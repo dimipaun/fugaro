@@ -65,8 +65,11 @@ frame-ancestors 'none'; object-src 'none'
 used.** `'self'` permits a stylesheet served from `app://console` — the console's own
 bundle — and the policy has no `'unsafe-inline'`, so a `<style>` element and a `style="…"`
 attribute are both refused by the browser whatever the code does. The `<meta
-http-equiv>` copy in each of the three documents is byte-identical to the header, and
-`console/test/unit/window.test.ts` holds the two equal and asserts the policy contains neither
+http-equiv>` copy in each of the three documents is byte-identical to the header:
+`console/test/unit/csp-document.test.ts` derives the document list from `SERVED_FILES`, so it
+holds **all three** copies equal to the header and to each other, and
+`console/test/unit/window.test.ts` holds the same for the two documents it reads
+(`index.html` and `refusal.html`) alongside the assertion that the policy contains neither
 `unsafe-inline`, `unsafe-eval` nor `*`.
 
 So this design **adds nothing to the CSP and removes nothing from it**. A stylesheet is
@@ -1156,9 +1159,10 @@ a fetch the CSP's `connect-src` governs, and no script fetches the CSS).
 The evidence a reviewer should require, and which the tests provide:
 
 - `CONTENT_SECURITY_POLICY` is byte-identical before and after, and so is the `<meta>`
-  copy in each of the three documents — held by `console/test/unit/window.test.ts`
-  (`expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)`) and by
-  `console/test/unit/csp-document.test.ts`;
+  copy in each of the three documents — held for **all three** by
+  `console/test/unit/csp-document.test.ts`, whose document list is derived from
+  `SERVED_FILES`, and for the two it reads by `console/test/unit/window.test.ts`, whose
+  `expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)` pins the policy itself;
 - `APP_SCHEME_PRIVILEGES` still has **no `bypassCSP`**, asserted rather than merely unset;
 - the served CSS is served by the same `serveAppRequest`, with
   `content-type: text/css; charset=utf-8` from `mediaTypeFor`, `nosniff`, and the CSP
@@ -1310,7 +1314,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with ten tests:
+`docs_budget_token_channel_test.go`, with eleven tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -1337,8 +1341,8 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    six task headings are there, that the four `theme/*.css` files are in the plan's tree,
    and that the phase names all six of the [§8](#8-open-for-the-owner) questions.
 
-And **five that read §3.4's numbers rather than its prose**, which is the half the review of
-the first revision asked for. They recompute WCAG 2.1's relative luminance
+**Items 5 to 9 — five of the eleven — read §3.4's numbers rather than its prose**, which is the
+half the review of the first revision asked for. They recompute WCAG 2.1's relative luminance
 (`(L1+0.05)/(L2+0.05)`) and circular hue distance
 (`min(|Δh|, 360°−|Δh|)`) from the literal values in §3.2 and §3.3, in four lines of Go each,
 deliberately not shared with the console's own token test: that one is TypeScript under
@@ -1373,12 +1377,13 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    does take it; 9 is what keeps the branch itself tested rather than dead code. It also
    pins both thresholds as inclusive, which is how §3.4 writes them ("at least 50°", "at
    least 3:1").
-10. a **phase-ordering test**, which is the one case here that reads [§7](#7-the-build-plan-phase-6-unapproved)
-   and the plan together rather than this document's tables: it cuts the plan's Phase 6 at
-   its six task headings and §7 at its seven, and fails when a task's `**Files**` or
-   `**Tests**` clause names a **later** task — the shape both of this revision's ordering
-   errors took — when [§5.2](#52-how-the-bundler-emits-it)'s `THEME_STYLESHEETS` literal names a
-   file no task has created yet at the point the list lands, when Tasks 6.3 or 6.4 omit
+10. a **phase-ordering test**, the tenth and the only case of the eleven that is neither about
+   this document's shape nor about its numbers — it reads
+   [§7](#7-the-build-plan-phase-6-unapproved) and the plan together: it cuts the plan's
+   Phase 6 at its six task headings and §7 at its seven, and fails when a task's `**Files**`
+   or `**Tests**` clause names a **later** task — the shape both of this revision's ordering
+   errors took — when [§5.2](#52-how-the-bundler-emits-it)'s `THEME_STYLESHEETS` literal
+   names a file no task has created yet at the point the list lands, when Tasks 6.3 or 6.4 omit
    their own file or their `THEME_STYLESHEETS` entry from `**Files**`, when Task 6.2 names
    either later file, when Task 6.1 claims `backgroundColor` or Task 6.5 does not, and when
    [§6.3](#63-contrast-as-unit-tests) stops saying the window-background case is Task 6.5's.
@@ -1388,6 +1393,19 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    line stayed at nine. Each of its cases is mutation-proven, and the seven mutations are
    named in [§7.7](#77-the-red-steps). It reads the plan as text for the same boundary reason
    the rest of this file does.
+11. a **counts test** over this section and §7.7, which is what keeps the numbers above from
+   rotting: it numbers the ordered list here and requires it to run 1 to N with no gap and N
+   to be the count this section's opening line prints in words; it reads the group sentence
+   ("Items 5 to 9 — five of the eleven") against the list it names, in every number the
+   sentence prints;
+   it counts the rows of §7.7's red-step table and the clauses of its two mutation lists
+   against the words above them; and it counts this document's `## ` headings against the
+   number the presence case names. Every count is taken from the thing counted — list items,
+   table rows, semicolon-separated clauses — rather than from the prose beside it, because a
+   test that agreed with the prose would agree with any prose. The revision that added it is
+   the evidence: this section introduced its §3.4 group as "five that read §3.4's numbers"
+   over a list numbered 5 to 10, so a reader counting the items after the sentence counted
+   six.
 
 **The citation test stats a file; these five read the file**, which is the difference
 between a citation that exists and a citation that is true. Neither substitutes for the
@@ -1415,9 +1433,10 @@ named with the change ([§7.7](#77-the-red-steps)).
 ## 7. The build plan (Phase 6, UNAPPROVED)
 
 Added to [the plan](../plans/2026-10-15-desktop-console.md) as a new **Phase 6** in the
-file's own numbering (a section `## Phase 6 — …`, tasks `### Task 6.n:`, a row in the
-Phase summary, a row in the PR groups table, and a line in the plan's File Structure
-tree). **Nothing here is approved**: the plan's OWNER APPROVAL GATE stands, and these tasks
+file's own numbering, in the five places that file carries a phase: one section
+`## Phase 6 — …`; **six** `### Task 6.n:` headings; **one** row in the Phase summary table;
+**five** rows in the PR groups table (`J` to `J5`, one per PR the phase is split into); and
+**four** lines in the File Structure tree, one per `theme/*.css` file. **Nothing here is approved**: the plan's OWNER APPROVAL GATE stands, and these tasks
 carry `UNAPPROVED` until the owner answers [§8](#8-open-for-the-owner). Task 6.2's heading
 carries `SECURITY-SENSITIVE, independent opus review`, and Global Constraints rule 9's list
 gains `6.2` in the same edit — `TestPlanRule9ListsEveryFlaggedHeading` fails otherwise,

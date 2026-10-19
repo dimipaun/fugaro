@@ -1180,8 +1180,9 @@ which the staged `docs/pending-workflows/console-tests.yml` already sets on the 
 recording belongs to Task 6.6, after the last stylesheet. Tasks 6.3 to 6.5 therefore run
 the rest of the e2e pass and say so; 6.6 is where the goldens stop being skipped.
 
-**Six PRs, in the file's own numbering** (this section, `### Task 6.n:` headings, a row in
-the Phase summary, five rows in the PR groups table and a line in the File Structure tree):
+**Six PRs, in the file's own numbering** (this section, six `### Task 6.n:` headings, one
+row in the Phase summary, five rows in the PR groups table — J to J5 — and four lines in the
+File Structure tree, one per `theme/*.css` file):
 **6.1** the tokens; **6.2** the wiring, SECURITY-SENSITIVE; **6.3** the layout; **6.4** the
 screens; **6.5** the theme switch, the window background and the keyboard; **6.6** the
 golden frames, re-recorded. Each is independently mergeable and green on its own; 6.1 is

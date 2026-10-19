@@ -270,6 +270,57 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 	if !strings.Contains(plan, "**Phase 6 — the console's style — is not on this list**") {
 		t.Errorf("%s: the MVP list no longer says phase 6 is not on it, which is the design's recommendation (its Q6) and would otherwise read as an omission", path)
 	}
+
+	// The other two places the file can say a phase is unapproved, because the
+	// docstring above claims all three and the heading alone is the one a reader
+	// who never scrolls to the tables would check. The plan's own preamble
+	// promises a Phase-summary row and the phase's PR rows, so this is also the
+	// check that the promise landed.
+	if !strings.Contains(plan, "| **6. The console's style — UNAPPROVED** |") {
+		t.Errorf("%s: the Phase summary has no row for phase 6 marked UNAPPROVED; the phase is listed in that table like every other one, and a row without the marker is a phase a reader takes as approved", path)
+	}
+	prRows := mdTableRows(plan, mdPRRowRE)
+	if len(prRows) != 5 {
+		t.Errorf("%s: the PR groups table holds %d rows for phase 6 (J to J5); the phase is six tasks split into five PRs, and this count is the number the design's §7 states", path, len(prRows))
+	}
+	for _, row := range prRows {
+		if !strings.Contains(row, "UNAPPROVED") {
+			t.Errorf("%s: the PR groups row %q does not say UNAPPROVED; every row the phase occupies carries the marker, since a PR group is what a reviewer merges", path, strings.TrimSpace(row))
+		}
+	}
+
+	// And the tree lines and PR rows are the count the design's §7 prints, so
+	// the description and the plan cannot drift apart: the design says four
+	// lines for the four stylesheets and five PR rows, and both are counted here
+	// rather than trusted.
+	themeLines := mdTableRows(plan, mdThemeTreeLineRE)
+	if len(themeLines) != 4 {
+		t.Errorf("%s: the File Structure tree holds %d theme stylesheet lines, and the design's §7 says four; a tree line and the design's count are the same fact", path, len(themeLines))
+	}
+	design := readDoc(t, "docs/design/console-styling.md")
+	for _, want := range []string{
+		"**five** rows in the PR groups table",
+		"**four** lines in the File Structure tree",
+		"**six** `### Task 6.n:` headings",
+	} {
+		if !strings.Contains(mdFlat(design), want) {
+			t.Errorf("docs/design/console-styling.md: §7 does not say %q; that sentence is how the design tells a reader where the phase landed, and each of its counts is a fact about the plan that this test just counted", want)
+		}
+	}
+}
+
+// mdPRRowRE matches a PR groups row for phase 6 — the phase's rows are the J
+// ones, and nothing else in that table starts with a J.
+var mdPRRowRE = regexp.MustCompile(`(?m)^\| J\d* \|[^\n]*$`)
+
+// mdThemeTreeLineRE matches a File Structure line for one of the theme
+// stylesheets, which are the four files the styling work adds.
+var mdThemeTreeLineRE = regexp.MustCompile(`(?m)^ {2}src/renderer/theme/[a-z]+\.css\b[^\n]*$`)
+
+// mdTableRows returns every line of doc the expression matches, with the
+// expression's own anchors left on, so a caller can search the row it gets.
+func mdTableRows(doc string, re *regexp.Regexp) []string {
+	return re.FindAllString(doc, -1)
 }
 
 // mdTaskSections cuts a document's task list into one string per task, in task
@@ -521,6 +572,188 @@ func mdNumberWord(n int) (string, bool) {
 		return "", false
 	}
 	return words[n], true
+}
+
+// mdWordValue reads a small count back out of the prose, so a sentence's word
+// and the list beside it can be compared. It is mdNumberWord's inverse and
+// covers the same range: zero to twenty.
+func mdWordValue(word string) (int, bool) {
+	for n := 0; n <= 20; n++ {
+		if w, ok := mdNumberWord(n); ok && w == word {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+// TestDocsConsoleStylingCountsMatch:
+// every count this design prints in prose is checked against the thing it
+// counts, because a count is a number and a number in a document rots the way a
+// link does — silently, and in whichever direction the sentence beside it needs.
+// The revision this test was written from is the evidence: §6.5 said "five that
+// read §3.4's numbers" over a list numbered 5 to 10, and a reader counting the
+// items after that sentence counted six.
+//
+// The checks are mechanical on purpose — items, rows and clauses, counted by
+// their markers rather than by reading the sentences — because a test that
+// agreed with the prose would agree with any prose. What it does not do is check
+// counts of things outside the document (§3.4's colours, the eight baselines,
+// the console's own test files): those are other cases' subjects, and this one
+// is about the document keeping its own arithmetic.
+func TestDocsConsoleStylingCountsMatch(t *testing.T) {
+	const path = "docs/design/console-styling.md"
+	doc := readDoc(t, path)
+
+	// §6.5's enumeration: the ordered list runs 1..N with no gap, and N is the
+	// number the section's opening line says in words.
+	section := mdBetween(t, path, doc, "### 6.5 The docs test", "\n---\n\n## 7. ")
+	itemNums := regexp.MustCompile(`(?m)^(\d+)\. `).FindAllStringSubmatch(section, -1)
+	if len(itemNums) == 0 {
+		t.Fatalf("%s: §6.5 has no ordered list; that list is the enumeration the section's count is about", path)
+	}
+	for i, m := range itemNums {
+		if m[1] != strconv.Itoa(i+1) {
+			t.Errorf("%s: §6.5's list jumps from %d to %s; the items are numbered consecutively, and a gap is how an item leaves the list without the count noticing", path, i, m[1])
+		}
+	}
+	stated := regexp.MustCompile(`with (\w+) tests`).FindStringSubmatch(mdFlat(section))
+	if stated == nil {
+		t.Fatalf("%s: §6.5 does not say how many tests this file has; the count and the enumeration are what a reader implements the phase from", path)
+	}
+	want, ok := mdWordValue(stated[1])
+	if !ok {
+		t.Fatalf("%s: §6.5's count %q is not a word this test knows", path, stated[1])
+	}
+	if want != len(itemNums) {
+		t.Errorf("%s: §6.5 says %s tests and enumerates %d items; a count that disagrees with the list under it is the defect this case exists for", path, stated[1], len(itemNums))
+	}
+
+	// The group inside that list, which is where the count and the enumeration
+	// last drifted apart: "Items 5 to 9 — five of the ten — read §3.4's numbers".
+	group := regexp.MustCompile(`Items (\d+) to (\d+) — (\w+) of the (\w+) —`).FindStringSubmatch(mdFlat(section))
+	if group == nil {
+		t.Errorf("%s: §6.5 no longer names the run of items that read §3.4's numbers as a range; without the range a reader counts the items after the sentence and gets the count wrong, which is exactly what happened here", path)
+	} else {
+		lo, errLo := strconv.Atoi(group[1])
+		hi, errHi := strconv.Atoi(group[2])
+		size, okSize := mdWordValue(group[3])
+		total, okTotal := mdWordValue(group[4])
+		switch {
+		case errLo != nil || errHi != nil || !okSize || !okTotal:
+			t.Errorf("%s: §6.5's group sentence could not be read: %q", path, group[0])
+		default:
+			if size != hi-lo+1 {
+				t.Errorf("%s: §6.5 says %s items and names the range %d to %d, which holds %d", path, group[3], lo, hi, hi-lo+1)
+			}
+			if total != len(itemNums) {
+				t.Errorf("%s: §6.5's group sentence calls the list \"the %s\" and the list holds %d items", path, group[4], len(itemNums))
+			}
+		}
+	}
+	// The sentence under the list that names the same group again, in the words
+	// a reader remembers: it has to be the group's own word.
+	if m := regexp.MustCompile(`these (\w+) read the file`).FindStringSubmatch(mdFlat(section)); m != nil {
+		if group == nil || m[1] != group[3] {
+			t.Errorf("%s: §6.5 says \"these %s read the file\" and the group it refers to is counted differently above; the two sentences name the same items", path, m[1])
+		}
+	} else {
+		t.Errorf("%s: §6.5 no longer says how many of its cases read the file rather than the tables", path)
+	}
+
+	// §7.7's three counts: the table of red steps, the docs test's own mutation
+	// list, and the ordering test's. Each is counted by its separators — table
+	// rows and semicolons — rather than by trusting the sentence above it.
+	reds := mdBetween(t, path, doc, "### 7.7 The red steps", "**And the ")
+	rows := 0
+	for _, line := range strings.Split(reds, "\n") {
+		if strings.HasPrefix(line, "| ") && !strings.Contains(line, "---") && !strings.Contains(line, "Red step |") {
+			rows++
+		}
+	}
+	if m := regexp.MustCompile(`The (\w+) that\s*\n?\s*matter most`).FindStringSubmatch(reds); m != nil {
+		if n, ok := mdWordValue(m[1]); !ok || n != rows {
+			t.Errorf("%s: §7.7 says the %s red steps that matter most are tabulated and the table has %d rows", path, m[1], rows)
+		}
+	} else {
+		t.Errorf("%s: §7.7 no longer says how many red steps it tabulates", path)
+	}
+
+	// The two mutation lists: each says a count in words and then lists that many
+	// clauses, separated by semicolons. The span is taken raw — from the sentence
+	// to the paragraph or the sentence that ends it — because a flattened
+	// document has no paragraph ends left, and these lists carry code spans with
+	// periods in them ("`Status: draft.`"), which a sentence-splitting regexp
+	// would cut in half.
+	for _, tc := range []struct {
+		sentence string
+		countRE  string
+		start    string
+		end      string
+	}{
+		{
+			sentence: "this document's own docs test was proved against",
+			countRE:  `\*\*And the (\w+) this document's own docs test was proved against`,
+			start:    "**And the four this document's own docs test was proved against",
+			end:      "The seventh is the plan's",
+		},
+		{
+			sentence: "the ordering test's mutations",
+			countRE:  `carries (\w+) of its own`,
+			start:    "And the ordering test (§6.5's tenth)",
+			end:      "\n---\n",
+		},
+	} {
+		span := mdBetween(t, path, doc, tc.start, tc.end)
+		m := regexp.MustCompile(tc.countRE).FindStringSubmatch(span)
+		if m == nil {
+			t.Errorf("%s: §7.7 no longer states the count for %s as a sentence this case can count", path, tc.sentence)
+			continue
+		}
+		n, ok := mdWordValue(m[1])
+		if !ok {
+			t.Errorf("%s: §7.7's count for %s is %q, not a word this test knows", path, tc.sentence, m[1])
+			continue
+		}
+		after := span[strings.Index(span, m[0])+len(m[0]):]
+		if i := strings.Index(after, ":"); i >= 0 {
+			after = after[i+1:]
+		}
+		clauses := len(strings.Split(strings.TrimSpace(after), ";"))
+		if clauses != n {
+			t.Errorf("%s: §7.7 says %s for %s and lists %d clauses; a count that disagrees with the list beside it is the defect this case exists for", path, m[1], tc.sentence, clauses)
+		}
+	}
+
+	// And the document's own shape: §6.5's first item counts the section
+	// headings, so the count is taken from the headings themselves.
+	headings := len(regexp.MustCompile(`(?m)^## `).FindAllString(doc, -1))
+	if m := regexp.MustCompile(`this document's (\w+) section headings`).FindStringSubmatch(mdFlat(doc)); m != nil {
+		if n, ok := mdWordValue(m[1]); !ok || n != headings {
+			t.Errorf("%s: §6.5 says this document has %s section headings and it has %d", path, m[1], headings)
+		}
+	} else {
+		t.Errorf("%s: §6.5's presence case no longer counts this document's section headings", path)
+	}
+}
+
+// mdBetween returns the part of doc that starts at start, the marker included,
+// and stops before end. Both markers must be there: a missing one is a document
+// this test can no longer read, and a silent empty slice would make every check
+// over it vacuous. The markers are raw — newlines and all — because the callers
+// count what is between them, and a flattened copy has no line ends left to
+// count.
+func mdBetween(t *testing.T, path, doc, start, end string) string {
+	t.Helper()
+	i := strings.Index(doc, start)
+	if i < 0 {
+		t.Fatalf("%s: %q is not in the document; this test reads what follows it", path, start)
+	}
+	rest := doc[i:]
+	j := strings.Index(rest[len(start):], end)
+	if j < 0 {
+		t.Fatalf("%s: %q does not end before %q, so this test cannot tell where the section stops", path, start, end)
+	}
+	return rest[:len(start)+j]
 }
 
 // taskIndex maps a task's name to its position among phase 6's six tasks, so a
