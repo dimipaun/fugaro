@@ -2943,6 +2943,24 @@ failed and no other case did.
 | `THEME_STYLESHEETS`' first two entries swapped | `bundle.test.ts`, "names the cascade in the design's order" — **and nothing else**, which is the finding: before that case, this mutant left the whole suite green |
 | the stray-file extension test made case-sensitive again | `bundle.test.ts`, "refuses a .css the list does not name whatever its extension's case is" |
 
+**A second pass over those fixes** (same review, 2026-10-19) closed two gaps the cases
+above left, each reproduced against the compiled tool before it was fixed and mutated
+after, and one overclaim in the prose:
+
+| Mutation | What fails |
+|---|---|
+| the three `refuseSymlinkedDirectory` calls removed | `bundle.test.ts`, both "…into a symlinked directory" cases and the `buildConsole` half of "refuses a foreign file in the served root before it writes anything" |
+| `QUOTED_STRING_RE`'s body narrowed to `[^"'\n]*` (excluding both marks, as it first shipped) | `bundle.test.ts`, "refuses a quoted string that names a URL" and the probe case — `image-set("https://…/a'b.png" 1x)` is admitted by the narrow body |
+
+The directory half was the one that mattered: with the file check alone, `dist/bundle` as a
+symlink to a directory outside the tree built **cleanly** and left `console.css` outside the
+served root. Two of these shapes a case can only reach by planting the link itself, which is
+what those cases do. A symlink *above* the output directory is still followed, and that is
+stated in `refuseSymlinkedDirectory` rather than left to be discovered: resolving the whole
+chain would refuse `/var`-style paths the platform ships (`os.tmpdir()` is under `/var` on
+macOS), and `dist/` is gitignored, so this shape needs a tampered working tree rather than a
+reviewed commit.
+
 ### What this task does not own
 
 `base.css` and `screens.css` are Tasks 6.3 and 6.4, and each appends its own file to
