@@ -40,8 +40,11 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/plan"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -3853,6 +3856,111 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 		id := m[1]
 		if !regexp.MustCompile(`(^|[^0-9.])` + regexp.QuoteMeta(id) + `([^0-9]|$)`).MatchString(rule) {
 			t.Errorf("Task %s's heading carries SECURITY-SENSITIVE but rule 9's list does not name it: the rule says the list is the headings", id)
+		}
+	}
+}
+
+// TestDocsDesktopConsoleContractCitesRunsStatsBySymbol: the contract's
+// `runs stats --json` section (6.10) cites the code it describes by SYMBOL, not
+// by line. The line numbers it used to carry (`runs_stats.go:69`, `:467`,
+// `:181`) each pointed at something else as soon as anything was inserted above
+// them — the one this test was written for went stale inside the same pull
+// request that added the section, when a review fix moved `writeUserStats` from
+// :467 to :493 — and a console author who follows a line number that now lands
+// on an unrelated statement reads the wrong shape off it. The symbols are what
+// the console reads the document for, so the section names them and a line
+// number cannot come back.
+//
+// Mutation (verified, run and restored): put `runs_stats.go:467` back beside
+// the section's `writeUserStats` — this fails naming the line citation.
+func TestDocsDesktopConsoleContractCitesRunsStatsBySymbol(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	start := strings.Index(doc, "### 6.10 `fugaro runs stats --json`")
+	end := strings.Index(doc, "## 7. The CLI gaps")
+	if start < 0 || end <= start {
+		t.Fatalf("%s's runs stats section was renamed or reordered; update this test's markers", path)
+	}
+	section := doc[start:end]
+	// The three symbols the section describes, each of which exists in the file
+	// it names (read from the source, so a rename cannot leave the contract
+	// pointing at a function that is gone).
+	src := readDoc(t, "internal/cli/runs_stats.go")
+	for _, sym := range []string{"newRunsStatsCmd", "runRunsStats", "userStatsDoc", "writeUserStats"} {
+		if !strings.Contains(section, "`"+sym+"`") {
+			t.Errorf("%s's runs stats section does not name `%s`: the console reads this document to learn the shape, and a symbol is what stays true", path, sym)
+		}
+		if !strings.Contains(src, "func "+sym+"(") && !strings.Contains(src, "type "+sym+" ") {
+			t.Errorf("%s names `%s`, and internal/cli/runs_stats.go no longer declares it", path, sym)
+		}
+	}
+	// No line citation in the section: one that is right today is wrong at the
+	// next insertion above it, and the console cannot tell the two apart.
+	if m := regexp.MustCompile(`runs_stats\.go:\d+`).FindString(section); m != "" {
+		t.Errorf("%s's runs stats section cites %s instead of a symbol: a line number here rots the moment anything is inserted above the symbol it means", path, m)
+	}
+}
+
+// TestDocsDesktopConsoleContractStatesTheAccountAxis: the `account` row of both
+// run shapes used to say the field could not appear on a project job at all —
+// "in phase 3 **never**, because a profile may not mount a Claude OAuth token"
+// — and internal/watch/json.go's own comment carried the same claim. The
+// release this contract documents made it false: a profile lists
+// claude_accounts, the deployer builds one job per (profile, provider,
+// account), and a row's account is the axis the run's job name was computed
+// from, which is exactly what a console shows a screen from. The stale sentence
+// is the dangerous half — a console that believes the key can never appear never
+// renders one — so it is banned by name in both files, and the row is held to
+// the axis the code computes rather than to a hand-kept paraphrase.
+//
+// Mutation (verified, run and restored): restore the sentence to either file —
+// this fails naming it.
+func TestDocsDesktopConsoleContractStatesTheAccountAxis(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	const code = "internal/watch/json.go"
+	doc := readDoc(t, path)
+	for _, stale := range []string{
+		"in phase 3 **never**",
+		"a profile may not mount a Claude OAuth token",
+		"absent on every phase-3 project job",
+		"which in phase 3 is every project job",
+	} {
+		for _, where := range []struct{ path, text string }{{path, doc}, {code, readDoc(t, code)}} {
+			if strings.Contains(where.text, stale) {
+				t.Errorf("%s still says %q: a project job's row can carry an account, and a console reading either document would never render one", where.path, stale)
+			}
+		}
+	}
+	// What the code computes: a profile that lists the default account and one
+	// named account has a job per entry (config.ProjectJobAccounts), and the
+	// named account's job is the one whose row carries an account
+	// (runner.ProjectJobOfPolicy, which internal/cli/project_job.go's
+	// projectJobIndex.ref puts on the row). The empty string is the profile's
+	// no-account job, which is why the key is omitempty and absent there.
+	p := &projectpolicy.Policy{Profiles: map[string]projectpolicy.Profile{
+		"standard": {JobProfile: config.JobProfile{Provider: "github",
+			ClaudeAccounts: []string{config.DefaultClaudeAccount, "work"}}},
+	}}
+	if _, _, account, ok := runner.ProjectJobOfPolicy(p, gcp.ProjectJobName("standard", "github", "work")); !ok || account != "work" {
+		t.Fatalf("ProjectJobOfPolicy(standard, github, work) = (%q, %v): a named account's job no longer carries its name on the row", account, ok)
+	}
+	if _, _, account, ok := runner.ProjectJobOfPolicy(p, gcp.ProjectJobName("standard", "github", "")); !ok || account != "" {
+		t.Fatalf("ProjectJobOfPolicy(standard, github, no account) = (%q, %v): the profile's no-account job no longer reads as the empty axis", account, ok)
+	}
+	if got := config.ProjectJobAccounts(config.JobProfile{ClaudeAccounts: []string{config.DefaultClaudeAccount, "work"}}); len(got) != 2 {
+		t.Fatalf("ProjectJobAccounts(default, work) = %v, want the two entries the row's presence rule is about", got)
+	}
+	// And the row says it, naming the code that decides it: the symbols are in
+	// the row rather than only in this test, so a reader of the contract can
+	// check the claim.
+	for _, want := range []string{
+		"**one job per account**",
+		"`config.ProjectJobAccounts`",
+		"`config.ProjectJobTokenAccount`",
+		"the profile's no-account job",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s's `account` row does not say %q: the axis is runner.ProjectJobOfPolicy's answer over config.ProjectJobAccounts, and the row is what a console reads to know whether to render one", path, want)
 		}
 	}
 }

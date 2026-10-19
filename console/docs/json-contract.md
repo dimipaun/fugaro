@@ -178,7 +178,7 @@ drift from it.
 | `workflow` | string | — | **yes** | from `task.json`, queued runs only |
 | `requested_by` | string | — | **yes** | from `task.json`, queued runs only — **a person's address**: the Spend screen's person view is off by default (D15) |
 | `job` | string | — | **yes** | the Cloud Run job this run is in, from the run's own `launch.json` (`runstore.Launch.Job`) — the same read that produces the queued rows, so a live row has it too. Absent when the reader has no `launch.json` for the run. Under the project-centric model this is the **shared** job of a (profile, provider, account), not one repository's. **Display text, not an authority**: `launch.json` is writable by every launcher and, on a shared job, by every run (SECURITY.md, D4), so the value is what that object says, stripped of control characters — never a name to act on |
-| `profile` / `provider` / `account` | string | — | **yes** | the (profile, provider, account) the job's name was **computed from**, matched against the project's published policy — never parsed back out of the name (R2-5), so a `job` no profile computes gets none of them. `profile` and `provider` are present together or absent together; `account` is present only beside them and only for a job of a named Claude account — in phase 3 **never**, because a profile may not mount a Claude OAuth token (design D2), so a project job's row carries `profile` and `provider` and no `account`. All three are absent for a run on a **per-repository** job (a baked workflow, a Bitbucket repository, an installation that has not migrated), whose name is no project job's. `provider` here is the **profile's** provider, not a general stamp of the repository's: it is the reason the field exists on the two run shapes but does not close §7's gap 7 |
+| `profile` / `provider` / `account` | string | — | **yes** | the (profile, provider, account) the job's name was **computed from**, matched against the project's published policy — never parsed back out of the name (R2-5), so a `job` no profile computes gets none of them. `profile` and `provider` are present together or absent together; `account` is present only beside them and only for a job of a named Claude account — a profile that lists `claude_accounts` gets **one job per account** beside its no-account job (`config.ProjectJobAccounts`), so a run on a named account's job carries that account's name, and a run on the profile's no-account job carries none. An absent `account` is **not** "this job mounts no credential": the no-account job holds the default account's token when the profile lists `default` and none otherwise (`config.ProjectJobTokenAccount`), so what is empty is the account axis of the job's name, never a claim about the run's credential. All three are absent for a run on a **per-repository** job (a baked workflow, a Bitbucket repository, an installation that has not migrated), whose name is no project job's. `provider` here is the **profile's** provider, not a general stamp of the repository's: it is the reason the field exists on the two run shapes but does not close §7's gap 7 |
 | `launched_by` | string | — | **yes** | who started the run, from the run's own `launch.json` (`runstore.Launch.LaunchedBy`, **CLI 0.9.0**) — a person's address, or the identity an automated launch runs as (a service account, a CI runner). It is the **full recorded identity**: the text views show the short form a column has room for (`runview.LauncherShort` — the part before an address's `@`, the whole value for anything else). Absent when the record has none — a run from before the launcher was recorded, or one whose `launch.json` the reader does not have — **never a value the CLI invents**. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), the value is sanitised and capped like every other bucket-derived string (`safetext.Field`, 512 runes), and no policy, admission or budget rule reads it |
 
 **A live run carries no PR field at all** — no `pr_url`, no `pr_number`, no
@@ -199,7 +199,7 @@ detail is open.
 | `pr_url` | string | URL | **yes** | **absent when the run has no PR — do not build a link from it** (gap 7) |
 | `pr_number` | int | number | **yes** | **absent (0) when the run has no PR** |
 | `job` | string | — | **yes** | as on `JSONRun`: a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose the job it ran on |
-| `profile` / `provider` / `account` | string | — | **yes** | as on `JSONRun` (`account` absent on every phase-3 project job; all three absent on a per-repository job) |
+| `profile` / `provider` / `account` | string | — | **yes** | as on `JSONRun` (`account` present only on a named account's job, absent on the profile's no-account job and, with the other two, on a per-repository job) |
 | `launched_by` | string | — | **yes** | as on `JSONRun` (**CLI 0.9.0**): a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose who launched it either. Absent when the launch record has none |
 | `age_seconds` | float64 | seconds | no | measured |
 
@@ -693,8 +693,10 @@ shows the CLI's refusal sentence rather than a graph.
 ### 6.10 `fugaro runs stats --json` (**CLI 0.9.0**)
 
 **Command:** `internal/cli/runs_stats.go` `newRunsStatsCmd` / `runRunsStats`.
-**Document:** `userStatsDoc` (`runs_stats.go:69`), indented (`writeUserStats`,
-`runs_stats.go:467`). This is the one command in this document the console
+**Document:** `userStatsDoc`, indented (`writeUserStats`), both in
+`internal/cli/runs_stats.go` — cited by symbol, not by line: an indented
+document is written by one function and a line number here rots at the next
+insertion above it. This is the one command in this document the console
 **does not spawn yet**: it is the data behind the Spend screen's by-person
 view (CLI 0.9.0), and the section is here so the screen that follows has a
 shape read off the code rather than assumed from a design. It is read-only —
@@ -767,7 +769,7 @@ behind **both** `rows` and `totals`; the counts are an embedded `Counts`
 | `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
 | `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
 
-**Flags** (`runs_stats.go:181`): `--by`, `--repo`, `--all`, `--since`,
+**Flags** (`newRunsStatsCmd`): `--by`, `--repo`, `--all`, `--since`,
 `--max-runs`, `--all-users`, `--json`, plus the cloud flags.
 
 ## 7. The CLI gaps, settled against the code

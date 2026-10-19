@@ -13,6 +13,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
+// doctorMaxJobPages is the most pages the launcher-jobs check follows while
+// listing a location's Cloud Run jobs: at the 100 a page it asks for, room for
+// 20,000 jobs, which is far past any installation's job set (one per
+// (profile, provider, account) plus one per per-repository workflow). It is a
+// bound on a walk that has gone wrong rather than a capacity: the SDK follows
+// whatever next-page token the server answers with, and doctor must end
+// whatever the server does (internal/managed's inventoryMaxPages is the same
+// guard on its own listing).
+const doctorMaxJobPages = 200
+
 // doctorLauncherReach is the launcher-jobs check (plan task 3.5 step 1): the
 // grant count doctor sees on the project's Cloud Run jobs, and the jobs a
 // launcher can start.
@@ -66,8 +76,9 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		withheld  int      // jobs whose policy the caller may not read
 		selfCan   []string // of those, the jobs the caller can start
 	)
+	seen := map[string]bool{}
 	page := ""
-	for {
+	for pages := 1; ; pages++ {
 		resp, err := svc.Projects.Locations.Jobs.List(parent).PageSize(100).PageToken(page).Context(ctx).Do()
 		if err != nil {
 			return unchecked(err)
@@ -112,24 +123,58 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 				public = append(public, shortJobName(j.Name))
 			}
 		}
-		page = resp.NextPageToken
-		if page == "" {
+		next := resp.NextPageToken
+		if next == "" {
 			break
 		}
+		// The SDK follows whatever next-page token the server answers with
+		// and never notices one it has already followed, so a server that
+		// repeats a token would have doctor walk this listing forever -- the
+		// same two guards internal/managed's inventory read carries, for the
+		// same reason. A walk past either bound is a read that failed, and
+		// this check has one answer for a failed read (the warning above),
+		// never a shorter list of jobs: a listing cut short would read as
+		// jobs a launcher cannot start.
+		if seen[next] {
+			return unchecked(fmt.Errorf("the server repeated page token %q after %d pages of the location's jobs", oneLineCLI(next), pages))
+		}
+		if pages >= doctorMaxJobPages {
+			return unchecked(fmt.Errorf("the listing of %s's jobs runs past %d pages", parent, doctorMaxJobPages))
+		}
+		seen[next] = true
+		page = next
 	}
 	slices.Sort(startable)
 	slices.Sort(selfCan)
 	read := len(jobs) - withheld - len(unread)
+	// Every count below is over the policies this doctor could read: a job
+	// whose policy the caller may not read (withheld) or whose read failed
+	// (unread) is in none of them. What that leaves out is said beside them
+	// below, so a count over a partial read never reads as a count over the
+	// location — in either direction: a job nobody read is neither one whose
+	// grants were counted nor one no launcher can start.
 	problem := fmt.Sprintf("launcher grants on Cloud Run jobs: %d grant(s) over %d job(s), and a launcher can start %d of them",
 		grants, read, len(startable))
 	switch {
 	case withheld > 0 && read == 0:
-		// Nothing was read, so there is no count to give: only the
-		// caller's own reach.
+		// Every policy was refused: that is the ordinary launcher's view
+		// (fugaroLauncher holds run.jobs.list and not run.jobs.getIamPolicy),
+		// not a fault. Nothing was read, so there is no count to give: only
+		// the caller's own reach, from testIamPermissions.
 		problem = fmt.Sprintf("your credentials may not read the Cloud Run jobs' IAM policies (the launchers' grants are an operator's check); of %d job(s), you can start %d of them", withheld, len(selfCan))
 		if len(selfCan) > 0 {
 			problem += ": " + strings.Join(selfCan, ", ")
 		}
+		if len(unread) > 0 {
+			problem += fmt.Sprintf(" (%d job(s) could not be asked even that: %s)", len(unread), strings.Join(unread, ", "))
+		}
+	case len(jobs) > 0 && read == 0:
+		// Not one policy was read, and not by refusal either: a read that
+		// failed leaves no grant count and no reach of the caller's own, and
+		// "no launcher is granted on any job" would be a claim about policies
+		// nobody read — beside the launcher-jobs-unread warning that names
+		// those jobs and says the answer for them is unknown, not no.
+		problem = fmt.Sprintf("could not read the IAM policy of %d of the location's %d Cloud Run job(s): this line has no grant count to give, and launcher-jobs-unread names them", len(unread), len(jobs))
 	case len(launchers) == 0:
 		// Nothing to compare the policies' members against: a zero here is
 		// the local config's, not the jobs'.
@@ -145,11 +190,24 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	default:
 		problem += " (no launcher or operator is named in the policy of any job whose policy could be read, so fugaro run cannot start one of them)"
 	}
-	if withheld > 0 && read > 0 {
-		problem += fmt.Sprintf("; of %d job(s) whose policy your credentials may not read, you can start %d", withheld, len(selfCan))
-		if len(selfCan) > 0 {
-			problem += ": " + strings.Join(selfCan, ", ")
+	// What the counts above leave out, and — for the jobs the caller was
+	// refused a policy for but could still ask about — its own reach over
+	// them. A job whose read failed is in neither half: not even its own
+	// permissions could be asked.
+	if left := withheld + len(unread); left > 0 && read > 0 {
+		var which []string
+		if withheld > 0 {
+			s := fmt.Sprintf("%d whose policy your credentials may not read", withheld)
+			if len(selfCan) > 0 {
+				s += ", of which you can start " + strings.Join(selfCan, ", ")
+			}
+			which = append(which, s)
 		}
+		if len(unread) > 0 {
+			which = append(which, fmt.Sprintf("%d whose read failed", len(unread)))
+		}
+		problem += fmt.Sprintf(" (%d of the location's %d job(s) are not in that count: %s)",
+			left, len(jobs), strings.Join(which, " and "))
 	}
 	// Not OK, and Severity "info": printDoctorChecks prints the checks that are
 	// not OK, and an "info" one never fails doctor, with or without --strict
