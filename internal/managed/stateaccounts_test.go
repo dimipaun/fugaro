@@ -60,6 +60,81 @@ func TestAccountsOfStateNamesEveryShape(t *testing.T) {
 	}
 }
 
+// The compute root's three resources, as the fixture the table's compute
+// entries exist for: what AccountsOfState makes of each of them, by type AND by
+// the name it accounts for, and that a listing holding them decides clean.
+//
+// Why the names are asserted and not only the types: the accounting reads like
+// the whole-project read or it accounts for nothing. Its name is the state's
+// own id, and Inventory.accounted matches that name only as "//…", as a
+// "projects/…" path compared whole, or as a bare top-level name — so an id of
+// another shape, or a type that is not the one GCP files the resource under,
+// matches no listed asset. The resource then stays Foreign, `foreign` never
+// empties, and Inventory.Check's fallback is true for the life of the project:
+// the exact failure these three entries were added to fix, arriving silently
+// because a key that is present reads as decided.
+//
+// The three, from deploy/terraform/gcp/modules/compute/network.tf (the module
+// the Batch backend's own root applies, whose state the installation's own
+// bucket holds): the deny-all ingress rule and the router are assets of the
+// project, and the NAT is not an asset at all — GCP keeps it inside its router
+// — so it is here as the table's empty answer and accounts for nothing. That
+// last part is asserted the only way it can be without inventing an id for a
+// resource whose id nothing in this tree records: the NAT's entry carries the
+// attributes the module sets and no id, and is still not an error, because the
+// accounting skips a type that accounts for nothing before it reads a single
+// attribute. A NAT turned back into a claimed asset type fails here twice.
+func TestAccountsOfStateNamesTheComputeRootsResources(t *testing.T) {
+	const (
+		region   = "us-east5"
+		firewall = "projects/" + gcpProject + "/global/firewalls/fugaro-run-deny-ingress"
+		router   = "projects/" + gcpProject + "/regions/" + region + "/routers/fugaro-router"
+	)
+	data := stateDoc(4,
+		stateRes("", "google_compute_firewall", "run_deny_ingress",
+			`{"id":"`+firewall+`","name":"fugaro-run-deny-ingress","project":"`+gcpProject+`","direction":"INGRESS","priority":1000}`),
+		stateRes("", "google_compute_router", "this",
+			`{"id":"`+router+`","name":"fugaro-router","region":"`+region+`","project":"`+gcpProject+`"}`),
+		stateRes("", "google_compute_router_nat", "this",
+			`{"name":"fugaro-nat","router":"fugaro-router","region":"`+region+`","project":"`+gcpProject+`","nat_ip_allocate_option":"AUTO_ONLY"}`),
+	)
+	accounted, err := AccountsOfState(data)
+	if err != nil {
+		t.Fatalf("AccountsOfState: %v", err)
+	}
+	want := []StateResource{
+		{Type: "compute.googleapis.com/Firewall", Name: firewall},
+		{Type: "compute.googleapis.com/Router", Name: router},
+	}
+	if len(accounted) != len(want) {
+		t.Fatalf("AccountsOfState answered %+v, want %+v (the NAT accounts for nothing: it is not an asset of the project)", accounted, want)
+	}
+	for i := range want {
+		if accounted[i] != want[i] {
+			t.Errorf("entry %d = %+v, want %+v", i, accounted[i], want[i])
+		}
+	}
+
+	// The table's own answer for the NAT type, spelled out rather than left to
+	// the fixture: it is a key of the closed table (a type absent from it would
+	// leave the module's resource unread), and its value is the empty one that
+	// says GCP files no such asset. The reason is the table's comment.
+	if got, ok := stateAssetTypes["google_compute_router_nat"]; !ok || got != "" {
+		t.Errorf("stateAssetTypes[google_compute_router_nat] = %q, present=%v, want the empty answer: GCP keeps a NAT inside its router, so the listing holds no NAT asset for the state to account for", got, ok)
+	}
+
+	// And the two that ARE assets, against a read: a listing that files them
+	// the way the Cloud Asset API does decides clean, which is only true if the
+	// names above are the ones Inventory.accounted can match.
+	a := &fakeAssets{assets: []Asset{
+		listed("//compute.googleapis.com/"+firewall, "compute.googleapis.com/Firewall"),
+		listed("//compute.googleapis.com/"+router, "compute.googleapis.com/Router"),
+	}}
+	if d := inventory(a, accounted...).Check(context.Background()); d.Fallback {
+		t.Errorf("a project holding only the compute root's own resources decided %+v, want clean: %s", d, d.Why)
+	}
+}
+
 // What the accounting does NOT account for, and why each is the safe
 // direction: a data source is not a managed resource, a type GCP keeps inside
 // another resource is not an asset of its own, and a type this build cannot
@@ -151,33 +226,14 @@ func TestStateAssetTypesAreEitherAnAssetTypeOrDeliberatelyNot(t *testing.T) {
 // (google_compute_firewall, google_compute_router, google_compute_router_nat,
 // deploy/terraform/gcp/modules/compute/network.tf) were exactly that, and the
 // compute root the Batch backend's stage applies writes its state into the
-// installation's own bucket, which managedAccounted reads with no prefix. Two
-// of those three are decided in stateAssetTypes and the third is recorded in
-// stateAssetTypesUndecided, which is the other answer this test accepts.
+// installation's own bucket, which managedAccounted reads with no prefix.
 //
 // The walk is the modules' own text, as tf/cover_test.go's
 // TestAllowedTypesCoverTheModules walks it for init's allowlist: a resource
 // block added to any module and left undecided here fails by name.
 func TestStateAssetTypesCoverTheModules(t *testing.T) {
-	for typ, path := range moduleDeclaredTypes(t) {
-		if _, ok := stateAssetTypes[typ]; ok {
-			continue
-		}
-		if _, ok := stateAssetTypesUndecided[typ]; ok {
-			continue
-		}
-		t.Errorf("%s declares %s, which stateAssetTypes does not decide: its resources would stay foreign and this project's fallback would never clear", path, typ)
-	}
-}
-
-// moduleDeclaredTypes is the walk both table tests read: every google provider
-// resource type the tree's Terraform declares, mapped to the first file that
-// declares it (the file is what the failure message has to name).
-func moduleDeclaredTypes(t *testing.T) map[string]string {
-	t.Helper()
 	root := filepath.Join("..", "..", "deploy", "terraform")
 	resRE := regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)"`)
-	declared := map[string]string{}
 	n := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".tf") {
@@ -193,47 +249,14 @@ func moduleDeclaredTypes(t *testing.T) map[string]string {
 			if !strings.HasPrefix(typ, "google_") {
 				continue // the table translates google provider types only
 			}
-			if _, ok := declared[typ]; !ok {
-				declared[typ] = path
+			if _, ok := stateAssetTypes[typ]; !ok {
+				t.Errorf("%s declares %s, which stateAssetTypes does not decide: its resources would stay foreign and this project's fallback would never clear", path, typ)
 			}
 		}
 		return nil
 	})
 	if err != nil || n < 10 {
 		t.Fatalf("read %d module files: %v", n, err)
-	}
-	return declared
-}
-
-// TestStateAssetTypesUndecidedAreDeclaredAndReasoned holds the undecided map to
-// being what it says it is. A type recorded there is a type this build looked
-// at and could not place, so:
-//
-//   - it is a type a module really declares (otherwise the record is a memory
-//     of a resource that no longer exists, kept forever by nobody's mistake);
-//   - it is not in stateAssetTypes as well (two answers to one question, and
-//     the code would read the map that says "accounts for it" while the record
-//     beside it says "could not place it"); and
-//   - it carries a reason long enough to be one, with how to settle it, since
-//     the whole point of the map is that the next reader does not have to
-//     rediscover why a module-declared type was left to fail closed.
-func TestStateAssetTypesUndecidedAreDeclaredAndReasoned(t *testing.T) {
-	declared := moduleDeclaredTypes(t)
-	for typ, why := range stateAssetTypesUndecided {
-		if _, ok := declared[typ]; !ok {
-			t.Errorf("stateAssetTypesUndecided records %s, which no module in deploy/terraform declares: the record is for a type the tree cannot produce", typ)
-		}
-		if asset, ok := stateAssetTypes[typ]; ok {
-			t.Errorf("%s is in stateAssetTypes (%q) and in stateAssetTypesUndecided at once: the table's answer is the one AccountsOfState reads, so the record would be dead text", typ, asset)
-		}
-		if len(why) < 80 {
-			t.Errorf("stateAssetTypesUndecided records %s with %q, want the open question spelled out with how it is settled", typ, why)
-		}
-		for _, marker := range []string{"TODO", "FIXME", "XXX"} {
-			if strings.Contains(why, marker) {
-				t.Errorf("stateAssetTypesUndecided records %s with a %s marker: the reason is prose the next reader can act on, not a note to whoever comes back", typ, marker)
-			}
-		}
 	}
 }
 

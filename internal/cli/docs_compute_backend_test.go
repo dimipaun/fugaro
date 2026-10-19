@@ -18,16 +18,20 @@ import (
 // docs/design/compute-backend.md), written against the tree branch
 // fugaro/20261019-140014-b55a stands on (= the branch `integration-0.9.5`, cut
 // from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
-// and this test, the documents and tests a review of them corrected, and no
-// Terraform and no workflow). The one behavioural line among those corrections
-// is internal/managed/stateaccounts.go's table, which learns two of the compute
-// module's three types and records the third as undecided; everything else the
-// branch adds is a comment, a test or a document. **The owner approved the plan
-// on 2026-10-19 ("Approve and start", every recommendation P1–P8 accepted as
-// written), and Task 8's first half is built here under that approval** — the
-// plan's Status line and its OWNER APPROVAL GATE say so, and
-// TestDocsComputeBackendStatusMatchesTheBranch holds both paragraphs to the
-// tree, so a branch that carries more (or less) than they claim fails.
+// and this test, the documents and tests a review of them corrected, the
+// credentials-service documents and their own pin test (a later, separate piece
+// of work whose owner ruling is recorded in
+// docs/credentials-service/reconciliation.md §4), and no Terraform and no
+// workflow). The one behavioural line among those corrections is
+// internal/managed/stateaccounts.go's table, which learns the compute module's
+// three types — the NAT as the table's empty answer, corrected on a later
+// review; everything else the branch adds is a comment, a test or a document.
+// **The owner approved the plan on 2026-10-19 ("Approve and start", every
+// recommendation P1–P8 accepted as written), and Task 8's first half is built
+// here under that approval** — the plan's Status line and its OWNER APPROVAL
+// GATE say so, and TestDocsComputeBackendStatusMatchesTheBranch holds both
+// paragraphs to the tree, so a branch that carries more (or less) than they
+// claim fails.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
