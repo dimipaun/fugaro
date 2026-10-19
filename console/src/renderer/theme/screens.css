@@ -126,12 +126,14 @@ p.run-log-refused,
 p.run-log-link-note,
 p.run-pr-reason,
 p.run-replay-note,
-p.run-halt-detail,
+p.run-report-path,
+p.run-comments-path,
+span.run-halt-detail,
 p.degraded-notice,
 p.degraded-warning,
 p.unavailable-reason,
 p.unavailable-sentence,
-p.unavailable-searched,
+div.unavailable-searched,
 p.run-agent-message,
 p.run-reported-warning,
 p.run-pin-warning,
@@ -260,7 +262,7 @@ li.live-run {
  */
 
 span.live-run-id,
-span.run-id,
+h1.run-id,
 span.run-repo,
 span.run-workflow,
 span.live-repo-name,
@@ -268,8 +270,8 @@ span.projects-job-repo,
 span.projects-job-run,
 span.projects-job-workflow,
 span.projects-job-created,
-span.projects-enrolled-repo,
-span.projects-seen-repo,
+li.projects-enrolled-repo,
+li.projects-seen-repo,
 span.projects-only-seen-repo,
 span.projects-only-enrolled-repo,
 span.projects-secret-name,
@@ -280,10 +282,7 @@ span.projects-job-model,
 span.run-log-time,
 span.run-log-stage,
 span.run-stage-name,
-span.run-log-tail-line,
 span.run-finding-file,
-span.run-report-path,
-span.run-comments-path,
 span.run-follow-up-pr,
 span.run-replay-from,
 span.run-replay-to,
@@ -797,9 +796,9 @@ section.run-ledger p {
   gap: var(--space-2xs) var(--space-sm);
 }
 
-span.run-ledger-model,
-span.run-ledger-compute,
-span.run-ledger-total {
+p.run-ledger-model,
+p.run-ledger-compute,
+p.run-ledger-total {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }
@@ -840,7 +839,8 @@ li.run-log-line {
 }
 
 span.run-log-severity,
-span.run-log-message {
+span.run-log-message,
+li.run-log-tail-line {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
 }
@@ -1270,9 +1270,9 @@ main p {
   span.run-follow-up-word,
   span.run-follow-up-comments-word,
   span.run-finding-severity,
-  span.run-ledger-model,
-  span.run-ledger-compute,
-  span.run-ledger-total,
+  p.run-ledger-model,
+  p.run-ledger-compute,
+  p.run-ledger-total,
   span.projects-cap-scope,
   span.projects-cap-source,
   span.projects-kill-scope,
@@ -1314,12 +1314,12 @@ main p {
   p.run-pr-reason,
   p.run-replay-note,
   p.run-replay-scrubbed,
-  p.run-halt-detail,
+  span.run-halt-detail,
   p.degraded-notice,
   p.degraded-warning,
   p.unavailable-reason,
   p.unavailable-sentence,
-  p.unavailable-searched {
+  div.unavailable-searched {
     color: CanvasText;
   }
 

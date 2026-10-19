@@ -48,7 +48,7 @@
 // and the per-file half is one entry in `SCANNED` -- which is why this file is
 // named for the selectors rather than for `base.css`.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -220,6 +220,167 @@ function selectorsIn(css: string): { readonly classes: readonly string[]; readon
   }
 }
 
+/** RENDERER is the half of the console that puts elements in the DOM. The
+ * cases below read it, not the design, because the design does not name the
+ * tags: §2.8 says so itself -- "**The tags are the code's and they matter**: the
+ * install command is a `code` and not a `pre`, and both leads are `span`s and
+ * not `p`s, so a rule spelled `pre.unavailable-install-command` styles nothing
+ * at all". */
+const RENDERER: readonly string[] = Object.freeze([
+  join(CONSOLE_ROOT, 'src', 'renderer'),
+  // `src/shared/version.ts` draws one root of its own -- the version-skew
+  // section -- and `base.css` selects it, so the half that draws is both
+  // directories and not the renderer alone.
+  join(CONSOLE_ROOT, 'src', 'shared'),
+])
+
+/** EMITTER is how a screen draws an element: `make` and `cell` and the two
+ * value helpers each take the factory, then the tag, then the classes. */
+const EMITTER = /\b(?:make|cell|textCell|numberCell)\(/g
+
+/** CLASS_LITERAL is what a class argument looks like. A tag passed as a class
+ * (`make(factory, 'li', 'li')`) is not one, and neither is a document value. */
+const CLASS_LITERAL = /^[a-z][a-z0-9-]*$/
+
+/** ELEMENT_QUALIFIED is a selector that names a tag as well as a class, which
+ * is the only shape a wrong tag can break: `span.run-id` styles nothing if the
+ * run's id is an `h1`. */
+const ELEMENT_QUALIFIED = /(?:^|[\s,>+~({])([a-z][a-z0-9]*)\.([a-z][a-z0-9-]*)/g
+
+/** sourceFiles is every TypeScript file under a directory, recursively. */
+function sourceFiles(dir: string): readonly string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...sourceFiles(path))
+    else if (entry.name.endsWith('.ts')) out.push(path)
+  }
+  return out
+}
+
+/** callArguments splits one call's arguments at its own top level, so a nested
+ * call, array or object does not split it -- `cell(line, factory, 'span',
+ * labelOf(entry), 'repo', 'projects-enrolled-repo')` is six arguments and not
+ * eight. `open` is the index of the call's `(`. */
+function callArguments(text: string, open: number): readonly string[] {
+  const args: string[] = []
+  let depth = 0
+  let start = open + 1
+  let quote: string | null = null
+  for (let at = open; at < text.length; at += 1) {
+    const character = text[at] ?? ''
+    if (quote !== null) {
+      if (character === '\\') at += 1
+      else if (character === quote) quote = null
+      continue
+    }
+    if (character === "'" || character === '"' || character === '`') quote = character
+    else if (character === '(' || character === '[' || character === '{') depth += 1
+    else if (character === ')' || character === ']' || character === '}') {
+      depth -= 1
+      if (depth === 0) {
+        args.push(text.slice(start, at))
+        return args
+      }
+    } else if (character === ',' && depth === 1) {
+      args.push(text.slice(start, at))
+      start = at + 1
+    }
+  }
+  return args
+}
+
+/** literalsIn is every string literal an argument can be, or none: a plain
+ * literal is itself, and an expression built only from literals and operators
+ * (`kind === 'no-firebase' ? 'degraded' : 'console-unavailable'`, which is how
+ * `renderDegraded` names its two roots) is all of them. An argument that reads a
+ * variable names no tag or class this scan can know. */
+function literalsIn(argument: string): readonly string[] {
+  const literals = [...argument.matchAll(/'([a-z][a-z0-9-]*)'/g)].map((match) => match[1] ?? '')
+  if (literals.length === 0) return []
+  const bare = argument.replace(/'[^']*'/g, '')
+  // `'degraded'` is itself; `kind === 'no-firebase' ? 'degraded' :
+  // 'console-unavailable'` is both of its literals; and an argument that
+  // computes a value (`labelOf(entry)`, `row.stage`) names neither.
+  if (bare.includes('?') && bare.includes(':')) return literals
+  return /[A-Za-z_]/.test(bare) ? [] : literals
+}
+
+/** enclosingHelper is the name of the function a `factory.create` call sits in,
+ * for the helpers that stamp their own class from a parameter (`entry.ts`'s
+ * `line()`), whose tag is only knowable from the call sites. */
+function enclosingHelper(text: string, index: number): string | null {
+  const openers = [...text.slice(0, index).matchAll(/(?:function\s+(\w+)|const\s+(\w+)\s*=\s*(?:\([^)]*\)|\w+)\s*(?::[^=]*)?=>)/g)]
+  const last = openers[openers.length - 1]
+  return last?.[1] ?? last?.[2] ?? null
+}
+
+/** drawnPairs is every `tag.class` pair the renderer can put in the DOM: the
+ * two ways a screen draws an element (an emitter call, whose classes are
+ * literals or a spread list, and a raw `factory.create` with `setAttribute`). */
+function drawnPairs(): ReadonlySet<string> {
+  const pairs = new Set<string>()
+  for (const dir of RENDERER) for (const file of sourceFiles(dir)) {
+    const text = readFileSync(file, 'utf8')
+    // The class lists a screen builds before it draws: `const classes =
+    // ['live-run']`, then `classes.push('live-run-queued')`, then a spread.
+    const lists = new Map<string, string>()
+    for (const match of text.matchAll(/const (\w+)(?:\s*:\s*[\w[\]<>| ]+)?\s*=\s*\[([^\]]*)\]/g)) {
+      lists.set(match[1] ?? '', match[2] ?? '')
+    }
+    // The chrome names its classes once and stamps the constant, so the
+    // constant's value is what the element gets (`RAIL_ROW_CLASS`).
+    const constants = new Map<string, string>()
+    for (const match of text.matchAll(/(?:export )?const (\w+)(?:\s*:\s*string)?\s*=\s*'([^']*)'/g)) {
+      constants.set(match[1] ?? '', match[2] ?? '')
+    }
+    for (const match of text.matchAll(/(\w+)\.push\(([^)]*)\)/g)) {
+      const name = match[1] ?? ''
+      if (lists.has(name)) lists.set(name, `${lists.get(name) ?? ''},${match[2] ?? ''}`)
+    }
+    for (const match of text.matchAll(EMITTER)) {
+      const args = callArguments(text, match.index + (match[0]?.length ?? 0) - 1)
+      const at = args.findIndex((argument) => argument.trim() === 'factory')
+      if (at === -1) continue
+      for (const tag of literalsIn(args[at + 1] ?? '')) {
+        for (const argument of args.slice(at + 2)) {
+          const trimmed = argument.trim()
+          for (const className of literalsIn(trimmed)) if (CLASS_LITERAL.test(className)) pairs.add(`${tag}.${className}`)
+          const spread = /^\.\.\.(\w+)$/.exec(trimmed)?.[1]
+          if (spread === undefined) continue
+          for (const one of (lists.get(spread) ?? '').matchAll(/'([a-z][a-z0-9-]*)'/g)) pairs.add(`${tag}.${one[1]}`)
+        }
+      }
+    }
+    // `factory.create('p')` followed by `setAttribute('class', …)`: the shape
+    // `entry.ts` draws through. When the class is a parameter, the tag is paired
+    // with what the helper's own call sites pass it.
+    for (const match of text.matchAll(/factory\.create\('([a-z][a-z0-9]*)'\)/g)) {
+      const tag = match[1] ?? ''
+      const after = text.slice(match.index, match.index + 1200)
+      for (const stamp of after.matchAll(/setAttribute\('class',\s*(?:'([^']*)'|(\w+))\)/g)) {
+        const literal = stamp[1] ?? constants.get(stamp[2] ?? '')
+        if (literal !== undefined) {
+          for (const name of literal.split(/\s+/).filter(Boolean)) pairs.add(`${tag}.${name}`)
+          continue
+        }
+        const helper = enclosingHelper(text, match.index)
+        if (helper === null) continue
+        for (const call of text.matchAll(new RegExp(`\\b${helper}\\('([a-z][a-z0-9-]*)'`, 'g'))) {
+          pairs.add(`${tag}.${call[1] ?? ''}`)
+        }
+      }
+    }
+  }
+  return pairs
+}
+
+/** elementQualified is every `tag.class` pair the stylesheets select. */
+function elementQualified(css: string): readonly string[] {
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  return [...new Set([...stripped.matchAll(ELEMENT_QUALIFIED)].map((match) => `${match[1] ?? ''}.${match[2] ?? ''}`))].sort()
+}
+
 describe('the theme’s selectors against the design’s §2 inventory', () => {
   it('reads the inventory out of the design, and it names the rail’s twelve hooks', () => {
     // The non-vacuity guard for every case below: an extraction that found
@@ -303,6 +464,26 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     // does not draw or §2.1 does not list, and both are the same defect.
     const rail = selectorsIn(readTheme('base.css')).classes.filter((name) => name.startsWith('console-rail'))
     expect(rail).toEqual([...RAIL_HOOKS].sort())
+  })
+
+  it('qualifies every selector with the tag the renderer actually draws', () => {
+    // The case above reads the classes a rule selects; this one reads the tags
+    // it qualifies them with, because §2's licence is about hooks and says
+    // nothing about the element in front of one -- and §2.8 is where the design
+    // warns that the tags are the code's and a wrong one styles nothing at all.
+    // `span.run-id` is the shape this catches: the run's id is an `h1`, so a
+    // rule that spelled it `span` would be a rule no element ever matches, and
+    // the selector scan above would still pass it, because `run-id` is a hook
+    // §2 names.
+    const drawn = drawnPairs()
+    expect(drawn.size, 'the renderer read as drawing nothing').toBeGreaterThan(200)
+    const unknown: string[] = []
+    for (const name of SCANNED) {
+      for (const pair of elementQualified(readTheme(name))) {
+        if (!drawn.has(pair)) unknown.push(`${name}: ${pair}`)
+      }
+    }
+    expect(unknown, 'a rule qualifies a hook with a tag nothing draws').toEqual([])
   })
 
   it('scans the stylesheets the bundler serves, so a layer cannot be added and skipped', () => {
