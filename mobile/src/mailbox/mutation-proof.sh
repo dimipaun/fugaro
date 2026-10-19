@@ -214,10 +214,8 @@ run "the message goes to the inbox, and not to the outbox" \
   "    const written = await store.write(paths.inboxMessage(id), record);" \
   "    const written = await store.write(paths.outboxMessage(id), record);"
 run "a message that is already there is landed, not a failure" \
-  "    if (written.ok || written.code === STORE_CODES.EXISTS) {
-      if (!isAction) outbound.set(id, { record, landed: true });" \
-  "    if (written.ok) {
-      if (!isAction) outbound.set(id, { record, landed: true });"
+  "    if (written.ok || written.code === STORE_CODES.EXISTS) {" \
+  "    if (written.ok) {"
 
 # 4. The retry: the same record, until the outbox answers or the TTL passes.
 run "the re-send is the same record, never re-stamped" \
