@@ -14,8 +14,9 @@ import (
 // computeBackendPlan is the plan this file pins: docs/plans/2026-10-19-compute-backend.md,
 // the implementation plan for the Cloud Batch compute backend (design
 // docs/design/compute-backend.md), written against the tree branch
-// fugaro/20261019-140014-b55a stands on (= origin/integration-0.9.5, af953e5e;
-// the branch's own commits are this plan and this test, and no code).
+// fugaro/20261019-140014-b55a stands on (= the branch `integration-0.9.5`, cut
+// from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
+// and this test, and no code).
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
@@ -199,14 +200,23 @@ var computeBackendSymbols = map[string][]string{
 	},
 }
 
-// computeBackendCommentSymbols is the other half of the table: names the plan
-// cites that live in comments rather than in code, so they are checked against
-// the file as written. The three TODO markers are the whole of it — a task that
-// changes a call site removes its marker in the same commit, and the plan says
-// so at each of the three.
-var computeBackendCommentSymbols = map[string][]string{
-	"internal/cli/cloud.go": {"TODO(compute-backend Task 8)"},
-	"internal/cli/run.go":   {"TODO(compute-backend Task 8)"},
+// computeBackendTodoMarker is the marker the design's Task 8 left at each call
+// site the seam has not reached, and which the plan's Task 8 removes with the
+// call site it marks.
+const computeBackendTodoMarker = "TODO(compute-backend Task 8)"
+
+// computeBackendCommentMarkers is the other half of the table, as counts: names
+// the plan cites that live in comments rather than in code, so they are checked
+// against the file as written. **The count is the assertion.** One Contains per
+// file passes with one of run.go's two markers deleted — the file still carries
+// the marker, so it reads as present while a call site has lost the note that
+// says Task 8 owns it — and the plan's own sentence is a distribution, not a
+// total: one in `internal/cli/cloud.go`, two in `internal/cli/run.go`. The three
+// are the whole of it, and TestDocsComputeBackendTodoMarkersAreCounted walks the
+// repository to hold both halves of that sentence.
+var computeBackendCommentMarkers = map[string]int{
+	"internal/cli/cloud.go": 1,
+	"internal/cli/run.go":   2,
 }
 
 // stripLineComments removes a file's line comments (`//` in Go, `#` in HCL),
@@ -261,15 +271,171 @@ func TestDocsComputeBackendSymbolsExist(t *testing.T) {
 			}
 		}
 	}
-	for path, symbols := range computeBackendCommentSymbols {
-		text, ok := read(path)
+}
+
+// TestDocsComputeBackendTodoMarkersAreCounted: the plan says the three
+// `TODO(compute-backend Task 8)` markers are the whole of what the seam has not
+// reached — one in internal/cli/cloud.go, two in internal/cli/run.go — and that
+// Task 8 removes each one with the call site it marks. A per-file Contains
+// cannot hold that: deleting one of run.go's two markers leaves the other one
+// answering for both, so the file still reads as "the marker is there" while a
+// call site has lost the note that says Task 8 owns it.
+//
+// So the markers are counted, per file and in total, and the count is held
+// against a walk of the repository in both directions: a marker the table does
+// not name is a call site the plan has not accounted for, and a count that has
+// dropped is a marker removed without its call site moving. This file is the one
+// path the walk skips, because it quotes the marker in its own text.
+func TestDocsComputeBackendTodoMarkersAreCounted(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	// The distribution is the plan's sentence, not this test's invention, so the
+	// counts below and the plan fail together.
+	if !strings.Contains(doc, "one in `internal/cli/cloud.go`, two in `internal/cli/run.go`") {
+		t.Errorf("%s no longer says where the three markers are (one in `internal/cli/cloud.go`, two in `internal/cli/run.go`): the counts in this test are that sentence", computeBackendPlan)
+	}
+	if !strings.Contains(doc, "the three `TODO(compute-backend Task 8)` sites") {
+		t.Errorf("%s no longer says the three `TODO(compute-backend Task 8)` sites are the whole of what the seam has not reached", computeBackendPlan)
+	}
+	seen := map[string]int{}
+	err := filepath.WalkDir("../..", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		rel := strings.TrimPrefix(filepath.ToSlash(p), "../../")
+		// This file is where the marker is quoted as a name (the constant, the
+		// comments and the table), so it is the one path skipped by name.
+		if rel == "internal/cli/docs_compute_backend_test.go" {
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if n := strings.Count(string(data), computeBackendTodoMarker); n > 0 {
+			seen[rel] = n
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for path, want := range computeBackendCommentMarkers {
+		total += want
+		got, ok := seen[path]
 		if !ok {
+			t.Errorf("%s carries no %q marker, and %s's Task 8 names the call site in it as one of the three: either the marker went before the call site did, or the call site moved and this table has to move with it", path, computeBackendTodoMarker, computeBackendPlan)
 			continue
 		}
-		for _, sym := range symbols {
-			if !strings.Contains(text, sym) {
-				t.Errorf("%s no longer carries the comment marker %q that %s's Task 8 names as one of the three call sites it owns", path, sym, computeBackendPlan)
+		if got != want {
+			t.Errorf("%s carries %d %q markers, want %d: %s counts the three markers rather than checking one substring per file, so a file that still carries one is not a file whose other marker may go unnoticed", path, got, computeBackendTodoMarker, want, computeBackendPlan)
+		}
+	}
+	if total != 3 {
+		t.Errorf("computeBackendCommentMarkers accounts for %d markers, and %s says the three `TODO(compute-backend Task 8)` sites are the whole of it", total, computeBackendPlan)
+	}
+	for path, n := range seen {
+		if _, ok := computeBackendCommentMarkers[path]; !ok {
+			t.Errorf("%s carries %d %q markers and is not in computeBackendCommentMarkers: the three the plan names are the whole of it, so a fourth site is either a call site the plan has not accounted for or a marker a task left behind", path, n, computeBackendTodoMarker)
+		}
+	}
+}
+
+// TestDocsComputeBackendNamesItsBase: every citation in this plan is written
+// against one tree, and the plan names that tree as a branch plus the commit the
+// branch was cut from — not as a remote-tracking ref. The distinction is not
+// pedantry: a clone whose fetch refspec maps `main` alone does not carry
+// `origin/integration-0.9.5`, so a base named as that ref is a base a reviewer
+// goes looking for and does not find, which is what happened. A test in this
+// package cannot ask the remote; the fetch command in the same sentence is how a
+// reader checks the name, and this test is what holds the plan to it.
+func TestDocsComputeBackendNamesItsBase(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	// The base as one sentence, so a wrong branch, a wrong parent line, a wrong
+	// commit or a wrong date each fails by name rather than passing on the two
+	// halves that happen to be right.
+	const base = "**`integration-0.9.5`, cut from `integration-0.9.0` at `af953e5e` on 2026-10-19**"
+	if !strings.Contains(doc, base) {
+		t.Errorf("%s no longer names its base as %q: the plan's whole citation set is written against that tree, so a base whose branch, parent line, commit or date has moved is a claim a reviewer cannot check", computeBackendPlan, base)
+	}
+	for _, want := range []string{
+		"**The base is named as that branch and the commit it was cut from rather than as a remote-tracking ref, because a default clone does not carry the ref**",
+		"git fetch origin integration-0.9.5",
+		"the owner moved this work, and the managed redesign with it, out of 0.9.0",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer says %q: the first is the shape the base is named in, the second is how a clone that does not carry the ref resolves it, and the third is why the base is the 0.9.5 line and not 0.9.0", computeBackendPlan, want)
+		}
+	}
+}
+
+// TestDocsComputeBackendTasksThatFalsifyThePinNameIt: Global Constraint 11 says
+// this plan's own pin test is a pin like the others, names the four tasks that
+// falsify it — 8, 9, 10 and 12 — and says each of them names the file in its own
+// Files. A task that removes a symbol the pin asserts without touching the pin
+// is a commit that does not build; a task that edits the pin without saying so
+// in its Files is a change the reviewer of that one task does not see coming.
+//
+// So each of the four Files lines is read out of the plan and asserted to name
+// the file, and every other task's is asserted not to: the constraint's list is
+// the whole of it, in the way Global Constraint 8's is of the flagged headings.
+func TestDocsComputeBackendTasksThatFalsifyThePinNameIt(t *testing.T) {
+	const pinTest = "internal/cli/docs_compute_backend_test.go"
+	doc := readDoc(t, computeBackendPlan)
+	if !strings.Contains(doc, "Tasks 8, 9, 10 and 12 each name that file in their own Files and say what flips") {
+		t.Errorf("%s no longer says which tasks name the pin test in their Files: Global Constraint 11 is where a reviewer of a single task learns that this file is one of the pins that task has to carry", computeBackendPlan)
+	}
+	// Each task's own Files line, taken from its heading to the next one.
+	heading := regexp.MustCompile(`(?m)^### Task (\d+):`)
+	locs := heading.FindAllStringSubmatchIndex(doc, -1)
+	files := map[string]string{}
+	for i, m := range locs {
+		end := len(doc)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		for _, line := range strings.Split(doc[m[0]:end], "\n") {
+			if strings.HasPrefix(line, "**Files:**") {
+				files[doc[m[2]:m[3]]] = line
+				break
 			}
+		}
+	}
+	if len(files) != 7 {
+		t.Errorf("%s carries %d task Files lines, want 7 (one per task): the four that name the pin test are read out of them", computeBackendPlan, len(files))
+	}
+	named := []string{"8", "9", "10", "12"}
+	for _, n := range named {
+		line, ok := files[n]
+		if !ok {
+			t.Errorf("%s has no Files line for Task %s, which Global Constraint 11 says names the pin test", computeBackendPlan, n)
+			continue
+		}
+		if !strings.Contains(line, pinTest) {
+			t.Errorf("Task %s's Files line no longer names %s: Global Constraint 11 says the tasks that falsify the pin test name it in their own Files, and Task %s is one of the four", n, pinTest, n)
+		}
+	}
+	for n, line := range files {
+		if !strings.Contains(line, pinTest) {
+			continue
+		}
+		isNamed := false
+		for _, want := range named {
+			if want == n {
+				isNamed = true
+			}
+		}
+		if !isNamed {
+			t.Errorf("Task %s's Files line names %s and Global Constraint 11 lists only Tasks 8, 9, 10 and 12: a fifth task that flips the pin test is a task the constraint has to name, and one that merely reads it is a task that has misread what the file is for", n, pinTest)
 		}
 	}
 }
