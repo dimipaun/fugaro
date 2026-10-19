@@ -4,9 +4,10 @@
 // The owner asked for "a screenshot slider at the top" of the console page, and the
 // repository has **no console screenshot in it**: the owner takes them from the released
 // console, on their own Mac, and drops the files in. So the component is data-driven and
-// the data file ships **empty**, and the two states of that list are what this file is
-// about — the empty one, which is the state this checkout is in, and a two-slide one, which
-// is a build of a copy of the repository with a fixture written into its data file:
+// the data file ships **empty**, and the three states of that list are what this file is
+// about — the empty one, which is the state this checkout is in, and a one-slide and a
+// two-slide one, each a build of a copy of the repository with a fixture written into its
+// data file:
 //
 //   1. **An empty list renders no slider and no placeholder.** The built console page
 //      carries no element the component would draw, no `<img>` and no new heading: the page
@@ -16,14 +17,21 @@
 //      `<img>`'s `src`, `alt`, `width` and `height` and every caption is the row's, read out
 //      of the data file rather than typed into the component (Global Constraint 6), and the
 //      `src` is DERIVED from the row's file name rather than written down.
-//   3. **The slider is usable with JavaScript off.** It is the browser's own scrolling:
+//   3. **One slide renders one slide and no control at all.** A single screenshot is the state
+//      the owner's first one lands in, and it is the one branch where the component suppresses
+//      the dots: a dot that can only take a reader where they already are is noise, so a
+//      one-slide slider carries no dot, no link, no button — nothing whose name says previous
+//      or next — and the track is the only thing a reader moves. That is why this state is
+//      asserted rather than left to the two-slide case: it is the branch a later change would
+//      delete without noticing (the guard is `screens.length > 1`).
+//   4. **The slider is usable with JavaScript off.** It is the browser's own scrolling:
 //      the track is a focusable, labelled scroll container with `scroll-snap`, each dot is
 //      an `<a href="#…">` naming the slide it shows, and the CSS carries no script, no
 //      autoplay and no timer. This is the half a hermetic test can hold — that the markup
 //      and the stylesheet are what makes the slider work — and it is the half that would
 //      rot silently, because a slider that needs a script to move is a slider that does
 //      nothing at all on a page the site's own rule keeps script-free.
-//   4. **The refusals.** A URL where a file name belongs, a name with no extension at all, a
+//   5. **The refusals.** A URL where a file name belongs, a name with no extension at all, a
 //      format the slider does not serve, an empty `alt`, an empty caption, a width, a height
 //      or a whole-number size that is not one, and a key no page reads — at the document's
 //      root and in a row — each stop the build naming the row. Between them they are the two
@@ -285,7 +293,66 @@ test('every slide is one list item of the slider\'s track, and the two orders ag
 })
 
 // ---------------------------------------------------------------------------------------
-// 3. The slider works with no script: the browser's own scrolling and its own anchors.
+// 3. One slide: one slide, and no control at all — the state the owner's first screenshot
+//    lands in, and the one branch where the component suppresses the dots.
+// ---------------------------------------------------------------------------------------
+
+test('one slide renders one slide, the row\'s own text, and no control at all', (t) => {
+  // This is the state the owner's FIRST screenshot lands in, and the branch the component
+  // takes when `screens.length > 1` is false — the dots are suppressed, because a dot that can
+  // only take a reader where they already are is noise. A later change that rendered the dots
+  // for any non-empty list would delete that branch silently, which is what this case is for.
+  const built = buildWithScreens(t, fixtureYAML([FIXTURE[0]]))
+  const page = consolePage(built)
+  const slider = sliderOf(page)
+  assert.ok(slider, `the console page renders no element marked data-slot="${SLOT}" with one slide in ${SCREENS_YAML}`)
+
+  const inside = [...walk(slider)]
+
+  // One slide, with the row's own text on it: the state is not a degenerate two-slide render,
+  // it is the row.
+  const images = inside.filter((el) => el.name === 'img')
+  assert.equal(images.length, 1, `the slider renders ${images.length} <img> for one row in ${SCREENS_YAML}`)
+  assert.equal(
+    images[0].attrs.get('src'),
+    `/${SCREENS_DIR}/${FIXTURE[0].file}`,
+    'the one slide\'s src is not the row\'s own file under /' + SCREENS_DIR + '/',
+  )
+  assert.equal(images[0].attrs.get('alt'), FIXTURE[0].alt, 'the one slide does not carry the row\'s alt text')
+
+  const slides = inside.filter((el) => el.name === 'li' && hasClass(el, 'screen'))
+  assert.equal(slides.length, 1, `the track carries ${slides.length} slide(s) for one row`)
+
+  const captions = inside.filter((el) => el.name === 'figcaption')
+  assert.equal(captions.length, 1, `the slider renders ${captions.length} caption(s) for one slide`)
+  assert.equal(textOf(captions[0]).trim(), FIXTURE[0].caption, 'the one slide\'s caption is not the row\'s caption')
+  assert.ok(
+    [...walk(slides[0])].includes(captions[0]),
+    'the one slide\'s caption is not inside its own slide, so it reads as a caption about nothing',
+  )
+
+  // **And no control at all.** With one slide the dots are suppressed, and the point of that
+  // is not only "one dot fewer": a one-slide slider has nowhere to go, so it carries no dot,
+  // no link and no button — and nothing whose accessible name says previous or next, whether
+  // the component draws it as a link, a button or a labelled element. A control added here
+  // would be a control a reader can press that does nothing (the same rule the component's
+  // comment states), and a `next` that is really there is the defect this half is for.
+  assert.ok(
+    !inside.some((el) => hasClass(el, 'screens-dots') || (el.name === 'a' && hasClass(el, 'screen-dot'))),
+    'the one-slide slider renders dots, and a dot that can only take a reader where they already are is noise',
+  )
+  const controls = inside.filter(
+    (el) => el.name === 'a' || el.name === 'button' || /previous|next/i.test(el.attrs.get('aria-label') ?? ''),
+  )
+  assert.deepEqual(
+    controls.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : '')),
+    [],
+    'the one-slide slider renders a control (a link, a button, or something named previous or next) with one slide to show and nowhere to go',
+  )
+})
+
+// ---------------------------------------------------------------------------------------
+// 4. The slider works with no script: the browser's own scrolling and its own anchors.
 // ---------------------------------------------------------------------------------------
 
 test('the slider is the browser\'s own scrolling, with no script and no timer', (t) => {
@@ -330,7 +397,7 @@ test('the slider is the browser\'s own scrolling, with no script and no timer', 
 })
 
 // ---------------------------------------------------------------------------------------
-// 4. The refusals: the data file cannot carry a URL, a foreign format, an empty text, a size
+// 5. The refusals: the data file cannot carry a URL, a foreign format, an empty text, a size
 //    that is not a whole number of pixels, or a key no page reads — at the document's root or
 //    in a row.
 // ---------------------------------------------------------------------------------------
