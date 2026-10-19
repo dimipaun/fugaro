@@ -1043,17 +1043,37 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`: a **presence test** over this document's
-load-bearing strings — that it says "design only; nothing is implemented", that it names
-the wiring task as security-sensitive, that it lists the five states the state colours
-must carry without colour alone, that it says the CSP is unchanged, and that the owner's
-open questions are open — and a **citation test** that `os.Stat`s every path this document
-cites (`console/src/main/protocol.ts`, `console/src/renderer/entry.ts`,
-`console/tools/bundle-renderer/index.ts`, `console/test/unit/bundle.test.ts`,
-`console/test/unit/csp-document.test.ts`, `website/src/styles/palette-logo.css`,
-`docs/plans/2026-10-15-desktop-console.md`), so a citation that moves is a failing test
-rather than a dead link. Its red step is this document's absence, and the mutations it is
-proved against are named with the change ([§7.7](#77-the-red-steps)).
+`docs_budget_token_channel_test.go`, with three tests:
+
+1. a **presence test** over this document's eleven section headings and its load-bearing
+   strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
+   alone`, `KILLED by`, `NOTIONAL~`, `(partial)`, `tabular-nums`, `prefers-color-scheme`,
+   `light-dark(`, `forced-colors`, "is already the directive a stylesheet needs",
+   `mediaTypeFor`, `text/css; charset=utf-8`, `console.css`, `adoptedStyleSheets`,
+   `Task 6.2`, "No D-number is allocated";
+2. a **citation test** that `os.Stat`s the paths this document cites **outside the console
+   directory** — `website/src/styles/{tokens,palette-logo}.css`, `website/test/a11y.mjs`,
+   `docs/design/desktop-console{,-v2}.md`, `docs/plans/2026-10-15-desktop-console.md`,
+   `docs/website/redesign/reconciliation.md` — so a citation that moves is a failing test
+   rather than a dead link;
+3. a **plan test** that [Phase 6](#7-the-build-plan-phase-6-unapproved) exists, that its
+   six task headings are there, that the four `theme/*.css` files are in the plan's tree,
+   and that the phase names all six of the [§8](#8-open-for-the-owner) questions.
+
+**The citations to the console's own files are deliberately not stat'ed, and the reason is
+a boundary rather than a preference.** `TestConsoleIsOutsideTheGoModule` in
+`internal/cli/docs_console_boundary_test.go` is plan Task 0.3's boundary, and its
+allow-list of Go files permitted to mention a path under `console/` is a **one-entry**
+exception — the console contract's own docs test — asserted to have exactly one entry. A
+second entry would be a deliberate widening of the boundary that this styling work has no
+case for and no mandate to make (the owner accepted C1 as recommended: the test **is** the
+guarantee that the Go module never reaches into `console/`). So this test reads the
+console-side citations only as text, and this document names them for the reader the design
+is written for. **The first draft of the test failed the boundary test**, which is how the
+rule was found rather than assumed.
+
+Its red step is this document's absence, and the mutations each test is proved against are
+named with the change ([§7.7](#77-the-red-steps)).
 
 ---
 
