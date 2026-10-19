@@ -176,7 +176,7 @@ var managedDeployerOpen = managedDeployerShipped
 
 // managedDisabled is the one refusal every managed entry point gives while
 // managedDeployerShipped is false.
-const managedDisabled = "managed projects are disabled in this release: the scoped deployer account cannot be created yet (docs/design/managed-projects.md); a project created without --managed is unaffected"
+const managedDisabled = "managed projects are disabled in this release: the managed deployer's scoped role and its binding are not created yet (docs/design/managed-projects.md); a project created without --managed is unaffected"
 
 // refuseManagedNotShipped is managedDisabled as an error, nil once the
 // managed deployer ships.

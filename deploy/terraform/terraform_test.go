@@ -2889,3 +2889,24 @@ resource "google_storage_bucket" "notarole" {
 		})
 	}
 }
+
+// TestRootManagedDeployerScopedDefaultsOff pins the installation root's
+// default for managed_deployer_scoped. The tftest runs plan the module
+// directly (assertions cannot reach into a child module from the root), so
+// nothing else fails if the root's default flips to true and the scoped role
+// and its binding return to every plan.
+func TestRootManagedDeployerScopedDefaultsOff(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/roots/installation/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	m := regexp.MustCompile(`(?m)^\s*variable\s+"managed_deployer_scoped"\s*\{`).FindStringIndex(code)
+	if m == nil {
+		t.Fatal("the installation root declares no managed_deployer_scoped variable")
+	}
+	body := code[m[1]:matchBrace(code, m[1]-1)]
+	if !hasAttr(body, "default", "false") {
+		t.Errorf("the root's managed_deployer_scoped must default to false; fugaro init never sets it in 0.8.6:\n%s", body)
+	}
+}
