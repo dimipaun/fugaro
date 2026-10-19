@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eleven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Twelve checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **973,619 bytes in a checkout with no tags** and to **973,619 bytes with the
+  commit builds to **974,846 bytes in a checkout with no tags** and to **974,846 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -448,6 +448,18 @@ added or removed without this sentence moving fails there:
     words ceiling re-derived with it, 919 → **949** (the page's own 759 words plus 25 %, below).
     The page weight, the script and the number of files did not move: the heaviest page is still
     the docs hub, which renders none of this, and the clone figure moved by the same bytes.
+  - **The caps page's figures became labelled rows on a phone** (the owner's feedback of
+    2026-10-19: "these render terrible on mobile"), and moved the site figure alone,
+    973,619 → **974,846**, by **1,227 bytes**, on one page: below the site's 48 rem breakpoint
+    each row of both figures tables is a block, each cell a line the stylesheet labels with its
+    column's own header through `content: attr(data-label)`, and the wide layout's own fit —
+    the nowrap figures and the box that scrolled around them — moved inside a `min-width:
+    48rem` block, with the stacked figures set at `--font-size-base` rather than `base.css`'s
+    smaller table size. The page weight and the script did not move: the heaviest page is the
+    docs hub, which renders neither table, and the caps page's own growth is nowhere near it.
+    The clone figure moved by the same bytes. The shape is held by `test/caps-figures.mjs`
+    (above), whose reading run against the old component names all six of the defects it was
+    written for.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -474,7 +486,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
     docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,651,072 bytes. Three times 1,217,024 (every file in `dist/`, 973,619
+  - **Whole site:** 3,655,674 bytes. Three times 1,218,558 (every file in `dist/`, 974,846
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -753,6 +765,28 @@ added or removed without this sentence moving fails there:
   and the three layered rules, and a case plants each defect — a header with no layer, a header
   a layer cannot apply to, a content block with a layer of its own — and watches the named
   refusal come back.
+- `test/caps-figures.mjs` — the caps page's figures survive a phone (the owner's feedback of
+  2026-10-19: "these render terrible on mobile", read on the page's right-hand part, the cost
+  figures). The page's two tables — what a job costs and the aggregation's per-recipe ranges —
+  were both read as tables at 360 px: the first inside an `overflow-x: auto` box, which is six
+  nowrap columns scrolling sideways inside their own box, and the second with no box at all,
+  whose minimum content width is what widened the document. Below the site's 48 rem breakpoint
+  each row is now a block, each cell a line labelled with its column's own header text through
+  `data-label`, and the label is printed by one rule (`content: attr(data-label)`) rather than
+  written into every cell; the wide table's own fit — the nowrap figures and the scroll box
+  around them — is scoped to `min-width: 48rem`, and the stacked figures are set at
+  `--font-size-base`, because `base.css` sets every `table` at the table's smaller type. The
+  gate reads the built page's own markup and stylesheet: every cell's `data-label` is its
+  column's head text in its column's order, both tables are stacked at 360 and at 390 px with
+  the label rule in force, nothing in force at those widths holds a figure on one line or in a
+  scroll box, no box is wider than `main`'s own content box at 360 px (read out of the
+  stylesheet, not typed), and the figures are no smaller than the body. It reads the checkout's
+  build and a copy built with a fixture `costs.json`, because the per-recipe table is the one
+  this checkout cannot render (D96); the fixture case also plants a defect only that table's
+  cells can show, so the second table is read rather than assumed. Its refusals are kept the
+  way the others keep theirs: the reading run against `main`'s own `CapsCosts.astro` names all
+  six defects at once, and every refusal has a case that plants the one thing it names in the
+  artifact's own bytes.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
