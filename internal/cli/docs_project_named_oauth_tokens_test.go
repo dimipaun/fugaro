@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"regexp"
 	"strings"
@@ -158,6 +159,28 @@ func TestDocsProjectNamedOAuthTokensAccountJobFacts(t *testing.T) {
 // site's hand-kept guide list until 0.9.0 ships.
 const projectClaudeAccountsDoc = "docs/project-claude-accounts.md"
 
+// releasedFugaroVersion is the version of the tree's own release, read out of
+// the plugin manifest the release process bumps
+// (plugin/.claude-plugin/plugin.json; scripts/bump-plugin-version.sh, held in
+// step by plugin's TestHeaderVersionEqualsPluginVersion). The guides below tell
+// an operator which release does and does not read 0.9.0's work, so they name
+// this version; deriving it here rather than pinning a literal is what makes a
+// version bump fail these tests on the drift instead of leaving the pages
+// describing a release that is no longer the latest one.
+func releasedFugaroVersion(t *testing.T) string {
+	t.Helper()
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(readDoc(t, "plugin/.claude-plugin/plugin.json")), &manifest); err != nil {
+		t.Fatalf("plugin/.claude-plugin/plugin.json: %v", err)
+	}
+	if manifest.Version == "" {
+		t.Fatal("plugin/.claude-plugin/plugin.json carries no version")
+	}
+	return manifest.Version
+}
+
 // TestDocsProjectClaudeAccountsOperatorGuide: the operator guide says what an
 // operator has to be told, in the one place the rest of this repository can
 // point at. Every item below is a fact of tasks 1 to 3 rather than a
@@ -183,11 +206,12 @@ const projectClaudeAccountsDoc = "docs/project-claude-accounts.md"
 // GitHub limit in §11, each of which is a fact an operator acts on.
 func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 	doc := readDoc(t, projectClaudeAccountsDoc)
+	released := releasedFugaroVersion(t)
 	for _, want := range []string{
 		// Which release this is, and where the reader is (the two scopes the
 		// owner requires on every setup command).
 		"**0.9.0, unreleased.**",
-		"The released Fugaro is 0.8.6",
+		"The released Fugaro is " + released + ",",
 		"**per installation**",
 		"**per repository checkout**",
 		// What a named account is.
@@ -245,7 +269,7 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		// does and does not carry (see
 		// TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue for the same
 		// claims tied to the code that makes them true).
-		"**0.8.6 does not read any of it.**",
+		"**" + released + " does not read any of it.**",
 		"**A GitHub run on a shared job reaches its provider, and it is still not a per-repository job.**",
 		"`FUGARO_GITHUB_APP_ID`",
 		"`projectJobGitHubAppID`",
@@ -407,9 +431,12 @@ func TestDocsProjectClaudeAccountsNoSecretShapes(t *testing.T) {
 // for the profile field's sentence and the project-wide storage step.
 func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 	doc := readDoc(t, "docs/gcp-setup.md")
+	// The section names the release an operator is on: derive it, so a bump
+	// cannot leave the page pointing at the previous one.
+	released := releasedFugaroVersion(t)
 	for _, want := range []string{
 		"## Claude accounts a project job serves (0.9.0)",
-		"**It is not in the released CLI — 0.8.6 does not read any of it**",
+		"**It is not in the released CLI — " + released + " does not read any of it**",
 		"(project-claude-accounts.md)",
 		// The profile field.
 		"`profiles.<profile>.claude_accounts` in the project's local config",
