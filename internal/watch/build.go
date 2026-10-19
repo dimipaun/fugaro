@@ -133,12 +133,24 @@ type RunRow struct {
 	// Job is the Cloud Run job this run executes on, and Profile, Provider
 	// and Account are the (profile, provider, account) that job's name was
 	// computed from — the shared project job's identity, which its name does
-	// not spell out (MergeJobs, plan task 3.5 step 2). All four are "" for a
+	// not spell out (MergeFacts, plan task 3.5 step 2). All four are "" for a
 	// run whose launch.json the reader does not have, for a run on a
 	// per-repository job (whose name is not a project job of the published
 	// policy), and in the interactive view, which groups by repository and
 	// reads none of them.
 	Job, Profile, Provider, Account string
+	// LaunchedBy is who started the run, as its launch.json recorded it at
+	// launch: a person's address, or the identity an automated launch runs as
+	// (a service account, a CI runner). It comes from the same read as Job
+	// (MergeFacts), and like Job it is "" for a run the reader has no
+	// launch.json for and for one whose launch.json recorded no launcher —
+	// which is every run launched before the launcher was recorded, so an
+	// absent value means "not recorded", never "nobody".
+	//
+	// It is untrusted text a launcher wrote, sanitised by MergeFacts (clean)
+	// like every other bucket-derived string; the renderers only shorten it
+	// (LauncherShort). Nothing decides anything by it.
+	LaunchedBy string
 
 	// Finished marks a row built from the runs bucket's result.json, not
 	// RTDB: the run's registry entry is already gone (design generic-tool

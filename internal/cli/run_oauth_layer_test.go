@@ -15,7 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// The refusal of task 3.4a must ask the question about the document the run
+// The account gate (projectJobAccountFor) must ask its question about the document the run
 // carries, not about the launcher's own resolution of the checkout
 // (projectJobAgentAuth, internal/cli/project_job.go).
 //
@@ -96,7 +96,7 @@ const projectJobProfiledOAuthLayer = projectJobOAuthLayer + "profiles:\n  p: { c
 // it over the ref's fugaro.yaml), so it is an OAuth launch onto a shared job —
 // while the launcher's own, freshly resolved layer says api-key.
 //
-// Mutation (run, restore): pass co.Agent.Auth to checkProjectJobOAuth again
+// Mutation (run, restore): pass co.Agent.Auth to projectJobAccountFor again
 // (what launchProjectJobFor read before this change) — the second attempt
 // launches on the shared project job, and the run halts inside Cloud Run with
 // the credential the job has no token for.
@@ -108,11 +108,12 @@ func TestSharedJobRefusalUsesTheLayerTheRunCarries(t *testing.T) {
 
 	const run = "20261018-120000-aaaa"
 	// The first attempt: the layer puts this run on `auth: oauth`, so it is
-	// refused (task 3.4a) — and it stores task.json first, because the job is
+	// refused by the account gate (the fixture's profile serves no Claude
+	// account) — and it stores task.json first, because the job is
 	// decided after createTask (run.go's finishLaunch), which is what makes the
 	// stored layer the one a repeat carries. No claim is taken by a refused
 	// launch, so the repeat below is not blocked by one.
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") {
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "lists no Claude account") {
 		t.Fatalf("the first attempt, whose layer says oauth: %v", err)
 	}
 	if pl := readSpec(t, f.cloudFixture, run).ProjectLayer; pl == nil || !strings.Contains(pl.YAML, "auth: oauth") {
@@ -129,7 +130,7 @@ func TestSharedJobRefusalUsesTheLayerTheRunCarries(t *testing.T) {
 	t.Cleanup(func() { launchHooks.beforeClaim = nil })
 
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") || !strings.Contains(err.Error(), "standard") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "lists no Claude account") || !strings.Contains(err.Error(), "standard") {
 		t.Fatalf("the repeat, whose task carries the oauth layer the first attempt stored: %v, want the same refusal the first attempt got", err)
 	}
 	if claimed {
@@ -210,7 +211,7 @@ func TestSharedJobRefusalIgnoresALayerThatDoesNotApply(t *testing.T) {
 	const run = "20261018-150000-dddd"
 	// The first attempt stores task.json and stops at the OAuth refusal, which
 	// is the stored task the rewrite below needs.
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") {
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "lists no Claude account") {
 		t.Fatalf("the first attempt: %v", err)
 	}
 	ctx := context.Background()
@@ -252,10 +253,10 @@ func TestSharedJobRefusalIgnoresALayerThatDoesNotApply(t *testing.T) {
 //
 // Mutation (run, restore): drop the LayerErr refusal (projectJobAgentAuth) and
 // resolve past the invalid layer — the launch then resolves the checkout alone,
-// whose own agent block is unset, so the auth reads "" and checkProjectJobOAuth
-// finds no oauth in it: the run launches on the shared project job carrying the
+// whose own agent block is unset, so the auth reads "" and projectJobAccountFor
+// sees no OAuth run: the run launches on the shared project job carrying the
 // OAuth layer the stored task dictates, which is the
-// launch task 3.4a exists to refuse. This test (and the one above) then fail on
+// launch the account gate exists to refuse. This test (and the one above) then fail on
 // the first attempt already, since the stored layer is never consulted.
 func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
 	f := newProjectJobFixture(t)
@@ -267,7 +268,7 @@ func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
 	// A first attempt stores task.json and stops at the OAuth refusal (the same
 	// oauth layer as the test above): what it leaves behind is a stored task
 	// with no launch, which is the state this test needs.
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") {
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "lists no Claude account") {
 		t.Fatalf("the first attempt: %v", err)
 	}
 	// The stored layer is then replaced by bytes the decoder refuses — what an
@@ -313,7 +314,7 @@ func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
 // projectJobAgentAuth that has no other guard behind it: when the checkout the
 // resolution is made against cannot be found, the credential is unknown, and an
 // unknown credential must refuse the launch rather than be read as "no oauth
-// here" (the empty string checkProjectJobOAuth is then handed).
+// here" (the empty string projectJobAccountFor is then handed).
 //
 // It is the state a launch reaches when its checkout goes away between the two
 // reads of it — launchProjectJobFor only gets past checkoutConfig with a
@@ -325,7 +326,7 @@ func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
 //
 // Mutation (run, restore): return "", nil for the empty root instead of
 // refusing — the launcher reads the empty string as the run's agent.auth, and
-// checkProjectJobOAuth finds no "oauth" in it, so an OAuth run would be launched
+// projectJobAccountFor finds no "oauth" in it, so an OAuth run would be launched
 // on a shared job that holds no token for it.
 func TestSharedJobRefusalWhenTheCheckoutCannotBeFound(t *testing.T) {
 	testutil.IsolateGit(t)
@@ -373,7 +374,7 @@ func TestSharedJobRefusalWhenTheCarriedLayerDoesNotResolve(t *testing.T) {
 	const run = "20261018-160000-eeee"
 	// The first attempt stores task.json and stops at the OAuth refusal: what
 	// the repeat below carries is that stored layer, replaced.
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") {
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "lists no Claude account") {
 		t.Fatalf("the first attempt: %v", err)
 	}
 	ctx := context.Background()

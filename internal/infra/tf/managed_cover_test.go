@@ -737,6 +737,52 @@ func TestManagedCoverListedMembersArePeople(t *testing.T) {
 	}
 }
 
+// TestManagedCoverRefusalNamesTheListsTheInstallationHas: the sentence a plan
+// that grants a role to somebody outside Cover.Listed is refused with. A
+// managed apply's cover is built from an installation's own configuration
+// (internal/cli's managedCover, the only place a ManagedCover is built), and
+// that command has no review screen at all — the refusal said "who is not on
+// the review screen", naming a screen the operator of `fugaro managed apply`
+// never saw and cannot go and look at, while saying nothing about the one thing
+// they can act on. The lists the member has to be on are the installation's
+// own, and the refusal names them.
+//
+// Mutation (verified, run and restored): put "who is not on the review screen"
+// back — the first assertion below fails.
+func TestManagedCoverRefusalNamesTheListsTheInstallationHas(t *testing.T) {
+	const outsider = "user:eve@example.com"
+	rc := mrc("google_storage_bucket_iam_member", map[string]any{
+		"bucket": ManagedPrefix + "bucket", "member": outsider, "role": "roles/storage.objectViewer"})
+	out := managedTestCover().NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 {
+		t.Fatalf("a grant to %s gives %q, want one refusal", outsider, out)
+	}
+	if strings.Contains(out[0], "review screen") {
+		t.Errorf("the refusal names a review screen, which a managed apply does not have: %q", out[0])
+	}
+	if !strings.Contains(out[0], outsider) {
+		t.Errorf("the refusal does not name the member it refused: %q", out[0])
+	}
+	// The three lists are the ones the config records, and naming them is the
+	// sentence's whole use: it says which key to edit. A budget admin is among
+	// them (internal/cli's managedCover puts terraform.budget_admins in Listed),
+	// so the sentence must not read as launchers-and-operators only.
+	for _, want := range []string{"launchers", "operators", "budget admins"} {
+		if !strings.Contains(out[0], want) {
+			t.Errorf("the refusal does not name the %s: %q", want, out[0])
+		}
+	}
+	// A member who *is* on one of them is covered, so the sentence above is
+	// what a refusal costs and not what every grant costs.
+	admin := mrc("google_storage_bucket_iam_member", map[string]any{
+		"bucket": ManagedPrefix + "bucket", "member": "user:budget@example.com", "role": "roles/storage.objectViewer"})
+	c := managedTestCover()
+	c.Listed = append(slices.Clone(c.Listed), "user:budget@example.com")
+	if out := c.NotCovered(managedPlan(admin), nil); len(out) != 0 {
+		t.Errorf("a grant to a listed budget admin gives %q, want it covered", out)
+	}
+}
+
 // TestManagedCoverSchedulerOIDC: a scheduler may call with an OIDC token as
 // well as an OAuth one, and the OIDC account is held to the same rule.
 func TestManagedCoverSchedulerOIDC(t *testing.T) {

@@ -674,15 +674,17 @@ func (in Inventory) foreignWhy(foreign []Asset) string {
 }
 
 // what names the project in the warning, in the shape the gate's own refusals
-// use.
+// use. Both halves are bounded: the warning is printed, and the inventory's
+// project reaches it from the caller's configuration and, through the marker,
+// from a cloud object.
 func (in Inventory) what() string {
 	switch {
 	case in.Project != "" && in.GCPProject != "":
-		return in.Project + " (" + in.GCPProject + ")"
+		return safetext.Field(in.Project) + " (" + safetext.Field(in.GCPProject) + ")"
 	case in.Project != "":
-		return in.Project
+		return safetext.Field(in.Project)
 	case in.GCPProject != "":
-		return in.GCPProject
+		return safetext.Field(in.GCPProject)
 	}
 	return "this project"
 }
@@ -761,7 +763,7 @@ type CloudAssets struct {
 func NewCloudAssets(ctx context.Context, opts ...option.ClientOption) (*CloudAssets, error) {
 	svc, err := cloudasset.NewService(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to the %s API: %w", ServiceCloudAsset, err)
+		return nil, fmt.Errorf("connecting to the %s API: %w", ServiceCloudAsset, safetext.FieldErr(err))
 	}
 	return &CloudAssets{svc: svc}, nil
 }
@@ -780,7 +782,7 @@ func (c *CloudAssets) List(ctx context.Context, gcpProject string) ([]Asset, err
 	ctx, cancel := withInventoryDeadline(ctx)
 	defer cancel()
 	fail := func(err error) ([]Asset, error) {
-		return nil, fmt.Errorf("reading project %s through the %s API: %w", gcpProject, ServiceCloudAsset, err)
+		return nil, fmt.Errorf("reading project %s through the %s API: %w", safetext.Field(gcpProject), ServiceCloudAsset, safetext.FieldErr(err))
 	}
 	call := c.svc.V1.SearchAllResources("projects/" + gcpProject).PageSize(inventoryPageSize)
 	var out []Asset
@@ -807,7 +809,7 @@ func (c *CloudAssets) List(ctx context.Context, gcpProject string) ([]Asset, err
 		case token == "":
 			return out, nil
 		case seen[token]:
-			return fail(fmt.Errorf("the server repeated page token %q after %d pages", token, pages))
+			return fail(fmt.Errorf("the server repeated page token %q after %d pages", safetext.Field(token), pages))
 		case pages >= inventoryMaxPages:
 			return fail(fmt.Errorf("the listing runs past %d pages", inventoryMaxPages))
 		}

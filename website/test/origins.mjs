@@ -28,22 +28,25 @@
 //      `data:` URLs are refused outright, and so are `<base>`, `<meta http-equiv=refresh>`,
 //      `ping`, `iframe[srcdoc]` and every inline `on*=` handler.
 //   2. Every inline executable `<script>` is on an allow-list by the SHA-256 of its exact text
-//      (below). One entry today: the consent banner's controller (W1.12). The analytics
-//      loader is deliberately not on the list — it is admitted by the analytics contract in
-//      point 4, which holds its shape rather than its bytes, because its `define:vars` prelude
-//      carries the measurement id W3.2 sets. The list is also the mechanism the deployed
-//      policy uses: the same base64 digest is what a `script-src 'sha256-…'` names, so W3.2
-//      copies these entries into `firebase.json` in the commit that turns analytics on.
-//   3. Every absolute URL inside a shipped `.js` file is first-party.
-//   4. The analytics exception, in two states (D93, D106). With `site.yaml`'s
-//      `analytics.enabled` false — today — no page names an analytics origin or carries the
-//      loader at all, and no page carries a script of any kind. With it true (a build of a
-//      temp copy with the flag flipped), the one admitted third-party origin is Google's tag
-//      origin, it appears ONLY inside the base layout's consent-gated inline loader (never as
-//      a `script[src]`, a preload or a preconnect), no second analytics origin appears, the
-//      loader reads the consent decision before it creates anything, and the page's other
-//      script — the banner's controller, which is what writes that decision — is admitted by
-//      the allow-list above and by nothing else.
+//      (below) — and the list is EMPTY, which is the point: D183 admits no inline script, the
+//      site's consent gate and copy control are both code in one first-party file
+//      (`/scripts/site.js`), and a page that grew an inline block would need a hash here and in
+//      the deployed policy. An empty list is what says "none", and the refusal below still
+//      names the digest of whatever appears, so the mechanism stays taught.
+//   3. Every absolute URL inside a shipped `.js` file is first-party — the one script file
+//      names no URL at all, because the analytics origin reaches its gate through the banner's
+//      markup rather than through a constant in the code.
+//   4. The analytics exception, in two states (D93, D106; the owner's ruling of 2026-10-18 in
+//      the amendment under plan Task W3.2). With `site.yaml`'s `analytics.enabled` false, no
+//      page names an analytics origin or carries the gate's configuration at all. With the
+//      flag true — the state the site ships in — the one admitted third-party origin is
+//      Google's tag origin, it appears in the consent banner's own markup as the gate's
+//      configuration (never as a `script[src]`, a preload or a preconnect), no second
+//      analytics origin appears anywhere, the page carries no inline script, and the gate that
+//      reads that configuration and fetches the script is the site's one script file.
+//   5. The deployed policy, in `firebase.json`, admits exactly the origins Google documents
+//      for Google Analytics 4 without any Ads features and nothing else — no `'unsafe-inline'`,
+//      no `'unsafe-eval'`, no nonce, no hash, no wildcard beyond the two documented ones.
 //
 // The red step this file was written against: the check, run over a page carrying a Google
 // Fonts stylesheet, has to report `fonts.googleapis.com is not on the allowed-host list` —
@@ -62,10 +65,12 @@ import path from 'node:path'
 import {
   DIST,
   HTMLScanError,
+  REPO,
   builtPages,
   cssRules,
   cssURLs,
   decodeEntities,
+  deployedCSP,
   filesUnder,
   parse,
   siteFacts,
@@ -77,22 +82,17 @@ import { buildCopy } from './lib/build.mjs'
 // ---- the allow-lists -------------------------------------------------------------------
 
 // Inline executable scripts the site is allowed to ship, by the base64 SHA-256 of their
-// exact text (the same digest a Content-Security-Policy `script-src 'sha256-…'` names), each
-// with the reason it exists. One entry: the consent banner's controller, which W1.12 added
-// here in the same commit as the component, which is what this list is for — a script the
-// site runs is a decision someone reads, not a side effect of a template. The analytics
-// loader is NOT listed: it is admitted by the analytics contract below, which holds its shape
-// rather than its bytes, because W3.2 changes its measurement id.
+// exact text (the same digest a Content-Security-Policy `script-src 'sha256-…'` names).
 //
-// Nothing ships these digests today: with `analytics.enabled` false the site emits no script
-// at all, so the only build in which they appear is the flag-on one below. W3.2 is the task
-// that copies them into `firebase.json`'s `script-src`, in the commit that turns analytics on.
-export const INLINE_SCRIPTS = new Map([
-  [
-    'sha256-7l2pFFWWCcUSll8vIeHQWoCNRK7+zMwiyv8DrPaFgVs=',
-    "the consent banner's controller (W1.12, website/src/components/ConsentBanner.astro): it reveals the banner when no decision is stored, writes the visitor's answer to localStorage under the consent key, dispatches `fugaro:consent` — which is what the layout's gated loader waits for — and moves focus to <main>. It names no origin, fetches nothing, writes no cookie. The digest is the exact text the build emits, so an edit inside that script re-derives it: build with the flag on, read the page's second <script>, and hash its text.",
-  ],
-])
+// **The list is empty, and that is the decision (D183, W3.2).** Until W3.2 the site shipped
+// two inline scripts when analytics were on — the consent banner's controller and the layout's
+// gated loader — and this map carried the banner's digest. Both are now code in the site's one
+// first-party script file, `/scripts/site.js`: a file is admitted by the policy's
+// `script-src 'self'` and needs no hash, no nonce and no `'unsafe-inline'`, and D183 admits
+// exactly one script. So the mechanism below stays — a script the site runs is a decision
+// someone reads, and the refusal names the digest of whatever appears — but nothing is on it,
+// and a page that grows an inline block fails here and in the policy at once.
+export const INLINE_SCRIPTS = new Map()
 
 // The one third-party origin D93 admits, and the analytics origins that are NOT admitted:
 // any of these appearing anywhere is a second analytics vendor or a direct collection
@@ -100,8 +100,17 @@ export const INLINE_SCRIPTS = new Map([
 export const ANALYTICS_ORIGIN = 'https://www.googletagmanager.com'
 const ANALYTICS_HOST = new URL(ANALYTICS_ORIGIN).host
 const ANALYTICS_NAMES = /googletagmanager|google-analytics|analytics\.google|gtag\(|dataLayer|firebase/i
-// The consent decision's key, as the base layout writes it (W1.3, owned by W1.12).
+// A second analytics origin, by name: the loader may name none of these (the admitted host is
+// the one exception, and it is written in the banner's markup, not in any script).
+const SECOND_ANALYTICS = /google-analytics|analytics\.google|firebase/i
+// The consent decision's key, as the banner's markup carries it (W1.12, W3.2).
 const CONSENT_KEY = 'fugaro:analytics-consent'
+// The two attributes the banner carries the gate's configuration in, and the site's one
+// script file — which is the gate itself (D183, W3.2).
+const ANALYTICS_ID_ATTR = 'data-analytics-id'
+const ANALYTICS_ORIGIN_ATTR = 'data-analytics-origin'
+const SITE_SCRIPT = '/scripts/site.js'
+const BANNER_ID = 'consent-banner'
 
 // `link` relations that make the browser fetch, and the ones that are only a reference.
 const FETCHING_RELS = new Set([
@@ -201,6 +210,9 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
   // Where an analytics name appears in markup (attributes, script and style text) — prose
   // that mentions a vendor is not a load, so text nodes are not read for this.
   const named = []
+  // The elements carrying the gate's configuration: the consent banner, with the property id
+  // and the one admitted origin as attributes (W3.2).
+  const configs = []
 
   for (const el of walk(doc)) {
     for (const [name, value] of el.attrs) {
@@ -214,6 +226,7 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
           if (why) at(el, `style="…url(${u})…": ${why}`)
         }
       }
+      if (name === ANALYTICS_ORIGIN_ATTR) configs.push(el)
       if (!analyticsEnabled && ANALYTICS_NAMES.test(value)) named.push(`<${el.name} ${name}>`)
     }
     switch (el.name) {
@@ -312,32 +325,138 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
     }
   }
 
-  // The analytics exception (D93, D106).
+  // The analytics exception (D93, D106, W3.2).
   if (!analyticsEnabled) {
     if (named.length) out.push(`${rel}: ${named.join(', ')} names analytics while site.yaml's analytics.enabled is false: nothing analytics-shaped may reach a page until the owner turns it on (W3.2), and then only behind the consent gate (W1.12)`)
+    if (configs.length) out.push(`${rel}: carries the gate's analytics configuration while site.yaml's analytics.enabled is false: the banner and its configuration are emitted only when the flag is on`)
   } else {
-    if (gatedLoaders.length > 1) out.push(`${rel}: carries ${gatedLoaders.length} inline scripts naming ${ANALYTICS_HOST}; the layout has exactly one gated loader`)
-    for (const body of gatedLoaders) out.push(...loaderFailures(body, rel, facts))
+    if (gatedLoaders.length) out.push(`${rel}: carries an inline script naming ${ANALYTICS_HOST}; the gate is code in ${SITE_SCRIPT}, and the site ships no inline script at all (D183, W3.2)`)
+    if (configs.length !== 1) {
+      out.push(`${rel}: ${configs.length} elements carry ${ANALYTICS_ORIGIN_ATTR}; the gate's configuration is written once, in the consent banner the visitor answers`)
+    }
+    for (const el of configs) {
+      const value = el.attrs.get(ANALYTICS_ORIGIN_ATTR)
+      if (value !== ANALYTICS_ORIGIN) {
+        out.push(`${rel}: the gate's configuration names ${value}: D106 admits exactly one third-party origin, ${ANALYTICS_ORIGIN}`)
+      }
+      if (!(el.attrs.get(ANALYTICS_ID_ATTR) ?? '').trim()) {
+        out.push(`${rel}: the gate's configuration carries no ${ANALYTICS_ID_ATTR}, so nothing decides which property a visit is reported to`)
+      }
+      if (el.attrs.get('id') !== BANNER_ID || !el.attrs.has('data-consent-key')) {
+        out.push(`${rel}: the gate's configuration is not on the consent banner: the element that asks the question is the element that carries the answer's key and the property it is about`)
+      }
+      for (const [name, attr] of el.attrs) {
+        if (name !== ANALYTICS_ORIGIN_ATTR && SECOND_ANALYTICS.test(attr)) {
+          out.push(`${rel}: <${el.name} ${name}> names a second analytics origin (${attr.slice(0, 40)}); D106 admits exactly one, ${ANALYTICS_HOST}`)
+        }
+      }
+    }
+    // And the gate itself: the configuration is inert without the file that reads it.
+    const scripts = [...walk(doc)].filter((el) => el.name === 'script' && el.attrs.get('src') === SITE_SCRIPT)
+    if (scripts.length !== 1) out.push(`${rel}: carries ${scripts.length} ${SITE_SCRIPT} tags; the gate that reads the configuration above is that one file, loaded once (D183, W3.2)`)
   }
   return out
 }
 
-/** The base layout's contract for the one admitted third-party script, read from its text. */
-export function loaderFailures(body, rel, facts) {
+/** The gate's contract, read from the one script file rather than from the markup (W3.2). */
+export function gateFailures(js, rel, facts) {
   const out = []
-  for (const m of body.matchAll(/https?:\/\/[^\s"'`)\\]+/g)) {
-    const host = new URL(m[0]).host
-    if (host !== ANALYTICS_HOST && host !== facts.canonicalHost) {
-      out.push(`${rel}: the analytics loader names ${host}: D106 admits exactly one third-party origin, ${ANALYTICS_HOST}`)
+  for (const m of js.matchAll(/(?:https?:)?\/\/[a-zA-Z0-9.*-]+\.[a-zA-Z]{2,}[^\s"'`)\\]*/g)) {
+    out.push(`${rel}: the gate names ${m[0]}: the origin it may load from reaches it through the banner's markup, so the script itself names no URL at all`)
+  }
+  if (SECOND_ANALYTICS.test(js)) out.push(`${rel}: the gate names a second analytics origin; D106 admits exactly one`)
+  for (const attr of [ANALYTICS_ID_ATTR, ANALYTICS_ORIGIN_ATTR, 'data-consent-key']) {
+    if (!js.includes(attr)) out.push(`${rel}: the gate does not read ${attr}, which is where the banner carries what it needs`)
+  }
+  // The comparison that makes the gate a gate: the decision read out of storage, compared
+  // with the one answer that loads anything. A file that reads storage in one place and
+  // compares some other value with 'granted' in another is a gate whose two halves never
+  // meet, which is why this looks for the two in the same statement rather than for each
+  // anywhere. It is a shape, not a proof — `website/test/consent.mjs` runs the file with no
+  // decision stored and watches for the request this contract is about.
+  if (!/(?:stored\s*\([^)]*\)|getItem\s*\([^)]*\))[^;{}]*===\s*(?:GRANTED|'granted'|"granted")/.test(js)) {
+    out.push(`${rel}: the gate never compares the decision it read out of storage with 'granted', so the flag alone would decide whether a Google script loads (D93)`)
+  }
+  return out
+}
+
+// ---- the deployed policy (W3.2) ---------------------------------------------------------
+
+// Every directive `firebase.json` serves and the exact tokens it may carry. The analytics
+// entries are **the minimum Google documents for Google Analytics 4 without any Ads
+// features**, read on 2026-10-18 from
+// <https://developers.google.com/tag-platform/security/guides/csp> ("Google Analytics" →
+// "To use Google Analytics without any Ads features"):
+//
+//   script-src-elem  https://www.googletagmanager.com
+//   img-src          https://www.googletagmanager.com https://*.google-analytics.com
+//   connect-src      https://www.googletagmanager.com https://*.google-analytics.com
+//                    https://*.google.com
+//
+// Three things about the transcription, each deliberate:
+//
+//   - the origin goes into `script-src` rather than `script-src-elem`: a policy with no
+//     `script-src-elem` falls back to `script-src` for script elements, so the allowance is
+//     identical and the policy keeps one script directive;
+//   - `https://*.analytics.google.com` is NOT here: older revisions of that page listed it,
+//     the current one does not, and this list is "what Google documents" rather than "what
+//     was once documented";
+//   - `https://*.google.com` in `connect-src` IS here: the documentation requires it for GA4,
+//     and the alternative is an analytics script whose collect requests the policy blocks.
+//
+// Everything else is the policy the site already served, unchanged: `style-src` keeps
+// `'unsafe-inline'` because Astro inlines small stylesheets, and there is no `'unsafe-inline'`,
+// `'unsafe-eval'`, nonce or hash in `script-src` — the site ships no inline script, so a hash
+// would admit nothing and the two unsafe keywords would admit everything.
+export const CSP_DIRECTIVES = new Map([
+  ['default-src', ["'self'"]],
+  ['script-src', ["'self'", ANALYTICS_ORIGIN]],
+  ['style-src', ["'self'", "'unsafe-inline'"]],
+  ['img-src', ["'self'", 'data:', ANALYTICS_ORIGIN, 'https://*.google-analytics.com']],
+  ['font-src', ["'self'"]],
+  ['connect-src', ["'self'", ANALYTICS_ORIGIN, 'https://*.google-analytics.com', 'https://*.google.com']],
+  ['manifest-src', ["'self'"]],
+  ['object-src', ["'none'"]],
+  ['base-uri', ["'self'"]],
+  ['form-action', ["'self'"]],
+  ['frame-ancestors', ["'none'"]],
+  ['upgrade-insecure-requests', []],
+])
+
+/**
+ * Why `policy` is not the policy the site's contract states: every directive present with
+ * exactly the tokens it may carry and no others, and no directive missing. An origin added
+ * anywhere, an `'unsafe-inline'` or an `'unsafe-eval'`, a nonce, a hash and a wildcard are
+ * all the same defect to this reader: a token the contract does not carry.
+ */
+export function cspFailures(policy) {
+  const out = []
+  const seen = new Map()
+  for (const part of policy.split(';')) {
+    const tokens = part.trim().split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) continue
+    const [name, ...values] = tokens
+    if (seen.has(name)) out.push(`${name} is declared twice`)
+    seen.set(name, values)
+    if (!CSP_DIRECTIVES.has(name)) {
+      out.push(`${name} is a directive this contract does not know: teach it what the site may load from`)
+      continue
+    }
+    const allowed = CSP_DIRECTIVES.get(name)
+    for (const value of values) {
+      if (!allowed.includes(value)) {
+        out.push(
+          `${name} admits ${value}: the policy may carry only the origins Google documents for Google Analytics 4 without Ads features (${ANALYTICS_ORIGIN}, https://*.google-analytics.com, https://*.google.com) and this site's own, and no 'unsafe-inline', 'unsafe-eval', nonce, hash or wildcard in script-src`,
+        )
+      }
+    }
+    for (const value of allowed) {
+      if (!values.includes(value)) out.push(`${name} does not carry ${value}, which the site's contract requires`)
     }
   }
-  if (/google-analytics|analytics\.google|firebase/i.test(body)) {
-    out.push(`${rel}: the analytics loader names a second analytics origin; D106 admits exactly one`)
+  for (const name of CSP_DIRECTIVES.keys()) {
+    if (!seen.has(name)) out.push(`the policy carries no ${name} directive`)
   }
-  if (!body.includes(CONSENT_KEY)) {
-    out.push(`${rel}: the analytics loader does not read the consent decision (${CONSENT_KEY}), so the flag alone would decide whether a Google script loads (D93)`)
-  }
-  if (!/===\s*['"]granted['"]/.test(body)) out.push(`${rel}: the analytics loader never compares the decision with 'granted'`)
   return out
 }
 
@@ -357,7 +476,12 @@ export function artifactOriginFailures(dist, facts, opts) {
   for (const page of builtPages(dist)) out.push(...pageOriginFailures(page.html, page.rel, facts, opts))
   for (const rel of filesUnder(dist)) {
     if (rel.endsWith('.css')) out.push(...cssFailures(readFileSync(path.join(dist, rel), 'utf8'), rel, facts))
-    if (/\.(m?js)$/.test(rel)) out.push(...scriptFileFailures(readFileSync(path.join(dist, rel), 'utf8'), rel, facts))
+    if (!/\.(m?js)$/.test(rel)) continue
+    const js = readFileSync(path.join(dist, rel), 'utf8')
+    out.push(...scriptFileFailures(js, rel, facts))
+    // The site's one script file is the consent gate (W3.2): it is held to the gate's own
+    // contract here as well as to the origin rule above.
+    if (rel === SITE_SCRIPT.replace(/^\//, '')) out.push(...gateFailures(js, rel, facts))
   }
   return out
 }
@@ -371,59 +495,76 @@ test('no built page loads anything from a host that is not this site', () => {
   assert.deepEqual(failures, [], `the built site loads from an origin D106 does not admit:\n  ${failures.join('\n  ')}`)
 })
 
-test('with analytics switched on, the one admitted third-party origin is loaded only by the consent-gated loader', async (t) => {
-  // site.yaml as W3.2 will leave it: the flag and a measurement id together (the boundary
-  // test requires them to agree). The id is a synthetic, obviously-fake one.
+test('with analytics on, the one admitted origin is the banner configuration, and no page ships an inline script', () => {
+  // The shipped build IS the flag-on state (W3.2 turned it on in site.yaml), so this case
+  // reads the artifact `npm run check` built rather than a copy of it.
+  assert.equal(FACTS.analyticsEnabled, true, 'this case is about the state the site ships in, and site.yaml no longer switches analytics on')
+  const failures = artifactOriginFailures(DIST, FACTS)
+  assert.deepEqual(failures, [], failures.join('\n'))
+
+  for (const page of builtPages(DIST)) {
+    const scripts = [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.name === 'script')
+    assert.deepEqual(
+      scripts.filter((t) => !t.attrs.has('src')).map((t) => t.raw ?? ''),
+      [],
+      `${page.rel}: the page ships an inline script; D183 admits one script file and no inline block, which is why the policy needs no hash (W3.2)`,
+    )
+    assert.deepEqual(
+      scripts.filter((t) => t.attrs.has('src')).map((t) => t.attrs.get('src')),
+      [SITE_SCRIPT],
+      `${page.rel}: the site's one script file is ${SITE_SCRIPT}, loaded once (D183)`,
+    )
+    assert.ok(!/<script[^>]*\bsrc=["']?https:\/\/www\.googletagmanager/i.test(page.html), `${page.rel}: emits the Google script as markup, which loads before any consent`)
+
+    // The gate's configuration, in the banner's markup, written once: the property from
+    // site.yaml and the one admitted origin.
+    const configs = [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.attrs.has(ANALYTICS_ORIGIN_ATTR))
+    assert.equal(configs.length, 1, `${page.rel}: ${configs.length} elements carry ${ANALYTICS_ORIGIN_ATTR}; the gate's configuration is written once`)
+    assert.equal(configs[0].name, 'aside', `${page.rel}: the gate's configuration is on a <${configs[0].name}>, not the consent banner`)
+    assert.equal(configs[0].attrs.get('id'), BANNER_ID, `${page.rel}: the gate's configuration is not on the consent banner`)
+    assert.equal(configs[0].attrs.get(ANALYTICS_ORIGIN_ATTR), ANALYTICS_ORIGIN, `${page.rel}: the gate's origin is not the one D106 admits`)
+    assert.equal(
+      configs[0].attrs.get(ANALYTICS_ID_ATTR),
+      FACTS.analyticsMeasurementID,
+      `${page.rel}: the gate's property is not the one site.yaml names, so the page would report to a property nothing declares`,
+    )
+    assert.equal(configs[0].attrs.get('data-consent-key'), CONSENT_KEY, `${page.rel}: the banner does not carry the consent key the gate reads`)
+
+    // The allow-list is exact, not a prefix and not a pattern: an inline script the site did
+    // not admit is refused, with its digest named, which is what makes an empty list a
+    // decision rather than a formality.
+    const planted = page.html.replace('<main id="main">', '<main id="main"><script>window.planted = true</script>')
+    assert.ok(
+      pageOriginFailures(planted, page.rel, FACTS).some((f) => /not on the allow-list \(sha256-/.test(f)),
+      `${page.rel}: a planted inline script is still admitted, so the allow-list does not hold the site to shipping none`,
+    )
+  }
+})
+
+test('with analytics off, no page and no file of the artifact names the analytics origin', async (t) => {
+  // The state the site shipped in before W3.2, built from a copy with the flag cleared: it is
+  // the other half of the promise, and the half a flag alone could quietly break.
   const built = buildCopy(t, ({ site }) => {
     const file = path.join(site, 'data', 'site.yaml')
     const before = readFileSync(file, 'utf8')
-    const after = before.replace(/^  enabled: false$/m, '  enabled: true').replace(/^  measurement_id: ""$/m, '  measurement_id: "G-0000000000"')
-    assert.notEqual(after, before, 'the fixture did not switch analytics on in the copy')
+    const after = before.replace(/^  enabled: true$/m, '  enabled: false').replace(/^  measurement_id: ".*"$/m, '  measurement_id: ""')
+    assert.notEqual(after, before, 'the fixture did not switch analytics off in the copy')
     writeFileSync(file, after)
   })
-  assert.equal(built.status, 0, `the build with analytics on failed:\n${built.output}`)
-  const facts = { ...FACTS, analyticsEnabled: true }
+  assert.equal(built.status, 0, `the build with analytics off failed:\n${built.output}`)
+  const facts = { ...FACTS, analyticsEnabled: false }
   const failures = artifactOriginFailures(built.dist, facts)
   assert.deepEqual(failures, [], failures.join('\n'))
 
-  // And the loader is actually there on every page — a contract nothing satisfies would pass.
   for (const page of builtPages(built.dist)) {
-    const scripts = [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.name === 'script')
-    const loaders = scripts.filter((t) => (t.raw ?? '').includes(ANALYTICS_HOST))
-    assert.equal(loaders.length, 1, `${page.rel}: expected exactly one consent-gated analytics loader with the flag on, found ${loaders.length}`)
-    assert.ok(!/<script[^>]*\bsrc=["']?https:\/\/www\.googletagmanager/i.test(page.html), `${page.rel}: emits the Google script as markup, which loads before any consent`)
-
-    // The page's scripts, all of them: the gated loader, and the consent banner's controller
-    // — which is the only thing that can write the decision the loader reads, so a page
-    // without it is a gate that can never open (W1.12).
-    assert.equal(scripts.length, 2, `${page.rel}: the site ships ${scripts.length} scripts with analytics on; it has two, the gated loader and the consent banner`)
-    const banner = scripts.find((token) => token !== loaders[0])
-    const body = banner.raw ?? ''
-    // The key is written once — in the banner's own markup — and the script reads it from
-    // there. These two assertions are the banner's half of the key: it carries the same
-    // literal the loader is held to by `loaderFailures`, and it does not carry a second one.
-    // (That is why the script's text has no key in it, and why the digest above is stable.)
+    assert.ok(!page.html.includes(ANALYTICS_HOST), `${page.rel} names the analytics origin while the flag is off`)
+    assert.ok(!page.html.includes(ANALYTICS_ID_ATTR), `${page.rel} carries the gate's configuration while the flag is off`)
+    assert.ok(!page.html.includes(CONSENT_KEY), `${page.rel} carries the consent key while the flag is off`)
+  }
+  for (const rel of filesUnder(built.dist)) {
     assert.ok(
-      page.html.includes(`data-consent-key="${CONSENT_KEY}"`),
-      `${page.rel}: the banner's markup does not carry the consent key (${CONSENT_KEY}) the loader reads`,
-    )
-    assert.ok(body.includes('data-consent-key'), `${page.rel}: the banner's script does not read the consent key out of its own markup`)
-    assert.ok(/setItem/.test(body), `${page.rel}: the banner's script never stores a decision`)
-    assert.ok(!/https?:|document\.cookie/.test(body), `${page.rel}: the banner's script names an origin or a cookie`)
-
-    const digest = `sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}`
-    assert.ok(
-      INLINE_SCRIPTS.has(digest),
-      `${page.rel}: the banner's script is not on the allow-list (${digest}); the allow-list is what admits a script the site runs, and what W3.2 copies into the policy`,
-    )
-
-    // The allow-list is exact, not a prefix and not a pattern: one edited character in the
-    // script the build emits is refused, which is what makes the entry a decision rather
-    // than a formality.
-    const tampered = page.html.replace(body, `${body}\n;window.tampered = true`)
-    assert.ok(
-      pageOriginFailures(tampered, page.rel, facts).some((f) => /not on the allow-list/.test(f)),
-      `${page.rel}: an edited copy of the banner's script is still admitted, so the allow-list does not hold the bytes it claims to`,
+      !readFileSync(path.join(built.dist, rel), 'utf8').includes(ANALYTICS_HOST),
+      `${rel} names the analytics origin while the flag is off: with the flag cleared the artifact is free of it, and the origin reaches the gate only through markup the flag emits`,
     )
   }
 })
@@ -438,6 +579,7 @@ function page({ head = '', body = '' } = {}) {
 const FIXTURE_FACTS = siteFacts(`canonical_url: https://site.example
 analytics:
   enabled: false
+  measurement_id: ""
 allowed_hosts:
   - github.com
   - site.example
@@ -494,24 +636,97 @@ test('first-party, data: images and the allowed media hosts pass', () => {
   assert.deepEqual(failuresOf(ok), [])
 })
 
-test('the analytics loader contract refuses a second origin, an ungated loader and markup that loads Google directly', () => {
+test('with analytics on, a page that loads Google as markup, carries no configuration, or carries two, is refused', () => {
   const on = { analyticsEnabled: true }
-  const gated = `(function(){function d(){return localStorage.getItem('${CONSENT_KEY}')}function load(){var s=document.createElement('script');s.src='${ANALYTICS_ORIGIN}/gtag/js';document.head.appendChild(s)}if(d()==='granted')load()})()`
-  assert.deepEqual(failuresOf(page({ head: `<script>${gated}</script>` }), on), [])
+  const banner = (attrs) => `<aside id="${BANNER_ID}" role="region" data-consent-key="${CONSENT_KEY}" ${attrs} hidden></aside>`
+  const good = page({
+    head: `<script src="${SITE_SCRIPT}" defer></script>`,
+    body: banner(`${ANALYTICS_ORIGIN_ATTR}="${ANALYTICS_ORIGIN}" ${ANALYTICS_ID_ATTR}="G-0000000000"`),
+  })
+  assert.deepEqual(failuresOf(good, on), [])
 
-  const ungated = `var s=document.createElement('script');s.src='${ANALYTICS_ORIGIN}/gtag/js';document.head.appendChild(s)`
-  assert.ok(failuresOf(page({ head: `<script>${ungated}</script>` }), on).some((f) => /consent decision/.test(f)))
-
-  const second = gated.replace('/gtag/js', '/gtag/js?x=https://www.google-analytics.com/g/collect')
-  assert.ok(failuresOf(page({ head: `<script>${second}</script>` }), on).some((f) => /second analytics origin|names www\.google-analytics\.com/.test(f)))
-
+  // A script element pointing at Google is the defect this whole file exists for: it loads
+  // when the browser reaches it, with no decision read and nothing to read one.
   const markup = page({ head: `<script async src="${ANALYTICS_ORIGIN}/gtag/js?id=G-0000000000"></script>` })
   assert.ok(failuresOf(markup, on).some((f) => /www\.googletagmanager\.com is not on the allowed-host list/.test(f)))
 
-  // Two gated loaders is one too many: the site has exactly one thing that may name the
-  // analytics origin, and W1.12's banner is not it (it names no origin at all).
-  const twice = page({ head: `<script>${gated}</script>`, body: `<script>${gated}</script>` })
-  assert.ok(failuresOf(twice, on).some((f) => /carries 2 inline scripts naming/.test(f)), failuresOf(twice, on).join('\n'))
+  // And an inline block that names the origin is the same defect with a different syntax —
+  // refused as an inline script naming the host (D183 admits no inline block at all).
+  const inline = page({ head: `<script>var s=document.createElement('script');s.src='${ANALYTICS_ORIGIN}/gtag/js'</script>` })
+  assert.ok(
+    failuresOf(inline, on).some((f) => /carries an inline script naming www\.googletagmanager\.com/.test(f)),
+    failuresOf(inline, on).join('\n'),
+  )
+
+  // The configuration is written once: a page with two of them has two answers to which
+  // property it reports to.
+  const twice = page({ body: banner(`${ANALYTICS_ORIGIN_ATTR}="${ANALYTICS_ORIGIN}" ${ANALYTICS_ID_ATTR}="G-0000000000"`) + banner(`${ANALYTICS_ORIGIN_ATTR}="${ANALYTICS_ORIGIN}" ${ANALYTICS_ID_ATTR}="G-1111111111"`) })
+  assert.ok(failuresOf(twice, on).some((f) => /2 elements carry/.test(f)), failuresOf(twice, on).join('\n'))
+
+  // A configuration naming a second analytics origin, or carrying no property, or living
+  // somewhere other than the banner the visitor answers.
+  const other = page({ body: `<div ${ANALYTICS_ORIGIN_ATTR}="https://www.google-analytics.com" ${ANALYTICS_ID_ATTR}="G-1"></div>` })
+  assert.ok(failuresOf(other, on).some((f) => /D106 admits exactly one third-party origin/.test(f)))
+  const noID = page({ body: banner(`${ANALYTICS_ORIGIN_ATTR}="${ANALYTICS_ORIGIN}"`) })
+  assert.ok(failuresOf(noID, on).some((f) => /carries no data-analytics-id/.test(f)))
+  const notBanner = page({ body: `<div id="x" data-consent-key="${CONSENT_KEY}" ${ANALYTICS_ORIGIN_ATTR}="${ANALYTICS_ORIGIN}" ${ANALYTICS_ID_ATTR}="G-1"></div>` })
+  assert.ok(failuresOf(notBanner, on).some((f) => /not on the consent banner/.test(f)))
+
+  // A second analytics origin hidden in another attribute of the banner is refused even
+  // though the origin attribute itself is right.
+  const smuggled = page({ body: banner(`${ANALYTICS_ORIGIN_ATTR}="${ANALYTICS_ORIGIN}" ${ANALYTICS_ID_ATTR}="G-1" data-collect="https://www.google-analytics.com/g/collect"`) })
+  assert.ok(failuresOf(smuggled, on).some((f) => /names a second analytics origin/.test(f)), failuresOf(smuggled, on).join('\n'))
+
+  // And the configuration is inert without the file that reads it.
+  const noScript = page({ body: banner(`${ANALYTICS_ORIGIN_ATTR}="${ANALYTICS_ORIGIN}" ${ANALYTICS_ID_ATTR}="G-1"`) })
+  assert.ok(failuresOf(noScript, on).some((f) => /carries 0 \/scripts\/site\.js tags/.test(f)), failuresOf(noScript, on).join('\n'))
+})
+
+test('the gate\'s contract refuses a URL, a second origin, an unread key and a decision nothing compares', () => {
+  const gated = `function stored(b){return localStorage.getItem(b.getAttribute('data-consent-key'))}
+function analytics(b){var id=b.getAttribute('data-analytics-id');var origin=b.getAttribute('data-analytics-origin')
+var s=document.createElement('script');s.src=origin+'/gtag/js?id='+id;if(stored(b)==='granted')document.head.appendChild(s)}`
+  assert.deepEqual(gateFailures(gated, 'scripts/site.js', FACTS), [])
+
+  // A URL in the gate is the defect the banner-carries-the-configuration design removes: a
+  // hard-coded origin in the script would load Google even on a flag-off build.
+  assert.ok(gateFailures(gated.replace("origin+'/gtag/js?id='+id", `'${ANALYTICS_ORIGIN}/gtag/js?id='+id`), 'scripts/site.js', FACTS).some((f) => /names https:\/\/www\.googletagmanager\.com/.test(f)))
+  assert.ok(gateFailures(gated.replace('data-consent-key', 'x'), 'scripts/site.js', FACTS).some((f) => /does not read data-consent-key/.test(f)))
+  assert.ok(gateFailures(gated.replace('data-analytics-origin', 'x'), 'scripts/site.js', FACTS).some((f) => /does not read data-analytics-origin/.test(f)))
+  assert.ok(gateFailures(gated.replace('data-analytics-id', 'x'), 'scripts/site.js', FACTS).some((f) => /does not read data-analytics-id/.test(f)))
+
+  // The consent check itself: with the comparison gone, the flag alone decides whether a
+  // Google script loads, which is exactly what the owner's ruling forbids (D93, W3.2).
+  const ungated = gated.replace("if(stored(b)==='granted')", '')
+  assert.ok(gateFailures(ungated, 'scripts/site.js', FACTS).some((f) => /never compares the decision it read out of storage with 'granted'/.test(f)))
+
+  // And a second analytics origin in the gate.
+  assert.ok(gateFailures(gated + `\nvar x='https://www.google-analytics.com/g/collect'`, 'scripts/site.js', FACTS).some((f) => /second analytics origin/.test(f)))
+})
+
+test('the deployed policy carries what Google documents for GA4 without Ads features, and nothing else', () => {
+  const policy = deployedCSP()
+  const failures = cspFailures(policy)
+  assert.deepEqual(failures, [], `firebase.json serves a policy this contract does not state:\n  ${failures.join('\n  ')}`)
+
+  // The policy is a promise, so the reader is held to it: each of these is a way the shipped
+  // policy could quietly widen, and each is refused with the token named.
+  const widen = (from, to) => cspFailures(policy.replace(from, to))
+  assert.ok(widen("script-src 'self'", "script-src 'self' 'unsafe-inline'").some((f) => /admits 'unsafe-inline'/.test(f)), 'unsafe-inline in script-src is admitted')
+  assert.ok(widen("script-src 'self'", "script-src 'self' 'unsafe-eval'").some((f) => /admits 'unsafe-eval'/.test(f)))
+  assert.ok(widen("script-src 'self'", "script-src 'self' 'nonce-abc123'").some((f) => /admits 'nonce-abc123'/.test(f)))
+  assert.ok(widen("script-src 'self'", "script-src 'self' 'sha256-abc123'").some((f) => /admits 'sha256-abc123'/.test(f)))
+  assert.ok(widen("script-src 'self'", 'script-src *').some((f) => /admits \*/.test(f)))
+  assert.ok(widen("img-src 'self' data:", "img-src 'self' data: https://cdn.example.net").some((f) => /img-src admits https:\/\/cdn\.example\.net/.test(f)), 'an extra origin in img-src is admitted')
+  assert.ok(widen(`connect-src 'self' ${ANALYTICS_ORIGIN}`, `connect-src 'self' ${ANALYTICS_ORIGIN} https://www.google-analytics.com`).some((f) => /admits https:\/\/www\.google-analytics\.com/.test(f)))
+  assert.ok(cspFailures(policy.replace("script-src 'self'", '')).some((f) => /carries no script-src directive/.test(f)))
+  assert.ok(cspFailures(`${policy}; report-uri https://x.example.net/`).some((f) => /report-uri is a directive this contract does not know/.test(f)))
+  assert.ok(cspFailures(policy.replace("default-src 'self'", "default-src 'self' https://x.example.net")).some((f) => /default-src admits https:\/\/x\.example\.net/.test(f)))
+
+  // The policy is what the artifact is held to, so a page that names an origin the policy
+  // would block is the same defect read from the other end: the admitted origin is in it.
+  assert.ok(policy.includes(ANALYTICS_ORIGIN), 'the deployed policy does not admit the analytics origin the banner names')
+  assert.ok(policy.includes('https://*.google-analytics.com'), 'the deployed policy does not admit the collect endpoint Google documents')
 })
 
 test('a shipped stylesheet or script file naming another host is refused', () => {
@@ -565,4 +780,19 @@ test('the stylesheet reader follows nested conditions and @import', () => {
   assert.equal(rules[2].selector, '@keyframes x')
   assert.deepEqual(rules[3].conditions, [])
   assert.throws(() => cssRules('.a{color:red'), /unbalanced/)
+})
+
+test('firebase.json serves exactly one Content-Security-Policy, on every path', () => {
+  // `deployedCSP()` reads the first policy it finds, so a second one — a looser policy on a
+  // narrower `source`, or a Content-Security-Policy-Report-Only beside it — would be served
+  // and never read by the contract above. The deploy config carries one, for `**`, and no
+  // other security-policy header at all.
+  const config = JSON.parse(readFileSync(path.join(REPO, 'firebase.json'), 'utf8'))
+  const policies = []
+  for (const entry of config.hosting.headers) {
+    for (const header of entry.headers) {
+      if (/content-security-policy/i.test(header.key)) policies.push(`${entry.source} ${header.key}`)
+    }
+  }
+  assert.deepEqual(policies, ['** Content-Security-Policy'], `firebase.json serves ${policies.length} security policies (${policies.join('; ')}); the contract reads one, for every path`)
 })

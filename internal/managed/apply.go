@@ -247,9 +247,11 @@ type RefusedError struct {
 	Advice  string
 }
 
-// Error is the refusal as a person reads it: one line per refused change, each
-// with the gate that refused it and the address and rule's own words, and then
-// the mode's advice when there is one.
+// Error is the refusal as a person reads it: one line per refused change — at
+// most safetext.FieldListMax of them, with the rest counted in this program's
+// own words — each with the gate that refused it and the address and rule's
+// own words, and then the mode's advice when there is one. The count in the
+// first line is every refusal, listed or not.
 //
 // Every part of it that can come from somewhere else is one bounded field
 // first (safetext.Field): an address and a rule's own words are read out of a
@@ -261,7 +263,11 @@ type RefusedError struct {
 func (e *RefusedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, so nothing is applied (%d refusal(s))", ErrRefused, len(e.Verdict.Refusals))
-	for _, r := range e.Verdict.Refusals {
+	listed := e.Verdict.Refusals
+	if len(listed) > safetext.FieldListMax {
+		listed = listed[:safetext.FieldListMax]
+	}
+	for _, r := range listed {
 		b.WriteString("\n  ")
 		// The gate's name is this program's own, but it is rendered the way
 		// the rest is: the shape of the line is the same whatever any of its
@@ -276,6 +282,15 @@ func (e *RefusedError) Error() string {
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
+	}
+	// The listing stops at the cap and says how many it did not print, in this
+	// program's own words: how many changes a plan refuses is the plan's to
+	// choose, and the count in the line above is the whole list's, so a
+	// truncated listing is flagged and never read as a short one.
+	if n := len(e.Verdict.Refusals) - len(listed); n > 0 {
+		b.WriteString("\n  (")
+		b.WriteString(safetext.FieldListNote(n))
+		b.WriteString(")")
 	}
 	if e.Advice != "" {
 		b.WriteString("\n")
@@ -308,7 +323,7 @@ func (e *RefusedError) Unwrap() error { return ErrRefused }
 func DeleteAdvice(gcpProject string) string {
 	where := "the owner's own list"
 	if gcpProject != "" {
-		where = "the owner's own list at gs://fugaro-runs-" + gcpProject + "/fugaro/allow-delete.json"
+		where = "the owner's own list at gs://fugaro-runs-" + safetext.Field(gcpProject) + "/fugaro/allow-delete.json"
 	}
 	return "the addresses a managed project may delete or replace are " + where +
 		", which the owner writes with their own credentials and the owner-run command fugaro allow-delete, and no address named on the command line of an applying command approves one: an address the owner approves is listed there"
@@ -379,19 +394,19 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 	// root carries one of its own, so there is exactly one.
 	settings, err := r.Workdir.WriteBackend(r.stateBucket(), infra.StatePrefixManaged)
 	if err != nil {
-		return Result{}, fmt.Errorf("the state backend of %s: %w", r.what(), err)
+		return Result{}, fmt.Errorf("the state backend of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	if err := r.Workdir.WriteBackendBlock(); err != nil {
-		return Result{}, fmt.Errorf("the state backend of %s: %w", r.what(), err)
+		return Result{}, fmt.Errorf("the state backend of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	if err := r.writeVars(); err != nil {
-		return Result{}, fmt.Errorf("the variables file of %s: %w", r.what(), err)
+		return Result{}, fmt.Errorf("the variables file of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	// The lock file is this command's too: init runs with -lockfile=readonly,
 	// so the lock decides which provider package is accepted, and the root's
 	// own was refused by the preflight.
 	if err := r.Workdir.WriteManagedLock(providers); err != nil {
-		return Result{}, fmt.Errorf("%w: the lock file of %s: %w", ErrPreflight, r.what(), err)
+		return Result{}, fmt.Errorf("%w: the lock file of %s: %w", ErrPreflight, r.what(), safetext.FieldErr(err))
 	}
 	// From here on everything runs as the deployer account of D75, and the
 	// first thing that runs as it is terraform itself: the plan is read from
@@ -412,15 +427,15 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 			defer done()
 		}
 		if err != nil {
-			return fmt.Errorf("terraform for %s: %w", r.what(), err)
+			return fmt.Errorf("terraform for %s: %w", r.what(), safetext.FieldErr(err))
 		}
 		if err := t.Init(ctx, settings); err != nil {
-			return fmt.Errorf("initializing the root of %s: %w", r.what(), err)
+			return fmt.Errorf("initializing the root of %s: %w", r.what(), safetext.FieldErr(err))
 		}
 		planPath := filepath.Join(r.Workdir.Root, infra.PlanFile)
 		changed, err := t.Plan(ctx, planPath)
 		if err != nil {
-			return fmt.Errorf("planning the root of %s: %w", r.what(), err)
+			return fmt.Errorf("planning the root of %s: %w", r.what(), safetext.FieldErr(err))
 		}
 		if !changed {
 			// Nothing to change: there is no plan to gate and none to apply,
@@ -442,10 +457,18 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 // all — a refusal that named one would be read by the session it refuses as a
 // thing to pass.
 func (r Request) refuseSession() error {
+	// The addresses are the applying session's own arguments and are bounded
+	// like every other untrusted value before they are interpolated: a refusal
+	// that a newline in an argument could turn into a line of its own is a
+	// refusal the session it refuses can write the rest of. The listing is
+	// capped as its source is — a command line holds as many arguments as the
+	// session passed — and the entries it leaves out are counted rather than
+	// silently dropped (safetext.FieldListLine).
 	named := slices.Clone(r.Session)
 	slices.Sort(named)
+	line := safetext.FieldListLine(named)
 	return fmt.Errorf("%w: refusing the addresses this command's own command line named (%s): in a managed project the addresses a run may delete or replace come from the owner's own list at gs://%s/%s, written with the operator's credentials by fugaro allow-delete, never from the arguments of the command that applies the plan; ask the owner to approve %s",
-		ErrSessionAddresses, strings.Join(named, ", "), r.runsBucket(), "fugaro/allow-delete.json", strings.Join(named, ", "))
+		ErrSessionAddresses, line, r.runsBucket(), "fugaro/allow-delete.json", line)
 }
 
 // fact is the creation fact's own rule: this command applies only for a
@@ -456,7 +479,7 @@ func (r Request) refuseSession() error {
 func (r Request) fact() error {
 	switch {
 	case r.Fact.Err != nil:
-		return fmt.Errorf("%w: reading the creation fact of %s: %w", ErrNotManaged, r.what(), r.Fact.Err)
+		return fmt.Errorf("%w: reading the creation fact of %s: %w", ErrNotManaged, r.what(), safetext.FieldErr(r.Fact.Err))
 	case r.Fact.Managed:
 		return nil
 	case safetext.Field(r.Fact.Reason) == "":
@@ -509,17 +532,23 @@ func (r Request) writeVars() error {
 // runsBucket is the name the marker and the delete list live under, the one
 // infra/managed reads (its runsBucketName): the default, never the config's
 // runs_bucket, because a managed object in another bucket is read by nobody.
-func (r Request) runsBucket() string { return "fugaro-runs-" + r.GCPProject }
+// The project in it is bounded (safetext.Field) because this name is printed:
+// it is built from what the marker read answered, and that is a value out of
+// an object someone else could have written.
+func (r Request) runsBucket() string { return "fugaro-runs-" + safetext.Field(r.GCPProject) }
 
-// what names the project in this file's refusals.
+// what names the project in this file's refusals. Both halves of the name are
+// untrusted at this boundary — whatever the caller read the project and its
+// GCP project from, and in a managed project that includes the marker the
+// cloud answered with — so each is bounded before it is interpolated.
 func (r Request) what() string {
 	switch {
 	case r.Project != "" && r.GCPProject != "":
-		return r.Project + " (" + r.GCPProject + ")"
+		return safetext.Field(r.Project) + " (" + safetext.Field(r.GCPProject) + ")"
 	case r.Project != "":
-		return r.Project
+		return safetext.Field(r.Project)
 	case r.GCPProject != "":
-		return r.GCPProject
+		return safetext.Field(r.GCPProject)
 	}
 	return "this project"
 }
@@ -538,13 +567,13 @@ func (r Request) spec(t *tf.TF) Spec {
 func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, planPath string) (Result, error) {
 	before, err := planHash(planPath)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: the saved plan of %s: %w", ErrRequest, r.what(), err)
+		return Result{}, fmt.Errorf("%w: the saved plan of %s: %w", ErrRequest, r.what(), safetext.FieldErr(err))
 	}
 	v, err := Gate(ctx, planPath, r.spec(t))
 	if err != nil {
 		// A plan the gate cannot read is an error and never a verdict, and the
 		// zero Verdict it returns is not OK either.
-		return Result{}, fmt.Errorf("gating the plan of %s: %w", r.what(), err)
+		return Result{}, fmt.Errorf("gating the plan of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	res := Result{Changed: true, PlanPath: planPath, PlanHash: before, Verdict: v}
 	if !v.OK {
@@ -568,17 +597,17 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 	// immediately before the apply.
 	now, err := planHash(planPath)
 	if err != nil {
-		return res, fmt.Errorf("%w: the saved plan of %s: %w", ErrPlanChanged, r.what(), err)
+		return res, fmt.Errorf("%w: the saved plan of %s: %w", ErrPlanChanged, r.what(), safetext.FieldErr(err))
 	}
 	if now != before {
 		return res, fmt.Errorf("%w: the file the gate admitted is not the file that would be applied (%s then, %s now), so nothing is applied: gate and apply must be the same bytes",
 			ErrPlanChanged, before, now)
 	}
 	if r.Out != nil {
-		fmt.Fprintf(r.Out, "applying the saved plan of %s as %s\n", r.what(), cred.Account())
+		fmt.Fprintf(r.Out, "applying the saved plan of %s as %s\n", r.what(), safetext.Field(cred.Account()))
 	}
 	if err := t.Apply(ctx, planPath); err != nil {
-		return res, err
+		return res, safetext.FieldErr(err)
 	}
 	return res, nil
 }
@@ -669,7 +698,7 @@ func (r Request) confirm(v Verdict, hash string) error {
 	ok, err := r.Ask(r.question(v, hash))
 	switch {
 	case err != nil:
-		return fmt.Errorf("%w: asking whether to apply the saved plan of %s: %w", ErrNotConfirmed, r.what(), err)
+		return fmt.Errorf("%w: asking whether to apply the saved plan of %s: %w", ErrNotConfirmed, r.what(), safetext.FieldErr(err))
 	case !ok:
 		return fmt.Errorf("%w: the saved plan of %s was not confirmed, so nothing is applied", ErrNotConfirmed, r.what())
 	}
@@ -733,7 +762,11 @@ func TerraformEnv(parent []string, workdir, cache string) ([]string, error) {
 		return nil, err
 	}
 	if k := providerSettingIn(env); k != "" {
-		return nil, fmt.Errorf("%w: %s is set in terraform's environment, and the credential terraform runs with is this command's own (the deployer account's): unset it", ErrProviderSetting, k)
+		// The name is a variable name out of the environment this command
+		// inherited — the one thing in the sentence that is not this
+		// program's, and a name that may hold anything but "=" and NUL — so it
+		// is one bounded field (safetext.Field) before it is interpolated.
+		return nil, fmt.Errorf("%w: %s is set in terraform's environment, and the credential terraform runs with is this command's own (the deployer account's): unset it", ErrProviderSetting, safetext.Field(k))
 	}
 	return env, nil
 }

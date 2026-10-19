@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The installation picker's document (desktop-console plan Task 3.4b; owner
+      ruling C9, 2026-10-18: the picker is a window of its own, opened from the
+      application menu, and not a panel in the dashboard's header).
+
+      The CSP below is the **same string** as `index.html`'s and as the header
+      `src/main/protocol.ts` attaches to every `app://` response: this document
+      is served by the same protocol handler, so it gets the same header, and
+      there is no delta for this document to have -- it is a second page of the
+      same bundle, not a second policy. Which test holds *this* copy to the
+      header is `console/test/unit/installations-ipc.test.ts` ("the picker's
+      document"); `console/test/unit/window.test.ts` holds `index.html`'s and
+      `refusal.html`'s, and does not read this file.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+    />
+    <title>Fugaro console — installations</title>
+  </head>
+  <body>
+    <!--
+      The picker's whole capability is one preload script and one bundle file,
+      both served from this same origin and from nowhere else. The script is
+      `installations.js`, and it is the **second entry** of the renderer
+      bundler that Task 3.4a writes (`console/tools/bundle-renderer`): it walks
+      the compiled CommonJS closure of an entry and writes one file per
+      document, and this document's entry is `src/renderer/installations.ts`.
+      That tool is **not on this branch** -- Task 3.4a owns it, and
+      `console/README.md` says so -- so `./installations.js` is a file this
+      document names and nothing yet produces. The tag is written here rather
+      than left to that task because the document is this task's file; until
+      3.4a lands, the request 404s and the page below is what is drawn.
+
+      It is `defer` and it is a file, exactly as `index.html`'s script is: the
+      CSP of rule 3 has no `'unsafe-inline'`, so an inline script would not run
+      even if one were written, and `console/test/unit/installations-ipc.test.ts`
+      asserts the tag's shape so that neither half can drift.
+
+      Without the bundle the page still draws, and it draws nothing else: a
+      heading, the status line, the empty list and the add form, which do
+      nothing until the script arrives.
+    -->
+    <main>
+      <h1>Installations</h1>
+      <p id="picker-status">Reading the installation list…</p>
+      <ul id="picker-list"></ul>
+      <form id="picker-add">
+        <label for="picker-project">Project name</label>
+        <input id="picker-project" name="project" type="text" autocomplete="off" />
+        <button type="button" id="picker-pick-binary">Choose binary…</button>
+        <button type="button" id="picker-pick-config">Choose config…</button>
+        <button type="button" id="picker-pick-checkout">Choose checkout…</button>
+        <button type="submit" id="picker-add-submit">Add</button>
+      </form>
+    </main>
+    <script src="./installations.js" defer></script>
+  </body>
+</html>

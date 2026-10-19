@@ -1,4 +1,4 @@
-// website/test/home.mjs — the hero, the terminal and the architecture diagram (website
+// website/test/home.mjs — the hero, the terminal and the flow (website
 // plan, Task W1.4).
 //
 // The two pages this task writes are the first pages the site has, and they are the pages
@@ -13,13 +13,24 @@
 //      be a sentence of README.md, and its install commands have to be the commands
 //      `website/data/install.yaml` carries for the paths it renders — never typed into the
 //      component (Global Constraint 6, W1.4 step 1).
-//   3. **The terminal types a real invocation.** The command is README.md's own example and
-//      `fugaro run` is a command the generated CLI reference documents (W0.4's file), and
-//      the animation holds its last frame so a reader whose system asks for less motion gets
-//      the finished command rather than a half-typed one (D105, W1.4 step 2).
-//   4. **The diagram carries the spec's five stage names and no sixth**, and every caption
-//      on it is a line of README.md's `## How it works` or of `docs/design/v1.md` — the two
-//      names the README does not use are asserted to be labels only (W1.4 step 3).
+//   3. **The terminal types a real invocation, and its transcript is the documented
+//      sequence.** The command is README.md's own example and `fugaro run` is a command the
+//      generated CLI reference documents (W0.4's file); the four lines after it are the
+//      numbered steps of README.md's `## How it works`, each held to the section it cites
+//      and to the order that section writes them in (P7, D184, RF11); and the animation
+//      holds its last frame, so a reader whose system asks for less motion gets the whole
+//      transcript rather than a half-typed line (D105, W1.4 step 2).
+//   4. **The flow carries D185's four steps, in order, with the two annotations on the job
+//      step**, and every caption on it — a step's and an annotation's — is a line of
+//      README.md or of `docs/design/v1.md`; the names the README does not use are asserted
+//      to be labels rather than quotations. The four steps, the caption the ruling gives each
+//      of them and the two annotations are all read out of the ruling's own row in
+//      `docs/website/redesign/reconciliation.md`, so the page is held to the decision rather
+//      than to a copy of it — including which caption belongs to which step, since all four
+//      are lines of the README and could otherwise be shuffled. The names a reader reads —
+//      each step's heading, each annotation's label — are held to the names the check reads,
+//      so a page whose visible flow says something else fails on what it shows rather than
+//      passing on its attributes (W1.4 step 3, P8, RF12/D185).
 //   5. **Neither page names a claim the product cannot back**: no console download, no
 //      Windows/WSL support, no "~2 h", no ballpark ranges (F50, D102, W1.4 step 4). The
 //      video slot is checked against `site.yaml`'s own flag rather than against today's
@@ -42,6 +53,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findAll, parse, textOf, walk } from './lib/html.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -81,16 +93,30 @@ function builtCSS(page) {
 }
 
 /** An element's text: its tags removed, and the entities Astro writes decoded. */
-function text(html) {
+function decode(html) {
   return html
-    .replace(/<[^>]*>/g, '')
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&')
-    .replace(/\s+/g, ' ')
-    .trim()
+}
+
+function text(html) {
+  return decode(html.replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * A node's text as a reader receives it: the decoration the page marks `aria-hidden` left
+ * out (the terminal's `$` prompt and its caret are drawing, not words), entities decoded,
+ * runs of whitespace one space. This is what the page says, which is what the checks below
+ * hold to the repository.
+ */
+function readableText(node) {
+  if (node.attrs && node.attrs.get('aria-hidden') === 'true') return ''
+  if (node.text !== undefined) return node.text
+  if (node.raw !== undefined) return ''
+  return (node.children ?? []).map(readableText).join('')
 }
 
 /** The text of the first element carrying `class="…"`, or null when there is none. */
@@ -176,17 +202,268 @@ function internalLinks(page) {
     .filter((href) => href.startsWith('/'))
 }
 
-/** The five stage names `docs/website/spec.md` §2 gives the architecture diagram. */
-function specStageNames() {
-  const line = repoFile('docs/website/spec.md')
+/**
+ * Split a list the ruling writes on one line into its items, on the commas that are the
+ * list's own: a comma inside a quotation or inside parentheses is part of an item
+ * ("Claude Code implements, writes tests, runs the build and tests" is one caption).
+ */
+function splitTopLevel(text) {
+  const items = []
+  let current = ''
+  let depth = 0
+  let quoted = false
+  for (const character of text) {
+    if (character === '"') quoted = !quoted
+    else if (!quoted && character === '(') depth += 1
+    else if (!quoted && character === ')') depth -= 1
+    if (character === ',' && !quoted && depth === 0) {
+      items.push(current)
+      current = ''
+      continue
+    }
+    current += character
+  }
+  items.push(current)
+  return items.map((item) => item.trim()).filter(Boolean)
+}
+
+/**
+ * The literal caption an item of D185's caption list names: a quotation, or — for the first
+ * step, which the row names by its invocation rather than by quoting it — the code span.
+ */
+function captionLiteral(item) {
+  const quoted = /"([^"]+)"/.exec(item)
+  if (quoted) return quoted[1]
+  const code = /`([^`]+)`/.exec(item)
+  assert.ok(
+    code,
+    `D185 names a caption this check cannot read (${JSON.stringify(item)}): each item is a quotation, or the invocation in a code span`,
+  )
+  return code[1]
+}
+
+/**
+ * D185's four steps, its two annotations and the caption it gives each step, read out of the
+ * ruling itself. The row is the decision the flow renders, so it is the row this check holds
+ * the page to: a page that changed its steps and a ruling that changed its mind cannot drift
+ * apart silently, and a reworded row stops this check with the row in the message rather
+ * than passing quietly.
+ *
+ * The captions are read too, and not only their sources: every one of the four is a line of
+ * the README, so held to the documents alone the four can be shuffled among the steps and
+ * each is still a quotation — while the page then says the pull request is where the agent
+ * runs. D185 names them in step order, so the pairing is in the ruling rather than in this
+ * file.
+ */
+function d185() {
+  const line = repoFile('docs/website/redesign/reconciliation.md')
     .split('\n')
-    .find((candidate) => candidate.includes('architecture diagram'))
-  assert.ok(line, 'docs/website/spec.md §2 no longer describes the architecture diagram, and its five stage names are what the diagram renders')
-  return line
-    .slice(line.lastIndexOf(':') + 1)
-    .split('→')
-    .map((name) => name.trim())
-    .filter(Boolean)
+    .find((candidate) => candidate.startsWith('| **D185**'))
+  assert.ok(
+    line,
+    'docs/website/redesign/reconciliation.md carries no D185 row, and the four steps the flow renders are the ones that ruling names (P8)',
+  )
+  // The row's own words, capital and all: its first two cells name the alternative it did
+  // not take, and the four steps are the ones between the em dashes of the decision.
+  const steps = /The brief's four steps — (.+?) —/.exec(line)
+  const annotations = /`([^`]+)` and `([^`]+)` stay as two annotations on the job step/.exec(line)
+  const captions = /quoted\*\* line: (.+?); `/.exec(line)
+  assert.ok(
+    steps && annotations && captions,
+    `the D185 row no longer reads the way this check reads it (the four steps between two em dashes, the caption list, then the two annotations on the job step): ${JSON.stringify(line.slice(0, 160))}`,
+  )
+  return {
+    steps: steps[1].split(',').map((name) => name.trim()),
+    captions: splitTopLevel(captions[1]).map(captionLiteral),
+    annotations: [annotations[1], annotations[2]],
+  }
+}
+
+/** The documents a caption may be quoted from, by the path a step cites. */
+function captionSources() {
+  return {
+    'README.md': repoFile('README.md'),
+    'docs/design/v1.md': repoFile('docs/design/v1.md'),
+  }
+}
+
+/** A built page's flow, as the elements it renders: the steps in order, with their arrows. */
+function flowOf(html) {
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  const doc = parse(html)
+  const flows = findAll(doc, (el) => el.name === 'ol' && classes(el).includes('flow-steps'))
+  const out = { flows: flows.length, steps: [], arrows: 0 }
+  for (const flow of flows) {
+    for (const el of walk(flow)) {
+      if (el.name === 'svg' && classes(el).includes('step-arrow')) out.arrows += 1
+      if (el.name !== 'li' || !classes(el).includes('flow-step')) continue
+      const inner = (selector) => {
+        const node = [...walk(el)].find((child) => classes(child).includes(selector))
+        return node ? textOf(node).replace(/\s+/g, ' ').trim() : ''
+      }
+      out.steps.push({
+        name: el.attrs.get('data-step') ?? '',
+        source: el.attrs.get('data-source') ?? '',
+        // The heading and the caption are the step as a reader sees it; `data-step` is this
+        // check's own hook, and the two are held together below rather than one trusted for
+        // the other.
+        heading: inner('step-name'),
+        caption: inner('step-caption'),
+        annotations: [...walk(el)]
+          .filter((child) => child.name === 'li' && classes(child).includes('annotation'))
+          .map((child) => ({
+            name: child.attrs.get('data-annotation') ?? '',
+            source: child.attrs.get('data-source') ?? '',
+            shown: (() => {
+              const label = [...walk(child)].find((x) => classes(x).includes('annotation-name'))
+              return label ? textOf(label).replace(/\s+/g, ' ').trim() : ''
+            })(),
+            caption: (() => {
+              const text = [...walk(child)].find((x) => classes(x).includes('annotation-caption'))
+              return text ? textOf(text).replace(/\s+/g, ' ').trim() : ''
+            })(),
+          })),
+      })
+    }
+  }
+  return out
+}
+
+/** A step's name as a heading: the brief writes the four lowercase, a heading does not. */
+function capitalize(name) {
+  return name ? name[0].toUpperCase() + name.slice(1) : ''
+}
+
+/**
+ * Whether a caption is about the thing its label names: `cache` with a line about the
+ * caches, `security boundary` with a line about the boundary. Without this the two
+ * annotation captions can be swapped — each is still a substring of the document it cites —
+ * and the page then reads "cache — The trust boundary is the container, not the process.",
+ * which is a claim about the caches that is not one.
+ */
+function mentions(caption, label) {
+  const words = new Set(caption.toLowerCase().split(/[^a-z]+/).filter(Boolean).map((word) => word.replace(/s$/, '')))
+  return label.toLowerCase().split(/\s+/).some((word) => words.has(word))
+}
+
+/**
+ * Every way a page's flow falls short of D185, as the lines a reader sees. Pure, over one
+ * page's HTML, so the built pages are checked with it and the refusals below are proved with
+ * it: a fixture that breaks one rule has to make exactly that line appear.
+ */
+function flowFailures(html, ruling, sources) {
+  const out = []
+  const flow = flowOf(html)
+  if (flow.flows !== 1) return [`the page renders ${flow.flows} flows, and it renders one: the flow is the picture of the run (P8, D185)`]
+
+  const names = flow.steps.map((step) => step.name)
+  if (names.join(' | ') !== ruling.steps.join(' | ')) {
+    out.push(
+      `the flow's steps are ${JSON.stringify(names)}, and D185 names ${JSON.stringify(ruling.steps)}, in that order: a step added, dropped or reordered is a claim about how a run works (P8)`,
+    )
+  }
+
+  for (const [index, step] of flow.steps.entries()) {
+    if (!(step.source in sources)) {
+      out.push(`the ${JSON.stringify(step.name)} step attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to README.md or to docs/design/v1.md (P8)`)
+    } else if (!normalize(sources[step.source]).includes(normalize(step.caption))) {
+      out.push(`the ${JSON.stringify(step.name)} caption ${JSON.stringify(step.caption)} does not appear in ${step.source}: every caption is the repository's own words rather than the page's (P8, D185)`)
+    }
+    if (!step.caption) out.push(`the ${JSON.stringify(step.name)} step carries no caption, and every step has one short line saying what happens there (P8, D185)`)
+    // The caption is the one D185 gives *this* step, not merely one of the four: all four are
+    // lines of the README, so held to their sources alone they can be shuffled among the
+    // steps and every one of them is still a quotation.
+    const named = ruling.captions?.[index]
+    if (named && !normalize(step.caption).includes(normalize(named))) {
+      out.push(`the ${JSON.stringify(step.name)} step's caption ${JSON.stringify(step.caption)} is not the one D185 gives that step (${JSON.stringify(named)}): the captions say what each step does, and one that moved describes the wrong step (P8, D185)`)
+    }
+    // And the name a reader sees, which is the heading: `data-step` is this check's own hook,
+    // and a heading that stopped matching it would leave the visible flow saying one thing
+    // while every check here read another.
+    if (step.heading !== capitalize(step.name)) {
+      out.push(`the ${JSON.stringify(step.name)} step's heading reads ${JSON.stringify(step.heading)}, and the step it renders is ${JSON.stringify(capitalize(step.name))}: the heading is the name a reader sees (P8, D185)`)
+    }
+  }
+
+  const annotated = flow.steps.filter((step) => step.annotations.length > 0)
+  const job = flow.steps[1]
+  const where = annotated.map((step) => step.name)
+  if (where.join(' | ') !== (job ? [job.name].join(' | ') : '')) {
+    out.push(
+      `the flow annotates ${JSON.stringify(where)}, and D185 puts both annotations on the job step, ${JSON.stringify(job?.name ?? '')}: the cache and the security boundary are things the container does, not steps of their own (P8, D185)`,
+    )
+  }
+  for (const annotation of annotated.flatMap((step) => step.annotations)) {
+    if (!(annotation.source in sources)) {
+      out.push(`the ${JSON.stringify(annotation.name)} annotation attributes its caption to ${JSON.stringify(annotation.source)}, and a caption is held to README.md or to docs/design/v1.md (P8)`)
+    } else if (!normalize(sources[annotation.source]).includes(normalize(annotation.caption))) {
+      out.push(`the ${JSON.stringify(annotation.name)} caption ${JSON.stringify(annotation.caption)} does not appear in ${annotation.source}: an annotation is a label with a quoted line, and the line is the repository's (P8, D185)`)
+    }
+    // The label and the line have to be about the same thing, or the two quoted lines can be
+    // swapped: each is still a substring of the document it cites, and the page then puts the
+    // trust boundary on the cache.
+    if (annotation.caption && !mentions(annotation.caption, annotation.name)) {
+      out.push(`the ${JSON.stringify(annotation.name)} annotation's caption ${JSON.stringify(annotation.caption)} is not about the name it carries: an annotation is a label on a line the repository writes about that label's subject (P8, D185)`)
+    }
+    // And the label as a reader sees it, held to the name this check reads, as the heading is.
+    if (annotation.shown !== annotation.name) {
+      out.push(`the annotation D185 names ${JSON.stringify(annotation.name)} is labelled ${JSON.stringify(annotation.shown)} on the page: the label is the name a reader sees, and a label that drifted from the name is a different annotation (P8, D185)`)
+    }
+  }
+  const annotationNames = annotated.flatMap((step) => step.annotations.map((annotation) => annotation.name))
+  if (annotationNames.join(' | ') !== ruling.annotations.join(' | ')) {
+    out.push(`the flow's annotations are ${JSON.stringify(annotationNames)}, and D185 names ${JSON.stringify(ruling.annotations)}, in that order (P8)`)
+  }
+
+  if (flow.arrows !== flow.steps.length - 1) {
+    out.push(
+      `the flow carries ${flow.arrows} arrows between ${flow.steps.length} steps, and it carries one between each pair: the brief's picture is a flow, and the arrows are what draw it (P8, spec item 4)`,
+    )
+  }
+  return out
+}
+
+/**
+ * A page carrying nothing but a flow, for the refusals below. The heading is the step's name
+ * as the component writes it, so the fixture page passes the same checks the built pages do;
+ * `heading` and an annotation's `label` are the overrides the two "a reader sees something
+ * else" cases break.
+ */
+function flowPage(steps) {
+  const body = steps
+    .map((step, index) => {
+      const annotations = (step.annotations ?? [])
+        .map(
+          (annotation) =>
+            `<li class="annotation" data-annotation="${annotation.name}" data-source="${annotation.source}"><span class="annotation-name">${annotation.label ?? annotation.name}</span><span class="annotation-caption">${annotation.caption}</span></li>`,
+        )
+        .join('')
+      const arrow =
+        index < steps.length - 1 && step.arrow !== false
+          ? '<svg class="step-arrow" aria-hidden="true" focusable="false"><path class="arrow-line" d="M12 1 V 25"></path></svg>'
+          : ''
+      return `<li class="flow-step" data-step="${step.name}" data-source="${step.source}"><div class="step-card"><div class="step-head"><span class="step-number" aria-hidden="true">${index + 1}</span><h2 class="step-name">${step.heading ?? capitalize(step.name)}</h2></div><p class="step-caption">${step.caption}</p><ul class="step-annotations">${annotations}</ul></div>${arrow}</li>`
+    })
+    .join('')
+  return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><figure class="flow"><ol class="flow-steps">${body}</ol></figure></main></body></html>`
+}
+
+/** The four steps as the page renders them, for the fixture cases: a copy of the markup. */
+function fixtureSteps() {
+  return [
+    { name: 'task submitted', source: 'README.md', caption: 'fugaro run "add a --verbose flag to the export command"' },
+    {
+      name: 'ephemeral Cloud Run job',
+      source: 'README.md',
+      caption: 'one execution per task, then gone',
+      annotations: [
+        { name: 'cache', source: 'README.md', caption: 'Sync to the exact target commit and restore the dependency caches.' },
+        { name: 'security boundary', source: 'docs/design/v1.md', caption: 'The trust boundary is the container, not the process.' },
+      ],
+    },
+    { name: 'agent runs', source: 'README.md', caption: 'Claude Code implements, writes tests, runs the build and tests' },
+    { name: 'pull request', source: 'README.md', caption: 'Push and open the pull request' },
+  ]
 }
 
 test("the hero tagline is README.md's tagline line, byte for byte", () => {
@@ -212,15 +489,20 @@ test("the hero's lead sentence is a sentence of README.md", () => {
 
 test('the hero renders the install commands install.yaml carries, and types none of them', () => {
   const page = builtPage('')
-  const rendered = [...page.matchAll(/<div[^>]*class="hero-install-path"[^>]*>([\s\S]*?)<\/div>/g)].map((m) => m[0])
+  // Read as a document rather than sliced with a regex: each path's block now holds a copy
+  // control as well as its commands (P6), and a non-greedy `<div>…</div>` would stop at the
+  // control's own closing tag and check half a block.
+  const blocks = [...walk(parse(page))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-install-path'))
 
-  assert.equal(rendered.length, 2, `the hero renders ${rendered.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
+  assert.equal(blocks.length, 2, `the hero renders ${blocks.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
 
-  for (const block of rendered) {
-    const id = /data-path="([^"]*)"/.exec(block)?.[1]
+  for (const block of blocks) {
+    const id = block.attrs.get('data-path')
     assert.ok(id, 'an install path in the hero names no id, so nothing says which path of install.yaml it is')
 
-    const commands = [...block.matchAll(/<pre[^>]*class="hero-install-command"[^>]*>([\s\S]*?)<\/pre>/g)].map((m) => text(m[1]))
+    const commands = [...walk(block)]
+      .filter((el) => el.name === 'pre')
+      .map((el) => textOf(el).trim())
     assert.deepEqual(
       commands,
       installPathCommands(id),
@@ -267,99 +549,412 @@ test('the terminal types an invocation the CLI reference documents, and README.m
   )
 })
 
-test('the terminal holds the finished command when motion is reduced', () => {
-  const page = builtPage('')
-  const css = builtCSS(page)
-  const command = classText(page, 'terminal-command')
+// ---- the transcript (P7, D184) -----------------------------------------------------------
 
-  // The end state is in the markup: the finished command is what a reader sees with the
-  // animation neutralised, so nothing about it depends on the animation having run.
-  assert.ok(
-    command && text(page).includes(command),
-    'the terminal\'s command is not in the markup in full, so a reader whose animation never runs sees a half-typed one',
+/**
+ * The documents a transcript line may cite, by the name the line carries. The command is
+ * README.md's example anywhere in the file; the four steps after it are the numbered steps
+ * of its `## How it works`, so they cite that section and are held to it rather than to the
+ * whole file.
+ */
+function transcriptSources() {
+  return {
+    'README.md': repoFile('README.md'),
+    'README.md#How it works': readmeSection('How it works'),
+  }
+}
+
+/** The transcript a built page renders: each line, the document it cites, and its timing. */
+function transcript(page) {
+  return [...walk(parse(page))]
+    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('terminal-line'))
+    .map((el) => {
+      const style = el.attrs.get('style') ?? ''
+      return {
+        text: decode(readableText(el)).replace(/\s+/g, ' ').trim(),
+        source: el.attrs.get('data-source') ?? '',
+        characters: Number(/--terminal-characters:\s*(\d+)/.exec(style)?.[1] ?? NaN),
+        delay: Number(/--terminal-delay:\s*([\d.]+)s/.exec(style)?.[1] ?? NaN),
+        caret: [...walk(el)].some((child) => (child.attrs?.get('class') ?? '').split(/\s+/).includes('terminal-caret')),
+      }
+    })
+}
+
+/**
+ * Every failure of the transcript's rule, as the lines a reader of this file sees: every
+ * line is a line of the document it cites, and the lines of a document come in the order
+ * that document writes them. The page's own caption calls the transcript the documented
+ * sequence of a run, so a line the document does not write — or writes after a line that
+ * follows it here — is the animation saying something the documentation does not (D184,
+ * RF11). Written as a function over a transcript so a fixture can prove it refuses.
+ */
+export function transcriptFailures(lines, sources) {
+  const out = []
+  const reached = new Map() // document -> how far into it the line before this one reached
+  for (const [index, line] of lines.entries()) {
+    const where = `line ${index + 1} of the transcript, ${JSON.stringify(line.text)}`
+    if (line.text === '') {
+      out.push(`${where}, has no text: the whole transcript is in the markup, and a line that is somewhere else is one a reader without the animation never sees`)
+      continue
+    }
+    const source = sources[line.source]
+    if (!source) {
+      out.push(`${where}, cites ${JSON.stringify(line.source)}, which is not a document this check reads: every line says which document it is quoted from`)
+      continue
+    }
+    const at = normalize(source).indexOf(normalize(line.text), reached.get(line.source) ?? 0)
+    if (at === -1) {
+      out.push(
+        `${where}, does not appear in ${line.source} at or after the line before it: the transcript is the documented sequence of a run rather than a run that happened, and every line of it is the repository's own words in the repository's own order (D184, RF11)`,
+      )
+      continue
+    }
+    reached.set(line.source, at + normalize(line.text).length)
+  }
+  return out
+}
+
+test("every line of the homepage transcript is the document it cites, in that document's order", () => {
+  const lines = transcript(builtPage(''))
+
+  // The transcript is the command and the README's four steps — Start, Sync, Loop, Push and
+  // open the pull request (D184). A page that grew a sixth line, or lost one, is a page this
+  // check would otherwise go on accepting.
+  assert.equal(lines.length, 5, `the homepage terminal renders ${lines.length} lines, and the documented sequence is the command and the README's four steps (P7, D184)`)
+
+  const failures = transcriptFailures(lines, transcriptSources())
+  assert.deepEqual(failures, [], `the homepage transcript is not the documented sequence (P7, D184, RF11):\n  ${failures.join('\n  ')}`)
+})
+
+test('the transcript rule refuses a line the document it cites does not write', () => {
+  const sources = transcriptSources()
+  const lines = transcript(builtPage(''))
+  assert.deepEqual(transcriptFailures(lines, sources), [], 'the rule refuses the page it is written for, so every refusal below is the one thing it breaks')
+
+  // A step with a word added to it: not a line of the section, and the defect this rule
+  // exists for — a transcript that is a paraphrase of the documentation rather than the
+  // documentation's own words.
+  const paraphrased = lines.map((line, index) =>
+    index === 2 ? { ...line, text: `${line.text}, quickly` } : line,
+  )
+  assert.match(transcriptFailures(paraphrased, sources).join('\n'), /does not appear in README\.md#How it works/)
+
+  // The README's words, but from outside the section the line cites. The claim a step line
+  // makes is that it is a step of `## How it works`, so this fails even though the words are
+  // in the file — which is why the section is what the line cites.
+  const elsewhere = "Or ask your agent: the plugin's working skill launches, watches and diagnoses runs"
+  assert.ok(normalize(sources['README.md']).includes(normalize(elsewhere)), 'the fixture quotes a sentence README.md carries, and it no longer does')
+  assert.ok(!normalize(sources['README.md#How it works']).includes(normalize(elsewhere)), 'the fixture quotes a sentence outside "## How it works", and the README moved it inside')
+  assert.match(
+    transcriptFailures(lines.map((line, index) => (index === 1 ? { ...line, text: elsewhere } : line)), sources).join('\n'),
+    /does not appear in README\.md#How it works/,
   )
 
-  const typing = /\.terminal-command[^{]*\{([^}]*)\}/.exec(css)
-  assert.ok(typing, 'the terminal has no typing rule, and the command is meant to be typed (W1.4 step 2)')
+  // The same lines, the fourth step put second: the words are all there, the order is not.
+  const reordered = [lines[0], lines[3], lines[1], lines[2], lines[4]]
+  assert.match(transcriptFailures(reordered, sources).join('\n'), /at or after the line before it/)
+
+  // A line citing a document nothing reads, and a line with no text at all.
+  assert.match(transcriptFailures([{ ...lines[0], source: 'website/content/cli-reference.md' }], sources).join('\n'), /not a document this check reads/)
+  assert.match(transcriptFailures([{ ...lines[0], text: '' }], sources).join('\n'), /has no text/)
+})
+
+test('every line of the transcript is in the markup, revealed by its own count, one after another', () => {
+  const page = builtPage('')
+  const lines = transcript(page)
+  assert.ok(lines.length > 1, 'the homepage terminal renders one line, and the transcript is a sequence (P7)')
+
+  // The end state is in the markup: every line is whole in the page a reader receives, so
+  // nothing about the transcript depends on the animation having run — with the animation
+  // neutralised, the page is the whole transcript, still (D105, W1.4 step 2).
+  for (const [index, line] of lines.entries()) {
+    assert.ok(
+      text(page).includes(line.text),
+      `line ${index + 1} of the transcript, ${JSON.stringify(line.text)}, is not in the markup in full, so a reader whose animation never runs sees a half-typed line`,
+    )
+  }
+
+  // The reveal: one step per character of the line, ending on the line's own width. The
+  // count is written on the line and the rule reads it, so a count that does not cover the
+  // line is a line that stops mid-word — and one that is far larger is a reveal that sits
+  // still while the reader waits for it.
+  const typing = /\.terminal-line[^{]*\{([^}]*)\}/.exec(builtCSS(page))
+  assert.ok(typing, 'the transcript has no typing rule, and every line is meant to be typed (W1.4 step 2, P7)')
   assert.match(
     typing[1],
     /animation:[^;}]*\b(forwards|both)\b/,
-    'the typing animation does not hold its last frame: with animation-duration neutralised the page has to land on the finished command, not on an empty line (D105, W1.4 step 2)',
+    'the typing animation does not hold its last frame: with animation-duration neutralised the page has to land on the whole transcript, not on empty lines (D105, W1.4 step 2)',
+  )
+  assert.match(
+    typing[1].replace(/\s+/g, ''),
+    /steps\(var\(--terminal-characters\),end\)/,
+    'the reveal is not stepped by the line\'s own character count, and a smooth reveal is a different animation from the one this page is written for (P7)',
   )
 
-  // The rule that neutralises it is the layout's, written once for every component (W1.3
-  // step 3, D105): this page carries it, so the terminal's end state is the one above.
-  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/, 'the built page carries no reduced-motion rule, and the terminal\'s end state depends on it (D105)')
+  for (const [index, line] of lines.entries()) {
+    assert.ok(
+      Number.isFinite(line.characters) && line.characters >= line.text.length,
+      `line ${index + 1} of the transcript carries ${line.characters} characters for ${line.text.length} characters of text: the reveal is as wide as the line, and a count short of it cuts the line off`,
+    )
+    assert.ok(Number.isFinite(line.delay), `line ${index + 1} of the transcript carries no --terminal-delay, so every line arrives at once (P7)`)
+  }
+  assert.equal(lines[0].delay, 0, 'the first line of the transcript waits before it starts, and the command is what the reader came for (P7)')
+  for (let i = 1; i < lines.length; i++) {
+    assert.ok(lines[i].delay > lines[i - 1].delay, `line ${i + 1} of the transcript arrives with the line before it, and the lines are staggered so a reader can follow them (P7)`)
+  }
+
+  // The caret is in the last line and the last line's reveal is one column wider than its
+  // text: that column is what the caret is drawn in, so a caret outside it — or a count
+  // without it — is a caret that stays clipped until the page is reloaded.
+  const last = lines[lines.length - 1]
+  assert.ok(last.caret, 'the transcript\'s caret is not in its last line, so it sits at the end of a line that has not been typed yet (P7)')
+  assert.ok(
+    last.characters > last.text.length,
+    'the last line\'s reveal is exactly its text wide, so the caret beside the text stays clipped (P7)',
+  )
+
+  // The rule that neutralises the animation is the layout's, written once for every
+  // component (W1.3 step 3, D105): this page carries it, so the transcript's end state is
+  // the one above.
+  assert.match(builtCSS(page), /@media\s*\(prefers-reduced-motion:\s*reduce\)/, 'the built page carries no reduced-motion rule, and the transcript\'s end state depends on it (D105)')
 })
 
-test("the diagram carries the spec's five stage names and no sixth", () => {
-  const names = specStageNames()
-  assert.equal(names.length, 5, `docs/website/spec.md names ${names.length} stages, and the diagram renders the plan's five`)
+test('the caret stops blinking within five seconds of starting', () => {
+  // WCAG 2.2.2: a blink that starts by itself and goes on past five seconds needs a way to
+  // stop it, and a decorative caret has none. So the blink is counted, it waits for the line
+  // it sits in to arrive, and it ends on the caret's visible base rule.
+  const caret = /\.terminal-caret[^{]*\{([^}]*)\}/.exec(builtCSS(builtPage('')))
+  assert.ok(caret, 'the terminal has no caret rule')
+  const animation = /animation:([^;}]*)/.exec(caret[1])
+  assert.ok(animation, 'the caret has no animation rule')
+  const value = animation[1].trim()
+  assert.ok(!/\binfinite\b/.test(value), `the caret blinks for ever (${value}): a blink past five seconds has to be stoppable, and this one is not (WCAG 2.2.2)`)
+  const seconds = (t) => (t.endsWith('ms') ? Number(t.slice(0, -2)) / 1000 : Number(t.slice(0, -1)))
+  const duration = seconds(/(\d*\.?\d+m?s)\b/.exec(value)[1])
+  const count = Number(/\s(\d+)\s*$/.exec(value)?.[1] ?? 1)
+  assert.ok(duration * count <= 5, `the caret blinks for ${duration * count}s (${value}): five seconds at most (WCAG 2.2.2)`)
+  assert.match(value.replace(/\s+/g, ''), /var\(--terminal-delay\)/, 'the caret starts blinking before its line has arrived, so its blinks are spent on a line nobody can see yet')
+})
 
-  const page = builtPage('how-it-works')
-  const rendered = [...page.matchAll(/data-stage="([^"]*)"/g)].map((m) => m[1])
+test('the transcript says on the page that it is the documented sequence, not a recording', () => {
+  // D184 admits the animation only in this form: the lines are the repository's own, and the
+  // page says what they are. The caption is the whole of that claim, so it is checked as the
+  // claim — a page that dropped it would be showing a transcript as if it were a run.
+  const caption = classText(builtPage(''), 'terminal-caption')
 
+  assert.ok(caption, 'the homepage terminal carries no caption, and D184 admits the run animation only as a labelled sequence rather than a recording (P7, RF11)')
+  assert.match(caption, /documented sequence/i, `the terminal's caption ${JSON.stringify(caption)} does not say the lines are the documented sequence (D184)`)
+  assert.match(caption, /not a recording/i, `the terminal's caption ${JSON.stringify(caption)} does not say the lines are not a recording of a run (D184)`)
+})
+
+test("the flow carries D185's four steps, in order, with the two annotations on the job step", () => {
+  const ruling = d185()
+  assert.equal(ruling.steps.length, 4, `D185's row names ${ruling.steps.length} steps, and the brief draws four (spec item 4, P8)`)
+  assert.equal(ruling.annotations.length, 2, `D185's row names ${ruling.annotations.length} annotations, and the ruling keeps two (P8)`)
+
+  // The homepage's flow sits under the hero, which is where D185 puts it: the picture of a
+  // run above the tagline would be the first thing a reader meets, before anything has said
+  // what Fugaro is. Held as "outside the hero and after it" rather than as an offset in the
+  // page's text: a flow rendered inside the hero — under the terminal, say — starts after the
+  // hero's opening tag too, and is the same defect.
+  const home = parse(builtPage(''))
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  const hero = findAll(home, (el) => el.name === 'section' && classes(el).includes('hero'))[0]
+  const figure = findAll(home, (el) => el.name === 'figure' && classes(el).includes('flow'))[0]
+  assert.ok(hero, 'the homepage has no hero section, and the flow is placed below it (P8, D185)')
+  assert.ok(figure, 'the homepage renders no <figure class="flow">, and the flow is the picture the brief asks for (P8, D185)')
+  let insideHero = false
+  for (let parent = figure.parent; parent; parent = parent.parent) if (parent === hero) insideHero = true
+  assert.ok(
+    !insideHero,
+    'the homepage renders its flow inside the hero section: D185 places the picture of the run below the hero, not within it (P8)',
+  )
+  const order = [...walk(home)]
+  assert.ok(
+    order.indexOf(hero) < order.indexOf(figure),
+    'the homepage renders its flow above the hero: D185 places the picture of the run below the hero (P8)',
+  )
+
+  // Both pages, because the same flow is placed on the homepage as the brief's item 5 "good
+  // images or diagrams that show how the system works" (RF21, D185): a check that read only
+  // How It Works would not notice the homepage losing the picture.
+  for (const route of ['', 'how-it-works']) {
+    const failures = flowFailures(builtPage(route), ruling, captionSources())
+    assert.deepEqual(
+      failures,
+      [],
+      `the ${route === '' ? '/' : `/${route}/`} page's flow is not the one D185 describes:\n  ${failures.join('\n  ')}`,
+    )
+  }
+})
+
+test('the flow refusals fire on the defect each one names', () => {
+  // The cases below are the check's own proof: the fixture page passes, and each fixture
+  // that breaks one rule of the flow makes exactly that rule's line appear. Without them a
+  // check that read no steps at all would pass every page.
+  const ruling = d185()
+  const sources = captionSources()
+  const fixture = (steps) => flowPage(steps)
+  const failing = (steps) => flowFailures(fixture(steps), ruling, sources)
+
+  assert.deepEqual(failing(fixtureSteps()), [], 'the fixture page does not pass the check it is the control for')
+
+  const dropped = fixtureSteps().slice(0, -1)
+  assert.ok(
+    failing(dropped).some((line) => /steps are .*and D185 names/.test(line)),
+    'a step removed from the flow passes the check: the four steps are what the brief draws, and a fifth or a missing one has to fail',
+  )
+
+  const reordered = [...fixtureSteps()]
+  ;[reordered[2], reordered[3]] = [reordered[3], reordered[2]]
+  assert.ok(
+    failing(reordered).some((line) => /steps are .*and D185 names/.test(line)),
+    'two steps swapped pass the check: the order is the run\'s order, and a flow that drew the pull request before the agent describes a run that cannot happen',
+  )
+
+  const paraphrased = fixtureSteps().map((step, i) => (i === 2 ? { ...step, caption: 'The agent works in the container.' } : step))
+  assert.ok(
+    failing(paraphrased).some((line) => /does not appear in README.md/.test(line)),
+    'a caption written for the page passes the check: every caption is a line of the document it cites (Global Constraint 6, RF11)',
+  )
+
+  // The four captions are all lines of the README, so a check that held each one to its
+  // document and no further would let them be shuffled among the steps.
+  const swapped = fixtureSteps().map((step, i) =>
+    i === 0 ? { ...step, caption: fixtureSteps()[3].caption } : i === 3 ? { ...step, caption: fixtureSteps()[0].caption } : step,
+  )
+  assert.ok(
+    failing(swapped).some((line) => /is not the one D185 gives that step/.test(line)),
+    'the first step\'s caption moved to the last step (and the last\'s to the first) passes the check: each is still a line of the README, and the page then says the pull request is where the task is submitted',
+  )
+
+  const misquoted = fixtureSteps().map((step, i) =>
+    i === 1 ? { ...step, annotations: [{ ...step.annotations[0], source: 'docs/design/v1.md' }] } : step,
+  )
+  assert.ok(
+    failing(misquoted).some((line) => /"cache" caption .* does not appear in docs\/design\/v1.md/.test(line)),
+    'an annotation whose caption is not in the document it cites passes the check: the annotation\'s line is quoted like every other caption',
+  )
+
+  // Both annotation captions are quotations from documents the page may cite, so the pair can
+  // be swapped and both still pass a check that reads only their sources.
+  const swappedLines = fixtureSteps().map((step, i) =>
+    i === 1 ? { ...step, annotations: [{ ...step.annotations[0], caption: step.annotations[1].caption, source: 'docs/design/v1.md' }, { ...step.annotations[1], caption: step.annotations[0].caption, source: 'README.md' }] } : step,
+  )
+  assert.ok(
+    failing(swappedLines).some((line) => /is not about the name it carries/.test(line)),
+    'the two annotation captions swapped (with their sources) pass the check: the page then reads "cache — The trust boundary is the container, not the process.", which is not a fact about the caches',
+  )
+
+  const moved = fixtureSteps().map((step, i) =>
+    i === 1 ? { ...step, annotations: [] } : i === 2 ? { ...step, annotations: fixtureSteps()[1].annotations } : step,
+  )
+  assert.ok(
+    failing(moved).some((line) => /annotates .*and D185 puts both annotations on the job step/.test(line)),
+    'the annotations moved off the job step pass the check: D185 keeps them on the step they describe',
+  )
+
+  const renamed = fixtureSteps().map((step, i) => (i === 1 ? { ...step, annotations: [{ ...step.annotations[0], name: 'deps' }, step.annotations[1]] } : step))
+  assert.ok(
+    failing(renamed).some((line) => /annotations are .*and D185 names/.test(line)),
+    'an annotation renamed passes the check: the two names are the ruling\'s, not the page\'s',
+  )
+
+  // The heading a reader sees, which is not the `data-step` this check reads: a page whose
+  // headings said something else entirely would otherwise pass on its attributes alone.
+  const retitled = fixtureSteps().map((step, i) => (i === 2 ? { ...step, heading: 'A container does the work' } : step))
+  assert.ok(
+    failing(retitled).some((line) => /heading reads .*and the step it renders is/.test(line)),
+    'a step heading replaced with a sentence of the page\'s own passes the check: the heading is the name a reader reads',
+  )
+
+  const relabelled = fixtureSteps().map((step, i) =>
+    i === 1 ? { ...step, annotations: [{ ...step.annotations[0], label: 'dependency store' }, step.annotations[1]] } : step,
+  )
+  assert.ok(
+    failing(relabelled).some((line) => /is labelled .*on the page/.test(line)),
+    'an annotation whose visible label drifted from its name passes the check: the label is the name a reader reads',
+  )
+
+  const arrowless = fixtureSteps().map((step, i) => (i === 1 ? { ...step, arrow: false } : step))
+  assert.ok(
+    failing(arrowless).some((line) => /carries 2 arrows between 4 steps/.test(line)),
+    'a step with no arrow after it passes the check: the brief asks for a visual flow, and the arrows are what make it one',
+  )
+
+  // And the reader itself: a page that renders no flow is the failure a check reading
+  // "no steps" would otherwise report as success.
   assert.deepEqual(
-    rendered,
-    names,
-    'the diagram does not carry the spec\'s five stage names, in the spec\'s order, and no sixth (W1.4 step 3)',
+    flowFailures('<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1></main></body></html>', ruling, sources),
+    ['the page renders 0 flows, and it renders one: the flow is the picture of the run (P8, D185)'],
   )
 })
 
-test('the diagram moves on scroll only for a reader who allows motion', () => {
-  const css = builtCSS(builtPage('how-it-works'))
+test('the flow moves on scroll only for a reader who allows motion', () => {
+  // Both pages, because the flow is on both and each page ships the component's CSS.
+  const css = ['', 'how-it-works'].map((route) => builtCSS(builtPage(route))).join('\n')
 
-  // The animation is a scroll-driven one on the stages, and the reduced-motion path is the
-  // diagram itself: a reader whose system asks for less motion gets every stage in place,
-  // because the animation that brings a stage in is inside a guard that never opens for
+  // The animation is a scroll-driven one on the steps, and the reduced-motion path is the
+  // flow itself: a reader whose system asks for less motion gets every step in place,
+  // because the animation that brings a step in is inside a guard that never opens for
   // them. That is why the guard is checked here rather than a fill mode (W1.4 step 3, D105).
   assert.match(
     css,
     /animation-timeline:\s*view\(\)/,
-    'the diagram has no scroll-driven animation, and W1.4 step 3 asks for one that reveals the stages as the reader reaches them',
+    'the flow has no scroll-driven animation, and W1.4 step 3 asks for one that reveals the steps as the reader reaches them',
   )
   assert.match(
     css.replace(/\s+/g, ''),
     /@supports\(animation-timeline:view\(\)\)/,
-    'the scroll-driven animation is not behind a feature query: a browser that cannot run it has to render the diagram as it stands rather than render nothing',
+    'the scroll-driven animation is not behind a feature query: a browser that cannot run it has to render the flow as it stands rather than render nothing',
   )
   assert.match(
     css.replace(/\s+/g, ''),
     /@media\(prefers-reduced-motion:no-preference\)/,
-    'the scroll-driven animation is not behind a preference query, so a reader who asked for less motion would get a diagram that fades in as they scroll it (D105, W1.4 step 3)',
+    'the scroll-driven animation is not behind a preference query, so a reader who asked for less motion would get a flow that fades in as they scroll it (D105, W1.4 step 3)',
   )
 })
 
-test("every caption on the diagram is the repository's own words", () => {
-  const page = builtPage('how-it-works')
-  const sources = {
-    'README.md': readmeSection('How it works'),
-    'docs/design/v1.md': repoFile('docs/design/v1.md'),
+test("every caption in the flow is the repository's own words", () => {
+  const ruling = d185()
+  const sources = captionSources()
+
+  for (const route of ['', 'how-it-works']) {
+    const page = builtPage(route)
+    const where = route === '' ? '/' : `/${route}/`
+    const flow = flowOf(page)
+
+    assert.equal(flow.steps.length, 4, `the ${where} page's flow renders ${flow.steps.length} steps, and D185 names four (P8)`)
+
+    for (const step of flow.steps) {
+      assert.ok(step.caption, `the ${where} page's ${JSON.stringify(step.name)} step carries no caption, and every step has one short line saying what happens there (P8, D185)`)
+      assert.ok(step.source in sources, `the ${where} page's ${JSON.stringify(step.name)} step attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to README.md or to docs/design/v1.md (P8)`)
+      assert.ok(
+        normalize(sources[step.source]).includes(normalize(step.caption)),
+        `the ${where} page's ${JSON.stringify(step.name)} caption ${JSON.stringify(step.caption)} does not appear in ${step.source}: every caption in the flow is the repository's own words rather than the page's (W1.4 step 3, P8, D185)`,
+      )
+    }
+
+    for (const annotation of flow.steps.flatMap((step) => step.annotations)) {
+      assert.ok(
+        annotation.caption && normalize(sources[annotation.source] ?? '').includes(normalize(annotation.caption)),
+        `the ${where} page's ${JSON.stringify(annotation.name)} annotation caption ${JSON.stringify(annotation.caption)} does not appear in ${annotation.source}: an annotation is a label and a quoted line, and the line is the repository's (P8, D185)`,
+      )
+    }
   }
 
-  const stages = [...page.matchAll(/<li[^>]*class="stage"[^>]*>[\s\S]*?<\/li>/g)].map((m) => m[0])
-  assert.equal(stages.length, 5, `the diagram renders ${stages.length} stages, and the spec names five (W1.4 step 3)`)
-
-  for (const stage of stages) {
-    const name = /data-stage="([^"]*)"/.exec(stage)?.[1]
-    const source = /data-source="([^"]*)"/.exec(stage)?.[1]
-    const caption = classText(stage, 'stage-caption')
-
-    assert.ok(caption, `the diagram's ${JSON.stringify(name)} stage carries no caption, and every stage has one sentence saying what happens there (W1.4 step 3)`)
-    assert.ok(source in sources, `the ${JSON.stringify(name)} stage attributes its caption to ${JSON.stringify(source)}, and a caption is held to README.md's "## How it works" or to docs/design/v1.md (W1.4 step 3)`)
+  // One name the README does not use is the page's label for a fact the design states in
+  // other words, and it stays a label: nothing on the page presents it as a line of the
+  // README's "## How it works" (P8, D185).
+  const howItWorks = readmeSection('How it works')
+  for (const label of ruling.annotations) {
+    // A word of its own rather than a substring: the README's step 2 restores "the
+    // dependency caches", and a page that wrote `cache` as though the section said it would
+    // be quoting a word the section does not have.
+    const asWord = new RegExp(`(^|[^a-z])${label}([^a-z]|$)`)
     assert.ok(
-      normalize(sources[source]).includes(normalize(caption)),
-      `the ${JSON.stringify(name)} caption ${JSON.stringify(caption)} does not appear in ${source}: every caption on the diagram is the repository's own words rather than the page's (W1.4 step 3)`,
-    )
-  }
-
-  // The two stage names README.md does not use are the page's map to the README's steps and
-  // not quotations: nothing on the page attributes them to the README (W1.4 step 3).
-  const howItWorks = sources['README.md']
-  for (const label of ['security boundary', 'PR or artifact collected back']) {
-    assert.ok(
-      !howItWorks.includes(label),
-      `README.md's "## How it works" uses the name ${JSON.stringify(label)}, and the page says it does not: the two names the README does not use are labels rather than quotations (W1.4 step 3)`,
+      !asWord.test(howItWorks),
+      `README.md's "## How it works" writes ${JSON.stringify(label)} as a word of its own, and the page keeps it as a label over a quoted caption: the names the README does not use are labels rather than quotations (P8, D185)`,
     )
   }
 })

@@ -23,7 +23,7 @@ func readDB(t *testing.T) (*gcpfake.RTDB, *rtdb.Client) {
 	return f, c
 }
 
-const readPolicy = `{"version": 2, "budget": {"mode": "observe", "per_run_usd": 5}, "allow_repos": ["github/acme/*"]}`
+const readPolicy = `{"version": 3, "budget": {"mode": "observe", "per_run_usd": 5}, "allow_repos": ["github/acme/*"]}`
 
 // The marker is what decides whether this installation can have a policy at
 // all (task 1.3 step 1): absent, or below PolicyRulesVersion, this
@@ -178,8 +178,8 @@ func TestReadRefusesAnUnusableNode(t *testing.T) {
 		"not an object":                     `[1, 2, 3]`,
 		"no version":                        `{"budget": {"mode": "observe"}}`,
 		"a version this code does not know": `{"version": 99}`,
-		"a misspelt budget key":             `{"version": 2, "budget": {"per_run_usdc": 5}}`,
-		"a bad mode":                        `{"version": 2, "budget": {"mode": "enforc"}}`,
+		"a misspelt budget key":             `{"version": 3, "budget": {"per_run_usdc": 5}}`,
+		"a bad mode":                        `{"version": 3, "budget": {"mode": "enforc"}}`,
 	} {
 		f, db := readDB(t)
 		f.Set(PathRulesMarker(), RulesVersion)
@@ -249,7 +249,7 @@ func TestReadRefusesANegativeMarker(t *testing.T) {
 // The keys this Fugaro does not know are tolerated and exposed (Decode's own
 // tolerance must not be silent): the runner logs them, the CLI refuses them.
 func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
-	p, found, err := Decode([]byte(`{"version": 2, "budget": {"mode": "observe"}, "future_key": 1, "another": {"a": 1}}`))
+	p, found, err := Decode([]byte(`{"version": 3, "budget": {"mode": "observe"}, "future_key": 1, "another": {"a": 1}}`))
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want a policy", p, found, err)
 	}
@@ -271,10 +271,10 @@ func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
 // routed by.
 func TestDecodeRefusesARoutingBlockThatNamesNoClaude(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want string }{
-		{"a misspelt claude", `{"version": 2, "routing": {"claud": {"via": "direct"}}}`, `"claud"`},
-		{"a member this release does not route", `{"version": 2, "routing": {"gemini": {"via": "vertex"}}}`, `"gemini"`},
-		{"claude written with no switch", `{"version": 2, "routing": {"claude": null}}`, "routing.claude"},
-		{"a member beside a null claude", `{"version": 2, "routing": {"claude": null, "gemini": {"via": "vertex"}}}`, "routing.claude"},
+		{"a misspelt claude", `{"version": 3, "routing": {"claud": {"via": "direct"}}}`, `"claud"`},
+		{"a member this release does not route", `{"version": 3, "routing": {"gemini": {"via": "vertex"}}}`, `"gemini"`},
+		{"claude written with no switch", `{"version": 3, "routing": {"claude": null}}`, "routing.claude"},
+		{"a member beside a null claude", `{"version": 3, "routing": {"claude": null, "gemini": {"via": "vertex"}}}`, "routing.claude"},
 	} {
 		raw := []byte(tc.raw)
 		p, found, err := Decode(raw)
@@ -292,7 +292,7 @@ func TestDecodeRefusesARoutingBlockThatNamesNoClaude(t *testing.T) {
 	// The other side: a block this Fugaro *can* act on is read, whatever else it
 	// names — the switch is the member named claude, and a sibling a newer
 	// release added is not this Fugaro's to refuse.
-	raw := []byte(`{"version": 2, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}, "routing": {"claude": {"via": "auto", "models": ["claude-sonnet-5-5"], "future_route": "x"}, "gemini": {"via": "vertex"}}}`)
+	raw := []byte(`{"version": 3, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}, "routing": {"claude": {"via": "auto", "models": ["claude-sonnet-5-5"], "future_route": "x"}, "gemini": {"via": "vertex"}}}`)
 	p, found, err := Decode(raw)
 	if err != nil || !found || p == nil || p.Routing == nil || p.Routing.Claude == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want the switch read", p, found, err)
@@ -303,7 +303,7 @@ func TestDecodeRefusesARoutingBlockThatNamesNoClaude(t *testing.T) {
 
 	// An empty block names nothing, and a nil switch is what it says: the same
 	// state as an absent one (D1b), not the refusal above.
-	p, found, err = Decode([]byte(`{"version": 2, "routing": {}}`))
+	p, found, err = Decode([]byte(`{"version": 3, "routing": {}}`))
 	if err != nil || !found || p == nil || p.Routing != nil && p.Routing.Claude != nil {
 		t.Fatalf("an empty routing block = (%v, %v, %v), want it read as no switch", p, found, err)
 	}
@@ -319,11 +319,11 @@ func TestDecodeRefusesARoutingBlockThatNamesNoClaude(t *testing.T) {
 // checked before the block is judged to name no claude at all.
 func TestDecodeRefusesDuplicateOrCaseFoldedRoutingMembers(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want, why string }{
-		{"a case-folded via beside the real one", `{"version": 2, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`, "routing.claude", "reads as one member"},
-		{"via written twice", `{"version": 2, "routing": {"claude": {"via": "openrouter", "via": "direct"}}}`, "routing.claude", "keeps the last one it reads"},
-		{"models spelled in another case", `{"version": 2, "routing": {"claude": {"via": "direct", "MODELS": ["claude-sonnet-5-5"]}}}`, "routing.claude", "spells models as \"MODELS\""},
-		{"claude spelled in another case", `{"version": 2, "routing": {"CLAUDE": {"via": "direct"}}}`, "routing", "spells claude as \"CLAUDE\""},
-		{"a case-folded claude beside the real one", `{"version": 2, "routing": {"claude": {"via": "direct"}, "Claude": {"via": "openrouter"}}}`, "routing", "reads as one member"},
+		{"a case-folded via beside the real one", `{"version": 3, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`, "routing.claude", "reads as one member"},
+		{"via written twice", `{"version": 3, "routing": {"claude": {"via": "openrouter", "via": "direct"}}}`, "routing.claude", "keeps the last one it reads"},
+		{"models spelled in another case", `{"version": 3, "routing": {"claude": {"via": "direct", "MODELS": ["claude-sonnet-5-5"]}}}`, "routing.claude", "spells models as \"MODELS\""},
+		{"claude spelled in another case", `{"version": 3, "routing": {"CLAUDE": {"via": "direct"}}}`, "routing", "spells claude as \"CLAUDE\""},
+		{"a case-folded claude beside the real one", `{"version": 3, "routing": {"claude": {"via": "direct"}, "Claude": {"via": "openrouter"}}}`, "routing", "reads as one member"},
 	} {
 		p, found, err := Decode([]byte(tc.raw))
 		if err == nil || p != nil || !found {
@@ -343,7 +343,7 @@ func TestDecodeRefusesDuplicateOrCaseFoldedRoutingMembers(t *testing.T) {
 	// The other side: a member this Fugaro does not model, spelled once, is not a
 	// name read two ways — it stays tolerated, exactly as it is in the tests
 	// above.
-	if _, found, err := Decode([]byte(`{"version": 2, "routing": {"claude": {"via": "direct", "future_route": "x"}, "gemini": {"via": "vertex"}}}`)); err != nil || !found {
+	if _, found, err := Decode([]byte(`{"version": 3, "routing": {"claude": {"via": "direct", "future_route": "x"}, "gemini": {"via": "vertex"}}}`)); err != nil || !found {
 		t.Errorf("an unmodelled sibling = (found=%v, err=%v), want it read", found, err)
 	}
 }
@@ -351,7 +351,7 @@ func TestDecodeRefusesDuplicateOrCaseFoldedRoutingMembers(t *testing.T) {
 // routing.claude.via is read in phase 1b, and must not accept garbage now.
 func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 	for _, via := range []string{"", "Direct", "openrouter-api", "none"} {
-		raw := []byte(`{"version": 2, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
+		raw := []byte(`{"version": 3, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
 		p, found, err := Decode(raw)
 		if err == nil || p != nil || !found {
 			t.Errorf("via %q: Decode = (%v, %v, %v), want a refusal", via, p, found, err)
@@ -365,7 +365,7 @@ func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 	// refusal this test is about, so the block is carried in both loops where
 	// the via itself is the fault.
 	for _, via := range []string{RouteDirect, RouteOpenRouter, RouteAuto} {
-		raw := []byte(`{"version": 2, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5-5"]}}}`)
+		raw := []byte(`{"version": 3, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5-5"]}}}`)
 		if p, found, err := Decode(raw); err != nil || !found || p == nil || p.Routing.Claude.Via != via {
 			t.Errorf("via %q: Decode = (%v, %v, %v), want it accepted", via, p, found, err)
 		}

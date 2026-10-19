@@ -22,17 +22,19 @@
  */
 
 /* The palette in force. D104 was answered on 2026-10-16 with palette C — violet for
- * structure and links, orange for warnings and cost — so `palette-split.css` is the file
- * imported, and `palette-violet.css` and `palette-orange.css` ship beside it as the two
- * documented alternatives the owner chose between. The import is the whole of the
- * selection: `website/test/a11y.mjs` asserts that exactly one palette is imported, that it
- * is this one, and that the other two are complete value sets for the same vocabulary, so
+ * structure and links, orange for warnings and cost — and the redesign moved the accent to
+ * the logo's own hue on 2026-10-18 (D180, `docs/website/redesign/reconciliation.md` §5), so
+ * `palette-logo.css` is the file imported. `palette-split.css` — the record of D104's
+ * choice — and `palette-violet.css` and `palette-orange.css`, the two candidates the owner
+ * chose between, all ship beside it. The import is the whole of the selection:
+ * `website/test/a11y.mjs` asserts that exactly one palette is imported, that it is this
+ * one, and that the other three are complete value sets for the same vocabulary, so
  * changing the palette is this line and nothing else (the plan's step 4).
  *
  * It is an `@import` and not a `site.yaml` key on purpose: a palette is a stylesheet, the
- * bundler resolves it at build time, and a value that decided which of three files the
+ * bundler resolves it at build time, and a value that decided which of four files the
  * build reads would be a fact about the build rather than about the site's text. */
-@import "./palette-split.css";
+@import "./palette-logo.css";
 
 :root {
   /* ---- spacing: a 4px-based scale, so a gap is a step and not a number ---- */

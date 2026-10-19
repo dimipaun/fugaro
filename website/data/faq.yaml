@@ -22,6 +22,13 @@
 #             provenance) and the security page (which renders SECURITY.md, byte for byte
 #             below its title -- a security claim is never paraphrased, F41, D99).
 #
+# **The redesign's cut (P4).** Every answer was 40-75 words and the page was 493; D188
+# gives a page 250 words and its lead 40, so each answer is now one or two sentences and the
+# lede no longer explains that the answers were not written here (D186). Nothing was dropped
+# that a reader acts on: the file each answer names is still the file the page links, and the
+# two answers whose detail lives elsewhere still link it. What went is the second sentence of
+# every answer -- the one that said the same thing again, more carefully.
+#
 # The questions are the six W1.10 step 1 fixes, and they are deliberately the six the
 # repository can answer: what Fugaro is, where the code runs, what a run costs and what
 # stops it, what a failed run leaves behind, what a run can never change, and what the
@@ -39,31 +46,22 @@ questions:
     question: What is Fugaro?
     answer: >-
       A fleet of ephemeral cloud workers for coding agents: one task, one container, one
-      pull request, then gone. Each task gets its own throwaway container in your own cloud
-      project, and the container does not survive the run -- the run record and the pull
-      request are what remain. It is not an agent in your editor: your machine runs the CLI,
-      Terraform and your own agent, and the run's agent is in the cloud.
+      pull request, then gone. The container does not survive the run.
     source: README.md
 
   - id: where-it-runs
     question: Where does the code run?
     answer: >-
       In your own Google Cloud project, not on a service of ours: each task is one Cloud Run
-      job execution, started from the image of the repository's workflow, with a task
-      timeout and no retries. Cache and task objects live in Cloud Storage, each
-      repository's secrets in Secret Manager and each repository's image in Cloud Build.
-      Google Cloud is the first backend; AWS and Azure are wanted and not built.
+      job execution. AWS and Azure are not built.
     source: README.md
 
   - id: cost-and-caps
     question: What does a run cost, and what stops it?
     answer: >-
       By default each stage passes Claude Code a dollar limit (agent.max_budget_usd, 25),
-      and when the budget is on with an API key the gateway prices every call and halts the
-      run at its cap; kill switches stop running runs within seconds. Caps guard against
-      mistakes and expensive tasks rather than against a hostile agent, so the caps-and-costs
-      page carries the figures, the sample they were drawn from and the provenance behind
-      each one.
+      and kill switches stop running runs within seconds. The caps-and-costs page carries
+      the figures.
     source: README.md
     more_label: Caps and costs
     more_href: /caps-and-costs/
@@ -71,27 +69,23 @@ questions:
   - id: a-failed-run
     question: What does a failed run leave behind?
     answer: >-
-      A pull request. The draft that opens at the first push is still there when a run
-      fails -- marked not verified -- with the diff, the report and the logs, and Fugaro
-      never merges it: protect the base branch, because a required review is what stops a
-      merge.
+      A pull request, marked not verified, with the diff, the report and the logs. Fugaro
+      never merges it: protect the base branch.
     source: README.md
 
   - id: workflow-files
     question: What can a run never change?
     answer: >-
       Your workflow files. On GitHub the App holds four repository permissions -- Contents,
-      Pull requests, Issues and Metadata -- and never Workflows, so a push that changed
-      .github/workflows/ is refused by GitHub itself; a run's token is for one repository.
-      There is no equivalent guard for Bitbucket pipelines.
+      Pull requests, Issues and Metadata -- and never Workflows. Bitbucket has no equivalent
+      guard.
     source: README.md
 
   - id: security-limits
     question: What does the security model not promise?
     answer: >-
-      This page does not summarize it. The security model states its own limits, residual
-      risks included, and the security page renders that document rather than a paraphrase
-      of it -- because a security claim restated is a security claim altered.
+      Not summarized here: the security model states its own limits, residual risks
+      included, and the security page renders it.
     source: SECURITY.md
     more_label: The security page
     more_href: /security/

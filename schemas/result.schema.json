@@ -19,6 +19,7 @@
     "reason": { "type": "string" },
     "branch": { "type": "string" },
     "base_branch": { "type": "string", "minLength": 1, "description": "The base the run's pull request targets: git.base_branch of the config it ran with. A follow-up takes it as its ref." },
+    "start_sha": { "type": "string", "description": "The commit the run's branch was cut from (the task's ref as bootstrap read it), which is the base every question of what this run changed is measured against. A follow-up records it as follow_up.start_sha instead; a mode: review run has no branch." },
     "head_sha": { "type": "string" },
     "pr": {
       "type": "object",
@@ -308,6 +309,17 @@
             }]
           }
         }
+      }
+    },
+    "changed_files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paths", "total"],
+      "description": "The paths the run changed, as the run itself recorded them at finalize (console v2 design D27, F17). Paths only: no contents, no diff, no commit message, no line counts. Bounded, with the truncation recorded rather than hidden. Absent for a run that recorded none — one that died before finalize, or whose git read failed — and absent means 'no record of what this run changed', never 'it changed nothing'.",
+      "properties": {
+        "paths": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "The paths, sorted as git listed them, at most 200 of them (runstore.MaxChangedFiles). Never null: an empty array is a run that changed no path, which is a different fact from the field being absent." },
+        "total": { "type": "integer", "minimum": 0, "description": "How many paths the run really changed, so a truncated record still says how big the set it is part of was." },
+        "truncated": { "type": "boolean", "description": "Set only when paths is shorter than total, which happens at 200 paths or 16 KiB of path (runstore.MaxChangedPathBytes), whichever comes first: the stored set is then not the whole set." }
       }
     }
   }

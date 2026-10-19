@@ -48,7 +48,7 @@ func TestRunnerReadsPolicyWhenTheNodeExists(t *testing.T) {
 	// $0.09. Each call on sonnet costs $0.04, and the third is refused before
 	// it is made: what is left of the cap does not cover it.
 	b := policyRun(t, gwConfig(t, ""), "off", "",
-		`{"version":2,"budget":{"mode":"enforce","per_run_usd":0.09}}`, capScript(3)...)
+		`{"version":3,"budget":{"mode":"enforce","per_run_usd":0.09}}`, capScript(3)...)
 	var st []int
 	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
 	if err != nil {
@@ -98,7 +98,7 @@ func TestRunnerUsesEnvCeilingWhenTheNodeIsAbsent(t *testing.T) {
 // and the installation runs as it always has (a node is published only with the
 // marker, and the deploy that publishes it grants the read).
 func TestRunnerWithoutTheMarkerTreatsADeniedReadAsLegacy(t *testing.T) {
-	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
 	// The pre-policy rules deny the node as they deny everything under
 	// config/policy: the read is the same read, and only the marker tells the
 	// two situations apart.
@@ -124,7 +124,7 @@ func TestRunnerWithoutTheMarkerTreatsADeniedReadAsLegacy(t *testing.T) {
 // marker). Falling back to the environment ceiling here would run outside the
 // policy the owner published.
 func TestRunnerHaltsOnADeniedReadWhenTheMarkerExists(t *testing.T) {
-	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
 	b.db.DenyRead(projectpolicy.PathShared())
 	rec, err := b.run(t, implement("feature"))
 	if err == nil {
@@ -235,7 +235,7 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 // project has published no policy" and go on with the environment ceiling while
 // the launcher minted a token precisely because a policy exists.
 func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
-	const policy = `{"version":2,"budget":{"mode":"enforce","per_run_usd":0.09}}`
+	const policy = `{"version":3,"budget":{"mode":"enforce","per_run_usd":0.09}}`
 	t.Run("mode off", func(t *testing.T) {
 		b := policyRun(t, gwConfig(t, ""), "off", "50", policy, capScript(3)...)
 		b.deps.Backend.TokenMarked = true
@@ -342,6 +342,43 @@ func TestRunnerWithNoBackendAndAnUnreadableBucketStops(t *testing.T) {
 	}
 	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 		t.Fatalf("the run went on: calls = %d, rec = %+v", len(b.agent.calls), rec)
+	}
+}
+
+// The other half of that refusal, and the one the bucket read can get wrong: a
+// budget-on run whose read of the token object is *refused* (403, which GCS
+// answers a job account with no grant on tokens/ — a job not re-applied since
+// the shared budget was turned on, the same re-apply that adds the grant) must
+// stop, exactly as one whose object is missing does. gocloud reports the
+// refusal as the same NotFound a missing object gets, so a presence check that
+// is not strict answers "no token object" and lets the run go on with no
+// session, no cap and no kill switch — the fail-open state refuseStrayToken
+// exists to close. The bucket here is a fake that answers the read with a 403,
+// and the object is there: the refusal, not the absence, is what stops the run.
+func TestRunnerWithARefusedTokenReadRefuses(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "off", "")
+	gcs := gcpfake.NewGCS(t)
+	gcs.AddBucket("runs", 1, nil)
+	g.deps.Bucket = gcs.Bucket(t, "runs")
+	key := token.ObjectKey(repoSlug, runID)
+	gcs.Put("runs", key, []byte("sealed")) // the launcher's object, which this job may not read
+	gcs.FailObjectGetsAfter("runs", key, 0)
+	g.deps.Spend = runner.Spend{Mode: "enforce"} // budget on
+	g.deps.Backend = runner.Backend{}            // and no backend in the job's environment
+	rec, err := g.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a refused read of the token object must stop the run: rec = %+v", rec)
+	}
+	if !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), "tokens/") {
+		t.Fatalf("err = %v, want the refusal the refused read makes", err)
+	}
+	// The cure, as the marker's refusal names it: the re-apply that writes the
+	// tokens/ grant this read was refused for.
+	if !strings.Contains(err.Error(), "fugaro init --repo") {
+		t.Errorf("the refusal does not name the operator's cure: %v", err)
+	}
+	if len(g.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("the run went on: calls = %d, rec = %+v", len(g.agent.calls), rec)
 	}
 }
 
@@ -466,7 +503,7 @@ func TestRunnerHaltsWhenTheExchangeFails(t *testing.T) {
 // session's own first calls until the grace runs out, and then a halt — never a
 // silent legacy path.
 func TestRunnerHaltsWhenTheMarkerReadFails(t *testing.T) {
-	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2}`, capScript(3)...)
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3}`, capScript(3)...)
 	b.db.RefusePath("policyRules", 503, "UNAVAILABLE", "", "down")
 	rec, err := b.run(t, implement("feature"))
 	if err != nil {
@@ -503,7 +540,7 @@ func TestPolicyReadErrorHaltsTheRun(t *testing.T) {
 // UnknownKeys; the CLI refuses them, task 1.6).
 func TestPolicyParseErrorHaltsTheRun(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50",
-		`{"version":2,"budget":{"mode":"enforce","per_run_usdc":5}}`, capScript(3)...)
+		`{"version":3,"budget":{"mode":"enforce","per_run_usdc":5}}`, capScript(3)...)
 	rec, err := b.run(t, implement("feature"))
 	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) {
 		t.Fatalf("a misspelt budget key must stop the run: err = %v, rec = %+v", err, rec)
@@ -523,7 +560,7 @@ func TestPolicyParseErrorHaltsTheRun(t *testing.T) {
 // that profile.
 func TestPolicyWithAClaudeOAuthTokenProfileHaltsTheRun(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50",
-		`{"version":2,"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["claude-oauth-token"]}}}`, capScript(3)...)
+		`{"version":3,"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["claude-oauth-token"]}}}`, capScript(3)...)
 	rec, err := b.run(t, implement("feature"))
 	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) || !strings.Contains(err.Error(), "person-owned") {
 		t.Fatalf("a profile mounting the reserved claude-oauth-token must stop the run naming the node: err = %v, rec = %+v", err, rec)
@@ -538,7 +575,7 @@ func TestPolicyWithAClaudeOAuthTokenProfileHaltsTheRun(t *testing.T) {
 // the last word on a misspelling is the CLI's (task 1.6).
 func TestPolicyUnknownKeyIsLoggedAndRuns(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50",
-		`{"version":2,"budget":{"mode":"enforce","per_run_usd":5},"allow_repo":["acme/*"]}`, capScript(1)...)
+		`{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"allow_repo":["acme/*"]}`, capScript(1)...)
 	rec, err := b.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("an unknown top-level key stopped the run: rec = %+v, err = %v", rec, err)
@@ -598,7 +635,7 @@ func TestPolicyOlderVersionHaltsTheRunWithThePublishRemedy(t *testing.T) {
 // user's node, named as itself — never read as "no marker", which would make a
 // project-centric installation a legacy one.
 func TestPolicyNonIntegerMarkerHaltsTheRun(t *testing.T) {
-	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2,"budget":{"mode":"enforce"}}`, capScript(3)...)
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce"}}`, capScript(3)...)
 	b.db.Set(projectpolicy.PathRulesMarker(), "one")
 	rec, err := b.run(t, implement("feature"))
 	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathRulesMarker()) || !strings.Contains(err.Error(), "one") {
@@ -609,17 +646,21 @@ func TestPolicyNonIntegerMarkerHaltsTheRun(t *testing.T) {
 	}
 }
 
-// The single token take (finding 2): the policy read and the session share one
-// TakeObject, because the call deletes the object as it reads it. A second take
-// inside the run would find nothing and stop it, so a run that finishes — with
-// a policy published, so that both readers use the identity — is the assertion.
-// The exchange itself happens twice (once for the client the policy is read
-// with, once in budget.Open), with the same custom token and the same claims.
+// One take, one identity: the policy read and the session share a single
+// TakeObject — the custom token is read out of the bucket once and held in
+// memory — so a run with a policy published finishes with the policy in effect
+// and two exchanges made (one for the client the policy is read with, one in
+// budget.Open). The take removes nothing: the job's grant on tokens/ is
+// read-only (D16), so the object is still in the bucket when the run ends, and
+// that is what the assertion below says. Consume-once does not rest on the
+// object being gone — it rests on the seal's key, which the launcher delivers
+// to the one execution it starts — so a leftover object stays readable for the
+// lifecycle window and gives a second reader nothing.
 func TestTokenIsTakenOnce(t *testing.T) {
-	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(1)...)
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(1)...)
 	rec, err := b.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v: the run could not take the token twice", rec, err)
+		t.Fatalf("rec = %+v, err = %v: the run with a published policy did not finish", rec, err)
 	}
 	if s := sourceOf(t, rec, "mode"); s != "policy" {
 		t.Fatalf("mode source = %q: the policy was not read", s)
@@ -637,7 +678,7 @@ func TestTokenIsTakenOnce(t *testing.T) {
 // the record says the policy set the value and that the other was ignored.
 func TestPolicyCannotLoosenTheBranchLayer(t *testing.T) {
 	b := policyRun(t, gwConfig(t, "")+"budget:\n  per_run_usd: 1000\n", "enforce", "50",
-		`{"version":2,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
+		`{"version":3,"budget":{"mode":"enforce","per_run_usd":0.05}}`, capScript(3)...)
 	b.deps.Project = "aurora"
 	var st []int
 	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
@@ -658,7 +699,7 @@ func TestPolicyPricesReplaceTheEnvOverrides(t *testing.T) {
 	// The environment prices sonnet's output at $100/M; the policy at $10/M.
 	// One 4,000-token reply is $0.40 or $0.04.
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50",
-		`{"version":2,"budget":{"mode":"enforce","per_run_usd":5},"model_prices":{"`+sonnet+`":{"input_per_m":20,"output_per_m":10}}}`,
+		`{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"model_prices":{"`+sonnet+`":{"input_per_m":20,"output_per_m":10}}}`,
 		capScript(1)...)
 	b.deps.Spend = ceilingOf(t, runner.ModelPricesEnv, `{"`+sonnet+`":{"input_per_m":20,"output_per_m":100}}`)
 	rec, err := b.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}), review("ship", 0))
@@ -681,7 +722,7 @@ func TestPolicyPricesReplaceTheEnvOverrides(t *testing.T) {
 func TestPolicyPricesKeepTheJobsRoutes(t *testing.T) {
 	use := pricing.Usage{Input: 1000, Output: 500}
 	b := policyRun(t, providerPinned(t), "enforce", "50",
-		`{"version":2,"budget":{"mode":"enforce","per_run_usd":5},"model_prices":{"`+sonnet+`":{"input_per_m":1,"output_per_m":2}}}`)
+		`{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"model_prices":{"`+sonnet+`":{"input_per_m":1,"output_per_m":2}}}`)
 	wireProviders(t, b.gw, []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
 	var status int
 	var body string
@@ -705,7 +746,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 	// The global kill switch is the environment ceiling's own limit, read by
 	// the session the environment's mode opens: a policy that dropped the mode
 	// to off would drop the switch with it.
-	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2,"allow_repos":["github/acme/*"]}`, capScript(3)...)
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"allow_repos":["github/acme/*"]}`, capScript(3)...)
 	b.db.Set(budget.PathKillGlobal, killSwitch(true))
 	rec, err := b.run(t) // no stage may run
 	if err != nil {
@@ -718,7 +759,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 	// The same node over the environment's own cap: the cap is the run's, so
 	// the third call is refused at it. One 4,000-token reply on sonnet costs
 	// about $0.04.
-	b = policyRun(t, gwConfig(t, ""), "enforce", "0.09", `{"version":2,"allow_repos":["github/acme/*"]}`, capScript(3)...)
+	b = policyRun(t, gwConfig(t, ""), "enforce", "0.09", `{"version":3,"allow_repos":["github/acme/*"]}`, capScript(3)...)
 	var st []int
 	rec, err = b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || !strings.Contains(rec.Halt.Detail, "0.09") {
@@ -739,7 +780,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 	// review of PR #379: dropping the job's list whenever the node was silent
 	// about it passed every test). A node that does not mention allowed_models
 	// leaves the job's list in force: the coder is still off it.
-	b = policyRun(t, gwConfig(t, ""), "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`, capScript(3)...)
+	b = policyRun(t, gwConfig(t, ""), "off", "", `{"version":3,"allow_repos":["github/acme/*"]}`, capScript(3)...)
 	b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, haiku)
 	rec, err = b.run(t) // no agent step may run
 	if err == nil || rec.Status != runstore.StatusInfraError ||
@@ -753,7 +794,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 	// alone and the node allows haiku and sonnet, so the run the job's own
 	// list would have refused goes through.
 	b = policyRun(t, gwConfig(t, ""), "off", "",
-		`{"version":2,"budget":{"mode":"off","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
+		`{"version":3,"budget":{"mode":"off","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
 	b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, haiku)
 	rec, err = b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
@@ -771,7 +812,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 func TestPolicyModeReplacesTheEnvMode(t *testing.T) {
 	// The environment enforces with a $50 cap; the policy observes. Every
 	// call is accounted and none is refused: the $50 ceiling is the job's.
-	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2,"budget":{"mode":"observe"}}`, capScript(3)...)
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"observe"}}`, capScript(3)...)
 	var st []int
 	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
@@ -798,7 +839,7 @@ func TestPolicyBudgetSetsTheKeysItNames(t *testing.T) {
 	// The environment caps a run at 1,000 tokens; the node caps it at $5 and
 	// names the mode. The token ceiling is the environment's, so the run halts
 	// on it rather than on the policy's cap.
-	b := policyRun(t, gwConfig(t, ""), "off", "", `{"version":2,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(3)...)
+	b := policyRun(t, gwConfig(t, ""), "off", "", `{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(3)...)
 	b.deps.Spend = ceilingOf(t, runner.MaxRunTokensEnv, "1000")
 	rec, err := b.run(t, big(implement("feature"), 1200))
 	tokenHalt(t, rec, err, "run used 1200 tokens of 1000")
@@ -824,7 +865,7 @@ func TestPolicyBudgetSetsTheKeysItNames(t *testing.T) {
 // #379): it is the half that tells the operator how to publish the node, and
 // the half the second guard cannot produce on its own.
 func TestPolicyBudgetWithoutAModeHaltsTheRun(t *testing.T) {
-	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2,"budget":{"per_run_usd":0.05}}`, capScript(3)...)
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"per_run_usd":0.05}}`, capScript(3)...)
 	rec, err := b.run(t, implement("feature"))
 	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) {
 		t.Fatalf("a budget block with no mode must stop the run: err = %v, rec = %+v", err, rec)
@@ -847,7 +888,7 @@ func TestPolicyBudgetWithoutAModeHaltsTheRun(t *testing.T) {
 func TestPolicyProviderKeyIsRefusedWithoutEchoingIt(t *testing.T) {
 	const key = "sk-or-v1-leakme0123456789abcdef"
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50",
-		`{"version":2,"allow_repos":["github/acme/*"],"providers":{"openrouter":{"kind":"anthropic-compat",`+
+		`{"version":3,"allow_repos":["github/acme/*"],"providers":{"openrouter":{"kind":"anthropic-compat",`+
 			`"base_url":"https://openrouter.ai/api/v1","auth":"bearer","secret":"`+key+`","models":["deepseek/*"]}}}`, capScript(1)...)
 	rec, err := b.run(t, implement("feature"))
 	if err == nil || !strings.Contains(err.Error(), "secret") {

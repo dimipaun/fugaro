@@ -8,6 +8,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The deployer account of D75: the identity a managed apply runs as, the one
@@ -119,38 +120,38 @@ func Deployer(ctx context.Context, gcpProject string, access Access, imp Imperso
 	case gcpProject == "":
 		return fmt.Errorf("%w: no GCP project, so nothing names the project the deployer account is in", ErrNoDeployerAccount)
 	case access == nil || imp == nil:
-		return fmt.Errorf("%w: nothing resolves the deployer account of %s", ErrNoDeployerAccount, gcpProject)
+		return fmt.Errorf("%w: nothing resolves the deployer account of %s", ErrNoDeployerAccount, safetext.Field(gcpProject))
 	case work == nil:
-		return fmt.Errorf("%w: no work to run as the deployer of %s", ErrImpersonationFailed, gcpProject)
+		return fmt.Errorf("%w: no work to run as the deployer of %s", ErrImpersonationFailed, safetext.Field(gcpProject))
 	}
 	account := DeployerAccount(gcpProject)
 	ok, err := access.Exists(ctx, account)
 	switch {
 	case err != nil:
-		return fmt.Errorf("%w: reading whether %s exists in %s: %w", ErrNoDeployerAccount, account, gcpProject, err)
+		return fmt.Errorf("%w: reading whether %s exists in %s: %w", ErrNoDeployerAccount, safetext.Field(account), safetext.Field(gcpProject), safetext.FieldErr(err))
 	case !ok:
 		return fmt.Errorf("%w: %s does not exist in %s — the owner-run creating apply creates it, and a managed apply with no deployer account is refused rather than run as you",
-			ErrNoDeployerAccount, account, gcpProject)
+			ErrNoDeployerAccount, safetext.Field(account), safetext.Field(gcpProject))
 	}
 	self := imp.Self()
 	granted, err := access.TokenCreator(ctx, account, self)
 	switch {
 	case err != nil:
-		return fmt.Errorf("%w: reading %s's IAM policy for %s: %w", ErrNoImpersonationGrant, account, self, err)
+		return fmt.Errorf("%w: reading %s's IAM policy for %s: %w", ErrNoImpersonationGrant, safetext.Field(account), safetext.Field(self), safetext.FieldErr(err))
 	case !granted:
 		return fmt.Errorf("%w: %s does not hold roles/iam.serviceAccountTokenCreator on %s — the owner-run creating apply grants it to var.operators, and a managed apply that cannot assume the account is refused rather than run as %s",
-			ErrNoImpersonationGrant, self, account, self)
+			ErrNoImpersonationGrant, safetext.Field(self), safetext.Field(account), safetext.Field(self))
 	}
 	cred, err := imp.Impersonate(ctx, account)
 	if err != nil {
-		return fmt.Errorf("%w: assuming %s as %s: %w", ErrImpersonationFailed, account, self, err)
+		return fmt.Errorf("%w: assuming %s as %s: %w", ErrImpersonationFailed, safetext.Field(account), safetext.Field(self), safetext.FieldErr(err))
 	}
 	if cred == nil {
-		return fmt.Errorf("%w: assuming %s as %s returned no credential", ErrImpersonationFailed, account, self)
+		return fmt.Errorf("%w: assuming %s as %s returned no credential", ErrImpersonationFailed, safetext.Field(account), safetext.Field(self))
 	}
 	if got := cred.Account(); got != account {
 		return fmt.Errorf("%w: the credential is for %s, not for %s — an apply runs as the deployer account of %s or it does not run",
-			ErrImpersonationFailed, got, account, gcpProject)
+			ErrImpersonationFailed, safetext.Field(got), safetext.Field(account), safetext.Field(gcpProject))
 	}
 	return work(ctx, cred)
 }

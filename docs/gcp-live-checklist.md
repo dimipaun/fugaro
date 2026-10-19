@@ -308,6 +308,21 @@ work holds 80–89 carved out of that range** (`docs/mobile/README.md`, owner
 allocation of 2026-10-16): neither is derived from a grep of the free numbers,
 and a reserved number is never reused or renumbered.
 
+**Check 70 is the website redesign's, proposed as 70a–70c**
+(`docs/website/redesign/implementation-plan.md` §4 and §8, written by its parts P3,
+P5 and P6), in the same sub-lettering convention. **70a** (the mobile header on one
+row, the drawer by keyboard) is written below by **P3** and **70c** (the copy
+control in a real browser, with a real clipboard) by **P6**; **70b** (the gist above
+the fold) is **P5**'s and is not in this file yet, so its absence is not a gap in
+the numbering — the shape 69a–69c arrived in. The number was free when P3 and P6
+merged: the highest written `## Check N` section here was **69b**, the website work
+holds 69 and up, and no document in the tree wrote `70` (the redesign plan checked
+that on 2026-10-18). The redesign's §8 proposes this block for the owner to confirm
+with `D180`–`D192` in `docs/website/redesign/reconciliation.md` §9, and the parts
+write their checks rather than waiting on the confirmation because a live check is
+what the owner runs: if the owner allocates differently, these sections renumber
+and the citations follow the allocation, never the other way round.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -469,7 +484,9 @@ probe account carries predefined grants only).
 | 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
 
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no console download link (`features.console_downloads` is false) and no video player (`features.video` is false) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; and the greps for a download link, a player and an unshipped platform printing nothing. **USER-RUN, NOT RUN.** |
-| 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Firebase Analytics behind the consent banner, so `analytics.enabled` is false until W3.2 and today's pass is that no analytics request appears at all) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
+| 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
+| 70a | The mobile header fits one row (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182, RF3): at **390 × 844** the header is **one row** — the wordmark and the menu toggle, with nothing wrapped under them and no sideways scroll — the drawer opens and closes **by keyboard**, Escape and a click outside close it, the focus goes back to the control that opened it, and the menu reaches every link with **JavaScript disabled** | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at 390 × 844 is one row's (about 56 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than 390, the toggle is focusable and opens the panel, Escape closes it and returns the focus, every link in the three groups is reachable and follows with JavaScript off, and at 1280 × 900 the menu is **visible**: the three groups in the header's one row as the three dropdowns D182 asks for, with no `Menu` toggle and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
+| 70c | Every copy control copies its own command (redesign plan §3, part P6; D183, RF13): on the built or deployed site **each kind of control** — the hero's install blocks, Getting Started's code blocks, the docs hub's rendered reference, the caps guide's usage lines and the terminal's own line — puts **that command** on a real clipboard, **by mouse and by keyboard**, the "Copied" state is announced politely and clears itself, and **nothing is shown with JavaScript off** | See "Check 70c" below; run by you, in a browser, against the **built artifact** or the deployed site — read-only, no cloud project touched, and **No agent runs any step of it** | Each control's clipboard content equals the command it sits on and nothing else — no `$` prompt, no caret, no neighbouring line, no page furniture — the copied state appears, is announced and clears, the keyboard reaches every control and the focus ring is visible on it, and with JavaScript disabled every command is still on the page with **no button rendered at all**. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -4203,9 +4220,11 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 
 1. **Every request's host, in the panel.** Read the panel's host column (group the requests by domain, or write the list down). **FACT:** the host list per page — or "only the canonical host" when that is all it holds.
 
-2. **The consent gate (D93).** Analytics is Firebase Analytics behind W1.12's consent banner, and `analytics.enabled` is **false** in `website/data/site.yaml` until W3.2 turns it on — so today's pass is that **no request to the analytics origin appears at all**, before or after the banner is accepted. Once W3.2 has turned it on, the same panel must show **no request to that origin before consent**, and **exactly that one origin and no other third party after it**; declining the banner must leave it absent, and the choice must survive a reload (W1.12's own tests cover the gate itself). **FACT:** the requests' origins with the banner's state at each point — before accepting, after accepting, after declining, and after a reload — and, when analytics is on, the one origin's requests and nothing beside it.
+2. **The consent gate (D93, W3.2).** Analytics is **Google Analytics 4** behind W1.12's consent banner, and **W3.2 has turned it on**: `analytics.enabled` is `true` in `website/data/site.yaml` and it carries the measurement id the site reports to (a `G-` id, which is a public identifier rather than a secret). So the panel must show **no request to the analytics origin before consent** and **exactly that one origin and no other third party after it**; declining the banner must leave it absent, and the choice must survive a reload (W1.12's own tests cover the gate itself, and `website/test/consent.mjs` runs the site's own script to check the request it builds). The one origin is `https://www.googletagmanager.com` — the `gtag/js` script the gate appends — and the requests that follow it go to the origins of `firebase.json`'s `connect-src` and `img-src` (Google's documented minimum for GA4 without the Advertising features), which are the only hosts the deployed policy admits beside the canonical one. Three more, from W3.2's review: open a page with `?probe=1#frag` in its address, accept, and read the collect request's `dl` and `dr` parameters — they carry the path with **no query and no fragment**; then, on `/privacy/`, decline after accepting, and the panel shows **no further collect request from that page** (Google's `ga-disable-<id>` flag is set); and in the GA4 property's admin, **Enhanced measurement is off** (or reduced to page views) and **Google signals is off**, because the site's code asks for page views only but enhanced-measurement events (scrolls, outbound clicks, downloads) are a property setting the code cannot turn off. **FACT:** the requests' origins with the banner's state at each point — before accepting, after accepting, after declining, and after a reload — the one origin's requests and nothing beside it, the `dl`/`dr` values seen, whether any collect request followed the withdrawal, and the two admin settings.
 
-3. **The page's own head, read as bytes.** The same three pages, fetched, so the check does not rest on the panel's grouping:
+3. **The cookies a withdrawal deletes (owner's ruling of 2026-10-18).** Still on `/privacy/`, and still in the same browser: open the developer tools' **Application** (Chrome/Edge) or **Storage** (Firefox/Safari) panel, **Cookies**, and the site's own origin. Accept analytics, reload, and read the list: it holds the tag's first-party cookies — `_ga`, `_ga_<container id>` (the measurement id from `website/data/site.yaml` without its `G-` prefix), `_gid`, and a `_gat` or `_gat_gtag_<id>` — each at **Path `/`** on the page's own host. Write their names down, and **only their names**: a cookie's value is an identifier and is never pasted anywhere. Then press **Decline** in the banner on that page and read the list again. **FACT:** the cookie names and their Path/Domain before the withdrawal, and whether **every one of the tag's cookies is gone** after it — on the host, and, where a cookie was set on a parent domain (`Domain` naming a registrable parent rather than the host), whether that copy went too. **The production host is the apex `fugaro.dev`, which has no parent domain**, so on the live site the host-scope deletion is the whole of it; a preview channel on a `*.web.app` host is a two-label host under a public suffix, where `site.js` derives a parent the browser refuses to write to and the host-scope deletion still applies. This is the step no hermetic test can take: `website/test/consent.mjs` runs the site's own file against a stub jar, which settles what the code asks a browser to do and not what the browser does with it. **The fix, if a cookie survives, is a bug in `site.js`'s deletion** (its `Path=/`, its host/parent attempts) and never an instruction to the visitor to clear their own cookies.
+
+4. **The page's own head, read as bytes.** The same three pages, fetched, so the check does not rest on the panel's grouping:
 
    ```bash
    for p in / /faq /docs/; do
@@ -4216,8 +4235,203 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 
    **FACT:** every absolute URL the deployed markup carries, and its host. An origin that is not on the list is a failure here even if the panel did not show it because the browser had it cached.
 
-**Passes when:** the panel (steps 1 and 2) and the markup (step 3) hold no origin outside `allowed_hosts` — no font from another origin, no CDN script, no embed, no tracking pixel — and no request to the analytics origin before consent, with `analytics.enabled` false meaning no such request at all.
+**Passes when:** the panel (steps 1 and 2) and the markup (step 4) hold no origin outside `allowed_hosts` — no font from another origin, no CDN script, no embed, no tracking pixel — **and no request to the analytics origin before consent**, with the one admitted origin appearing after an accept and nothing beside it; declining leaves it absent, and the page source (step 4) carries no absolute URL to it either, because the gate is code in the site's own file rather than a tag in the markup. **And the withdrawal leaves nothing of the tag's behind** (step 3): after declining on `/privacy/`, none of `_ga`, `_ga_<container id>`, `_gid` or the `_gat`/`_gat_*` names is in the browser's cookie list for the site's origin (owner's ruling of 2026-10-18).
 
-**Fails when:** any request or any markup URL names a host that is not on the list, or an analytics request appears before consent (or after the banner is declined). What failing looks like: a font or a script someone added from a CDN for one page; a `preconnect` left in a layout; an analytics loader that runs on load instead of after consent — the last is W1.12's rule as well as this check's, so it is a bug in the loader's tests too. **The fix is never "add the host to `allowed_hosts`"**: that list is what the site's build refuses links to, and the CSP in `firebase.json` (`default-src 'self'`, `script-src 'self'`) is what the browser enforces, so a new origin is a decision about the site's privacy page taken by the task that wants it.
+**Fails when:** any request or any markup URL names a host that is not on the list, or an analytics request appears before consent (or after the banner is declined). What failing looks like: a font or a script someone added from a CDN for one page; a `preconnect` left in a layout; an analytics loader that runs on load instead of after consent — the last is W1.12's rule as well as this check's, so it is a bug in the loader's tests too. **The fix is never "add the host to `allowed_hosts`"**: that list is what the site's build refuses links to, and the CSP in `firebase.json` (`default-src 'self'`, `script-src 'self' https://www.googletagmanager.com` — the analytics origin W3.2 pinned, and nothing else) is what the browser enforces, so a new origin is a decision about the site's privacy page taken by the task that wants it.
 
-**Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
+**Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the cookie **names** — and `Path`/`Domain`, never a value — the tag left on `/privacy/` before the withdrawal and what the list held after it; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
+
+
+## Check 70a: the mobile header fits one row, and the menu is a keyboard drawer (the built artifact or the live site, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by **part P3** of the website redesign
+(`docs/website/redesign/implementation-plan.md` §3, decision D182, reconciliation finding
+RF3), and written here rather than left to the redesign's own plan because this is the file
+the owner runs live checks out of. It is the half of P3 no hermetic test can take: the tests
+in `website/test/base-styles.mjs` hold the **structure** — the header does not wrap, the panel
+is out of its flow, the toggle is hidden from 48rem up — and a browser is what measures the
+rendered row.
+
+**Method.** One browser, one built site, two widths, no account and no cloud project. Either
+serve the artifact locally or read the deployed site; both are read-only:
+
+```bash
+# What this check needs, read out of the tree rather than remembered. It refuses to start
+# on a build that is not there, so a pass below is a pass about a page that exists.
+[ -f website/dist/index.html ] || { echo "Check 70a stopped: website/dist/ is not built — run (cd website && npm run check) or scripts/deploy-website.sh --dry-run first" >&2; exit 1; }
+(cd website/dist && python3 -m http.server 8080) &     # the built artifact, on localhost:8080
+# ...or, for the deployed site instead, read the canonical origin out of the site's own facts:
+sed -n 's/^canonical_url: *//p' website/data/site.yaml
+# The breakpoint the layout switches at, read from the stylesheet rather than typed: the
+# narrow layout is everything below it, and it is the width step 2 must be under.
+grep -o '@media[^{]*48rem[^{]*' website/dist/index.html | head -1
+# The groups and links the menu shows, read out of the layout rather than typed: the names
+# steps 3 and 5 look for, and the nine links step 3 has to reach.
+sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
+```
+
+1. **At 390 × 844, the header is one row.** Set the viewport to **390 × 844** (the size RF3
+   measured), hard-reload, and measure the header: `document.querySelector('.site-header').getBoundingClientRect().height`
+   in the console, and `document.documentElement.scrollWidth`. **FACT:** the header's height in
+   pixels and the document's scroll width. RF3 measured **177 px** of three wrapped nav rows on
+   the page before P3; one row is about **56 px**. A scroll width greater than 390 is a sideways
+   scrollbar on a phone, which is the same defect seen from the other side.
+
+2. **The drawer opens and closes, by keyboard.** With the viewport still narrow, Tab to the
+   `Menu` control (`.site-nav-toggle`) and press Enter: the panel opens below the header, and
+   the header's own height does not change (the panel is out of its flow — step 1's number
+   again, with the drawer open). Press Escape: the panel closes and the focus is back on the
+   control that opened it. Open it again and click somewhere else on the page: it closes.
+   **FACT:** what each of the four did — Enter, Escape, the outside click, and the header's
+   height with the panel open.
+
+3. **Every link in the three groups is reachable.** Open the drawer, then reach each group's
+   `<summary>` and each link inside it by keyboard alone, and follow one. The groups are
+   **Product**, **Reference** and **Project**, and **Privacy is not among them** — it is a
+   footer link (D182). **FACT:** the three group names as rendered, the links under each, and
+   that Privacy is in the footer rather than the menu.
+
+4. **With JavaScript disabled, the menu still works.** Turn scripting off and reload at 390 ×
+   844: the drawer still opens on Enter, the groups still open, every link is still there and
+   still follows. **FACT:** that each of those held with scripting off. The script's only job
+   in the menu is closing on Escape and on a click outside (P3), so with no script the drawer
+   opens and closes by the control's own `<details>` behaviour — the only thing missing is the
+   two closes step 2 checks.
+
+5. **At 1280 × 900, the menu is in the header's one row — and the wide menu is there at all.**
+   Widen the viewport to 1280 × 900. The header shows the wordmark and the three groups in
+   **one row**, and **no `Menu` control and no overlay panel**: the drawer and the panel it
+   opens are the narrow layout's, and from 768 px up the panel is the header's own flex item
+   instead. Read the groups: **they are dropdowns at this width too** — three `<summary>`
+   controls, closed, each with its three links behind it (D182's "three top-level sections
+   with dropdowns", the same two levels as the drawer's menu, which is what makes this a
+   two-level menu rather than a row of nine links). **FACT:** the header's height, the three
+   group names, that no `Menu` toggle is visible, and that the nine links are not printed in
+   the row before anything is opened.
+
+6. **Opening a group at 1280 × 900 shows its links and does not move the page.** Open
+   *Product* by keyboard, read the header's height again, and confirm the three links are
+   visible under it; then close it with Escape and again by clicking elsewhere. Do it for the
+   **last** group as well, and read `document.documentElement.scrollWidth` with a group open.
+   **FACT:** the header's height before opening and with the group open — **the same number
+   twice**, because the wide dropdown is out of the header's flow, exactly as the narrow
+   drawer's panel is — the links that appeared, the document's scroll width with the last
+   group open (not wider than the viewport), and what each of the two closes did.
+
+**Passes when:** the header at 390 × 844 is one row — roughly 56 px rather than 177, with no
+sideways scroll — the drawer opens by keyboard, closes on Escape and on an outside click with
+the focus returned to its control, every link in the three groups is reachable by keyboard and
+follows, **all of that holds with JavaScript disabled**, Privacy is a footer link and not a
+menu item, and at 1280 × 900 the three groups are in the header's one row with **no toggle and
+no overlay**, as three dropdowns whose links are behind their summaries, opening a group
+**without changing the header's height** and without a sideways scroll even on the last group
+— and the menu is **visible** at that width at all, which is the thing a wide rule that
+repositions the panel without displaying it takes away.
+
+**Fails when:** the header at 390 × 844 is taller than one row or the document scrolls
+sideways; the drawer does not open, or Escape or an outside click leaves it open, or the focus
+is lost; a group or a link cannot be reached or does not follow; the menu stops working with
+scripting off (which would mean P3 made the menu depend on the script, where the script only
+adds two ways to close it); Privacy has moved into the menu; **at 1280 × 900 there is no menu
+at all** — the wordmark and nothing else, which is what a 48rem block that sets the panel's
+`position` but not its `display` produces, since the base rule hides it and the drawer whose
+`open` attribute would show it is the element that block takes away; the wide viewport still
+shows the `Menu` toggle or an overlay panel hanging over the page; or opening a group there
+**grows the header and shifts the page down**, or makes the document wider than the viewport
+by opening off the right edge. The wide menu's two groups of links are *not* a
+failure: the dropdowns are D182's decision. The **structural** half of each of those is already
+refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the wide block to
+displaying the panel and to taking the group's list out of the header's flow, and `navFailures`
+holds the menu to its contract — so a failure here that the build did not catch is a
+**rendered** fact — a measurement, a focus behaviour or a browser's own `<details>` — and the
+fix belongs in `src/styles/base.css` or the layout, with the case that would have caught it
+added to that test where the test can see it.
+
+**Paste back:** the header's height and the document's scroll width at 390 × 844; what Enter,
+Escape and the outside click each did, and the header's height with the drawer open; the three
+group names, their links, and where Privacy is; what held with JavaScript disabled; and at
+1280 × 900 the header's height closed **and** with a group open, the group names, the toggle's
+visibility, and the links that appeared — with the browser and its version, because a
+`<details>` element's keyboard behaviour is the browser's. **No step here changes anything and
+no agent runs any step of it.** Until this check runs, the menu's **rendered** behaviour at
+phone width and at desktop width is **UNVERIFIED** — the artifact's structure is not a
+rendered row — and the row above stays **NOT RUN**.
+
+## Check 70c: every copy control copies its own command, by mouse and by keyboard (the built artifact or the live site; run by you; NOT RUN)
+
+**NOT RUN.** Written by **part P6** of the website redesign
+(`docs/website/redesign/implementation-plan.md` §3, decision D183, reconciliation finding
+RF13). It is the half of P6 no hermetic test can take: `website/test/copy.mjs` holds the
+markup — every block carries its control, the button is `hidden` in the markup, the status
+line is a polite live region — and a real clipboard is what a browser has and `node --test`
+does not.
+
+**Method.** One browser, one built site, a real clipboard. Serve the artifact locally or read
+the deployed site, both read-only. The controls are the ones the tree's own markup writes, so
+this check lists them rather than remembering them:
+
+```bash
+# What this check needs, read out of the tree rather than remembered.
+[ -f website/dist/index.html ] || { echo "Check 70c stopped: website/dist/ is not built — run (cd website && npm run check) or scripts/deploy-website.sh --dry-run first" >&2; exit 1; }
+(cd website/dist && python3 -m http.server 8080) &
+# The pages that carry a copy control, and how many each carries: the artifact's own answer
+# to "each kind of control", rather than a list typed here that can go stale.
+grep -rl 'data-copy' website/dist --include='*.html' | sort
+grep -ro 'data-copy-button' website/dist --include='*.html' | cut -d: -f1 | sort | uniq -c
+# The script that reveals and drives them — the only script the site ships (D183).
+ls -l website/dist/scripts/site.js
+```
+
+1. **Each kind of control, by mouse.** On the built or deployed site, click the copy control
+   on: the hero's install blocks (home), a code block on Getting Started, a block of the
+   rendered CLI reference on the docs hub, a usage line on the caps guide, and the terminal's
+   own line on the home page. After each click, paste into a text editor and read it back.
+   **FACT:** for each control, what the clipboard held. The content has to be **that command
+   and nothing else** — no `$` prompt, no blinking caret, no line of output beside it, no page
+   furniture. The terminal is the case that makes this check worth running: its window holds
+   the command **and** the four documented steps after it, and the control must put the
+   invocation alone on the clipboard.
+
+2. **By keyboard, with a visible focus ring.** Tab to each of those controls, confirm the
+   focus ring is visible on the button, and press Enter (and Space on one of them). **FACT:**
+   that every control was reached by Tab, that the ring was visible on each, and what Enter
+   and Space did.
+
+3. **The confirmation is announced, and it clears.** With a screen reader (or the
+   accessibility inspector's live-region view), press a control: **"Copied"** is announced
+   **politely** — the status line is `role="status"` with `aria-live="polite"`, so it never
+   interrupts — and the button's own visible label does **not** change (its accessible name
+   contains its label, WCAG 2.5.3). Then wait: the message clears itself. **FACT:** what was
+   announced, the button's label before and after, and that the message cleared.
+
+4. **With JavaScript disabled, no button is shown.** Turn scripting off, reload, and look at
+   every page from step 1. **FACT:** that each page still prints its commands **in full**,
+   and that **no copy button appears at all** — not a disabled one, not a button that copies
+   nothing. The markup renders the button `hidden` and the script is what reveals it, so this
+   is the arrangement working rather than a degradation: a reader whose browser runs no script
+   gets the command and no control (D183).
+
+**Passes when:** every control puts **its own command** on a real clipboard, by mouse and by
+keyboard, with nothing around it; each is keyboard-reachable with a visible focus ring; the
+"Copied" state is announced politely and clears itself while the button's label stays put; and
+with JavaScript disabled every command is still on the page with **no button rendered at all**.
+
+**Fails when:** a clipboard holds more or less than its command — the prompt, the caret, a
+neighbouring line, or a whole `<pre>` where one line was meant; a control does nothing, or
+does nothing when reached by keyboard, or has no visible focus ring; the confirmation is not
+announced, interrupts, or never clears; or a button is shown with scripting off. What failing
+looks like: `sourceOf` in `website/public/scripts/site.js` falling back to the whole
+`<pre>` on the terminal because the `[data-copy-source]` mark moved; a block whose markup lost
+its `hidden` attribute, so the button is on the page before the script that drives it. The
+**markup** half of each is already refused by `website/test/copy.mjs`, so a failure here that
+the build did not catch is a **runtime** fact — a clipboard, a live region, a focus ring — and
+the fix belongs in the script or the markup, with the case the test can see added to
+`copy.mjs`.
+
+**Paste back:** per control, what the clipboard held; that Tab reached each and the ring was
+visible; what was announced and that it cleared, with the button's label before and after;
+and what each page showed with JavaScript disabled — with the browser and its version, because
+the clipboard's permissions and the live region's announcement are the browser's. **No step
+here reads a token or a key and no agent runs any step of it.** Until this check runs, the
+controls' **runtime** behaviour is **UNVERIFIED** — the markup's shape is not a clipboard —
+and the row above stays **NOT RUN**.

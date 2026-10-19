@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // QueuedStuckAfter is how long a queued run may go since its launch claim or
@@ -24,9 +25,16 @@ type QueuedRun struct {
 	// bucket's own (unescaped) form; MergeQueued converts them to the wire
 	// keys a View's repository blocks use.
 	Run, Slug string
+	// Title is the run's own job title, from the one place every surface
+	// reads it (task.Spec.TitleLine): the launcher's fugaro run --title,
+	// else the task prompt's first line. "" when task.json did not parse.
+	Title string
 	// Workflow, Recipe and RequestedBy are read from task.json, when it
 	// parses; each is "" when not known.
 	Workflow, Recipe, RequestedBy string
+	// LaunchedBy is who started the run, as its launch.json recorded it (""
+	// when there is no launch.json, or the one there recorded no launcher).
+	LaunchedBy string
 	// LaunchedAt is when the run entered its claimed or launched state: the
 	// claim's or launch.json's own timestamp, else the run id's mint time.
 	LaunchedAt time.Time
@@ -39,7 +47,12 @@ type QueuedRun struct {
 // queuedRow is q as a RunRow, aged as of now.
 func queuedRow(q QueuedRun, now time.Time) RunRow {
 	age := max(now.Sub(q.LaunchedAt), 0)
-	title := q.Workflow
+	// The run's own title, when task.json gave one; else the workflow, which
+	// is all a queued row ever had to name (the requester, failing that).
+	title := q.Title
+	if title == "" {
+		title = q.Workflow
+	}
 	if title == "" {
 		title = q.RequestedBy
 	}
@@ -47,7 +60,8 @@ func queuedRow(q QueuedRun, now time.Time) RunRow {
 		Run: clean(q.Run), Slug: budget.Key(q.Slug),
 		Title: dash(title), Stage: "queued", Round: "-", Verify: "-", Models: "-", Auth: "-",
 		Recipe: clean(q.Recipe), Workflow: clean(q.Workflow), RequestedBy: clean(q.RequestedBy),
-		Age: age, HasAge: true,
+		LaunchedBy: safetext.Field(q.LaunchedBy),
+		Age:        age, HasAge: true,
 		Queued: true, Stuck: q.Stale || age > QueuedStuckAfter,
 		StartedAt: q.LaunchedAt.UnixMilli(),
 	}

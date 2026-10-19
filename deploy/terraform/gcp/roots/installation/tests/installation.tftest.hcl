@@ -1597,3 +1597,105 @@ run "project_secrets" {
     error_message = "no operator may read a project-wide secret's value"
   }
 }
+
+# The shared project job's three grants, which the installation golden plan
+# cannot show: its tfvars name no launcher, no operator and no Vertex profile,
+# so the planned project module holds none of them and a change to any of the
+# three passes every plan-level test in the tree. This run plans the module
+# itself, the way the runs above it do, with a launcher, an operator and a
+# Vertex profile set.
+#
+# What each grant is: the launchers may start THIS job with overrides
+# (fugaroJobRunner, the same role and permission the per-repository path
+# grants); the operators may act as the job's account, which deploying the job
+# needs; and a Vertex profile's job account may call aiplatform. None of the
+# three is a project-level widening — the launcher's role is on the job, and
+# the actAs is on the account.
+run "project_job_grants" {
+  command = plan
+
+  module {
+    source = "../../modules/project"
+  }
+
+  variables {
+    project         = "proj-1234"
+    fugaro_project  = "aurora"
+    region          = "us-east5"
+    runs_bucket     = "fugaro-runs-proj-1234"
+    job_runner_role = "projects/proj-1234/roles/fugaroJobRunner"
+    launchers       = ["user:launcher@example.com"]
+    operators       = ["user:operator@example.com"]
+    secrets         = {}
+    job = {
+      profile  = "standard"
+      provider = "github"
+      account  = ""
+      job      = "fugaro-p-standard-github-0ca96e64b636"
+      service_account = {
+        account_id   = "fugaro-p-standard-git-0ca96e64"
+        display_name = "Fugaro project job standard github"
+      }
+      image          = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
+      cpu            = "2"
+      memory         = "8Gi"
+      task_timeout_s = 21720
+      # FUGARO_GITHUB_APP_ID: a github shared job's precondition (job.tf,
+      # owner ruling 2026-10-17) refuses the plan without it.
+      env = {
+        FUGARO_BUCKET        = "gs://fugaro-runs-proj-1234"
+        FUGARO_GCP_PROJECT   = "proj-1234"
+        FUGARO_GITHUB_APP_ID = "123456789"
+        FUGARO_PROJECT       = "aurora"
+        FUGARO_REGION        = "us-east5"
+      }
+      secret_env = {}
+      bucket_condition = {
+        title      = "fugaro-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/cache/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/locks/\")"
+      }
+      token_condition = {
+        title      = "fugaro-project-tokens-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+      }
+      vertex = true
+    }
+  }
+
+  assert {
+    condition = (keys(google_cloud_run_v2_job_iam_member.launcher) == ["user:launcher@example.com"] &&
+      google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"].role == "projects/proj-1234/roles/fugaroJobRunner" &&
+      google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"].member == "user:launcher@example.com" &&
+    google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"].name == "fugaro-p-standard-github-0ca96e64b636")
+    error_message = "each launcher gets fugaroJobRunner on this job alone, and never on the project"
+  }
+  # The grants below are written from this account's computed member, so the
+  # mock provider has to give it one during the plan for them to be readable.
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = google_service_account.job.account_id == "fugaro-p-standard-git-0ca96e64"
+    error_message = "the job's own account is the one the profile names, so the grants below can be read against it"
+  }
+  assert {
+    condition = (keys(google_service_account_iam_member.operator) == ["user:operator@example.com"] &&
+      google_service_account_iam_member.operator["user:operator@example.com"].role == "roles/iam.serviceAccountUser" &&
+      google_service_account_iam_member.operator["user:operator@example.com"].member == "user:operator@example.com" &&
+    google_service_account_iam_member.operator["user:operator@example.com"].service_account_id == google_service_account.job.name)
+    error_message = "each operator may act as this job's own account, which deploying the job needs"
+  }
+  assert {
+    condition = (length(google_project_iam_member.vertex) == 1 &&
+      google_project_iam_member.vertex[0].role == "roles/aiplatform.user" &&
+    google_project_iam_member.vertex[0].member == google_service_account.job.member)
+    error_message = "a Vertex profile's job account, and only it, may call aiplatform"
+  }
+}

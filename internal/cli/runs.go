@@ -68,16 +68,17 @@ type lsDoc struct {
 	Warnings []string `json:"warnings"`
 }
 
-// newRunsCmd is "fugaro runs". ls is its only subcommand today; the 0.7.0
-// top-level `fugaro ls` tombstone was deleted by #350 in 0.7.5 (design
-// generic-tool §5, G17; the owner's 2026-10-14 ruling moved the deletion from
-// 0.8.0 to the next release — the one that became 0.7.5, #370; plan Task 29).
+// newRunsCmd is "fugaro runs": ls lists the runs, and stats aggregates them
+// by the person who started each one. The 0.7.0 top-level `fugaro ls`
+// tombstone was deleted by #350 in 0.7.5 (design generic-tool §5, G17; the
+// owner's 2026-10-14 ruling moved the deletion from 0.8.0 to the next
+// release — the one that became 0.7.5, #370; plan Task 29).
 func newRunsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd())
 	return cmd
 }
 
@@ -490,6 +491,12 @@ func absent[T any](v *T, err error) (*T, error) {
 	return v, err
 }
 
+// maxSinceDays is the largest day count whose duration fits in int64
+// nanoseconds: time.Duration(days)*24*time.Hour silently wraps to a negative
+// window past it, so a larger count is refused rather than read as "no runs".
+// The desktop console's runs-window schema holds the same bound.
+const maxSinceDays = 106751
+
 // parseSince parses --since: a positive number of days (7d), a positive Go
 // duration (36h, 90m), or 0 for no bound.
 func parseSince(s string) (time.Duration, error) {
@@ -498,7 +505,7 @@ func parseSince(s string) (time.Duration, error) {
 	}
 	if n, ok := strings.CutSuffix(s, "d"); ok {
 		days, err := strconv.Atoi(n)
-		if err != nil || days < 1 {
+		if err != nil || days < 1 || days > maxSinceDays {
 			return 0, fmt.Errorf("--since %q: use a positive number of days (7d) or a Go duration (36h)", s)
 		}
 		return time.Duration(days) * 24 * time.Hour, nil
@@ -539,7 +546,12 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	// every run that opens a pull request has none, and its columns do not
 	// change (design artifact-runs.md §9).
 	showArtifacts := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ArtifactCount > 0 })
-	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
+	// The changed-files column appears only when some listed run's record
+	// carries the set (design D27): a run from before the field, or one that
+	// never reached finalize, has none and does not widen every other run's
+	// columns for it.
+	showFiles := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ChangedFiles != nil })
+	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
 	if showRecipe {
 		header += "\tRECIPE"
 	}
@@ -552,6 +564,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	if showArtifacts {
 		header += "\tARTIFACTS"
 	}
+	if showFiles {
+		header += "\tFILES"
+	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
 		cost := fmt.Sprintf("$%.2f", r.Cost.TotalUSD)
@@ -561,7 +576,7 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r), launcherCell(r))
 		if showRecipe {
 			name := r.Recipe
 			if name == "" {
@@ -581,6 +596,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		}
 		if showArtifacts {
 			line += "\t" + artifactCell(r)
+		}
+		if showFiles {
+			line += "\t" + changedFilesCell(r)
 		}
 		fmt.Fprintln(tw, line)
 	}
@@ -606,12 +624,45 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	return err
 }
 
+// launcherCell is a row's BY cell: who started the run, in the short form a
+// column has room for (the part before the @ of an address, the whole value
+// for anything else — a service account name, a CI identity), or "-" for a
+// run whose launch.json recorded no launcher. Several people start runs on
+// one project at once, so the column is always there, and the dash is a fact
+// ("nobody recorded"), never a placeholder for one.
+//
+// The launcher is untrusted text a launcher wrote, so it is clipped and
+// escaped like every other name column, whether or not it arrived through
+// runview.Join's own sanitising.
+func launcherCell(r runview.Row) string {
+	by := runview.LauncherShort(r.LaunchedBy)
+	if by == "" {
+		return "-"
+	}
+	return cellOneLine(clipRunes(by, maxNameCellRunes))
+}
+
 // statusCell is a row's status; a halted run says which limit halted it.
 func statusCell(r runview.Row) string {
 	if r.Status == string(runstore.StatusHalted) && r.Halt != nil {
 		return r.Status + " (" + string(r.Halt.Reason) + ")"
 	}
 	return r.Status
+}
+
+// changedFilesCell is a row's recorded changed-path count (design D27): the
+// count of paths the record holds, and "N/M" when the record was truncated at
+// M paths, so a reader can see that the set it holds is not the whole set.
+// "-" for a run that recorded none — an unknown answer, never a zero.
+func changedFilesCell(r runview.Row) string {
+	cf := r.ChangedFiles
+	if cf == nil {
+		return "-"
+	}
+	if cf.Truncated {
+		return fmt.Sprintf("%d/%d", len(cf.Paths), cf.Total)
+	}
+	return strconv.Itoa(len(cf.Paths))
 }
 
 // validSHA256 reports whether s is a sha256 hex digest: exactly 64 lowercase

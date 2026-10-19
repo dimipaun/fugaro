@@ -12,6 +12,9 @@ Plain Markdown, no title (the release page adds `## Highlights`):
 
 - 3 to 6 bullets for users, each one sentence: what they can do now or what changed for them, not the commit titles (the changelog has those).
 - When a rollout order matters, a `### For operators` heading with the ordered steps (for example: upgrade CLIs and CI pins first, then rebuild images, then merge the config change), and anything that breaks or needs a manual step. Omit it otherwise.
+- A `### Known limits` heading with the release's known limits as bullets: what this release does not do, does not stop, or leaves to a later one, and anything a reader who relies on it has to know. The rule is that a release ships with its known limits in its notes, so write them; the heading is omitted only for a release that genuinely has none.
+
+The two section headings are optional, independent (a file may carry either without the other, or none) and written after the bullets, in the order a reader needs them — and they are `###`, not `##`: GoReleaser puts the file into the release body under its own `## Highlights` (`.goreleaser.yaml`), so a `##` inside the file would be a second top-level heading beside it. The website's changelog page renders each one as a heading with its bullets under it, in the order the file writes them (`website/src/lib/changelog.mjs`); a heading line it does not recognise is rendered as the text it is, and the site's check refuses it.
 
 Example:
 
@@ -23,4 +26,8 @@ Example:
 
 1. Upgrade the CLI and run `fugaro init` once per installation.
 2. Rebuild each repository's image before merging its `gcp_project:` line.
+
+### Known limits
+
+- `fugaro init --name` does not rename an installation that already exists.
 ```

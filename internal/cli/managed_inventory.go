@@ -8,6 +8,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The whole-project inventory of `fugaro managed apply` (Task 4.5, design
@@ -75,11 +76,11 @@ func managedInventory(ctx context.Context, lc *localcfg.Config, c *infra.Clients
 	assets, err := managedAssets(ctx, lc)
 	if err != nil {
 		return managedmode.CheckedInventory(managedmode.Unread(lc.Name, lc.GCPProject, managedmode.CauseNoReader,
-			"no whole-project read could be built: "+err.Error()))
+			"no whole-project read could be built: "+safetext.Field(err.Error())))
 	}
 	accounted, err := managedAccounted(ctx, c, lc.GCPProject, installationStateBucket(lc))
 	if err != nil {
-		return managedmode.CheckedInventory(managedmode.Unread(lc.Name, lc.GCPProject, managedmode.CauseStateUnread, err.Error()))
+		return managedmode.CheckedInventory(managedmode.Unread(lc.Name, lc.GCPProject, managedmode.CauseStateUnread, safetext.Field(err.Error())))
 	}
 	in := managedmode.Inventory{
 		Project:       lc.Name,
@@ -169,7 +170,7 @@ func managedAccounted(ctx context.Context, c *infra.Clients, gcpProject, stateBu
 			}
 			res, err := managedmode.AccountsOfState(data)
 			if err != nil {
-				return nil, fmt.Errorf("gs://%s/%s: %w", b.bucket, name, err)
+				return nil, fmt.Errorf("gs://%s/%s: %w", safetext.Field(b.bucket), safetext.Field(name), safetext.FieldErr(err))
 			}
 			out = append(out, res...)
 		}

@@ -179,6 +179,7 @@ drift from it.
 | `requested_by` | string | — | **yes** | from `task.json`, queued runs only — **a person's address**: the Spend screen's person view is off by default (D15) |
 | `job` | string | — | **yes** | the Cloud Run job this run is in, from the run's own `launch.json` (`runstore.Launch.Job`) — the same read that produces the queued rows, so a live row has it too. Absent when the reader has no `launch.json` for the run. Under the project-centric model this is the **shared** job of a (profile, provider, account), not one repository's. **Display text, not an authority**: `launch.json` is writable by every launcher and, on a shared job, by every run (SECURITY.md, D4), so the value is what that object says, stripped of control characters — never a name to act on |
 | `profile` / `provider` / `account` | string | — | **yes** | the (profile, provider, account) the job's name was **computed from**, matched against the project's published policy — never parsed back out of the name (R2-5), so a `job` no profile computes gets none of them. `profile` and `provider` are present together or absent together; `account` is present only beside them and only for a job of a named Claude account — in phase 3 **never**, because a profile may not mount a Claude OAuth token (design D2), so a project job's row carries `profile` and `provider` and no `account`. All three are absent for a run on a **per-repository** job (a baked workflow, a Bitbucket repository, an installation that has not migrated), whose name is no project job's. `provider` here is the **profile's** provider, not a general stamp of the repository's: it is the reason the field exists on the two run shapes but does not close §7's gap 7 |
+| `launched_by` | string | — | **yes** | who started the run, from the run's own `launch.json` (`runstore.Launch.LaunchedBy`, **CLI 0.9.0**) — a person's address, or the identity an automated launch runs as (a service account, a CI runner). It is the **full recorded identity**: the text views show the short form a column has room for (`runview.LauncherShort` — the part before an address's `@`, the whole value for anything else). Absent when the record has none — a run from before the launcher was recorded, or one whose `launch.json` the reader does not have — **never a value the CLI invents**. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), the value is sanitised and capped like every other bucket-derived string (`safetext.Field`, 512 runes), and no policy, admission or budget rule reads it |
 
 **A live run carries no PR field at all** — no `pr_url`, no `pr_number`, no
 `pr` (design §4.3 gap 6, §5.1 rule 2). The console renders no link for a live
@@ -199,6 +200,7 @@ detail is open.
 | `pr_number` | int | number | **yes** | **absent (0) when the run has no PR** |
 | `job` | string | — | **yes** | as on `JSONRun`: a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose the job it ran on |
 | `profile` / `provider` / `account` | string | — | **yes** | as on `JSONRun` (`account` absent on every phase-3 project job; all three absent on a per-repository job) |
+| `launched_by` | string | — | **yes** | as on `JSONRun` (**CLI 0.9.0**): a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose who launched it either. Absent when the launch record has none |
 | `age_seconds` | float64 | seconds | no | measured |
 
 ### The three facts the whole feed turns on
@@ -373,12 +375,14 @@ reads:
 | `run`, `run_id`, `repo` | string | no | |
 | `slug` | — | — | **not a field**: `Row` has no `slug`; the slug is the row's own bucket key |
 | `workflow` | string | **yes** | |
+| `title` | string | **yes** | the run's own job title (`task.Spec.TitleLine`: the title flag of `fugaro run`, else the task's first line) — the field `fugaro watch` names a run by, absent when the task has neither; **task-derived, not sanitized** (the task-text fallback is raw) — the display layer sanitizes it (design §5.1 rule 7) |
 | `oauth_account` | string | **yes** | the named Claude account |
 | `recipe`, `config_sha256` | string | **yes** | |
 | `project_layer` | `*runstore.ProjectLayerRecord` | **yes** | absent before 0.6.0 |
 | `status`, `stage`, `reason` | string | `status` no, other two yes | |
 | `halt` | `*runstore.Halt` | **yes** | why a run halted |
 | `batch`, `requested_by` | string | **yes** | `requested_by` is a person's address |
+| `launched_by` | string | **yes** | who started the run, from its `launch.json` (**CLI 0.9.0**); absent when the record has none. The same value `JSONRun`/`JSONFinished` carry, and display text only — see `JSONRun`'s row |
 | `pr_url` | string | **yes** | the URL as the host gave it |
 | `execution`, `log_url` | string | **yes** | `log_url` is what `logs RUN --url` prints |
 | `created` | time.Time | no | RFC 3339 |
@@ -396,6 +400,32 @@ reads:
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
+| `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
+
+**`changed_files` is the run's own account, and it is bounded.** The runner
+reads the paths of the run's own commits (`origin/<base>...HEAD` for a first
+run, its start commit for a follow-up — `gitops.ChangedFiles`) and stores at
+most `runstore.MaxChangedFiles` = **200** of them, or
+`runstore.MaxChangedPathBytes` = **16 KiB** of path, whichever comes first:
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `paths` | `[]string` | no | sorted, as git listed them; **`[]` when the run changed no path — never null** |
+| `total` | int | no | **how many paths the run really changed**, so a truncated record still says how big the set it is part of was |
+| `truncated` | bool | **yes** | set **only** when `paths` is shorter than `total` — a console that renders a truncated set as the whole set is showing a number the record does not support |
+
+**Paths only.** No contents, no diff, no commit message, no line counts: a
+path can name a client, a person or a project, so the record holds the least
+that answers "did these two runs touch the same file". A rename is recorded as
+the delete and the add it is, because a path that moved is a path two runs can
+collide on.
+
+**The reader bounds it again.** The record is an object the job can write, so
+`runview.Join` does not pass the set through as written: `ChangedFiles.Bounded`
+drops empty paths, re-applies both caps, never lets `total` fall below the
+paths kept, and sets `truncated` when the record said so or when `paths` is
+short of `total`. A tampered record therefore reaches the console bounded and
+with its truncation flagged, never larger or dressed as whole.
 
 `runview.Totals` (`runview.go:436`): `runs` int, `model_usd` float64,
 `model_notional_usd` float64 (**notional** — kept apart from `model_usd` by
@@ -545,11 +575,210 @@ root command sets no cobra `Version` field (`fugaro --version` fails). The
 console parses the human line, pinned by a test against the real output
 (design §4.3 gap 2).
 
-## 7. The seven CLI gaps, settled against the code
+### 6.8 `fugaro config list --json`
+
+**Command:** `internal/cli/config_list.go` `newConfigListCmd`, a subcommand of
+`fugaro config` (`internal/cli/configcmd.go`). **Flags:** `--json`. **It takes
+no cloud flags** — `--project`, `--config`, `--gcp-project` and `--region` are
+absent on purpose: this is a local read of the operator's own project configs,
+it opens no bucket and it needs no installation selected, so it works outside a
+checkout and with no config at all (an empty list).
+
+**What it closes:** v1 design §4.3 gap 5 — the read D13 itself names, and the
+one the installation picker waits on. It enumerates
+`internal/localcfg/localcfg.go`'s `Projects(getenv)` and reads each one with
+`LoadProject`, so the list is the CLI's own enumeration and the app still never
+opens `~/.config/fugaro` (§3.4 rule 7).
+
+The document:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `installations` | array | never | never | every project config, in the order `Projects` returns them; `[]` when there are none |
+| `warnings` | array | never | never | one line per installation that could not be read; `[]` when there are none |
+
+and one entry of `installations`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the project name, i.e. the config file's own name |
+| `gcp_project` | string | never | never | `""` when the config could not be read (the warning says why) |
+| `region` | string | never | never | `""` when the config could not be read |
+| `shared_merged` | bool | never | never | whether this machine holds the installation's published shared config |
+| `shared_checked_at` | string | never | **yes** | RFC 3339 UTC; null exactly when `shared_merged` is false |
+
+**An installation whose config cannot be read is still listed, by name, with a
+warning** — a picker that offered a name and then failed silently is worse than
+one that says what it could not read.
+
+**The document is a named set of fields and it is deliberately not a marshalled
+`localcfg.Config`.** That struct carries the operator's providers and their base
+URLs, the named Claude accounts, the reserved project secrets, the Terraform
+block and the whole repository list — none of which the picker needs, and all of
+which would join this document the day a field is added to the struct. A test
+fails if a field outside the five above reaches the output, and if either type
+ever becomes (or embeds) `localcfg.Config`.
+
+**Version skew.** The command is new, so an older CLI does not have it at all:
+the spawn fails and the console shows its "this CLI cannot list installations"
+state, which is the form D13 accepted for v1. The handshake (§6.7) is what tells
+the console which case it is in.
+
+### 6.9 `fugaro plan graph --json`
+
+**Command:** `internal/cli/plan.go` `newPlanGraphCmd`, the only subcommand of
+`fugaro plan`. **Flags:** `--plan <path>` (the plan document the graph sits
+beside; with none, the one graph artifact under `docs/plans` is read, and more
+than one is refused and listed rather than picked), `--json`. **It takes no
+cloud flags**, for the same reason as §6.8: it reads a file in the checkout.
+
+**What it reads:** the plan-side graph artifact (v2 design D25 and F6/F33),
+`<plan>.graph.json` beside `<plan>.md`, parsed and validated by
+`internal/plan/`. The console never opens the file — it spawns this command and
+reads the document, like every other figure (D1, §3.4 rule 7).
+
+The document:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `schema_version` | number | never | never | `1` today; a document carrying another number is **refused**, not rendered |
+| `plan` | string | never | never | the plan the artifact came from, as the artifact names it |
+| `nodes` | array | never | never | the tasks; `[]` is a plan with no tasks yet |
+| `edges` | array | never | never | the dependencies; `[]` is a plan with no dependencies yet |
+
+one entry of `nodes`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the planner's own name for the task; unique in the document |
+| `title` | string | never | never | what a person reads |
+| `run` | string | never | **yes** | the run this task belongs to; null when it belongs to none |
+| `version` | string | never | **yes** | the target version; null when the plan does not say |
+| `footprint` | object | never | never | the expected paths, below |
+
+one entry of `edges`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `task` | string | never | never | the node that depends |
+| `needs` | string | never | never | the node it depends on |
+| `reason` | string | never | never | why; a document with an edge and no reason is refused |
+
+and the `footprint` object:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `prediction` | bool | never | never | **always `true`** — a footprint is a prediction, and the label travels with the data (D28) |
+| `paths` | array | never | never | glob patterns matched with doublestar; `[]` is a task that predicts it touches nothing |
+
+**Four refusals, and they are refusals rather than partial renders:** a document
+from a schema version this build does not read (the message names both
+versions), a malformed one, one whose edges name a node that is not there or
+whose ids repeat, and **one with a cycle** — every "ready" and "blocked" answer
+is a function of the graph, so a cyclic graph has none to give. A refused graph
+is no document at all: the command exits non-zero and prints nothing to stdout,
+so a renderer never has half a graph to draw.
+
+**The footprint is advisory and it is a prediction; the measured set is a
+different document.** What a task *expected* to touch is this field; what a run
+*did* touch is the run's own record (D27), written after the fact. The console
+labels the first as a prediction wherever it shows it, and the label is in the
+document rather than in the renderer.
+
+**Version skew.** Both the command and the document's `schema_version` answer
+this, and they answer different halves: an older CLI has no `plan graph` at all,
+and a newer *planner* can write a `schema_version` the CLI refuses. The console
+shows the CLI's refusal sentence rather than a graph.
+
+### 6.10 `fugaro runs stats --json` (**CLI 0.9.0**)
+
+**Command:** `internal/cli/runs_stats.go` `newRunsStatsCmd` / `runRunsStats`.
+**Document:** `userStatsDoc` (`runs_stats.go:69`), indented (`writeUserStats`,
+`runs_stats.go:467`). This is the one command in this document the console
+**does not spawn yet**: it is the data behind the Spend screen's by-person
+view (CLI 0.9.0), and the section is here so the screen that follows has a
+shape read off the code rather than assumed from a design. It is read-only —
+the figures come from the run records (`launch.json`'s `launched_by`, and
+`result.json`'s outcome and settled cost), never from the budget database, so
+there is no write path behind it and no counter a screen has to reconcile.
+
+| Field | Type | omitempty | Availability state |
+|---|---|---|---|
+| `project` | string | no | the Fugaro project, the marker's name |
+| `by` | string | no | the breakdown asked for: `"user"`, the only value the command publishes |
+| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an operator of the installation (the identity the local config's `user:`/git names, listed in its `terraform.operators`) sees `"all"`; a plain launcher gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
+| `you` | string | no | the identity the view was resolved for, in the same domain a row's key is. `""` is *unavailable*, not anonymous: the CLI could not tell who the caller is — no identity at all, or one with nothing printable in it — which `--all-users` gets past. It is `"unknown"` only when the caller's own identity literally says so, never as a stand-in for "no key of its own", because that word is a group of runs rather than a person. A screen must not read `you` as a row it can always find in `rows` (see below) |
+| `operator` | bool | no | whether the installation's own lists place `you` as an operator. A screen must not render `"all"` as "you are an operator": `--all-users` produces `"all"` with `operator: false` |
+| `since` | string | no | the window's first UTC day (`YYYY-MM-DD`); `""` (unbounded) for `--since 0` |
+| `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
+| `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
+| `truncated` | bool | no | **the window held more runs than `max_runs`**: every figure is over its newest `max_runs` alone. The bound is on the read and not on a person: it is applied before the view is, so a private view can be over fewer of the caller's own runs than `max_runs` suggests. A console must show this the way it shows a gap, never as the window's own total |
+| `rows` | `[]userstats.Row` | no | `[]` when none. One row per (user, currency) — dollars are never added across currencies |
+| `totals` | `[]userstats.Row` | no | one per currency, in currency order, with `user` `""` |
+| `unlaunched` | int | no | runs in the window with neither a launch nor a record (never launched, cancelled before launch, or a stale claim). They never started: they are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
+| `notes` | `[]string` | no | the lines the human table prints before and after its own: whose numbers these are, what the money counts, and what the read left out. The document and the table say the same things |
+
+**The `"own"` view filters a read that is not its own.** It holds the runs
+whose `launch.json` recorded the caller's own identity — the recorded text
+itself, compared the way `runs ls --mine` compares it — rather than every run
+under the key `you` names. The two differ when a key is shared: identities
+that sanitise to the same text are one row, and the other person's runs are
+not the caller's own, so a row in `"own"` can be smaller than the same key's
+row with `--all-users`. The row a private view does show is keyed by `you`,
+since every run in it recorded the caller's identity and that identity's key
+is `you`.
+
+`truncated` and `unlaunched` are the read's, computed over everyone's runs in
+the window before the caller's row is picked out of it — they are counts of
+runs, and a run that never launched has no launcher to attribute. So in
+`"own"` a screen reads them as facts about the window, not about the person: a
+truncated private view may cover fewer of the caller's runs than `max_runs`,
+and `unlaunched` is not a count of runs they started. `"own"` with `rows: []` is
+likewise a state of its own, not an error: a window the caller started nothing
+in, or a caller whose identity has no key of its own — nothing printable in it,
+or a text that reads as `"unknown"` itself. The unattributed row is every run
+of the window that recorded no launcher, so it is never shown as a person's
+own; the human output says so in a note, and `--all-users` still shows it with
+everyone else's.
+
+An identity that cannot be resolved **at all** — the local config's `user:`
+empty and `git config user.email` answering nothing — is neither of those: the
+command is **refused** instead, with no document at all and an error naming
+`--all-users`, the one way to the full table that never needed to know who the
+caller is. There is no `"own"` document to describe for it, which is why the
+refusal is stated here rather than as a third state of `rows`.
+
+`userstats.Row` (`internal/userstats/userstats.go:140`) is the group shape
+behind **both** `rows` and `totals`; the counts are an embedded `Counts`
+(`userstats.go:121`), so they are flattened into the same object on the wire.
+**The counts add up**, which is how a screen reads the shape:
+`runs == succeeded + failed + halted + infra_error + other + no_record`.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `user` | string | no | the launcher the run's own `launch.json` recorded, sanitised to one printable line and capped at 128 runes; `"unknown"` (report's `budget.UnknownPerson` spelling) when the run recorded none — never guessed from the task, the record or the account it ran under. **Untrusted display text**: a service account or a CI identity is a row like a person's, and nothing is authorised by this string. **Two identities that sanitise to the same text share a row**: the 128-rune cap is one way to the collision and characters the sanitising drops (`alice` and `alice` + U+200B) the other, so a row is a key rather than a person. The `"own"` view does not follow the key — see the note below |
+| `currency` | string | no | the unit the money columns are in; `"USD"` today (`CurrencyUSD`) |
+| `runs` | int | no | every run of the group in the window, averaged or not |
+| `succeeded`, `failed`, `halted`, `infra_error` | int | no | the four settled statuses, spelled as `result.json` spells them |
+| `other` | int | no | a record that settled as none of the four: still running, or cancelled |
+| `no_record` | int | no | **no usable `result.json`**: not finalised yet, or the object cannot be read. Its status and its money are unknown — never a measured `0` |
+| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps (`model_basis` `api-list`/vertex). Compute is attributed to nobody, here or in the budget database's own person view |
+| `notional_usd` | float64 | no | the group's model dollars on a **subscription** (`agent.auth oauth`): **notional**, counted toward no cap and nobody's bill. Kept apart from `counted_usd` by construction and never summed with it |
+| `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
+| `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
+
+**Flags** (`runs_stats.go:181`): `--by`, `--repo`, `--all`, `--since`,
+`--max-runs`, `--all-users`, `--json`, plus the cloud flags.
+
+## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
 (design §4.3, D19). Each is a fact of this tree, with the symbol that proves
-it.
+it. **The list was seven and it is now six: gap 5 is closed** by
+`fugaro config list --json` (§6.8, console v2 plan V2.1.1). Its row is kept
+below as the state the console was written against rather than deleted, so a
+reader who finds the old count in the v1 design's §4.3 and in its plan finds
+the closing here.
 
 | # | The gap | Proved by | What the console does meanwhile |
 |---|---|---|---|
@@ -557,7 +786,7 @@ it.
 | 2 | `version` has **no `--json`** and no flags at all | `newVersionCmd`, `internal/cli/root.go` — `cobra.NoArgs`, no `Flags()` | Parse the human line, pinned by a test |
 | 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Projects screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
 | 4 | **No schema version in the `watch --json` document** | `JSONDoc`, `internal/watch/json.go:97` — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
-| 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory |
+| 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory. **Closed 2026-10-18: `fugaro config list --json` exists (§6.8), so the typed name becomes a pick from the list of names the CLI prints — the field stays for an installation the operator adds before the CLI is updated** |
 | 6 | **No PR field on a run that has not finished** | `JSONRun` (`json.go:54`) carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished` (`json.go:91-92`); `runview.Row` (`runview.go:57`) spells the pair `pr_url` + `pr` (`runview.go:109`) | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
 | 7 | **No provider a console can build a link from** | `runview.Row` (`runview.go:57`) and `diagnose`'s row carry no provider, and `doctor --json`'s `doctorOutput` reports none. `JSONRun` and `JSONFinished` now do carry `provider` (phase 3, Task 3.5), and it is the right answer for the runs that have one — a shared project job's profile pins the provider its runs clone from — but it is **absent on every per-repository job**, which in phase 3 is every Bitbucket repository and every baked workflow. The kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket — and that run is exactly one of the runs whose `provider` is absent |
 
@@ -593,6 +822,8 @@ and **not** off this document or the design:
 | `accounts ls` | yes (`internal/cli/accounts.go:43`) |
 | `doctor` | yes (`internal/cli/doctor.go:195`) |
 | **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`) |
+| **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |
+| **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,

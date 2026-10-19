@@ -48,52 +48,76 @@ func TestRunsBucketFindings(t *testing.T) {
 	// tokens/: its launchers still carry the runs/-only write, so they cannot
 	// write the sealed token. The install guard says so, and its fix is
 	// fugaro init, which replaces the grant.
+	//
+	// The old condition is the SAME grant in its pre-0.9.0 form, and the one
+	// fix that must never appear for it is a removal: the member holds the
+	// runs/ write it is supposed to hold, and `remove-iam-policy-binding
+	// --all` would leave the installation unable to launch anything. Doctor
+	// printed exactly that on every not-yet-reinitialised installation —
+	// the stale binding matched none of the launcher cases and fell through
+	// to the catch-all for a condition that is not the launchers' own — so
+	// this test asserts both halves: the init fix is there, and nothing for
+	// this member tells an operator to remove the binding.
 	t.Run("the launchers' pre-seal runs/-only write", func(t *testing.T) {
-		old := &storage.Expr{Title: "fugaro-launchers-runs", Expression: `resource.name.startsWith("projects/_/buckets/` + b + `/objects/runs/")`}
+		old := &storage.Expr{Title: gcp.LegacyLauncherBucketConditionTitle, Expression: gcp.LegacyLauncherBucketCondition(b)}
 		p := &storage.Policy{Bindings: slices.Clone(hardened)}
 		p.Bindings[2] = &storage.PolicyBindings{Role: "roles/storage.objectUser", Members: []string{a}, Condition: old}
 		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
-		found := false
+		lacks, oldForm := false, false
 		for _, f := range fs {
+			if strings.Contains(f.Fix, "remove-iam-policy-binding") {
+				t.Errorf("an operator is told to remove the launcher's own grant: %+v", f)
+			}
 			if f.Severity == "warning" && strings.Contains(f.Problem, "lacks") && strings.Contains(f.Problem, "tokens/") && strings.Contains(f.Fix, "fugaro init") {
-				found = true
+				lacks = true
+			}
+			if f.Severity == "warning" && strings.Contains(f.Problem, gcp.LegacyLauncherBucketConditionTitle) && strings.Contains(f.Fix, "fugaro init (0.9.0 or later)") {
+				oldForm = true
 			}
 		}
-		if !found {
-			t.Fatalf("a launcher without the tokens/ write is not reported: %+v", fs)
+		if !lacks {
+			t.Errorf("a launcher without the tokens/ write is not reported: %+v", fs)
+		}
+		if !oldForm {
+			t.Errorf("the pre-0.9.0 launcher condition is not reported as that grant's old form: %+v", fs)
 		}
 	})
-	// And that binding is not a stranger's conditional write: the pre-seal
-	// condition is a launcher's own, in the shape 0.7.0 through 0.8.x wrote,
-	// so the finding about it must not tell the operator to remove the
-	// launcher's grant — the launcher would lose its read of runs/ as well as
-	// its writes. Its fix is the same one the missing tokens/ write has: an
-	// operator runs fugaro init, which replaces the whole binding.
-	t.Run("the previous launcher condition is not foreign", func(t *testing.T) {
-		old := &storage.Expr{Title: "fugaro-launchers-runs", Expression: `resource.name.startsWith("projects/_/buckets/` + b + `/objects/runs/")`}
-		p := &storage.Policy{Bindings: slices.Clone(hardened)}
-		p.Bindings[2] = &storage.PolicyBindings{Role: "roles/storage.objectUser", Members: []string{a}, Condition: old}
-		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
-		var about int
+	// The same binding on an installation whose launcher and operator lists
+	// doctor could not read (both empty): still the launchers' own grant in
+	// its old form, so still no removal command — the catch-all that would
+	// print one is for conditions that are not the launchers' own.
+	t.Run("the pre-seal launcher condition with unknown lists", func(t *testing.T) {
+		p := &storage.Policy{Bindings: []*storage.PolicyBindings{
+			{Role: "roles/storage.objectUser", Members: []string{a},
+				Condition: &storage.Expr{Title: gcp.LegacyLauncherBucketConditionTitle, Expression: gcp.LegacyLauncherBucketCondition(b)}},
+		}}
+		fs := RunsBucketFindings(p, b, hardeningProject, nil, nil)
+		if sev(fs, "info") != 0 {
+			t.Errorf("the launchers' own old grant is reported as an unknown writer: %+v", fs)
+		}
 		for _, f := range fs {
-			if f.Member != a {
-				continue
-			}
 			if strings.Contains(f.Fix, "remove-iam-policy-binding") {
-				t.Errorf("a launcher on the previous runs/-only condition is told to remove its grant: %+v", f)
+				t.Errorf("unknown lists turned the launchers' old grant into a removal: %+v", f)
 			}
-			if f.Severity == "warning" && strings.Contains(f.Problem, "not the launchers'") {
-				t.Errorf("the previous launcher condition is reported as somebody else's: %+v", f)
-			}
-			if f.Severity == "warning" && strings.Contains(f.Problem, "predates") && !strings.Contains(f.Fix, "fugaro init") {
-				t.Errorf("the previous launcher condition's fix is not fugaro init: %+v", f)
-			}
-			if f.Severity == "warning" && strings.Contains(f.Problem, "predates") {
-				about++
+			if f.Fix != "an operator runs fugaro init (0.9.0 or later), which replaces the grant" {
+				t.Errorf("fix = %q, want the init that replaces the grant", f.Fix)
 			}
 		}
-		if about == 0 {
-			t.Errorf("the previous launcher condition is not named for what it is: %+v", fs)
+	})
+	// A condition that is NOT the launchers' own — the same title under a
+	// different role, or a different expression — keeps the removal: the
+	// allowance is for this one grant's old form, not for its title.
+	t.Run("the old title with another role or another expression is still a removal", func(t *testing.T) {
+		for _, bd := range []*storage.PolicyBindings{
+			{Role: "roles/storage.objectAdmin", Members: []string{"user:x@example.com"},
+				Condition: &storage.Expr{Title: gcp.LegacyLauncherBucketConditionTitle, Expression: gcp.LegacyLauncherBucketCondition(b)}},
+			{Role: "roles/storage.objectUser", Members: []string{"user:x@example.com"},
+				Condition: &storage.Expr{Title: gcp.LegacyLauncherBucketConditionTitle, Expression: gcp.LegacyLauncherBucketCondition(b) + ` || true`}},
+		} {
+			fs := RunsBucketFindings(&storage.Policy{Bindings: []*storage.PolicyBindings{bd}}, b, hardeningProject, []string{o}, []string{o})
+			if len(fs) != 1 || !strings.Contains(fs[0].Fix, "remove-iam-policy-binding") {
+				t.Errorf("%s under %+v: the launchers' condition is not this binding's, so it is not covered: %+v", bd.Role, bd.Condition.Expression, fs)
+			}
 		}
 	})
 	t.Run("not hardened: a launcher with objectAdmin and no launcher grants", func(t *testing.T) {

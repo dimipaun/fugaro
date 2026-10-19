@@ -149,6 +149,19 @@ type Policy struct {
 	// safe — a block that is present must define the default.
 	Profiles map[string]Profile `json:"profiles,omitempty"`
 
+	// Accounts are the project's Claude accounts, keyed by account name (D3,
+	// design project-named-oauth-tokens §4.1): which repositories each
+	// account's token may be used by. A profile lists the accounts it serves
+	// (config.JobProfile.ClaudeAccounts) and one job is deployed per (profile,
+	// provider, account), so this block is what bounds the token a run of an
+	// account's job holds — the profile is shared by every repository admitted
+	// to it, and the account's list is the per-repository decision.
+	//
+	// It is derived, never hand-written: publish computes it from the
+	// project's local config (DeriveAccounts), and `fugaro init` validates the
+	// profiles it deploys against the same block.
+	Accounts map[string]Account `json:"accounts,omitempty"`
+
 	// CloneURLs are the project's clone URLs, keyed by canonical repository
 	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
 	// the runner's slug already use). A repository that is not listed here
@@ -184,7 +197,7 @@ type Policy struct {
 var knownTopLevelKeys = map[string]bool{
 	"version": true, "budget": true, "allow_repos": true,
 	"providers": true, "model_prices": true, "routing": true,
-	"profiles": true, "clone_urls": true,
+	"profiles": true, "clone_urls": true, "accounts": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -412,6 +425,23 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 	}
+	// The accounts block is judged *before* the profiles block, and the
+	// profiles block against it: the subset rule is a property of the two
+	// together, and the profiles are the side that may not widen what an
+	// account covers. Decoding them in the other order would let a profile
+	// name an account whose entry has not been read yet.
+	if craw, ok := doc["accounts"]; ok && !IsNull(craw) {
+		// decodeAccountBlock's errors name their place themselves
+		// ("projectpolicy: accounts.<name>..."), so they are returned as they are.
+		as, err := decodeAccountBlock(craw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Accounts = as
+		if err := validAccounts(p.Accounts); err != nil {
+			return nil, true, err
+		}
+	}
 	if fraw, ok := doc["profiles"]; ok && !IsNull(fraw) {
 		// decodeProfileBlock's errors name their place themselves
 		// ("projectpolicy: profiles.<name>..."), so they are returned as they are.
@@ -420,7 +450,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.Profiles = ps
-		if err := validProfiles(p.Profiles); err != nil {
+		if err := validProfiles(p.Profiles, p.Accounts); err != nil {
 			return nil, true, err
 		}
 	}

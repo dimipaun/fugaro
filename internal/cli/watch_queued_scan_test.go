@@ -493,15 +493,15 @@ func TestScanCachesFinishedRunsAcrossPolls(t *testing.T) {
 
 // A cached finished run keeps the job its launch.json names. The row is cached
 // so a later poll does not re-read it, and the job has to travel with it: the
-// scan's jobs map is rebuilt from each scan's own results (scanRepo), and it is
-// what a frame stamps from (watch.MergeJobs), so a cache hit that served the
+// scan's facts map is rebuilt from each scan's own results (scanRepo), and it is
+// what a frame stamps from (watch.MergeFacts), so a cache hit that served the
 // row alone would leave the run's `job`, `profile`, `provider` and `account`
 // out of its finished[] entry on every poll after the first — the loss
 // JSONFinished's comment forbids for exactly this reader.
 //
 // Mutation (run, restore): serve the row alone on a hit again
-// (`scanResult{IsFinished: true, Finished: c.row}`), or cache `res.Finished`
-// instead of the pair — the second poll finds no job for the run and the loop
+// (`scanResult{IsFinished: true, Finished: c.row}`), or cache the row without
+// `res.Facts` — the second poll finds no job for the run and the loop
 // below fails on it; the first poll, which reads the run, still passes.
 func TestScanKeepsTheJobOfACachedFinishedRun(t *testing.T) {
 	b := memblob.OpenBucket(nil)
@@ -527,9 +527,9 @@ func TestScanKeepsTheJobOfACachedFinishedRun(t *testing.T) {
 		if _, _, _, err := sc.scan(ctx); err != nil {
 			t.Fatalf("%s: %v", poll, err)
 		}
-		ref, ok := sc.Jobs()[key]
+		ref, ok := sc.Facts()[key]
 		if !ok || ref.Job != job {
-			t.Fatalf("%s: jobs[%+v] = %+v (present %v), want the job %q of %s's launch.json: a run's job is not re-read with its cached row, so it has to be served with it",
+			t.Fatalf("%s: facts[%+v] = %+v (present %v), want the job %q of %s's launch.json: a run's facts are not re-read with its cached row, so they have to be served with it",
 				poll, key, ref, ok, job, finished)
 		}
 	}
@@ -597,20 +597,36 @@ func TestFinishedResultFallsBackToStartedAt(t *testing.T) {
 	}
 }
 
-// finishedTitle stops at the task prompt's first line: a second line (a
+// runTitle stops at the task prompt's first line: a second line (a
 // fuller description) never leaks into the one-line title.
 func TestFinishedTitleStopsAtFirstLine(t *testing.T) {
-	got := finishedTitle(&task.Spec{Task: "first line\nsecond line"})
+	got := runTitle(&task.Spec{Task: "first line\nsecond line"})
 	if got != "first line" {
 		t.Fatalf("title = %q, want just the first line", got)
 	}
 }
 
-// finishedTitle clips a long first line to 80 runes, like the runner's own
+// runTitle lists a run by its own job title when fugaro run --title gave
+// it one: the row is the title the launcher stored, not the brief's first
+// line, which a shared preamble makes identical across every run of it.
+//
+// Mutation (read the task's first line instead of Spec.TitleLine): the row
+// shows "Read CLAUDE.md and the plan first." and this test fails.
+func TestFinishedTitlePrefersTheStoredTitle(t *testing.T) {
+	got := runTitle(&task.Spec{
+		Task:  "Read CLAUDE.md and the plan first.\n\nThen fix the flaky test.",
+		Title: "Ship the flaky-test fix",
+	})
+	if got != "Ship the flaky-test fix" {
+		t.Fatalf("title = %q, want the run's own title", got)
+	}
+}
+
+// runTitle clips a long first line to 80 runes, like the runner's own
 // registry entry title.
 func TestFinishedTitleClipsAt80Runes(t *testing.T) {
 	long := strings.Repeat("x", 90)
-	got := finishedTitle(&task.Spec{Task: long})
+	got := runTitle(&task.Spec{Task: long})
 	if got != long[:80] {
 		t.Fatalf("title = %q (%d runes), want the first 80", got, len([]rune(got)))
 	}

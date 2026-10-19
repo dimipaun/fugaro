@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -43,7 +44,8 @@ const (
 	// a run of the same repository could delete a queued run's token object
 	// (before the seal moved it to tokens/, read-only for a job, D16), and a
 	// token object a run cannot read is still possible (a job account without
-	// its tokens/ grant reads it as missing), and a job whose own mode is off
+	// its tokens/ grant used to read it as missing; the strict read, token.ObjectPresent,
+	// now refuses it and stops the run), and a job whose own mode is off
 	// read that as "this project has published no
 	// policy" and ran with no session, no cap and no kill switch — while the
 	// launcher had minted a token precisely because a policy exists. With the
@@ -220,6 +222,13 @@ func (r *run) haltExternal(h runstore.Halt) bool {
 // otherwise go on outside the shared caps without a word. One bucket read,
 // only for budget-on runs without a backend; with no token object (every
 // install that never turned the shared budget on) it changes nothing.
+//
+// A refused read stops the run as well, and it is the same state: the job's
+// service account holds no grant on tokens/ — the re-apply that adds the
+// grant is the one that puts the backend in this job's environment — and a
+// read that cannot be told from absence must not be read as absence
+// (token.ObjectPresent). Going on would be the fail-open this function exists
+// to close.
 func (r *run) refuseStrayToken(ctx context.Context) error {
 	slug, runID := r.d.Store.Slug(), r.d.Store.RunID()
 	if r.d.Bucket == nil || budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
@@ -229,6 +238,9 @@ func (r *run) refuseStrayToken(ctx context.Context) error {
 	// minted, and this run has no backend to use it with. The run's grant on
 	// tokens/ is read-only, so the object stays for the lifecycle rule.
 	present, err := token.ObjectPresent(ctx, r.d.Bucket, slug, runID)
+	if errors.Is(err, blobx.ErrForbidden) {
+		return fmt.Errorf("this job's read of its repository's token objects was refused, and it has no budget backend either (%s is not set in its environment): the job holds no grant on tokens/ — a job not re-applied since the budget token moved there — so the run cannot tell a token object from a refused read and stops rather than going on without a session. Run fugaro init --repo for this repository, which writes both grants, then launch the run again", RTDBURLEnv)
+	}
 	if err != nil {
 		return fmt.Errorf("checking for a budget token in the runs bucket: %s", r.redact(err.Error()))
 	}
@@ -292,15 +304,15 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	if !r.spend.On() {
 		return nil
 	}
-	// The run's identity, taken out of the runs bucket exactly once and shared
-	// with the project policy's read (projectpolicy.go): the take is memoized
-	// in r.ident (budgetIdentity.done, set by budgetClient and read here), so
-	// the session and the policy read open with the one token this run took.
-	// TakeObject itself is read-only (the job's grant on tokens/ admits no
-	// delete, D16), so nothing here rests on a second read finding nothing.
-	// Its refusals are this function's own, shipped ones: a job
-	// whose backend is damaged, or whose budget is on with no token in the
-	// bucket, stops here (B1).
+	// The run's identity, taken out of the runs bucket once and shared with
+	// the project policy's read (projectpolicy.go): one take, so the policy
+	// read and the session are one identity. The take removes nothing (D16:
+	// the job's grant on tokens/ is read-only, and the object stays until the
+	// lifecycle rule or the launcher removes it), so what makes it
+	// consume-once is the seal — the launcher delivers the key to the one
+	// execution it starts — and never a missing object. Its refusals are this
+	// function's own, shipped ones: a job whose backend is damaged, or whose
+	// budget is on with no token in the bucket, stops here (B1).
 	if _, err := r.budgetClient(ctx); err != nil {
 		return err
 	}
@@ -361,11 +373,11 @@ func (r *run) committedDaily() budget.Micros {
 	return m
 }
 
-// registryEntry is what the run says about itself at bootstrap. The task's
-// first line is untrusted text: redacted and clipped by the session.
+// registryEntry is what the run says about itself at bootstrap. The title
+// (task.Spec.TitleLine: the launcher's own --title, else the task's first
+// line) is untrusted text: redacted and clipped by the session.
 func (r *run) registryEntry() budget.AgentEntry {
-	title, _, _ := strings.Cut(strings.TrimSpace(r.spec.Task), "\n")
-	title = r.redact(title)
+	title := r.redact(r.spec.TitleLine())
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}

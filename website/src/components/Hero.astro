@@ -22,6 +22,7 @@
  * hero holds no fact of its own: what it renders, it reads.
  */
 import { loadSite } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
 import Terminal from './Terminal.astro'
 
 const site = loadSite()
@@ -63,14 +64,29 @@ const videoExists = facts.features.video
 
   <p class="hero-lead" data-source="README.md">{LEAD}</p>
 
+  {/* The page's first section, and the reason it has one (P5): the lead is the promise
+      above it and nothing else, so the gist a reader gets before scrolling is the promise,
+      and the commands are the section under it rather than part of the lead. The heading
+      is what makes the install block a section at all — the tagline, the promise and the
+      first command are the first screen, and the section is where the reader who has read
+      the promise lands. */}
+  <h2 class="hero-install-title" id="hero-install-title">Install</h2>
+
   <div class="hero-install" data-source="website/data/install.yaml">
     {
       paths.map((path) => (
         <div class="hero-install-path" data-path={path.id} data-source={path.source}>
           <p class="hero-install-name">{path.name}</p>
           {/* Written on one line: whitespace inside `<pre>` is shown, so an indented
-              template would indent the command on the page. */}
-          {path.commands.map((command) => <pre class="hero-install-command"><code>{command}</code></pre>)}
+              template would indent the command on the page. The control beside it is
+              `src/lib/copy-control.mjs`'s markup, emitted `hidden` and revealed by the
+              site's script (P6, D183). */}
+          {path.commands.map((command) => (
+            <div class="command-block" data-copy>
+              <Fragment set:html={copyControlHTML('Copy the install command')} />
+              <pre class="hero-install-command"><code>{command}</code></pre>
+            </div>
+          ))}
           {path.note && <p class="hero-install-note">{path.note}</p>}
         </div>
       ))
@@ -114,11 +130,37 @@ const videoExists = facts.features.video
     margin: 0;
     max-width: var(--measure);
     font-family: var(--font-sans);
-    font-size: var(--font-size-4xl);
+    /* The tagline is the page's `h1`, and on a phone it is the first thing that has to fit:
+       at the desktop size (`--font-size-4xl`, 56px) the sentence runs to six lines and its
+       own bottom lands below a 390 × 844 first screen, so the promise under it and the
+       first install command were both below the fold (RF5's measurement, P5). The shape is
+       the one the layout's own `h1` rule takes — `clamp(2xl, 6vw, …)`, so a phone gets
+       `--font-size-2xl` and a wide viewport gets the rule's upper end — but the upper end
+       here is the hero's own: this tagline is already the site's largest type at 56px
+       (`--font-size-4xl`), and reading it at the layout's `--font-size-3xl` (44px, what
+       every other page's `h1` takes above about 733px) would shrink the one loud line on
+       the one page whose whole job is the promise, which is a design change and not P5's.
+       What sits between 6vw and the ends is where the two rules agree; what they do at the
+       wide end is the hero's, on purpose. */
+    font-size: clamp(var(--font-size-2xl), 6vw, var(--font-size-4xl));
     line-height: var(--leading-tight);
     letter-spacing: var(--tracking-tight);
     font-weight: var(--weight-semibold);
     color: var(--text);
+  }
+
+  /* The heading that opens the install section: a section label rather than a second
+     headline, so the tagline stays the page's one loud line. It is an `h2` all the same —
+     that is what makes the block a section, what ends the page's lead at the promise, and
+     what a reader navigating by headings lands on next. Its spacing is the hero's own gap,
+     which is why it carries no margin. */
+  .hero-install-title {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text-muted);
   }
 
   .hero-lead {

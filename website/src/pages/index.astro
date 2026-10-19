@@ -1,14 +1,34 @@
 ---
-// website/src/pages/index.astro — the site's front page (website plan, Task W1.4).
+// website/src/pages/index.astro — the site's front page (website plan, Task W1.4; redesign
+// part P8, findings RF20 and RF21).
 //
-// The page is the hero and nothing else: every other thing the front page could say is a
-// section of its own with a section's own facts (W2.x, W3.x), and a placeholder here would
-// be a sentence the product cannot back (F50). What the page reads, it reads through the
-// content pipeline (W1.3) — it holds no fact of its own.
+// The page is the hero, and under it the flow: the brief's item 5 asks for a picture of how
+// the system works, and the flow How It Works carries is that picture (D185), so the same
+// component is placed here rather than a second drawing built for the front page. Every
+// other thing the front page could say is a section of its own with a section's own facts
+// (W2.x, W3.x), and a placeholder here would be a sentence the product cannot back (F50).
+// What the page reads, it reads through the content pipeline (W1.3) — it holds no fact of
+// its own.
 import Base from '../layouts/Base.astro'
 import Hero from '../components/Hero.astro'
+import ArchitectureDiagram from '../components/ArchitectureDiagram.astro'
 ---
 
 <Base title="Fugaro">
   <Hero />
+  {/* A div rather than a section: the flow is a figure, and a <section> without a heading
+      of its own would be a landmark a reader has to skip through with no name on it. */}
+  <div class="home-flow">
+    <ArchitectureDiagram />
+  </div>
 </Base>
+
+<style>
+  /* The flow sits under the hero, on the same column as everything else (W1.2's tokens;
+     its spacing is the layout's, not a number of this page's own). */
+  .home-flow {
+    max-width: var(--page-max);
+    margin: 0 auto;
+    padding: 0 var(--space-md) var(--space-3xl);
+  }
+</style>

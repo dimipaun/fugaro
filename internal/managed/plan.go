@@ -243,7 +243,7 @@ func (s Spec) read(ctx context.Context, planPath string) (*tf.Plan, error) {
 	}
 	p, err := s.TF.Show(ctx, planPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading the saved plan %s of %s: %w", planPath, s.what(), err)
+		return nil, fmt.Errorf("reading the saved plan %s of %s: %w", safetext.Field(planPath), s.what(), safetext.FieldErr(err))
 	}
 	return p, nil
 }
@@ -290,15 +290,17 @@ func (s Spec) unjudgedDeletes(p *tf.Plan) []string {
 	return out
 }
 
-// what names the project in the refusals and errors Gate writes itself.
+// what names the project in the refusals and errors Gate writes itself. Both
+// halves are bounded (safetext.Field): they reach this Spec from a marker read
+// and from a configuration, and this is the text of a refusal a person reads.
 func (s Spec) what() string {
 	switch {
 	case s.Project != "" && s.GCPProject != "":
-		return s.Project + " (" + s.GCPProject + ")"
+		return safetext.Field(s.Project) + " (" + safetext.Field(s.GCPProject) + ")"
 	case s.Project != "":
-		return s.Project
+		return safetext.Field(s.Project)
 	case s.GCPProject != "":
-		return s.GCPProject
+		return safetext.Field(s.GCPProject)
 	}
 	return "this project"
 }

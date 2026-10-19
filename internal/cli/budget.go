@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -207,11 +208,13 @@ func confirmTyped(cmd *cobra.Command, in *bufio.Reader, lc *localcfg.Config, yes
 // command that has no such flag it is advice that cannot be taken.
 func confirmTypedStrict(cmd *cobra.Command, lc *localcfg.Config, why, what string) error {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
+	// The name is printed bounded (safetext.Field) and compared as itself
+	// below: the bound is on the text and never on the comparison.
+	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)
 	if !stdinIsTerminal(cmd.InOrStdin()) {
 		return userErr("%s: %s", initflow.NeedsTerminal("the typed confirmation of this step"), why)
 	}
-	fmt.Fprintf(out, "Type %s to confirm: ", lc.Name)
+	fmt.Fprintf(out, "Type %s to confirm: ", safetext.Field(lc.Name))
 	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return userErr("reading the confirmation: %v", err)

@@ -532,6 +532,35 @@ func (r *Repo) countAhead(ctx context.Context, base, until string) (int, error) 
 	return strconv.Atoi(out)
 }
 
+// CommitsAhead counts the commits HEAD has that since does not and, when
+// except is not empty, that except does not have either: the commits of a
+// run's own work, since being the commit the run was cut from and except
+// the base branch, whose own commits — a base the agent merged or rebased
+// into the branch — are the base's and not the run's. Measuring against the
+// base branch alone counts every commit of the ref a run was started from
+// (--ref console with base_branch main), so "the agent made no commits"
+// could never fire there.
+//
+// Both are a commit or a plain ref name, never a moving ref such as HEAD:
+// the agent controls the checkout while a stage runs (checkpoint.go's C6a).
+// An except the checkout cannot resolve (a base commit the agent never
+// fetched) is left out, which counts more rather than failing. Replace refs
+// are the agent's too, so they are not honoured.
+func (r *Repo) CommitsAhead(ctx context.Context, since, except string) (int, error) {
+	revs := []string{"--no-replace-objects", "rev-list", "--count", "--end-of-options", since + "..HEAD"}
+	if except != "" {
+		revs = append(revs, "^"+except)
+	}
+	out, err := r.git(ctx, revs...)
+	if err != nil {
+		if except != "" {
+			return r.CommitsAhead(ctx, since, "")
+		}
+		return 0, err
+	}
+	return strconv.Atoi(out)
+}
+
 // RunBranchPrefix starts every branch the runner pushes.
 const RunBranchPrefix = "fugaro/"
 

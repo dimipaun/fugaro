@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -346,8 +347,8 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 		// The creation is this run's and complete; only the budget gate
 		// refused. The config stays moved (no putBack), the checkout does not.
 		moved = false
-		return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. If the marker records no valid budget, this release cannot add one to an existing project (Task 6.1, unscheduled): shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
-			rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID)
+		return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. If the marker records no valid budget, the owner can add one with `fugaro managed flag %s --budget N --budget-currency CCC` at their own terminal (Task 6.1; it replaces the fact that records none) — or shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+			rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID, rr.newID)
 	}
 	// The project exists, this run created it and wrote its fact: from here
 	// the config names a project that is the installation's, and it stays.
@@ -680,6 +681,19 @@ func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string
 //     token ceiling, the grace — stay. Where the new backend lives is the
 //     operator's decision (fugaro init --firebase), not the restore's, and it
 //     is named in what is returned.
+//   - Every base_images entry whose reference names the old project's
+//     registry goes, and the kinds it dropped are named in what is returned.
+//     The reference is <region>-docker.pkg.dev/<old project>/…, so it is not
+//     cleared by the creating apply: init reads base_images as the operator's
+//     own choice (basePlanItem's isManaged), and a reference that is not a pin
+//     this installation wrote is used as it is with a note — so the
+//     installation would keep building FROM a registry in a project that no
+//     longer exists, and nothing else would move it. Emptying the entry is
+//     what makes the creating run pin this release's base image again (the
+//     empty case is basePlanItem's pin), and an entry pointing anywhere else —
+//     an image of the operator's own — is kept untouched: it names no project
+//     of this installation's, and clearing it would replace a deliberate
+//     choice with this release's base.
 //
 // What is refused rather than moved, because the restore cannot know the
 // answer: a runs_bucket that is not the installation's default name, and a
@@ -700,6 +714,7 @@ func restoreConfig(lc, onDisk *localcfg.Config, newID string) (*localcfg.Config,
 	if s := lc.Terraform.StateBucket; s != "" && s != "fugaro-tfstate-"+lc.GCPProject {
 		return nil, nil, userErr("the project config names terraform.state_bucket %s, which is a bucket of its own rather than %s's default: a restore cannot know where that bucket's successor should be. Remove terraform.state_bucket from the config (fugaro init derives fugaro-tfstate-%s) or move it yourself", s, lc.GCPProject, newID)
 	}
+	var strandedBases []string
 	next := *onDisk
 	next.GCPProject = newID
 	next.RunsBucket = "fugaro-runs-" + newID
@@ -711,8 +726,12 @@ func restoreConfig(lc, onDisk *localcfg.Config, newID string) (*localcfg.Config,
 	next.Build.ServiceAccount = ""
 	next.Terraform = onDisk.Terraform
 	next.Terraform.StateBucket = ""
+	next.BaseImages, strandedBases = restoreBaseImages(onDisk)
 
 	var left []string
+	if len(strandedBases) > 0 {
+		left = append(left, fmt.Sprintf("the base images of %s's registry (kinds: %s) did not come across: each reference named the registry of the project that was lost, and the creating run pins this release's base images again (fugaro init --base, or --base-image KIND=IMAGE to point a kind at an image of your own)", onDisk.GCPProject, strings.Join(strandedBases, ", ")))
+	}
 	if b := onDisk.Budget; b != nil {
 		nb := *b
 		if nb.RTDBURL != "" || nb.FirebaseProject != "" || nb.FirebaseAPIKey != "" || nb.TokenSigner != "" {
@@ -722,6 +741,47 @@ func restoreConfig(lc, onDisk *localcfg.Config, newID string) (*localcfg.Config,
 		next.Budget = &nb
 	}
 	return &next, left, nil
+}
+
+// restoreBaseImages is the base_images block as the new project may have it,
+// beside the kinds it dropped (sorted, so the sentence the restore prints names
+// them in one order). It drops exactly the entries whose reference is under the
+// OLD installation's registry host — <region>-docker.pkg.dev/<old project>,
+// which is where every ref this tool writes lives, both the pin through the
+// remote repository and a copy in the installation's own fugaro-base — and
+// keeps every other entry as it is.
+//
+// The host comes from infra.RegistryHost, the one derivation of it: the
+// config's own registry_host when it records one, else <region>-docker.pkg.dev/
+// <gcp_project>. It is read before the caller clears registry_host, and it is
+// read through the config the operator's file holds, so a config whose
+// registry_host names another project is refused by every other reader anyway
+// (localcfg's checkRegistryHostProject, infra.registryHost) and nothing here
+// has to decide what that would mean. A config that cannot name a host at all
+// has no entry this installation's own registry served, and drops nothing.
+func restoreBaseImages(lc *localcfg.Config) (kept map[string]string, dropped []string) {
+	if len(lc.BaseImages) == 0 {
+		return lc.BaseImages, nil
+	}
+	host, err := infra.RegistryHost(lc)
+	if err != nil || host == "" {
+		return maps.Clone(lc.BaseImages), nil
+	}
+	kept = make(map[string]string, len(lc.BaseImages))
+	for kind, ref := range lc.BaseImages {
+		if strings.HasPrefix(ref, host+"/") {
+			dropped = append(dropped, kind)
+			continue
+		}
+		kept[kind] = ref
+	}
+	if len(kept) == 0 {
+		// No entry left is the same config as none written: the creating run
+		// pins this release's base images for the kinds it needs.
+		kept = nil
+	}
+	slices.Sort(dropped)
+	return kept, dropped
 }
 
 // readConfirmLine reads one line from in, one byte at a time.
@@ -1021,9 +1081,13 @@ func restoreGCPProjectLine(data []byte, oldID, newID string) ([]byte, bool, erro
 	if at < 0 {
 		return nil, false, byHand("fugaro.yaml's gcp_project: is not a one-line top-level key")
 	}
-	body := bytes.TrimRight(lines[at], "\r\n")
-	eol := lines[at][len(body):]
-	lines[at] = append([]byte("gcp_project: "+newID), eol...)
+	line := bytes.TrimRight(lines[at], "\r\n")
+	eol := lines[at][len(line):]
+	rewritten, err := rewriteGCPProjectValue(line, newID)
+	if err != nil {
+		return nil, false, byHand("%v", err)
+	}
+	lines[at] = append(rewritten, eol...)
 	out := bytes.Join(lines, nil)
 
 	// Read it back, as setGCPProjectLine does: the file must mean what it
@@ -1037,6 +1101,81 @@ func restoreGCPProjectLine(data []byte, oldID, newID string) ([]byte, bool, erro
 		return nil, false, byHand("the edited file would not read back as intended")
 	}
 	return out, true, nil
+}
+
+// rewriteGCPProjectValue replaces the VALUE of a gcp_project: line and nothing
+// else — the key's own spelling, the spacing after the colon, the quoting the
+// value carried and any trailing comment are the file's, because the restore
+// edits one value of a committed file and every other byte of it is the
+// operator's. It is the difference between "the line now names the new
+// project" and "the line is now what this program would have written": the
+// second drops a comment that said why the value was what it was, and the
+// read-back check cannot see it, because a comment and a pair of quotes are
+// not part of the parsed value.
+//
+// The value is read with the quoting YAML gives it — a double-quoted scalar
+// (with the backslash escapes it may hold), a single-quoted one, or a bare
+// scalar that ends at the first blank or "#" — and written back in the same
+// quoting. A project ID needs no escaping, so the two forms cannot differ in
+// what they mean; what is kept is the file's.
+func rewriteGCPProjectValue(line []byte, id string) ([]byte, error) {
+	colon := bytes.IndexByte(line, ':')
+	if colon < 0 {
+		return nil, errors.New("the gcp_project: line has no colon")
+	}
+	// head is the key and the colon with the spacing after it, as written.
+	end := colon + 1
+	for end < len(line) && (line[end] == ' ' || line[end] == '\t') {
+		end++
+	}
+	head, rest := line[:end], line[end:]
+	tail, quote, err := valueTailAndQuote(rest)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(line)+len(id))
+	out = append(out, head...)
+	out = append(out, quote...)
+	out = append(out, id...)
+	out = append(out, quote...)
+	out = append(out, tail...)
+	return out, nil
+}
+
+// valueTailAndQuote reads the YAML scalar a gcp_project: line drops after the
+// colon — a double-quoted one (with the backslash escapes it may hold), a
+// single-quoted one, or a bare one that ends at the first blank or "#" — and
+// returns what follows it on the line (the spacing before a trailing comment,
+// and the comment) together with the quote character the scalar opened with,
+// "" for a bare one. Its two errors are shapes the read above has in practice
+// already refused — a line with no value at all parses as no value, and an
+// unclosed quote does not parse — and they are kept so that the editor refuses
+// a line it cannot read rather than rebuilding it: the rule here is that every
+// shape this function does not understand is the operator's, not this
+// program's to write.
+func valueTailAndQuote(rest []byte) (tail []byte, quote string, err error) {
+	if len(rest) == 0 {
+		return nil, "", errors.New("the gcp_project: line has no value")
+	}
+	if q := rest[0]; q == '"' || q == '\'' {
+		for i := 1; i < len(rest); i++ {
+			if q == '"' && rest[i] == '\\' {
+				// The escape and what it escapes are inside the scalar whatever
+				// the next byte is, so a quoted \" does not close it.
+				i++
+				continue
+			}
+			if rest[i] == q {
+				return rest[i+1:], string(rune(q)), nil
+			}
+		}
+		return nil, "", errors.New("the gcp_project: value's quote is never closed")
+	}
+	i := 0
+	for i < len(rest) && rest[i] != ' ' && rest[i] != '\t' && rest[i] != '#' {
+		i++
+	}
+	return rest[i:], "", nil
 }
 
 // notRestored is D66's list: what the new project does NOT have, as a list

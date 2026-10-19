@@ -781,6 +781,18 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []st
 // (at held to MaxAmount, an id to something the schema allows longer) fails
 // here.
 //
+// P6.3 grew the schema — `mac` is now required on every message, and `agent`,
+// `kind`, `options`, `reply_to` and the action record are optional fields — and
+// the template has NOT grown with it: the mailbox subtree still gates P2.1's
+// field set, and P6.4 (a task of its own, level 3, after P2.2) is what adds the
+// new fields to the rules. So the two lists below are pinned in the direction
+// that must hold NOW: the schema's field set is exactly this (a change to it
+// is a deliberate change to this test), and every field the rules DO gate is a
+// field the schema names, never one it does not. The fields the rules do not
+// gate yet are named in the comment above the per-node loop, so that "fewer
+// fields than the schema" is a known, listed state rather than an oversight —
+// and so that P6.4 has a failing test to make pass, not a silent gap to close.
+//
 // What this test cannot pin is the rest of the schema's judgement, and §6.4
 // says where the rules are looser rather than claiming they are the same: the
 // rules cannot inspect characters, so the id's key rule (no `%`, no control
@@ -801,10 +813,10 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	if got, want := MaxTimestamp, consts["AT_MAX"]; got != want {
 		t.Errorf("MaxTimestamp = %d, the schema's AT_MAX = %d", got, want)
 	}
-	if want := []string{"id", "sender", "text", "at"}; !slices.Equal(required, want) {
+	if want := []string{"id", "sender", "text", "at", "mac"}; !slices.Equal(required, want) {
 		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
 	}
-	if want := []string{"id", "sender", "text", "at", "acked"}; !slices.Equal(fields, want) {
+	if want := []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action"}; !slices.Equal(fields, want) {
 		t.Errorf("the schema's FIELDS = %v, want %v", fields, want)
 	}
 
@@ -838,10 +850,19 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 	}
 
-	// The fields, per node: exactly the schema's set, no more. An inbox message
-	// has the four required ones — `acked` is the phone's ack of a message it
-	// spoke, which lives on an outbox message — and an outbox message has all
-	// five.
+	// The fields, per node: exactly what P2.1's template gates today, and every
+	// one of them a field the schema names. An inbox message has the four
+	// required P0.2 fields — `acked` is the phone's ack of a message it spoke,
+	// which lives on an outbox message — and an outbox message has all five.
+	//
+	// P6.3's `mac` is NOT among them yet, and that is the gap P6.4 closes: the
+	// schema now requires a tag on every message and the rules would refuse the
+	// write that carries one. It is listed here, as a want that deliberately
+	// lacks it, so the gap is visible in the test rather than only in a plan;
+	// P6.4 adds "mac" to both lists and the same loop then asserts it. Until
+	// then the second assertion below is what keeps the difference one-way: the
+	// rules may gate FEWER fields than the schema, never a field it does not
+	// name.
 	for _, c := range []struct {
 		path string
 		want []string
@@ -865,7 +886,12 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		want := slices.Clone(c.want)
 		slices.Sort(want)
 		if !slices.Equal(got, want) {
-			t.Errorf("/%s holds %v, the schema's field set for it is %v", c.path, got, want)
+			t.Errorf("/%s holds %v, P2.1's field set for it is %v", c.path, got, want)
+		}
+		for _, field := range got {
+			if !slices.Contains(fields, field) {
+				t.Errorf("/%s gates %q, which the shared schema does not name: the rules may gate fewer fields than the schema, never one it does not have", c.path, field)
+			}
 		}
 	}
 }

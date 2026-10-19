@@ -771,6 +771,17 @@ func (c *Config) validate() error {
 			bad("profiles.%s.allow_repos: a written list with no repository in it is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's allow_repos is still required, so a profile's list can only narrow it)", name)
 		}
 	}
+	// A profile's claude_accounts entries are resolved here against the two
+	// blocks an account can be defined in, because this file is where both are
+	// written, and an account a profile names but this file does not define
+	// names no credential at all (design project-named-oauth-tokens §4.4 row 1,
+	// plan Task 1). The one question only the published node can answer —
+	// whether the profile's own allow_repos covers every repository the
+	// account's allow_data_to does — is projectpolicy's, where both lists are
+	// in hand.
+	for _, p := range config.ValidateProfileClaudeAccounts(c.Profiles, c.ClaudeAccounts, c.ProjectSecrets) {
+		bad("%s: %s", p.Path, p.Message)
+	}
 	if c.ImageSource != "" {
 		if err := mirror.ValidSourcePrefix(c.ImageSource); err != nil {
 			bad("image_source %v", err)
