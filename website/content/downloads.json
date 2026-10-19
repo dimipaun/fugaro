@@ -38,7 +38,7 @@
   ],
   "release": {
     "tag_prefix": "console-v",
-    "version": "0.8.7",
+    "version": "0.9.0",
     "source": "docs/release.md"
   },
   "downloads": [
@@ -46,13 +46,13 @@
       "id": "macos-dmg",
       "platform": "macOS",
       "file": "Fugaro Console-{version}-universal.dmg",
-      "sha256": "a434f3ef9563f12f0821dde1a42993e5a3fc5fea86b6b7db6cb2747a101d7af9"
+      "sha256": "3bde68eae6542886e5243c74f7137d58a05b8a6b349987c412bb42ba681abbfb"
     },
     {
       "id": "macos-zip",
       "platform": "macOS",
       "file": "Fugaro Console-{version}-universal-mac.zip",
-      "sha256": "65737c86eef5a5d08fa9c8aac242642b9b139d669b05e17387aa757c782aca83"
+      "sha256": "af86fb8bd01464e63395e9473b0adea4b9f8eae610542d691f31bf2f13117f8a"
     }
   ]
 }

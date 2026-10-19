@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Ten checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Eleven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **972,553 bytes in a checkout with no tags** and to **972,553 bytes with the
+  commit builds to **973,619 bytes in a checkout with no tags** and to **973,619 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -418,8 +418,23 @@ added or removed without this sentence moving fails there:
     sentence starting the next. The space is written into the line now, **1 byte**, and the
     site figure is 972,414 → **972,415**. The page weight and the script did not move. The
     clone figure moved by the same bytes as each of the security page's rounds.
+  - **The header was put on a layer of its own** (the owner's reading of 2026-10-19: "How it
+    works: menu hidden by the blocks on mobile"), and moved **every page by the same 77
+    bytes**: 972,415 → **973,262** at the site figure and 280,604 → **280,681** at the page
+    weight. The whole of the move is the stylesheet every one of the eleven pages inlines — the
+    scale's two tokens, the header's `z-index`, and the skip link's and the banner's moved onto
+    the scale's names — and the script is untouched, because the fix is CSS and the script was
+    not what covered the menu. That the eleven pages move by the same bytes is the check worth
+    keeping: this round is the chrome, and the chrome is on every page. The clone figure moved by
+    the same bytes.
+
+  - **The console's own release moved to `console-v0.9.0`** (the owner's ruling of 2026-10-19,
+    below): `docs/releases/v0.9.0.md` names the console's own release now, and that line is part
+    of the changelog entry the page renders — the site figure is 973,262 → **973,481** (219
+    bytes), and the two checkout shapes move together as one figure. The page weight and the
+    script did not move: the heaviest page is the docs hub, which renders no changelog entry.
   - **The app's reporting is always on, and the app has no switch** (the owner's ruling of
-    2026-10-19), and it is the round this build's site figure ends at. The phone app's paragraph
+    2026-10-19), and it moved the page once more. The phone app's paragraph
     said collection was off until the reader turned it on in the app's settings, and the deletion
     section said turning that switch off stopped the sending. The ruling leaves no switch: the
     versions that carry the reports send them, and the page says so — no switch inside the app to
@@ -429,7 +444,7 @@ added or removed without this sentence moving fails there:
     website on purpose: the site's own measurement is the page's first part, under the consent
     that part states, so a software-part sentence calling the website unmeasured would be the
     page contradicting itself, and the flag that decides that part is not this list's to read.
-    That is **138 bytes onto the page's own markup**, 972,415 → **972,553**, and the
+    That is **138 bytes onto the page's own markup**, 973,481 → **973,619**, and the
     words ceiling re-derived with it, 919 → **949** (the page's own 759 words plus 25 %, below).
     The page weight, the script and the number of files did not move: the heaviest page is still
     the docs hub, which renders none of this, and the clone figure moved by the same bytes.
@@ -456,10 +471,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
-    docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
+    docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,647,076 bytes. Three times 1,215,692 (every file in `dist/`, 972,553
+  - **Whole site:** 3,651,072 bytes. Three times 1,217,024 (every file in `dist/`, 973,619
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -721,6 +736,23 @@ added or removed without this sentence moving fails there:
   privacy statement's own count plus 25 %, the number `website/README.md` states, and every
   other page of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that
   measures it and the byte figures it is a sibling of.
+- `test/stacking.mjs` — the header paints above the page's blocks (the owner's reading of
+  2026-10-19: "How it works: menu hidden by the blocks on mobile"). `tokens.css` names the
+  site's two layers — `--z-header` for the header's row and the panel a group hangs below it,
+  `--z-chrome` for the reader's own chrome above the page — and this gate reads them out of the
+  **built** stylesheets: the header is positioned and carries the header's layer, which is what
+  makes it a stacking context; the skip link and the consent banner carry the chrome's layer
+  and nothing else does; and **no other rule declares a `z-index` at all**, which is the only
+  thing a content component would need to paint over an open menu. The defect it was written
+  for is the diagram: `ArchitectureDiagram.astro`'s steps are `position: relative` — that is
+  what their arrows are placed against — and a positioned box with no `z-index` paints with
+  every other such box in tree order, where the header is the first and a block drawn after it
+  covers the menu on the two pages that carry the drawing. `base.css` gives `.site-header` the
+  header's layer instead, in one rule rather than one per component, and this gate keeps it
+  there. Its refusals are kept the way the others keep theirs: a fixture page carries the scale
+  and the three layered rules, and a case plants each defect — a header with no layer, a header
+  a layer cannot apply to, a content block with a layer of its own — and watches the named
+  refusal come back.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
@@ -877,6 +909,20 @@ bumped to the CLI tag the console was built from, and each entry's `sha256` set 
 release's own sums file records for its published name. The download list itself does not change —
 it already carries the release's published names — so no URL is typed anywhere and every button,
 label and URL follows from those.
+
+**A later console release moves two of those four again, and it has happened once:** on
+2026-10-19 the console's own release moved to `console-v0.9.0` (the owner's ruling that
+the site's console downloads follow the console's own release), so `release.version` and both
+`sha256` values moved with it and `data/console-sha256sums.txt` was replaced by the published
+`console-v0.9.0` asset, byte for byte. Nothing else about the section changed: the same two
+artifacts, the same signing and notarisation, and the same derived URLs.
+
+**The tag's prefix is checked in the build, not only in the gates.** `src/lib/console-downloads.mjs`
+reads `CONSOLE_TAG="<prefix>$VERSION"` out of `.github/workflows/console-release.yml` and refuses a
+`release.tag_prefix` the workflow does not compose (`website/test/console.mjs` plants the
+disagreement and requires the refusal). A prefix of the right *shape* that no run composes is a tag
+no release carries, and every button would 404 — the one failure the checksums, the documented names
+and `console/README.md` all agree with a build that made it.
 
 **It was not a one-line change, and four checks were written to say so** — each keeping the
 unreleased state true, and each refusing the flip until the commit that made it extended it. That

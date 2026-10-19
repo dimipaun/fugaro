@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { bundleRenderer, bundleStylesheet, consoleBundles, consoleStylesheet } from '../../tools/bundle-renderer/index'
+import { buildConsole } from '../../tools/bundle-renderer/index'
 
 /** CONSOLE_ROOT is the console package, from this file's location. */
 export const CONSOLE_ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -129,15 +129,16 @@ function isStale(): boolean {
 }
 
 /** build runs the steps `npm run build` runs, in its order: the compiler, then
- * the bundler that writes the stylesheet and the two bundles. */
+ * the bundler's own `buildConsole` -- the stylesheet and the two bundles, behind
+ * the served root's foreign-file refusal, which is the same function the command
+ * runs rather than a second spelling of its order. */
 function build(): void {
   execFileSync(
     process.execPath,
     [join(CONSOLE_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.build.json'],
     { cwd: CONSOLE_ROOT, stdio: 'pipe' },
   )
-  bundleStylesheet(consoleStylesheet(CONSOLE_ROOT))
-  for (const bundle of consoleBundles(CONSOLE_ROOT)) bundleRenderer(bundle)
+  buildConsole(CONSOLE_ROOT)
 }
 
 /** takeLock is the one-writer rule: `wx` either creates the file or says

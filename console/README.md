@@ -2708,7 +2708,9 @@ two do not, and that is the phase's own order rather than an omission:
 is the record of the stage before that.** Each is named by `THEME_STYLESHEETS` in
 `tools/bundle-renderer/index.ts`, the bundler's stylesheet step concatenates them (in list
 order) into `dist/bundle/console.css`, `/console.css` is one of the entries `SERVED_FILES`
-admits, and each of the three documents links it — see the section at the foot of this file.
+names — the list `test/unit/bundle.test.ts` holds the served root to, not a filter the
+handler consults — and each of the three documents links it — see the section at the foot of
+this file.
 `test/unit/bundle.test.ts` fails if a stylesheet `THEME_STYLESHEETS` names still says in its
 own prose that nothing reads it, which is the sentence this paragraph used to open with and
 the reason it was rewritten rather than left standing.
@@ -2800,18 +2802,55 @@ intermediate state is a real build of the files that exist.
 `test/unit/bundle.test.ts` reads the list rather than four hard-coded names, so its case is
 true here with two files in it and stays true when the other two are appended.
 
-The step also refuses an **`@import`** and a **remote `url()`** in any theme file: the
-bundle is one file and the console is offline (`connect-src 'none'`), so an import would
-either fail at runtime or be a request the CSP forbids. `url(./mark.png)` and
-`url(data:...)` are admitted — a path on this origin, and a byte string rather than a
-request (`img-src 'self' data:` allows the second). The `@import` scan is **ASCII
-case-insensitive**, matching `CSS_URL_RE` and `REMOTE_SCHEME_RE` beside it and matching CSS
-itself, where at-rule names are case-insensitive: `@IMPORT url("./base.css");` is the same
-rule, and it is the spelling that would otherwise slip through — its target is relative, so
-the remote-URL refusal does not see it, and the emitted `console.css` would carry an import
-at a path that is not in `dist/bundle/` and drop that layer out of the cascade with nothing
-failing. `test/unit/bundle.test.ts` plants `@import`, `@IMPORT` and `@Import`, and controls
-with the word spelled without its `@`.
+The step also refuses four things in any theme file, and the first is what makes the
+other three hold: a **backslash**, an **`@import`**, a **quoted string that names a URL**
+and a **remote `url()`**. The bundle is one file and the console is offline
+(`connect-src 'none'`), so an import would either fail at runtime or be a request the CSP
+forbids — and CSS reads `\` as the start of an **escape**, so `@\69mport "./base.css";` is
+an `@import`, `u\72l(...)` is a `url(...)` and `"\68ttp://…"` is a remote URL. Every scan in
+this tool is a scan and not a parse (the reason a *comment* that mentions `@import` is
+refused for it), so none of them unescapes, and the escape itself is what is refused.
+Neither theme file holds one, and a file that wants an escaped character writes the
+character — a scan that tried to tell the harmless escapes from the load-bearing ones would
+be the parser this tool does not have. `test/unit/bundle.test.ts` plants all four spellings
+of an escaped rule, `content: "\2014"` among them, which is the case that makes the rule a
+rule rather than a list of three shapes.
+
+The quoted-string scan is separate from the `url()` one because `image-set()` and
+`-webkit-image-set()` take a **bare string** as a URL, which is a remote load that never
+writes `url(`: `image-set("https://cdn.example/x.png" 1x)` is a request the `url()` scan and
+the at-rule scan both miss. Both scans read a target the same way — a scheme that leaves
+this machine, or the protocol-relative `//` — and the `url()` scan runs first, so a quoted
+`url('http://…')` is refused as the call that made the request. A quoted `<string>` may hold
+the *other* mark inside it, because CSS allows it — `image-set("https://cdn.example/a'b.png"
+1x)` is a valid URL — and the scan reads it as one.
+
+The target test is **anchored at the start of the string**, which is what keeps the cost
+narrow: a string that merely *mentions* a URL is not a URL, so `content: "see the design's
+notes, https://…"` passes. What is refused is a string that *begins* as a URL and is not one
+— `content: "Note: hello"` reads as the scheme `Note:` — and the fix is to reword the string.
+That is the whole of the false-positive surface, and it is the direction the tool errs in
+everywhere else.
+
+`url(./mark.png)` and `url(data:...)` are admitted — a path on this origin, and a byte
+string rather than a request (`img-src 'self' data:` allows the second). Two asymmetries
+are admitted with them and are stated rather than solved, because neither weakens anything:
+`data:` is allowed by `img-src` and by **no** other directive, so an `@font-face
+src: url(data:…)` would pass the build and be blocked when it is painted (`font-src 'self'`);
+and `blob:` is admitted by the same reading of `REMOTE_SCHEME_RE` while **no** directive
+allows it at all. Both are a silent failure mode — a rule that builds and does not paint —
+and not a hole: the CSP refuses the load either way.
+
+The `@import` scan is **ASCII case-insensitive**, matching `CSS_URL_RE` and
+`REMOTE_SCHEME_RE` beside it and matching CSS itself, where at-rule names are
+case-insensitive: `@IMPORT url("./base.css");` is the same rule, and it is the spelling that
+would otherwise slip through — its target is relative, so the remote-URL refusal does not
+see it, and the emitted `console.css` would carry an import at a path that is not in
+`dist/bundle/` and drop that layer out of the cascade with nothing failing.
+`test/unit/bundle.test.ts` plants `@import`, `@IMPORT` and `@Import`, and controls with the
+word spelled without its `@`. The stray-`.css` refusal beside these is case-insensitive too:
+`stray.CSS` is a stylesheet, and which checkout made the bundle should not decide whether
+the list is the directory's whole contents.
 
 **No CSS is parsed, minified, autoprefixed or rewritten.** The bytes on disk are the bytes
 served, which is what makes `theme-tokens.test.ts`'s contrast arithmetic meaningful: it
@@ -2841,7 +2880,12 @@ from this origin, so `'self'` admits it. `default-src 'none'` is not consulted f
 `connect-src` governs, and no script fetches the CSS). **No directive is added, none is
 loosened, and there is no inline style, no `<style>` element and no `'unsafe-inline'`
 anywhere.** `mediaTypeFor` already mapped `.css`, so the protocol handler's change is the
-allow-list entry and nothing else.
+`SERVED_FILES` entry and nothing else — **and that entry is a list the handler never
+reads**: `resolveBundleRequest` serves any file under the root a URL names, deliberately
+(`protocol.ts` says so itself: `SERVED_FILES` is "deliberately not a second filter"), so the
+entry is the *test-held mirror* of `dist/bundle/` and not a runtime allow-list. The
+enforcement is the directory's contents, which the build decides; the list is how a reader
+and `test/unit/bundle.test.ts` see what the build decided.
 
 Four things hold that, and each is a test rather than a promise:
 
@@ -2881,6 +2925,41 @@ Each was planted for real, run, and removed. The red step is the failure, not th
 | `dist/bundle/console.css` removed from `build.files` | `build-files.test.ts` (`bundlerOutputs`) and `fuses.test.ts` |
 | "Nothing reads this file yet" put back into a listed theme file | `bundle.test.ts`, on the unwired-claim pin — planted in `tokens.css` and observed failing, then reworded |
 | the newline append removed from `stylesheetText` | `bundle.test.ts`, on the planted unterminated stylesheet — the mutant was planted (`source.css` without the `${…}\n` arm) and the case observed failing on the `a { color: red; }/* palette.css */` seam |
+
+### The follow-up's own mutations (review of #694, 2026-10-19)
+
+The independent review of the merged task left four minors and three nits, and each fix
+landed with a case that was mutated first. Each mutant below was planted in
+`tools/bundle-renderer/index.ts`, run, and reverted; in every run exactly the cases named
+failed and no other case did.
+
+| Mutation | What fails |
+|---|---|
+| the backslash refusal removed | `bundle.test.ts`, "refuses a backslash, which CSS reads as an escape" — the four escaped spellings, `@\69mport` first |
+| the quoted-string refusal removed | `bundle.test.ts`, "refuses a quoted string that names a URL" — `image-set("https://…")` is admitted with it gone |
+| the `isFile()` check on a listed theme file removed (`statSync` in its place) | `bundle.test.ts`, "refuses a listed theme file that is a symlink" |
+| `buildConsole` put back to the old order (stylesheet before the foreign-file refusal) | `bundle.test.ts`, "refuses a foreign file in the served root before it writes anything" — the refusal still lands, but `console.css` is already there |
+| `refuseSymlinkedOutput` dropped from either writer | `bundle.test.ts`, "refuses to write the stylesheet through a symlink" (and "…its bundle through a symlink") |
+| `THEME_STYLESHEETS`' first two entries swapped | `bundle.test.ts`, "names the cascade in the design's order" — **and nothing else**, which is the finding: before that case, this mutant left the whole suite green |
+| the stray-file extension test made case-sensitive again | `bundle.test.ts`, "refuses a .css the list does not name whatever its extension's case is" |
+
+**A second pass over those fixes** (same review, 2026-10-19) closed two gaps the cases
+above left, each reproduced against the compiled tool before it was fixed and mutated
+after, and one overclaim in the prose:
+
+| Mutation | What fails |
+|---|---|
+| the three `refuseSymlinkedDirectory` calls removed | `bundle.test.ts`, both "…into a symlinked directory" cases and the `buildConsole` half of "refuses a foreign file in the served root before it writes anything" |
+| `QUOTED_STRING_RE`'s body narrowed to `[^"'\n]*` (excluding both marks, as it first shipped) | `bundle.test.ts`, "refuses a quoted string that names a URL" and the probe case — `image-set("https://…/a'b.png" 1x)` is admitted by the narrow body |
+
+The directory half was the one that mattered: with the file check alone, `dist/bundle` as a
+symlink to a directory outside the tree built **cleanly** and left `console.css` outside the
+served root. Two of these shapes a case can only reach by planting the link itself, which is
+what those cases do. A symlink *above* the output directory is still followed, and that is
+stated in `refuseSymlinkedDirectory` rather than left to be discovered: resolving the whole
+chain would refuse `/var`-style paths the platform ships (`os.tmpdir()` is under `/var` on
+macOS), and `dist/` is gitignored, so this shape needs a tampered working tree rather than a
+reviewed commit.
 
 ### What this task does not own
 
