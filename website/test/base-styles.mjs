@@ -178,9 +178,21 @@ test('the header cannot become two rows, and the wide row is where the menu is',
 // case would fail for the wrong reason (or worse, pass).
 const TODAY = () => pageCss(readFileSync(path.join(DIST, 'index.html'), 'utf8'))
 
-function plant(from, to) {
+/**
+ * Today's stylesheet with one fragment replaced — the fixture every case below is made of.
+ * `which` picks the occurrence: the first by default, and `'last'` for the fragments the
+ * flow's three layouts each write. The arrow's turn is the one that needs it: `rotate(-90deg)`
+ * is written twice, once for the two-by-two's row arrows and once for the row's, and a case
+ * about the row has to edit the row's — the first occurrence is the two-by-two's, which the
+ * check reads at 35 rem and not at 72.
+ */
+function plant(from, to, which = 'first') {
   const css = TODAY()
   assert.ok(css.includes(from), `this fixture is built by removing ${JSON.stringify(from)} from the built stylesheet, and the stylesheet no longer carries it`)
+  if (which === 'last') {
+    const at = css.lastIndexOf(from)
+    return css.slice(0, at) + to + css.slice(at + from.length)
+  }
   return css.replace(from, to)
 }
 
@@ -278,12 +290,29 @@ function declarations(rule) {
   return Object.fromEntries(cssDeclarations(rule.decls))
 }
 
-/** True when a rule is in force at a viewport width: no `@media`, or a min-width at or below it. */
+/**
+ * True when a rule is in force at a viewport width: no `@media`, or a width range the width
+ * falls in. **Both ends of a range are read.** The flow has three layouts and each is a range
+ * of its own — the column below 35 rem, the two-by-two from 35 rem to 71.98 rem, the row from
+ * 72 rem — and a reader that honoured only `min-width` would apply the two-by-two's rules at
+ * 1280 px as well, where they are not in force at all: the last of them would win the reads
+ * below and the row would be measured out of the wrong block. The end that made the defect
+ * visible is the row's own: it has to be measured with the padding, the gap and the arrow box
+ * of the block that actually lays it out.
+ *
+ * A query with no width in it at all — `prefers-reduced-motion`, `@supports` — is a rule the
+ * width does not decide, and it is reported as not applying: the two animation rules are the
+ * ones that matter here, and they are about motion rather than about a width.
+ */
 function appliesAt(width) {
   return (rule) => {
     if (!rule.query) return true
     const min = /width\s*>=\s*([\d.]+)rem/.exec(rule.query)
-    return min !== null && Number(min[1]) * 16 <= width
+    const max = /width\s*<=\s*([\d.]+)rem/.exec(rule.query)
+    if (min === null && max === null) return false
+    if (min !== null && Number(min[1]) * 16 > width) return false
+    if (max !== null && Number(max[1]) * 16 < width) return false
+    return true
   }
 }
 
@@ -315,6 +344,36 @@ function firstToken(value) {
   return end === -1 ? text : text.slice(0, end + 1)
 }
 
+/**
+ * A shorthand declaration's components, in order, with any `calc()` kept whole. Built on
+ * `firstToken`, so `padding: var(--space-md) var(--space-2xs)` is two components and a
+ * `calc()` in one of them stays one.
+ */
+function shorthandParts(value) {
+  const out = []
+  let rest = (value ?? '').trim()
+  while (rest) {
+    const token = firstToken(rest)
+    if (!token) break
+    out.push(token)
+    rest = rest.slice(token.length).trim()
+  }
+  return out
+}
+
+/**
+ * The **inline** component of a shorthand — the room a `padding` takes from the sides, and
+ * the gap a two-value `gap` puts between columns — which is the second component when there
+ * is one and the first when the shorthand names a single value. The horizontal half is the
+ * one that matters to the arithmetic below: a card's block padding is the reader's breathing
+ * room and costs the name nothing, while its inline padding comes straight out of the box the
+ * name has to print in.
+ */
+function inlineToken(value) {
+  const parts = shorthandParts(value)
+  return parts.length > 1 ? parts[1] : parts[0]
+}
+
 /** The tokens a stylesheet declares, as `name -> px`. */
 function lengthTokens(css) {
   const out = new Map()
@@ -342,6 +401,20 @@ export function textWidth(text, fontSize) {
   for (const ch of text) ems += ADVANCE.get(ch) ?? DEFAULT_ADVANCE
   return ems * fontSize
 }
+
+/**
+ * The margin the longest step name must have left over on top of `textWidth`'s estimate, in
+ * pixels, where the four cards stand in a row. The estimate is already an upper bound — every
+ * character at least 0.68 em, and the wide ones at their own wider value — so this is the
+ * second margin rather than the only one: a system font a little wider than the table, a
+ * rounding in the browser, a hinting that adds a fraction of a pixel per glyph. Four pixels
+ * is a third of a character, which is enough that the name is not *exactly* at the box's edge
+ * when the estimate is right, and small enough that it never decides the layout on its own —
+ * the box is 232 px against an estimated 225 at the width the row starts at. The row is the
+ * one layout where a name that wraps is the defect, so it is the one place the margin is
+ * required rather than merely positive.
+ */
+const NAME_MARGIN = 4
 
 /** The longest word of a name: what a card has to hold when the name wraps. */
 function longestWord(names) {
@@ -712,8 +785,34 @@ export function listMaxWidth(css, width, element = FLOW_LIST) {
 }
 
 /**
+ * The flow's layout rules, as the stylesheet declares them: the row (the block that lays the
+ * list out as a row of four) and the two-by-two (the block that gives it two columns), each
+ * with the width its own query starts it at. The phone's column is neither — it is what a
+ * list with no other layout is — so there is nothing to find for it.
+ *
+ * Read in one place and handed to both callers, because three checks need the same blocks:
+ * the name arithmetic needs the row, the two-by-two's word arithmetic needs the grid, and the
+ * arrows need both to know which shapes to check at which widths. A block that is not there is
+ * `null`, and what that means is the caller's own refusal: a missing row means the picture is
+ * not drawn, a missing two-by-two only means the check about it has nothing to measure.
+ */
+function flowLayouts(css) {
+  const rules = allRules(css)
+  const find = (test) => rules.find((r) => /\.flow-steps(?![\w-])/.test(r.selector) && r.query && test(r))
+  const read = (rule) => {
+    if (rule === undefined) return null
+    const from = /width\s*>=\s*([\d.]+)rem/.exec(rule.query)
+    return { rule, from: from === null ? null : Number(from[1]) * 16 }
+  }
+  return {
+    row: read(find((r) => /flex-direction:row/.test(r.decls))),
+    grid: read(find((r) => declarations(r)['grid-template-columns'] !== undefined)),
+  }
+}
+
+/**
  * Every way the flow's four-across row fails to render the step names it prints, for one
- * built page's stylesheet and the names that page carries. Two things are checked, and each
+ * built page's stylesheet and the names that page carries. Five things are checked, and each
  * is the defect rather than a preference:
  *
  *   - **the name may wrap.** A step name held on one line is a name that overflows its card
@@ -721,7 +820,21 @@ export function listMaxWidth(css, width, element = FLOW_LIST) {
  *   - **a card is wide enough for the longest word its names are made of.** With the name free
  *     to wrap, the limit is the longest single word ("Ephemeral", in the spec's item 4's own
  *     step names) at the size the name is set: the flow's own breakpoint has to be a width at
- *     which the row has that much room, and inside a card the number may not take it away.
+ *     which the row has that much room, and inside a card the number may not take it away;
+ *   - **the longest name is one line in the row.** This is the defect the review of this
+ *     branch measured at 1280 px: `Ephemeral cloud job` broke onto two lines while the three
+ *     names beside it fitted on one, so that card grew and the row's bottom edge went ragged.
+ *     The estimate is this file's own per-character table (`textWidth`) at the size the
+ *     stylesheet sets, it is an upper bound rather than a measurement, and the check asks for
+ *     a margin on top of it (`NAME_MARGIN`) — see the constant;
+ *   - **the four cards are one height.** The steps stretch to the row and the cards stretch to
+ *     their step, and a card's content starts at its top: a row whose steps are
+ *     `align-items: center` gives each card its own content's height, which is how card 4 came
+ *     out about 30 px shorter than card 3;
+ *   - **the two-by-two's columns hold the longest word.** Between a phone and the full row the
+ *     steps are `1 2 / 3 4`, so a card is half the column rather than a quarter — a different
+ *     box, and the one a 768 px screen reads. It is checked at the width the two-by-two starts
+ *     at, where its cards are narrowest.
  *
  * The width a card gets is the arithmetic the layout does: `main` is the page's column
  * (`--page-max` wide, centred, with its gutter), the classes between `main` and the figure
@@ -741,17 +854,16 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
 
   // The block that lays the flow out as a row of four: without it there is no row to check,
   // and the picture the spec asks for is missing rather than too narrow.
-  const row = rules.find((r) => /\.flow-steps(?![\w-])/.test(r.selector) && /flex-direction:row/.test(r.decls) && r.query)
+  const row = flowLayouts(css).row
   if (!row) {
     out.push("the flow has no four-across row: item 4's picture is the four steps travelling left to right, and no rule lays them out as a row")
     return out
   }
-  const breakpoint = /width\s*>=\s*([\d.]+)rem/.exec(row.query)
-  if (!breakpoint) {
-    out.push(`the flow's four-across row is not inside a min-width breakpoint (${JSON.stringify(row.query)}): the width a card gets cannot be read, and a row that starts at no width is a row that starts at every width`)
+  if (row.from === null) {
+    out.push(`the flow's four-across row is not inside a min-width breakpoint (${JSON.stringify(row.rule.query)}): the width a card gets cannot be read, and a row that starts at no width is a row that starts at every width`)
     return out
   }
-  const at = Number(breakpoint[1]) * 16
+  const at = row.from
 
   // The name may wrap, at every width: one rule holding it on a line is the whole defect.
   for (const rule of rules) {
@@ -765,10 +877,45 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
   const nameSize = toPx(declsOf('step-name').map((d) => d['font-size']).filter(Boolean).pop(), tokens)
   const number = toPx(declsOf('step-number').map((d) => d['width']).filter(Boolean).pop(), tokens)
   const headGap = toPx(declsOf('step-head').map((d) => d['gap']).filter(Boolean).pop(), tokens)
-  const cardPad = toPx(firstToken(declsOf('step-card').map((d) => d['padding']).filter(Boolean).pop()), tokens)
-  const border = toPx(firstToken(declsOf('step-card').map((d) => d['border']).filter(Boolean).pop()), tokens)
-  const arrow = toPx(rules.filter((r) => /\.step-arrow(?![\w-])/.test(r.selector)).map(declarations).map((d) => d['width']).filter(Boolean).pop(), tokens)
-  const gap = toPx(declarations(row)['gap'], tokens)
+  const gap = toPx(declarations(row.rule)['gap'], tokens)
+
+  /**
+   * The last value a class's own rules declare for a property, among the rules in force at a
+   * width — the way a browser reads one property of one element, with the later rule winning.
+   * The width is the point: each of the flow's three layouts sets the card's padding, its
+   * border and the arrow's box differently, so "the card's padding" is a number with a width
+   * attached, and reading one number for all of them is how a rule that is not in force at the
+   * width being measured could decide what that width measures.
+   */
+  const declared = (klass, property, width) =>
+    rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(width)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+
+  /**
+   * The card's inline padding at a width — this is the number that comes off the box the name
+   * has to print in, and it is why the shorthand is read for its inline component rather than
+   * its first: the row's cards carry `var(--space-md) var(--space-2xs)`, and a reader that
+   * took the block padding for the inline one would think the name had 32 px more than it has.
+   */
+  const cardPadAt = (width) => toPx(inlineToken(declared('step-card', 'padding', width)), tokens)
+  /** The card's border at a width, from the first component of the shorthand. */
+  const borderAt = (width) => toPx(firstToken(declared('step-card', 'border', width)), tokens)
+  /** The arrow's declared box at a width, whether or not that box takes room in the flow. */
+  const arrowBoxAt = (width) => toPx(declared('step-arrow', 'width', width), tokens)
+  /**
+   * The width the arrow takes out of a step's share of the row: its box, or **nothing** when it
+   * is absolutely positioned in the gap between two cards. That is what it is in both layouts
+   * where the cards share the width, and it is the defect this reading was added for: the arrow
+   * used to sit in the row's own flow, 32 px wide inside three of the four steps, so the
+   * fourth step's card was a quarter of the row wider than the other three.
+   */
+  const arrowWidthAt = (width) => {
+    const position = declared('step-arrow', 'position', width)
+    return position === 'absolute' || position === 'fixed' ? 0 : arrowBoxAt(width)
+  }
 
   // Every number the arithmetic below is made of, refused here when this reader could not turn
   // it into pixels rather than carried into the sums. `NaN` is false against every comparison,
@@ -781,9 +928,9 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
     ['the size the step names are set in (`.step-name`’s font-size)', nameSize],
     ['the step number’s box (`.step-number`’s width)', number],
     ['the gap between the number and the name (`.step-head`’s gap)', headGap],
-    ['the card’s padding (`.step-card`’s padding)', cardPad],
-    ['the card’s border (`.step-card`’s border)', border],
-    ["the arrow's box (`.step-arrow`'s width)", arrow],
+    ['the card’s padding (`.step-card`’s padding)', cardPadAt(at)],
+    ['the card’s border (`.step-card`’s border)', borderAt(at)],
+    ["the arrow's box (`.step-arrow`'s width)", arrowBoxAt(at)],
     ["the row's gap (`.flow-steps`'s gap inside its row breakpoint)", gap],
   ].filter(([, px]) => Number.isNaN(px))
   if (lengths.length > 0) {
@@ -792,8 +939,8 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
     ]
   }
 
-  /** The horizontal padding a rule declares: the second value of a `padding` shorthand. */
-  const paddingInline = (rule) => toPx((declarations(rule)['padding'] ?? '').split(/\s+/)[1], tokens)
+  /** The inline padding a rule declares: `inlineToken` of its `padding` shorthand. */
+  const paddingInline = (rule) => toPx(inlineToken(declarations(rule)['padding']), tokens)
 
   /**
    * `main`'s gutter at a width: the last of its rules that applies there — the base rule and
@@ -829,8 +976,10 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
   }
 
   // The card's content box at a viewport: the row's width, shared between four cards, three
-  // arrows and three gaps, less the card's own padding and border.
-  const contentBox = (width) => (rowWidth(width) - 3 * gap - 3 * arrow) / 4 - 2 * cardPad - 2 * border
+  // arrows and three gaps, less the card's own padding and border — every one of those read at
+  // the width being measured, because the row block and the two-by-two block set them
+  // differently and only one of the two is in force at a time.
+  const contentBox = (width) => (rowWidth(width) - 3 * gap - 3 * arrowWidthAt(width)) / 4 - 2 * cardPadAt(width) - 2 * borderAt(width)
 
   // The head is a row (the number beside the name) until a rule turns it into a column, which
   // is how the name's own box is read: the number is `flex: none`, so a row takes its width and
@@ -842,11 +991,19 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
       .filter(Boolean)
       .pop() === 'column'
 
-  // What the row needs of its own box: four cards wide enough for the longest word of the
-  // names (plus their own padding and border), the three arrows between them and the three
-  // gaps. A box narrower than this is a row the browser has to squeeze.
-  const cardNeeds = (names_) => textWidth(longestWord(names_), nameSize) + 2 * cardPad + 2 * border
-  const rowNeeds = (names_) => 4 * cardNeeds(names_) + 3 * (arrow + gap)
+  // The name the row has to fit on one line: the widest of the four, by the same per-character
+  // estimate everything else in this file uses. Chosen by estimated width rather than by
+  // character count, because the table is not one width per character — `Ephemeral cloud job`
+  // is the widest of item 4's four and not the longest by letters.
+  const longestName = (names_) => names_.reduce((a, b) => (textWidth(b, nameSize) > textWidth(a, nameSize) ? b : a), '')
+
+  // What the row needs of its own box: four cards wide enough for **the longest name on one
+  // line** (plus their own padding and border), the three arrows between them and the three
+  // gaps. A box narrower than this is a row the browser has to squeeze the picture into — and
+  // the longest name rather than the longest word, because the row is exactly the layout where
+  // the name is not allowed to wrap.
+  const cardNeeds = (names_) => textWidth(longestName(names_), nameSize) + 2 * cardPadAt(at) + 2 * borderAt(at)
+  const rowNeeds = (names_) => 4 * cardNeeds(names_) + 3 * (arrowWidthAt(at) + gap)
 
   for (const width of [at, 80 * 16]) {
     const content = contentBox(width)
@@ -868,6 +1025,76 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
       out.push(
         `at ${width / 16} rem the flow's four-across row gives a step name ${Math.round(nameBox)} px and the longest word of the names it prints (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(needs)} px: the row cannot render its own step names (changes spec 2026-10-18, item 4)`,
       )
+    }
+
+    // The name on one line. This is the defect the review of this branch measured at 1280 px:
+    // `Ephemeral cloud job` broke onto two lines while the three names beside it fitted on one,
+    // so that card grew and the row's bottom edge went ragged. The estimate is `textWidth`'s
+    // per-character table at the size the stylesheet sets, it is an upper bound, and `NAME_MARGIN`
+    // is the second margin on top of it.
+    const nameNeeds = textWidth(longestName(names), nameSize)
+    if (nameBox < nameNeeds + NAME_MARGIN) {
+      out.push(
+        `at ${width / 16} rem the flow's four-across row gives a step name ${Math.round(nameBox)} px and the longest of the four names it prints (${JSON.stringify(longestName(names))}, ${Math.round(nameNeeds)} px by this check's per-character estimate at ${nameSize} px, and at least ${NAME_MARGIN} px of margin on top of it) does not fit on one line: ` +
+          `a name that wraps is a card taller than the three beside it, which is the ragged row the review of this branch measured (changes spec 2026-10-18, item 4)`,
+      )
+    }
+  }
+
+  // ---- the four cards are one height ------------------------------------------------------
+  //
+  // A row of cards whose bottoms do not line up reads as a broken row. The defect that shipped
+  // was `.flow-step { align-items: center }` inside the row's own breakpoint: the step's cross
+  // axis is its card, so the card took its own content's height, and the fourth card — the
+  // shortest caption of the four — ended about 30 px above the third's. What the row needs is
+  // `stretch` on the list (so the steps are one height) and on the step (so its card fills it),
+  // with the card's own content packed from its top rather than spread down it.
+  for (const width of [at, 80 * 16]) {
+    for (const [klass, what] of [
+      ['flow-steps', "the flow's row container"],
+      ['flow-step', 'a step'],
+    ]) {
+      const align = declared(klass, 'align-items', width)
+      if (align !== undefined && align !== 'stretch') {
+        out.push(
+          `at ${width / 16} rem ${what} aligns its items to \`${align}\`, and a flow whose items are aligned to anything but \`stretch\` gives each card its own content's height: the four cards of a row are one height, and the row's bottom edge is ragged otherwise (changes spec 2026-10-18, item 4)`,
+        )
+      }
+    }
+    const packing = declared('step-card', 'align-content', width) ?? declared('step-card', 'align-items', width)
+    if (packing === undefined || !['start', 'flex-start'].includes(packing)) {
+      out.push(
+        `at ${width / 16} rem the step card packs its content with \`${packing ?? '(nothing declared)'}\`: a card is stretched to the height of the row's tallest step, so without \`align-content: start\` its number, its name and its caption are spread down it instead of starting at its top (changes spec 2026-10-18, item 4)`,
+      )
+    }
+  }
+
+  // ---- and the two-by-two, where a card is half the column rather than a quarter ----------
+  //
+  // Between a phone and the full row the steps are `1 2 / 3 4`, so the box a name has to print
+  // in is a different box — half the column, its own padding, its own gap — and it is the one a
+  // 768 px screen reads. Checked at the width the two-by-two starts at, where its cards are at
+  // their narrowest; the longest word, because at half a column the name is free to wrap.
+  const grid = flowLayouts(css).grid
+  if (grid !== null && grid.from !== null) {
+    const columns = declarations(grid.rule)['grid-template-columns']
+    const count = columns.split(/\s+/).filter(Boolean).length
+    const columnGap = toPx(inlineToken(declarations(grid.rule)['gap']), tokens)
+    const pad = cardPadAt(grid.from)
+    const edge = borderAt(grid.from)
+    const unreadable = [columnGap, pad, edge].some((px) => Number.isNaN(px)) || count < 2
+    if (unreadable) {
+      out.push(
+        `the two-by-two's arithmetic cannot be read: \`${columns}\` with a gap of \`${declarations(grid.rule)['gap'] ?? ''}\` on ${JSON.stringify(grid.rule.selector)} is not a grid this check can turn into pixels, and a box it cannot measure is a box nothing checked (changes spec 2026-10-18, item 4)`,
+      )
+    } else {
+      const box = (rowWidth(grid.from) - (count - 1) * columnGap) / count - 2 * pad - 2 * edge
+      const wordNeeds = textWidth(longestWord(names), nameSize)
+      if (box < wordNeeds) {
+        out.push(
+          `at ${grid.from / 16} rem the flow is a two-by-two and a card there is ${Math.round(box)} px wide, and the longest word of the step names (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(wordNeeds)} px: the picture a 768 px screen reads cannot print its own step names (changes spec 2026-10-18, item 4)`,
+        )
+      }
     }
   }
   return out
@@ -1054,9 +1281,13 @@ test('every flow-layout refusal fires on the defect it names', () => {
     // `NaN` would make every comparison below pass without measuring anything.
     [
       'a step-name font size this reader cannot turn into pixels',
-      plant(
-        'font-size:var(--font-size-xl);font-weight:var(--weight-semibold)',
-        'font-size:clamp(1rem,2vw,1.5rem);font-weight:var(--weight-semibold)',
+      // Anchored at the class, because `font-size: var(--font-size-lg)` with the same weight
+      // beside it is written by four of the site's rules and only one of them is the step name;
+      // `TODAY().replace` rather than `plant` so the fixture names the rule and not a hash the
+      // next build of the component would change.
+      TODAY().replace(
+        /(\.step-name\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)font-size:var\(--font-size-lg\)/,
+        '$1font-size:clamp(1rem,2vw,1.5rem)',
       ),
       /is not a length this check can turn into pixels/,
     ],
@@ -1073,36 +1304,92 @@ test('every flow-layout refusal fires on the defect it names', () => {
       plant('color:var(--text);overflow-wrap:anywhere;margin:0}', 'color:var(--text);white-space:nowrap;overflow-wrap:anywhere;margin:0}'),
       /held on one line/,
     ],
-    // And the layout that made it overflow: four cards from the width the chrome switches at,
-    // where a card's content box is 100 px.
+    // And the layout that made it overflow: the four-across row starting at 48 rem, where a
+    // card is a quarter of a column of 768 px and cannot print its longest name on one line.
     [
       'the four-across row starting before a card can hold a name',
-      TODAY().replace(/(width>=64rem)\)\{\.flow-steps/, '(width>=48rem){.flow-steps'),
-      /cannot render its own step names/,
+      TODAY().replace(/(width>=72rem)\)\{\.flow-steps/, '(width>=48rem){.flow-steps'),
+      /does not fit on one line/,
     ],
-    // The number is `flex: none` beside the name: at the breakpoint it takes the room the
-    // longest word needs.
+    // The name's own size, which is the other half of that arithmetic: the step up the type
+    // scale this branch took the name *down* from, put back. `Ephemeral cloud job` at 24 px is
+    // wider than a quarter of the row, so this is the defect the review measured at 1280 px —
+    // and the case is the mutation the name's size is proved by.
+    [
+      'a step name one step up the type scale, which no longer fits the row',
+      TODAY().replace(
+        /(\.step-name\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)font-size:var\(--font-size-lg\)/,
+        '$1font-size:var(--font-size-xl)',
+      ),
+      /does not fit on one line/,
+    ],
+    // The number is `flex: none` *beside* the name, which is the phone's own head: from 35 rem
+    // up the head is a column and the number costs the name nothing. Planting the row's head
+    // back as a row is the box the number takes out of the name.
     [
       'a step number that takes the name’s width',
       plant('flex-direction:column;align-items:flex-start}', 'align-items:flex-start}'),
-      /cannot render its own step names/,
+      /does not fit on one line/,
+    ],
+    // The ragged row itself, which is the second defect the review measured: the steps aligned
+    // to their centre, so each card takes its own content's height instead of the row's.
+    [
+      'a row whose steps are centred rather than stretched',
+      plant('align-items:stretch;gap:var(--space-sm);flex-direction:row', 'align-items:center;gap:var(--space-sm);flex-direction:row'),
+      /aligns its items to `center`/,
+    ],
+    // And the other half of it: the cards stretch to their step, so a card whose own content is
+    // spread down it is the same ragged look with the row's height in every card.
+    [
+      'a card that spreads its content down the row’s height',
+      plant('align-content:start;gap:var(--space-xs)', 'align-content:space-between;gap:var(--space-xs)'),
+      /packs its content with `space-between`/,
+    ],
+    // The two-by-two's own arithmetic: its cards are half the column, and padding wide enough
+    // takes the longest word out of one.
+    [
+      'a two-by-two whose cards are padded past their own names',
+      plant('padding:var(--space-md) var(--space-sm)', 'padding:var(--space-md) var(--space-3xl)'),
+      /a card there is \d+ px wide/,
     ],
     // The arrows, which are the rest of the same picture: the one that shipped wrong turns the
-    // drawn-down arrow a quarter turn clockwise, which points it back along the row.
+    // drawn-down arrow a quarter turn clockwise, which points it back along the row. The first
+    // occurrence is the two-by-two's turn and the last is the row's, so each is a case of its
+    // own — and a check that read one arrow for the whole page would pass both.
     [
-      'an arrow turned the wrong way along the row',
+      'the two-by-two’s row arrows turned the wrong way',
       plant('transform:rotate(-90deg)', 'transform:rotate(90deg)'),
-      /points left at 64 rem/,
+      /points left at 35 rem/,
+    ],
+    [
+      'the row’s arrows turned the wrong way',
+      plant('transform:rotate(-90deg)', 'transform:rotate(90deg)', 'last'),
+      /points left at 72 rem/,
+    ],
+    [
+      'the two-by-two’s row arrows never turned at all',
+      plant(';transform:rotate(-90deg)', ''),
+      /points down at 35 rem/,
     ],
     [
       'a row whose arrows were never turned at all',
-      plant(';transform:rotate(-90deg)', ''),
-      /points down at 64 rem/,
+      plant(';transform:rotate(-90deg)', '', 'last'),
+      /points down at 72 rem/,
+    ],
+    // The one arrow the two-by-two draws downwards: left alone it is right (the drawing points
+    // down), and turned with the other two it points along the row instead of down the side.
+    [
+      'the two-by-two’s downward arrow turned along its row',
+      plant(
+        'margin:calc(var(--space-lg) / 2 - var(--space-2xs)) 0 0 calc(-1 * var(--space-2xs));top:100%;left:50%}',
+        'transform:rotate(-90deg);margin:calc(var(--space-lg) / 2 - var(--space-2xs)) 0 0 calc(-1 * var(--space-2xs));top:100%;left:50%}',
+      ),
+      /points right at 35 rem/,
     ],
     [
       'an arrow turned sideways in the column',
       plant('{width:1.5rem;height:2rem;margin:var(--space-2xs) auto;display:block}', '{transform:rotate(-90deg);width:1.5rem;height:2rem;margin:var(--space-2xs) auto;display:block}'),
-      /points right below the flow’s breakpoint/,
+      /points right below the flow’s first breakpoint/,
     ],
   ]
   for (const [what, css, expected] of cases) {
@@ -1125,14 +1412,39 @@ test('every flow-layout refusal fires on the defect it names', () => {
  * direction, so a picture it cannot read is a picture it has to refuse.
  */
 function arrowDrawnVector(html) {
-  const svg = [...walk(parse(html))].find((el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('step-arrow'))
-  if (!svg) return null
+  const svg = [...walk(parse(html))].find((el) => el.name === 'svg' && hasClass(el, 'step-arrow'))
+  return svg ? arrowShaft(svg) : null
+}
+
+/** The drawn direction of one arrow `<svg>`: the same reading, for the step that carries it. */
+function arrowShaft(svg) {
   for (const path of walk(svg)) {
     const d = (path.attrs.get('d') ?? '').replace(/\s+/g, ' ').trim()
     const shaft = /^M\s*(-?[\d.]+)\s+(-?[\d.]+)\s+V\s*(-?[\d.]+)$/.exec(d)
     if (shaft) return { x: 0, y: Math.sign(Number(shaft[3]) - Number(shaft[2])) }
   }
   return null
+}
+
+/** Whether an element carries a class, by the space-separated list its `class` attribute holds. */
+function hasClass(el, name) {
+  return (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
+}
+
+/**
+ * The flow's steps on one built page, each with the arrow it carries: `step` is its place in
+ * the run, `drawn` whether the step has an arrow at all (the last one has none — it is where
+ * the run ends), and `vector` the direction that arrow is drawn in, or `null` when its shaft
+ * is not a straight `M … V …` line this check can read. Read per step rather than once for the
+ * page, because the three layouts address the arrows separately: the two-by-two turns two of
+ * them along its rows and leaves the second pointing down.
+ */
+function flowArrows(html) {
+  const steps = [...walk(parse(html))].filter((el) => el.name === 'li' && hasClass(el, 'flow-step'))
+  return steps.map((step, index) => {
+    const svg = [...walk(step)].find((el) => el.name === 'svg' && hasClass(el, 'step-arrow'))
+    return { step: index + 1, drawn: svg !== undefined, vector: svg === undefined ? null : arrowShaft(svg) }
+  })
 }
 
 /** A vector turned by a CSS `rotate()` angle. Positive is clockwise, on a y-downs axis. */
@@ -1152,27 +1464,32 @@ function points(vector) {
 
 /**
  * Every way the flow's arrows point the wrong way down the run, for one built page: the
- * direction is read two ways, and each is a defect rather than a preference.
+ * direction is read for **each step** and at **each of the three layouts**, because the arrows
+ * are addressed per step and the run travels differently in each shape.
  *
- *   - **Below the row's breakpoint the steps are a column, and an arrow between two of them
- *     points down it.** A sideways arrow in a column draws an order the list does not have.
- *   - **In the row the steps travel left to right, and each arrow points right.** This is the
- *     one that shipped wrong: the arrow is drawn pointing down, `rotate(90deg)` is clockwise,
- *     and the arrow between each pair therefore pointed back at the step before it — four
- *     steps drawn in reverse by the one mark that says which way the run goes. A positive
- *     angle is clockwise on the axis the picture is drawn on, so the turn that points right
- *     is negative (`rotate(-90deg)`, or `270deg` written the long way round).
+ *   - **The phone's column**: one step under the next, so every arrow points down. A sideways
+ *     arrow in a column draws an order the list does not have.
+ *   - **The two-by-two** (`1 2` over `3 4`): along the top row, down the right-hand side, along
+ *     the bottom row — the odd steps' arrows point right and the second step's points down.
+ *   - **The row**: the run travels left to right and each arrow points right. This is the one
+ *     that shipped wrong: the arrow is drawn pointing down, `rotate(90deg)` is clockwise, and
+ *     the arrow between each pair therefore pointed back at the step before it — four steps
+ *     drawn in reverse by the one mark that says which way the run goes. A positive angle is
+ *     clockwise on the axis the picture is drawn on, so the turn that points right is negative
+ *     (`rotate(-90deg)`, or `270deg` written the long way round).
  *
- * The rotation is the one the cascade leaves in force at each width — the last rule that sets
- * `transform` among those in force, which is one property read the way a browser reads it.
- * An arrow whose `transform` is neither `none` nor a plain `rotate(<angle>)` is refused rather
- * than passed: the direction would be a guess, and the direction is the subject.
+ * The width each layout is read at comes out of the stylesheet — the row's own breakpoint and
+ * the two-by-two's — rather than out of this file, so a layout that moves its breakpoint is
+ * read where it now starts. The rotation is the last rule **that reaches that step's arrow**
+ * among those in force, which is one property read the way a browser reads it. An arrow whose
+ * `transform` is neither `none` nor a plain `rotate(<angle>)` is refused rather than passed:
+ * the direction would be a guess, and the direction is the subject.
  */
 export function arrowDirectionFailures(css, html) {
   const out = []
   const rules = allRules(css)
-  const drawn = arrowDrawnVector(html)
-  if (!drawn) {
+  const arrows = flowArrows(html)
+  if (arrows.every(({ vector }) => vector === null)) {
     out.push(
       "the flow draws no arrow this check can read (an SVG classed `step-arrow` with a straight `M … V …` shaft), and the arrow between two steps is what says which way the run travels (changes spec 2026-10-18, item 4)",
     )
@@ -1180,39 +1497,88 @@ export function arrowDirectionFailures(css, html) {
   }
 
   const arrowRules = rules.filter((r) => /\.step-arrow(?![\w-])/.test(r.selector))
-  /** The `transform` in force on the arrow at a width, as degrees: `null` when it is not a rotation. */
-  const rotationAt = (width) => {
-    const values = arrowRules.filter(appliesAt(width)).map((r) => declarations(r)['transform']).filter((value) => value !== undefined)
-    const value = (values.at(-1) ?? 'none').trim()
+
+  /**
+   * Whether one of those rules reaches the arrow of step `n`. The layouts address single
+   * arrows — `:nth-child(2)` is the two-by-two's arrow down its right-hand side, the odd
+   * indices its two along the rows — so a rule that says so is about that arrow and not about
+   * the four. A selector with no `:nth-child()` in it reaches every step; one whose argument
+   * this reader cannot evaluate (`2n+1`, say) is read the same way, because the shapes the flow
+   * writes are `odd`, `even` and a single number, and a rule about every arrow is the base rule
+   * that sets its box.
+   */
+  const reachesStep = (selector, step) => {
+    const nth = /:nth-child\(\s*([^)]*)\)/.exec(selector)
+    if (!nth) return true
+    const arg = nth[1].trim()
+    if (arg === 'odd') return step % 2 === 1
+    if (arg === 'even') return step % 2 === 0
+    return /^\d+$/.test(arg) ? Number(arg) === step : true
+  }
+
+  /** The `transform` in force on step `n`'s arrow at a width, in degrees: `null` when it is not a rotation. */
+  const rotationAt = (width, step) => {
+    const value = (
+      arrowRules
+        .filter(appliesAt(width))
+        .filter((r) => reachesStep(r.selector, step))
+        .map((r) => declarations(r)['transform'])
+        .filter((declared) => declared !== undefined)
+        .at(-1) ?? 'none'
+    ).trim()
     if (value === 'none' || value === '') return 0
     const rotate = /^rotate\(\s*(-?[\d.]+)deg\s*\)$/.exec(value)
     return rotate ? Number(rotate[1]) : null
   }
 
-  /** One refusal for an arrow that does not point the way the run travels at a width. */
-  const refusal = (width, expected) => {
-    const rotation = rotationAt(width)
-    if (rotation === null) {
-      return `the arrow's transform at ${width / 16} rem is not a rotation this check can read, so the direction it leaves the arrow pointing is a guess (changes spec 2026-10-18, item 4)`
-    }
-    const way = points(turn(drawn, rotation))
-    if (way === expected) return null
-    const where = width === 390 ? 'below the flow’s breakpoint, where the four steps are a column' : `at ${width / 16} rem, where the four steps are a row`
-    const how = rotation === 0 ? 'no rotation at all' : `transform: rotate(${rotation}deg), which turns the arrow the markup draws pointing down ${rotation > 0 ? 'clockwise' : 'anticlockwise'}`
-    return `the arrow between two steps points ${way} ${where} (${how}): item 4's run travels left to right along the row and down the column, and an arrow drawn the other way reads the four steps in the opposite order (changes spec 2026-10-18, item 4)`
+  // The layouts the arrows are read at, each with the way the run travels in it. The column is
+  // below the flow's first breakpoint, and it is hard-coded the way it always was: it is what
+  // the flow is with neither of the other two blocks in force, so there is no rule to read a
+  // start from — the two-by-two is the block that ends it.
+  const layouts = flowLayouts(css)
+  const bands = [
+    { width: 390, where: 'below the flow’s first breakpoint, where the four steps are a column', way: () => 'down' },
+  ]
+  if (layouts.grid !== null && layouts.grid.from !== null) {
+    bands.push({
+      width: layouts.grid.from,
+      where: `at ${layouts.grid.from / 16} rem, where the four steps are a two-by-two`,
+      way: (step) => (step % 2 === 1 ? 'right' : 'down'),
+    })
   }
+  if (layouts.row !== null && layouts.row.from !== null) {
+    for (const width of [layouts.row.from, 80 * 16]) {
+      bands.push({ width, where: `at ${width / 16} rem, where the four steps are a row`, way: () => 'right' })
+    }
+  }
+  if (layouts.row === null) return out // `flowLayoutFailures` names the missing row; there is no row to read here
 
-  // The column: a phone shows the steps one after another, and the arrow goes down.
-  const column = refusal(390, 'down')
-  if (column) out.push(column)
-
-  // The row: at the width it starts at, and at the page's maximum width.
-  const row = rules.find((r) => /\.flow-steps(?![\w-])/.test(r.selector) && /flex-direction:row/.test(r.decls) && r.query)
-  const breakpoint = row ? Number(/width\s*>=\s*([\d.]+)rem/.exec(row.query)?.[1]) * 16 : NaN
-  if (!row) return out // `flowLayoutFailures` names the missing row; there is no row to read here
-  for (const width of [breakpoint, 80 * 16]) {
-    const at = refusal(width, 'right')
-    if (at) out.push(at)
+  for (const band of bands) {
+    for (const { step, drawn, vector } of arrows) {
+      // A step with no arrow is the flow's own shape — the last step is where the run ends —
+      // and the count of arrows is `website/test/home.mjs`'s check rather than this one's.
+      if (!drawn) continue
+      if (vector === null) {
+        out.push(
+          `the arrow out of step ${step} is not a shaft this check can read (a straight \`M … V …\` line), so the direction it points is a guess (changes spec 2026-10-18, item 4)`,
+        )
+        continue
+      }
+      const rotation = rotationAt(band.width, step)
+      if (rotation === null) {
+        out.push(
+          `the arrow out of step ${step}'s transform, ${band.where}, is not a rotation this check can read, so the direction it leaves the arrow pointing is a guess (changes spec 2026-10-18, item 4)`,
+        )
+        continue
+      }
+      const way = points(turn(vector, rotation))
+      const expected = band.way(step)
+      if (way === expected) continue
+      const how = rotation === 0 ? 'no rotation at all' : `transform: rotate(${rotation}deg), which turns the arrow the markup draws pointing down ${rotation > 0 ? 'clockwise' : 'anticlockwise'}`
+      out.push(
+        `the arrow out of step ${step} points ${way} ${band.where} (${how}), and there the run travels ${expected}: item 4's run goes left to right along a row and down a column, and an arrow drawn the other way reads the four steps in the opposite order (changes spec 2026-10-18, item 4)`,
+      )
+    }
   }
   return out
 }

@@ -32,27 +32,50 @@
  * headings and captions, which is the whole content, and each step's arrow is an SVG marked
  * `aria-hidden`, because a picture of four boxes and three arrows is not a thing a screen
  * reader should have to describe when the four boxes are right there as text. Nothing about
- * the flow depends on the arrows having been drawn. The four cards are one row from 64 rem
- * up, and a column below it, so a phone reads the run top to bottom; the arrows turn with
- * the layout and the step's own heading stays one row at 390 px.
+ * the flow depends on the arrows having been drawn.
  *
- * **Why 64 rem, and not the chrome's 48 rem.** Four cards share the row, so a card is a
- * quarter of the column less the arrows between them, and at 48 rem that leaves a card's
- * content box about 100 px — narrower than the word `Ephemeral` in the spec's own third step
- * name, at the size a step name is set. The row is where the reader gets four boxes and their
- * arrows travelling left to right, so it is worth having earlier rather than later; it is not
- * worth having a picture that cannot print its own labels. From 64 rem the box measures
- * about 164 px, the longest word fits and a longer name wraps inside its card.
- * `website/test/base-styles.mjs` does that arithmetic over the built stylesheet, at the
- * breakpoint and at the page's maximum width, so the two numbers move together: a name that
- * grows past what a card holds, or a row that starts earlier, fails there naming the card's
- * width.
+ * **One picture, three widths.** A phone reads the run top to bottom, one card under the
+ * other, with an arrow between each pair (below 35 rem); a tablet or a laptop reads it as a
+ * two-by-two — `1 2` over `3 4`, the run going right, down and right again — which is the
+ * shape a 768 px screen wants, where four stacked cards are over 400 px of picture and four
+ * across is not yet possible (35 rem to 72 rem); and at the page's own maximum width the
+ * four cards stand in the one row the run travels along, left to right (72 rem up).
+ *
+ * **Why 72 rem, and not the chrome's 48 rem or the 64 rem this used to be.** Four cards
+ * share the row, so a card is a quarter of the column less the gaps between them, and the
+ * **longest step name has to fit one line** — `Ephemeral cloud job` is the spec's own third
+ * step and it may not be printed as `Ephemeral cloud / job` on a desktop while the three
+ * names beside it are one line each: a card that wraps is a card taller than its neighbours,
+ * which is the ragged row the review of this branch measured. The arithmetic that says
+ * where that is true is `website/test/base-styles.mjs`'s: it computes the card's content
+ * box from the built stylesheet — the page's column, the four cards, the three gaps and the
+ * card's own padding and border, every number read rather than typed — and refuses a row
+ * where the longest name (or the longest word of any name, which is what a wrapped name
+ * cannot break) does not fit. At 72 rem, which is also where the page stops growing, that
+ * box is 232 px against the longest name's estimated 225. So the row is drawn exactly where
+ * the page has its full column and nowhere below it.
+ *
+ * **The arrow is absolutely positioned, so it costs the card nothing.** The arrow used to
+ * sit in the row's flow, 32 px wide inside each step, which took that 32 px out of three of
+ * the four cards — the fourth step's card was a quarter of the row wider than the other
+ * three, and the least the third card could be was 32 px narrower than the name it had to
+ * print. It now sits *in the gap* between two cards, `left: 100%` from the step before it,
+ * and the gap is what it is drawn in. It is still the same SVG, still turned by `transform`
+ * alone (the transformation the arrow-direction check reads), and the step is
+ * `position: relative` so the arrow is placed against it.
+ *
+ * **The cards are one height, and their content starts at the top.** A row of cards whose
+ * bottoms do not line up reads as a broken row, so the steps stretch to the row's height,
+ * the cards stretch to their step's, and the card's own content — the number, the name and
+ * the caption — is packed from the card's top rather than spread down it.
  *
  * **The name may wrap, and the number does not take its room.** A step name is a heading and
  * not a label, so it wraps rather than running out of its card — `white-space: nowrap` here
- * was the bug the arithmetic above was written for — and inside the row the number sits
- * *above* the name instead of beside it, because the number is `flex: none` and 40 px out of
- * a 164 px box is the difference between a name that fits and one that breaks mid-word.
+ * was the bug the arithmetic above was written for. The number sits beside the name only in
+ * the phone's one-column stack, where a card has the page's whole width; from 35 rem up —
+ * the two-by-two and the row alike — it sits *above* the name, because it is `flex: none`
+ * and 32 px plus the head's gap is 44 px of a quarter-width card's content box, which is the
+ * difference between `Ephemeral cloud job` on one line and on two.
  *
  * **The animation.** The steps fade in as the reader scrolls to them, using a scroll-driven
  * animation (`animation-timeline: view()`), which costs no JavaScript at all. It is inside a
@@ -134,8 +157,11 @@ const STEPS = [
   {
     name: 'Pull request',
     source: 'README.md#How it works',
-    // Step 4 of the README's numbered steps, its first words.
-    caption: 'Push and open the pull request',
+    // Step 4 of the README's numbered steps, its own words about the push. A fragment and
+    // not the step's heading ("Push and open the pull request"): the other three captions
+    // are lowercase fragments of the sentence they come from, and a capitalised sentence
+    // among them read as a different kind of line.
+    caption: 'each commit is pushed within about a minute while the agent works',
   },
 ]
 
@@ -222,9 +248,17 @@ const STEPS = [
     list-style: none;
   }
 
+  /* The step, and the card that fills it. `position: relative` is what the arrow is placed
+     against at the three widths it sits in a gap; `align-items: stretch` and the card's
+     `flex: 1 1 auto` are what make the four cards one height — the row container stretches
+     the steps, and each card stretches to its own step (see the row block below, where the
+     defect this replaces is named). */
   .flow-step {
+    position: relative;
     display: flex;
     flex-direction: column;
+    align-items: stretch;
+    min-width: 0;
   }
 
   /* The centrepiece's card (changes spec item 4's acceptance: the picture is the most
@@ -234,6 +268,9 @@ const STEPS = [
      to right. `--accent` on `--surface` is a pair `a11y.mjs` computes at 3:1 for a UI edge. */
   .step-card {
     display: grid;
+    align-content: start;
+    flex: 1 1 auto;
+    min-width: 0;
     gap: var(--space-xs);
     padding: var(--space-md);
     border: calc(var(--border-width) * 2) solid var(--accent);
@@ -242,10 +279,10 @@ const STEPS = [
     background: var(--surface);
   }
 
-  /* The step's heading row: the number and the name on one line, which is what the column
-     of steps has room for at every width it is a column at. The number is a fixed box beside
-     the name; the row that shares the width four ways turns this into a column instead (see
-     the 64rem block below). */
+  /* The step's heading row: the number and the name on one line, which is what the phone's
+     full-width card has room for. The number is a fixed box beside the name; every layout
+     where the cards share the width — the two-by-two and the row — turns this into a column
+     instead (see the 35 rem block below), because there the name needs the box. */
   .step-head {
     display: flex;
     align-items: center;
@@ -272,19 +309,24 @@ const STEPS = [
     font-weight: var(--weight-semibold);
   }
 
-  /* The name wraps, at every width: it is a heading, and a heading that cannot fit its card
-     is a heading that runs out of it. The wrap is what makes the card's width the only thing
-     that matters — `website/test/base-styles.mjs` sizes the card against the longest word of
-     the names the flow prints, because a word is what wrapping cannot break. */
+  /* The name wraps, at every width it has to: it is a heading, and a heading that cannot fit
+     its card runs out of it. What it may not do is wrap in the row, where the four names
+     stand beside each other — `Ephemeral cloud job` on two lines while the other three are
+     one line each is a card taller than its neighbours, which is the ragged row the review
+     of this branch measured. So the row's breakpoint is set where the *name* fits, and
+     `website/test/base-styles.mjs` computes that box from the built stylesheet and refuses a
+     row that starts before a card can print its longest name on one line. */
   .step-name {
     margin: 0;
     font-family: var(--font-sans);
-    /* 24 px (`--font-size-xl`) and `--weight-semibold`: item 4's "names at least 20 px bold",
-       as large as the row can print them. `website/test/base-styles.mjs` sizes each card
-       against the longest word of these names at the size this rule declares, so the two move
-       together — and 24 px is where that arithmetic says the four-across row still fits:
-       a step further up the scale is a picture whose own labels do not fit it. */
-    font-size: var(--font-size-xl);
+    /* 20 px (`--font-size-lg`) and `--weight-semibold`: the largest step of the type scale at
+       which the longest of item 4's four names — `Ephemeral cloud job`, spelled as the spec
+       spells it — is one line inside a quarter of the page's column. The test estimates that
+       name's width per character at the size this rule declares and requires a margin on top
+       of it, so a larger size here fails the build rather than wrapping on a desktop; and the
+       names are still the largest thing in the card below the number, which is what item 4's
+       acceptance ("the most visually prominent element in its section") rests on. */
+    font-size: var(--font-size-lg);
     font-weight: var(--weight-semibold);
     letter-spacing: var(--tracking-tight);
     color: var(--text);
@@ -325,53 +367,111 @@ const STEPS = [
     stroke-linejoin: round;
   }
 
-  /* The row: four cards side by side, which is the run travelling left to right. The steps
-     share the width and the arrows sit between the cards, turned to point along the row — the
-     drawing's own box turns with them, so the arrow lands inside the gap rather than across a
-     card. **The turn is `-90deg`, and the sign is the direction of the run:** the path below is
-     drawn pointing down, and a positive angle in CSS turns clockwise, so `90deg` would send the
-     arrow leftwards — from each step back at the one before it, against the order item 4 draws.
-     `website/test/base-styles.mjs` reads the drawn direction out of the markup and the angle
-     out of this stylesheet and refuses an arrow that points the way the run does not travel.
-
-     64 rem rather than the chrome's 48 rem: a card here is a quarter of the column less the
-     arrows, and below about 51 rem that box is narrower than the longest word of the spec's
-     own step names. `website/test/base-styles.mjs` computes both numbers and fails if the row
-     starts before a card can hold a name.
-
-     The head turns into a column as well: the number is `flex: none`, and beside the name it
-     takes 40 px of the box the name has to fit in. Above the name it costs a row and nothing
-     horizontal, which is what keeps the four names reading as names rather than as fragments. */
-  @media (min-width: 64rem) {
-    .flow-steps {
-      flex-direction: row;
-      align-items: stretch;
-      gap: var(--space-2xs);
-    }
-
+  /* Wherever the cards are narrower than the page's own column — the two-by-two and the row,
+     everything from 35 rem up — the number sits above the name rather than beside it: it is
+     `flex: none` and 32 px plus the head's gap, which is 44 px of a card's content box that
+     the name needs to print itself on one line. Above the name it costs a row and nothing
+     horizontal — and a row is a thing a card can afford, a name that does not fit is not. */
+  @media (min-width: 35rem) {
     .step-head {
       flex-direction: column;
       align-items: flex-start;
     }
+  }
 
-    .flow-step {
-      flex: 1 1 0;
-      flex-direction: row;
-      align-items: center;
-      min-width: 0;
+  /* The two-by-two: `1 2` over `3 4`, at the widths between a phone's stack and the page's
+     own column. Four stacked cards are over 400 px of picture at 768 px, which is what a
+     reader scrolls past to reach the chat, and four across is not possible yet (see the row
+     below): two rows of two are the shape the run has there, and the arrows follow it —
+     `1 -> 2` and `3 -> 4` along a row, `2 -> 3` down from the top row to the bottom one. The
+     arrows are absolutely positioned in the gaps for the same reason they are in the row:
+     in the flow they would make the two cards of a row different heights, because the last
+     step of the flow carries no arrow at all. */
+  @media (min-width: 35rem) and (max-width: 71.98rem) {
+    .flow-steps {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-lg) var(--space-md);
     }
 
     .step-card {
-      flex: 1 1 auto;
-      min-width: 0;
-      align-content: start;
+      padding: var(--space-md) var(--space-sm);
     }
 
     .step-arrow {
-      flex: none;
-      width: 2rem;
-      height: 1.5rem;
+      position: absolute;
+      width: 1rem;
+      height: 1rem;
       margin: 0;
+    }
+
+    /* A turn of `-90deg` points the drawn-down arrow along the row it travels: a positive
+       angle in CSS turns clockwise, so `90deg` would send it back at the step before it. The
+       margin is what centres the arrow's box in the gap it is drawn in — half the gap less
+       half the box. */
+    .flow-step:nth-child(odd) .step-arrow {
+      top: 50%;
+      left: 100%;
+      margin: calc(-1 * var(--space-2xs)) 0 0 calc(var(--space-md) / 2 - var(--space-2xs));
+      transform: rotate(-90deg);
+    }
+
+    /* The one arrow that goes down the two-by-two: step 2's, from the top row to the step
+       below it. `transform` is left alone, which is the direction the drawing is drawn in. */
+    .flow-step:nth-child(2) .step-arrow {
+      top: 100%;
+      left: 50%;
+      margin: calc(var(--space-lg) / 2 - var(--space-2xs)) 0 0 calc(-1 * var(--space-2xs));
+    }
+  }
+
+  /* The row: four cards side by side, which is the run travelling left to right. The steps
+     share the width, the cards are one height, and the arrows sit in the gaps between the
+     cards, turned to point along the row. **The turn is `-90deg`, and the sign is the
+     direction of the run:** the path below is drawn pointing down, and a positive angle in
+     CSS turns clockwise, so `90deg` would send the arrow leftwards — from each step back at
+     the one before it, against the order item 4 draws. `website/test/base-styles.mjs` reads
+     the drawn direction out of the markup and the angle out of this stylesheet — for the
+     arrow of *each* step, at the widths of each of the three layouts — and refuses an arrow
+     that points the way the run does not travel.
+
+     72 rem: the width the page's column reaches its maximum at, and the width the four
+     names need to stand one line each inside a quarter of it. `website/test/base-styles.mjs`
+     computes that box and fails if the row starts before a card can print its name.
+
+     `align-items: stretch` on the list and on the step, with the card's `flex: 1 1 auto`,
+     is the whole of "the four cards are one height": the row takes the height of its
+     tallest card and every card fills its step. What this replaces is a row whose steps were
+     `align-items: center`, which gives each card its own content's height — card 4 was about
+     30 px shorter than card 3 and the row's bottom edge was ragged. */
+  @media (min-width: 72rem) {
+    .flow-steps {
+      flex-direction: row;
+      align-items: stretch;
+      gap: var(--space-sm);
+    }
+
+    .flow-step {
+      flex: 1 1 0;
+    }
+
+    /* The card's own padding, tightened on the sides: four cards and three gaps share the
+       page's column, and the name has to fit one line inside a quarter of it. The block
+       padding is the reader's breathing room and does not cost the name anything. */
+    .step-card {
+      padding: var(--space-md) var(--space-2xs);
+    }
+
+    /* The arrow, out of the flow and into the gap: `left: 100%` is the step's right edge,
+       which is where the gap begins, and the box is the gap's own width — so the arrow is
+       drawn exactly between two cards and takes no width from either. */
+    .step-arrow {
+      position: absolute;
+      top: 50%;
+      left: 100%;
+      width: var(--space-sm);
+      height: var(--space-sm);
+      margin: calc(-1 * var(--space-2xs)) 0 0 calc(var(--space-sm) / 2 - var(--space-2xs));
       transform: rotate(-90deg);
     }
   }

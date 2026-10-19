@@ -404,7 +404,7 @@ function fixtureSteps() {
     { name: 'your agent', source: 'README.md#Getting started', caption: "the plugin's working skill launches, watches and diagnoses runs" },
     { name: 'fugaro', source: 'README.md#Why Fugaro', caption: 'it uses your Google Cloud project and your model credentials' },
     { name: 'ephemeral cloud job', source: 'README.md#How it works', caption: 'one execution per task, then gone' },
-    { name: 'pull request', source: 'README.md#How it works', caption: 'Push and open the pull request' },
+    { name: 'pull request', source: 'README.md#How it works', caption: 'each commit is pushed within about a minute while the agent works' },
   ]
 }
 
