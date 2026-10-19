@@ -115,6 +115,13 @@ func reviewModePR(i invocation) bool {
 	return false
 }
 
+// drivenWindow is one recency-windowed entry point a test drives, with the
+// line of the invocation that drives it.
+type drivenWindow struct {
+	w    recencyWindow
+	line int
+}
+
 // recencyWindow is one entry point whose listing is filtered by a window
 // measured back from the real clock, plus the production constant that holds
 // the window. A test that drives one and hard-codes a run ID passes only
@@ -155,11 +162,12 @@ var recencyWindows = []recencyWindow{
 	// watch: the queued scan lists run IDs by mint time over queuedLookback
 	// and finishedLookback (watch_queued.go), and the degraded view reads
 	// degradedSince (watch.go). Both clocks are time.Now(); only the
-	// scanner's own now field is a seam. Only runs bucket objects have a
-	// mint time: the frame's agent rows come from the /agents registry,
-	// which no window ages.
+	// scanner's own now field is a seam (assigned a func, so a bool flag
+	// named now cannot pass for one). Only runs bucket objects have a mint
+	// time: the frame's agent rows come from the /agents registry, which no
+	// window ages.
 	{cmd: "watch", window: "queuedLookback/finishedLookback/degradedSince", run: []string{"watch"},
-		needs: runsBucketWrite, seam: regexp.MustCompile(`\bnow\s*=`)},
+		needs: runsBucketWrite, seam: regexp.MustCompile(`\.now\s*=\s*func\(`)},
 	{cmd: "run --pr", window: "followUpLookback", run: []string{"run", "--pr"}, unless: reviewModePR},
 	// run --retry reads followUpLookback only through recheckFollowUp, for a
 	// stored task that is a follow-up (run.go's reused = spec.IsFollowUp);
@@ -315,7 +323,7 @@ func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 		if !strings.HasPrefix(name, "Test") || name == "TestNoFixedRunIDsInRecencyTests" {
 			continue
 		}
-		var windows []recencyWindow
+		var windows []drivenWindow
 		for _, w := range recencyWindows {
 			if pinned(d, w) {
 				continue
@@ -336,7 +344,7 @@ func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 				if w.since && !inv.noSince() {
 					continue
 				}
-				windows = append(windows, w)
+				windows = append(windows, drivenWindow{w, inv.line})
 				break
 			}
 		}
@@ -348,9 +356,9 @@ func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 			if id == "" || strings.Contains(line, "runid-guard:allow") {
 				continue
 			}
-			for _, w := range windows {
-				t.Errorf("%s:%d: %s drives %s (its window is %s, measured back from the real clock) yet hard-codes run ID %s, so it passes only until that window passes the ID's date; mint it with recentRunID/runIDAt, or mark the line // runid-guard:allow:\n\t%s",
-					d.file, fset.Position(d.fn.Pos()).Line+i, name, w.cmd, w.window, id, strings.TrimSpace(line))
+			for _, dw := range windows {
+				t.Errorf("%s:%d: %s hard-codes run ID %s and drives %s at line %d, whose window is %s measured back from the real clock: it passes only until that window passes the ID's date; mint it with recentRunID/runIDAt, or mark the line // runid-guard:allow:\n\t%s",
+					d.file, fset.Position(d.fn.Pos()).Line+i, name, id, dw.w.cmd, dw.line, dw.w.window, strings.TrimSpace(line))
 			}
 		}
 	}
