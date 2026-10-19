@@ -418,7 +418,7 @@ var (
 	mdFillRowRE = regexp.MustCompile(
 		"(?m)^\\| `(--[a-z-]+)` \\| \\*\\*([0-9.]+)\\*\\* \\| \\*\\*([0-9.]+)\\*\\* \\|")
 	mdPairRowRE = regexp.MustCompile(
-		"(?m)^\\| `(--[a-z-]+)` / `(--[a-z-]+)` \\| ([0-9.]+)° \\| ([0-9.]+) \\|")
+		"(?m)^\\| `(--[a-z-]+)` / `(--[a-z-]+)` \\| ([0-9.]+)° \\| ([0-9.]+) \\| ([a-z]+) \\|")
 )
 
 // mdTokens reads a value set out of its §3.2/§3.3 table: the rows that pair a
@@ -582,19 +582,27 @@ func TestDocsConsoleStylingContrastComputes(t *testing.T) {
 		}
 	}
 
-	// The rule §3.4 states, pinned to the number this test computes with: the
-	// two cannot drift apart silently.
-	if !strings.Contains(doc, "**Any two of the five state colours are at least 50° apart in hue.**") {
-		t.Errorf("%s: §3.4 no longer states the 50° minimum this test checks the state colours against", path)
+	// The rule §3.4 states, pinned to the two numbers this test computes with:
+	// the rule and the arithmetic cannot drift apart silently.
+	if !strings.Contains(doc, "at least 50° apart in hue, _or_ at least 3:1") {
+		t.Errorf("%s: §3.4 no longer states the 50°-or-3:1 rule this test checks the state colours against", path)
 	}
 }
 
 // TestDocsConsoleStylingStateSeparation: the ten pairs of state colours in each
 // set, as §3.4 prints them, are the ten pairs the literals make — the hue
 // distance to a tenth of a degree, the luminance contrast to two decimals — and
-// every one of them clears the 50° minimum the section states. This is the
-// claim the first revision of the design got wrong, and the reason it is a
-// table of computed numbers now rather than a sentence.
+// every one of them satisfies the rule the section states. This is the claim the
+// first revision of the design got wrong, and the reason it is a table of
+// computed numbers now rather than a sentence.
+//
+// The rule is a disjunction and this enforces it as one: **50° of hue, or 3:1 of
+// luminance contrast where hue cannot separate the pair.** So the case fails on a
+// pair that misses both, and on a row that claims the wrong arm, but it does not
+// demand 3:1 of a pair that already clears 50° — the design does not state that,
+// the ten present pairs do not meet it, and a test that pinned it would refuse a
+// future token taking the documented fallback. The message it fails with is
+// still the section's own: change the token, not the rule.
 func TestDocsConsoleStylingStateSeparation(t *testing.T) {
 	const path = "docs/design/console-styling.md"
 	_, dark, light, contrast := mdStylingDoc(t)
@@ -633,15 +641,31 @@ func TestDocsConsoleStylingStateSeparation(t *testing.T) {
 			} else if math.Abs(got-gap) > 0.05 {
 				t.Errorf("%s: the %s pair table prints %s / %s as %.1f° apart, and the literals compute %.1f°", path, tc.name, a, b, got, gap)
 			}
-			if gap < 50 {
-				t.Errorf("%s: the %s set's %s and %s are %.1f° apart in hue, under the 50° minimum §3.4 states: change the token, not the rule", path, tc.name, a, b, gap)
-			}
 
-			want := mdRatio(t, tc.set[a], tc.set[b])
+			contrast := mdRatio(t, tc.set[a], tc.set[b])
 			if got, err := strconv.ParseFloat(m[4], 64); err != nil {
 				t.Fatalf("%s: %s/%s: %v", path, a, b, err)
-			} else if math.Abs(got-want) > 0.005 {
-				t.Errorf("%s: the %s pair table prints %s / %s at %s:1 luminance contrast, and the literals compute %.2f:1", path, tc.name, a, b, m[4], want)
+			} else if math.Abs(got-contrast) > 0.005 {
+				t.Errorf("%s: the %s pair table prints %s / %s at %s:1 luminance contrast, and the literals compute %.2f:1", path, tc.name, a, b, m[4], contrast)
+			}
+
+			// §3.4's rule is a disjunction — 50° of hue, **or** 3:1 of luminance
+			// contrast where hue cannot separate the pair — so this accepts the
+			// documented fallback rather than pinning one arm of it. A pair that
+			// fails both is the one thing the rule forbids, and a pair that
+			// clears the first need not clear the second: none of the ten does
+			// today, and demanding it would be a rule the design does not state.
+			separated := "hue"
+			if gap < 50 {
+				separated = "luminance"
+			}
+			if gap < 50 && contrast < 3 {
+				t.Errorf("%s: the %s set's %s and %s are %.1f° apart and %.2f:1 apart; §3.4's rule needs one of the two — 50° of hue, or 3:1 of luminance as the fallback — so change the token, not the rule", path, tc.name, a, b, gap, contrast)
+			}
+			// And the row says which arm it took, so a fallback pair cannot be
+			// tabulated as if hue had separated it.
+			if m[5] != separated {
+				t.Errorf("%s: the %s pair table says %s / %s are separated by %q, and the literals say %q (%.1f° of hue, %.2f:1 of luminance)", path, tc.name, a, b, m[5], separated, gap, contrast)
 			}
 		}
 		for i, a := range mdStateOrder {

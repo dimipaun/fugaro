@@ -1175,9 +1175,19 @@ it checks are the literals the window paints: every pair of the design's §3.4 w
 required ratio (4.5:1 for body text and every state colour on the three surfaces, 3:1 for
 the accent and the control border, 4.5:1 for a label on a filled control); the vocabulary
 complete and identical in both sets, so a token added to one and not the other fails by
-name; `--border` used decoratively only; and a **deliberately failing pair**, asserted to
-report `--text-muted on --surface is 3.10:1, needs 4.5:1`, in the shape
-`website/test/a11y.mjs` keeps so the refusal cannot rot into a comment.
+name; **the main process's window background against both `--ground` values** (the dark
+literal and the light one, since `--ground` has two), per the design's §4.1; and a
+**deliberately failing fixture**, asserted to report
+**`--text-muted on --surface is 3.1:1, needs 4.5:1`** — one decimal, because that is the
+string `website/test/a11y.mjs` actually formats (`ratio.toFixed(1)`, and its committed
+fixture prints `3.1:1`), and a **fixture pair named in the case** (the precedent's is
+`#646464` on `#14141F`), because the console's real `--text-muted on --surface` is 8.02:1
+dark and 6.27:1 light, so no real value produces that line.
+
+**Not in this task: the `--border`-is-decorative case.** It is the one case in this file
+that reads a file other than `palette.css` — a scan of the CSS text of `base.css` and
+`screens.css` — and both of those are created later, by Tasks 6.3 and 6.4. Task 6.4 adds
+that case, and `theme-tokens.test.ts` is in its Files for it.
 
 **Command:** `cd console && npm run test:unit`
 
@@ -1262,16 +1272,31 @@ still marked); `entry.spec.ts`'s existing body-children assertion.
 **Scope.** `src/renderer/theme/screens.css`: the rules for Live, Spend, Projects, Run, the
 degraded and unavailable screens, the refusal document and the picker, in the order the
 design's §2 inventories them, including the tabular-figure and right-alignment rule for the
-four `-num`/`-number` hooks, the density rules of its §3.8, and the state colours of its
-§3.5 — where **no state is carried by colour alone**, because every state already has its
-word in the DOM (`KILLED by`, `n/a`, `—`, `(partial)`, `silent`, `lost`, `queued`,
-`NOTIONAL~`, `degraded`, `polling`, and the cap's own percentage beside its bar).
+five number hooks, the density rules of its §3.8, and the state colours of its §3.5 — where
+**no state is carried by colour alone**, because every state already has its word in the
+DOM (`KILLED by`, `n/a`, `—`, `(partial)`, `silent`, `lost`, `queued`, `NOTIONAL~`,
+`degraded`, `polling`, and the cap's own percentage beside its bar).
 
-**Files.** `src/renderer/theme/screens.css`, new; `console/README.md`.
+**The fifth number hook does not exist yet, and this task adds it.** Live, Spend, Projects
+and Run each have a `numberCell` that prepends `live-num` / `spend-num` / `projects-number`
+/ `run-number`; the degraded screen's `numberCell` (`src/renderer/screens/degraded.ts`)
+prepends **no** class, so its figures — the feed age, the counts, the money — have no
+tabular-figures and no right-align hook and a rule written for the four existing hooks
+cannot reach them (the design's §2.10). That is why `degraded.ts` is in this task's Files:
+**one line, adding `degraded-num` to that one helper**, and then the same rule the other
+four get. It is the only code change in the styling work, and it is deliberately a class
+and not an attribute rule, so the styling stays a stylesheet problem.
+
+**Files.** `src/renderer/theme/screens.css`, new; `console/src/renderer/screens/degraded.ts`
+(the one-line `degraded-num` above); `console/README.md`;
+`console/test/unit/theme-tokens.test.ts` (the `--border`-is-decorative case the design's
+§6.3 places here, because this is the first task at which both `base.css` and `screens.css`
+exist — Task 6.1 writes the file and leaves that case out for exactly that reason).
 
 **Tests.** A case that every selector in `screens.css` names a hook the design's §2
 inventory lists — checked against a list derived from the screens' own class literals, so a
-rule that styles a class nothing emits fails; the computed-background assertion per screen.
+rule that styles a class nothing emits fails; the `--border`-is-decorative scan of
+`base.css` and `screens.css`; the computed-background assertion per screen.
 
 **Command:** `cd console && npm run test:unit && npm run test:e2e`
 
@@ -1288,8 +1313,14 @@ its `change` event — `:root`'s `color-scheme: light dark` is the OS default, a
 the script-free `refusal.html` (the OS alone themes it, which is the strongest argument for
 the OS default); the entry stamps `data-theme` on the mount it draws the chrome into; the
 picker's script stamps its document; `consoleWindowOptions` gains a `backgroundColor`
-equal to `--ground` (the main process cannot read the CSS, so the token test holds the two
-literals equal); and the nav gains the WAI-ARIA tablist behaviour it lacks — `role`,
+**equal to the `--ground` of the theme it is about to paint**, read from
+`nativeTheme.shouldUseDarkColors` — `#0A0E16` when true, `#F2F6FA` when false — and
+re-set from `nativeTheme.on('updated', …)`, so an OS appearance change while the window is
+open does not leave the other theme's ground behind the next paint (the design's §4.1:
+a single pinned literal would flash **dark** on a light-OS machine, which is the very
+flash the background colour exists to remove). `nativeTheme` is core Electron, needs no
+dependency and touches no CSP; the main process still cannot read the CSS, so the token
+test holds **both** literals equal to their set's `--ground`); and the nav gains the WAI-ARIA tablist behaviour it lacks — `role`,
 `aria-selected`, a roving `tabindex` and Arrow/Home/End handling that calls the existing
 `show(id)`, since `entry.ts` has no keydown handling at all today.
 
@@ -1301,8 +1332,11 @@ literals equal); and the nav gains the WAI-ARIA tablist behaviour it lacks — `
 attribute, and `role`, `aria-*` and `tabindex` are attributes — so `ElementLike` needs no
 widening and no style is written.
 
-**Tests.** `CONSOLE_THEME` no longer follows the media query; the background literal
-drifting from `--ground`; a roving-tabindex regression.
+**Tests.** `CONSOLE_THEME` no longer follows the media query; **the background literal for
+each theme drifting from that theme's `--ground`** (both directions, since there are two
+literals now — the dark one checked against the dark `--ground`, the light one against the
+light `--ground`, and `shouldUseDarkColors` deciding which is set); a roving-tabindex
+regression.
 
 **Command:** `cd console && npm run test:unit && npm run test:e2e`
 

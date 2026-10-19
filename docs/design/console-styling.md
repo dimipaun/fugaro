@@ -130,6 +130,17 @@ is the contract the stylesheet is written against: **a rule may only select a ho
 table names**, and a task that adds a screen, a state or a reading extends this table in
 the same PR.
 
+**The tables are the hooks a rule needs, not every attribute the screens emit.** Two things
+follow, and both are the same rule read twice. A hook that is emitted and not listed here is
+**not** a licence to write a rule against it: Task 6.4's inventory test fails a selector for
+a hook §2 does not name, and §2 is the table it fails against. And a hook a rule genuinely
+wants — one the screens emit and this table has dropped — is added **here first**, in the PR
+that wants it, so the test's list and the stylesheet's selectors move together. The
+`data-*` attributes the screens emit beyond these are real (`data-hollow`, `data-peak`,
+`data-known`, `data-account` … most of them on the charts, where §4's rules read them), and
+the list is deliberately the subset a rule is written against rather than a second copy of
+the code.
+
 Three facts hold across every screen and are stated once:
 
 - **A number is never bare.** Every figure goes through `putReading` (`app.ts`), which
@@ -221,17 +232,18 @@ of `li.live-repo`, each with a cap bar, a burn sparkline and a kill banner and a
 | `data-received-at` | an ISO stamp, or `''` | the newest frame |
 | `data-fill` | a formatted percent (`12.5%`, `≥ 12.5%`, `NOTIONAL~12.5%`, `est. 12.5%`, `n/a`, `—`) | a bar's fill, as text |
 | `data-height` | the same shapes | each sparkline bar |
-| `data-state` | `measured` \| `notional` \| `estimated` \| `unavailable` \| `gap` | a bar's or a cell's availability — **the state rule's only hook** |
+| `data-state` | **two vocabularies.** A bar's availability: `measured` \| `notional` \| `estimated` \| `unavailable` \| `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` (and the sparkline's bars) writes the five availability words; `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the five words and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
 | `data-segments` | an integer as a string | how many pieces a sparkline broke into |
 | `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
 | `data-queued` | `true` \| `false` | |
 | `data-flag` | `silent` \| `lost` \| `near deadline` \| `over deadline` \| `stuck` \| `queued` \| `unknown health` \| `unknown deadline` | one `span.live-run-flag` per flag |
 | `data-contradiction` | `true` (present only) | health says quiet longer than the run is old |
-| `data-killed` | `true` \| `false` | repo block, total, and the banner (`true`) |
+| `data-killed` | `true` \| `false` | **the repository block only** (`li.live-repo`, `true`/`false`), and `true` on the kill banner `div.live-kill`. **Not on `div.live-total`**: `total()` emits no `data-killed` and appends the banner instead, so a rule that colours the total block by this attribute selects nothing |
 | `data-key` | a sanitized slug, or `''` | the repository |
 | `data-fast` | `true` \| `false` | burn faster than the cap allows |
 | `data-stale` | `true` (present only) | the stale banner |
 | `data-stale-by-age` | `true` \| `false` | the connection cell |
+| `data-silence` | the measured silence **as drawn** (`formatReading`, so `45 s`, `n/a`, `—`) | the stale banner `div.live-stale` — the number the screen drew, for a rule that wants to key on it without recomputing it from the stamps |
 
 State variants and **how each is marked**: killed/halted (`div.live-kill` with
 `data-killed="true"`, the word `KILLED by` then who, when, why); stale (`div.live-stale`
@@ -276,7 +288,8 @@ caps panel.
 `data-hollow`, `data-key`, `data-account` (`model|notional|compute`), `data-peak`,
 `data-segments` on the charts and rows; `data-available`, `data-scope-known`,
 `data-daily-scope`, `data-per-run-scope` (a document word, or `unknown`), `data-limit`
-(`max_reserve`), `data-killed` on the caps panel.
+(`max_reserve`), `data-killed` (`true`) on the **kill banner `div.spend-kill`** — not on
+`div.spend-caps`, which the banner is appended beside rather than written onto.
 
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
 (`data-partial="true"` / `data-hollow="true"` plus the `(partial)` marker text in
@@ -306,6 +319,7 @@ Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` 
 | Group | Class hooks |
 |---|---|
 | Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
+| Notes | `projects-note` — the class `note()` puts on **every** note paragraph whatever panel it is in (the `projects-jobs-note` / `projects-accounts-note` below are the panel-specific two beside it), so it is the single hook that reaches the console's own sentences on this screen |
 | Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
 | Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
 | Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
@@ -340,7 +354,7 @@ request → logs → diagnosis → replay → warnings.
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-name`, `run-stage-passed`, `run-stage-tests`, `run-stage-failures`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-url`, `run-pr-reason` |
 | Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
-| Diagnosis | `run-diagnosis`, `run-failed`, `run-failed-word`, `run-failed-test`, `run-flaky`, `run-flaky-word`, `run-flaky-test`, `run-finding`, `run-finding-severity`, `run-finding-file`, `run-finding-summary`, `run-agent-message`, `run-agent-word`, `run-agent-text`, `run-comments-word`, `run-comments-path`, `run-comments-value`, `run-draft-note`, `run-follow-up-word`, `run-follow-up-pr`, `run-follow-up-comments-word`, `run-follow-up-comments`, `run-follow-up-session`, `run-reported`, `run-reported-usd`, `run-charged-word`, `run-charge-usd`, `run-reported-warning`, `run-pin-warning`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
+| Diagnosis | `run-diagnosis`, `run-failed`, `run-failed-word`, `run-failed-test`, `run-flaky`, `run-flaky-word`, `run-flaky-test`, `run-finding`, `run-finding-severity`, `run-finding-file`, `run-finding-summary`, `run-agent-message`, `run-agent-word`, `run-agent-text`, `run-report-path`, `run-report-word`, `run-report-value`, `run-comments-word`, `run-comments-path`, `run-comments-value`, `run-draft-note`, `run-follow-up-word`, `run-follow-up-pr`, `run-follow-up-comments-word`, `run-follow-up-comments`, `run-follow-up-session`, `run-reported`, `run-reported-usd`, `run-charged-word`, `run-charge-usd`, `run-reported-warning`, `run-pin-warning`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
 | Replay | `run-replay`, `run-replay-records`, `run-replay-count`, `run-replay-window-word`, `run-replay-window`, `run-replay-span`, `run-replay-from`, `run-replay-to`, `run-replay-scrubbed`, `run-replay-at`, `run-replay-note`, `run-replay-count` |
 | Warnings | `run-warning` |
 
@@ -383,10 +397,17 @@ affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound
 `renderUnavailable` draws `section.console-unavailable` with `data-kind="no-binary"` or
 `data-kind="refused"`, `data-theme`, `data-received-at=""`. Two bodies:
 
-- **no binary** — `h1.unavailable-headline` ("no fugaro binary"), `p.unavailable-reason`,
-  `p.unavailable-install-lead` ("install it with"), `pre.unavailable-install-command`,
-  `div.unavailable-picker` + `p.unavailable-picker-lead` (with **`data-picker="binary"`**),
-  and a searched-places line (`unavailable-searched`, `-lead`, `-count`).
+- **no binary** — `div.unavailable-body` holding `h1.unavailable-headline` ("no fugaro
+  binary"), `p.unavailable-reason`, `div.unavailable-install` (itself holding
+  `span.unavailable-install-lead` ("install it with") and
+  **`code.unavailable-install-command`**), `div.unavailable-picker` (holding
+  `span.unavailable-picker-lead`, with **`data-picker="binary"`**, and an optional
+  `span.unavailable-configured` carrying the path the installation named when it named
+  one), and a searched-places line — `div.unavailable-searched` holding
+  `span.unavailable-searched-count` and `span.unavailable-searched-lead`. **The tags are
+  the code's and they matter**: the install command is a `code` and not a `pre`, and both
+  leads are `span`s and not `p`s, so a rule spelled `pre.unavailable-install-command`
+  styles nothing at all.
 - **refused** — `h1.unavailable-headline` ("the CLI refused this read"),
   `span.unavailable-operation` and `p.unavailable-sentence`, where the sentence is the
   CLI's own text through `sanitizeRefusal` or the console's
@@ -407,7 +428,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | Live (repo, total, banner), Spend (caps), Projects (kill panel, banner), Run (`run-halt`) | a banner element with `data-killed="true"` / the word `KILLED by` / `HALTED` + who, when, why |
+| killed / halted | Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner), Run (`run-halt`) | a banner element with `data-killed="true"` / the word `KILLED by` / `HALTED` + who, when, why. **The attribute is on the banner, never on the block that holds it** — `div.live-total` and `div.spend-caps` carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
 | silent / lost / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
@@ -435,11 +456,26 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
 | **Count** | `count` | Live (segments), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), degraded (runs, searched) | 0 decimals + grouping |
 
-Every numeric cell carries `live-num` / `spend-num` / `projects-number` / `run-number`
-(`numberCell` prepends it), which is the single hook that gives **tabular figures** and
-right alignment — §6.1 rule 2's "tabular figures, right-aligned numerics" is satisfiable
-today only because that class exists. Monospace is the mechanism: `font-variant-numeric:
-tabular-nums` with a fallback to `--font-mono`.
+**Four of the five screens have a number hook, and the fifth does not.** Live, Spend,
+Projects and Run each have their own `numberCell` — one per screen file, not one in
+`app.ts` — and each prepends its own class: `live-num`, `spend-num`, `projects-number`,
+`run-number`. That class is the single hook giving **tabular figures** and right alignment,
+so §6.1 rule 2's "tabular figures, right-aligned numerics" is satisfiable today on those
+four screens only.
+
+**The degraded screen's `numberCell` (`degraded.ts`) prepends no class at all** — it is
+`cell(parent, factory, tag, ...classes)` with no `-num` — so every figure on the degraded
+and unavailable screens (the feed age, runs, the money totals, the per-row money, the
+searched count) has **no tabular-figures and no right-align hook** — and the table just
+above names the degraded screen as the source of a duration, a count and money like every
+other kind. That is a gap in the code and
+not a gap in the rule: **Task 6.4 closes it**, by adding `degraded-num` to that one helper
+and writing the same `font-variant-numeric: tabular-nums` rule for it, which is why
+`console/src/renderer/screens/degraded.ts` is in Task 6.4's Files — the one screen file the
+styling work edits, and the reason it is a code change and not a CSS one.
+
+Monospace is the mechanism on all five: `font-variant-numeric: tabular-nums` with a
+fallback to `--font-mono`.
 
 ---
 
@@ -651,10 +687,13 @@ dark set's `--warn`/`--error` pair was **37.0°** apart, its `--halted`/`--stale
 **55.0°**, and the light set's `--warn`/`--error` pair **39.7°**). What this design holds
 instead is a rule and a number:
 
-> **Any two of the five state colours are at least 50° apart in hue.** Where a future pair
-> cannot clear 50° — the amber-to-red arc is the crowded one — the fallback is **at least
-> 3:1 of luminance contrast** between the two, which is the second column of the table
-> below and the same 3:1 [§4.4](#44-forced-colors-and-high-contrast) leans on.
+> **Any two of the five state colours are at least 50° apart in hue, _or_ at least 3:1
+> apart in luminance contrast.** The first is what the five present colours meet; the
+> second is the fallback for a future pair that cannot clear 50° — the amber-to-red arc is
+> the crowded one — and it is the same 3:1 [§4.4](#44-forced-colors-and-high-contrast)
+> leans on. **A pair that clears the first need not clear the second**, and none of the
+> ten below does: the luminance column is there to carry a pair that falls back, not to be
+> a second constraint on a pair that does not.
 
 50° is chosen as the point where two hues stop reading as "the same colour, shaded"; it is
 satisfiable without moving `--warn`, which is reused verbatim from the website, and it
@@ -866,11 +905,35 @@ animated would be a figure whose last frame is a lie about when the value was re
 `CONSOLE_WINDOW_SIZE` is `{ width: 1180, height: 780 }` CSS pixels
 (`src/main/window.ts`) and the window sets **no background colour at all** — there is no
 `backgroundColor` key in `consoleWindowOptions`. That is one wiring detail this design
-proposes to change, and it is *not* a CSS change: until `backgroundColor` is set to
-`#0A0E16`, a light-theme window flashes the platform's default (usually white) before the
-document paints, and a dark-theme window flashes white on a white-on-white round trip. The
-main process cannot read the CSS, so the value is a duplicate of `--ground`; the plan's
-Task 6.5 carries it, and the token test asserts the two literals are equal.
+proposes to change, and it is *not* a CSS change: with no `backgroundColor`, a theme's
+window flashes the platform's default (usually white) before the document paints.
+
+**Which ground the window paints is a decision, and the first revision of this section
+left it ambiguous.** It said "equal to `--ground`" — but `--ground` has **two** values,
+`#0A0E16` and `#F2F6FA`, and §3.6 makes the OS the default, so a single pinned literal is
+wrong on one of the two machines. Pinning the dark ground alone is the worse of the two
+errors: on a light-OS machine it introduces the very flash §4.1 exists to remove, **dark**
+where the document is about to paint light.
+
+So the window paints **the ground of the theme it is about to show**, and the main process
+reads which that is from `nativeTheme`:
+
+- `nativeTheme.shouldUseDarkColors` → `#0A0E16` (the dark `--ground`), otherwise
+  `#F2F6FA` (the light one);
+- `nativeTheme.on('updated', …)` re-sets `backgroundColor`, so an OS appearance change
+  while the window is open does not leave a stale ground behind the next paint;
+- the sources in [§3.6](#36-how-the-theme-is-chosen) are the same order here, because they
+  are the same fact: `nativeTheme.themeSource` is what an owner override sets (source 3),
+  `shouldUseDarkColors` is its answer, and the renderer's `matchMedia` read (Task 6.5) is
+  asking the same question of the same preference. The `data-theme` attribute is still the
+  single switch for the CSS.
+
+`nativeTheme` is core Electron and needs no dependency and no CSP change. The main process
+still cannot read the CSS, so **both** literals are duplicates of the two `--ground`
+values; the plan's Task 6.5 carries it, and the token test asserts **both** equalities —
+the dark literal against `--ground` in the dark set and the light literal against `--ground`
+in the light set — rather than the ambiguous "equal to `--ground`" the first revision
+wrote.
 
 The document is one column with three bands, matching the three children the entry already
 appends:
@@ -1021,10 +1084,15 @@ export const SERVED_FILES: readonly string[] = Object.freeze([
 ```
 
 `console/test/unit/bundle.test.ts` changes with it, in the three places it counts or compares:
-`expect(SERVED_FILES.length, …).toBe(6)`, and `builtListing('bundle')` — which is derived
-from `SERVED_FILES` — keeps holding the directory equal in both directions. **The test's
-non-vacuity assertion is the load-bearing half**: a name dropped from the list, or a file
-written into `dist/bundle/` that nothing vouches for, still fails.
+`expect(SERVED_FILES.length, …).toBe(6)`, and the comparison that holds the two sides equal
+in both directions — `expect(builtListing('bundle')).toEqual(servedNames())`. The two sides
+are **different sources, which is what makes the comparison worth making**: `builtListing`
+(`console/test/support/built.ts`) reads `dist/bundle/` off disk, and `servedNames()`
+(`bundle.test.ts`) maps `SERVED_FILES` to bare file names. Adding `/console.css` changes the
+**listed** side and the comparison fails until the build actually writes the file into
+`dist/bundle/` — so the test is what makes a packaged app without its stylesheet fail rather
+than ship. **The test's non-vacuity assertion is the load-bearing half**: a name dropped from
+the list, or a file written into `dist/bundle/` that nothing vouches for, still fails.
 
 ### 5.4 The three `<link>` elements
 
@@ -1141,15 +1209,28 @@ should reuse the arithmetic of rather than re-derive):
   is present — so a token added to light and not to dark fails by name;
 - a case asserts `--border` is **only** used decoratively: no rule in `base.css` or
   `screens.css` uses `--border` where the property is `outline` or where the border marks
-  a control (a scan of the CSS text, in the spirit of `screen-literals.test.ts`);
-- a case asserts **the main process's window background equals `--ground` for the default
-  theme** ([§4.1](#41-the-windows-structure)) — a literal duplicated by necessity, held
-  equal by test rather than by hope;
+  a control (a scan of the CSS text, in the spirit of `screen-literals.test.ts`). **This
+  one case is Task 6.4's and not Task 6.1's**, because it is the only case in this file
+  that reads a file other than `palette.css` and the two files it reads are created by
+  Tasks 6.3 and 6.4 — see [§7.4](#74-task-64--the-screens). Task 6.1 writes the file and
+  its palette cases; Task 6.4 adds this case at the point where both stylesheets exist;
+- a case asserts **the main process's window background equals the ground of the theme it
+  is about to paint** ([§4.1](#41-the-windows-structure)) — **both** literals, the dark one
+  against the dark `--ground` and the light one against the light `--ground`, rather than
+  the ambiguous "equal to `--ground`" a `--ground` with two values cannot support;
 - **a red step, run for real and committed as a case**: the arithmetic is exercised against
-  a deliberately failing pair, and the case asserts it reports
-  `--text-muted on --surface is 3.10:1, needs 4.5:1` — the same discipline `a11y.mjs`
-  keeps, "so the refusal cannot rot into a comment about a check that no longer refuses
-  anything".
+  a deliberately failing fixture, in the shape `a11y.mjs` keeps but with a pair this file
+  names, and the case asserts it reports
+  **`--text-muted on --surface is 3.1:1, needs 4.5:1`** — "so the refusal cannot rot into a
+  comment about a check that no longer refuses anything". Two details are load-bearing and
+  both were wrong in the first revision of this section: the **precision is one decimal**,
+  because `a11y.mjs` formats `ratio.toFixed(1)` and its own committed fixture prints
+  `3.1:1` (`website/test/a11y.mjs`), so a `3.10:1` string could not come from this
+  discipline at all; and **the fixture pair is named**, because the console's real
+  `--text-muted on --surface` is 8.02:1 dark and 6.27:1 light, so a `3.1:1` reading
+  presupposes a pair deliberately overridden for the case — the precedent's own fixture is
+  `--text-muted` `#646464` on `--surface` `#14141F`, and Task 6.1's case names its pair the
+  same way rather than pretending a real one produced the figure.
 
 ### 6.4 A forced-colors smoke
 
@@ -1313,12 +1394,19 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 
 - **Scope:** `theme/screens.css` — the rules for Live, Spend, Projects, Run, the degraded
   and unavailable screens and the picker (§2), including the tabular-figure/right-align
-  rule, the density rules of §3.8 and the state colours of §3.5.
-- **Files:** `theme/screens.css`; `README.md`.
+  rule, the density rules of §3.8 and the state colours of §3.5; **and one line of code**,
+  adding `degraded-num` to the degraded screen's `numberCell`, because that helper prepends
+  no class today and the fifth number hook therefore does not exist for a stylesheet to
+  select ([§2.10](#210-numbers-money-and-time--what-the-stylesheet-must-align)).
+- **Files:** `theme/screens.css`; `src/renderer/screens/degraded.ts` (that one line);
+  `README.md`; `test/unit/theme-tokens.test.ts` (the `--border`-is-decorative case of §6.3,
+  which belongs here rather than to Task 6.1 — it is the one case that reads `base.css` and
+  `screens.css`, and neither exists until this task).
 - **Tests:** the computed-background assertion per screen (§6.2); a case that
   `screens.css` selects only hooks the [§2](#2-screen-inventory) inventory names — a scan
   of the stylesheet's selectors checked against a list derived from the screens' own class
-  literals, so a rule that styles a class nothing emits fails.
+  literals, so a rule that styles a class nothing emits fails; the
+  `--border`-is-decorative scan.
 - **Verification:** `cd console && npm run test:unit && npm run test:e2e`.
 - **Reviewer tier:** ordinary.
 
@@ -1327,12 +1415,15 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 - **Scope:** `CONSOLE_THEME` becomes the answer of a `themeChoice()` that reads
   `matchMedia('(prefers-color-scheme: dark)')` and subscribes to `change` (§3.6); the entry
   stamps `data-theme` on the mount it draws the chrome into; the picker's script stamps its
-  document; `consoleWindowOptions` gains `backgroundColor` (§4.1); the nav's tablist
-  behaviour (§4.3).
+  document; `consoleWindowOptions` gains `backgroundColor`, **both literals**, read from
+  `nativeTheme.shouldUseDarkColors` and re-set on `nativeTheme`'s `updated` event (§4.1);
+  the nav's tablist behaviour (§4.3).
 - **Files:** `console/src/renderer/entry.ts`, `console/src/renderer/installations.ts`,
   `console/src/main/window.ts`, `console/test/unit/{entry-wiring,window,theme-tokens}.test.ts`.
 - **Tests, mutation-proven:** `CONSOLE_THEME` no longer follows the media query → the
-  unit test fails; the background literal drifts from `--ground` → the token test fails;
+  unit test fails; either background literal drifts from **its own** `--ground` (the dark
+  one from the dark set's, the light one from the light set's) → the token test fails —
+  one assertion per literal, since "equal to `--ground`" is ambiguous with two grounds;
   a second roving-tabindex regression → the entry wiring test fails.
 - **Note on the CSP and `ElementLike`:** this task writes **attributes only**. A
   `matchMedia` read is not a DOM write and not a network call; `data-theme` is a
