@@ -798,8 +798,9 @@ func TestDocsComputeBackendCIReachMatchesTheTree(t *testing.T) {
 // was written against a brief that the tree does not carry — the release, and
 // the Spot result — are stated in the plan's own text rather than smoothed
 // over. The brief's Spot sentence has no `50001` anywhere under docs/ **outside
-// this plan**, and the release is 0.9.0 in the constant and the 0.8.6 note; a
-// plan that quietly agreed with either would be a plan a reader could not check.
+// this plan**, and the release is 0.9.0 in the released notes and in the
+// constant's own comment; a plan that quietly agreed with either would be a plan
+// a reader could not check.
 //
 // The `50001` half is a claim about the whole of `docs/`, so it is asserted
 // over the whole of `docs/` — every file, recursively, this plan excluded —
@@ -859,31 +860,43 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	if walked == 0 {
 		t.Fatalf("no files under docs/ were walked: %s's Spot fact is a claim about the whole directory", computeBackendPlan)
 	}
-	// The release: the tree says 0.9.0 in the constant and the 0.8.6 note, and
-	// the plan follows the brief's 0.9.5 and says so.
+	// The release: the tree says 0.9.0 in the released notes and in the
+	// constant's own comment, and the plan follows the brief's 0.9.5 and says so.
+	// The constant's comment is the one of the three 0.9.0's own release content
+	// rewrote: it read "batchProvisionShipped is false until 0.9.0" and reads
+	// "false until a later release" with the exclusion from 0.9.0 in the lines
+	// below it, so the pin follows the tree's new truth rather than the wording
+	// the plan was first written against.
 	for _, want := range []string{
-		"**0.9.5**", "is false until 0.9.0", "The reaper will be redesigned for 0.9.0",
+		"**0.9.5**", "is false until a later release", "The reaper will be redesigned for 0.9.0",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer quotes %q in its release fact", computeBackendPlan, want)
 		}
 	}
-	if !strings.Contains(readDoc(t, "internal/cli/recipes_skew.go"), "is false until 0.9.0") {
-		t.Errorf("internal/cli/recipes_skew.go no longer says the Batch provisioning is false until 0.9.0: Task 9's commit is the one that changes it, so a change here means that task has landed and %s's release fact has to change with it", computeBackendPlan)
+	if !strings.Contains(readDoc(t, "internal/cli/recipes_skew.go"), "is false until a later release") {
+		t.Errorf("internal/cli/recipes_skew.go no longer says the Batch provisioning is false until a later release: Task 9's commit is the one that changes it, so a change here means that task has landed and %s's release fact has to change with it", computeBackendPlan)
 	}
 }
 
 // computeBackendZeroNineZero is every place in the tree's own code, its tests
 // and its release documents that names 0.9.0 for the work this plan is about,
-// each as the file, the line and the words that line carries: the constant whose
-// comment names the release, the refusal text it feeds, the released note the
-// refusal came from, the rerelease checklist's verifying line, the Terraform
-// pin's two lines, the shipped-gate test's assertion that the refusal says
-// 0.9.0, and the init flag table's entry for the stage the refusal covers.
+// each as the file, the anchor a reader finds the place by and the words the
+// tree carries there beside the release name: the constant whose comment names
+// the release, the released notes the refusal came from and was recorded in, the
+// rerelease checklist's verifying line, the Terraform pin's comment and its
+// known-invalid entry, the design's own status line, and the init flag table's
+// entry for the stage the refusal covers.
 //
-// It is a table of lines rather than a walk because the words matter — every
-// entry here is a citation the plan makes, and the assertion below reads the
-// tree's line back, so a citation that moved, a line rewritten elsewhere and a
+// It is a table of places rather than of lines because the words are the fact
+// and the line number is not: the tree's 0.9.0 release content landed on this
+// branch, and it rewrote some of these places, retired one of them (the refusal
+// text, which no longer names a release at all) and moved the lines of the rest
+// — a citation by line is a second fact that an edit anywhere above it
+// falsifies, while the anchor a reader finds the place by does not move. The
+// anchor is the symbol, heading or bullet the place is found by, and the
+// assertion below reads the words back out of the comment or paragraph the
+// anchor opens, so a citation that moved, a place rewritten elsewhere and a
 // count that drifted are all failures. What a table cannot do is say whether it
 // is complete, and a count nobody can check is how this fact said "two places"
 // for a tree that has nine: so the two walks below are its bounds.
@@ -896,19 +909,61 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 // the second walk finds are the record of an earlier ruling, which no task here
 // rewrites.
 var computeBackendZeroNineZero = []struct {
-	file string
-	line int
-	text string
+	file   string
+	anchor string
+	text   string
 }{
-	{"internal/cli/recipes_skew.go", 170, "batchProvisionShipped is false until 0.9.0"},
-	{"internal/cli/recipes_skew.go", 187, "it returns in 0.9.0, and the installation's ordinary steps are unaffected"},
-	{"docs/releases/v0.8.6.md", 2, "both are planned to return in 0.9.0 after a redesign"},
-	{"docs/releases/v0.8.6.md", 15, "The reaper will be redesigned for 0.9.0."},
-	{"docs/release.md", 78, "each names 0.9.0 as the release meant to ship it"},
-	{"deploy/terraform/terraform_test.go", 3103, "the reaper is redesigned for 0.9.0"},
-	{"deploy/terraform/terraform_test.go", 3108, "--provision-batch refuses until 0.9.0 (batchProvisionShipped)"},
-	{"internal/cli/shipped_gates_test.go", 87, `"batch.jobs.cancel", "0.9.0"`},
-	{"internal/cli/managed_test.go", 821, "main's compute stage (0.9.0, init_compute.go)"},
+	{"internal/cli/recipes_skew.go", "batchProvisionShipped is false until a later release", "excluded from 0.9.0"},
+	{"docs/releases/v0.8.6.md", "Managed projects and `fugaro init --provision-batch` are turned off in this release", "both are planned to return in 0.9.0 after a redesign"},
+	{"docs/releases/v0.8.6.md", "**`fugaro init --provision-batch` is disabled.**", "The reaper will be redesigned for 0.9.0."},
+	{"docs/release.md", "**Verify `managedDeployerShipped` and `batchProvisionShipped`", "excluded from 0.9.0"},
+	{"deploy/terraform/terraform_test.go", "Known-invalid entries not fixed by this change", "backend is excluded from 0.9.0"},
+	{"deploy/terraform/terraform_test.go", `"gcp/modules/compute/iam.tf|batch.jobs.cancel"`, "which is not 0.9.0 (batchProvisionShipped)"},
+	{"internal/cli/managed_test.go", `"provision-batch":`, "excluded from 0.9.0; init_compute.go"},
+	{"docs/design/compute-backend.md", "**Not shipped, and not in 0.9.0.**", "`fugaro init --provision-batch` refuses"},
+	{"docs/releases/v0.9.0.md", "**The Batch backend is still disabled.**", "would return in 0.9.0, and neither returns here"},
+}
+
+// anchoredLines finds the anchor in doc and returns the 0-based index of the
+// line it is on, whether it was found, and the place read as prose: the anchor's
+// line and, for a Go comment or a markdown blockquote, the comment or quote it
+// opens, each stripped of its marker and joined with single spaces. A sentence a
+// comment wraps does not stop at the line it wraps on — the constant's comment
+// wraps "excluded from 0.9.0" across two lines — and the words are what is
+// pinned, so the wrap is not part of the pin. A line carrying no such marker
+// stands alone: a map entry is its own place, not the head of the block it sits
+// in.
+func anchoredLines(doc, anchor string) (int, string, bool) {
+	lines := strings.Split(doc, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, anchor) {
+			continue
+		}
+		marker := lineMarker(lines[i])
+		parts := []string{strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), marker))}
+		for j := i + 1; marker != "" && j < len(lines); j++ {
+			next := strings.TrimSpace(lines[j])
+			if next == "" || !strings.HasPrefix(next, marker) {
+				break
+			}
+			parts = append(parts, strings.TrimSpace(strings.TrimPrefix(next, marker)))
+		}
+		return i, strings.Join(parts, " "), true
+	}
+	return 0, "", false
+}
+
+// lineMarker is the comment or quote marker a line opens with: "//" for a Go
+// comment, ">" for a markdown blockquote, and "" for everything else.
+func lineMarker(line string) string {
+	s := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(s, "//"):
+		return "//"
+	case strings.HasPrefix(s, ">"):
+		return ">"
+	}
+	return ""
 }
 
 // computeBackendGateIdentifiers are this work's own gating names: the constant
@@ -969,18 +1024,24 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 		}
 	}
 	for _, want := range computeBackendZeroNineZero {
-		if cite := fmt.Sprintf("`%s:%d`", want.file, want.line); !strings.Contains(doc, cite) {
-			t.Errorf("%s no longer cites %s among the places the tree names 0.9.0 for this work", computeBackendPlan, cite)
+		if !strings.Contains(doc, "`"+want.file+"`") {
+			t.Errorf("%s no longer names %s among the places the tree names 0.9.0 for this work", computeBackendPlan, want.file)
 		}
-		if !strings.Contains(doc, want.text) {
-			t.Errorf("%s no longer quotes %q, the words %s:%d carries", computeBackendPlan, want.text, want.file, want.line)
+		// The plan quotes the anchor and the words, so a reader can find the
+		// place and see what it says without the plan having to be right about
+		// which line it is on.
+		for _, quoted := range []string{want.anchor, want.text} {
+			if !strings.Contains(doc, quoted) {
+				t.Errorf("%s no longer quotes %q, which %s carries beside the release name it gives this work", computeBackendPlan, quoted, want.file)
+			}
 		}
-		lines := strings.Split(readDoc(t, want.file), "\n")
-		if want.line < 1 || want.line > len(lines) {
-			t.Fatalf("%s has %d lines and the plan cites line %d", want.file, len(lines), want.line)
+		_, place, ok := anchoredLines(readDoc(t, want.file), want.anchor)
+		if !ok {
+			t.Errorf("%s no longer carries the anchor %q that %s's place is found by: the release fact cites that place, so the anchor and this table move together — and Task 9 is the commit that rewrites or retires the five of these that are not the released notes or the design's own status line", want.file, want.anchor, computeBackendPlan)
+			continue
 		}
-		if got := lines[want.line-1]; !strings.Contains(got, want.text) {
-			t.Errorf("%s:%d no longer says %q (it reads %q): the release fact lists that line, so a moved or rewritten line means the plan and this table move together — and Task 9 is the commit that retires the seven of these that are not the released note's", want.file, want.line, want.text, strings.TrimSpace(got))
+		if !strings.Contains(place, want.text) {
+			t.Errorf("%s's %q no longer says %q (it reads %q): the release fact lists that place, so rewritten words mean the plan and this table move together — and Task 9 is the commit that rewrites or retires the five of these that are not the released notes or the design's own status line", want.file, want.anchor, want.text, place)
 		}
 	}
 }
@@ -1000,9 +1061,16 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 // Two files are skipped by name: this test file, whose table quotes every one of
 // the lines, and the plan, which cites them.
 func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
+	// The table is a table of places, and the walk finds lines: each entry is
+	// resolved to the line its anchor is on, and that line is what is listed.
 	listed := map[string]bool{}
 	for _, e := range computeBackendZeroNineZero {
-		listed[fmt.Sprintf("%s:%d", e.file, e.line)] = true
+		i, _, ok := anchoredLines(readDoc(t, e.file), e.anchor)
+		if !ok {
+			t.Errorf("%s no longer carries the anchor %q this table lists a place by, so the walk below cannot tell whether a line of it is listed", e.file, e.anchor)
+			continue
+		}
+		listed[fmt.Sprintf("%s:%d", e.file, i+1)] = true
 	}
 	release := regexp.MustCompile(`0\.9\.[0-9]`)
 	found := 0
@@ -1068,12 +1136,15 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 // with no count stated anywhere near it. These are the records of the owner's
 // ruling of 2026-10-15, which placed this backend in 0.9.0 and which the brief's
 // placement supersedes: docs/release.md and docs/releases/v0.8.6.md are the two
-// the plan treats as release surfaces (they are in the table above, by line),
-// and the rest are design and plan text no task in this plan rewrites — of which
-// docs/design/compute-backend.md is this work's own design.
+// the plan treats as release surfaces (they are in the table above, by their
+// places), and the rest are released notes and design and plan text no task in
+// this plan rewrites — of which docs/design/compute-backend.md is this work's
+// own design and docs/releases/v0.9.0.md is the note that recorded the work as a
+// known limit of the release it did not return in.
 var computeBackendReleaseProse = []string{
 	"docs/release.md",
 	"docs/releases/v0.8.6.md",
+	"docs/releases/v0.9.0.md",
 	"docs/design/compute-backend.md",
 	"docs/design/generic-tool.md",
 	"docs/plans/2026-10-08-generic-tool.md",
