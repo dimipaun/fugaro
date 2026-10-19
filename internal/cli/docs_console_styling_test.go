@@ -121,6 +121,46 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 			t.Errorf("%s: §3.7's screen-prose rule does not name %s, so the Projects note that carries it falls outside the rule", path, hook)
 		}
 	}
+	// §2.5's third note hook carries no second class: the `'note'` in that call
+	// is the wire field `textCell` writes, not a class, and a rule written
+	// against `p.note` would never match. And the hook itself is reachable from
+	// no document this CLI produces — `accounts ls` answers `complete: false`
+	// whenever the note is non-empty, which builds the panel as unavailable, so
+	// the note is drawn as the panel's `projects-because` sentence instead.
+	if strings.Contains(notes, "generic `note` class") {
+		t.Errorf("%s: §2.5 says the accounts note carries a generic `note` class; the element's only class is `projects-accounts-note`, and a rule written against `p.note` matches nothing", path)
+	}
+	projects := mdBetween(t, path, doc, "### 2.5 Projects", "### 2.6 Run detail")
+	if !strings.Contains(projects, "reachable by no feed today") {
+		t.Errorf("%s: §2.5 no longer says `projects-accounts-note` is reachable from no document the CLI produces, which is why it cannot be keyed on", path)
+	}
+	// §2.3's two derived attributes are not "a formatted percent" in general:
+	// `bar()` writes `data-fill` from the same percent reading it writes
+	// `data-state` from, so that one is a measured percent or `n/a`; `spark()`
+	// builds each `data-height` as a measured share or a gap, so that one is a
+	// measured percent or the em dash and never `n/a`.
+	liveSection := mdBetween(t, path, doc, "### 2.3 Live", "### 2.4 Spend")
+	if fill := mdRow(t, path, liveSection, "| `data-fill` |"); !strings.Contains(fill, "and **nothing else**") {
+		t.Errorf("%s: §2.3's `data-fill` row does not give the attribute's real value set; a percent reading is measured or unavailable, so a marked form or the em dash cannot appear", path)
+	}
+	if height := mdRow(t, path, liveSection, "| `data-height` |"); !strings.Contains(height, "never `n/a`") {
+		t.Errorf("%s: §2.3's `data-height` row does not say it is never `n/a`; a sparkline bar's height is a measured share or a gap", path)
+	}
+	// And no table cell may hold an unescaped `|` inside a code span: GFM splits
+	// the row on it, drops every column past the header's, and renders the row
+	// truncated mid-span — the navigation row's `data-view="live|spend|projects"`
+	// did exactly that, while the nine other cells that write a value set escape
+	// it as `\|`.
+	for _, line := range strings.Split(doc, "\n") {
+		if !strings.HasPrefix(line, "| ") {
+			continue
+		}
+		for _, span := range mdCodeSpanRE.FindAllString(line, -1) {
+			if strings.Contains(strings.ReplaceAll(span, `\|`, ""), "|") {
+				t.Errorf("%s: the table row %q holds an unescaped `|` inside %s; GFM splits the row on it and drops every column past the header's, so the row renders truncated mid-span", path, strings.TrimSpace(line), span)
+			}
+		}
+	}
 	states := mdBetween(t, path, doc, "### 2.9 Every state variant", "### 2.10 Numbers")
 	for _, want := range []struct {
 		row, has, because string

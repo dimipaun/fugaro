@@ -175,7 +175,7 @@ The entry draws the body's three children, in this order, all from `domSurface`'
 | Region | Element and hooks | What it holds |
 |---|---|---|
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
-| Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live|spend|projects"`, `aria-current="true|false"`, label as text |
+| Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
 | Panel | `div.console-panel` | the mounted screen's root |
 | Reduced/refused banner | drawn by `renderVersionSkew` into the mount, before the nav | see §2.8 |
 
@@ -240,8 +240,8 @@ of `li.live-repo`, each with a cap bar, a burn sparkline and a kill banner and a
 |---|---|---|
 | `data-theme` | `light` \| `dark` | on the `section.live` root |
 | `data-received-at` | an ISO stamp, or `''` | the newest frame |
-| `data-fill` | a formatted percent (`12.5%`, `≥ 12.5%`, `NOTIONAL~12.5%`, `est. 12.5%`, `n/a`, `—`) | a bar's fill, as text |
-| `data-height` | the same shapes | each sparkline bar |
+| `data-fill` | `12.5%` or `n/a` — one decimal, and **nothing else** | a bar's fill, as text. `bar()` writes it from the **same percent reading** it writes `data-state` from (`live.ts`), and both call sites pass a *percent* figure — `repo.percent`, `total.percent` — which `schema.ts` reads through `readNumber`, whose only two states are `measured` and `unavailable`. So this attribute is never `≥ 12.5%` (no `lowerBound` reaches a percent reading), never `NOTIONAL~12.5%` or `est. 12.5%` (no percent reading is marked), and never the em dash; **a rule keyed on a marked form here would match nothing** |
+| `data-height` | `12.5%` or `—` — and **never `n/a`** | each sparkline bar. The heights are the bar's own shapes, not the reading's: `spark()` builds every one as `measured(share)` or, for a sample that is not plottable, `gap(...)` — so a bar the console cannot fill draws the em dash and never the `n/a` a `data-fill` may carry |
 | `data-state` | **two vocabularies.** A bar's availability: `measured` \| `notional` \| `estimated` \| `unavailable` \| `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` (and the sparkline's bars) writes the five availability words; `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the five words and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
 | `data-segments` | an integer as a string | how many pieces a sparkline broke into |
 | `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
@@ -263,9 +263,10 @@ gap (`data-state="gap"`, the mark `—`); silent (`data-flag="silent"`, `data-to
 lost (`data-flag="lost"`, `data-tone="alarm"`); near/over deadline (`data-flag`, amber and
 alarm); queued (the `live-run-queued` class, `data-queued="true"`, `data-tone="queued"`);
 stuck (`live-run-stuck`, `data-tone="alarm"`); notional (**the text mark `NOTIONAL~` alone** —
-Live's `data-state` comes from a `percent` reading, and a percent reading is `measured`,
-`unavailable` or `gap`, so this screen never writes `data-state="notional"`; the attribute is
-Spend's, §2.4); unavailable (`data-state="unavailable"`, the text `n/a`, the reason in
+Live's `data-state` comes from a `percent` reading, which is `measured` or `unavailable`, or
+from a sparkline bar's height, which is `measured` or `gap`, so this screen never writes
+`data-state="notional"`; the attribute is Spend's, §2.4); unavailable
+(`data-state="unavailable"`, the text `n/a`, the reason in
 `title`); empty (a sparkline with no sample draws **one** bar whose reading is a `gap`).
 **There is no loading state**: the screen is drawn from a model, and the entry draws
 nothing until the handshake answers. **There is no cap-reached flag**: the cap is a
@@ -331,7 +332,7 @@ Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` 
 | Group | Class hooks |
 |---|---|
 | Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
-| Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, `projects-accounts-note` on the accounts panel's sentence (which also carries the generic `note` class). **No single hook reaches all three**, so a rule that means "the notes" has to name the three |
+| Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, and `projects-accounts-note` on the accounts panel's sentence — the **only** class on it, since the `'note'` in that call is the wire field `textCell` writes and not a class, so a rule written against `p.note` matches nothing. **No single hook reaches all three**, and the third is **unreachable today** — see below |
 | Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
 | Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
 | Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
@@ -349,6 +350,16 @@ The `not-built` state is the design's own honesty rule in the DOM: `policy` and
 readable with this CLI: …"). An `unavailable` panel carries the CLI's sentence or "no
 document arrived for …". A `read` panel carries a count and a body; **a panel in any other
 state has no body at all**, so a rule that painted an empty body would be painting nothing.
+
+**`projects-accounts-note` is a hook no document this CLI produces can reach.** `fugaro
+accounts ls --json` writes `note` with `omitempty` and answers `complete: false` whenever
+that note is non-empty (`internal/cli/accounts.go`), and the screen builds the accounts
+panel as an *unavailable* panel in exactly that case: the body that draws the hook — and
+`projects-accounts-note` is drawn nowhere else — exists only for a panel that **read** a
+document, and the note itself is drawn as the panel's `projects-because` sentence. So the
+hook is emitted by the code and reachable by no feed today; it becomes reachable the day
+`complete: true` and a non-empty `note` can arrive together, which is why it stays in the
+vocabulary rather than being deleted.
 
 Readings: money (`usd`) for the reserve, the caps and the job figures; counts for panel
 counts, dropped/total, enrolled/seen, secret versions. **No reading is a time on this
