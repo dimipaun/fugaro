@@ -37,6 +37,8 @@ import { REFUSALS as SCHEMA_REFUSALS, validateHeartbeat, validateMessage } from 
 import { REASON, STATE, evaluatePresence } from '../../../shared/presence/index.js';
 import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
 import { CLIENT_CODES, MAILBOX_TTL_MS, PRESENCE_REASON, createMailboxClient, toPresenceHeartbeat } from './client.js';
+import { MemoryConnection } from './connection.js';
+import { GATE_CODES, OFFLINE_SPEECH } from './gate.js';
 import { macOf } from './mac.js';
 import { MemoryMailboxStore, STORE_CODES } from './store.js';
 import { MemorySpeaker } from './speaker.js';
@@ -153,6 +155,12 @@ async function harness(options = {}) {
   const store = new LoggedStore(db, events);
   const speaker = options.speaker ?? new LoggedSpeaker(events);
   const keys = options.keys ?? new SecretStore(new MemorySecureStore());
+  // P6.10's port. It defaults to ONLINE and to a consumer nothing has looked at
+  // yet, which is the state every test that is not about the gate starts in: a
+  // suite about signing and acking must not silently be a suite about being
+  // offline, and "nothing has been observed" is not evidence that the consumer
+  // is down (`gate.js` says why).
+  const connection = options.connection ?? new MemoryConnection();
   // The key is stored under the INSTALLATION's id, which is not the mailbox's
   // (D114 vs the rules' `$mb == auth.uid`): the two tests that move the account
   // tuple are about exactly that.
@@ -163,6 +171,7 @@ async function harness(options = {}) {
     account: options.account ?? ACCOUNT,
     keys,
     store,
+    connection,
     speaker,
     now: () => nowMs,
     newId: options.newId ?? (() => `m-${++minted}`),
@@ -175,6 +184,7 @@ async function harness(options = {}) {
     store,
     speaker,
     keys,
+    connection,
     db,
     events,
     paths: client.paths,
@@ -275,6 +285,7 @@ test('every port and every value source is required, and nothing is guessed', ()
     account: ACCOUNT,
     keys: new SecretStore(new MemorySecureStore()),
     store: new MemoryMailboxStore(),
+    connection: new MemoryConnection(),
     speaker: new MemorySpeaker(),
     now: () => T0,
     newId: () => 'm-1',
@@ -285,11 +296,11 @@ test('every port and every value source is required, and nothing is guessed', ()
   // A missing port is a wiring bug, not a refusal a caller can ignore: a
   // client built without a key store would fail at the first utterance, with
   // the owner waiting.
-  for (const field of ['account', 'keys', 'store', 'speaker', 'now', 'newId', 'secrets', 'heartbeatIntervalMs']) {
+  for (const field of ['account', 'keys', 'store', 'connection', 'speaker', 'now', 'newId', 'secrets', 'heartbeatIntervalMs']) {
     const { [field]: _gone, ...rest } = base;
     assert.throws(() => createMailboxClient(rest), TypeError, `without ${field}`);
   }
-  for (const field of ['keys', 'store', 'speaker']) {
+  for (const field of ['keys', 'store', 'connection', 'speaker']) {
     assert.throws(() => createMailboxClient({ ...base, [field]: {} }), TypeError, field);
   }
   assert.throws(() => createMailboxClient(null), TypeError);
@@ -318,6 +329,7 @@ test('an account tuple that is not usable is a wiring failure carrying P3.1\'s c
       account: broken,
       keys: new SecretStore(new MemorySecureStore()),
       store: new MemoryMailboxStore(),
+      connection: new MemoryConnection(),
       speaker: new MemorySpeaker(),
       now: () => T0,
       newId: () => 'm-1',
@@ -350,13 +362,15 @@ test('the client is frozen, and so are the paths it writes to', async () => {
   }, TypeError);
 });
 
-test('the client object is exactly its six names, and nothing else is on it', async () => {
+test('the client object is exactly its seven names, and nothing else is on it', async () => {
   // `index.test.js` pins the DOOR's export set; the object the builder returns
   // is the other half of the same rule, and it is the one a screen holds. A
   // `raw(path, value)` added here "for one screen" would be a second write path
   // with its own key handling -- the thing D113 and this whole task are about.
+  // `unsent` is P6.10's one addition, and it is a read: the utterances the gate
+  // refused, which nothing here will ever send.
   const h = await harness();
-  assert.deepEqual(Object.keys(h.client).sort(), ['flush', 'ok', 'paths', 'pending', 'poll', 'send']);
+  assert.deepEqual(Object.keys(h.client).sort(), ['flush', 'ok', 'paths', 'pending', 'poll', 'send', 'unsent']);
   for (const name of ['raw', 'write', 'read', 'store', 'keys', 'key', 'mac', 'database', 'ref']) {
     assert.equal(name in h.client, false, name);
   }
@@ -548,6 +562,7 @@ test('a clock that is not a time, and an id that is not a database key, are refu
       account: ACCOUNT,
       keys: h.keys,
       store: h.store,
+      connection: h.connection,
       speaker: h.speaker,
       now: () => T0,
       newId: () => bad,
@@ -1225,6 +1240,7 @@ test('an unreadable heartbeat does not stop the replies, and is never live', asy
     account: ACCOUNT,
     keys: h.keys,
     store: failing,
+    connection: h.connection,
     speaker: h.speaker,
     now: h.now,
     newId: () => 'm-1',

@@ -26,6 +26,11 @@
 //   * it **re-delivers an unacked message after a reconnect** -- the same
 //     record, id and `at` included -- so the consumer's ledger answers it as a
 //     duplicate and does not act on it twice.
+//   * **it never sends into the void** (P6.10, D167): with no connection, or
+//     with the consumer stale or offline, nothing is written, the owner is told
+//     why, and the utterance is kept **only** as unsent text to resend; a
+//     destructive action record is never queued at all. See `gate.js` for the
+//     decision and "The offline gate" below for what this file does with it.
 //
 // **What is injected, and why nothing is reached for.** The client reads no
 // clock (`now` is D117's server-anchored now, supplied by the app), mints no
@@ -48,6 +53,31 @@
 // `flush` and `poll`, each with the code the module that made the decision
 // uses: the schema's, the store's, P1.4's or this module's. Nothing is
 // swallowed and nothing is turned into a boolean the caller cannot question.
+//
+// **The offline gate** (P6.10, D167) is the second thing this file owns, and it
+// is the one that says no. Its decision is `gate.js`'s -- a pure function of
+// "is there a connection" and "what did the last poll see" -- and what this
+// file does with it is three separate rules:
+//
+//   * `send`, `flush` and `poll` ask the **connection** gate first, before any
+//     read, write, signature or speak. The SDK queues an offline write and
+//     sends it on reconnect, so the write has to not be issued at all.
+//   * `send` asks the **presence** gate too, because a sentence the owner just
+//     spoke is the one thing D167 is about. `flush` and `poll` do not: presence
+//     is what a poll *observes*, and gating a poll on its own observation would
+//     be circular. Re-delivering an already-written message is not the hazard --
+//     the consumer's ledger answers it as a duplicate, and P1.1's window
+//     refuses it if it is too old.
+//   * a gated utterance is kept as `unsent()` text and **not** in the outbox
+//     queue: `flush` never sends it, because "delivered hours later" is exactly
+//     what D167 rules out. The owner resends it, which is a new utterance with a
+//     new id. A gated **action** is not kept at all -- an action record is never
+//     queued, and resending one means confirming it again (P6.2).
+//
+// The presence the gate reads is the LAST poll's heartbeat, re-judged at the
+// current time rather than the verdict it was given then: a heartbeat that was
+// fresh at the last poll and is five minutes old now is `stale` now, which is
+// the whole point of asking again.
 
 import { validateAccount } from '../accounts/account.js';
 import { SECRET_ITEMS } from '../accounts/secret.js';
@@ -64,6 +94,7 @@ import {
   STATE,
   evaluatePresence,
 } from '../../../shared/presence/index.js';
+import { evaluateGate, offlineSpeech } from './gate.js';
 import { macOf, verifyMac } from './mac.js';
 import { isDatabaseKey, mailboxPaths } from './paths.js';
 import { outboundRedactor } from './redact.js';
@@ -316,6 +347,7 @@ function readOutbox(value) {
  * @param {object} options.account D114's tuple (P3.1's `validateAccount` shape)
  * @param {object} options.keys a `SecretStore`: `use(accountId, item, fn)`
  * @param {object} options.store the database port: `write(path, value)`, `read(path)`
+ * @param {object} options.connection the connection port (P6.10): `isOnline()`
  * @param {object} options.speaker the audio port (P3.6's stub of P3.4): `speak(text)`
  * @param {() => number} options.now D117's server-anchored now, in ms
  * @param {() => string} options.newId a fresh message id per call
@@ -340,13 +372,20 @@ export function createMailboxClient(options = {}) {
     error.field = account.field;
     throw error;
   }
-  const { keys, store, speaker, now, newId, secrets } = options;
+  const { keys, store, connection, speaker, now, newId, secrets } = options;
   if (keys === null || typeof keys !== 'object' || typeof keys.use !== 'function') {
     throw new TypeError('createMailboxClient: a secret store with use() is required');
   }
   if (store === null || typeof store !== 'object' || typeof store.write !== 'function'
     || typeof store.read !== 'function') {
     throw new TypeError('createMailboxClient: a store with write() and read() is required');
+  }
+  // P6.10's port. It is REQUIRED rather than optional-with-an-online-default:
+  // a client that could be built without a connection is a client that would
+  // send into the void exactly when the SDK is holding writes, which is the one
+  // thing D167 rules out.
+  if (connection === null || typeof connection !== 'object' || typeof connection.isOnline !== 'function') {
+    throw new TypeError('createMailboxClient: a connection with isOnline() is required');
   }
   if (speaker === null || typeof speaker !== 'object' || typeof speaker.speak !== 'function') {
     throw new TypeError('createMailboxClient: a speaker with speak() is required');
@@ -387,6 +426,23 @@ export function createMailboxClient(options = {}) {
   /** The outbox ids this client has spoken, and the ones it has acked. */
   const spoken = new Set();
   const acked = new Set();
+  /**
+   * P6.10's two pieces of state, and both are deliberately small.
+   *
+   * `unsent` is the utterances the gate refused, as `{ text, at, code }` -- the
+   * REDACTED text (D118: what is kept is what would have been written), never an
+   * id and never a record, because an id would make it look like something the
+   * outbox might still send. Nothing here is ever written or re-sent by this
+   * client: D167's "only as unsent text the user can resend" is a rule about the
+   * owner resending it, as a new utterance with a new id.
+   *
+   * `observation` is the last poll's look at the heartbeat -- the raw result of
+   * the read, the validated heartbeat, and the tag verdict -- not the presence
+   * object it produced: presence has to be judged at the time of the question,
+   * and a verdict computed five minutes ago is a five-minute-old answer.
+   */
+  const unsent = [];
+  let observation = null;
 
   /** The material is used inside the callback and never comes back out. */
   const withKey = (fn) => keys.use(accountId, MAC_KEY_ITEM, fn);
@@ -408,6 +464,49 @@ export function createMailboxClient(options = {}) {
   }
 
   /**
+   * What the consumer looked like at the last poll, re-judged NOW.
+   *
+   * `null` means no poll has run, which is the one input the gate reads as "no
+   * observation" rather than as a refusal (`gate.js` says why). Everything else
+   * goes back through `presenceOf` with the current time, so a heartbeat that
+   * was fresh when it was read and has since gone quiet is `stale` or `offline`
+   * at the moment the owner speaks -- which is the question, and not "was the
+   * consumer up five minutes ago".
+   */
+  function consumerPresence(nowMs) {
+    if (observation === null) return null;
+    return presenceOf(observation.beat, observation.heartbeat, observation.verified, nowMs);
+  }
+
+  /**
+   * The gate's decision, and the two things that follow from it when it says no.
+   *
+   * The owner is **told** -- through the one port this directory has for saying
+   * anything, the speaker -- and the sentence is `gate.js`'s, so the voice screen
+   * and this refusal cannot say two different things about one reason. A speak
+   * that failed does not change the refusal: the code is what a screen switches
+   * on, and `told` reports the truth about whether the owner heard it.
+   *
+   * `keepText` is false for an action record, and that is D167's "a destructive
+   * action record is never queued at all": there is nothing to resend, because
+   * resending a destructive command means confirming it again (P6.2).
+   *
+   * @returns {Promise<object>} the frozen refusal `send` returns
+   */
+  async function gateRefusal(verdict, { text, at, keepText }) {
+    const message = offlineSpeech(verdict.code);
+    const said = await speaker.speak(message);
+    if (keepText) unsent.push(Object.freeze({ text, at, code: verdict.code }));
+    return Object.freeze({
+      ok: false,
+      code: verdict.code,
+      field: verdict.field,
+      message,
+      told: said.ok === true,
+    });
+  }
+
+  /**
    * Send one utterance: **one** message, with a fresh id, redacted, signed,
    * written to this mailbox's inbox and nowhere else.
    *
@@ -419,24 +518,52 @@ export function createMailboxClient(options = {}) {
    * schema before it is written -- so a record the rules or the consumer would
    * refuse is never attempted, and no unsigned record ever reaches the store.
    *
+   * **The gate is here, before anything is minted or signed** (P6.10, D167):
+   * the text is redacted first (so what is kept as unsent text and what is
+   * signed are the same string, with no secret in either), then the clock is
+   * read (the gate cannot judge a heartbeat's age without one), then the gate.
+   * Nothing is written, no id is minted and the key is not touched.
+   *
    * @param {unknown} text what the owner said
+   * @param {{action?: object}} [options] pass `action` to send D169's action
+   *   record: the message carries `kind: 'action'`, and it is **never queued**
+   *   -- not in the outbox, not in `pending()`, not in `unsent()`
    * @returns {Promise<{ok: true, id: string, at: number}
    *   | {ok: false, code: string, field: string|null}>}
    */
-  async function send(text) {
+  async function send(text, options) {
     if (typeof text !== 'string' || text === '') return refuse(CLIENT_CODES.BAD_TEXT, 'text');
     if (text.length > TEXT_MAX) return refuse(CLIENT_CODES.TOO_LONG, 'text');
     const body = redact(text);
     if (!body.ok) return body;
     const at = clock();
     if (at === null) return refuse(CLIENT_CODES.BAD_CLOCK, 'now');
+
+    const opts = options === undefined || options === null ? {} : options;
+    if (typeof opts !== 'object' || Array.isArray(opts)) {
+      throw new TypeError('send: the options must be an object');
+    }
+    // An ACTION is a record carrying D169's action, and it is decided here
+    // rather than after the schema has judged it: whether this record may be
+    // queued is this file's rule, and it must not depend on how well-formed the
+    // record turns out to be. What the action record must CONTAIN is P6.3's, and
+    // the schema refuses a malformed one after the tag is made.
+    const isAction = Object.hasOwn(opts, 'action');
+
+    const verdict = evaluateGate({ online: connection.isOnline(), presence: consumerPresence(at) });
+    if (!verdict.ok) {
+      return gateRefusal(verdict, { text: body.text, at, keepText: !isAction });
+    }
+
     const id = newId();
     if (!isDatabaseKey(id)) return refuse(CLIENT_CODES.BAD_ID, 'newId');
 
     // `mac` is outside the bytes it covers, so the tag is made over the record
     // without it and attached after: one definition of the signed bytes, the
     // schema's.
-    const base = Object.freeze({ id, sender: from, text: body.text, at });
+    const base = Object.freeze(isAction
+      ? { id, sender: from, text: body.text, at, kind: 'action', action: opts.action }
+      : { id, sender: from, text: body.text, at });
     // **Before the key is touched, and never as `key-unreadable`.** A field with
     // no single canonical byte string makes `canonicalBytes` throw, and inside
     // the key's callback that throw is indistinguishable from a Keychain that
@@ -465,13 +592,19 @@ export function createMailboxClient(options = {}) {
     // reconnect case -- is denied rather than accepted, and the message the
     // consumer will read IS this one.
     if (written.ok || written.code === STORE_CODES.EXISTS) {
-      outbound.set(id, { record, landed: true });
+      // **An action is written and then forgotten**, never remembered for a
+      // retry: D167's "a destructive action record is never queued at all". It
+      // is not in `outbound`, so `flush` cannot re-send it, `pending()` cannot
+      // offer it and nothing here will ever write it a second time.
+      if (!isAction) outbound.set(id, { record, landed: true });
       return Object.freeze({ ok: true, id, at });
     }
     // It did not land. The record is kept VERBATIM for `flush` -- never
     // re-minted, never re-stamped (P1.1's caller duty: "never retry an id with
     // a new `at`") -- and the refusal lets the screen show it as unsent (D167).
-    outbound.set(id, { record, landed: false });
+    // An ACTION is the exception, and the exception is the rule above: a write
+    // that did not land is reported and dropped, and the owner confirms again.
+    if (!isAction) outbound.set(id, { record, landed: false });
     return refuse(written.code, written.field);
   }
 
@@ -519,11 +652,19 @@ export function createMailboxClient(options = {}) {
    * on it twice (P1.1) -- and an early `flush` costs nothing: a message that is
    * already there is denied by the rules and read here as landed.
    *
+   * **With no connection there is no flush** (P6.10): every re-send is a write
+   * the SDK would hold and fire on reconnect, which is the queue D167 rules out
+   * -- not only for a new sentence but for one already in the outbox. The
+   * records stay in `outbound`, so the next flush with a connection re-delivers
+   * them unchanged.
+   *
    * @returns {Promise<object>} the flush report, or a refusal for a bad clock
    */
   async function flush() {
     const nowMs = clock();
     if (nowMs === null) return refuse(CLIENT_CODES.BAD_CLOCK, 'now');
+    const verdict = evaluateGate({ online: connection.isOnline() });
+    if (!verdict.ok) return refuse(verdict.code, verdict.field);
     return Object.freeze({ ok: true, ...(await flushMutating(nowMs)) });
   }
 
@@ -543,6 +684,15 @@ export function createMailboxClient(options = {}) {
   async function poll() {
     const nowMs = clock();
     if (nowMs === null) return refuse(CLIENT_CODES.BAD_CLOCK, 'now');
+    // **No connection, no pass at all** (P6.10): the re-sends would go into the
+    // SDK's queue, and so would every ack -- the phone would ack a message it
+    // read out of the SDK's own cache and has not heard the consumer write. The
+    // gate's presence half is deliberately NOT asked here: presence is what this
+    // pass OBSERVES, and refusing to look until the answer is good is a circle.
+    // The connection half is the one that has to hold, and it is the SDK's own
+    // flag.
+    const online = evaluateGate({ online: connection.isOnline() });
+    if (!online.ok) return refuse(online.code, online.field);
     const flushed = await flushMutating(nowMs);
 
     const out = await store.read(paths.outbox);
@@ -561,6 +711,14 @@ export function createMailboxClient(options = {}) {
         : false,
     }));
     if (!verdicts.ok) return keyRefusal(verdicts);
+
+    // P6.10: the one thing this pass leaves behind. It is the RAW look -- the
+    // read, the validated heartbeat and the tag verdict -- and not the presence
+    // it produced, because the gate has to judge it again at the moment the owner
+    // speaks. A poll that read an unsigned heartbeat therefore leaves an
+    // observation the gate reads as `offline`, with `verified: false`, exactly
+    // as this pass reported it.
+    observation = Object.freeze({ beat, heartbeat, verified: verdicts.result.heartbeat });
 
     const dropped = [];
     const speakable = [];
@@ -715,6 +873,26 @@ export function createMailboxClient(options = {}) {
     })));
   }
 
+  /**
+   * D167's "unsent text the user can resend": the utterances the offline gate
+   * refused, oldest first, as `{ text, at, code }`. The text is the REDACTED
+   * text; the code is `gate.js`'s, so a screen can say the same thing the phone
+   * said out loud.
+   *
+   * **Nothing here is ever sent by this client**, and that is the difference
+   * between this list and `pending()`. `pending()` is what the outbox has not
+   * answered and `flush` will re-deliver; this is what was never written at all,
+   * and D167 keeps it that way on purpose -- a command delivered on reconnect is
+   * a command that runs at a time nobody chose. The owner resends it by speaking
+   * again, which is a new utterance with a new id; a destructive action is not
+   * here at all, because resending one means confirming it again (P6.2).
+   *
+   * @returns {ReadonlyArray<{text: string, at: number, code: string}>}
+   */
+  function unsentText() {
+    return freezeList([...unsent]);
+  }
+
   // serial runs one mutation at a time, in call order, and is the whole of the
   // client's concurrency control. It is here rather than inside a method
   // because the thing it protects is a PROPERTY OF THE PAIR: two `poll`s in
@@ -738,9 +916,10 @@ export function createMailboxClient(options = {}) {
   return Object.freeze({
     ok: true,
     paths,
-    send: (text) => serial(() => send(text)),
+    send: (text, options) => serial(() => send(text, options)),
     flush: () => serial(() => flush()),
     poll: () => serial(() => poll()),
     pending,
+    unsent: unsentText,
   });
 }

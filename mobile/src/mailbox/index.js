@@ -30,9 +30,13 @@ export {
   toPresenceHeartbeat,
 } from './client.js';
 
+export { GATE_CODES, OFFLINE_SPEECH, evaluateGate, offlineSpeech } from './gate.js';
+
 export { MAILBOX_ROOT, isDatabaseKey, mailboxPaths } from './paths.js';
 
 export { STORE_CODES, MemoryMailboxStore } from './store.js';
+
+export { MemoryConnection } from './connection.js';
 
 export { SPEAK_CODES, MemorySpeaker } from './speaker.js';
 
