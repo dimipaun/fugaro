@@ -558,13 +558,26 @@ func restoreNewProjectID(lc *localcfg.Config, id string) error {
 
 // restoreApplyCloud is the cloud flags the final apply is given.
 //
-// --gcp-project is dropped, and only it: by the time the apply runs, the
-// project config has moved to the new project, and a --gcp-project that got
-// this far named the OLD one (any other value would have been refused by the
-// first selection). Handing it on would make the apply's own selection refuse
-// at the last step — after the project exists and the config has moved. The
-// rest of the flags (--config, --project, --region) name the same project
-// before and after the move and are passed through unchanged.
+// --gcp-project and --region are dropped, and only they. Both are how this
+// invocation ADDRESSED THE OLD PROJECT, and neither is the new
+// installation's to take from the command line:
+//
+//   - --gcp-project named the old project by the time the apply runs (any
+//     other value would have been refused by the first selection), and
+//     handing it on would make the apply's own selection refuse at the last
+//     step — after the project exists and the config has moved.
+//   - --region overrides the config's region for this invocation
+//     (localcfg.Config.Override), and the config this run MOVED is built from
+//     the file's own values, so the installation is created in the file's
+//     region (planConfig, and createArgs, which is handed the moved config
+//     and no --region). Passing the flag on would make the apply read the
+//     installation in one region and judge its plan against another: the
+//     region the apply resolves is the region the plan's resources are
+//     covered in (tf.Cover.Region), so a --region that only addressed the
+//     old project would refuse the new installation's own resources.
+//
+// The rest of the flags (--config, --project) name the same project before
+// and after the move and are passed through unchanged.
 func restoreApplyCloud(o cloudOptions) cloudOptions {
 	o.gcpProject = ""
 	return o

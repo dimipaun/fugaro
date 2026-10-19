@@ -1094,19 +1094,28 @@ func TestRestoreRefusesAProjectConfigItDoesNotHold(t *testing.T) {
 }
 
 // TestRestoreApplyCloudDropsTheOldProjectID: the apply at the end selects its
-// project from the config this run moved, so the --gcp-project that got this
-// far — the OLD project, since any other value was refused by the first
-// selection — is dropped. Handing it on would make the apply refuse at the
-// last step, after the project exists and the config has moved. Every other
-// flag names the same project before and after and is passed through.
+// project and its region from the config this run moved, so the two flags
+// that addressed the OLD project are dropped — --gcp-project, which by then
+// names the project that was lost (any other value was refused by the first
+// selection), and --region, which overrides the config's region for the
+// invocation while the moved config keeps the file's own (planConfig) — so
+// handing it on would have the apply read the installation in one region and
+// cover its plan in another. Every other flag names the same project before
+// and after and is passed through.
+//
+// Mutation (run, restored): return o unchanged (or drop only gcpProject, as
+// this test's first version asserted). This fails on the region.
 func TestRestoreApplyCloudDropsTheOldProjectID(t *testing.T) {
-	o := cloudOptions{config: "/tmp/x.yaml", project: initProjectName, gcpProject: initProject, region: "us-east5"}
+	o := cloudOptions{config: "/tmp/x.yaml", project: initProjectName, gcpProject: initProject, region: "us-central1"}
 	got := restoreApplyCloud(o)
 	if got.gcpProject != "" {
 		t.Errorf("the apply is given --gcp-project %q: it names the project that was lost", got.gcpProject)
 	}
-	if got.config != o.config || got.project != o.project || got.region != o.region {
-		t.Errorf("restoreApplyCloud dropped more than the old ID: %+v", got)
+	if got.region != "" {
+		t.Errorf("the apply is given --region %q: it addressed the project that was lost, and the moved config carries the installation's own region", got.region)
+	}
+	if got.config != o.config || got.project != o.project {
+		t.Errorf("restoreApplyCloud dropped more than the two addressing flags: %+v", got)
 	}
 }
 

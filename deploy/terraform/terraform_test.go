@@ -686,21 +686,66 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	}
 }
 
+// Every secretAccessor grant the installation module writes on one of its
+// own project-wide containers reads the ID off the container resource, not
+// off the input map. The map (var.project_secrets) is a literal from
+// terraform.tfvars.json: a grant whose secret_id comes straight from it has
+// no dependency edge on google_secret_manager_secret.project, so on a fresh
+// installation Terraform may create the grant before the container it names
+// and the apply fails with a 404. Reading the ID through the resource is
+// what orders the two, and it is what every grant in the module already
+// does (secrets.tf's operator grant; credentials.tf's credentials grant).
+// A plan test cannot see the edge — it is not in resource_changes — so the
+// expression itself is pinned here.
+//
+// Mutation (run, restore): put credentials.tf's secret_id back to
+// var.project_secrets[each.value] — this fails on the file.
+func TestInstallationSecretGrantsWaitForTheirContainer(t *testing.T) {
+	const dir = "gcp/modules/installation/"
+	n := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, dir) {
+			return
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member") {
+			n++
+			id := firstAttr(blk.body, "secret_id")
+			if !strings.Contains(id, "google_secret_manager_secret.project") {
+				t.Errorf("%s: %s: secret_id = %s does not read the container resource, so this grant has no dependency edge on the container it names", path, blk.name, id)
+			}
+		}
+	})
+	if n == 0 {
+		t.Fatal("no google_secret_manager_secret_iam_member in the installation module: the scan proves nothing")
+	}
+}
+
 // The installation's log sink and its _Default exclusion carry one arm per
-// platform a Fugaro-managed job's lines can come from (design
-// docs/design/compute-backend.md §1.5, §8.1 task 4): Cloud Run's
-// cloud_run_job, which every installation's sink and exclusion already
-// filter on, and Cloud Batch's batch.googleapis.com/Job, without which a
-// Batch run's lines sit in _Default where every project viewer reads them.
+// kind of line a Fugaro-managed thing produces (design
+// docs/design/compute-backend.md §1.5, §8.1 task 4, and the credentials
+// service's own arm): Cloud Run's cloud_run_job, which every installation's
+// sink and exclusion already filter on; Cloud Batch's
+// batch.googleapis.com/Job, without which a Batch run's lines sit in
+// _Default where every project viewer reads them; and cloud_run_revision,
+// the resource type a Cloud Run *service* logs under — the credentials
+// service (modules/installation/credentials.tf, D146) is a service, so
+// without that arm the one identity holding the project's model credentials
+// logs into _Default.
+//
+// The name is the one design docs/design/compute-backend.md §8.1 cites ("both
+// platforms" are the Cloud Run job and the Batch one, the two that work
+// added); the service arm joined the same local afterwards, and the test
+// covers every arm.
 //
 // Four things this pins, none of which a plan test can see as a string:
 //
-//   - the Cloud Run arm is byte-for-byte what it was before the Batch arm
+//   - the Cloud Run job arm is byte-for-byte what it was before the Batch arm
 //     existed. An installation's live sink filters on that text, and an arm
 //     that drifted by a byte would move lines the installation never meant
 //     to route (or stop routing its own);
-//   - the Batch arm is exactly the documented one -- the resource type Batch
-//     gives a job's entries, pinned to the installation's own marker;
+//   - the Batch and Cloud Run service arms are exactly the documented ones --
+//     the resource type each gives its entries, pinned to the installation's
+//     own marker;
 //   - the rendered sink and exclusion filters, exactly, parenthesis for
 //     parenthesis;
 //   - and that neither filter mixes AND with OR at one parenthesis level.
@@ -737,14 +782,18 @@ func TestLogSinkRoutesBothPlatforms(t *testing.T) {
 	// here rather than derived, so that a change to it fails this test.
 	const cloudRunArm = `resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\"`
 	const batchArm = `resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\"`
+	const serviceArm = `resource.type=\"cloud_run_revision\" AND labels.\"fugaro\"=\"managed\"`
 	if got := arm("fugaro_cloud_run_logs"); got != cloudRunArm {
-		t.Errorf("the Cloud Run arm = %s\nwant                  %s\nthe Cloud Run arm must stay byte-for-byte unchanged", got, cloudRunArm)
+		t.Errorf("the Cloud Run job arm = %s\nwant                      %s\nthis arm must stay byte-for-byte unchanged", got, cloudRunArm)
 	}
 	if got := arm("fugaro_batch_logs"); got != batchArm {
 		t.Errorf("the Batch arm = %s\nwant            %s", got, batchArm)
 	}
+	if got := arm("fugaro_cloud_run_service_logs"); got != serviceArm {
+		t.Errorf("the Cloud Run service arm = %s\nwant                        %s", got, serviceArm)
+	}
 	// How the arms are joined, in the source.
-	if got, want := arm("fugaro_logs"), "((${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs}))"; got != want {
+	if got, want := arm("fugaro_logs"), "((${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs}) OR (${local.fugaro_cloud_run_service_logs}))"; got != want {
 		t.Errorf("the combined filter = %s\nwant                  %s\nthe arms must be one group with each arm parenthesized: Cloud Logging binds AND loosest (NOT, then OR, then AND)", got, want)
 	}
 	// The two rendered filters, as Cloud Logging receives them: the local
@@ -754,10 +803,11 @@ func TestLogSinkRoutesBothPlatforms(t *testing.T) {
 	unescape := func(s string) string { return strings.ReplaceAll(s, `\"`, `"`) }
 	render := func(s string) string {
 		s = strings.ReplaceAll(s, "${local.fugaro_cloud_run_logs}", cloudRunArm)
-		return strings.ReplaceAll(s, "${local.fugaro_batch_logs}", batchArm)
+		s = strings.ReplaceAll(s, "${local.fugaro_batch_logs}", batchArm)
+		return strings.ReplaceAll(s, "${local.fugaro_cloud_run_service_logs}", serviceArm)
 	}
 	sinkFilter := unescape(render(arm("fugaro_logs")))
-	wantSink := "((" + unescape(cloudRunArm) + ") OR (" + unescape(batchArm) + "))"
+	wantSink := "((" + unescape(cloudRunArm) + ") OR (" + unescape(batchArm) + ") OR (" + unescape(serviceArm) + "))"
 	if sinkFilter != wantSink {
 		t.Errorf("the sink's filter renders as %s\nwant                        %s", sinkFilter, wantSink)
 	}

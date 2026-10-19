@@ -6,13 +6,21 @@
 # Global Constraint 7). With the opt-in off this file creates nothing and
 # every repository's job keeps the mounts it has today.
 #
-# What it is not: it holds no bucket access and no Firebase role, so it
-# cannot read a run's files or write the database's budget tree; and nobody
-# is granted actAs on its account but the operators, who need it to apply
-# the service. The state the cascade shares (exhausted and broken marks,
-# locks, per-run leases) lives in RTDB under creds/ (D136) and the account
-# that writes it needs firebasedatabase.admin on the Firebase project, which
-# the Firebase root grants (it is the same grant the history account has).
+# What it is not: it holds no bucket access, so it cannot read a run's files;
+# and nobody is granted actAs on its account but the operators, who need it to
+# apply the service.
+#
+# KNOWN GAP, and a blocker for turning the opt-in on: the state the cascade
+# shares (exhausted and broken marks, locks, per-run leases) lives in RTDB
+# under creds/ (D136, spec.md §"State"), and the account that reads and writes
+# it needs firebasedatabase.admin on the Firebase project — the same role the
+# history account holds (modules/firebase/iam.tf's history_database, the only
+# place that role is granted today). This file does NOT grant it and cannot:
+# the Firebase project is the Firebase root's, a different root with a
+# different state, and in the split layout it is not even this project. The
+# grant belongs there, beside the history account's, and until it lands an
+# installation that turns the opt-in on gets a service that cannot reach the
+# state it exists to share. The PR records this.
 
 locals {
   credentials = var.credentials_service
@@ -60,11 +68,21 @@ resource "google_service_account_iam_member" "credentials_operator" {
 # exactly these secrets from every job account's accessor when the opt-in is
 # on, so from then on the service is the only Fugaro identity that can read
 # a model credential (Check 94).
+#
+# secret_id is read off the container resource rather than off the input map:
+# each.value is a logical name, which is a key of
+# google_secret_manager_secret.project, and reading the ID through that
+# resource is what makes this grant wait for the container to exist. An ID
+# taken straight from var.project_secrets (a literal, from
+# terraform.tfvars.json) carries no such edge, and on a fresh installation
+# this grant could be created before the container it names and fail with a
+# 404 — the ordering the module's own grants keep (secrets.tf's operator
+# grant, and outputs.tf's project_secrets).
 resource "google_secret_manager_secret_iam_member" "credentials" {
   for_each = toset(local.credentials == null ? [] : local.credentials.secrets)
 
   project   = var.project
-  secret_id = var.project_secrets[each.value]
+  secret_id = google_secret_manager_secret.project[each.value].secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.credentials[0].member
 }
@@ -153,9 +171,8 @@ resource "google_cloud_run_v2_service" "credentials" {
 
 # No project-level role is granted to the service's account, on purpose: it
 # runs no Cloud Run job and reads no registry, so nothing of fugaroLauncher
-# belongs on it. What it reads beyond its own secrets — the project policy
-# and each repository's admissions — is RTDB data (D136), and the account
-# that reaches RTDB is granted firebasedatabase.admin by the Firebase root,
-# beside the history account's own grant. That grant is the one thing this
-# task could not add (the Firebase root is not one of its files); the PR
-# records it.
+# belongs on it. The one role it does need, firebasedatabase.admin, is not
+# here either — see the note at the top of this file: it is the Firebase
+# root's to grant, it is not granted there yet, and an installation that
+# turns the opt-in on before it lands gets a service that cannot reach the
+# state it exists to share.

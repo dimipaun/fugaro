@@ -4,9 +4,10 @@
 # can't take roles/logging.viewer away from anyone, so the same lines are
 # also kept out of _Default. Owners and editors still read everything.
 #
-# A job's platform decides its resource.type -- cloud_run_job on Cloud Run,
+# What produces a line decides its resource.type -- cloud_run_job on a Cloud
+# Run job, cloud_run_revision on a Cloud Run service, and
 # batch.googleapis.com/Job on Cloud Batch (the VM backend) -- so the filter
-# below has one arm per platform, and both are pinned by the same label.
+# below has one arm per kind, and all three are pinned by the same label.
 #
 # Cloud Build logs stay in _Default: they hold the repository's build
 # output, never a secret value.
@@ -32,7 +33,24 @@ locals {
   # nothing.
   fugaro_batch_logs = "resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\""
 
-  # Both arms, as one group, with each arm's own AND clauses parenthesized
+  # The Cloud Run service arm: the credentials service (credentials.tf, D146)
+  # is a Cloud Run *service*, and a service's lines carry
+  # resource.type="cloud_run_revision", not cloud_run_job. Without this arm
+  # the one identity that holds the project's model credentials logs into
+  # _Default, where every project viewer reads it, instead of into the
+  # installation's own bucket and view. ADDITIVE and inert for an installation
+  # that has not opted in: no Fugaro-managed Cloud Run service means no entry
+  # with this resource type and this label, so the arm matches nothing and
+  # moves nothing. The label is the service's own (credentials.tf's labels
+  # block), the marker the other two arms select on as well.
+  #
+  # That a revision's entries carry the service's labels is not something a
+  # plan can check — the Cloud Run job arm rests on the same fact, which the
+  # owner's log-isolation check confirmed live — so the owner's Check 94/95 is
+  # where this arm is confirmed for a service.
+  fugaro_cloud_run_service_logs = "resource.type=\"cloud_run_revision\" AND labels.\"fugaro\"=\"managed\""
+
+  # Every arm, as one group, with each arm's own AND clauses parenthesized
   # inside it. Every parenthesis here is load-bearing, because Cloud
   # Logging's query language is NOT the usual one: NOT has the highest
   # precedence, "followed by OR and AND in that order" -- AND binds
@@ -41,12 +59,12 @@ locals {
   # makes `"a" OR NOT "b" AND NOT "c" OR "d"` mean
   # `("a" OR (NOT "b")) AND ((NOT "c") OR "d")`). So an unparenthesized
   # `A1 AND A2 OR B1 AND B2` would be read as `A1 AND (A2 OR B1) AND B2`,
-  # which matches only the Cloud Run arm -- the Batch arm would route and
-  # exclude nothing, leaving a Batch run's task lines in _Default where every
-  # project viewer reads them, which is the outcome this whole file exists to
-  # prevent. Written out, the filter means what it says whichever order the
-  # reader assumes. A test pins it.
-  fugaro_logs = "((${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs}))"
+  # which matches only the first arm -- the others would route and exclude
+  # nothing, leaving their lines in _Default where every project viewer reads
+  # them, which is the outcome this whole file exists to prevent. Written out,
+  # the filter means what it says whichever order the reader assumes. A test
+  # pins it.
+  fugaro_logs = "((${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs}) OR (${local.fugaro_cloud_run_service_logs}))"
 }
 
 resource "google_logging_project_bucket_config" "fugaro" {
