@@ -117,14 +117,29 @@ func allowListRefusal(p *projectpolicy.Policy, provider, repo string) error {
 
 // policySkewRefusal is the policySince gate's message (plan task 1.5 step 4):
 // the sentence the CLI prints for a policy written in a version this Fugaro
-// does not read, the release the policy model ships in quoted beside the
-// policy's own version, and the remedy for *this direction* of the skew, which
-// the gate takes from projectpolicy.SkewRemedy — the one place both this
-// package's readers and the runner's word a version skew from, so neither side
-// can tell an operator to upgrade a binary that is already ahead of the node
-// (the review finding on this change). launchPolicyGates refuses a launch with
-// it before the execution is created.
+// does not read, the release the skew is about, and the remedy for *this
+// direction* of the skew, which the gate takes from projectpolicy.SkewRemedy —
+// the one place both this package's readers and the runner's word a version
+// skew from, so neither side can tell an operator to upgrade a binary that is
+// already ahead of the node (the review finding on this change).
+// launchPolicyGates refuses a launch with it before the execution is created.
+//
+// The release it names is the one that introduced the version on the node when
+// the node is ahead of this binary, from projectpolicy.VersionSince (through
+// SkewSentence, the sentence every too-new reader prints) — the release the
+// operator has to reach — and never policySince: that constant names the
+// release the policy *model* ships in, and quoting it beside a version-2 node
+// told the operator of an 0.8.1 binary to upgrade to >= 0.8.0, which they
+// already run (the table's own comment has the whole argument). A version no
+// row of the table names came from a release newer than any this binary has
+// heard of, and it is answered with the remedy alone rather than with a
+// release that is already installed. The other direction, a node *behind* this
+// binary, keeps the model's release, which is what wrote a node of a version
+// below projectpolicy.Version.
 func policySkewRefusal(ve *projectpolicy.VersionError) error {
+	if ve.Found > ve.Understood {
+		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
+	}
 	return userErr("%s (the policy model is fugaro %s's): %s",
 		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood), policySince,
 		projectpolicy.SkewRemedy(ve, projectpolicy.ReaderCLI))

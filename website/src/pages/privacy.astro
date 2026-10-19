@@ -1,7 +1,7 @@
 ---
 /**
  * website/src/pages/privacy.astro — the privacy statement (website plan, Task W1.12;
- * reconciliation findings 16 and 18; decisions D93 and D106).
+ * reconciliation findings 16 and 18; decisions D93, D106 and W3.2's privacy defaults).
  *
  * The page a reader is owed once the site measures anything: what is collected, by what, when
  * it loads, how the answer is given and how it is taken back. It is also the page where the
@@ -11,15 +11,34 @@
  *
  * **Every sentence about measurement is a fact the build holds, and nothing is invented.**
  * The page reads `site.yaml` through the content pipeline, exactly as the layout does, and
- * branches on `analytics.enabled`: with the flag off — the state the site ships in today —
- * it says the site collects nothing, and it names no vendor, because there is no vendor to
- * name. With the flag on it states what the site's own loader does, which is one page view
- * and one setting (`anonymize_ip`), and it does not restate Google's policy for Google. Two
- * of its claims are held to the artifact by `website/test/consent.mjs`: that no page carries
- * a form or a field, and that the tool it names is the tool the build would load.
+ * branches on `analytics.enabled`: with the flag off it says the site collects nothing, and
+ * it names no vendor, because there is no vendor to name. With the flag on it states what the
+ * site's own gate does — Google Analytics 4, one page view per page, no event and no user id,
+ * Google Signals and ads personalisation off, GA4's own IP anonymisation — and it does not
+ * restate Google's policy for Google. Four of its claims are held to the artifact by
+ * `website/test/consent.mjs`: that no page carries a form or a field; that the tool it names
+ * is the tool the build would load (the page names Google Analytics, and the origin the gate
+ * loads from must be Google's); that the withdrawal it describes deletes the cookies it says
+ * it does (the script touches `document.cookie`, and the sentence and the code are held to
+ * each other); and that the defaults it states are the ones the gate's
+ * `config` call makes, in both directions — an option the script sets is a sentence the page
+ * owes the reader, and an option the script stops setting is a sentence the page may not keep
+ * ("the privacy defaults the page states are the ones the site's script makes"). The last
+ * claim, that the page names nothing it cannot hold, is the one no test makes: it is a
+ * sentence to read rather than a string to match.
  *
- * The page carries no script of its own and no second copy of the consent key: the banner is
- * the layout's, rendered here because this page asks for it. The styles are scoped, token-only
+ * **It is measured like every other page**, and D188's ceiling is 250 words: W3.2 turned the
+ * flag on, so the branch a reader now sees is the one that has to fit — and it fits exactly,
+ * which is why the sentence about the host's request logs was traded back in against shorter
+ * wording elsewhere rather than dropped (an earlier draft cut it and pointed at `/security/`
+ * for it, which does not carry it: the security page is the Fugaro program's posture, not the
+ * host's logs). Any sentence added here costs a sentence traded out — including the owner's
+ * ruling of 2026-10-18, that a withdrawal deletes the cookies Google's tag set: the sentence
+ * saying so replaced "Google's cookies stay until you clear them", and the clause pointing at
+ * Google's own policy beyond IP anonymisation paid for the rest.
+ *
+ * The page carries no script of its own and no copy of the consent key: the banner is the
+ * layout's, rendered here because this page asks for it. The styles are scoped, token-only
  * (no colour literal, so the palette stays W1.2's) and add no behaviour.
  */
 import Base from '../layouts/Base.astro'
@@ -36,118 +55,84 @@ const analyticsEnabled = site.facts.analytics.enabled
     <h1>Privacy</h1>
 
     <p class="privacy-lead">
-      What this website does with a visitor's browser, and what it does not: the Fugaro
-      program's posture is the <a href="/security/">security page</a>'s subject.
+      What this website does with a visitor's browser, and what it leaves to others.
     </p>
 
-    <h2>What this site collects</h2>
-
     {analyticsEnabled ? (
       <>
+        <h2>What this site collects</h2>
         <p>
-          This site counts visits with <strong>Google Analytics</strong>, through Firebase
-          Analytics. When you accept, the site loads Google's script and that script reports the
-          page you are on to Google. It sets <strong>identifiers</strong> in your browser — a
-          client id, kept in cookies or similar storage — which is how Google tells one visit
-          from another.
+          This site counts visits with <strong>Google Analytics 4</strong>. If you accept,
+          Google's script reports the page's path, without any query, to Google, which
+          processes it for the site, and sets <strong>identifiers</strong> in your browser — a
+          client id, in cookies or similar storage.
         </p>
         <p>
-          The site's own code asks for one page view per page and configures one setting,
-          <code>anonymize_ip</code>. Nothing else about a visit is set here: no advertising, no
-          remarketing, no profile of what you read elsewhere. What the Google script does beyond
-          that, and what Google does with what it receives, is Google's own policy — this page
-          does not restate it.
+          The site's own code asks for one page view per page: no event, no user id, Google
+          Signals and ads personalisation off. Google Analytics 4 anonymises your IP address
+          by default.
         </p>
-      </>
-    ) : (
-      <p>
-        <strong>This site collects nothing.</strong> It is a set of static pages built from this
-        repository's files: no account, no form, no comment box, and no code of the site's own
-        running on a server. Nothing counts your visit, and nothing about it is sent
-        anywhere. Should measurement ever be switched on, this page changes at the same time,
-        and the site asks you first.
-      </p>
-    )}
 
-    {analyticsEnabled ? (
-      <>
-        <h2>Analytics, and when it loads</h2>
+        <h2>Consent</h2>
         <p>
-          Google's script loads only after you accept, and never before. Until then the page you
-          are reading has made no request to Google at all: the script is not in the page, and no
-          code fetches it. The banner at the foot of the window offers the choice, and the two
-          answers are one press each:
+          Google's script loads only after you accept: until then this page has asked Google
+          nothing. <strong>Accept</strong>, in the banner, loads Google's
+          script once; <strong>Decline</strong> loads nothing, now or on any later page.
         </p>
+        <p>
+          Dismissing the banner — Escape, or reading on — is a refusal. The answer is kept in
+          this browser, under <code>fugaro:analytics-consent</code> in <code>localStorage</code>.
+        </p>
+        <p>
+          To withdraw, use the banner here: it always offers the choice again. Declining stops
+          reporting at once, on this page too, and deletes Google's cookies
+          (<code>_ga</code> and the rest) from this browser.
+        </p>
+
+        <h2>What this site does not do</h2>
         <ul>
-          <li><strong>Accept analytics</strong> loads Google's script, once, on this page.</li>
+          <li>It sets no cookie of its own.</li>
+          <li>It has no account, form or comment box.</li>
           <li>
-            <strong>Decline analytics</strong> loads nothing — and nothing on any later page
-            either, until you accept.
+            It loads nothing from another origin except Google's script, and only after you
+            accept.
           </li>
         </ul>
-        <p>
-          Dismissing the banner without choosing — with Escape, or by reading on — counts as a
-          refusal. The script needs a stored <em>yes</em> before it fetches anything, so a
-          visitor who never answers is measured by nothing.
-        </p>
 
-        <h2>Giving and withdrawing consent</h2>
+        <h2>What this page does not cover</h2>
         <p>
-          Your answer is kept in this browser only, and sent nowhere, under the key
-          <code>fugaro:analytics-consent</code> in <code>localStorage</code>. The page's own
-          loader reads it; nothing else does.
-        </p>
-        <p>
-          To change your mind, use the banner on this page: it always offers the choice again,
-          whichever answer you gave. Declining here withdraws consent — from your next page view
-          the site loads nothing from Google. The page you are on keeps whatever it already
-          loaded, because a page cannot un-request a script; closing or reloading it is enough.
-          To remove the stored answer altogether, clear this site's data in your browser, and the
-          next page you open asks again.
-        </p>
-        <p>
-          If your browser refuses to store the answer — a private window, or site data turned off
-          — the site loads nothing and asks again on your next visit. An answer that cannot be
-          kept is not treated as one.
+          It leaves the host's request logs, which this repository does not control, and the
+          Fugaro program on your machine, to the <a href="/security/">security page</a>.
         </p>
       </>
     ) : (
       <>
+        <p>
+          <strong>This site collects nothing.</strong> It is a set of static pages built from
+          this repository's files: no account, no form, no comment box, and no code of the
+          site's own running on a server. Nothing counts your visit, and nothing about it is
+          sent anywhere. Should measurement ever be switched on, this page changes at the same
+          time, and the site asks you first.
+        </p>
+
         <h2>Analytics</h2>
         <p>
-          This site has no analytics at all: nothing counts your visit, and no analytics script,
-          cookie or identifier is involved in the page you are reading. There is no consent to
-          give here, and nothing to withdraw.
+          This site has no analytics at all: nothing counts your visit, and no analytics
+          script, cookie or identifier is involved in the page you are reading. There is no
+          consent to give here, and nothing to withdraw.
         </p>
+
+        <h2>What this site does not do</h2>
+        <ul>
+          <li>It sets no cookie, and it loads nothing that could set one.</li>
+          <li>
+            It loads nothing from another origin — no font, no script, no image, no embedded
+            player.
+          </li>
+          <li>It sells nothing, because it collects nothing to sell.</li>
+        </ul>
       </>
     )}
-
-    <h2>What this site does not do</h2>
-    <ul>
-      <li>
-        {analyticsEnabled
-          ? 'It sets no cookie of its own, and — before you accept anything — it loads nothing that could set one.'
-          : 'It sets no cookie of its own, and it loads nothing that could set one.'}
-      </li>
-      <li>It asks you for nothing: no account, no email address, no form to fill in.</li>
-      <li>
-        {analyticsEnabled
-          ? "It loads nothing from another origin except Google's analytics script, and only after you accept. The typefaces are served from this site, and the build refuses a page that names another host."
-          : 'It loads nothing from another origin — no font, no script, no image, no embedded player.'}
-      </li>
-      <li>
-        {analyticsEnabled
-          ? 'It sells nothing, because it collects nothing to sell. The only thing that leaves your browser is what the analytics script sends, and only if you accepted it.'
-          : 'It sells nothing, because it collects nothing to sell: nothing leaves your browser at all.'}
-      </li>
-    </ul>
-
-    <h2>What this page does not cover</h2>
-    <p>
-      This page describes the site's own pages, not the host's request logs, which this
-      repository does not control, or what the Fugaro program does on your machine — the
-      <a href="/security/">security page</a>'s subject.
-    </p>
   </article>
 </Base>
 

@@ -104,15 +104,21 @@ func TestInstallationVarsMatchModule(t *testing.T) {
 }
 
 // The installation root passes each of its variables to the module
-// unchanged, so a value the tfvars carry is never dropped on the way.
+// unchanged, so a value the tfvars carry is never dropped on the way. A
+// variable the root iterates instead (project_jobs, one module per project
+// job) is handed over entry by entry, which is the same guarantee: the whole
+// map reaches a module, and for_each = var.x is the only other shape a root
+// variable may have.
 func TestInstallationRootPassesEveryVariable(t *testing.T) {
 	b, err := fs.ReadFile(terraform.FS, "gcp/roots/installation/main.tf")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for v := range rootVariables(t) {
-		if !regexp.MustCompile(`(?m)^\s*` + v + `\s*=\s*var\.` + v + `\s*$`).Match(b) {
-			t.Errorf("the installation root doesn't pass var.%s to the module", v)
+		passed := regexp.MustCompile(`(?m)^\s*` + v + `\s*=\s*var\.` + v + `\s*$`).Match(b)
+		iterated := regexp.MustCompile(`(?m)^\s*for_each\s*=\s*var\.` + v + `\s*$`).Match(b)
+		if !passed && !iterated {
+			t.Errorf("the installation root neither passes var.%s to a module nor iterates it", v)
 		}
 	}
 }
@@ -290,5 +296,33 @@ func TestDeleteHintsAPIs(t *testing.T) {
 		if !strings.Contains(hints[0], want) {
 			t.Errorf("the APIs' hint lacks %q: %q", want, hints[0])
 		}
+	}
+}
+
+// managed_deployer_scoped is left out of the tfvars unless the installation
+// opts in, so a default installation's tfvars are the same bytes as before the
+// variable existed and its plan has no scoped deployer role or binding (0.8.6
+// gates them off: deploy/terraform/gcp/modules/installation/deployer.tf). The
+// opt-in writes the key, which must be a variable of the installation root.
+func TestInstallationManagedDeployerScopedIsOptIn(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	s, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := InstallationVars(s)
+	if strings.Contains(string(data), "managed_deployer_scoped") {
+		t.Errorf("the default tfvars name managed_deployer_scoped:\n%s", data)
+	}
+	s, err = Installation(lc, InstallOptions{ManagedDeployerScoped: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ = InstallationVars(s)
+	if !slices.Contains(jsonKeys(t, data), "managed_deployer_scoped") || !strings.Contains(string(data), `"managed_deployer_scoped": true`) {
+		t.Errorf("the opt-in's tfvars do not set managed_deployer_scoped to true:\n%s", data)
+	}
+	if _, ok := rootVariables(t)["managed_deployer_scoped"]; !ok {
+		t.Error("managed_deployer_scoped is not a variable of the installation root")
 	}
 }

@@ -2,7 +2,7 @@
 # writes it into a workdir with terraform.tfvars.json and a backend config
 # naming the state bucket, and plans and applies it there.
 terraform {
-  required_version = ">= 1.7.0, < 2.0.0"
+  required_version = ">= 1.9.0, < 2.0.0"
 
   required_providers {
     google = {
@@ -47,4 +47,38 @@ module "installation" {
   enable_budget             = var.enable_budget
   history                   = var.history
   project_secrets           = var.project_secrets
+  managed_deployer_scoped   = var.managed_deployer_scoped
+}
+
+# The shared project jobs (design docs/design/project-centric.md §4.1): one
+# Cloud Run job and one job service account per (profile, provider,
+# account), from the local config's profiles. The key is absent for an
+# installation that names no profile, and the module then creates nothing.
+#
+# They belong to the installation, not to a repository root: a project job
+# serves every repository admitted to its profile, and its account must
+# outlive any one repository's root. fugaro init computes every name, env
+# and condition of each entry (internal/infra.ProjectJobs); nothing here
+# derives one.
+module "project" {
+  source   = "../../modules/project"
+  for_each = var.project_jobs
+
+  project         = var.project
+  fugaro_project  = var.fugaro_project
+  region          = var.region
+  job             = each.value
+  runs_bucket     = var.runs_bucket
+  secrets         = module.installation.project_secrets
+  job_runner_role = module.installation.role_ids.job_runner
+  launchers       = var.launchers
+  operators       = var.operators
+
+  # The runs bucket arrives as a name, and every other grant in this tree
+  # references the bucket resource itself — which is what orders them. On a
+  # fresh installation the bucket is created in this same apply, and a
+  # bucket grant created before it would fail with a 404, so this module
+  # waits for the installation that creates it (internal/cli's init note:
+  # "the apply may just have created the runs bucket").
+  depends_on = [module.installation]
 }

@@ -51,6 +51,2638 @@ packages as this module's, and so a `.go` file put under
 `console/node_modules/` is a `.go` file in this directory and fails a test by
 name. `testdata/` is read deliberately.
 
-What is here today: this file, and the contract the console reads
-(`docs/json-contract.md`, pinned by plan Task 0.1). The Node toolchain (plan
-Task 1.0) comes next, and this file gains Electron's pinned version with it.
+What is here today: this file, the contract the console reads
+(`docs/json-contract.md`, pinned by plan Task 0.1), and the pinned toolchain
+(plan Task 1.0): `package.json`, `package-lock.json`, `tsconfig.json`,
+`playwright.config.ts`, `.npmrc`, `.gitignore`, and the three unit tests that
+hold the pinning rule, the lockfile, and the typecheck's coverage of the root
+config files (`test/unit/{pinning,lockfile,tsconfig}.test.ts`); and the hardened
+window (plan Task 1.1, below): `src/main/window.ts`, `src/main/protocol.ts`,
+`src/main/index.ts`, `src/renderer/index.html`, `tsconfig.build.json`, the
+two test files that try to leave it, and a third that holds the e2e harness's
+own premise (`test/unit/playwright.test.ts`); the IPC allow-list (plan Task 1.2,
+which this file's history carries without a section of its own):
+`src/main/ipc.ts`, `src/preload/index.ts`, and `test/unit/ipc.test.ts`; the
+one child process (plan Task 1.3): `src/main/spawn.ts`,
+`src/main/spawnlog.ts`, `src/source/source.ts`, `src/source/cli.ts`, and the
+three suites that hold them (`test/unit/{spawn,spawnlog,configread}.test.ts`)
+with the fake CLI they spawn (`test/unit/stub.ts`); and the recorded fixtures
+(plan Task 1.4, the last section): `src/source/redact.ts`,
+`src/source/fixture.ts`, the recorder (`tools/record-fixture/index.ts`),
+the one committed fixture (`test/fixtures/synthetic.ndjson`, **synthetic**),
+the suite that invents it (`test/unit/synthetic.ts`), and the three suites that
+hold the three (`test/unit/{redact,fixture,recorder}.test.ts`).
+
+## The toolchain, pinned (Task 1.0)
+
+**Electron is pinned to exactly `44.7.2`, and it is bumped on purpose**, with the
+toolchain task and the lockfile in the same commit — the same rule
+`internal/budget/rules/emulator/package.json` states for its own `firebase-tools`
+pin. Electron is not an ordinary dependency: it pulls a large prebuilt runtime
+from its own download host rather than from npm, so the pin, the download and
+the checksum get the hand-bumped, documented treatment the repository already
+gives the Trivy digest and the Dockerfile frontend digest (design section 5.2).
+
+The rest of the pinned set, all exact, all build and test tooling (there is no
+runtime dependency today; see below):
+
+| Package | Version | Where | Why it is here |
+|---|---|---|---|
+| `electron` | `44.7.2` | `devDependencies` | the app's runtime, bumped on purpose |
+| `typescript` | `7.0.2` | `devDependencies` | `tsc --noEmit` for `npm run typecheck`, and `tsc -p tsconfig.build.json` for `npm run build` (Task 1.1: the build is `tsc` too, because the pinning rule leaves no room for a bundler) |
+| `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
+| `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
+| `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
+| `@electron/fuses` | `2.0.0` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
+| `electron-builder` | `26.17.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
+
+`dependencies` is empty, and that is a decision rather than a symptom: the
+renderer bundles no framework runtime and no charting library (design D9), and
+everything a `dependencies` entry names is packed into the shipped asar. Task 1.0
+pinned `electron-updater` there for Task 4.4's auto-update; Task 4.1's review
+found it shipped in the bundle with nothing importing it, so it was removed, and
+Task 4.4 adds it back, exactly pinned, with the code that uses it. The pinning
+test asserts the `dependencies` set is exactly empty until then.
+
+**The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
+It is the version every command in this task was run on, and it is a member of
+both pinned tools' own engine ranges (Electron 44.7.2 declares `>= 22.12.0`,
+Vitest 5.0.5 declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the
+toolchain is asking for anything narrower. A range here would have been the one
+float left in a task whose whole subject is exact pins — and the plan already
+hands this field to CI (Task 1.4's `actions/setup-node` takes its version from
+it), so an exact value is what makes the runner's Node the same Node the tests
+were written against. Bumping it is a deliberate edit, like every other pin, and
+`test/unit/pinning.test.ts` refuses a wildcard, a tag or an operator in this
+field the way it refuses one in a specifier. `.npmrc` sets `engine-strict=true`,
+so a reader whose Node is another version finds out at install time rather than
+in a test failure nobody can explain.
+
+### Commands
+
+```
+npm ci --ignore-scripts --no-audit --no-fund   # the install; never `npm install`
+npm run test:unit                              # vitest, test/unit/*.test.ts
+npm run build                                  # tsc -p tsconfig.build.json, src/ -> dist/
+npm run test:e2e                               # playwright, test/e2e/*.spec.ts; builds first
+npm run test:e2e -- security                   # just the window's spec
+npm run typecheck                              # tsc --noEmit over src/, test/, tools/ and the root config files
+npm run record-fixture -- --help               # the recorder; OWNER-RUN, see "Recorded, redacted fixtures"
+```
+
+`npm ci` — never `npm install` — is the install step in this file, in the plan's
+command and in the staged console workflow, because it installs exactly the
+lockfile and refuses when the lockfile and the manifest disagree.
+`--ignore-scripts` is passed on the command rather than set in `.npmrc` because
+npm has no per-package escape hatch: `ignore-scripts` in that file would turn
+off every lifecycle script of every command run here with no way to allow one
+package back, and design section 5.2 asks for the other shape — an allow-list of
+the packages whose postinstall is genuinely required, which is a decision made
+at each call site.
+
+**And what that costs, stated rather than left to be inferred: nothing at the
+install step, because Electron's runtime is not fetched by a lifecycle script
+here.** Electron is not an ordinary dependency — the pin, the download and the
+checksum are hand-bumped and documented rather than floated (design section
+5.2) — but with `--ignore-scripts` the download simply happens later: Electron
+44.7.2 fetches its runtime on the first `require('electron')` (its `index.js`
+spawns `install.js` when `path.txt` and `dist/` are missing, printing
+`Downloading Electron binary...`). Verified on this tree: `npm ci
+--ignore-scripts --no-audit --no-fund`, then `require('electron')`, downloads
+and resolves `node_modules/electron/dist/electron`. So the e2e path works with
+scripts ignored, the runtime arrives on the machine that runs the tests rather
+than on the machine that installs, and by packaging time (Task 4.1) it is
+already on disk.
+
+**That lazy fetch is a writer, and it has to finish before anything execs what
+it writes.** `install.js` unpacks the archive into `node_modules/electron/dist`
+as it goes, so a launch that reaches the executable while the unpack is still
+running finds a file open for writing: Linux refuses that with ETXTBSY (and a
+launch that gets there before the file exists at all gets ENOENT). Two
+Playwright workers on a cold `node_modules` did exactly that, which is what made
+the `console (ubuntu-latest)` check — a required check of
+`scripts/release-gate.sh` — fail intermittently (`Error: electron.launch: spawn
+ETXTBSY`, run 39174336894 attempt 1, then a red gate). The fetch is therefore
+**hoisted out of the workers**: `playwright.config.ts` names
+`test/support/globalSetup.ts`, which resolves the binary once in Playwright's
+main process before the first worker is forked, so the writer exits — every
+descriptor closed — before a launch exists to race it. Every spec starts the
+console through `test/support/launch.ts` (`launchConsole`), which resolves the
+binary again on the way into each launch and retries ETXTBSY three times, 250 ms
+apart (`test/support/textFileBusy.ts`); no other launch error is retried, and
+`test/unit/playwright.test.ts` holds both the config line and the rule that no
+spec calls `electron.launch` itself.
+
+## The hardened window (Task 1.1)
+
+The console's shell is one window, and everything it is allowed to do is
+decided in two modules. `src/main/window.ts` holds the window's construction
+options and the four policies on it:
+
+| Rule (design §5.1) | What the code does |
+|---|---|
+| 1 — the renderer is untrusted by construction | `contextIsolation: true`, `nodeIntegration: false`, `nodeIntegrationInWorker: false`, `sandbox: true`, `webviewTag: false`, `allowRunningInsecureContent: false`, `experimentalFeatures: false` — and nothing else, asserted key by key |
+| 2 — no remote content, ever | the only load is `app://console/index.html`; `will-navigate` denies every navigation; `setWindowOpenHandler` returns `{ action: 'deny' }`; `will-attach-webview` refuses; every permission is denied in both of Electron's handlers; the one `openExternal` path validates `https:`, no credentials, no port, host on an allow-list |
+| 3 — a deny-by-default CSP, as a real header | `src/main/protocol.ts` registers `app` as a standard, secure scheme (no `bypassCSP`) and serves the bundle through `protocol.handle('app', …)`, so every response carries the design's CSP — header first, `<meta>` copy beside it |
+| D14 — the allow-list is the guarantee | the `openExternal` allow-list is exactly three hosts: `github.com`, `bitbucket.org` (rule 2's "both providers' web hosts") and `console.cloud.google.com` (where `fugaro logs RUN --url` points). Rule 2 also names "the docs" and no document on this tree names a docs host, so none is on the list; a fourth entry is a deliberate edit, with the case for it, in the code and in the test that holds the list |
+
+The protocol handler is deny-by-default in the same shape: one scheme, one
+host, no port, no credentials, no query, no dot segment in the raw request URL,
+no NUL, no backslash, and a resolved path that must stay under the bundle root.
+The two refusals worth knowing about are the ones the URL parser makes
+interesting — `app://console/../../etc/passwd` is refused as a traversal by a
+check on the *raw* URL, because the WHATWG parser normalises dot segments away
+before anything parsed can see them, and `%2e%2e%2f%2e%2e%2f` survives that
+normalisation as a single segment and is caught by the containment check after
+the one decode. Both are asserted, with their statuses and reasons.
+
+Two things are here that the plan's Files column for Task 1.1 does not name,
+said out loud rather than slipped in:
+
+- **`src/main/index.ts`, the entry point.** `window.ts` and `protocol.ts` are
+  libraries; without a caller the scheme is never registered, `protocol.handle`
+  never runs, and the e2e spec has no application to launch. It registers the
+  scheme before `whenReady`, installs the three denials on every
+  `web-contents-created`, serves `src/renderer` and builds the window. It holds
+  no decision the unit tests cannot reach.
+
+  Its two halves are deliberately separate, and `activate` is the reason: macOS
+  keeps the process alive when the window closes and `activate` (the dock icon)
+  has to build the window again, but the scheme is registered **once** per
+  process — `protocol.handle` refuses a second registration with "Failed to
+  register protocol: app", and `reportAndQuit` would turn that into
+  `app.exit(1)`, quitting the console exactly when the user asked for it back.
+  `activate` therefore calls `openConsoleWindow` and never `main`. The e2e spec
+  runs that sequence for real: it checks that the second registration really is
+  an error on this Electron, closes the window, emits `activate`, and asserts a
+  window is there again.
+- **`tsconfig.build.json` and package.json's `main`/`build`.** Electron runs a
+  file, and `tsc` is the only transform available: the pinning rule holds
+  `dependencies` to the one entry Task 1.0 installed, so a bundler would be a
+  dependency this task is not allowed to gain. `npm run test:e2e` builds before
+  Playwright starts, so the spec always launches what the tree currently says.
+
+`tsc` copies nothing, so the bundle's files stay where they were written and the
+handler's root is `src/renderer` under the app's own path
+(`app.getAppPath()`), not `dist/`. Packing the renderer into a packaged app is
+Task 4.1's, and this task builds no package.
+
+What is deliberately **not** here: the preload attached to the window (Task
+1.2 writes `src/preload/index.ts` — see "The IPC allow-list" below — and
+deliberately does not wire it in), the spawn allow-list (Task 2.1), and the
+Electron fuses (Task 4.1). The window is built so that each of those lands
+inside something already switched off — `consoleWebPreferences()` asserts the
+absence of a `preload` today precisely so that adding one is a decision rather
+than an oversight.
+
+### The security properties are tests, and each one fails under a mutation
+
+`test/unit/window.test.ts` never loads Electron: `src/main/*` imports *types*
+only and takes the runtime as an argument, so the window's decisions are driven
+under plain Node with a fake `webContents`, `session`, `protocol` and
+BrowserWindow class, and nothing is mocked that could hide a decision.
+`test/e2e/security.spec.ts` launches the real app and asserts what the browser
+does with them.
+
+| Mutation | What fails |
+|---|---|
+| any of the seven flags flipped (e.g. `contextIsolation: false`, `sandbox: false`) | the named row of the flag table |
+| a flag *added* beside the right ones | "sets exactly those flags and no others" |
+| a `preload` appearing | "no preload yet" |
+| `will-navigate` that does not deny | the navigation table, the wiring test, and the e2e navigation test |
+| `setWindowOpenHandler` returning `{ action: 'allow' }` | the window-open test, the wiring test, and the e2e `window.open` test |
+| a permission handler calling back `true`, or a check handler returning `true` | the two halves of the permission test |
+| `validateExternalUrl` accepting `javascript:`, `file:` or `data:` | three rows of its table |
+| accepting an off-allow-list host, credentials or a port | the rows that name each |
+| `openExternal` called on a refused link | "calls nothing at all for a refused link" |
+| the protocol handler serving another scheme or host | the row's status and reason |
+| serving a path outside the bundle root | the traversal row, the `%2e%2e%2f` row, and `isInsideBundleRoot`'s own cases |
+| `registerSchemesAsPrivileged` without `standard`/`secure`, or with `bypassCSP` | the registration test |
+| the CSP losing a directive, or `connect-src` relaxed to `'self'` | the directive test, and the two e2e probes: the remote one (a `securitypolicyviolation` naming `connect-src`, and nothing recorded by the route handler) and the same-origin one (a fetch for the console's own document is refused — the plan's red step) |
+| `activate` calling the module's `main` again (the scheme registered twice) | the e2e `activate` test: `protocol.handle` throws, `reportAndQuit` exits the app |
+| the `<meta>` copy drifting from the header | "byte for byte" |
+| `loadURL` to anything but the bundled document | `createConsoleWindow`'s test |
+
+The e2e network probes are where two gates stand behind one assertion, and it is
+worth being precise about which is which *and* about which probe catches which
+mutation. `connect-src 'none'` refuses a request inside Blink and produces a
+`securitypolicyviolation` event naming the directive, while a Playwright route
+handler aborts every remote request that gets that far and records it: a CSP
+that stops refusing remote requests fails on both counts — the violation never
+fires, and the request shows up in the handler's record, which is asserted
+empty, and which is also the assertion to revisit first if a future Chromium
+starts reporting CSP-blocked requests to Playwright's network events.
+
+A CSP relaxed to `connect-src 'self'` is a different mutation and needs a
+different probe, which is the plan's Task 1.1 red step: the remote target is not
+this origin, so `'self'` refuses it exactly as `'none'` does — same violation
+event, and nothing for the route handler to abort. The second probe therefore
+asks for the console's own document, `app://console/index.html`, and asserts the
+**violation event**, which is the only thing that separates the two directives
+here: under `'none'` Blink refuses the fetch and dispatches a violation naming
+`connect-src`, and under `'self'` it permits the request and dispatches nothing
+(the fetch still fails, because Chromium's `fetch()` does not support a custom
+scheme, so an assertion on the failure alone would pass under the mutation).
+That test fails under the red step, and the remote one does not.
+
+One more unit test holds a premise the e2e file depends on and cannot see:
+`test/unit/playwright.test.ts` asserts that `playwright.config.ts` keeps
+`fullyParallel` at Playwright's default, `false`. `security.spec.ts` launches
+Electron once in `beforeAll` and is written against that one instance — one app,
+one page, tests in order in a worker, the `activate` test last because it takes
+the window down — and with `fullyParallel: true` Playwright spreads one file's
+tests across workers and runs that file's `beforeAll` **once per worker**, so
+the file would launch one Electron per worker and the ordering would stop
+meaning anything. No assertion in the spec can notice that (measured on the
+pinned Playwright 1.64.1 with a scratch spec of four tests in one file: `false`
+ran all four in worker 0, `true` split them over two workers and would use more
+where more are free), so the flag is held where it can be: flipping it back to
+`true` fails `test/unit/playwright.test.ts`, which reads the config the way
+Playwright does and needs no display and no Electron runtime to do it.
+
+### The pinning rule is a test, not a habit
+
+`test/unit/pinning.test.ts` reads `package.json` and fails on any specifier that
+is not an exact version — a `^`, a `~`, a `*`, `latest`, or any other range —
+naming the dependency and the marker, and it holds the checker itself to a table
+of specifiers it must accept and refuse, so "package.json is clean" cannot pass
+on a checker that accepts everything. `test/unit/lockfile.test.ts` holds the
+other half: the lockfile exists, is `lockfileVersion` 3, declares exactly the
+names and specifiers `package.json` declares, locks each of them to its pinned
+version with an `integrity` hash, and resolves **every** entry — the names the
+manifest declares and every package that arrives through them, which is code
+that runs just the same — from `https://registry.npmjs.org/`, with nothing
+floating anywhere. `.npmrc`'s `save-exact=true` is the same rule enforced by the
+client, so a later `npm install <package>` writes an exact pin and not the first
+range a test would have to catch. `test/unit/tsconfig.test.ts` is the third
+piece: every TypeScript file at the console's root — today
+`playwright.config.ts`, whose `testDir` is what keeps Playwright from collecting
+the vitest unit tests — is asserted to be inside `tsconfig.json`'s `include`,
+because a file outside `include` is not typechecked at all.
+
+### Dependabot's scope is not extended here (a decision, not an oversight)
+
+Recorded as the plan words it, because the plan hands this decision to this
+task: "**Dependabot's scope is not extended here.** §5.2 notes that the console
+adds a second thing Dependabot should watch — `console/package.json` and its
+lockfile — and that Electron's own binary is not an ordinary npm dependency at
+all. `.github/dependabot.yml` is not under `.github/workflows/`, so an agent may
+edit it, and this plan deliberately does not: it belongs with Task 1.0's pins,
+and the owner may prefer to keep Dependabot's scope where it is rather than have
+a weekly PR stream behind an approval gate. **Listed so that the omission is a
+decision, not an oversight.**"
+(`docs/plans/2026-10-15-desktop-console.md`, "Open items, listed rather than
+fixed", item 5.)
+
+So `.github/dependabot.yml` still tracks one ecosystem — `github-actions` from
+`/`, weekly — and nothing in this task edits it. What that costs is visible
+rather than hidden: the console's pins are bumped by hand, by a person, with the
+lockfile in the same commit, and the only things watching them are
+`test/unit/pinning.test.ts` and `test/unit/lockfile.test.ts`. Dependabot could
+not fully watch this tree even if it were pointed at it: **Electron's own binary
+is not an npm dependency** — npm carries the package, but the runtime comes from
+Electron's download host, so its pin, download and checksum get the hand-bumped
+treatment the repository already gives the Trivy digest and the Dockerfile
+frontend digest (design section 5.2).
+
+## The IPC allow-list (Task 1.2)
+
+Design section 5.1 rule 5: "**an IPC allow-list, not an IPC bridge**". The
+console has no bridge. It has a fixed table of named operations, and three
+prohibitions that are the whole of the rule: **no `invoke(channel, ...)`**
+(nothing in the console takes a channel from a caller), **no channel name from
+the renderer** (the preload exposes one *method* per operation and the renderer
+passes arguments to a method, never a name), and **no dynamic `require`**.
+
+`src/main/ipc.ts` is the table and the gate. Twelve operations — the eleven CLI
+reads of design section 2.1 (`watch`, `budget show`, `report`, `runs ls`,
+`diagnose`, `logs` for the document, `logs` for the link, `secrets ls`,
+`accounts ls`, `version`, `doctor`) plus the one validated external link — each
+with the command it drives, the flags it fixes and a **closed argument schema**
+validated in the main process before any handler sees it. Closed means every key
+is declared (an extra key is refused by name), `__proto__`/`constructor`/
+`prototype` are refused by name and a payload whose prototype is not a plain
+object's is refused whole, every string is bounded and refused when it carries a
+control character, an invisible format character, an unpaired surrogate or
+anything outside its grammar, and the validated arguments are rebuilt into a
+frozen null-prototype object. What an operation may **not** take is the other
+half: no path (the installation's directory and `doctor --dir` are main-process
+state), no command (the verb is a constant in the table) and no URL beyond the
+one link, which is `validateExternalUrl` from `src/main/window.ts` — imported,
+not re-implemented, so the two cannot drift.
+
+**A kind belongs to a command, not to a flag name.** Two commands' `--since` are
+two grammars: `report --since` takes a UTC day, `30d` or `12w`, bounded by the
+CLI's own `reportMaxDays`, while `runs ls --since` takes `0`, `7d` or a Go
+duration in hours or minutes (`36h`, `90m`) and has no date branch at all. One
+kind shared between them was wrong in both directions at once — refusing `12w`,
+which `report`'s own help advertises, and admitting a calendar day that
+`parseSince` rejects — so each command has its own kind (`reportSince`,
+`runSince`), and `test/unit/ipc.test.ts` carries a table per command in which
+every row is a value that command's own parser accepts or refuses. Where a kind
+is narrower than its flag it says so in the kind's own doc comment (`runSince`
+does not carry `7s`, and no kind carries a path).
+
+**The sender is checked before the arguments are, and the check is not
+optional.** A registered channel is reachable by any frame the application has
+loaded, so arriving on the right channel is not a capability. Every listener
+refuses a message unless three things hold — the event has a sending frame at
+all, that frame *is* `event.sender.mainFrame` (identity, not equality of URL
+strings: a subframe inside a document the console did not write would otherwise
+pass an origin test by living in a frame that did), and the frame's URL is on
+the console's own origin `app://console` — and it answers one fixed sentence
+that repeats nothing the sender wrote. This is the Electron security
+checklist's item 17, "validate the sender of all IPC messages". The origin is
+not spelled again here: `APP_SCHEME` and `APP_HOST` come from `src/main/protocol.ts`,
+and the test builds its accepted event from `APP_ENTRY_URL`, so the origin the
+gate checks and the origin the console serves cannot drift apart. The
+webContents *id* is deliberately not a separate check — handlers are registered
+before any window exists and macOS `activate` builds a new one afterwards, so a
+captured id is stale by design, and the frame identity already decides the same
+thing: a frame is on `app://console` only if this process served it out of its
+own bundle.
+
+**A refusal's text is bounded, and the reason is a hostile `error.message`.**
+Design §6.3 wants the CLI's own sentence shown verbatim, and a CLI sentence is
+short and dull; a handler that threw with four megabytes in it, or with a
+newline, an escape sequence or `/home/you/.fugaro/secrets.yaml` in it, would put
+all of that in a renderer that is entitled to treat a reply as the console's own
+words. `replyReason` therefore flattens a message to one line, drops control
+characters and invisible format characters (bidi overrides and isolates,
+zero-width characters), replaces absolute paths (POSIX, `~/`, drive-letter and
+UNC, after a space, quote, backtick, bracket, `;` or `:`, and a `file://` URL
+whole) with `<path>` while leaving a web URL whole, and cuts at 2 KB with an
+ellipsis, never inside a surrogate pair. The test that an ordinary CLI
+sentence comes through byte for byte is what keeps those three from eating the
+case the design asks for. The same shape applies to what the console *accepts*:
+after the argument-count bound, a payload's own width (every key plus every
+scalar value) is bounded at `MAX_PAYLOAD_WIDTH`, set deliberately above what the
+per-kind bounds can add up to, so it can only refuse what no screen would send.
+It cannot bound Electron's own deserialisation of the message, which happens
+before the listener runs; that limit is stated where the constant is declared.
+
+`src/preload/index.ts` puts **one frozen, versioned object** on `window.fugaro`,
+one method per operation. It is deliberately a phone book and not a switch: the
+channel a method calls is a constant concatenated from that operation's name,
+the argument object is forwarded untouched (there is one validating gate and it
+is in main), and the reply is checked for the promised envelope before a screen
+sees it.
+
+**The surface is closed twice, and the second half is the compiler's.** The
+table is declared `as const`, with **no type annotation**, so its twelve rows
+stay literal types: `ExposedName` and `ExposedMethod` are unions of twelve
+literals rather than `string`, `ConsoleBridge` is twelve *named* methods rather
+than a string index signature, and `bridge.showBudgte(...)` is a compile error
+instead of an `undefined` call somewhere inside a screen's render. Nothing at
+runtime can see this — the object is built *from* the table and the suite pins
+the same two sets against `CONSOLE_OPERATIONS`, which is exactly why an
+annotated table was silent. So the claim is held where it is decided:
+`test/unit/ipc.test.ts` carries `assertClosedSurface`, whose `@ts-expect-error`
+directives *become* `Unused '@ts-expect-error' directive` errors — a red
+`npm run typecheck` — the moment the table is widened again. Re-adding the
+annotation on 2026-10-16 produced eight errors. `satisfies readonly (readonly
+[string, string])[]` checks each row's shape without widening anything, and is
+load-bearing in its own right: with it removed, a row carrying a third element
+typechecks clean, because only `[number][0]` and `[number][1]` are ever read.
+
+### Why the preload writes the surface out a second time
+
+The window runs `sandbox: true`, and in a sandboxed preload Electron replaces
+`require` with a polyfill that resolves `electron`, `events`, `timers` and `url`
+and **nothing else** — a relative `require('../main/ipc')`, which is what `tsc`
+emits for a value import, would fail the moment Electron ran the file. The
+alternatives were a bundler (a dependency this task may not add: `package.json`'s
+dependency set is exact and `test/unit/pinning.test.ts` asserts it) or writing
+the list twice. So it is written twice, and `test/unit/ipc.test.ts` closes the
+duplication in both directions: the methods on the frozen object must be exactly
+the table's methods, each must `invoke` the channel `channelForOperation(name)`
+computes for that same operation, and the version in the bridge must be the
+table's. **Types are imported from the table; values are not** — a type-only
+import is erased, which is why the preload can still be typed against
+`ConsoleReply` and `RendererLike` shape-checked against Electron's own types.
+
+### The never-reachable table, and the mutation-proof half
+
+`NEVER_REACHABLE` names what the console must never reach, read off the code
+rather than off a paragraph — every `where` columns names the `internal/cli`
+file and line each entry was grepped from on 2026-10-16. It carries every
+command the CLI has that writes (including `verify`, which runs a workflow's own
+build/test/lint commands in the checkout, and `image build`/`gate`/`record`/
+`refresh`), the `secrets` commands, `init`, `upgrade` and the hidden `exec`, the
+hidden `budget history` job, `image git-credential` (it prints a credential),
+the project-centric phase 1 commands that write or publish (which do not exist
+on this tree yet, and are listed anyway so that the day one appears the
+allow-list is already closed to it), and the flags that turn a read into
+something else: `--follow`, `--check-github-app`, `--strict`, `--csv`,
+`--watch`, and the watch renderer's `--plain`/`--poll`/`--ascii`/`--no-color`.
+
+Two things read that table. `assertReachableSurface` — called by
+`registerConsoleHandlers` before it registers anything — throws at startup if an
+operation drives a row of it, fixes a flag the surface may not fix, or shares a
+name; a console that cannot be built with `budget kill` in it cannot be talked
+into running it later. And the test names **one test per row**: nothing in the
+allow-list drives `budget kill`, or `--follow`, or any other row.
+
+| Mutation | What fails |
+|---|---|
+| `budget kill` (or any row) added to `CONSOLE_OPERATIONS` | the test named for that row, the "argv for argv" test, and `assertReachableSurface` at registration — the plan's red step |
+| a command the snapshot does not classify as one the allow-list admits | "drives *command* only because the design's allow-list admits it" |
+| a writer missing from `NEVER_REACHABLE` | "knows that *command* is on the never table, or is simply unused" |
+| `--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch` or a watch-renderer flag fixed by an operation | the never-table test named for the flag, and the "fixes only the two flags" test |
+| `--url` and `--json` on one operation | "never --url with --json" (the CLI refuses that argv: `internal/cli/logs.go:63`) |
+| an operation with no preload method, or a preload method with no operation | the two-way surface test |
+| a method invoking anything but `channelForOperation(name)` | the channel-routing test |
+| a schema accepting an extra key, a prototype-pollution key, a path, a command, a control or format character, an oversize string or a wrong type | the table entry that names it |
+| one kind shared by two commands whose flags are not one grammar | the per-command window table, row by row, and "gives each command its own window kind" |
+| the sender check removed, or any of its three checks (frame present, frame *is* the main frame, frame URL on the console's origin) | the "sender gate" tests: 12 failures for the check as a whole, and the row named for each individual check |
+| a handler's message left unbounded, or its control characters or absolute paths left in | "bounds a handler's own message", "keeps a refusal to one line", "takes an absolute path out of a handler's message" |
+| `assertReachableSurface(CONSOLE_OPERATIONS)` removed from registration, or moved after the channels are on | "checks the surface before it registers anything" |
+| the allowed-flags half of `assertReachableSurface` removed (a flag the never table does not even list) | "refuses a table with a flag the never table does not even list" |
+| a never-table *flag* row renamed away | "carries a never-table row for *flag*", one test per flag |
+| the `PROTOTYPE_KEYS` branch removed | "names the protection key it refused" |
+| the payload-width bound removed | "refuses a payload wider than the width bound" |
+| a schema that refuses *everything* (the way to pass every refusal test vacuously) | the well-formed-payload table, one row per operation |
+| an unfrozen bridge, a wrong version, a `length > 1` method, an `invoke`/`send`/`on` property | the surface-shape tests |
+| `EXPOSED_OPERATIONS` given a type annotation, which widens `ExposedName`, `ExposedMethod` and `ConsoleBridge` back to `string` | `tsc --noEmit`: eight errors — seven unused `@ts-expect-error` directives in `assertClosedSurface` and the bridge no longer matching `ConsoleBridge` — plus "declares the table with literal types" |
+| `as const`, or the `satisfies` clause, dropped from the table | the same directives, and the same source scan |
+| a row of the table given a third element (with `satisfies` removed to permit it) | nothing — which is why the `satisfies` clause is itself asserted by the scan |
+| a second `invoke`, a computed `require`, an `eval`, a `child_process`, or a value import in the preload | the source scans |
+
+The red step was run as the plan writes it: `budget kill` added to the
+allow-list fails 21 tests, three of them named for it — "nothing in the
+allow-list drives budget kill", "drives budget kill only because the design's
+allow-list admits it", and the registration throw, which surfaces as "accepts
+the table the console actually has" reporting `budget.kill drives budget kill,
+which the console must never reach`. It also found a real weakness in the test
+file, which is why it is recorded here: the "throws on an operation name that is
+not in the table" test used `budget.kill` as its unknown name, so adding
+`budget.kill` to the table made *that* test pass and hid one of the failures
+behind it. It now uses a name no screen would ever add.
+
+### What is deliberately not here (Task 1.2)
+
+The **handler implementations** — Task 1.3 spawns the CLI; this task defines
+what a handler may be asked for and nothing about how it answers.
+`registerConsoleHandlers` takes the handlers as an argument, so the surface is
+complete and testable today and gains its one implementation without an edit to
+the allow-list. And the **window's `preload` option**: `test/unit/window.test.ts`
+asserts its absence by name, and attaching a bridge over handlers that do not
+exist yet would be the one edit that makes this surface reachable before there
+is anything behind it.
+
+Nothing here loads Electron, and nothing here spawns anything. The whole section
+is driven by `test/unit/ipc.test.ts` under plain Node — a fake `ipcMain` that
+records the channels it was given, a fake `ipcRenderer` that delivers each
+`invoke` to the listener for that channel, and a `codeOnly` helper that strips
+comments before the source scans, so a scan cannot be satisfied by prose that
+happens to name the thing it is looking for.
+
+## The one child process, and the spawn log (Task 1.3)
+
+The console reaches the data one way: it spawns the installed `fugaro` and reads
+its JSON (design D1, Option A). It never reads a database, never holds a
+credential and never opens the operator's config. Four files say so —
+`src/main/spawn.ts` decides every spawn, `src/main/spawnlog.ts` is one of the
+two things the app writes, `src/source/source.ts` is the data plane every screen
+talks to, and `src/source/cli.ts` is the v1 implementation over the child.
+
+`FugaroSource` **yields `JSONDoc`-shaped snapshots and emits change events, and
+knows nothing about how they were produced**: v1 spawns the CLI, the fixtures of
+Task 1.4 replay a recording, and Option C's loopback API slots in behind the same
+interface without a screen changing. A snapshot is the CLI's document *as it
+arrived* plus the console's own stamp — when it arrived, which one it is in the
+series, which day it belongs to, and whether that day just changed — and the one
+field this task reads out of a document is `day`, which the rollover needs.
+
+| Rule (design §3.4 and §5.1) | What the code does |
+|---|---|
+| 1 — argv is an array, `shell: false`, never built from a job-written field | `argvFor` is the only place an argv is built. It walks the row's *declared* arguments, refuses an undeclared key by name, and passes every value through a conservative character whitelist, so a value that arrived from a document cannot become a command word. Every emitted element is its own array entry, every emitted flag is asserted against `SPAWN_FLAGS`, and the spawner is always called with the literal `shell: false`. The schema's kinds and the table's kinds are related by exactly one mapping, `SPAWN_KIND_FOR`, and `assertSpawnSurface` refuses a row whose kind disagrees with the operation's schema — so a validated value that argv cannot spell is a table-load failure rather than a refusal a user reads |
+| 3 — `--project` on every command that takes it | `SPAWN_COMMANDS` carries `takesProject` per row: the nine commands of `addCloudFlags` (`internal/cli/cloud.go:51`) plus a tenth row (the console has two operations over `logs`, `--json` and `--url`, and neither may be the one that forgets). The handshake's argv is exactly `["version"]`, because `newVersionCmd` is `cobra.NoArgs` with no flags. `--config <path>` follows `--project` whenever the installation declares one |
+| 4 — the binary is resolved explicitly | the operator's configured path, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and only then every entry of the app's own `PATH`; the resolved path and version are what the header draws. **A candidate that exists but whose version cannot be read is refused rather than skipped** — falling through to the next `fugaro` on the machine would silently change which installation the numbers came from |
+| 5 — the child's environment is built, not inherited | exactly `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, the five `XDG_*` variables and the chosen installation's `FUGARO_PROJECT`. A hostile `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `SSH_AUTH_SOCK` or ambient `FUGARO_PROJECT` in the app's environment cannot reach the child |
+| 5 — the child's `PATH` is a list, not one directory | the resolved binary's own directory first, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin` — because the CLI looks up external tools itself (`exec.LookPath`, `internal/cli/doctor.go:147`), and `terraform` and `cosign` do not sit beside the `fugaro` binary even under Homebrew. The app's inherited `PATH` still never reaches the child, and a tool outside that list is reported as *not on the `PATH` the console gives the CLI* rather than as "not installed" |
+| 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory, checked with `lstat` (not a link, owned by this uid, mode `0700`) rather than trusted to `mkdir`. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
+| 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The add-an-installation check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
+| 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
+| 10 — the installations file (D13, C8) | `src/main/installations.ts`, documented below: the second and last file the app writes |
+| Task 0.2's four settled behaviours | restart with the CLI's own backoff (1 s doubling to 30 s) except after a refusal, a signal read as the ordinary end of a feed, the UTC-midnight rollover marked as a **gap** rather than a zero, and the reader rule that a stdout line which is not a JSON object is **skipped** and surfaced as a notice — the degraded mode writes a plain sentence on the same stream as the documents (`runWatchDegraded`, `internal/cli/watch.go`) |
+
+### The spawn log, and the two files the app writes
+
+**The console writes nothing by default.** Set `FUGARO_CONSOLE_SPAWN_LOG` to a
+path and the main process appends one JSON object per line there, one line per
+child process, **created with mode `0600`**:
+
+```json
+{"ts":"2026-10-15T14:22:31Z","argv":["/opt/homebrew/bin/fugaro","watch","--json","--project","fugaro"],"cwd":"/Users/owner/src/fugaro","project":"fugaro"}
+```
+
+Exactly those four keys. `ts` is RFC 3339 UTC at second precision, `argv` is the
+array as spawned with the binary's absolute path first, `cwd` is absolute, and
+`project` is the installation's project name — **the value passed as
+`--project`, so the bare `version` handshake still records which installation it
+was for**. It holds no command output, no environment, no credential and nothing
+a job wrote. **A spawn that produced no process records nothing**: the line is
+written when the child's own `spawn` event says the process exists, so a binary
+that is missing or not executable — which `spawn` answers with a `ChildProcess`
+and then an `error`, never with a throw — is not a line in this file. It is **bounded at 1000 records**: at the 1001st spawn the writer
+appends one `{"truncated":true,"limit":1000}` line and stops, rather than
+rotating or truncating in place. It is never read back, never rotated, never
+deleted and never transmitted — `test/unit/spawnlog.test.ts` holds the first and
+the last as scans over `console/src/`, so a screen, a source or an IPC handler
+that started reading it would fail a named test. It is what Check 59's
+assertion (4) reads and what Task 4.3's FACT commands read the key names from.
+
+**It is one of the two files the app ever writes to disk, and the other one is
+off by default too.** The other write in this task is a directory rather than a
+record: `privateWorkingDirectory()` creates an empty `0700` directory under the
+system temporary directory for an installation that has no checkout, so that
+`doctor --dir` is a directory and the child's `cwd` is not `/`. Section 5.1 rule
+10 is about *records* — no history, no cached document, no crash dump, nothing
+that outlives the process — and this holds nothing at all. The **other record**
+is the installation list, `installations.json`, which the owner ruled in on
+2026-10-18 (C8) and which is documented in its own section below: rule 10 was
+amended to name it rather than having it grow by accident.
+
+### The spawn properties are tests, and each one fails under a mutation
+
+The tests spawn **a fake `fugaro` in a temporary directory — never the real CLI
+and never the network** (`test/unit/stub.ts`: an executable whose shebang
+names the Node running the suite by absolute path, a generated script, and a
+`scenario.json`).
+The report file the stub appends to is the child's *own* account of its argv,
+`cwd` and environment, which is what makes these tests about what a real machine
+sees rather than about the console's self-consistency. Seventeen mutations were
+run against the committed tree, and each made a named test red:
+
+| Mutation | What fails |
+|---|---|
+| the child's environment merged from the app's own | "gives the child exactly `CHILD_ENV_KEYS` and nothing else" |
+| the child's `PATH` reduced to the binary's directory alone | "builds the child's PATH from the binary's directory and every well-known prefix" |
+| `--project` appended to the `version` handshake | "runs the version handshake bare" |
+| `--project` dropped from `watch` | "live.watch puts --project on its argv, from the chosen installation" |
+| `shell: true` on the real spawner | "hands the real spawner `shell: false`, as a literal, and never `true`" |
+| the argument whitelist removed | the hostile-value table (`; rm -rf /`, `$(id)`, quotes, spaces, leading dashes) |
+| a non-JSON stdout line parsed instead of skipped | "skips a degraded-mode sentence rather than failing the read" |
+| `cwd` left as the app's own | "spawns from the installation's checkout" and "spawns from a private directory the app owns" |
+| `--strict` added to `doctor` | "passes `--dir <that directory>` and never `--strict`" |
+| a candidate with an unreadable version skipped rather than refused | "refuses a candidate whose version cannot be read, rather than skipping it" |
+| a refusal restarted anyway | "does not restart after a refusal, and keeps the CLI's sentence" |
+| the spawn log enabled without the variable | "unset means nothing on disk: no path, no descriptor, no file" (asserted on the injected `fs`, not only on the filesystem) |
+| the spawn log's bound removed | "stops at the bound: one truncation line at record 1001, then nothing" |
+| an `env` field added to a log line | "writes exactly the four keys, checked against a planted fifth" |
+| a `readFileSync(join(homedir(), '.config', 'fugaro', …))` anywhere under `console/src/` | "is clean: no file under console/src/ opens a config, anywhere" — and the planted file that *is* that mutation is a fixture in `test/unit/configread.test.ts`, so the checker is tested against what it must catch |
+| `runs.list`'s `pr` row back to `kind: 'value'` — the bug a review found here: the schema hands over a *number* and that case required a string, so every PR-filtered run list was refused on the way to a spawn that never happened | "what the schema validates is what the spawn table accepts > spawns runs.list from the payload validateArguments returns", and 29 others: the kind disagreement makes `assertSpawnSurface` refuse the table, so `CliSource.create` and everything behind it fails too |
+| `spend.report`'s `since` back to the runs grammar (`kind: 'since'`) | the report-range rows of "the day and window arguments" (`12w`, `522w`, `0d`, `3h`, `3661d`) and "carries the report range 12w through to argv unchanged" |
+
+### What is deliberately not here
+
+- **The wiring.** Nothing registers `handlersFor(source, …)` with
+  `registerConsoleHandlers` and nothing attaches a preload: that is the Live
+  screen's task, and doing it here would flip Task 1.1's named "no preload yet"
+  assertion (and its mutation row) before there is a surface to attach. The
+  pieces are all reachable from a test, which is where they are held.
+- **Cleanup on quit or crash.** Nothing calls `CliSource.close()` on
+  `before-quit`, and nothing stops the live children if the main process
+  crashes. Today no source is ever constructed by the app, so there is nothing
+  to leak; **the task that wires `handlersFor` must, as a precondition, stop
+  every feed on quit** (`close()` from `before-quit`, awaited before exit).
+  What this task does bound: every one-shot read has a deadline
+  (`READ_TIMEOUT_MS`) and a stdout cap, the feed's line buffer is capped, and a
+  source keeps at most `MAX_LIVE_FEEDS` (4) live children, stopping the least
+  recently used.
+- **Persistence.** `createInstallationStore` holds the list in memory for one
+  run, and it took a `persistence` seam rather than a file: the store's
+  read-and-write half is `src/main/installations.ts` (Task 3.4b), which owns
+  `installations.json` and is documented below. The in-memory default is what
+  the unit tests and the e2e harness use, and nothing here writes.
+- **The fixtures.** `FugaroSource`'s second implementation is Task 1.4's
+  recorder and replay, and it slots in behind the same interface — see the
+  section below. What landed there is the tool and one synthetic fixture; the
+  design's eight recordings are still the owner's to make.
+- **`version --json` and a schema version.** The CLI has neither (contract §4.3
+  gaps 1 and 3), so the handshake is the one human line and the console refuses a
+  binary whose line it cannot read rather than guessing.
+
+## Recorded, redacted fixtures, and the recorder (Task 1.4)
+
+**The tool is agent-written; the recordings are OWNER-RUN.** This is the
+distinction the whole section turns on, and it is a boundary rather than a
+division of labour: an agent may not run `fugaro watch` against a real
+installation, may not read `~/.config/fugaro`, may not handle a credential and
+may not touch `belong` (Global Constraints 2 and 6), so **no agent ran the
+recorder in this task, and no file under `test/fixtures/` was recorded.** What
+is agent-written is the recorder, the redactor, the fixture format, its loader
+and the replaying source; what is the owner's is the eight recordings design
+§9.1 asks for.
+
+Three files make up the data plane's second implementation, and they have three
+different jobs:
+
+| File | What it is |
+|---|---|
+| `src/source/redact.ts` | the redactor: what a recording may carry into this repository |
+| `src/source/fixture.ts` | the format, the loader that verifies it, and `FixtureSource`, the replay |
+| `tools/record-fixture/index.ts` | the recorder: one `fugaro watch --json` → one fixture file |
+
+### The owner's one command
+
+```
+npm run record-fixture -- --out test/fixtures/<name>.ndjson --project <project> --gcp-project <gcp-project-id>
+```
+
+Run **by the owner**, from the sandbox checkout, with the **sandbox**
+installation selected — never `belong`. The eight recordings are the owner's to
+produce, and the plan attaches them to this task's pull request by hand or in a
+follow-up commit. `--project` is **required and never defaulted**: falling back
+to whatever the ambient selection happens to be is precisely how a recording of
+the wrong project gets made (design §3.4 rule 3), so its absence is a refusal
+that names the flag. `--gcp-project` is required too: the recorder reads no
+config, so it is told the GCP project ID, and the ID, its runs bucket
+(`fugaro-runs-<id>`), an optional `--project-number` and any `--literal`
+(repeatable) are handed to the redactor as literals. The rest of the flags,
+and the refusals, are in `--help` / `USAGE`.
+
+The script is `tsc -p tsconfig.record-fixture.json && node
+.record-fixture/tools/record-fixture/index.js`: the tool is TypeScript like
+everything else here, and `.record-fixture/` is a build output directory that
+`.gitignore` names. The recorder spawns through the console's **own**
+`planFor('live.watch', …)`, so the argv, the child environment
+(`CHILD_ENV_KEYS`), the working directory and `shell: false` are the console's
+rules and not a second copy of them — a recording cannot be of a command the
+console would refuse to run. It records for a bounded time (`--duration`, 120 s
+by default), then stops the child the way the console does, `SIGTERM` and then
+`SIGKILL` after `SHUTDOWN_GRACE_MS`. It reads until the child's pipes **close**
+(not until the process exits: Node may report the exit while the last stdout
+chunks are still in the pipe), with one more grace period after the `SIGKILL` for
+a pipe that never closes. A torn last line is dropped rather than
+recorded as garbage, while a last line that is a whole JSON document — a CLI
+that wrote its final frame without a newline — is recorded like any other.
+
+### The `normal` fixture: the real CLI's shape, every value invented
+
+`test/fixtures/normal.ndjson` is the one fixture of the eight that exists. The
+owner ruled on 2026-10-19 "record from the real installation, scrub by hand". One
+snapshot (`fugaro watch --json --once`) was read from a real installation with
+the 0.8.6 CLI (header `cli: 0.8.6`), outside this repository, and
+`tools/scrub-fixture/` replaced every value that could identify it. **The shape
+is the real CLI's** (every key, its type, its order, which optional keys are
+present); **every value in the file is invented**, so the header says
+`synthetic: true` and its note says every value is invented (the two agree: no
+installation produced these values). The raw recording is never committed and is
+deleted after the scrub. **It is not reproducible from this repository, by
+design:** the committed fixture is the only artefact, and nothing is kept that
+could lead back to a removed value (no list, no hash, no salt). *A file of
+digests of the removed values was in PR #643's branch until review removed it;
+the paragraph below says what that leaves exposed, and it is not nothing.*
+
+```
+node node_modules/typescript/bin/tsc -p tsconfig.record-fixture.json
+node .record-fixture/tools/scrub-fixture/index.js --in <raw.json, outside the repo> \
+  --out test/fixtures/normal.ndjson --cli 0.8.6
+```
+
+The command prints the COUNT of values it replaced and nothing else, and the test
+gets the removed values in memory, through a callback the scrub run is given, on a
+scrub of a synthetic input: nothing derived from a removed value is written
+anywhere. One file of digests did exist on PR #643's branch, and **it is still in
+the pull request's history — this is the honest account of it.** PR #643's first
+commit (`d41f726b`) added `console/tools/scrub-fixture/normal.scrubbed.json`, a
+JSON array of the unsalted SHA-256 digests of the values the scrub had replaced,
+and a later commit on the same branch (`2fc37c7fd8`) removed it again. The PR was
+**squash-merged**, so neither commit is on `main` and no commit on `main` ever
+held the file — but the pull request's own history on GitHub still does, and a
+squash does not delete anything from the remote. (Those two commits are not in a
+clone of `main` either: `git cat-file` does not know them, and this branch was
+created after the squash, so nothing was ever in its history either. So this
+paragraph is the account of what the PR's history holds, and a reader here cannot
+read the file itself to check it.) An unsalted SHA-256 digest is a dictionary: a
+small integer, a dollar amount or a repository name is recovered from a bare
+digest by trying candidates, so the values that file covered must be treated as
+**exposed**, not merely removed. Those values were a public repository's name, the
+project's name and some development spend figures. Nothing here undoes that; the
+note is here because a reader of this file is the person most likely to believe
+the opposite.
+
+The scrub (`scrub.ts`) is fail-closed: an unknown key is a refusal, and every key
+it copies has its own typed rule (numbers are copied; an enum is copied only if
+the value is in the CLI's vocabulary; a free string is refused unless the key has
+an explicit replacement). It replaces the project, repo, slug, run ID, title
+(`# Task: example task N`), models, requester and kill actor, PR URL, workflow,
+recipe and every dollar amount, and **shifts the whole clock by a random offset
+drawn for the run** (`now`, `day`, the header's `recorded`, `kill.at`, and the
+run IDs' timestamps, which are the shifted `now` minus the run's own age, so
+every `age_seconds` stays consistent). Totals, percentages, `runs` and
+`run_hours` are recomputed from the invented rows so the document's invariants
+hold. The result then goes through the console's redactor with a public key (as
+`synthetic.ndjson` does), which is why the repo and slug read as pseudonyms
+(`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
+them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,
+`VERIFY_KINDS`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
+verify, connection state, `queued_note`, and the ages and burn numbers. A
+connection `reason` is the one value with a free-text branch: the two sentences
+the CLI writes itself are kept, and the transport's own error text is replaced
+rather than copied (see the vocabularies below).
+
+**The clock shift is drawn, not committed** (owner review of PR #643, item 2).
+`scrubDocument` takes the offset as an argument and, given none, draws a
+crypto-random one of up to ±400 days; the tool never passes one and never prints
+it. So the scrub is **not reproducible byte for byte between runs**, and that is
+the point: `normalFixture` takes the offset as an optional argument too, so a
+test can hold the clock still and scan a scrub run that is the same on every
+machine — the tool never passes one, and the tests that hold the drawn clock's
+randomness use the scrub's own draw (`scrub-vocabulary.test.ts`: the offset is an
+integer inside the range; `normal-fixture.test.ts`: two unsaid draws differ).
+The fixture of PR #643 was shifted by `TIME_SHIFT_MS`, a constant in
+the file, and that constant added back to its `now` gave the real recording
+instant exactly. The committed fixture was re-scrubbed from its own structure
+under a drawn offset (`console: re-scrub the normal fixture…`), so the file on
+`main` is not a shift of anything and the old constant is dead against it — it
+still recovers the instant from the *history* of that write, which is why the
+paragraph above says what it says. Nothing but the clock, the run IDs, the
+header's `recorded` and its checksum moved in that re-scrub: the invented
+project, repos, slugs, titles, amounts and verify lines are the ones they were.
+
+**The vocabularies are derived from the Go source, and a Go test holds them
+there.** Every list in `scrub.ts` names the writer it came from, and
+`TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource` — in
+`internal/cli/docs_desktop_console_test.go`, the one Go file Task 0.3's boundary
+test allows to mention a `console/` path, reading this file as bytes and
+importing nothing from it, so the allow-list keeps its single entry — reads the
+lists back out of the file and compares them with the constants the source writes
+them from: the runs[].stage vocabulary, the config's allowed `agent.auth`, the
+budget's modes, the three verify kinds, the two status words and the rerun flag,
+the one warning sentence and the clean-tree note, the connection, health,
+deadline, status and outcome tables, the two connection `reason` sentences
+`internal/watch/state.go` writes itself (`CONNECTION_REASONS`), the two
+`commands.reports` globs the warning
+sentence carries (`VERIFY_REPORT_GLOBS`, against `internal/config/defaults.go`),
+and the 120-rune clip the registry puts on the summary (`VERIFY_CLIP_RUNES`,
+against internal/runner's `verifySummaryRunes`) — the scrub needs the number
+because a clipped line is a PREFIX of the writer's, which is what its matchers
+are built to accept. The verify line's *head* is not a list but a
+grammar, so it is held differently: the test reads `VERIFY_HEAD`'s regex source
+out of the file, fills its `${...}` interpolations with the values it derived,
+compiles it and tries it against lines built from `verify.go`'s own format
+string — with the exit code `internal/procgroup/procgroup.go` leaves for a
+process it killed, which is `-1`, so a timed-out verify writes `(exit -1; timed
+out)` and a pattern narrowed to `\d+` fails there. The *tail* is held the same
+way, and was the gap this round closed: the test renders `Record.Summary`'s
+segments and the file's `VERIFY_TAIL` from their own sources — a literal as
+written, the writer's `%d` as a digits marker, each `strings.Join` as a
+test-names marker, and `r.Warning` as the warning sentence the Go source builds
+plus the globs marker — and compares them segment by segment, in order. So a
+segment added to `verify.go` (a `; N skipped` for the `Skipped` count the summary
+does not print today, say) fails here instead of leaving the scrub refusing an
+ordinary recording. The segment scan skips the `if` line a segment sits under (a
+condition names what it guards without writing it), so the one condition a
+segment *is* decided by is read on its own: the counts are written under
+`r.Kind == KindTest` and no other kind, which is what lets the grammar slice that
+group off for a build or a lint and require it for a test. The list that was too *short* is
+the failure that review found: a value the CLI writes and the scrub does
+not know is not a leak, it is a recorder that throws on an ordinary run.
+`bootstrap` and `review_first` were missing from `stage`, `vertex`
+from `auth`, and `warn` was a mode no CLI writes.
+
+**A list that is too *long* is the same failure from the other side, and the
+scan has to read the right field to see it.** `stage` held five names
+`runs[].stage` cannot carry — `provision`, `check`, `render`, `writeback`,
+`finalize` — because the scan took every stage string in `internal/runner`. Only
+one of those is the row's: `internal/watch/build.go` writes `dash(e.Stage)` from
+the run's **registry entry**, which is given a stage by exactly two writers — the
+literal it is created with, `bootstrap`
+(`internal/runner/budget_session.go`'s `registryEntry`), and `beginBudgetStage`,
+whose only caller is `r.stage(ctx, name, ...)`, so the rest are that helper's
+call sites. The others are other documents: `r.rec.Stage` (`render`,
+`writeback`, `check`, `finalize`) is the run record's own stage in `result.json`,
+and `provisionStage` names the timing row provisioning records. The scan now
+reads the entry's literal plus `r.stage`'s call sites plus the `queued`
+`internal/watch/queued.go` gives a runs-bucket row with no entry yet, and pins
+that `beginBudgetStage` still has that one caller taking its own `name`
+argument. `sameSet` compared the two lists in both directions already — the
+premise, not the comparison, was what a too-long list slipped past.
+
+**A connection reason is kept only when the CLI wrote it.** `connection.reason`
+had no rule at all, so any recording made while the link was not live failed the
+scrub — `internal/watch/state.go` sets `access refused` for a permission error
+and `connecting` before the first event, and its third branch is the transport's
+own error, one-lined and clipped there. Those two sentences are
+`CONNECTION_REASONS`, held against the source by the drift test; anything else
+that is a string is **replaced** with `INVENTED_CONNECTION_REASON`, so the free
+text never reaches the fixture, and anything that is not a string is refused.
+The scan that gates a commit carries all three values in its allow-list, and
+`normal-fixture.test.ts` holds the whole path — scrub, redactor, writer, scan —
+for each of them: accepting a reason the scan then refuses would leave the
+recording the rule exists for uncommittable, which is the shape of the finding.
+That test is one case of a **round-trip property** the file also holds in full:
+every value of every list in `VOCAB`, and every invented value the scrub writes
+in its place, goes through the whole tool and the result is scanned, so a
+vocabulary value the allow-list cannot carry fails there rather than at the
+first real recording. (The verify line is the one value the property does not
+sweep: the scrub keeps it as the writer wrote it, while the scan's matcher pins
+the globs slot to the CLI's own two defaults on purpose, so the two matchers are
+not meant to agree.)
+
+**Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
+`repo-at-cap` (they need cloud writes), and the other cases still await a
+recording. `normal` is one snapshot: no `finished`, `ready` or queued runs (the
+runs bucket did not answer within 3 s on that read), so those shapes are covered
+by `synthetic.ndjson` and the Go types, not by this file.
+
+**No spec consumes `normal.ndjson` yet**: only its own tests
+(`test/unit/normal-fixture.test.ts`, the Go
+`TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes`) and the recorder tests
+read it.
+
+Held by `test/unit/normal-fixture.test.ts`: the shape, the invariants, a scan of
+every decoded key and string value (after NFKC, case and zero-width folding)
+against forbidden substrings and a positive allow-list of shapes, and the scrub's
+refusals, each mutation-proven. One rule in that scan refuses a run of twelve or
+more decimal digits — a leaked amount, identifier or epoch-millisecond stamp the
+allow-list would otherwise take for an invented value. It reads a number, not a
+digest: the header's SHA-256 is hex, so twelve consecutive digits occur inside it
+about 7% of the time (1504 of 20000 digests, and 145 of 2000 scrubs, measured),
+and the digest is redrawn every run because the scrub draws a fresh clock
+offset. As a bare `\d{12}` the rule failed the scan at random, about one run in
+fourteen; it now matches a run only with no hex digit beside it, so the digits
+inside a longer hex token (a digest, a pseudonym, a commit) are not a number
+standing on its own — 0 of 20000 digests, measured — while a planted
+`123456789012`, `1234567890123` or `acme-123456789012` still is. The run is the
+whole maximal one (`\d{12,}`): a fixed twelve would match neither lookaround
+inside a thirteen-digit stamp, since every twelve-character window there has a
+digit on both sides, and that stamp is exactly what the rule is for — the verify
+line's name slot is open in the allow-list, because `junit.go` copies an ID
+verbatim, so this rule is the only guard against a number riding in it. The proof
+is a deterministic case (a 64-character digest with a twelve-digit run planted in
+it, plus runs of 12, 13 and 20 digits standing on their own) and a loop that
+scrubs and scans 300 drawings of the clock.
+
+**The removed-values rule is a substring rule, and it does not run over tokens
+the scrub drew.** The second flake of the same loop, and the one that failed on
+`main` (CI run 39231293918, `iteration 252`): the scan looks for each removed
+value as a substring of every string in the fixture, and a plain recording's
+`kill.at` sits an hour before its `now` — so an offset of between 22 and 23 hours
+(the shift is uniform over ±400 days, one offset in 19200) puts the shifted
+`kill.at` back on the recording's own date while the shifted `now` lands on the
+next one. The recording's `day` is a removed value as soon as the offset leaves
+it, so the rule read that day inside a timestamp that is a function of the
+offset, and the run failed: about one run in sixty of the 300 draws, which is
+exactly the shape of a flake nobody can reproduce. Inside a token the scrub draws
+— the shifted clock (`now`, `day`, `kill.at`, the header's `recorded` and `at`),
+the run IDs stamped from it, and the body's SHA-256 — nothing of the recording is
+present, so only coincidence can put a removed value there, and the rule is not
+run over them. It is still run over `removed.includes(raw)`, and the exemption is
+the shape of the value the *fixture carries*, never which removed value it is: a
+removed day riding in a verify line's name slot (the one slot the allow-list
+leaves open) is refused, and that case is held.
+
+**The draws are committed, so the loop is deterministic.** The 300 offsets no
+longer come from the scrub's own draw but from `CLOCK_SEED` in the test (a
+mulberry32 walk, written out there): a test that draws its own randomness passes
+on every machine but the unlucky one, which is what happened. The walk asserts
+what it is made of — that at least one of its 300 headers carries a digest with
+twelve digits in it, and that at least one of its offsets crosses the date — so a
+seed that stopped covering either flake fails the walk instead of passing
+quietly, and the crossing draw is a named regression case that fails when the
+rule is restored to the substring-only one (both mutations were run: restoring
+the rule fails the walk at `iteration 13` and the regression case; exempting the
+removed value's shape instead of the fixture's fails the name-slot case). The
+scrub's own draw is unchanged and still random — `scrub-vocabulary.test.ts` holds
+its range and `normal-fixture.test.ts` holds that two unsaid draws differ. Held by `test/unit/scrub-vocabulary.test.ts`: that
+the scrub accepts every stage, auth and mode the CLI writes and refuses what it
+does not — the stage list it loops over is `VOCAB.stage` itself, so this file
+keeps no second copy of it — that the connection `reason` the CLI wrote is kept
+and the transport's own error text replaced, that the verify shape is the one
+`internal/verify/verify.go` writes
+(every tail variant, the `FAILED` spelling, the `exit -1` a killed process
+leaves, and the 120-rune clip) and refuses a line it cannot, that the pinned
+matcher takes the IDs `junit.go` builds verbatim — pytest parametrisations, names
+with spaces or a bare comma, `TestFoo#01`, an escaped bidi character — and holds
+the warning globs to the CLI's own two, that the nullable Go
+fields may be null, and that the clock shift is drawn per run — all
+mutation-proven, and the vocabularies themselves pinned against the Go source by
+the drift test named above.
+
+**A test line carries its counts; no other kind carries any.** `Record.Summary`
+appends `, %d tests, %d failures` under `if r.Kind == KindTest` and nowhere else,
+so the grammar's first tail group is sliced off entirely for a build or a lint
+and required **whole** for a test. Requiring it whole is what the writer does, not
+a tightening for its own sake: every run writes it, and the 120-rune clip lands
+far past it, so a test line that stops at `(exit 0)` — or part way through the
+counts — is one no run can produce, and an earlier grammar took it as a clipped
+one. Both directions are tested (`fugaro verify build #5: passed (exit 0)` passes,
+the same line with counts does not), the clip test's cuts now start where the
+counts end, and the drift test reads the `KindTest` condition itself, since its
+segment scan skips the `if` line.
+
+**The scan pins the verify line's globs slot; nothing can pin its name slots.**
+The verify line is the one value whose middle the CLI fills from the repository
+it ran in — the test names its reports carry and the globs it was configured to
+read — so `scrub.ts` has two matchers for it. `isVerifySummary` is the scrub's
+rule and leaves those slots open on purpose: a real recording's test names are
+the writer's own output, and a vocabulary that refused one would refuse an
+ordinary run. The fixture's scan uses `isKnownVerifySummary`, the same grammar
+with the **globs** slot pinned to the two `commands.reports` defaults the CLI
+writes there with no configuration — any other glob is text the CLI was never
+given, and with an open slot `**/acme-payroll/*.xml` passed the scan too.
+
+The name slots are open in **both** matchers, and that is not a leftover: an
+earlier round pinned them to a character class that looked like Go test names
+(`[A-Za-z0-9_.:/\-#]` and `, `), which was wrong twice over. `internal/verify/
+junit.go` builds each ID as `classname + "." + name`, verbatim from the JUnit
+XML, so a pytest parametrisation (`test_mod.py::test_add[1-2]`, and one carrying
+`, ` of its own), a name with a space, the `#01` `go-junit-report` appends to a
+duplicated subtest, and the escape `internal/pluginwire` writes in place of a
+control or bidi character are all ordinary names — and a recording the pinned
+matcher refuses cannot be committed, which is the failure these vocabularies
+exist to avoid. What guards that slot is the fixture scan's forbidden-substring
+pass, which runs over the **whole** verify value, name list included: a
+`dimipaun/fugaro` planted in a failed-name slot is caught by that pass, not by
+the shape matcher.
+
+The warning sentence is not a slot in either matcher —
+`Record.Summary` writes one sentence there, and the drift test fails first if
+`verify.go` ever gains a second one.
+
+### The eight recordings, and why seven of them are missing
+
+Design §9.1 asks for eight cases, one recording each, and `FIXTURE_CASES` in
+`src/source/fixture.ts` is that list in that order:
+
+`normal`, `silent-then-lost`, `kill-mid-feed`, `repo-at-cap`, `oauth-notional`,
+`absent-field`, `gap`, `hostile-title`.
+
+**None of the eight exists on this tree, and the reason is not effort.** Three
+of them cannot be produced without a live sandbox doing real work: a run that
+stops heartbeating and then goes `lost` needs a real stalled run, a kill switch
+flipping mid-feed needs a real `budget kill` against the sandbox, and a
+repository at its cap needs real spend to accumulate. The other five could be
+recorded from a sandbox checkout, and they are missing for the same reason:
+**the recorder is the owner's to run, full stop.** They land here as
+`test/fixtures/<case>.ndjson`, one file per name in `FIXTURE_CASES`, which is
+the only naming `fixture.test.ts` accepts beside the two fixtures this tree
+writes from invented documents, `synthetic.ndjson` and `degraded.ndjson` — a
+stray file fails a test by name, while the owner's recordings do not have to be
+preceded by an edit to the suite. Until they land, `test/fixtures/` holds those
+two files and no recording at all, and each is labelled for what it is:
+
+```
+{"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/2","case":"synthetic",
+ "project":"<project>","synthetic":true,"records":6,"sha256":"24cdc5f829ce2bea6efb4336622c38d85066be5ea522af10ef51079d26415a0e",
+ "note":"synthetic: invented documents put through the same redaction path as a recording; never recorded from any installation or cloud"}}
+```
+
+(`degraded.ndjson` is Task 3.1's: a project with no budget backend, which the
+sandbox every recording is made against cannot be put into, so the degraded
+screen and the recorder cannot be exercised from the same fixture. Its header
+says `"case":"degraded"`, and `FixtureCaseName` names it for the same reason.)
+
+`synthetic` is deliberately **not** a member of `FIXTURE_CASES`: the eight are
+the recordings, and a reader who saw nine names would have to work out which one
+was real. The invented documents live in `test/unit/synthetic.ts`, not only in
+the committed file, and `fixture.test.ts` regenerates the fixture from them and
+asserts the committed bytes are exactly what comes out — **byte-identity, not a
+diff** — so a hand-edited fixture fails a named test even if its digest were
+recomputed by hand, and a reader can see which documents the file was made from
+without a decoder in their head. Those documents cover the axes a replay has to
+reproduce (a normal document, the next tick with the numbers moved, the degraded
+mode's sentence as a *notice*, a silent run, a 160-second gap with the run
+`lost`, and a run with fields the CLI omits), which is why one synthetic fixture
+is enough to make the harness exercisable while the real eight are missing —
+**and it is not a substitute for them.** No screen has ever claimed to be tested
+against real CLI output, and this section does not claim it either.
+
+### The redactor: deny-by-default, and fail-closed twice
+
+A recording is made on a real installation against a real project from a real
+checkout, so every document in it can carry the operator's world — their project
+name, their machine, their home directory, their repository names, their
+colleagues' addresses and branch names, and whatever a job wrote into a title.
+None of that belongs in a commit. `src/source/redact.ts` is what stands between
+a recording and `test/fixtures/`, and it is written to be told nothing:
+
+- **Every string is hostile until a rule has passed over it.** Two kinds of rule.
+  *Field classes*, where the key names what the value is and **the whole value
+  is replaced**: a repository (`repo`), a slug, a project (`project`,
+  `gcp_project`, `project_id`, `project_number`), a bucket, a path (`path`,
+  `dir`, `cwd`, `checkout`, `binary`, `config`, …), a host (`host`,
+  `hostname`, `ip`, …), a URL (`url`, `pr_url`, `log_url`, any `*_url`), a
+  credential (`token`, `secret`, `password`, `private_key_id`, any `*_token`,
+  `*_secret`, `*_password`, `*_api_key`, `*_session_id`, …; keys are read
+  through camelCase and hyphens, so `githubToken`, `X-Api-Key` and `sessionId`
+  are credentials too), a person or account (`requested_by`,
+  `author`, `user`, `actor`, `owner`, `account`, `oauth_account`, any `*_by`,
+  `*_email`; `by` everywhere except a report's break-down dimension), a branch
+  (`branch`, `base_branch`, `ref`, any `*_branch`), an opaque identifier
+  (`execution`), and a digest (`sha256`, `pushed_head`, …, kept only when it
+  is hex). A reserved key's **whole subtree** is its class (`{"branch":
+  {"name": …}}` is a branch all the way down), a **number** under a reserved
+  key becomes its marker (`project_number: 123456789012` is `<project>`), and a
+  number that is one of the literals becomes `[redacted]`. *Pattern classes*
+  apply to **every** string whatever its key is, and they read its **prepared
+  form**: NFKC first, then every default-ignorable, bidi and control character
+  stripped — so a fullwidth `＠` *is* an `@` before the address rule looks
+  (`ana.smith＠acme.com` is `redacted@example.invalid`, local part and all), and
+  a zero-width space, a soft hyphen or a bidi override cannot split an address
+  or a literal. A percent-encoded run is decoded (up to three rounds, so
+  `%2540` is an `@`) and anything a rule finds in it replaces the run:
+  `u=ana.smith%40acme.com` is `u=redacted@example.invalid`. The classes: a URL; a token (GitHub, OpenAI/Anthropic, Slack,
+  GitLab, npm, AWS, Google API key, access and refresh token, JWT, bearer
+  header, PEM block, a percent- or base64-wrapped one decoded first, a
+  `name=value` assignment whose name says secret, and any long high-entropy
+  run, so a token split across two fields loses both halves, and one split
+  across adjacent strings of an array loses every piece); an address in
+  any script, IDN domains included; a branch by its prefix or `refs/`; an
+  absolute path, consumed whole with its spaces and non-ASCII characters; a
+  repository path; a GCP project or bucket named in a sentence and the runs
+  bucket by name; an IPv4 or IPv6 address; a hostname; and the installation's
+  own literals, matched case-insensitively, with Cyrillic and Greek
+  look-alikes folded (`acme-dеvel` with a Cyrillic `е` is the literal), and
+  with a host literal's stem (`Zoras-Laptop-Pro.local` is also
+  `Zoras-Laptop-Pro`). **A person is identity wherever the document spells
+  them**: every person-class value is collected before anything is redacted,
+  and the same name anywhere else in the document — matched on whole words,
+  in any case, in NFKC, look-alikes folded, with any separator between its
+  words and last word first (`Ana  Smith`, `Ana-Smith`, `Smith, Ana`) — gets
+  the same pseudonym its field got. The CLI titles a queued run with no
+  workflow by its requester (`internal/watch/queued.go`), and `requested_by` is
+  the config's free-form `user:`, so without this a queued run's title carried
+  the name its `requested_by` had lost. **People and literals are replaced
+  after every pattern rule**, never before: a requester called `ya29`,
+  `password`, `local` or `42` would otherwise switch off the rule for a token,
+  an assignment, a host or an IP address. The names are a hash table of word
+  sequences, one scan of each string's words whatever the number of people, and
+  a document naming more than 4096 distinct persons (or a person in more than
+  16 words) is refused. A requester that is a contract keyword (`queued`,
+  `run`, `api`, ...) or the `-` placeholder is not a name, and the contract
+  fields (`run`, `id`, `stage`, `status`, `auth`, `health`, `deadline`,
+  `verify`, `outcome`, `mode`, `state`) are never rewritten by the person pass.
+  **A notice gets the person pass too, with the recording's people**: a notice
+  is free text with no fields, so the only names the redactor can know in one
+  are the ones the recording's documents named. The redactor keeps every person
+  any document named, and the recorder re-runs every notice through it once the
+  recording is over, so a notice written *before* the document that names its
+  person loses the name as well. A name no document in the recording ever
+  named is not found in a notice — there is nothing to find it by.
+  Every redacted document must be a **fixed point**: redacting it again must
+  change nothing, or the recording is refused. A document
+  with a key nobody anticipated still cannot carry an address out of the room, and a test per class holds each one — a run title, a
+  requester address, a repository name in the field *and* in a sentence, a
+  branch name, a POSIX and a Windows path (including the `/usr`, `/etc`,
+  `/System` and firmlink forms a prefix whitelist would have missed), a token by
+  shape and by key, a URL with userinfo, the installation's own literals, and an
+  address under a key nobody anticipated.
+- **A key is a string too, and it is the one string a rule cannot replace.**
+  Renaming a key would change a document's shape — `repo`, `title`, `day` and
+  `burn` are names the console reads — so a key that carries identity is a
+  **refusal** instead: `{"ana@example.com": …}`, `{"acme/secret-repo": …}`,
+  `{"/Users/ana/src/fugaro": 1}` and a key naming the installation's own project
+  all end a recording rather than travelling inside one that redacts to itself.
+  The audit walks keys with the same rules as values, and reads a key's *parent*
+  through an array index, so `{"kill":[{"by":"Ana Smith"}]}` is a person there
+  as it is in the object form. A `__proto__` key is refused rather than
+  silently dropped by the copy. **A refusal names no identity**: it names the
+  class and the path, prints a value as its length, and prints a key that is
+  not plain snake_case (or that itself carries a class) as its position
+  (`<key 3>`).
+- **Every rule runs in time linear in its input, and the input is capped.** A
+  pattern that can fail after scanning a run starts only at the start of that
+  run; the percent-encoded rule is a single character-class scan and a
+  hand-written decoder. At 96b81997 three rules were quadratic — 100 KB of
+  `a` took half a minute, and the recorder's 4 MiB line bound made that about
+  twelve hours inside the stdout handler, where the `--duration` timer cannot
+  fire. Now a megabyte of every shape that was quadratic takes well under a
+  second, and `redact-final.test.ts` holds each shape to a 4x-input / under-10x
+  time ratio. On top of that, a string or key longer than
+  `MAX_REDACTABLE_STRING_LENGTH` (64 KiB) and a feed line longer than
+  `MAX_REDACTABLE_LINE_LENGTH` (1 MiB) are **refused before any rule runs**,
+  never truncated; the loader holds the same string cap and a record line cap
+  of twice the line cap. A document nested deeper than 256 levels, a string
+  whose NFKC form is more than twice its length, and a document whose strings
+  together grow by more than 64 KiB under NFKC are refused too (a `RedactionRefusal`,
+  or a `FixtureRefusal` on load), never a raw `RangeError`.
+- **Redaction is a marker, not a deletion, and the markers are a closed set**
+  (`<path>`, `<project>`, `<bucket>`, `<host>`, `<branch>`, `[redacted-token]`,
+  `[redacted-url]`, `redacted@example.invalid`, `[redacted]`). A marked value is
+  unambiguous on sight, so nothing in a fixture can be mistaken for real data,
+  and a value that is *already* marked is left alone — which is what makes the
+  whole function **idempotent**, asserted as `redact(redact(x)) == redact(x)`.
+  Three classes keep a per-value pseudonym instead of a fixed marker — a
+  repository (`r-1a2b3c4d/r-5e6f7a8b`), a slug (`slug-1a2b3c4d`) and a person
+  (`person-1a2b3c4d`) — because a fixture with several repositories is only
+  worth having if the rows stay distinguishable. **A pseudonym is an
+  HMAC-SHA-256 under a per-recording random key**, drawn when the recorder
+  builds its redactor, held in a closure and never written anywhere: the same
+  repository is the same pseudonym within one recording and a different one in
+  the next, and the loader never needs the key. (An earlier version used
+  SHA-256 with a public salt cut to 32 bits; for a guessable name — an
+  organisation, a product — that is a lookup table away from the name, so it
+  was not one-way in any sense that mattered.) The synthetic fixture uses a
+  fixed, public, synthetic-only key so its bytes are reproducible; its names
+  are invented.
+- **It fails closed, twice.** A line that is not a JSON object is refused rather
+  than passed through, and every document is **audited** after redaction: if any
+  class is still present after the rules have run — any pattern class above, a
+  literal, or a reserved key whose value is not its class's marker — the call
+  throws. A bug in a rule is therefore a failed
+  recording, not a leaked fixture. The refusal names the class it refused on, so
+  a failed recording can be read rather than guessed at.
+- **It redacts identity, not hostility, and it does not invent data.** A
+  `<script>` in a title stays a `<script>`: the design wants a hostile-title
+  *recording*, and making text safe to *render* is the display layer's job (Task
+  2.0's `src/shared/sanitize.ts`), not the recorder's. Numbers, booleans, `null`
+  and an **empty string** pass through untouched — `pr_url: ""` is a run with no
+  pull request, not a URL to redact — because a fixture whose absent fields had
+  been turned into markers would be a fixture that lies about absence.
+
+**And the same audit runs on the way back in.** `loadFixture` audits every
+document and every notice it loads, so a fixture edited by hand after it was
+written is refused too, with `FixtureRefusal` naming the class. The loader is
+told no literals, but every other class — addresses, hosts, IPs, GCP names,
+branch and person fields, tokens, paths — needs no list, and is checked. **What
+the loader cannot check is a person's name in free text** — a title or a
+notice: it has no person table, so a name is only a name to it in a person
+field. A name in free text is kept out by the recorder's person pass above,
+not by the load-time audit, and a hand edit that writes one into a title or a
+notice is not refused on the way back in.
+
+### The format, and what the loader refuses
+
+A fixture is NDJSON: one header line and one line per record. The header is the
+file's paperwork — the format version, **the redactor that made it**
+(`redactor: "fugaro-console-redact/2"`), whether it is synthetic, which case it
+is, the project *as redacted*, how many records follow, and **a SHA-256 of the
+body**. The records are what the console replays: an arrival stamp and either a
+document or a notice, which is exactly the pair `decodeFeedLine` produces from a
+child's stdout.
+
+`loadFixture` verifies **before** it returns anything, and refuses by name at
+each step: the header parses; the format version is one this build knows; the
+redaction marker names a redactor this build knows; the body's digest matches
+the header's; **the header itself is redaction-clean**; the record count matches
+the header's; every record is a well-formed envelope with a non-decreasing
+timestamp; and every document and notice passes the redaction audit. The
+header's own audit is not decoration either: **the digest covers the body, not
+the header**, so a hand-edited `"project"` — a value `FixtureSource` hands a
+screen as the installation's name — would otherwise pass every check above it.
+**The digest is an unkeyed SHA-256 and proves nothing about who wrote the
+file**: anyone who edits a fixture can recompute it. It catches an accidental
+truncation or a partial edit, nothing more. What stands between a hand-edited
+fixture and a replay is the redaction audit, and, for the synthetic fixture
+only, the byte-identity test against `test/unit/synthetic.ts`. The redactor
+check is a version check: a fixture stamped by an older or unknown redactor is
+refused, because its contents were judged by rules that are not the ones in
+front of it.
+
+`FixtureSource` then implements the whole `FugaroSource` interface over one
+fixture, so every screen and every later test can be driven with no child
+process, no network and no installation. **The live feed replays the recording's
+own clock**: ninety seconds between two records is ninety seconds in the stream,
+the documents go through the same `FeedTracker` a real child's frames go
+through, and the notices arrive on the same stream in the same place. A fixture
+that replayed its records back-to-back would answer the wrong question — the
+eight cases are *about* time, and "a gap in the recording is a gap in the
+replayed stream" is what makes Task 3.1's `stale` tests mean anything.
+
+### The recorder's refusals are the point
+
+Everything the recorder does before it spawns is a refusal rather than a
+guess, and this is what makes it a tool an agent cannot be talked into
+misusing. `parseRecorderArgs` refuses, by name: a missing `--project` or
+`--gcp-project`; the project `belong`, however it is spaced or spelled (values
+are NFKC-normalised, stripped of whitespace and control characters, folded
+for Cyrillic and Greek look-alikes, lower-cased, and stripped of a trailing dot
+per segment before the check, so `bеlong` with a Cyrillic `е` and `belong.` are
+refused too); **any `--out` outside this repository's
+`console/test/fixtures/`** (any directory merely *named* `fixtures` was
+accepted once) or not ending `.ndjson`; an existing fixture without `--force`; an unknown flag; a
+`--duration` that is not a positive number; and a `--case` outside
+`FIXTURE_CASES` — a `--case wibble` would write `test/fixtures/wibble.ndjson`, a
+file `fixture.test.ts` then refuses, so the refusal would land on whoever
+replays the recording rather than on the invocation that made it. `OUT_OF_BOUNDS` also refuses a path
+carrying the fragment `.config/fugaro`, normalised for case and for Windows
+separators, so an invocation pointed at the operator's config stops before it
+spawns anything. And a recording that read **no document at all** is a refusal
+rather than an empty fixture: an empty file would look like a quiet installation
+rather than a failed run.
+
+The recorder never prints the child's documents, and it never echoes its
+stderr either — the operator's terminal is theirs, but a scrollback is a leak
+this tool will not create. A stdout line longer than
+`MAX_REDACTABLE_LINE_LENGTH` (1 MiB, the redactor's own bound) ends the
+recording before it reaches the redactor, so the buffer cannot grow without
+limit and no single line can hold the event loop. The child's stderr is **drained and discarded**:
+drained, because `planFor` gives the child a pipe and a pipe nobody reads fills
+up and then blocks the child's write, which would stall a recording of a CLI
+that logs; discarded, because a stderr line is raw CLI text rather than a feed
+frame, and putting it in the fixture as a *notice* would make the fixture claim
+`watch --json` wrote something it did not. It writes exactly one file: the
+fixture `--out` names, and only after the text has gone back through the real
+`loadFixture`. **The write is safe against links** (`writeFixtureFile`): every
+component from the console package down to `test/fixtures/` is `lstat`ed and
+refused if it is a symbolic link, the target's parent must be that directory by
+real path, a symbolic link at the target — dangling or not — is refused, and so
+is anything that is not a regular file **even with `--force`**. The text goes
+to a temporary file created exclusively (`wx`) in the same directory, then is
+linked into place (a new fixture; fails if something appeared meanwhile) or
+renamed over the regular file `--force` names.
+
+### The properties are tests, and each one fails under a mutation
+
+| Mutation | What fails |
+|---|---|
+| a title passed through untouched | "redacts run titles: the words stay, the people and the places go" |
+| the path rule narrowed back to a whitelist of first segments, or its leading-context lookbehind restored | "redacts the paths a whitelist of prefixes would have missed" |
+| the literal rule's lookbehind restored, so a literal glued to a word character or a slash is missed | "redacts a literal whose first character is not a word character, glued into a word" |
+| the repository rule back to two-character segments, so `and/or` becomes a repository | "finds a repository behind a host, and never invents one out of prose" |
+| keys left outside the rules and the audit | "refuses a key that carries identity, because a key cannot be renamed" |
+| `parentKeyOf` reading the raw trail, so an array index hides the parent | "reads the class of a key through an array index" |
+| a fixture in `test/fixtures/` with a planted address | "refuses a fixture whose records carry what the redactor removes" |
+| a fixture committed into `test/fixtures/` with a stale digest or a planted address | "loads every file in test/fixtures/, and refuses one that does not verify" |
+| `redactDocument` made non-idempotent | "redacting twice changes nothing" |
+| a frame that cannot be parsed passed through | "fails closed on a frame it cannot parse" |
+| the audit's throw turned into a return of the problems | "the audit accepts what redaction produces, and refuses what it does not" |
+| a repository pseudonym replaced by the value itself | "uses pseudonyms that are stable within a recording, and never the value itself" |
+| the pseudonym key made fixed or public again | "are keyed per recording, so a name list cannot rebuild them" (`redact-hardening.test.ts`) |
+| any rule or field class the security review of `b65fff5` added, removed or narrowed back | the test named after its class in `redact-hardening.test.ts` (addresses in any script, branch and account fields, hosts and GCP names, folded literals, token families, people and paths, the loader with no literals) |
+| `--gcp-project` optional again, or `belong` with a leading space accepted | "requires the GCP project, …" / "normalises a value before the out-of-bounds check" |
+| an `--out` in any directory named `fixtures` | "refuses an --out outside this repository's console/test/fixtures" |
+| the write following a symbolic link, overwriting a non-file, or `stat` in place of `lstat` | the four tests under "the write" |
+| the line buffer unbounded | "refuses a line longer than a feed line can be, before it reaches the redactor" |
+| the header's `sha256` left unchecked on load | "refuses a fixture whose hash does not verify" |
+| the header's `redactor` left unchecked on load | "refuses a fixture whose redaction marker this build does not know" |
+| the header left out of the redaction audit, so an edited `project` passes the digest and every check above it | "refuses a header that carries what the redactor removes" |
+| a fixture edited after it was written to carry an address | "refuses a fixture whose records carry what the redactor removes" |
+| the replay firing records back-to-back instead of on their stamps | "replays the recording on the recording's own clock" |
+| the committed synthetic fixture hand-edited, digest and all | "is exactly what the redaction path writes from the documents in source" |
+| a stray file in `test/fixtures/` — a hand-made copy, a recording under a name no case holds | "holds exactly the synthetic fixture plus, at most, one file per recorded case" |
+| a `--project` defaulted to the ambient project, `belong` accepted, an `--out` outside `fixtures/`, or a `--case` outside `FIXTURE_CASES` | "refuses an invocation that would record the wrong thing" (one table, one row per refusal) |
+| an existing fixture overwritten without `--force` | "never overwrites a fixture without --force" |
+| the spawn built from a hand-written argv instead of `planFor` | "is the console's live.watch plan, --project and all" |
+| the child's environment inherited instead of built | "gives the child CHILD_ENV_KEYS and nothing else" |
+| the redaction refusal swallowed, so the recording continues | "refuses rather than records when the redactor will not vouch for a frame" |
+| the fixture written before it is verified | "verifies the whole fixture before a byte is written" |
+| the child's stderr left undrained | "drains the child's stderr, and never records a byte of it" |
+| `SIGKILL` never sent to a child that will not go | "stops the child at the end of the duration: SIGTERM, then SIGKILL" |
+| the child left running after a refusal | "reports a refusal, and the child is stopped rather than left running" |
+| an empty recording written as a quiet-looking fixture | "refuses an empty recording rather than writing a quiet-looking fixture" |
+
+The red step was run as the plan writes it, on this tree: the title-passthrough
+mutation and the planted-address fixture both failed the tests named above, and
+the two workflow mutations the plan says to run first (a `console` job renamed,
+and one carrying `paths: ['console/**']`) were run with them — see the
+`docs/pending-workflows/console-tests.yml` section below for those two.
+
+Seven more were run after a review of this task, one per row above that names a
+mutation of the redactor or the recorder's arguments: the path rule restored to
+its whitelist and lookbehind, the literal rule's lookbehind restored, the
+repository rule's segments shortened to two, `auditKey` removed, `parentKeyOf`
+left reading the raw trail, `--case` accepted unchecked, and a `test/fixtures/`
+file written with a stale digest. Each failed exactly the test named beside it
+and nothing else, which is what makes the row a promise rather than a note. One
+mutation is *not* in the table because nothing failed it: dropping the
+repository rule's dotted host prefix. The widened path class reaches
+`github.com/acme/secret-repo` on its own, so that half of the rule is the second
+of two rather than the only one, and `src/source/redact.ts` says so where the
+rule is written.
+
+### What is deliberately not here (Task 1.4)
+
+- **The recordings.** Eight cases, owner-run, listed above and in
+  `FIXTURE_CASES`; one synthetic fixture stands in until they land.
+- **Any screen.** Nothing renders a fixture yet: `FixtureSource` is a
+  `FugaroSource` and no screen exists to consume one until Task 2.1 (Task 2.0
+  builds the text path and the document shapes those screens must go through).
+- **The wiring.** Nothing chooses a fixture, and nothing switches a running
+  console between the live source and a replay — that belongs with the Live
+  screen's task, beside the `handlersFor` wiring Task 1.3 left open.
+
+### Deviations from the plan's file list, said out loud
+
+Three additions and one move, each with its reason:
+
+- **`src/source/redact.ts`, not `tools/record-fixture/redact.ts`.** The plan puts
+  the recorder in `tools/`, and the recorder is the *writer* of a fixture — but
+  the rules are also the *reader*'s, because `loadFixture` audits every document
+  it loads with exactly these classes, and a fixture is only as safe as the rules
+  that made it. `src/source/fixture.ts` therefore has to import the module, and
+  `tsconfig.build.json` has `rootDir: "src"`: a file under `tools/` cannot be in
+  the app's build. The redactor lives next to the loader that depends on it, and
+  the recorder imports it from there. The plan's split is otherwise exactly as
+  written: recorder in `tools/`, format and loader in `src/`.
+- **`tsconfig.record-fixture.json`, `.gitignore`'s `.record-fixture/`, and
+  package.json's `record-fixture` script.** The plan's owner step is
+  `npm run record-fixture -- --out test/fixtures/<name>.ndjson`, and a command
+  that runs a TypeScript tool needs a build and a script to be that command.
+  The config is Node16 with `rootDir: "."` over `src/**` and `tools/**`, which
+  is what makes the tool's imports of `src/source/*` resolve as written at
+  runtime. `test/unit/pinning.test.ts` asserts the `test:unit` and `test:e2e`
+  scripts exactly and allows other scripts to exist, so this adds no exception
+  to a pin.
+- **`test/unit/synthetic.ts`** — the fixture suite's own module rather than a
+  helper inside `fixture.test.ts`, because it is also what the byte-identity
+  assertion of the committed file regenerates from.
+- **`test/unit/recorder.test.ts`** — the plan's file list names the redactor's
+  and the fixture's suites but not the recorder's. A recorder whose *refusals*
+  are untested is a recorder that can be talked into recording the wrong
+  project, and the refusals are most of what the file does before it spawns;
+  the suite holds every one of them, plus the spawn, the redaction of one line,
+  the header, a recording in progress and the whole tool end to end, against
+  stubs and never a real child.
+
+## Availability, sanitization and the text path (Task 2.0)
+
+Four modules, and the rule is the same rule four times: **a number the document
+does not carry has no number to draw, and a string a job wrote is text.** The
+desktop console's worst failure is not a crash — it is a screen that looks fine
+and says something the CLI never said: a subscription's spend drawn as billed
+money, a `0` for a cap nobody set, a hostile title turned into markup, a
+degraded document rendered as an empty feed. Each of those is now a type or a
+door rather than a convention a screen is asked to remember.
+
+The plan's red steps for this task are both here and both are real: removing the
+`textContent` writer (or planting an assignment to a markup-parsing property in
+`src/renderer/`) fails `sanitize.test.ts`, and making a missing number render as
+`0` fails `availability.test.ts`.
+
+### The five states, in one type every screen goes through
+
+`src/shared/availability.ts` is the contract's five states as a discriminated
+union — **measured**, **notional**, **estimated**, **unavailable**, **gap** —
+with the contract's own spellings for each (`NOTIONAL~`, `est.`, `n/a`, an em
+dash for a gap, `≥` for a floor) and one `formatReading` that is the only place a
+`Reading` becomes a string. A reading that is not measured carries a *sentence*
+saying why instead of a value, and the constructors refuse to build one without
+it, so `{ state: 'unavailable', value: 0 }` is not expressible.
+
+Two consequences worth naming, because both are bugs the tests were written to
+catch:
+
+- **`readNumber` is the one door.** The contract carries most numbers as
+  `*float64` (`internal/watch/json.go:54`), which makes `null` a normal value —
+  "no cap set", "no spend recorded" — and `0` a measured zero. One `JSON.parse`
+  apart, and a formatter that read `.value` without reading `.state` would draw
+  the wrong one.
+- **The sign is decided after rounding** (commit `670314f`). `-0.001` used to
+  draw as `-$0.00`, which is a claim that a repository spent below nothing. The
+  sign now comes from the rounded text a person actually reads, so a negative
+  that rounds away is drawn as zero and one that survives keeps its sign.
+
+### Eleven classes, deny-by-default
+
+`src/shared/sanitize.ts` is the display layer's **copy** of the recorder's rules
+(design §5.1 rule 7: the sanitization is re-applied here rather than trusted to
+have survived the subprocess boundary). It is a copy rather than an import
+because `src/source/redact.ts` reaches for `node:crypto` and the renderer has no
+Node; `sanitize.test.ts` holds the two vocabularies **equal by test** — the
+markers, the placeholders and the bounds by importing both, and the keep-or-drop
+decision over **free text** (the `sentence` class) by running both modules over
+the same inputs, one-directionally: this layer may change more than the recorder,
+never less — so drift on either side fails a test rather than a screen. The
+validating classes are not held to that equality, because they decide
+differently on purpose: the recorder replaces **every** `url` field with
+`[redacted-url]`, while the `url` class keeps a clean `https` link (and refuses
+one whose host, path, query or fragment carries anything the credential rules
+match, whose host has a random-looking label or an `xn--` label that is not
+valid punycode, or that is one of the well-known webhook URLs whose secret is a
+path segment, matched after the path's slash runs, dot segments and percent
+escapes are resolved and with any subdomain or trailing dots on the host);
+the recorder writes a keyed pseudonym where this layer, with no key, accepts the
+recorder's pseudonym or validates the value's shape.
+
+The host rule has a trade-off, said out loud: a host label with an unbroken run
+of 20 or more letters and digits that mixes both at 3.5 bits per character or
+more reads as a key, not a name, so a legitimate host built that way — a Netlify
+deploy preview's hash-prefixed subdomain, for one — is refused and drawn as
+`n/a` rather than as a link. A run broken by hyphens (`us-east-1`,
+`edgeweb-abc123xyz-ue`) is read piece by piece and kept.
+
+Every value is held to 64 KiB twice — as it arrives, and again after NFKC (which
+can grow a string eighteen-fold) — and a value past either bound is refused, not
+truncated.
+
+| class | admits | on anything else |
+| --- | --- | --- |
+| `sentence` | free text a job wrote, one line, invisible characters stripped, credential-shaped runs neutralised, every URL replaced | clipped at 512 characters, never refused (an empty title is a title) |
+| `label` | a short rendered field (`stage`, `round`, `verify`, `models`, `recipe`, `workflow`) | refused past 200 characters, or if it is not a single line |
+| `repository` | `owner/name`, at most 200 characters, no `..` | refused |
+| `slug` | the console's own slug grammar | refused |
+| `branch` | a git ref, no leading/trailing slash, no `.lock` | refused |
+| `project` | a GCP project name | refused |
+| `person` | a login or a pseudonym | an email address becomes `redacted@example.invalid`; anything else refused |
+| `runId` | the run-id grammar, or a marker | refused |
+| `host` | a machine name: every value, hostname, IP address or anything else, is drawn as `<host>` (a recorder marker is kept) | — |
+| `path` | a filesystem path | redacted to `<path>` |
+| `url` | `https`, a non-empty host, no whitespace, no credential in the host, a path segment, the query or the fragment (each read as written and percent-decoded: the token families, a credential-named assignment such as `access_token=…`, and — in the host, the query and the fragment — the high-entropy rule, which there also reads a run that follows a dot), no random-looking host label (the host is read as written and as parsed, whole and label by label, each `xn--` label also punycode-decoded; a run of 20+ letters and digits with both, at 3.5+ bits per character, is refused even case-folded), and not a well-known webhook URL (Slack `hooks.slack.com/services/…`, Discord `…/api/webhooks/…`, Microsoft Teams, Zapier, IFTTT, Telegram); userinfo is dropped | refused — including `http:`, `javascript:` and a URL carrying a credential |
+
+**The trade-off in the path, said out loud.** A path segment is not held to the
+high-entropy rule, because a commit link's 40-hex digest is a path segment and
+refusing it would refuse the forge's own URLs. So a secret that lives in a URL's
+path is caught only by a token family or by the webhook table: a service that is
+not on the table and keeps a shapeless secret in its path is drawn as it came.
+The table is the well-known shapes, matched on the parsed host (case-folded,
+trailing dot dropped) and the percent-decoded path, and a listed host's other
+pages (`discord.com/channels/…`) are kept.
+
+Every refusal is a **sentence about the class** ("it is not https") that names
+the field and never the value: a refusal that echoed its input would put the
+input on screen through the back door, which is the same failure it exists to
+prevent.
+
+### The entropy guard is copied with its guard, so a model name stays a model name
+
+The recorder's credential net ends with a high-entropy rule over runs of 20 or
+more token characters, and that rule has a guard (`isHighEntropy`): a run is a
+token only if it is a 32+ character hexadecimal run with both letters and
+digits, or if it mixes upper case, lower case **and** digits at 3.5 bits of
+entropy per character or more. A model name, a run id, a slug and a workflow
+name mix at most two of those three kinds, so the guard keeps them. Without it,
+`claude-sonnet-4-5-20250929` is a 26-character run of the net's alphabet and
+every run's model pair would be drawn as `[redacted-token]` —
+a redaction where there is nothing to redact, which is worse than a leak of a
+model name. The console's copy carries the guard, and the fixture's model pair is
+the standing witness: it is in the committed recording, and it survives decoding
+(`test/fixtures/synthetic.ndjson`).
+
+### The text path: three writers, and no fourth way
+
+`src/renderer/app.ts` is the only code in the console that touches an element,
+and it is deliberately narrow (`ElementLike`: a text slot and attributes — no
+markup slot, no style, no event handler):
+
+- **`putText`** writes a string through `textContent` and nothing else. A refusal
+  is drawn as `n/a` with the console's sentence in the `title` attribute.
+- **`putReading`** writes a number through `formatReading`, so a screen cannot
+  draw a bare `0` where the document said "not known".
+- **`putLink`** takes its destination from `safeUrl` and puts it in `data-href`
+  — **never** in the navigating attribute. The renderer therefore cannot
+  navigate even if a screen is written badly later: an element carrying
+  `data-href` is inert until the main process, behind Task 1.2's allow-list,
+  decides the URL may be opened at all. A redaction marker offered as a link is
+  text with a title instead, because "the CLI redacted this URL" is a different
+  fact from "there is no URL".
+
+`sanitize.test.ts` drives the plan's hostile-title corpus through all three
+writers into a **fake element whose every markup-parsing property and every
+navigational or event attribute throws**, so "the text path cannot become markup"
+is a fact a test holds rather than a property a reviewer reads for. The fake also
+records every mutation, so a test can assert that the *only* write that happened
+was a text write. The same file scans `src/renderer/` for the markup-parsing
+properties (and for `toFixed`, `toLocaleString` and `Intl.NumberFormat`, which
+are how a number escapes the availability model), and checks that the scan sees a
+planted one — a lint that cannot fail is not a lint.
+
+### Two document shapes, and neither is a guess
+
+`src/shared/schema.ts` is the door every document comes through. It admits
+exactly the two shapes the CLI writes and nothing else:
+
+- the live feed (`internal/watch/json.go`), and
+- `watchDegradedDoc` — `lsDoc` **embedded** plus `degraded: true` and a `notice`
+  (`internal/cli/watch.go:401`), for a project with no budget backend.
+
+The discrimination is the `degraded` key itself, not a guess about which fields
+happen to be present: a document with `degraded` must carry `true` (no version of
+`watch` writes anything else), a document carrying `degraded: true` *and* the
+live feed's identifying keys is refused as a contradiction, and a document with
+neither shape's keys is the **skew state Task 3.2 renders** — never an empty
+screen, which is the failure that looks like a working console.
+
+Three rules a reader would not guess, all taken from the wire:
+
+- **The identifying keys are the eight the degraded shape does not have.**
+  `project` and `runs` are in *both* (`lsDoc` carries them), so a marker list
+  including them refuses a real degraded document as a contradiction. This is
+  exactly the bug the first draft of the test caught.
+- **Numbers are the tolerant axis and keys are not.** An absent or `null` number
+  is an unavailable reading with a sentence; an absent *string* key a screen
+  reads is a refusal by name (`runs[0].round`, `missing`).
+- **An unknown key is a refusal, and the key is text.** A document with a key
+  this console does not know is refused by name rather than half-drawn, and the
+  name goes through the sanitizer before it reaches a banner — a key shaped like
+  a credential is neutralised and a key no class admits is not drawn at all.
+
+The tests hold the plan's four claims, and three mutants die on them: reading a
+degraded document as a live one (4 tests), reading a missing number as `0` (3
+tests), and a shape that stops refusing unknown keys (2 tests).
+
+### The corpus was corrected against the wire, not against itself
+
+`synthetic.ts` and the committed recording now say what the Go source writes,
+which is not what the previous draft of the fixture said:
+
+- **`round` is a string**, not an int: `strconv.Itoa(e.Round)`, and `"-"` for a
+  run whose round is not known (`internal/watch/build.go:403`). A console that
+  typed it as a number would pass every fixture until a queued run arrived.
+  `schema.test.ts` has that near-miss as its own red step.
+- **`kill` is `null` when the switch is off**, not absent (`json.go:134`: the
+  field has no `omitempty`).
+- **The `omitempty` keys are absent, not empty** (`recipe`, `halted`, `queued`,
+  `stuck`, `workflow`, `requested_by`, `queued_note`), and `queued_note` is
+  therefore the one live key the corpus does not carry — asserted, so that a key
+  added to the shape and never carried by a document fails the walk.
+- **A queued row carries a dash in each of the five fields it has no value for**
+  (`round`, `verify`, `models`, `auth`, `internal/watch/queued.go:40`), with
+  `spent_usd: null`.
+
+The fixture is regenerated from `synthetic`, and `fixture.test.ts` asserts the
+committed bytes are exactly what the module produces, so an edit to the corpus
+that is not committed (or the reverse) fails.
+
+### The fake secrets, and why every one is built at run time
+
+`test/support/fakeSecrets.ts` is the one addition to the plan's file list for
+this task, and it exists for the reason below. It assembles every secret-shaped
+test input by concatenation — `gh` + `p_` + 36 characters, a PEM header from pieces and a body
+of repeated `A` — and no line of this task's files carries a shape a scanner
+matches. A fake token that is a *literal* is indistinguishable from a leaked one
+to GitHub's push protection and to a reader, and the console's own tests would be
+the last place to find out.
+
+The rule is now a test rather than a habit: `test/unit/secret-hygiene.test.ts`
+walks `src/`, `test/`, `tools/`, `docs/`, `README.md` and `package.json` and
+fails on the first line matching a credential shape — the forges' prefixes, the
+vendors' keys, a JWT's first segment, a PEM header — with the patterns themselves
+assembled from fragments and the scan checked against a planted line, so a scan
+that cannot fail is not mistaken for one that passes. Turning the rule on it
+found and removed twenty literal lines left by Task 1.4's own suites, across
+five files, one of them a 36-character body that is exactly what a leaked GitHub
+token looks like -- and every test that had been running against them still runs
+against the same strings, assembled at run time. And
+`TOKEN_RES`'s first pattern in `src/source/redact.ts` is now built from
+fragments, character-for-character the expression it was.
+
+### What is deliberately not here (Task 2.0)
+
+- **Any screen, and the wiring to the bridge.** `app.ts` has the writers and
+  nothing else: no screen, no entry point, no decision about where the compiled
+  script is served from (`tsc` emits `dist/`, `src/main/index.ts` serves
+  `src/renderer`, and one of the two has to move). Those are Task 2.1's.
+- **The skew banner itself.** `schema.ts` produces the state Task 3.2 draws; this
+  task does not draw it.
+- **The loader's share of the fixture decision.** `loadFixture` already refuses a
+  fixture whose header, redaction marker or hash does not verify (Task 1.4); this
+  task reads none of that and adds no second format.
+
+### The deep-nesting failure, and how it was closed
+
+`test/unit/redact-persons.test.ts` — "refuses a document nested 10000 deep as a
+`RedactionRefusal`, and the loader as a `FixtureRefusal`" — used to fail with
+`RangeError: Maximum call stack size exceeded` from `JSON.stringify` in
+`src/source/fixture.ts`. It was inherited: it failed identically at `43c6dd7`,
+this branch's head before Task 2.0 began. It is **now green**, and the fix is in
+the writer rather than in the test: `writeFixture` serialises with
+`stringifyDeep`, which walks the document with an explicit stack instead of the
+engine's recursion, so a document deep enough to exhaust the stack is
+serialised and the loader refuses it as the `FixtureRefusal` the suite expects.
+`fixture.test.ts` holds the new writer to `JSON.stringify`'s bytes on a table of
+awkward cases — empty containers, `undefined` in objects and in arrays,
+non-finite numbers, escaping, `toJSON` nested and returning `undefined` — and
+carries the 10 000-deep document as its own case.
+
+## The installation store, and the picker window (Task 3.4b)
+
+The console is pointed at an **installation** — a project name, the path to a
+`fugaro` binary, the path to that installation's config, and optionally the
+checkout directory (design D13). This task is where the list of them is kept and
+where the operator picks one.
+
+### The store: one bounded, schema-checked, `0600` file
+
+`src/main/installations.ts` owns it. It is the second of the **two files the app
+writes** (design §5.1 rule 10, §7.4), and the owner ruled it in on 2026-10-18
+(**C8**) rather than letting it grow by accident:
+
+- **`installations.json`, in the app's own `userData`**. Electron names that
+  directory after `package.json`'s `productName`, else its `name`; this
+  package sets no top-level `productName`, so a development run (`electron .`,
+  the e2e specs) uses `fugaro-console`, and a packaged build may use
+  electron-builder's product name, `Fugaro Console`. Neither is the CLI's
+  `fugaro`, and `test/unit/installations-store.test.ts` reads both names from
+  `package.json` and checks them. It is written `0600` inside a `0700`
+  directory.
+- **Tuples only** — `id`, `project`, `binaryPath`, an optional `configPath` and
+  an optional `checkout`. **Never a credential**, and **never read from the
+  operator's CLI config**: rule 7 forbids that outright, and the store's only
+  touch of a config path is a `stat` (see `test/unit/configread.test.ts`).
+- **It refuses to live under the CLI's own configuration.** `installationStorePath`
+  throws if `userData` is inside `~/.config/fugaro`, `$XDG_CONFIG_HOME/fugaro`
+  or the directory `$FUGARO_CONFIG` names, so the console's file and the CLI's
+  cannot be confused for one another. The picker catches that refusal: the
+  console still starts, with **no store**, and the picker and the dashboard say
+  why (a `$FUGARO_CONFIG` of `~/fugaro.yaml` inherited from a shell is the case
+  that reaches it, since every `userData` is under the home directory). `cliConfigDirectories` takes `home` as an
+  argument rather than calling `homedir()`, because the console's own guard
+  forbids that call outside binary resolution.
+- **Schema-checked on read, and closed.** `readInstallationFile` refuses a file
+  whose top-level keys are not exactly `version`, `active`, `installations`, an
+  entry with a key outside `INSTALLATION_KEYS`, a duplicate id, an id that is
+  not 16 hex characters, a project name that is not one, a path that is not
+  absolute or is too long — **an unknown key refuses the whole file** rather
+  than being ignored, because a file the console only partly understands is a
+  file it must not act on. A missing file is an empty list, not a failure.
+- **A regular file, or nothing.** The read `lstat`s the name and refuses a
+  symbolic link, a FIFO or anything else that is not a regular file, then opens
+  it `O_NOFOLLOW | O_NONBLOCK`, re-checks it with `fstat`, and reads at most one
+  byte past the bound from that descriptor — so a FIFO cannot hang startup and
+  a file that grows between the checks is still refused.
+- **Bounded.** `MAX_INSTALLATIONS` (16) and `MAX_INSTALLATION_FILE_BYTES`
+  (64 KiB, refused unread past it). The bound is re-checked **after** the
+  `await` in `add`, because validation spawns a child process and two adds can
+  be in flight at once — the pre-await check alone let a 17th through.
+- **Written atomically.** A temporary file in the same directory, then a
+  `rename` over the old one, so a crash mid-write leaves the previous list
+  intact rather than a truncated one. The test that proves it injects an `fs`
+  whose `rename` throws `ENOSPC` and asserts the previous bytes are untouched.
+- **Nothing is written on the refusing path, and nothing on a read.** The
+  `recordingFs()` in `test/unit/installations-store.test.ts` asserts **no write
+  at all** until an `add`, a `choose` or a `remove` — a load, a `list` and a
+  `current` write nothing.
+
+The file is Electron-free, and the store's filesystem is injected as
+`InstallationFs`, so every property above is a plain-Node unit test.
+
+### Validation: the binary is proved, not trusted
+
+`validateInstallation` refuses anything that is not an **absolute** path to a
+file that **exists**, is a **file** and is **executable**, and then runs that
+installation's own `version` handshake through `probeInstallation` — so a
+candidate is stored with the `CliCompatibility` the console actually read from
+*that* binary, not from whichever `fugaro` happens to be on `PATH` (rule 4). A
+binary below the hard floor is refused and **nothing is stored**; a binary in
+the reduced range is stored and its row says `reduced`. The CLI's own pairing
+check (`doctor --json`) then runs on every add as one allow-listed spawn, and a
+checkout that belongs to another project is refused **with the CLI's sentence
+shown** and not stored — the console never reads `fugaro.yaml` itself (rule 7).
+Every probe of an add or a choose runs from the checkout when one is given and
+from the console's private directory otherwise — never from the binary's own
+directory — and is in the spawn log, with the candidate's project, when the
+operator has turned the log on.
+
+`isProjectName` is deliberately **stricter** than the spawn layer's
+`isSafeInstallationValue`: the latter allows a space, because a path may contain
+one, while a project name may not.
+
+### D13's semantics, which the store implements
+
+`--project` is passed on **every allow-listed command except `version`** — and
+`--config` follows it whenever the installation declares one and is not the
+ambient installation. The `version` handshake stays bare (`COMMANDS_WITHOUT_PROJECT`),
+because `newVersionCmd` is `cobra.NoArgs` with no flags, so `--project` on it
+would be refused by the CLI rather than ignored.
+
+### The picker: a separate window, its own document, its own preload (C9)
+
+The owner fixed the shape on 2026-10-18 (**C9**): the installation picker is
+**its own small window, opened from the app menu** — not a control in the
+dashboard's header. `src/main/picker.ts` builds it:
+
+- `installations.html` is a **second document on the same origin**
+  (`app://console`), served by the same protocol handler, with the same
+  byte-identical CSP and the same hardened `webPreferences`. It needs no
+  protocol change: the bundle handler already serves any path under the root.
+- **Its own preload**, `src/preload/installations.ts`, exposing exactly the
+  eight rows of `INSTALLATION_OPERATIONS` under `fugaroInstallations`. It
+  imports nothing from `src/main/` — the mirror is written out a second time,
+  the same way the dashboard's preload is, and `test/unit/installations-ipc.test.ts`
+  asserts the two lists are equal.
+- **The channels are `fugaro:installations/…`, and the sender gate is
+  per-document.** The two documents share an origin, so an origin check alone
+  would let the dashboard's frame call the picker's channels and vice versa.
+  `isSenderOnDocument(event, entryUrl)` adds the document path to the check, and
+  the test drives it **both ways**: every picker channel refuses the dashboard's
+  frame, every dashboard channel refuses the picker's.
+- **The renderer never names a path.** `add` takes its three paths as **pick
+  tokens** — single-use, kind-bound capabilities the main process issues for a
+  path *it* chose in a native dialog. A literal path is refused by shape
+  (`binary is not a path this console offered`) before any redemption, and a
+  replayed token is refused (`binary is not an outstanding choice`). At most
+  `MAX_OUTSTANDING_PICKS` (8) are outstanding, the oldest is dropped past the
+  bound, and every token is dropped when the window closes.
+- **The menu is the only way in.** `installationsMenuTemplate` adds
+  `Installations…` (and `Quit`), beside Electron's own Edit and Window menus so
+  the editing and window shortcuts keep working; the window is opened by that
+  item and by the first run (`openOnFirstRun`, which opens only when no
+  installation has been chosen).
+- **One mutation at a time.** An add, a choose or a remove runs only after the
+  one before it has finished — for a choose, after the window it asked for is
+  up — and the picker's controls are disabled while a request is in flight, so
+  two quick chooses cannot leave two dashboards open.
+
+`src/main/index.ts` wires it in: `installInstallationPicker(...)` with Electron's
+own `BrowserWindow`, `session.defaultSession`, `ipcMain`, `dialog`, `Menu` and
+`app`, then `installMenu()`, then `openOnFirstRun()` after the handshake has
+settled. The picker keeps the registry, and `picker.installation()` is the
+seam the renderer entry (Task 3.4a) needs to answer the dashboard's
+`installation.current` row.
+
+### What is deliberately not here
+
+- **The dashboard's join, and the choose.** `src/source/source.ts` answers
+  `installation.current` from an **optional** `installation` dep, defaulting to
+  D13's "no installation has been chosen" state; since the merge with Task
+  3.4a, `src/main/index.ts` passes `picker.installation` in. A choose runs the
+  handshake for that installation in the picker and hands the answer to
+  `lifecycle.choose` (`src/main/window.ts`), which registers the surface if it
+  was not yet and reopens the window through `openWindowFor`. The startup
+  handshake reads the stored active installation's binary — **that binary and
+  no other**: a stored binary that is missing or not executable is a refusal,
+  never a fall through to another `fugaro` on the machine — with its project,
+  and its answer is what `installation.current` and the picker's rows report
+  (an installation nothing has read in this run says `unknown`, never `ok`).
+  The dashboard draws one line from that read and no figure: the project, the
+  binary, the version and mode, or the no-installation sentence and, when the
+  store's file was refused, its path and why. Binding
+  a `CliSource` to it is Task 3.4c's: until then the dashboard's reads answer
+  `NO_ACTIVE_INSTALLATION`.
+- **`build.files`.** The packaged app must carry everything it loads at runtime.
+  Task 4.1 (#540) wrote the list and Task 3.4a moved the served root to the
+  bundler's output; this task adds its two files to it. `build.files` carries
+  the documents the handler serves, as the bundler's copies of
+  `src/renderer/index.html`, `src/renderer/refusal.html` and
+  `src/renderer/installations.html` in `dist/bundle/`; the two bundles,
+  `dist/bundle/console.js` and `dist/bundle/installations.js`; the two preloads
+  a window loads by absolute path, `dist/preload/index.js` and
+  `dist/preload/installations.js`; and the compiled main process, shared and
+  source modules under `dist/**` except the two Task 4.1 excludes by name.
+  `test/unit/build-files.test.ts` reads that list off the tree rather than
+  repeating it, so a third document or a third preload is covered when it is
+  added, and a file that works here but is missing from the shipped bundle
+  fails a named test instead of shipping.
+- **The picker's bundle entry** is the bundler's second entry
+  (`pickerBundlePaths` in `tools/bundle-renderer/index.ts`): `npm run build`
+  writes `dist/bundle/installations.js` beside `console.js`, each bundle step
+  told the other's name so the served root still refuses any file it did not
+  write, and `SERVED_FILES` names both documents and both scripts.
+- **A picker e2e spec.** The picker's coverage is
+  `test/unit/installations-store.test.ts`, `test/unit/installations-ipc.test.ts`
+  and `test/unit/installations-view.test.ts` (the last drives the view over a
+  fake document built from the ids `installations.html` declares, because the
+  console has no jsdom dependency);
+  a Playwright spec that drives the second window is a follow-up, because a
+  window-opening spec cannot be checked by hand in a worker with no display.
+
+## `docs/pending-workflows/console-tests.yml`
+
+The console's own CI is **staged, not applied**, and Task 1.4 is the task that
+stages it — see `docs/pending-workflows/README.md` for the file itself and the
+one command that applies it. Two things about it belong here, because they are
+about this directory rather than about the workflow:
+
+- **The file is `console-tests.yml`, tests only, and it holds no secret of any
+  kind.** The signing, notarising and stapling workflow is Task 4.2's
+  **separate** `console-release.yml`, precisely so that a file which runs on
+  every pull request from any branch never sits next to the Apple material
+  (design §9.4).
+- **The job runs unconditionally, and that is what makes it gate-able.** It has
+  no `paths:` filter and no job-level `if:`, and its key is `console`. The two
+  check runs it reports are `console (ubuntu-latest)` and
+  `console (macos-latest)` — GitHub appends a matrix job's values to its
+  check-run name, so there is no check run named exactly `console` — and **Task
+  4.6 adds those two names to `scripts/release-gate.sh`'s `names` array**. From
+  that edit on, the gate requires both on a tag's commit and, in its
+  `identical_tree_checks` fallback, the same names on the
+  pull request head whose tree matches; **a check that does not exist is not a
+  success and neither is a skipped one**, so a `console` job filtered to
+  `console/**` would then make the gate refuse **every** release tag in this
+  repository, including the ones that never touch the console (design §9.4;
+  plan Task 4.6). Two tests in
+  `internal/cli/docs_desktop_console_test.go` —
+  `TestConsoleTestsWorkflowIsStagedAndPinned` and `TestConsoleWorkflowJobIsGateable`
+  — assert the pins, the absence of any secret, the job's name and the absence
+  of a filter or a guard, and byte-identity with the copy under
+  `.github/workflows/` once the owner has applied it.
+
+**Tasks 1.0 to 1.4 merged with no console CI at all.** The copy-in is Task 1.5,
+and it has now happened (the line below names the commit): the pinned
+toolchain, the hardened window, the IPC allow-list, `FugaroSource` and the
+fixtures were written, reviewed and merged on the strength of a reviewer's
+machine, and no workflow ran a console test on any of their pull requests.
+
+Tests workflow applied at commit 8a17d941 (`Add console workflow`, on the `console` branch): the owner copied `docs/pending-workflows/console-tests.yml` to `.github/workflows/console-tests.yml` unchanged. Tasks 1.0 to 1.4 merged before that commit and had no console CI; commits after it are covered by the console's checks (`console (ubuntu-latest)` and `console (macos-latest)`).
+
+## The macOS bundle, its entitlements and its fuses (Task 4.1)
+
+The console is packaged by **electron-builder**, configured entirely in
+`package.json`'s `build` key, and `src/main/fuses.ts` is the `afterPack` hook
+that flips the Electron fuses into the binary before the packer signs it.
+`test/unit/entitlements.test.ts` and `test/unit/fuses.test.ts` assert every part
+of that: the entitlement set exactly, each fuse by name, what the hook passes
+and what it verifies, and the rest of the build configuration.
+
+### The minimum entitlements, and why each withheld key is withheld
+
+`entitlements.mac.plist` grants **one** entitlement:
+
+| Key | Why |
+|---|---|
+| `com.apple.security.cs.allow-jit` | The hardened runtime denies memory that is both writable and executable, and V8 needs it for its JIT — without it Electron aborts at startup on arm64. The JIT is V8's, inside the framework this app is built on; the console has none of its own. |
+
+Everything else is deliberately absent, and the plist says so in its own comment
+rather than leaving a reader to infer it from a short file — the argument for
+each, in one line:
+
+- **`com.apple.security.cs.disable-library-validation`** and
+  **`com.apple.security.cs.allow-unsigned-executable-memory`** are the pair every
+  Electron tutorial adds "just in case", for plug-ins that load their own
+  libraries and bring their own JIT. The console loads **no plug-in and no native
+  module of its own**: its runtime surface is Node's own modules, the Electron
+  framework, and the processes of the CLI it spawns. This is the entitlement the
+  design's §12 item 4 leaves open, and the answer here is "not needed, and here
+  is the reason" — not "probably not needed".
+- **`com.apple.security.cs.allow-dyld-environment-variables`** is the macOS twin
+  of the `NODE_OPTIONS` hole the fuses close: an environment variable that turns
+  into code in our process.
+- **`com.apple.security.cs.debugger`** and **`com.apple.security.get-task-allow`**
+  let another process attach to a hardened-runtime app; `get-task-allow` is a
+  development entitlement, and nothing here builds a debug variant.
+- **`com.apple.security.app-sandbox`** is a Mac App Store key (§D4), and a
+  sandbox key with no container and no file entitlements is a claim with nothing
+  behind it.
+- **The device, network and file keys** are refused by design rather than
+  omitted: the renderer reaches no network and no device and every permission
+  request is denied in the main process (§5.1 rule 9), and the only process that
+  talks to a network or reads a checkout is the CLI, which is a separate binary
+  with its own signature.
+
+`entitlementsInherit` points at the **same file**, and that is what makes the
+minimum a property of the whole bundle rather than of its outermost binary:
+electron-builder's own `templates/entitlements.mac.plist` — the file it uses for
+**both** `entitlements` and `entitlementsInherit` when neither is set
+(`macPackager.js`, `getEntitlements`/`getEntitlementsInherit`) — grants all
+three of `allow-jit`, `allow-unsigned-executable-memory` and
+`disable-library-validation`. Naming this file for both is therefore the edit
+that takes the plug-in pair out of the signature, not a tidiness preference; the
+suite asserts both keys, so deleting one is a red test rather than a quiet
+return to the template.
+
+**Unverified, and named as such in the plist.** This repository has never
+produced a signed build. The claim above is an argument from the bundle's
+contents; Check 59a — owner-run, on a Mac with a Developer ID certificate — is
+where it becomes a measurement, and `codesign -d --entitlements -` on the built
+bundle is the command that prints what was actually granted.
+
+### The six fuses, and the two left alone
+
+Flipped in `afterPack` over `@electron/fuses` 2.0.0, and these are the six the
+design's §5.1 rule 4 names — with the two this build does *not* touch named too,
+because "left at its upstream default" is a decision and not an oversight:
+
+| Fuse | Value | Why |
+|---|---|---|
+| `RunAsNode` | **disabled** | `ELECTRON_RUN_AS_NODE=1` must not turn the shipped console into a Node interpreter — for anyone who can execute the file, not just the owner. |
+| `EnableNodeOptionsEnvironmentVariable` | **disabled** | `NODE_OPTIONS=--require …` is code injected through the environment. |
+| `EnableNodeCliInspectArguments` | **disabled** | `--inspect` must not attach a debugger. |
+| `EnableEmbeddedAsarIntegrityValidation` | **enabled** | The app loads only if its asar is the one that was packed. |
+| `OnlyLoadAppFromAsar` | **enabled** | The app loads from `app.asar` and nowhere else. |
+| `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
+| `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
+| `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
+| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Beyond the pin: Electron 44.7.2's wire holds **nine** fuses and `@electron/fuses` 2.0.0 names eight, so this one cannot be set through the pinned package at all. It is V8's WebAssembly bounds-check strategy: it loads no code, reads no environment variable or flag, and the console runs no WebAssembly. `BEYOND_PIN_FUSES` in `fuses.ts` records it with its default, and the hook verifies the default. |
+
+Three properties of the hook are worth stating here, because they are what make
+the six a fact rather than an intention:
+
+- **It verifies what it wrote.** `flipFuses` reports how many fuses it changed,
+  not what the binary now holds — so a table entry carrying the index of the fuse
+  above it flips the wrong byte with nothing from the packer to say so. The hook
+  reads the fuse wire back and fails — naming the fuse and the binary — if a flip
+  did not take. (It is *not* a guard against a path that is not an Electron
+  binary: the pinned `@electron/fuses` refuses that itself, both calls rejecting
+  with "Could not find sentinel in the provided Electron binary", which
+  `fuses.test.ts` asserts rather than assumes.)
+- **It refuses a platform that is not darwin** instead of skipping. A build on
+  any other platform would produce no `Contents/MacOS` bundle to flip, and a
+  silently skipped hook is the one outcome that ships the fuses unset.
+- **It refuses a wire it has not accounted for.** After the flips, the hook
+  compares the wire's length with the fuses `fuses.ts` decides about (six
+  flipped, two left alone, one beyond the pin: nine) and stops the build if they
+  differ, so an Electron bump that adds a fuse cannot reach the signer
+  unexamined. The three fuses it leaves alone are checked **by value** too: the
+  two left-alone fuses must still be disabled and `WasmTrapHandlers` enabled,
+  the defaults the pinned Electron 44.7.2 ships, or the build stops.
+  `fuses.test.ts` also reads the real binary's wire when
+  `node_modules/electron/dist` is installed, and on macOS runs the real hook over
+  a copy of it in a temporary directory; without the binary those two tests skip
+  and say why. **CI never runs those two**: the console job's unit step runs
+  after `npm ci --ignore-scripts` and before anything downloads Electron, so
+  there they skip. They are owner-run verification: step 2 of the owner's
+  commands below runs them by name, on the Mac, after the download.
+- **It is the only flipper.** `build.electronFuses` is deliberately unset, so
+  electron-builder's own fuse support cannot run a second, untested
+  configuration over the same binary.
+
+`resetAdHocDarwinSignature` is deliberately **not** set, and the reason is an
+ordering fact: `@electron/fuses` requires it only when the app is not signed
+immediately after the flip ("otherwise the app will refuse to launch with code
+signature validation errors" — its README, Apple Silicon section), and
+electron-builder signs *after* the `afterPack` hook, in the same run. The
+consequence for the owner is the next section's first line.
+
+### The owner's commands, exactly
+
+Run from `console/` on the Mac that holds the Developer ID certificate. The
+variables are **names only** — no value of any of them appears in this
+repository, and `package.json` names no signing identity at all. The order is
+the point: everything that installs or downloads runs **first**, in a shell with
+no secret in it, and the signing material exists only in the environment of the
+one command that packages — an environment built from nothing (`env -i`), so an
+ambient `GH_TOKEN`, a cloud credential or anything else the owner's login shell
+carries is not in it.
+
+```sh
+# 1. Install, with no secret in the environment. Lifecycle scripts stay off:
+#    every package, the packer included, comes from package-lock.json (exact
+#    version, integrity hash, registry host -- lockfile.test.ts).
+npm ci --ignore-scripts --no-audit --no-fund
+
+# 2. The one install step the tree needs, run explicitly: Electron's own
+#    download of its distribution, verified against the checksums.json in the
+#    pinned package. Packaging does not use it (see below); the tests do.
+node node_modules/electron/install.js
+npm run test:unit
+# The two real-binary fuse tests, on their own: they need the distribution
+# step 2 downloaded, and CI never runs them (its unit job runs before anything
+# downloads Electron, so there they skip). The output must read
+# "2 passed", with neither skipped.
+npm run test:unit -- test/unit/fuses.test.ts -t 'the pinned Electron binary itself'
+
+# 3. Package, in a subshell (so the `exit` below ends it, not your terminal),
+#    with an environment built from nothing. Only files and identifiers go on
+#    a command line: CSC_LINK is a FILE PATH to the exported .p12 (Developer ID
+#    Application), never its base64 inline, and APPLE_API_KEY is the path of the
+#    .p8. The one secret VALUE, the certificate's password, never touches argv:
+#    the inner shell reads it from the terminal and exports it to the packager.
+#    Notarisation activates by itself when one credential triple is present
+#    (electron-builder 26 has no "turn it on" flag, only a disable switch); the
+#    App Store Connect API key is the recommended one -- the alternatives are
+#    APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID, or APPLE_KEYCHAIN +
+#    APPLE_KEYCHAIN_PROFILE: one triple, not three.
+(
+  test ! -e electron-builder.env || { echo 'remove console/electron-builder.env first' >&2; exit 1; }
+  env -i \
+    PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin" \
+    HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
+    NO_UPDATE_NOTIFIER=1 CI=1 \
+    CSC_LINK="$HOME/<private dir>/developer-id-application.p12" \
+    APPLE_API_KEY="$HOME/<private dir>/AuthKey_<key id>.p8" \
+    APPLE_API_KEY_ID="<key id>" \
+    APPLE_API_ISSUER="<issuer uuid>" \
+    /bin/bash --noprofile --norc -c '
+      IFS= read -rs -p "Developer ID certificate password: " CSC_KEY_PASSWORD </dev/tty
+      echo >&2
+      export CSC_KEY_PASSWORD
+      exec npm run package   # npm run build && electron-builder --mac --universal --publish never
+    '
+)
+```
+
+Why each of the variables that are not secrets is there:
+
+- `NO_UPDATE_NOTIFIER=1` and `CI=1`: electron-builder's CLI (`cli-util.js`)
+  runs `simple-update-notifier`, which contacts `registry.npmjs.org` from the
+  shell holding the secrets, unless `NO_UPDATE_NOTIFIER` is set or `ci-info`
+  reports CI. Both are set; `CI` turns nothing on here that matters, because
+  publishing is off from both sides (below).
+- `PATH` is the Node that installed the tree plus the system directories
+  `codesign`, `xcrun` and `hdiutil` live in, and nothing from the owner's
+  profile.
+
+**`console/electron-builder.env` must not exist.** The same `cli-util.js` loads
+`electron-builder.env` from the working directory into the environment before
+it builds, so a file there would add variables the `env -i` above was written to
+keep out — and, if it held secrets, put them in a file in the checkout.
+`fuses.test.ts` asserts the file is absent and that `build.files` could not
+ship it.
+
+**The window that remains, said plainly.** The password is in the environment
+of the packaging processes (the inner shell, npm, `tsc`, electron-builder and
+what they start) for the length of the build, where any process running as the
+owner's user can read it (`ps eww`, for one); and electron-builder itself hands
+it to `/usr/bin/security import … -P <password>` on a command line for the
+moment it imports the certificate into its temporary keychain
+(`codeSign/macCodeSign.js`), which the pinned packer does and this repository
+cannot change. The `.p12` and the `.p8` are files whose paths, not contents,
+are passed; keep them `0600` in a directory only the owner can read.
+
+**What still runs with the secrets present**, said plainly: `npm run package`
+runs `tsc` (`npm run build`) and then the whole electron-builder tree, and every
+line of both can read the environment. The mitigation is the pins, not
+isolation: the tree is exactly the lockfile's (exact versions, integrity
+hashes, one registry host, installed with scripts off in step 1, before any
+secret existed), `npmRebuild` is off so no install script runs at pack time,
+the Electron archives are checked against the pinned hashes, and the toolsets
+the packer fetches are checked against hashes inside the locked packages.
+
+**The build is universal (arm64 + x64)**, by `--universal` in the script, so one
+DMG and one zip run on every Mac this release supports. electron-builder packs
+each architecture from the official Electron archive for that architecture,
+verifies both archives against the two hashes in `build.electronDownload` (which
+`fuses.test.ts` requires to equal the pinned `electron` package's own
+`checksums.json`, so they move with the Electron pin and nowhere else), and
+merges the two apps with `@electron/universal`. The archives are downloaded at
+pack time, once, into electron-builder's cache, and a mismatched hash stops the
+build (mutation-checked: a zeroed x64 hash fails with "Generated checksum …
+did not match expected checksum"). The `afterPack` hook runs on each thin app
+and again on the merged one, before signing. An unsigned universal pack of this
+configuration was run locally (`-c.mac.identity=null`, no credentials in the
+environment): it produced the artifacts below, the asar held exactly the files
+`build.files` names, the merged app's fuse wire read
+`0,0,0,0,1,1,0,0,1` for indices 0 to 8 (six flipped, the cookie and snapshot
+fuses at Electron's defaults, `WasmTrapHandlers` on), `Info.plist` carried the
+merged asar's integrity hash, and `Contents/Resources` held no `app-update.yml`.
+
+`npm run package` therefore produces:
+
+- `release/mac-universal/Fugaro Console.app` — signed with the hardened runtime
+  and this directory's entitlements, **notarised and stapled by electron-builder**
+  (it submits the `.app` through `@electron/notarize` and staples the ticket to
+  the `.app`);
+- `release/Fugaro Console-<version>-universal.dmg` and
+  `release/Fugaro Console-<version>-universal-mac.zip` — built from that stapled
+  app. **electron-builder 26 neither signs (`dmg.sign` defaults to false), nor
+  notarises, nor staples the DMG itself.** Notarising and stapling the DMG is
+  Task 4.2's workflow step: `xcrun notarytool submit` the DMG `--wait`, then
+  `xcrun stapler staple` it.
+
+**The certificate has to be in the packaging command's environment**: the fuses are flipped
+before the packer signs, and a bundle left with the ad-hoc signature the fuse
+flip invalidated will not launch on arm64. A build with no signing material is a
+build with no signature and no notarisation — `spctl` refuses it, which is the
+correct outcome and not a failure of this configuration.
+
+Then, on the artifact (these are also the FACT lines Check 59a is written
+around, and the checks Task 4.5 re-runs after installing):
+
+```sh
+APP="release/mac-universal/Fugaro Console.app"
+codesign --verify --deep --strict --verbose=2 "$APP"
+codesign -d --entitlements - "$APP"          # must print allow-jit and nothing else
+xcrun stapler validate "$APP"
+spctl --assess --type execute --verbose=4 "$APP"
+lipo -archs "$APP/Contents/MacOS/Fugaro Console"   # x86_64 arm64
+# The DMG checks hold only after Task 4.2's notarise-and-staple step on the DMG:
+#   xcrun stapler validate release/*.dmg
+#   spctl --assess --type open --context context:primary-signature -v release/*.dmg
+```
+
+Two things this section is *not*: it is not Task 4.2's workflow (the staged
+`docs/pending-workflows/console-release.yml` names its own secrets and runs the
+same steps in CI, and it is the owner who copies it in), and it is not a claim
+that a *signed* build has run — no agent has signed or notarised a bundle in
+this repository; the unsigned pack above is the most that ran.
+
+### The hook's import: what was run rather than assumed
+
+`src/main/fuses.ts` imports `@electron/fuses`, which is an ES module, and the
+console's build emits CommonJS — so `tsc` refuses that import for its *format*
+(TS1479) in `tsconfig.build.json`, while the type checker (`tsconfig.json`,
+`module: ESNext` + `moduleResolution: bundler`) resolves it and reports nothing.
+The import therefore carries a `@ts-ignore`, which is why it is `@ts-ignore` and
+not `@ts-expect-error`: the expect-error form fails the type checker as *unused*.
+It suppresses the format rule and nothing else — the package's types still land
+on every binding — but a suppressed import line is one `tsc` will not flag if
+this package changes its API, so `fuses.test.ts` carries that check instead: it
+imports the same package and asserts both calls are exported, that every fuse
+name in the table maps to the index the table gives it, and that the wire states
+the verification compares against are still spelled the same way.
+
+The two facts this rests on were **run, not assumed**, after `npm run build`:
+
+```sh
+$ node -e "console.log(Object.keys(require('./dist/main/fuses.js')).join(','))"
+FLIPPED_FUSES,LEFT_ALONE_FUSES,afterPack,fuseConfig,macExecutable
+$ node -e "console.log(JSON.stringify(require('./dist/main/fuses.js').fuseConfig()))"
+{"0":false,"2":false,"3":false,"4":true,"5":true,"7":false,"version":"1"}
+```
+
+— the emitted `require("@electron/fuses")` resolves under Node 22.12+'s
+`require(esm)` (it is the same mechanism electron-builder's own fuse support
+uses), the six flips arrive at their documented indices with nothing else set,
+and calling the hook for a darwin context reaches the real `flipFuses` rather
+than a stub: it failed inside the Electron framework lookup for a path that has
+no bundle, which is what a real flip attempt against a non-bundle path does.
+
+### The packer is a pinned devDependency, and nothing it installs runs
+
+`electron-builder` `26.17.0` is in `devDependencies`, recorded in
+`package-lock.json` with its whole tree (exact versions, integrity hashes, every
+entry from `https://registry.npmjs.org/`), and `npm run package` runs its local
+binary — never `npx`, which resolves a tree outside the lockfile and runs its
+install scripts in the shell the signing secrets are exported into. An earlier
+revision did exactly that (`npx --yes electron-builder@26.0.12`), because the
+26.0 line's tree carried a git-sourced `@electron/node-gyp` that
+`lockfile.test.ts` refuses; from the 26.1 line the packer depends on `@electron/rebuild`
+4, whose `node-gyp` comes from the registry, so the 26.17.0 tree passes the
+lockfile test with no exception and none was added. Three settings keep the
+packer from reaching outside what is pinned:
+
+- `npmRebuild: false` — the console has no native module, and a rebuild runs
+  `node-gyp` and install scripts;
+- `electronDownload.checksums` — the two Electron archives a universal build
+  downloads are verified against hashes in this file, equal to the pinned
+  `electron` package's `checksums.json`;
+- the toolsets the packer fetches for the DMG and the zip (`dmgbuild`, `7zip`)
+  are verified against SHA-256 hashes hard-coded in the locked `dmg-builder` and
+  `app-builder-lib` packages.
+
+**Publishing is off from both sides.** `build.publish` is `null`, not merely
+absent — absent, electron-builder infers a GitHub provider whenever `GH_TOKEN` or
+`GITHUB_TOKEN` is in the environment, writes `app-update.yml` into the bundle and
+uploads on a CI tag — and the script passes `--publish never`.
+
+### The seam Task 1.1 left, settled
+
+Task 1.1's section above records the one thing it handed to packaging: `tsc`
+emits JavaScript into `dist/` and copies nothing, while the protocol handler
+serves `src/renderer` (`rendererRoot` in `src/main/index.ts`), so "a packaged
+console needs `src/renderer` on disk". Task 4.1 settles it by naming the file
+rather than moving it: `build.files` is
+
+```json
+["dist/main/**/*.js", "!dist/main/fuses.js", "dist/preload/index.js",
+ "dist/preload/installations.js", "dist/shared/**/*.js", "dist/source/**/*.js",
+ "!dist/source/fixture.js", "dist/bundle/console.js", "dist/bundle/index.html",
+ "dist/bundle/installations.html", "dist/bundle/installations.js",
+ "dist/bundle/refusal.html"]
+```
+
+(as amended when Task 3.4a moved the served root to `dist/bundle/` and Task
+3.4b added the picker's document, script and preload; the paragraph below is
+Task 4.1's record of its own first list)
+
+— the compiled main process, preload, shared and source modules, the document
+the window actually loads, and nothing else. Two compiled files are excluded by
+name because the app never loads them: `dist/main/fuses.js` is the packing hook
+(the packer loads it from the project directory, and it needs a devDependency)
+and `dist/source/fixture.js` is the fixture loader the tests and the recorder
+use. No source map ships (every include names `.js` or one `.html` file, and a
+map in the asar is a second copy of the sources with a pointer to it).
+`fuses.test.ts` walks the import closure of `src/main/index.ts` and
+`src/preload/index.ts` and asserts every module in it is shipped and the two
+excluded files are not. The
+renderer's *scripts* are compiled into `dist/renderer/` and are not served from
+there: no task serves a script to the document yet (the e2e specs draw their
+screens through `executeJavaScript`), and whichever task does it has to put the
+compiled file inside the served root — the allow-list above is where that
+becomes visible rather than being discovered by an empty packaged window.
+
+Two smaller decisions belong to this list. `directories.output` is `release`
+rather than electron-builder's default `dist`, because `dist` is the compiler's
+output directory here — the packer would otherwise write the app it is packing
+into the tree it is packing from — and `release/` is in `.gitignore` for the
+same reason. `appId` is `io.github.dimipaun.fugaro-console`: electron-builder's
+default is `com.electron.<name>`, which claims upstream's namespace, and this
+repository has no domain, so the project's GitHub home reversed is the honest
+choice. It is a deliberate edit if it ever changes, because the bundle id is the
+identity Gatekeeper and the notary record keep.
+
+### What is deliberately not here
+
+- **A signing workflow.** Task 4.2 stages it under `docs/pending-workflows/`,
+  and that task's file, not this one, names the CI secrets. This section's
+  commands are the owner's local run.
+- **Automatic updates.** `build.publish` is `null`, the script passes
+  `--publish never`, there is no feed, and `electron-updater` is not a
+  dependency: Task 4.4 is the auto-update task and brings all of that with it.
+- **An icon.** There is no `build/icon.icns`, so the bundle carries Electron's
+  default icon. It is a packaging wart, not a security property, and it needs an
+  asset file that no task has produced.
+- **Any signed build.** No bundle has been signed or notarised here; one
+  unsigned universal pack was run (above). The signed build is Check 59a's job,
+  and design §12 item 4 stays open until it has run.
+
+### The properties are tests, and each one fails under a mutation
+
+Every claim above is asserted, and the two that matter most were re-run by hand
+against a planted change in the shipped files — recorded here the way the other
+tasks record theirs, because a test that has never been seen red is a test
+nobody should trust:
+
+| Mutation | What went red |
+|---|---|
+| `com.apple.security.cs.disable-library-validation` added to `entitlements.mac.plist` | three named tests: "grants com.apple.security.cs.allow-jit and nothing else", "grants nothing that the set above does not name", and the named test for that one key |
+| `RunAsNode` flipped to `true` in `FLIPPED_FUSES` | "leaves RunAsNode disabled: the binary is never a Node interpreter", and the wire-verification test (the fake wire now agrees with the mutated configuration, so the hook no longer refuses it) |
+| `EnableNodeCliInspectArguments` given the index of the fuse above it (a copy-paste) | four named tests, including "knows every fuse this build names, at the index this build names it at" and "accounts for every fuse this pin knows" |
+| a value the plist parser does not understand (`<integer>`, a nested dict, a root array) | the parser fixtures: each throws rather than reporting an empty set |
+| a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
+| `electronPlatformName: 'linux'` handed to the hook | "refuses a platform that is not darwin…", and `flipFuses` is never called |
+| any entry added to `build.files`, or `asar` turned off, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
+| `asarUnpack: ["**/*"]`, `extraResources`, `extraFiles` or a `mas` block added to `build`; `extraResources` added to `build.mac` | "has exactly the build keys this task decided…" / "has exactly the mac keys this task decided" |
+| `publish` deleted (absent rather than `null`) | "publishes nowhere: publish is null, not merely absent" and the exact-keys test |
+| the `package` script back to `npx --yes electron-builder@26.0.12 …`, or `--publish always` | "packages with the pinned local electron-builder, universal, and never publishing" |
+| `dist/renderer/**/*.js` added to `build.files`, or `!dist/source/fixture.js` removed | the exact-list test and "ships every module the main process and the preload load, and neither excluded file" |
+| a zeroed Electron x64 hash in `electronDownload`; `npmRebuild: true` | the checksum test (and, at pack time, electron-builder's own "did not match expected checksum"); the rebuild test |
+| `BEYOND_PIN_FUSES` emptied (WasmTrapHandlers undecided) | five tests, including both real-binary tests: the wire holds 9 fuses and the file accounts for 8 |
+
+## The signing and notarisation pipeline, staged (Task 4.2)
+
+The workflow that signs, notarises and staples this bundle is **staged, not
+applied**: `docs/pending-workflows/console-release.yml`, copied into
+`.github/workflows/` by the owner as Task 4.5, with the file's row, the one
+command that applies it and its "Not verified" note in
+`docs/pending-workflows/README.md`. What belongs *here* is the part that is
+about this directory: what the workflow has to line up with, what the owner has
+to create before it can run, and what nobody has run yet.
+
+**It is a separate file from `console-tests.yml`, and that separation is the
+security boundary, not tidiness.** The release workflow reads the Apple signing
+certificate and the App Store Connect key; the tests workflow runs on every pull
+request from any branch of this repository and holds no secret at all. One file
+carrying both jobs would put the signing job's definition next to a job any
+branch can run, where the only thing between them is GitHub's rule about
+*forks* — and a branch is not a fork (design §9.4). So the release file's `on:`
+is one event, the push of a strict `vX.Y.Z` tag, and it carries no
+`pull_request`, `pull_request_target`, `workflow_run` or `workflow_dispatch`
+trigger of any kind.
+
+**The six secrets, by name.** These are the names the workflow reads, the names
+the protected environment holds, and the names listed in
+`docs/pending-workflows/README.md`. No value of any of them is in this
+repository, in the workflow, or in any run an agent performs:
+
+| Secret | What it is |
+|---|---|
+| `APPLE_CERTIFICATE` | base64 of the Developer ID Application `.p12`, one line (the G2 Sub-CA certificate) |
+| `APPLE_CERTIFICATE_PASSWORD` | that `.p12`'s password |
+| `APPLE_TEAM_ID` | the team identifier `ZM8Y2LC7JL` — an identifier and not a credential, which is why the workflow can check it against the signature it built |
+| `APPLE_API_KEY` | the App Store Connect API key's `.p8` contents |
+| `APPLE_API_KEY_ID` | the key's id |
+| `APPLE_API_ISSUER` | the issuer uuid |
+
+**The notarisation credential is the App Store Connect API key, not an
+app-specific password.** D4 leaves the choice open; this is the decision, so
+`APPLE_ID` and `APPLE_APP_PASSWORD` are deliberately absent. The workflow
+writes the `.p8` under `umask 077` (created private, never tightened after) in
+the runner's temp directory and hands on its *path*, which is what both
+readers take: `APPLE_API_KEY` is a file to electron-builder and `--key` is a
+file to notarytool. The key's value never reaches a command line.
+
+**Two jobs, and the write token is never in the job that runs the packer.**
+`release` (the protected environment, the Apple secrets, the packer, on
+`macos-15`) holds `contents: read` and `checks: read` only: it gates, builds,
+signs, notarises, staples, verifies, and uploads the `.dmg`, the `.zip`, the
+record and the SHA-256 sums as the workflow artifact `console-release-assets`.
+`publish` (`needs: release`, on `ubuntu-24.04`: no environment, no Apple
+secret, no checkout, no packer) is the only job with `contents: write`: it
+downloads the artifact, re-checks every file with `sha256sum --strict --check`
+and that the `.dmg` and `.zip` are named for the tag's version, and publishes.
+The artifact actions carry the pins `release.yml` and `images.yml` already use.
+`GH_TOKEN` is in exactly two steps' `env:`: the gate (read-only) and the
+publish step.
+
+**The version is the tag's.** `package.json` says `0.0.0` and nothing in it is
+a release version, so a step before anything is built refuses a tag that is
+not a strict `vX.Y.Z`, and every pack is stamped with
+`-c.extraMetadata.version=X.Y.Z` (through `env:`). The `.dmg` and `.zip` names
+therefore carry the real version (`Fugaro Console-X.Y.Z-universal.dmg`,
+`…-universal-mac.zip`), the signing step refuses artifacts not named for it,
+and the update feed of plan Tasks 4.3/4.4 depends on it: a console that called
+itself 0.0.0 would never see an update as newer.
+
+**No secret is placed in any step's environment or on disk while anything
+installs or downloads, and one step holds all six.** (The runner process
+receives the environment's secrets when the job starts; what the file controls
+is where they are exposed.) The checkout, setup-node (no `cache:`: a restored
+cache is written by other runs), `npm ci --ignore-scripts --no-audit
+--no-fund`, Electron's own download (`node node_modules/electron/install.js`)
+and an unsigned warm-up `npm run package -- -c.mac.identity=null
+-c.mac.notarize=false -c.extraMetadata.version=X.Y.Z` (whose output is
+deleted) run first, with no
+secret in any step's environment: the warm-up is what downloads the two Electron archives the
+universal build needs and the packer's DMG and zip toolsets, into the packer's
+cache. Then **one step** — `Sign, notarise and staple the console` — reads the
+six secrets into its own `env:` (never a workflow- or job-level `env:`) and
+does everything that needs them, in this order: the fail-closed check, the
+temporary keychain, the certificate's team checked against `APPLE_TEAM_ID`,
+the `.p8` file, the first `npm run package` (with the certificate, its
+password and the key's contents unset — which keeps them out of the packer's
+environment, not out of the signing shell's own starting environment — and
+`APPLE_API_KEY` re-exported as the key file's path), the signature's
+TeamIdentifier checked, the bundle notarised, stapled and validated by
+`console/scripts/notarize-and-staple.sh`, the `.dmg` and the `.zip` packed
+from that stapled bundle, and the `.dmg` signed and then notarised, stapled and
+validated by the same script. Its exit trap deletes the keychain and
+both key files whether it passed or failed, so no later step runs with key
+material on disk; an `if: always()` step at the end is the backstop.
+
+**The order inside that step is the load-bearing part: the bundle is notarised
+and stapled *before* the `.dmg` and the `.zip` are built, and what is verified
+is the bundle inside them.** An earlier revision of the staged file notarised
+after packing, which ships two artifacts carrying an unstapled bundle (the
+review of Task 4.2 caught it). The current revision goes further, because the
+packer's own notarisation turned out to be a place nothing can retry: **the
+workflow now does the notarising, and the packer does none of it.**
+
+The packer is run twice in the signing step, with `-c.mac.notarize=false` both
+times — `npm run package` for the first, and `npm run package:targets` (the
+same packer without its `npm run build`) for the second:
+
+1. `npm run package -- --dir -c.mac.notarize=false
+   -c.extraMetadata.version=X.Y.Z` builds and signs the universal `.app` and
+   **nothing else** — no `.dmg`, no `.zip` — and, with notarisation off, does
+   not submit it or staple it. That call is the one that failed: electron-builder's
+   `@electron/notarize` step submits the bundle *and staples the ticket* inside
+   `npm run package`, so a lost connection to Apple's ticket delivery there is
+   one call in the middle of the packer's process, where nothing can retry it
+   and the pack simply fails (error 68).
+2. `console/scripts/notarize-and-staple.sh app "release/mac-universal/Fugaro
+   Console.app"` does the three calls this file owns: `ditto -c -k
+   --keepParent` the bundle into a `.zip` and `xcrun notarytool submit … --wait
+   --output-format json` it **once**, refusing at once (no staple, the answer
+   printed) unless `notarytool` **exited 0 and** Apple's status is exactly
+   `Accepted` — neither alone is the whole answer; then `xcrun stapler staple`
+   and `xcrun stapler validate`, both retried.
+3. `npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false
+   -c.extraMetadata.version=X.Y.Z` builds the `.dmg` and the `.zip` **from the
+   bundle that now carries its ticket**, so both artifacts contain a stapled
+   `.app`. This is the one-of-the-two pack that does not rebuild: `package` is
+   `npm run build && electron-builder …`, and with `--prepackaged` the bundle
+   is already built, so the compile would only be spent a second time — here,
+   in the step that holds the unlocked keychain and the exported `.p8` path.
+   `package:targets` is the same pinned local packer alone. What the first pack
+   builds is unchanged.
+4. The `.dmg` is **signed** (`codesign --sign <identity> --timestamp`:
+   electron-builder leaves `dmg.sign` false, Apple's guidance is to sign a disk
+   image before notarising it, and a hardened runtime is for executables, not a
+   `.dmg`), then handed to the same script as `dmg`, which submits it (a
+   notarytool submission takes a `.dmg` as itself — no zip step) and staples
+   and validates it with the retry.
+
+The owner's own `npm run package` on their Mac (Task 4.1, above) is unchanged:
+no `-c.mac.notarize=false`, no `--dir`, so it still signs, notarises and
+staples the `.app` in one command and then builds the targets. Nothing in
+`console/package.json`'s **build configuration** changed — the switch is on the
+workflow's command lines, which is also what keeps `entitlements.test.ts`'s
+"does not turn the notariser off" assertion true of the checked-in
+configuration. The manifest did gain one script, `package:targets`,
+`electron-builder --mac --universal --publish never` with no `npm run build`,
+which is what the workflow's second pack uses; `fuses.test.ts` still pins
+`package` exactly as it was.
+
+**Every `xcrun stapler` call in the pipeline is retried, bounded — the retry
+and the move out of the packer landed together, on 2026-10-19, after the
+release run failed there.** `xcrun stapler staple` and `xcrun stapler validate`
+reach Apple's ticket-delivery service over the network, and the run printed
+`CloudKit … error is Error Domain=NSURLErrorDomain Code=-1005 "The network
+connection was lost"` against
+`.../com.apple.gk.ticket-delivery/production/public/records/lookup`, error 68,
+after which the signing step refused with "carries no stapled ticket: refusing
+to publish artifacts that would carry it unstapled". **Which call failed
+matters, and it moved the notarisation out of the packer**: release run
+39163351646 was attempted five times, and of those only the fourth and the
+fifth reached Apple — the fourth attempt's failure was `@electron/notarize`'s
+staple *inside* `npm run package` ("Failed to staple your application with
+code: 68"), and the fifth's a `xcrun stapler validate` **on the bundle**, in
+the workflow, before any target was packed. The three earlier attempts never
+reached Apple: the first failed within about a second with no step having
+started (its cause is not recorded, and this section does not guess one), the
+second on missing `APPLE_API_*` secrets, the third on a certificate import with
+the wrong password. So "three consecutive runs failed at the stapler" is not
+what happened, and this section said so until 2026-10-19. The notarisation
+itself had been accepted where it was submitted: what was lost was the
+connection, not the ticket.
+
+So one shell function, `retry_apple_network`, defined once in
+`console/scripts/notarize-and-staple.sh` and once — character for character the
+same — in the verification step, makes up to five attempts at every `xcrun
+stapler` call on the way to a release (the bundle's and the disk image's in the
+script; the bundle inside the mounted `.dmg`, the one inside the extracted
+`.zip` and the disk image itself in the verification step), with a growing
+pause between them (15, 30, 60, 90 seconds), printing each attempt's number and
+exit code, and returns the failure only after the fifth: a ticket that is
+genuinely absent still refuses to publish. In the verification step the calls
+sit inside `record`, so every attempt is in `console-verification.txt` too.
+
+**The submission is deliberately not retried, and the file is not pretending
+otherwise.** `xcrun notarytool submit --wait` is the submission itself — a
+rejection is final, and re-submitting is not this file's business — so the
+script runs it once, reads Apple's own answer as JSON (`--output-format json`)
+and refuses at once, with the answer printed and no staple, unless `notarytool`
+exited 0 **and** the status is exactly `Accepted`. Both halves are needed:
+`notarytool` can exit non-zero having printed an answer, and it can exit 0
+having printed something other than `Accepted`, and neither case is a
+submission with a ticket to staple. **Nothing outside the `xcrun stapler` calls
+is retried at all** — `codesign`, the submission and its result, the TeamIdentifier
+checks, `scripts/release-gate.sh` and the fail-closed secret check all still
+fail at once, with no retry — and the tests read it both ways over the script
+and over every step: every line naming the helper is one of those calls, and
+every line that calls `xcrun stapler` names the helper.
+
+**The environment is `console-release`, and the owner creates it before the
+copy-in.** Required reviewers on the owner, deployment branches restricted to
+tags. A staging file cannot create an environment, which is why Task 4.5 is the
+copy-in *and* the environment. **That reviewer, with a tag ruleset, is the real
+control, not the file's gate**: a tag push runs the workflow as the *tagged*
+commit holds it, so a tag on a branch whose copy of the workflow or of
+`scripts/release-gate.sh` was edited runs the edited copy. The approver
+confirms the tag's commit is on `main` before approving the deployment. The
+job's first step checks the same (`git merge-base --is-ancestor "$GITHUB_SHA"
+origin/main`), which catches a mistake, not someone who controls the tagged
+tree.
+
+**It fails closed, and that is the first property to check when reading it.**
+The signing step's first act is to refuse to continue unless all six secrets
+are non-empty, naming the missing one. No step carries an `if:` except the
+cleanup's `always()`, nothing carries `continue-on-error`, and `|| true` is the
+cleanup's alone: a signing job that skipped its signing when a secret was
+absent would publish an **unsigned** console under a signed release's name —
+worse than publishing nothing.
+
+**Two signing paths, documented separately, and neither borrows the other's
+mechanism.** The **owner's manual packaging** is Task 4.1's "The owner's
+commands, exactly" above: on the owner's Mac, `npm run package` under `env -i`,
+`CSC_LINK` the *file path* of the `.p12`, and the certificate's password read
+from the terminal inside that `env -i` shell. The **CI workflow** is this
+section: on the `macos-15` runner, the `.p12` imported from the
+`APPLE_CERTIFICATE` secret into a temporary keychain, and the identity named
+with `CSC_NAME` + `CSC_KEYCHAIN`; `CSC_LINK` and `CSC_KEY_PASSWORD` are never
+set there. Nothing in this section changes the owner's commands, and they are
+not a fallback for the workflow.
+
+**Where the two agree, and where the workflow deliberately differs.** Both call
+the same script, `console/scripts/notarize-and-staple.sh`, and the same pinned
+local electron-builder (`--mac --universal --publish never`, through `npm run
+package`, or through `package:targets` where the workflow has no reason to
+rebuild), so the hardened runtime, the `.dmg` and `.zip` targets,
+`entitlements.mac.plist` and the fuse hook are one configuration and not two.
+The differences are on purpose:
+
+- **The certificate goes into a keychain the step creates**, never the runner's
+  login keychain: a random password from `openssl rand`, `security
+  create-keychain`, `security import -T /usr/bin/codesign`, `security
+  set-key-partition-list -S apple-tool:,apple:` (codesign is an Apple-signed
+  tool). `/usr/bin/security` is deliberately **not** a trusted application of
+  the key: with it, any later command could `security export` the private key
+  without a prompt.
+- **The signing identity is named explicitly**, through `CSC_NAME` set to the
+  SHA-1 of the identity in that keychain (`CSC_KEYCHAIN`). The SHA-1 of a
+  certificate is public; a runner carrying more than one identity cannot pick
+  another.
+- **The team is checked before the notary is spent**: the identity's name must
+  end in `(APPLE_TEAM_ID)` before anything is packed, and `codesign -dv` must
+  report the same TeamIdentifier on the bundle after, so a development
+  certificate or another team's is refused rather than submitted.
+- **The packer's own notarisation is off** (`-c.mac.notarize=false` on every
+  pack, with `--dir` for the bundle-only one and `--prepackaged` for the
+  targets, which go through `npm run package:targets` rather than `npm run
+  package` because the bundle they pack is already built), and the workflow's
+  own `console/scripts/notarize-and-staple.sh`
+  submits, staples and validates instead. That is the one deliberate difference
+  in the *packing* as well as in the signing: the packer's staple is a call
+  inside its own process, so a lost connection there cannot be retried, and one
+  did fail a release run. The owner's manual flow keeps the packer's
+  notarisation, so this is a property of the workflow's command lines and of
+  nothing checked in.
+
+**The verification is recorded, not just performed, and it is about the
+shipped bytes.** The SHA-256 of the `.dmg` and the `.zip` opens the record
+(and is published as `console-sha256sums.txt`), so the record is tied to the
+files a user downloads. The `.dmg` is mounted read-only and the bundle inside it
+is what `codesign --verify --deep --strict`, `codesign -d --entitlements -`,
+`spctl --assess --type execute` and `xcrun stapler validate` run against; the
+`.zip` is extracted and its bundle gets the same treatment; the disk image's own
+signature, ticket and Gatekeeper assessment (`codesign --verify`, `xcrun
+stapler validate`, `spctl --assess --type open`) close it. All of it, with the
+commands' real output, goes into `console-verification.txt`. Each command must
+succeed: `record()` exits 1 on the first failure.
+
+**The console publishes its own release, `console-vX.Y.Z`, and never touches
+the CLI's** (the owner's ruling of 2026-10-17, "Separate console release").
+GoReleaser publishes the CLI's `vX.Y.Z` release from the same tag push, and
+with immutable releases on nothing can be added to it once published. So the
+`publish` job creates `console-vX.Y.Z` — X.Y.Z from the CLI tag that triggered it, the
+same commit and the same gate (D11: one gate, the CLI's tag; its own release) —
+as a **draft**, puts the `.dmg`, the `.zip`, the verification record and the
+sums on it, and publishes it in the same step (`gh release edit --draft=false`,
+`--latest=false` so the CLI's release stays the latest). A re-run never
+clobbers: an existing `console-vX.Y.Z` (published, or a draft left by a failed
+attempt, which the owner deletes before re-running) or tag stops the job, and
+only a 404 counts as "no such tag": any other answer (a 5xx, a rate limit)
+stops it too rather than publishing on a guess. The
+tag ruleset must let the workflow create `console-v*` tags. The console's
+Homebrew cask, when there is one, points at this release.
+
+**Nothing about it has run, and this section claims nothing else.** No bundle
+has been signed, notarised or verified by any agent, here or in CI: the
+workflow has never been applied. Check 59a and 59b (plan Task 4.3, owner-run)
+are the first real run, and the workflow's own `Not verified` note in
+`docs/pending-workflows/README.md` says the same. **Not verified, and Check
+59a's to settle:** that electron-builder accepts `CSC_NAME` as a SHA-1 together
+with `CSC_KEYCHAIN`; that codesign signs with only `apple-tool:,apple:` in the
+partition list; that the warm-up pack leaves everything the signed pack needs
+in the cache; that `-c.extraMetadata.version` reaches the bundle's version
+and the artifact names as described; and that the signed, stapled DMG passes
+`spctl --assess --type open --context context:primary-signature`. To that the
+2026-10-19 retry adds one more: that a `xcrun stapler` call which really does
+meet a transient CloudKit failure recovers inside the five attempts (the fake
+`xcrun` the tests run the helper and the script with proves the *control flow* —
+five attempts, the pauses, the refusal, the no-retry on a submission whose exit
+status or status is not good — and nothing about Apple's service). The same
+change's move of the notarisation out of the packer adds three more, all about
+electron-builder's own flags rather than the retry: that `--dir` builds the
+universal `.app` and no targets, that `--prepackaged "$APP"` packs the `.dmg`
+and the `.zip` from that bundle with the tag's version still in their names
+under `--mac --universal` and with `-c.mac.notarize=false`, and that a
+prepackaged pack needs no `npm run build` before it (which is what
+`package:targets` leaves out). None of these can be checked offline. **Accepted residuals:** `security` takes the
+keychain password (`create-keychain -p`, `unlock-keychain -p`,
+`set-key-partition-list -k`) and the `.p12` password (`import -P`) only on its
+command line, so another process of the same user can read them in the process
+list while those commands run, and the signing shell's starting environment
+holds the six secrets for the step's lifetime (`ps -E`, same user); the runner
+is a single-job VM and the packer is the only third-party code in that window.
+
+### What is deliberately not here (Task 4.2)
+
+- **A `workflow_dispatch` trigger**, or any other way to run the signing job by
+  hand. A manual trigger is a second way into a job that reads a private key,
+  and the release train this repository already has — one tag, `release.yml` and
+  `images.yml` and now this — does not need one.
+- **Any action that could see the key material.** The signing, notarising,
+  stapling and verifying are `run:` calls to `xcrun`, `codesign`, `security`
+  and `openssl`. Checkout and setup-node run before the signing step;
+  upload-artifact runs after it, when its exit trap has removed the key
+  material; download-artifact runs in `publish`. All four are pinned to full
+  commits with version comments, the artifact pair at the pins the applied
+  workflows already use.
+- **An auto-update feed.** `build.publish` is `null` and this workflow publishes
+  the console's own release and nowhere else: Task 4.4 is the auto-update task
+  and it is not part of this MVP.
+- **A copy under `.github/workflows/`.** No agent creates, edits, renames or
+  deletes anything there — GitHub rejects a push that touches it, so the copy-in
+  is the owner's Task 4.5. While both files exist,
+  `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` asserts they are
+  byte-identical, so an edit to one without the other fails a named test rather
+  than drifting silently.
+
+### The properties are tests, and each one fails under a mutation (Task 4.2)
+
+Every claim above is asserted in
+`internal/cli/docs_desktop_console_test.go` (`TestDocsConsoleReleaseWorkflowIsStagedAndPinned`,
+`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`,
+`TestDocsConsoleReleasePublishRefusesToClobber` and
+`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (these two run the
+staged scripts under bash with a faked `gh`), and
+`TestDocsPendingWorkflowsReadmeNamesTheConsoleRows`, all selected by the
+`-run 'Docs|Lint'` filter), reading the file structurally with yaml.v3 where a
+substring scan would let a mutation through. Each mutation below was applied to
+a scratch copy of the staged file and turned the named test red:
+
+| Mutation | What went red |
+|---|---|
+| `pull_request:` added to the staged file's `on:` | `TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, on the trigger block's own text and on the parsed trigger keys |
+| `uses: actions/checkout@v5` (a tag instead of a full commit) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`'s pin scan |
+| `if [ -n "$missing" ]` changed to `if false` in the fail-closed check; or its `exit 1` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the fail-closed lines read in order |
+| `if: false` on the ancestry step, the gate or the signing step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the parsed steps: no `if:` except the cleanup's `always()` |
+| `continue-on-error: true` on a step or on the job | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the parsed step and job keys, and on the text |
+| `|| true` added in the verification or the signing step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `|| true` outside the cleanup step |
+| a workflow-level or job-level `env:` holding a secret; a secret in the warm-up step's `env:` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the parsed `env:` levels, and on secrets being in exactly one step |
+| `${{ github.ref_name }}` or a `${{ steps.… }}` output inlined into a `run:` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on any `${{` in a script |
+| `set -x` / `set -eux` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the shell-trace scan |
+| `exit 1` removed from `record()` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `record()`'s body, line by line |
+| `cat "$KEY"`, or `echo "$APPLE_CERTIFICATE_PASSWORD"`, added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the allow-list of lines that may name the key material |
+| `-T /usr/bin/security` added to the import | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the import line and the text scan |
+| the `.p8` written then `chmod 600` (not under `umask 077`) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the umask line |
+| the `.dmg` `codesign --sign` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the disk image's sign, notarise, staple order |
+| the packer back to `npx --yes electron-builder@26.0.12` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `npx` / `electron-builder` in any script |
+| `runs-on: macos-latest` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the pinned `macos-15` |
+| the app path back to `release/mac-*` with `head -n1` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the exact `release/mac-universal` path |
+| the ancestry check replaced with `if false` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the first run step |
+| `gh release upload "$TAG" --clobber` added (the CLI's release) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `gh release upload`, `--clobber` and the CLI tag |
+| the published-release refusal's `exit 1` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on each re-run refusal |
+| the certificate's team check emptied (team checked only after notarising) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the team check before `npm run package` |
+| the SHA-256 line removed from the record | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `record cat "$SUMS"` |
+| the signing step moved before the install and the warm-up | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the step order |
+| the version stamp removed from the signed pack, or from the warm-up pack | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on every `npm run package` carrying `-c.extraMetadata.version="$VERSION"` |
+| the tag-shape check disabled (`if false && [[ … ]]`) | `TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions`, on `v1.2` passing |
+| the version-named-artifact check disabled | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the signing step's refusal |
+| a pass-all `*) ;;` default in the existing-release `case` | `TestDocsConsoleReleasePublishRefusesToClobber`, on publishing over a published release and a draft |
+| the tag lookup replaced by `if false` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the tag refusal's shape |
+| a 5xx tag lookup read as "absent" (`*) ;;` in the answer `case`) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that `case`'s default branch |
+| `contents: write` on the release job; `GH_TOKEN` in the warm-up step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on each job's permissions and on which steps hold the token |
+| `environment: console-release` on the publish job | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job holding no environment |
+| `cache: npm` restored on setup-node | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on setup-node's keys |
+| `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
+| the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
+| the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |
+| `retry_apple_network` removed from `console/scripts/notarize-and-staple.sh` or from the verification step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the helper's definition in each of the two places and on every call site it must have |
+| the retry wrapped around a step's `codesign --sign`, or around the script's `xcrun notarytool submit` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the only-lines-that-may-name-the-helper clause ("retries … the helper wraps the `xcrun stapler` calls this pipeline makes and nothing else") |
+| the script's `xcrun stapler staple` or `xcrun stapler validate` left unwrapped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two retried calls the script must run |
+| the attempt bound lowered to 3, in the script only | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two definitions differing, and on the five-attempt clause; and `TestDocsConsoleReleaseRetryHelperIsBounded` and `TestDocsConsoleNotarizeAndStapleScript`, on the fifth attempt never being made |
+| the first pause changed (15 → 5) in the script only | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the pause clause; and `TestDocsConsoleReleaseRetryHelperIsBounded`, on the pause the helper asked for |
+| the helper made to return after its first failure | `TestDocsConsoleReleaseRetryHelperIsBounded`, on the retried case and on the five-attempt case; and `TestDocsConsoleNotarizeAndStapleScript`, on the staple that recovers after two failures |
+| `exit 1` removed from the script's refusal after the fifth failure, at the staple or at the validation | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines; and `TestDocsConsoleNotarizeAndStapleScript`, on the two never-gets-there cases |
+| a fresh, un-retried `xcrun stapler validate` added to the script or to a step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the both-directions clause — every line that calls `xcrun stapler` must name the helper |
+| `-c.mac.notarize=false` removed from any `npm run package` (the packer notarising and stapling again) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on every pack carrying the switch |
+| `--dir` dropped from the bundle-only pack, or `--prepackaged "$APP"` from the targets pack | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the bundle/script/targets order |
+| the script's call for the `.app`, or the one for the `.dmg`, removed from the signing step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that order and on the `.dmg`'s sign-then-notarise order |
+| the status check neutered (`if false`), or a status that is not `Accepted` accepted | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines; and `TestDocsConsoleNotarizeAndStapleScript`, on the rejected-submission case (no staple, no pause, non-zero exit) |
+| the exit-status half of the submission's result dropped (`[ "$status" != "Accepted" ]` alone, so an Accepted body over a non-zero `notarytool` exit is stapled) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines; and `TestDocsConsoleNotarizeAndStapleScript`, on the Accepted-body-over-a-non-zero-exit case |
+| `npm run build` added to `package:targets` (the second pack rebuilding under the unlocked keychain) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the manifest's `package:targets` being the packer alone |
+| `npm run build` removed from `package` (the first pack, and the owner's command, with nothing to pack) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `package` still building |
+| the second pack back to plain `npm run package -- --prepackaged "$APP"` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the targets pack's exact line |
+| `--output-format json` dropped from the submission | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the submission line |
+| the `ditto -c -k --keepParent` zip of the bundle dropped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that line; and `TestDocsConsoleNotarizeAndStapleScript`, on the calls the fake `xcrun` and `ditto` log |
+| the script left non-executable | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on its file mode (the signing step runs it directly) |
+| the "Re-copy required" note deleted from `docs/pending-workflows/README.md` while the staged and applied files differ | `TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn`: the owner is the one who has to copy the file in, and that section is where they read it |

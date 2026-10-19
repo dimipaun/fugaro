@@ -10,7 +10,7 @@
 # `backend: cloud-batch` stays refused by config validation until the enable
 # task (§8.1 task 9). See the module's variables.tf for what each input is.
 terraform {
-  required_version = ">= 1.7.0, < 2.0.0"
+  required_version = ">= 1.9.0, < 2.0.0"
 
   required_providers {
     google = {

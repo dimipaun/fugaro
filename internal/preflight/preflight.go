@@ -90,9 +90,13 @@ func firstLine(s string) string {
 
 // terraformMinMinor bounds the supported Terraform versions together with
 // the major-version check in supportedTerraform, as internal/infra/tf.New
-// enforces before any plan or apply (>= 1.7.0, < 2.0.0: import for_each,
-// removed blocks, mock providers).
-const terraformMinMinor = 7
+// enforces before any plan or apply (>= 1.9.0, < 2.0.0: a variable
+// validation may only read the variable it validates before 1.9, and the
+// project module's `secrets` validation reads var.job.secret_env — on 1.8.5
+// `terraform init` refuses the installation root with "Invalid reference in
+// variable validation", so 1.7 and 1.8 cannot plan an installation at all.
+// tf.go's minMinor carries the same floor and the same reason).
+const terraformMinMinor = 9
 
 // Terraform finds terraform on PATH with lookPath and, if found, runs only
 // `terraform version -json` (the one subcommand every check here may run)
@@ -100,15 +104,15 @@ const terraformMinMinor = 7
 func Terraform(lookPath func(string) (string, error)) (bin string, c Check) {
 	bin, err := lookPath("terraform")
 	if err != nil {
-		return "", Check{ID: "terraform", Problem: "terraform is not on PATH", Fix: "install terraform >= 1.7.0 and < 2.0.0 and put it on PATH"}
+		return "", Check{ID: "terraform", Problem: "terraform is not on PATH", Fix: "install terraform >= 1.9.0 and < 2.0.0 and put it on PATH"}
 	}
 	out, err := exec.Command(bin, "version", "-json").Output()
 	if err != nil {
-		return bin, Check{ID: "terraform", Problem: "terraform version -json failed: " + firstLine(err.Error()), Fix: "reinstall terraform >= 1.7.0 and < 2.0.0"}
+		return bin, Check{ID: "terraform", Problem: "terraform version -json failed: " + firstLine(err.Error()), Fix: "reinstall terraform >= 1.9.0 and < 2.0.0"}
 	}
 	v, err := parseTerraformVersion(out)
 	if err != nil {
-		return bin, Check{ID: "terraform", Problem: firstLine(err.Error()), Fix: "reinstall terraform >= 1.7.0 and < 2.0.0"}
+		return bin, Check{ID: "terraform", Problem: firstLine(err.Error()), Fix: "reinstall terraform >= 1.9.0 and < 2.0.0"}
 	}
 	if !supportedTerraform(v) {
 		return bin, Check{ID: "terraform", Problem: "terraform " + v + " is not supported", Fix: "install terraform >= 1." + strconv.Itoa(terraformMinMinor) + ".0 and < 2.0.0"}
@@ -131,7 +135,7 @@ func parseTerraformVersion(out []byte) (string, error) {
 	return v.Version, nil
 }
 
-// supportedTerraform reports whether v is within bounds (>= 1.7.0, <
+// supportedTerraform reports whether v is within bounds (>= 1.9.0, <
 // 2.0.0); an unparseable version is not supported.
 func supportedTerraform(v string) bool {
 	m := terraformVersionRE.FindStringSubmatch(v)

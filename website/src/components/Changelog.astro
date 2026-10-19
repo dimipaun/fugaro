@@ -5,10 +5,11 @@
  * One entry per release, newest first, each one rendered from the lines W0.6's
  * `src/lib/changelog.mjs` read out of `docs/releases/vX.Y.Z.md` at build time, preceded by
  * the summary block the redesign's P4 added (D189; RF24). The component writes nothing of
- * its own: the tag comes from the filename, the bullets and the operator steps are the
- * file's own lines, and the only words it adds are the summary block's heading, the
- * "not yet released" marker below and the "For operators" heading the file itself
- * carries (`### For operators`).
+ * its own: the tag comes from the filename, the bullets and the sections are the file's own
+ * lines, and the only words it adds are the summary block's heading and the "not yet
+ * released" marker below. Every heading inside an entry is a `###` heading the file itself
+ * carries — `### For operators`, `### Known limits` — printed as the heading element it is,
+ * so a section the format allows is a section the page renders.
  *
  * Five decisions are worth stating rather than leaving in the code:
  *
@@ -41,6 +42,20 @@
  *      to `main` before its tag exists. The entry says so rather than reading as shipped.
  */
 
+/**
+ * One section of a release file's body, as W0.6's generator returns it: a `###` heading the
+ * format names (`### For operators`, `### Known limits`), its words a title, and the lines
+ * under it verbatim. The two headings are the same kind of thing, so a release carries a
+ * list of these rather than a field per heading, and a third one later is a room in the list
+ * rather than a fourth branch here.
+ */
+interface Section {
+  /** The heading's own words, with the `###` left behind: `For operators`, `Known limits`. */
+  title: string
+  /** The lines under the heading, verbatim. */
+  lines: string[]
+}
+
 /** One release, as W0.6's generator returns it: the file's own text and nothing else. */
 interface Entry {
   /** The tag, from the filename: `vX.Y.Z`. */
@@ -49,10 +64,10 @@ interface Entry {
   version: string
   /** True only where the checkout the build ran in has this tag. */
   released: boolean
-  /** The file's lines before its `### For operators` heading, verbatim. */
+  /** The file's lines before its first section heading, verbatim. */
   highlights: string[]
-  /** The file's lines after it, verbatim, or empty when the file has no such block. */
-  for_operators: string[]
+  /** Every section the file writes after them, in the file's own order. */
+  sections: Section[]
 }
 
 interface Props {
@@ -109,12 +124,18 @@ function elements(lines: string[]): Element[] {
   return out
 }
 
-/** An entry's whole body: its highlights, then the operator steps when the file has them. */
+/**
+ * An entry's whole body: its highlights, then each section the file writes — the operator
+ * steps, the release's known limits — as its own heading with its lines under it, in the
+ * order the file writes them. The heading's words are the file's own, printed as the
+ * heading element they are; the file's order is kept rather than the format's, so a page
+ * never reorders what its source said.
+ */
 function body(entry: Entry): Element[] {
   const out = elements(entry.highlights)
-  if (entry.for_operators.length > 0) {
-    out.push({ kind: 'heading', text: 'For operators' })
-    out.push(...elements(entry.for_operators))
+  for (const section of entry.sections) {
+    out.push({ kind: 'heading', text: section.title })
+    out.push(...elements(section.lines))
   }
   return out
 }

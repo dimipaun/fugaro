@@ -67,6 +67,16 @@ type LaunchSpec struct {
 	Repo     RepoRef
 	Workflow string
 	RunID    string
+	// Job is the job to run, by its own name (not a path): the shared project
+	// job of the profile the workflow selects, under the project-centric model
+	// (docs/design/project-centric.md §4.1, plan task 3.4 step 1). Empty means
+	// the per-repository job of (Repo.Slug, Workflow), which is what every
+	// project that has published no profiles gets, byte for byte, and what
+	// every workflow that is not a `checkout: clone` one keeps until phase 4
+	// ends (§4.4). The launcher computes it (gcp.ProjectJobName, from the
+	// published policy); the backend only runs what it is given, because the
+	// name is a fact about the project's profiles and not about the backend.
+	Job string
 	// Timeout is the workflow's total time for this run; zero means the job's own.
 	// The backend adds TaskTimeoutSlack to it.
 	Timeout time.Duration
@@ -107,6 +117,32 @@ type ExecutionRef struct {
 	Name   string // the platform's full resource name
 	Job    string
 	LogURL string
+}
+
+// JobOf is the name of the job an execution was launched from: the field the
+// platform's own report of an execution carries (Cloud Run's CLOUD_RUN_JOB,
+// codec.go), read out of the execution name a run already has
+// (Platform.ExecutionFromEnv, wired at internal/cli/exec.go).
+//
+// It is how a run learns the job it is in without reading its environment
+// again. The job's name is what a project job's identity rests on (plan task
+// 3.3 step 1, design §4.1): the provider is part of it, Cloud Run sets it, and
+// a launcher cannot write it — unlike $FUGARO_GIT_PROVIDER, which any launcher
+// can override (design §12a item 2, finding 4). The name is therefore read
+// from the platform's own answer and never from a variable, and the runner
+// computes the names a policy defines and matches this one against them
+// (R2-5: the name is written, never parsed).
+//
+// An error means the name is not one any backend of this build parses, so the
+// job cannot be named from it: the run halts rather than guessing an identity
+// (fail closed). A local invocation has no execution name at all and never
+// reaches this (its ExecutionFromEnv is "").
+func JobOf(execution string) (string, error) {
+	id, ok := ParseExecution(execution)
+	if !ok {
+		return "", fmt.Errorf("%s is not an execution name of any backend this build knows, so the job this run is in cannot be named", execution)
+	}
+	return id.Job, nil
 }
 
 // Execution is one execution as the platform reports it.

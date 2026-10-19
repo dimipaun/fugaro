@@ -481,21 +481,53 @@ func TestExecutionNamesArePinnedToTheRegion(t *testing.T) {
 	}
 }
 
-func TestCheckRunExecution(t *testing.T) {
+func TestCheckExecutionName(t *testing.T) {
 	own := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: webJob, Name: webJob + "-abcde"}
-	if err := CheckRunExecution(own.String(), "us-east5", "acme-app", "web"); err != nil {
+	if err := CheckExecutionName(own.String(), "us-east5"); err != nil {
 		t.Fatalf("own execution refused: %v", err)
 	}
 	num := own
 	num.GCPProject = "123456789"
-	if err := CheckRunExecution(num.String(), "us-east5", "acme-app", "web"); err != nil {
+	if err := CheckExecutionName(num.String(), "us-east5"); err != nil {
 		t.Fatalf("project number refused: %v", err)
 	}
-	other := own
-	other.Job = apiJob
-	for name, n := range map[string]string{"another job": other.String(), "another region": strings.Replace(own.String(), "us-east5", "us-central1", 1), "junk": "x"} {
-		if err := CheckRunExecution(n, "us-east5", "acme-app", "web"); err == nil {
+	for name, n := range map[string]string{"another region": strings.Replace(own.String(), "us-east5", "us-central1", 1), "junk": "x"} {
+		if err := CheckExecutionName(n, "us-east5"); err == nil {
 			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// TestCheckRunExecution is task 3.4 step 2: an execution read from a run's
+// bucket is followed only when the FUGARO_RUN it reports is the run's own.
+// The job it is of says nothing — on a shared project job (design §4.1) every
+// run of every repository admitted to the profile has that same job.
+func TestCheckRunExecution(t *testing.T) {
+	const slug, run = "acme-app", "20260927-100000-abcd"
+	own := backend.Execution{
+		Name: "projects/proj-1234/locations/us-east5/jobs/" + webJob + "/executions/" + webJob + "-abcde",
+		Run:  slug + "/" + run,
+	}
+	if err := CheckRunExecution(own, slug, run); err != nil {
+		t.Fatalf("the run's own execution refused: %v", err)
+	}
+	for name, x := range map[string]backend.Execution{
+		"another run of the same job": {Name: own.Name, Run: "acme-other/20260927-100000-bbbb"},
+		"another repository's run":    {Name: own.Name, Run: "acme-other/" + run},
+		"no FUGARO_RUN at all":        {Name: own.Name},
+		"a bare run id":               {Name: own.Name, Run: run},
+	} {
+		err := CheckRunExecution(x, slug, run)
+		if err == nil {
+			t.Errorf("%s accepted", name)
+			continue
+		}
+		// The refusal reaches the user of the run that named the execution
+		// (logs, cancel, --retry, ls's Reason): it must not say whose run the
+		// execution is (review D2 of #460).
+		// (A bare run id is the run's own id, which the refusal does name.)
+		if x.Run != "" && !strings.Contains(slug+"/"+run, x.Run) && strings.Contains(err.Error(), x.Run) {
+			t.Errorf("%s: the refusal names the other run %q: %v", name, x.Run, err)
 		}
 	}
 }

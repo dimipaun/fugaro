@@ -1,0 +1,513 @@
+---
+/**
+ * website/src/components/AgentChat.astro — the hero's example (website changes spec of
+ * 2026-10-18, item 3; it replaces `Terminal.astro`, the `fugaro run` transcript of P7/D184).
+ *
+ * **What it shows.** Fugaro is not a CLI the reader drives from a terminal: it is what the
+ * reader's own coding agent reaches for, through the plugin's skills. So the figure shows
+ * that — three turns of a chat: the reader asks for three bug fixes fanned out, the agent
+ * answers and launches the runs, and a few minutes later it reports the pull requests. The
+ * launch is the agent's own action, drawn as a subdued **status line** under its answer
+ * rather than as a command with a prompt in front of it, because the reader did not type it
+ * and item 3 asks for exactly that ("shown as a subtle tool-call / status line, not a command
+ * the user typed").
+ *
+ * **Every line a turn of the chat speaks is a line of a document.** Global Constraint 6 and
+ * D102: a page renders a fact and never restates one. (The status line and the three result
+ * labels are the two things here that are not a document's line, and the reading below says
+ * so.) The request is the spec's own example; the agent's two lines are
+ * the `parallelism` and `working` skills' own sentences — what the agent really says, read
+ * from the skills rather than imagined (item 3's acceptance: "the agent's lines show the real
+ * shape of the skills' behaviour"). Every one of those lines — the request and the agent's two
+ * sentences — is held here at build time to the document it cites, and again from outside by
+ * `website/test/home.mjs`.
+ *
+ * **Why the launch is a status line and not the skill's command.** This figure used to print
+ * the invocation the `parallelism` skill's code block documents
+ * (`fugaro run --batch <name> --run-id <id> --task-file -`) as the agent's tool call. Two
+ * things were wrong with it: the owner's item 3 removes `fugaro run` from the homepage's
+ * example (it stays in the documentation as the manual option), and the line is a command —
+ * it wrapped to two lines in a phone's card and read as something to type, which is the
+ * opposite of what the turn is for. What it says now is the illustration's own label for what
+ * the agent did, `Fugaro: launching 3 jobs`, in the same class as the three
+ * `Pull request n of 3` labels: a reader sees the shape of the action without being handed a
+ * command, and the count is the reader's own three pieces rather than a stat about anything.
+ *
+ * **The pull requests are text, not links, and they are the illustration's own labels.**
+ * Item 3 asks the agent to report back with pull request links, and there is no honest link
+ * to draw: a run that has not happened has no pull request number, and a link to one would be
+ * either invented (D184's rejected alternative) or a pointer at a page that does not exist
+ * (Global Constraint 9). So the three results are named as the batch's own pieces — `Pull
+ * request 1 of 3` — which is the one thing in the figure that is **not** a quotation: they
+ * are labels for work the run would report, and the guard below does not claim otherwise.
+ * The sentence above them is the skill's own line about what a run ends with. `fugaro watch`
+ * is the one command the reader is asked for, and it is the one they can copy.
+ *
+ * **The slot.** Under the chat, a marked, empty element sits where the `fugaro watch`
+ * screenshot goes: a separate task adds the image, and until it exists there is nothing to
+ * show (the rule the hero's video slot follows, D107). No binary file is added here.
+ */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
+
+// The documents a line of the chat may be quoted from. The spec, because the request is its
+// example of a request; the two skills, because they are what the agent does with one.
+const SPEC = 'docs/website/redesign/changes-spec-2026-10-18.md'
+const PARALLELISM = 'plugin/skills/parallelism/SKILL.md'
+const WORKING = 'plugin/skills/working/SKILL.md'
+
+/**
+ * A string with its markdown markers and its whitespace removed: how a line and the document
+ * it claims to come from are compared, the same reading the other components use. Code spans
+ * and emphasis are markers rather than text.
+ */
+function comparable(document: string): string {
+  return document.replace(/[`*]/g, '').replace(/\s+/g, '')
+}
+
+/** A document of this repository, by the path a line cites, read once. */
+function source(document: string): string {
+  return readFileSync(path.join(REPO_ROOT, document), 'utf8')
+}
+
+const SOURCES: { [name: string]: string } = {
+  [SPEC]: source(SPEC),
+  [PARALLELISM]: source(PARALLELISM),
+  [WORKING]: source(WORKING),
+}
+
+/**
+ * The chat, turn by turn: who says it, what they say, and the document each line is quoted
+ * from. `line` is what the turn says and is held to its document; `status` is the
+ * illustration's own label for what the agent did — the second class of text on this figure,
+ * with `results` — and `results` is the list the last turn reports back with.
+ */
+const TURNS = [
+  {
+    who: 'You',
+    turn: 'you',
+    line: 'Fan out these three bug fixes.',
+    source: SPEC,
+  },
+  {
+    who: 'Your agent',
+    turn: 'agent',
+    line: 'One run per piece, each with a self-contained task',
+    source: PARALLELISM,
+    // The status line (changes spec item 3): what the agent did, as the figure's own label.
+    // It names no command — `fugaro run` is the documentation's manual path, and item 3 takes
+    // it out of the homepage's example — and the three is the reader's own three pieces.
+    status: 'Fugaro: launching 3 jobs',
+  },
+  {
+    // The same speaker as the turn above, and the same label: the two lines a label is read
+    // against are one column of the conversation, so the labels are the two speakers' names
+    // and the timing — "a few minutes later" — is what the results under the third line say
+    // (a label that names a time instead of a speaker is a third column width for one row).
+    who: 'Your agent',
+    turn: 'agent',
+    line: 'It always ends with a pull request, a draft one when it is not sure.',
+    source: WORKING,
+    results: ['Pull request 1 of 3', 'Pull request 2 of 3', 'Pull request 3 of 3'],
+  },
+]
+
+/**
+ * The one command the reader is asked for (item 3's acceptance: "the only command they are
+ * likely to type is `fugaro watch`"), and the skill's own line about what it shows. The
+ * snippet is the hero's only command block besides the install paths, and it carries its own
+ * copy control like every other block on the site (P6).
+ *
+ * The note is the skill's sentence in the two parts the page renders — the command as a code
+ * span, the rest of it after that — rather than as one string carrying the markdown's
+ * backticks, which a reader would see as backticks. Each part is a piece of the skill's line on
+ * its own, and `WATCH_NOTE` is the two joined the way the skill writes them: that is the string
+ * the build holds to the file below, so neither part can drift from the skill without stopping
+ * the build here.
+ */
+const WATCH = 'fugaro watch'
+const WATCH_TAIL = 'is the live screen of spend, repositories and running agents.'
+const WATCH_NOTE = `\`${WATCH}\` ${WATCH_TAIL}`
+
+// Hold every line a turn speaks — its `line` — to the document it cites, in that document's
+// order, here, so a paraphrase — or a line the skills stopped saying — stops the build naming
+// the file rather than reaching a reader as the agent's own words. `cursor` walks forward
+// through a document, so two lines quoted from one of them can only be quoted in the order it
+// writes them.
+//
+// `status` and `results` are deliberately not in this loop: they are the illustration's own
+// labels rather than documents' lines, and a guard that read them would either fail on the
+// figure the spec asks for or push somebody to write document lines that pretend to be a
+// status the skills do not print. What they may not be is a line of the document their own
+// turn cites — that would make them quotations, which the caption says they are not — and
+// `website/test/home.mjs` is the case that reads that: the same reading it gives the three
+// result labels.
+{
+  const cursors: { [name: string]: number } = {}
+  for (const turn of TURNS) {
+    for (const [what, line] of [['line', turn.line]] as const) {
+      if (!line) continue
+      const document = comparable(SOURCES[turn.source])
+      const quoted = comparable(line)
+      const from = cursors[turn.source] ?? 0
+      const at = document.indexOf(quoted, from)
+      if (at === -1) {
+        throw new Error(
+          `website/src/components/AgentChat.astro: the chat's ${what} ${JSON.stringify(line)} is not a line of ${turn.source} at or after the line before it, and every line a turn of the chat speaks is a document's own words rather than words written for the page (changes spec 2026-10-18, item 3; Global Constraint 6).`,
+        )
+      }
+      cursors[turn.source] = at + quoted.length
+    }
+  }
+  // The status line is the figure's own, so it may not be one of the skills' sentences: a
+  // label that turned out to be a quotation would make the caption's reading of the figure
+  // false the other way round.
+  for (const turn of TURNS) {
+    if (!turn.status) continue
+    if (comparable(SOURCES[turn.source]).includes(comparable(turn.status))) {
+      throw new Error(
+        `website/src/components/AgentChat.astro: the chat's status line ${JSON.stringify(turn.status)} is a line of ${turn.source}, and the status line is the illustration's own label rather than a quotation: the caption says the figure's labels are the picture's and not the skills' words (changes spec 2026-10-18, item 3).`,
+      )
+    }
+  }
+}
+
+// And the note under the watch snippet, held the same way, to the skill that writes it.
+if (!comparable(SOURCES[WORKING]).includes(comparable(WATCH_NOTE))) {
+  throw new Error(
+    `website/src/components/AgentChat.astro: the note ${JSON.stringify(WATCH_NOTE)} is not a line of ${WORKING}, and the page quotes the skill rather than describing it (Global Constraint 6).`,
+  )
+}
+
+// And the command itself, to the README: `fugaro watch` is a command the documentation
+// prints, so the one thing the reader is asked to type is a command that exists.
+if (!source('README.md').includes(WATCH)) {
+  throw new Error(
+    `website/src/components/AgentChat.astro: README.md does not print ${JSON.stringify(WATCH)}, and the snippet offers a command the documentation carries. Either the README stopped documenting it or the snippet is showing one that does not exist (Global Constraint 9).`,
+  )
+}
+---
+
+<figure class="chat" data-source={SPEC}>
+  <h2 class="chat-title">Through your agent</h2>
+
+  <ol class="chat-turns">
+    {
+      TURNS.map((turn) => (
+        <li class="chat-turn" data-turn={turn.turn} data-source={turn.source}>
+          <p class="turn-who">{turn.who}</p>
+          {/* The body of the turn — everything the speaker said — as one element, because it
+              is drawn as one bubble and the two speakers' bubbles sit on opposite sides of
+              the card (review round 5: the figure is a chat, so the reader's turn is at the
+              right and the agent's at the left). The body is also what makes the alternation
+              a thing the stylesheet can state in one rule rather than three: one box per
+              turn, and the box moves. */}
+          <div class="turn-body">
+            <p class="turn-line">{turn.line}</p>
+            {/* The agent's own status line: what it did, drawn as a subdued line rather than
+                as a prompt a reader is meant to type. It is a paragraph and not a `<pre>`, so
+                it carries no copy control — what a reader copies here is `fugaro watch` below,
+                not the agent's launch. It is inside the bubble: the launch is part of what the
+                agent did, not a note beside it. */}
+            {turn.status && <p class="turn-status">{turn.status}</p>}
+            {turn.results && (
+              <ul class="turn-results">
+                {turn.results.map((result) => (
+                  <li class="turn-result">{result}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+
+  {/* The caption is the figure's last child, and it is **directly under the conversation**:
+      it says what the picture is rather than leaving a reader to take it for a session that
+      happened (D184's rule for the transcript this component replaced), and a reader meets it
+      before the `fugaro watch` block below rather than after it (review round 3, item 3a: the
+      caption used to sit under "Watch it run", which is a different thing's heading). It
+      claims nothing about where the lines come from, because not every line is a quotation:
+      the request is item 3's own example of one, and the three results are the
+      illustration's — a run that has not happened has no pull request numbers to quote. So
+      the caption separates the two: **the agent's lines are the skills'**, and the labels —
+      the launch status and the three `Pull request n of 3` — are the picture's own, which is
+      the one thing about the figure a reader can go and check. It says that in one sentence
+      rather than three (review round 5: a caption that ran to five lines under a phone's
+      conversation was longer than the thing it described), which is why the request and the
+      "shape of what your agent does and reports" it used to walk through are gone. The
+      caption is the site's own sentence rather than a quotation, so `website/test/home.mjs`
+      holds it to the shape it has to keep — the word "illustration", the words "not a
+      recording", the word "skills", and no claim that the figure's lines are quotations —
+      and `website/test/wording.mjs` refuses the claim it used to make. */}
+  <figcaption class="chat-caption">
+    An illustration, not a recording of a session: the agent's lines are the skills Fugaro
+    installs, and the labels are the picture's.
+  </figcaption>
+</figure>
+
+{/* The `fugaro watch` block: the heading, the slot the screenshot goes into, the command and
+    the skill's note about it. **It is outside the figure**, because the caption above is the
+    figure's last child — HTML content model — and the caption belongs under the
+    conversation. The block is still the same page and the same component, and
+    `website/test/home.mjs` reads it there. */}
+<div class="chat-watch-block">
+  <h3 class="chat-watch-title">Watch it run</h3>
+
+  {/* Where the `fugaro watch` screenshot goes (changes spec item 3): a separate task adds the
+      image, and until it exists this element carries nothing at all — no placeholder, no
+      empty frame, no request for a file the build does not produce. `data-slot` is the hook
+      that task and `website/test/home.mjs` read; it is deliberately not a class, so it is not
+      something the stylesheet can start drawing. The rule below sizes the image the moment
+      the slot holds one, and an empty slot takes no space at all, so adding the image is
+      `<img src="…" alt="…">` on the line inside this element and nothing else. */}
+  <div class="chat-shot" data-slot="watch-screenshot"></div>
+
+  <div class="chat-watch command-block" data-copy>
+    <Fragment set:html={copyControlHTML('Copy the command')} />
+    <pre class="chat-watch-command"><code>{WATCH}</code></pre>
+  </div>
+
+  {/* The skill's own line about the screen, with the command in the site's code style rather
+      than in markdown backticks (the line `WATCH_NOTE` above is held to the skill). */}
+  <p class="chat-watch-note"><code>{WATCH}</code> {WATCH_TAIL}</p>
+</div>
+
+<style>
+  /* Tokens only (W1.2). **The chat comes first on the homepage and the flow is drawn under
+     it** (review round 5): what a reader of this page is deciding is whether to hand their
+     agent the work, so they meet the conversation and the one command before the schematic of
+     a run's four steps. The chat is still the quieter of the two however it is drawn — an
+     illustration of what happens rather than the picture of the run — and the accent marks
+     the agent's name, which is where the work leaves the reader's hands.
+
+     **One card, one conversation, at a readable width** (review round 3, item 3a). The turns
+     were three cards across the page's column, and three cards of a quarter of the page each
+     left dead space inside them: the reader's one short line floated in the middle of a card
+     whose height its neighbours set. A conversation is one card with the speaker at the left
+     of every line, so the column is the measure — the width a line of prose is set at
+     everywhere else on the site, and the width a chat is read at — and the figure, the
+     caption and the watch block under it all take it. */
+  .chat {
+    max-width: var(--measure);
+    margin: 0 auto;
+  }
+
+  /* The watch block below the figure: the same column as the conversation it belongs to, so
+     its heading, its command and its bar share the card's left edge rather than the page's. */
+  .chat-watch-block {
+    max-width: var(--measure);
+    margin: 0 auto;
+  }
+
+  .chat-title {
+    margin: 0 0 var(--space-xs);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  /* **The list is the card.** One border, one background and one radius around the whole
+     conversation, with the turns as its rows — no `max-width: none`: the cap `base.css` puts
+     on a list is the measure, and the card this column is drawn at is the measure, so the cap
+     is the shape rather than something to opt out of. */
+  .chat-turns {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    margin: 0;
+    padding: var(--space-sm) 0;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    list-style: none;
+  }
+
+  /* A turn is one row of it, and the row holds the speaker's name and the body of what they
+     said. The name is the muted tone, and the agent's carries the accent — where the work
+     leaves the reader's hands. That mark used to be a rail down the turn's left edge, and
+     with the bubble below it the row drew two marks for one thing (review round 5's
+     "calmer"). */
+  .chat-turn {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3xs);
+    padding: var(--space-xs) var(--space-md);
+  }
+
+  .chat-turn[data-turn='agent'] .turn-who {
+    color: var(--accent-on-dark);
+  }
+
+  /* **The body is the bubble, and its side is which speaker it is** (review round 5: the
+     reviews of this branch asked for a figure that reads as a chat rather than as a
+     transcript). One box per turn, tinted against the card, and the reader's moves to the
+     right edge while the agent's stays at the left — an illustration of a conversation, which
+     is what item 3 asks the homepage to show.
+
+     `justify-self: start` is declared and not left to default: a grid item's `normal`
+     justification is `stretch`, so without it the bubble would be a full-width band of the
+     column rather than the shape of a message. `max-width: 100%` is the other end — a long
+     line wraps inside the card rather than pushing the bubble past it.
+
+     **The names stay in one column at the left of every row** (review round 3, item 3a) while
+     the bubbles alternate inside the column of what was said, so the reader's own name has the
+     width of that column between it and its bubble. That is the one visible cost of keeping
+     the two claims at once, and it is the cheaper of the two: a name that travelled with its
+     bubble would have to sit inside it, where it would start at that bubble's edge rather than
+     at the one edge every line of the conversation shares.
+
+     A bubble is not the "card per turn" the review of round 3 refused: that was three cards
+     laid out across the page, each stretched to the height of the row's tallest, with the
+     reader's one short line floating in the middle of the space its neighbours set. The turns
+     here are rows of one card stacked vertically (`.chat-turns` is the card, one column), and
+     the bubble is content-sized inside its row, so nothing is stretched to anything.
+     `website/test/base-styles.mjs` still refuses a background, a border or a radius on
+     `.chat-turn` itself — a turn is a row of the card and never a card of its own — and
+     refuses a rule set that leaves both speakers' bubbles on the same side. */
+  .turn-body {
+    display: grid;
+    gap: var(--space-3xs);
+    max-width: 100%;
+    padding: var(--space-2xs) var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--ground);
+    justify-self: start;
+  }
+
+  .chat-turn[data-turn='you'] .turn-body {
+    justify-self: end;
+  }
+
+  /* From the layout's own 35 rem up, the speaker is a column of its own at the left of the
+     line it introduces, and what they said starts at one edge down the whole conversation.
+     **The column is a fixed 7 rem and not `max-content`**, and that is the whole of "the
+     labels are aligned": a `max-content` column is resolved per row against that row's own
+     label, so two speakers of two different lengths give two different column widths and the
+     lines start at two different places. `website/test/base-styles.mjs` reads this rule and
+     refuses a content-sized column for exactly that reason — and reads the label at the size
+     this component sets it to (`.turn-who`, the smallest mono size) and requires the column
+     to be wide enough for the widest label in the markup with room to spare, so a longer
+     speaker name fails the build rather than wrapping in a column too narrow for it. */
+  @media (min-width: 35rem) {
+    .chat-turn {
+      grid-template-columns: 7rem minmax(0, 1fr);
+      column-gap: var(--space-sm);
+      align-items: baseline;
+    }
+
+    /* Everything but the label is in the second column, under the line it belongs to: the
+       body is one grid item, so this is the whole of "what they said starts one edge down the
+       conversation" — the bubble moves inside the column (it alternates sides) and the column
+       itself does not. */
+    .turn-body {
+      grid-column: 2;
+    }
+  }
+
+  .turn-who {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+  }
+
+  .turn-line {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-size-base);
+    line-height: var(--leading-normal);
+  }
+
+  /* The agent's status line (changes spec item 3): no card of its own, no prompt, no control —
+     the smallest thing that says the agent did something. It is set in the mono face at the
+     smallest size and in the muted colour, so it reads as a line the tool printed rather than
+     as a thing the reader typed or an instruction to them. */
+  .turn-status {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+
+  .turn-results {
+    display: grid;
+    gap: var(--space-3xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .turn-result {
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+  }
+
+  .chat-watch-title {
+    margin: var(--space-lg) 0 var(--space-3xs);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  /* The slot the `fugaro watch` screenshot goes into, and **a slot that takes no space until
+     the image lands** (review round 3, item 3b). `:empty` is
+     what makes that true: the element is written empty and stays empty until a later task puts
+     the screenshot in it, and a slot that reserved a height, a frame or a background would be
+     a blank rectangle on the page in the meantime — about 140 px of it, which is what the
+     review saw. `website/test/home.mjs` reads the rules that reach this slot and refuses any
+     that gives it a box of its own, so a placeholder cannot come back.
+     The rule under it is the other half: what sizes the image the moment the slot holds one,
+     so adding it is `<img src="…" alt="…">` inside the element and no CSS at all. */
+  .chat-shot:empty {
+    display: none;
+  }
+
+  .chat-shot > img {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: var(--space-sm) 0 0;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  /* One bar around the block `base.css` lays out: the command at the left and its control at
+     the right, which is what `.command-block` does for every command block on the site — the
+     install cards and this bar read the same way now (review round 3, item 3c), so this rule
+     is the bar's own look and nothing about where the control sits. */
+  .chat-watch {
+    padding: var(--space-2xs) var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--ground);
+  }
+
+  .chat-watch-command {
+    margin: 0;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-watch-note {
+    margin: var(--space-3xs) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+  }
+
+  .chat-caption {
+    margin-top: var(--space-sm);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+  }
+</style>

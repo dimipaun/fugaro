@@ -17,7 +17,7 @@ Some tests sit behind build tags and need extra tools. CI type-checks all of the
 
 | Tag | What it runs | Needs |
 | --- | --- | --- |
-| `terraform` | the Terraform wrapper against a real binary: `go test -tags terraform ./internal/infra/...` | Terraform 1.7+ |
+| `terraform` | the Terraform wrapper against a real binary: `go test -tags terraform ./internal/infra/...` | Terraform 1.9+ |
 | `firebase` | the budget database rules against the Realtime Database emulator: `go test -tags firebase ./internal/budget/rules/...` (see `internal/budget/rules/emulator`) | Java 21, Node 22, the pinned firebase-tools |
 | `docker` | the image and gateway tests that build or run containers | Docker |
 | `live` | tests against real cloud accounts; never run in CI, only type-checked | your own project |

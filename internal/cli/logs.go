@@ -129,7 +129,10 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 		return nil, nil, "", err
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
-	l, err := ownerLaunch(ctx, env, s, id)
+	l, err := viewLaunch(ctx, env, s, id)
+	if errors.Is(err, errExecutionGone) {
+		return nil, nil, "", userErr("%v", err)
+	}
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -144,9 +147,36 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 // the run (after a double launch, launch.json may name the duplicate);
 // else launch.json's. nil means never launched. Unlike
 // existingLaunch it never writes: it serves read-only views. An execution
-// that is not of the run's own job is an error, never followed: the run's
-// service account can write the objects that name it.
+// that is not the run's own is an error, never followed: the run's service
+// account can write the objects that name it, and on a shared job
+// (design §4.1) the FUGARO_RUN the execution reports is what says whose it
+// is.
+//
+// An execution Cloud Run no longer has is tolerated here: cancel, the one
+// caller, has nothing to act on then. A view that reads the execution's logs
+// uses viewLaunch instead.
 func ownerLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string) (*runstore.Launch, error) {
+	return launchOf(ctx, env, s, id, false)
+}
+
+// viewLaunch is ownerLaunch for the views that read the execution's logs
+// (logs, diagnose): it refuses, with errExecutionGone, an execution Cloud Run
+// no longer has. Such an execution reports no FUGARO_RUN, so nothing the
+// runner or the launcher verified says it is the run's — only the run's own
+// objects name it, and the run's service account can write those. Its logs
+// can outlive it in the log bucket, and on a shared job (or naming another
+// repository's job) they are another run's: following it would print them
+// (review D1 of #460). Cloud Run and the log bucket both keep 30 days, so a
+// run old enough to have lost its execution has lost its logs too.
+func viewLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string) (*runstore.Launch, error) {
+	return launchOf(ctx, env, s, id, true)
+}
+
+// errExecutionGone marks viewLaunch's refusal of an execution the backend no
+// longer has.
+var errExecutionGone = errors.New("its execution no longer exists (Cloud Run keeps an execution 30 days), so the FUGARO_RUN it reported cannot be checked and its logs are not read")
+
+func launchOf(ctx context.Context, env *cloudEnv, s *runstore.Store, id string, mustExist bool) (*runstore.Launch, error) {
 	l, err := absent(s.ReadLaunch(ctx))
 	if err != nil {
 		return nil, remote(err)
@@ -167,9 +197,12 @@ func ownerLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id strin
 	if owner == nil || owner.Execution == "" {
 		return owner, nil
 	}
-	spec, _ := s.ReadTask(ctx) // unreadable: checkExecution refuses
-	if err := env.checkExecution(owner.Execution, s.Slug(), spec); err != nil {
+	x, err := env.checkExecution(ctx, nil, owner.Execution, s.Slug(), id)
+	if err != nil {
 		return nil, remote(fmt.Errorf("run %s/%s: %w: %w", s.Slug(), id, errNotFollowing, err))
+	}
+	if x == nil && mustExist {
+		return nil, fmt.Errorf("run %s/%s: %w", s.Slug(), id, errExecutionGone)
 	}
 	return owner, nil
 }

@@ -1,0 +1,284 @@
+// Ambiguous escape sequences are read every way, and the union is redacted
+// (review round 4 of PR 494).
+//
+// A sequence a terminal completes with a printable byte -- `ESC [ K`, `ESC [ 1 A`,
+// `ESC ( B`, `ESC c`, C1 CSI + `1A` -- swallows that byte, and in text never
+// meant for a terminal the byte may be the first letter of a token. Round 3
+// read the whole string two ways and drew whichever reading redacted more
+// tokens; the gate review gamed that three ways:
+//
+//   1. two keys, one found by each reading, the same count each: the pick drew
+//      the other key (`a ESC[K<key> b ESC[<key> c` gave `a KAKIA<key> ...`);
+//   2. the conservative reading applied to the whole string glued a real
+//      one-letter command onto the token after it (`ESC[K ESC[<npm token>` is
+//      `Knpm_...` there and `pm_...` in the terminal reading: no reading found
+//      it);
+//   3. only a *bare* `ESC [` + letter was ambiguous, so `ESC [ 1`, `ESC [ ;`,
+//      `ESC [ ?`, `ESC [ ` (space), C1 CSI + `1`, `ESC (`, `ESC #` and `ESC ` (space)
+//      still ate a token's first letter.
+//
+// The rule now (`resolveAmbiguousSequences`) is the union, per sequence: every
+// combination of readings of the sequences in one run of text is scanned, and a
+// character a terminal draws is redacted if any reading's credential rules
+// matched it. Every credential-shaped value is built at run time
+// (test/support/fakeSecrets); none is written down.
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  MAX_TEXT_INPUT_LENGTH,
+  TOKEN_PLACEHOLDER,
+  resolveAmbiguousSequences,
+  sanitizeRefusal,
+  sanitizeText,
+  stripTerminalSequences,
+  tracedRefusalRules,
+} from '../../src/shared/sanitize'
+import { createRedactor } from '../../src/source/redact'
+import * as fake from '../support/fakeSecrets'
+
+const ESC = String.fromCharCode(0x1b)
+const CSI1 = String.fromCharCode(0x9b)
+
+function drawn(result: ReturnType<typeof sanitizeText>): string {
+  return result.ok ? result.text : `refused: ${result.reason}`
+}
+
+function allThree(sentence: string): readonly [string, string, string] {
+  return [drawn(sanitizeText(sentence, 'sentence')), drawn(sanitizeRefusal(sentence)), createRedactor().redactText(sentence)]
+}
+
+/** leaks answers whether `out` holds any piece of `token` four characters or
+ * longer that is not also a piece of the marker -- "no part of any token". */
+function leaks(out: string, token: string): string | null {
+  for (let start = 0; start + 4 <= token.length; start += 1) {
+    const piece = token.slice(start, start + 4)
+    if (TOKEN_PLACEHOLDER.includes(piece)) continue
+    if (out.includes(piece)) return piece
+  }
+  return null
+}
+
+function expectNoLeak(sentence: string, tokens: readonly string[], label: string): void {
+  for (const [layer, out] of ['sentence', 'refusal', 'recorder'].map((name, index) => [name, allThree(sentence)[index] ?? ''] as const)) {
+    for (const token of tokens) {
+      expect(leaks(out, token), `${label} / ${layer}: ${JSON.stringify(out)}`).toBeNull()
+    }
+  }
+}
+
+function credentials(): readonly (readonly [string, string])[] {
+  return [
+    ['github token', fake.githubToken()],
+    ['github pat', fake.githubPat()],
+    ['gitlab token', fake.gitlabToken()],
+    ['npm token', fake.npmToken()],
+    ['provider key', fake.providerApiKey()],
+    ['slack token', fake.slackToken()],
+    ['aws key id', fake.awsKeyId()],
+    ['google api key', fake.googleApiKey()],
+    ['google access token', fake.googleAccessToken()],
+    ['jwt', fake.jwt()],
+    ['high-entropy run', fake.highEntropyRun()],
+  ]
+}
+
+describe('round 4, finding 1: two readings that each find one key', () => {
+  it('redacts both keys, in all three layers alike', () => {
+    const key = fake.awsKeyId()
+    const sentence = `a ${ESC}[K${key} b ${ESC}[${key} c`
+    const expected = `a ${TOKEN_PLACEHOLDER} b ${TOKEN_PLACEHOLDER} c`
+    expect(allThree(sentence)).toEqual([expected, expected, expected])
+  })
+
+  it('redacts both, whatever the two credentials are', () => {
+    for (const [firstName, first] of credentials()) {
+      for (const [secondName, second] of credentials()) {
+        const sentence = `a ${ESC}[K${first} b ${ESC}[${second} c`
+        expectNoLeak(sentence, [first, second], `${firstName} then ${secondName}`)
+      }
+    }
+  })
+})
+
+describe('round 4, finding 2: a real one-letter command before an ambiguous one', () => {
+  it('does not glue the command onto the token', () => {
+    const token = fake.npmToken()
+    const sentence = `w ${ESC}[K${ESC}[${token} v`
+    const expected = `w ${TOKEN_PLACEHOLDER} v`
+    expect(allThree(sentence)).toEqual([expected, expected, expected])
+  })
+
+  it('does the same after a reset (ESC c) and for every credential', () => {
+    for (const [name, token] of credentials()) {
+      for (const command of [`${ESC}[K`, `${ESC}c`, `${ESC}[2J`, `${ESC}[0m`]) {
+        const sentence = `w ${command}${ESC}[${token} v`
+        expectNoLeak(sentence, [token], `${JSON.stringify(command)} + ${name}`)
+      }
+    }
+  })
+})
+
+/** INTRODUCERS are the sequences that swallow a token's first letter, or its
+ * first letter and the bytes before it (finding 3). */
+const INTRODUCERS: readonly string[] = [
+  `${ESC}[`,
+  `${ESC}[1`,
+  `${ESC}[;`,
+  `${ESC}[?`,
+  `${ESC}[ `,
+  `${ESC}[1;31`,
+  `${CSI1}`,
+  `${CSI1}1`,
+  `${ESC}(`,
+  `${ESC}#`,
+  `${ESC} `,
+  `${ESC}$(`,
+  ESC,
+]
+
+describe('round 4, finding 3: every sequence whose final byte is the token', () => {
+  it('redacts the token behind every introducer, in all three layers alike', () => {
+    for (const introducer of INTRODUCERS) {
+      for (const [name, token] of credentials()) {
+        const sentence = `w ${introducer}${token} v`
+        const label = `${JSON.stringify(introducer)} + ${name}`
+        expectNoLeak(sentence, [token], label)
+        expect(allThree(sentence), label).toEqual([`w ${TOKEN_PLACEHOLDER} v`, `w ${TOKEN_PLACEHOLDER} v`, `w ${TOKEN_PLACEHOLDER} v`])
+      }
+    }
+  })
+
+  it('redacts a token whose leading digits a terminal takes as parameters', () => {
+    // `ESC [` + `1234` + the rest: the CSI takes the digits and the next letter.
+    const key = fake.awsKeyId()
+    const sentence = `w ${key.slice(0, 4)}${ESC}[${key.slice(4)} v`
+    expectNoLeak(sentence, [key], 'digits as parameters')
+  })
+
+  it('keeps a token-free sentence as a terminal draws it', () => {
+    for (const introducer of INTRODUCERS) {
+      expect(drawn(sanitizeText(`permission ${introducer}Kdenied`, 'sentence')), JSON.stringify(introducer)).toBe('permission denied')
+    }
+  })
+})
+
+describe('the union is mutation-proof against picking one reading', () => {
+  it('needs both readings of one string at once', () => {
+    // Only the union of the two readings redacts both: a rule that drew either
+    // reading's own result would draw the other key's remainder.
+    const key = fake.awsKeyId()
+    const out = createRedactor().redactText(`a ${ESC}[K${key} b ${ESC}[${key} c`)
+    expect(out).not.toContain(key.slice(1))
+    expect(out).not.toContain(`K${key}`)
+  })
+})
+
+describe('the resolver', () => {
+  it('returns nothing to do for text whose sequences swallowed nothing', () => {
+    expect(resolveAmbiguousSequences('plain text')).toBeUndefined()
+    expect(resolveAmbiguousSequences(`${ESC}]0;title\u0007after`)).toBeUndefined()
+  })
+
+  it('maps a find through invisible characters', () => {
+    const key = fake.awsKeyId()
+    const result = resolveAmbiguousSequences(`x ​${ESC}[​${key} y`)
+    expect(result?.text).toBe(`x ${TOKEN_PLACEHOLDER} y`)
+    expect(result?.masked).toBe(true)
+  })
+
+  it('refuses a run of text with more combinations than it reads (fail closed)', () => {
+    const glued = `${ESC}[1A`.repeat(10)
+    expect(resolveAmbiguousSequences(`x${glued}y`)).toBeNull()
+    expect(drawn(sanitizeText(`x${glued}y`, 'sentence'))).toMatch(/^refused: /)
+    expect(drawn(sanitizeRefusal(`x${glued}y`))).toMatch(/^refused: /)
+    expect(createRedactor().redactText(`x${glued}y`)).toBe(TOKEN_PLACEHOLDER)
+  })
+
+  it('refuses an ambiguous credential in a validating class and in a url', () => {
+    const token = fake.githubToken()
+    expect(sanitizeText(`${ESC}[${token}`, 'branch').ok).toBe(false)
+    expect(sanitizeText(`${ESC}[1${fake.awsKeyId()}`, 'person').ok).toBe(false)
+    expect(sanitizeText(`https://example.invalid/${ESC}[K${token}`, 'url').ok).toBe(false)
+  })
+
+  it('traces the same text the refusal rules write', () => {
+    const corpus = [
+      ...credentials().map(([, token]) => `denied for ${token} while reading`),
+      `see https://user:pw@example.invalid/x and ${fake.githubToken()}`,
+      `${fake.bearerHeader()} then`,
+      `api_key=hunter2 and password: ${fake.highEntropyRun()}`,
+      `u=${encodeURIComponent(fake.githubToken())}`,
+      `blob ${Buffer.from(fake.googleApiKey()).toString('base64')} end`,
+      fake.pemBlock(),
+      'nothing at all here',
+    ]
+    for (const text of corpus) {
+      const viaRules = drawn(sanitizeRefusal(text))
+      expect(tracedRefusalRules(text).replace(/\s+/g, ' ').trim(), text).toBe(viaRules)
+    }
+  })
+})
+
+describe('a line break inside a sequence (finding 4a)', () => {
+  it('ends the sequence and is kept', () => {
+    expect(stripTerminalSequences(`a${ESC}[1\nx`)).toBe('a\nx')
+    expect(stripTerminalSequences(`a${ESC}[1\tx`)).toBe('a\tx')
+    expect(stripTerminalSequences(`a${ESC}[1\rx`)).toBe('a\rx')
+    expect(stripTerminalSequences(`a${ESC}\nx`)).toBe('a\nx')
+    expect(stripTerminalSequences(`a${ESC}(\nx`)).toBe('a\nx')
+    expect(createRedactor().redactText(`line one${ESC}[1\nline two`)).toBe('line one\nline two')
+  })
+})
+
+describe('the recorder never mangles its own marker (finding 4b)', () => {
+  it('writes only whole markers, whatever sequence sits before a token', () => {
+    const circled = String.fromCharCode(0x2460)
+    const prefixes = [ESC, `${ESC}[`, `${ESC}[1`, CSI1, `${ESC}(`, `${ESC}\n`, `${ESC}​`]
+    for (const prefix of prefixes) {
+      for (const [name, token] of [...credentials(), ['aws key + circled digit', `${fake.awsKeyId()}${circled}`] as const]) {
+        const out = createRedactor().redactText(`x ${prefix}${token} y`)
+        const label = `${JSON.stringify(prefix)} + ${name}: ${JSON.stringify(out)}`
+        expect(out.replaceAll(TOKEN_PLACEHOLDER, ''), label).not.toMatch(/edacted|redacted-token\]/)
+        expect(out, label).not.toContain(ESC)
+      }
+    }
+  })
+})
+
+/** BOUND_MS is the linear-time bound terminal-sequences.test.ts holds. */
+const BOUND_MS = 250
+
+function timed(run: () => unknown): number {
+  const start = performance.now()
+  try {
+    run()
+  } catch {
+    // A refusal is an answer; only the time it took matters here.
+  }
+  return performance.now() - start
+}
+
+function fill(unit: string): string {
+  return unit.repeat(Math.floor(MAX_TEXT_INPUT_LENGTH / unit.length))
+}
+
+describe('10,000 ambiguous sites cost every layer milliseconds', () => {
+  const inputs: readonly (readonly [string, string])[] = [
+    ['ESC [ K word, apart', fill(`${ESC}[Kab `)],
+    ['ESC [ 1 A word, apart', fill(`${ESC}[1Ab `)],
+    ['ESC c, apart', fill(`${ESC}c `)],
+    ['C1 CSI 1 A, apart', fill(`${CSI1}1Ax `)],
+    ['ESC [ K glued', fill(`${ESC}[Ka`)],
+    ['colour codes around words', fill(`${ESC}[31mred${ESC}[0m `)],
+    ['ESC [ before a token fragment', fill(`${ESC}[${fake.githubToken().slice(0, 6)} `)],
+    ['ESC [ before a whole token', fill(`${ESC}[${fake.githubToken()} `)],
+  ]
+  it.each(inputs)('%s', (_name, input) => {
+    expect(input.length).toBeLessThanOrEqual(MAX_TEXT_INPUT_LENGTH)
+    expect(timed(() => resolveAmbiguousSequences(input))).toBeLessThan(BOUND_MS)
+    expect(timed(() => sanitizeText(input, 'sentence'))).toBeLessThan(BOUND_MS)
+    expect(timed(() => sanitizeRefusal(input))).toBeLessThan(BOUND_MS)
+    expect(timed(() => createRedactor().redactText(input))).toBeLessThan(BOUND_MS)
+  })
+})

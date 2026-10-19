@@ -171,8 +171,17 @@ type Record struct {
 	// a first run may set to another branch). A follow-up takes it as its
 	// ref. Absent in records from before it was kept.
 	BaseBranch string `json:"base_branch,omitempty"`
-	HeadSHA    string `json:"head_sha,omitempty"`
-	PR         *PRRef `json:"pr,omitempty"`
+	// StartSHA is the commit the run's branch was cut from: the task's ref
+	// (--ref, or the base branch) as bootstrap read it, right after the
+	// checkout and before the agent ran. It is the base every question of
+	// "did this run change X" is measured against — the workflow guard most
+	// of all — which is not the base branch when the run was started from
+	// another ref. A follow-up records the commit it started from in
+	// follow_up.start_sha instead, and a mode: review run has no branch.
+	// Absent in records from before it was kept.
+	StartSHA string `json:"start_sha,omitempty"`
+	HeadSHA  string `json:"head_sha,omitempty"`
+	PR       *PRRef `json:"pr,omitempty"`
 	// DraftFallback is set when the host refused real draft pull requests,
 	// so the PR is an ordinary one marked "[DRAFT]" in its title.
 	DraftFallback bool            `json:"draft_fallback,omitempty"`
@@ -230,6 +239,13 @@ type Record struct {
 	// size and sha256. Absent for a run launched without an attachment, and
 	// in records from before this field existed.
 	Inputs []InputFile `json:"inputs,omitempty"`
+	// ChangedFiles is the paths the run changed, recorded by the runner at
+	// finalize (console v2 design D27, F17): paths only, bounded, and with
+	// the truncation recorded as a fact (changedfiles.go). Absent for a run
+	// that recorded none — one that died before finalize, or whose git read
+	// failed — and in records from before this field existed, so a reader
+	// from before it sees the record it always saw.
+	ChangedFiles *ChangedFiles `json:"changed_files,omitempty"`
 	// Artifacts is the files a mode: artifact run uploaded, in name order
 	// (design artifact-runs.md §3, §8): one entry per object under the
 	// run's artifacts/ prefix, each the account a reader verifies what it

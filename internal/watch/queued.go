@@ -24,6 +24,10 @@ type QueuedRun struct {
 	// bucket's own (unescaped) form; MergeQueued converts them to the wire
 	// keys a View's repository blocks use.
 	Run, Slug string
+	// Title is the run's own job title, from the one place every surface
+	// reads it (task.Spec.TitleLine): the launcher's fugaro run --title,
+	// else the task prompt's first line. "" when task.json did not parse.
+	Title string
 	// Workflow, Recipe and RequestedBy are read from task.json, when it
 	// parses; each is "" when not known.
 	Workflow, Recipe, RequestedBy string
@@ -39,7 +43,12 @@ type QueuedRun struct {
 // queuedRow is q as a RunRow, aged as of now.
 func queuedRow(q QueuedRun, now time.Time) RunRow {
 	age := max(now.Sub(q.LaunchedAt), 0)
-	title := q.Workflow
+	// The run's own title, when task.json gave one; else the workflow, which
+	// is all a queued row ever had to name (the requester, failing that).
+	title := q.Title
+	if title == "" {
+		title = q.Workflow
+	}
 	if title == "" {
 		title = q.RequestedBy
 	}

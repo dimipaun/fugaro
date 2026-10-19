@@ -16,8 +16,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -321,8 +321,8 @@ func rulesMarkerPrePolicyText(gen int) string {
 // is this release's own document, whose mailbox the mobile app has no grant for
 // until the owner deploys it (mobile plan P2.3).
 func rulesMarkerOlderText(gen int) string {
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4); re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
-		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, projectpolicy.RulesVersion)
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, rules.PathDevices, projectpolicy.RulesVersion)
 }
 
 // readPolicyNode reads the shared node with its ETag, the precondition the
@@ -349,7 +349,7 @@ func refuseNewerPolicy(raw []byte) error {
 		return nil
 	}
 	if head.Version > projectpolicy.Version {
-		return userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, head.Version, projectpolicy.Version))
+		return userErr("%s", projectpolicy.SkewSentence(&projectpolicy.VersionError{Found: head.Version, Understood: projectpolicy.Version}, projectpolicy.ReaderCLI))
 	}
 	return nil
 }
@@ -366,7 +366,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 	switch {
 	case errors.As(err, &ve):
 		if ve.Found > ve.Understood {
-			return nil, userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
+			return nil, userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
 		}
 		// An older version (a hand-written node, or one a release before this
 		// shape wrote). "Publish again" would be advice this very refusal
@@ -558,9 +558,52 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 // A repository cannot reach this key either way: its fugaro.yaml has no routing
 // (D1a), and `repos add|rm` edits the node as the document it is
 // (patchPolicyJSON) so it cannot drop what this publisher writes.
+//
+// The clone_urls block is kept from the node being replaced, not dropped: this
+// Fugaro reads it (the runner computes a project job's clone URL from it, plan
+// task 3.3 step 3, design §4.1(1)) but no command of this release writes one, so
+// a publish that built the node without it would drop an entry an operator put
+// there — and a dropped entry is a repository that starts cloning from its
+// provider's usual host instead of the mirror the project chose. There is no
+// writer here, so "kept" is all this publisher can promise; printPolicyDiff
+// says so.
 func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy, removeRouting bool) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, false, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
+	}
+	// A policy that carries profiles must define the one every workflow that
+	// names none runs on (projectpolicy.validProfiles applies the same rule to
+	// the node, and checkPolicyWeWouldWrite would refuse it there). It is
+	// refused here, before the node is built, so that the operator is told
+	// which file to fix: the alternative is a repository selecting a profile
+	// nobody defined, which is refused at run start, one run at a time.
+	if len(lc.Profiles) > 0 {
+		if _, ok := lc.Profiles[projectpolicy.DefaultProfileName]; !ok {
+			return nil, false, userErr("this project's config sets profiles: and does not define %q, the profile every workflow that names none runs on: a repository selecting it would have every run refused; define it in %s, or remove the profiles: block (a policy with no profiles block sets no profile at all)",
+				projectpolicy.DefaultProfileName, lc.Name)
+		}
+		for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+			// A profile's allow_repos is either written or not, and the node
+			// could not tell the two apart: the carrier's json omitempty drops
+			// an empty list on the way into the policy, so projectpolicy's own
+			// refusal for a written empty list (checkWrittenProfileFields)
+			// never sees this one — the profile would silently fall back to
+			// the project's wider allow_repos, which is the one direction a
+			// profile's list must never move (docs/project-layer.md §5).
+			// It is refused here, where the file still says which it was: a
+			// written empty list (`allow_repos: []`) and a written blank one
+			// (`allow_repos:` with nothing under it) both reach this function
+			// as an empty slice, and config.JobProfile's allowReposWritten is
+			// what tells them from the absent key. localcfg refuses both when
+			// the file is read (validate), so through the CLI this check is
+			// unreachable: it is defence in depth, the second door on the same
+			// rule for a config that reaches the publisher by another path.
+			// TestBuildProjectPolicyRefusesAnEmptyProfileAllowRepos tests it
+			// with a config built in code.
+			if pr := lc.Profiles[name]; pr.AllowReposWritten() && len(pr.AllowRepos) == 0 {
+				return nil, false, userErr("this project's config sets profiles.%s.allow_repos to a written list with nothing in it, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
+			}
+		}
 	}
 	silent := lc.Routing == nil || lc.Routing.Claude == nil
 	switch {
@@ -581,6 +624,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		AllowRepos: nonNil(allow),
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
+		Profiles:   policyProfiles(lc),
 	}
 	switch {
 	case !silent:
@@ -590,6 +634,11 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// from a value this config does not hold. The member itself is carried
 		// over byte for byte on top of this (policyNodeBytes, keepRouting).
 		pol.Routing = old.Routing
+	}
+	// clone_urls is kept whatever the routing switch does: no command of this
+	// release writes it (see above), so the node's entries are the only ones.
+	if old != nil {
+		pol.CloneURLs = old.CloneURLs
 	}
 	return pol, keepRouting, nil
 }
@@ -626,6 +675,40 @@ func policyProviders(lc *localcfg.Config) map[string]projectpolicy.Provider {
 		// carrier and leave a respelled copy at zero. Neither can happen with
 		// exactly one declaration of each key.
 		out[name] = projectpolicy.Provider{ModelProvider: mp}
+	}
+	return out
+}
+
+// policyProfiles is the policy's profiles block, built from the operator's
+// config.
+//
+// Each entry is the operator's own carrier, copied whole, for the reason
+// policyProviders copies a provider whole: config.JobProfile is the one
+// declaration of the document (projectpolicy.Profile embeds it), so a copy by
+// name could only lose a key a later release adds.
+//
+// The block is published exactly as the file spells it, and the rules that
+// make it usable are the policy's own (projectpolicy.validProfiles, run by
+// checkPolicyWeWouldWrite before anything is written): the default profile
+// defined, every provider named and known, cpu/memory a Cloud Run shape, the
+// timeout within Cloud Run's ceiling, and every allow_repos pattern of the
+// profile's own provider. Refusing them here too would be a second copy of
+// those rules to drift from — and the operator reads the refusal with the
+// profile's name in it either way.
+//
+// A config that sets no profiles: publishes no block, and so drops the one
+// the node carried — the same rule the providers, the prices and the budget
+// follow (the file is what a publish is built from), and the reason
+// printPolicyDiff prints a line per profile: the operator reads the loss
+// before it is written, rather than discovering it when a repository's
+// workflow is refused at run start.
+func policyProfiles(lc *localcfg.Config) map[string]projectpolicy.Profile {
+	if len(lc.Profiles) == 0 {
+		return nil
+	}
+	out := make(map[string]projectpolicy.Profile, len(lc.Profiles))
+	for name, jp := range lc.Profiles {
+		out[name] = projectpolicy.Profile{JobProfile: jp}
 	}
 	return out
 }
@@ -693,6 +776,20 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 	}
 	if !exists {
 		return node, nil
+	}
+	// The clone_urls member is carried over byte for byte: no command of this
+	// release writes it (the runner reads it, plan task 3.3 step 3), so a key
+	// inside it that this binary does not model (a clone_urls field of a newer
+	// release) would be dropped by a re-encode of the decoded value.
+	if member, ok, err := jsonMember(oldRaw, "clone_urls"); err != nil {
+		// The node decoded as a policy a moment ago (publishedPolicyOf), so a
+		// member of it cannot be unreadable; refuse rather than write a node
+		// that silently lost the block.
+		return nil, userErr("%s cannot be read back as a document, so its clone_urls block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
+	} else if ok {
+		if node, err = patchPolicyJSON(node, "clone_urls", member); err != nil {
+			return nil, userErr("building the policy: %v", err)
+		}
 	}
 	routing, ok, err := jsonMember(oldRaw, "routing")
 	if err != nil {
@@ -874,7 +971,7 @@ func checkPolicyBytes(raw []byte) error {
 	p, found, err := projectpolicy.Decode(raw)
 	switch {
 	case err != nil:
-		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices and the allow-list — with 'fugaro validate'", err)
+		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices, the profiles and the allow-list — with 'fugaro validate'", err)
 	case !found || p == nil:
 		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written: check the values it is built from with 'fugaro validate'")
 	}
@@ -988,6 +1085,13 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// TestPolicyCarriesNoSecretValue is the guard that it never does.
 	diffLines(out, providerLines(old), providerLines(new))
 	diffLines(out, priceLines(old), priceLines(new))
+	// Profiles are the jobs this project deploys and the repositories each is
+	// admitted to, so a publish that changes one must say which: a line that
+	// only said "profiles: standard" would hide a widened allow_repos list or
+	// an upsized job, and one that said nothing at all would hide a profile
+	// that stopped existing — which refuses the runs of every workflow that
+	// selected it.
+	diffLines(out, profileLines(old), profileLines(new))
 	// The routing switch moves with this publish: it comes from the operator's
 	// config, so a route that appeared or changed is a line an operator reading
 	// money-and-data-sharing changes must see — a route that quietly starts
@@ -998,6 +1102,14 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// can reach here is the deliberate one, --remove-routing (or a config that
 	// writes via: direct), and then the "-" line is the whole point of the diff.
 	diffLines(out, routingLines(old), routingLines(new))
+	// The clone URLs a project job clones from (plan task 3.3 step 3): kept,
+	// because no command of this release writes one, and worth a line because a
+	// dropped entry changes where a repository's runs clone from. The URL is
+	// credential-free by the node's own validation (repourl.CloneURL), so
+	// printing it is not printing a secret.
+	for _, canonical := range slices.Sorted(maps.Keys(new.CloneURLs)) {
+		fmt.Fprintf(out, "  clone_urls %s kept: %s\n", canonical, new.CloneURLs[canonical])
+	}
 	for _, r := range new.AllowRepos {
 		if src, ok := sources[r]; ok {
 			fmt.Fprintf(out, "  allow_repos %s (%s)\n", r, src)
@@ -1005,6 +1117,54 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 			fmt.Fprintf(out, "  allow_repos %s (kept from the published node)\n", r)
 		}
 	}
+}
+
+// profileLines is one line per value of every profile, and one per job it
+// maps to, for the diff and for `policy show`. A nil policy (no node
+// published) has no profiles.
+func profileLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := make(map[string]string, 2*len(p.Profiles))
+	for _, name := range p.ProfileNames() {
+		pr := p.Profiles[name]
+		out["profile "+name] = profileText(pr)
+		out["profile "+name+" jobs"] = profileJobsText(name, pr)
+	}
+	return out
+}
+
+// profileText is a profile as one line: everything the job is deployed as, and
+// the admission list a run of it is held to. The secrets are their NAMES —
+// the node carries no value (TestPolicyCarriesNoSecretValue is the guard) —
+// and an absent list is printed as the fallback it is, never as an empty one.
+func profileText(pr projectpolicy.Profile) string {
+	secrets := "none"
+	if len(pr.Secrets) > 0 {
+		secrets = strings.Join(pr.Secrets, ", ")
+	}
+	allow := "the project's allow_repos"
+	switch {
+	case len(pr.AllowRepos) > 0:
+		allow = strings.Join(pr.AllowRepos, ", ")
+	case len(pr.Secrets) > 0:
+		// Any enrolled repository on the profile's provider can select it
+		// with job_profile:, and every run of it mounts these secrets.
+		allow += " (warning: every enrolled repository can select this profile and read its secrets; give it its own allow_repos)"
+	}
+	return fmt.Sprintf("provider %s, cpu %d, memory %s, timeout %s, secrets %s, allow_repos %s",
+		pr.Provider, pr.CPU, pr.Memory, pr.TimeoutClass, secrets, allow)
+}
+
+// profileJobsText is the jobs a profile maps to. Design §4.1 deploys one job
+// and one job service account per (profile, provider, account): the provider
+// is the profile's, and the account is the Claude credential the run uses, so
+// a profile is as many jobs as the project has accounts. The Cloud Run job
+// name itself is Task 3.2's (gcp's own naming), and this prints the key it is
+// built from rather than a spelling this command would have to guess.
+func profileJobsText(name string, pr projectpolicy.Profile) string {
+	return fmt.Sprintf("one job per (profile, provider, account): (%s, %s, <account>)", name, pr.Provider)
 }
 
 // diffLines prints what a write changes, one line per key: the keys the write
@@ -1128,7 +1288,17 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"budget.max_run_tokens": fmt.Sprintf("%d", p.Budget.MaxRunTokens),
 		"allow_repos":           fmt.Sprintf("%v", nonNil(p.AllowRepos)),
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
+		"profiles":              profilesText(p),
 	}
+}
+
+// profilesText is the policy's profile names as one line, for the diff's
+// summary row (the per-profile lines below it carry the values).
+func profilesText(p *projectpolicy.Policy) string {
+	if len(p.Profiles) == 0 {
+		return "none (a workflow that selects one is refused at run start)"
+	}
+	return strings.Join(p.ProfileNames(), ", ")
 }
 
 // deleteProjectPolicy removes the published policy (B5): the child nodes of
@@ -1247,20 +1417,7 @@ func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (in
 // policy until it finishes. A flag typed in advance must not be what stops a
 // run that is already running, so this asks for the name itself.
 func confirmRemovalStrict(cmd *cobra.Command, lc *localcfg.Config, what string) error {
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s: --yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", initflow.NeedsTerminal("the typed confirmation of this step"))
-	}
-	fmt.Fprintf(out, "Type %s to confirm: ", lc.Name)
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
-	}
-	if strings.TrimSpace(line) != lc.Name {
-		return userErr("not confirmed (the project's name was not typed); nothing was changed")
-	}
-	return nil
+	return confirmTypedStrict(cmd, lc, "--yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", what)
 }
 
 // confirmRemoval is confirmRemovalStrict where --yes may stand in for the
@@ -1582,6 +1739,13 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	for _, line := range slices.Sorted(maps.Keys(policyLines(p))) {
 		fmt.Fprintf(out, "  %s: %s\n", line, policyLines(p)[line])
 	}
+	// One line per profile, then the jobs it maps to: a reader of this command
+	// is reading what the project deploys and who may run on it (§4.1).
+	for _, name := range p.ProfileNames() {
+		pr := p.Profiles[name]
+		fmt.Fprintf(out, "  profile %s: %s\n", name, profileText(pr))
+		fmt.Fprintf(out, "  profile %s jobs: %s\n", name, profileJobsText(name, pr))
+	}
 	for _, name := range slices.Sorted(maps.Keys(p.Providers)) {
 		pv := p.Providers[name]
 		fmt.Fprintf(out, "  provider %s: %s %s, auth %s, secret %s, require_zdr %v, price_policy %s\n",
@@ -1596,6 +1760,16 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	}
 	if p.Routing != nil {
 		fmt.Fprintf(out, "  routing: %s\n", routingText(p.Routing))
+	}
+	// One line per clone URL, under the canonical repository name the runner
+	// looks up (plan task 3.3 step 3). Like routing: this Fugaro reads the
+	// block and writes none, so an operator has to be able to see what the
+	// node carries — a node with an entry must not read like one without, and
+	// the entry is where that repository's runs clone from. The URL is
+	// credential-free by the node's own validation (repourl.CloneURL), so
+	// printing it is not printing a secret.
+	for _, canonical := range slices.Sorted(maps.Keys(p.CloneURLs)) {
+		fmt.Fprintf(out, "  clone_urls: %s → %s\n", canonical, p.CloneURLs[canonical])
 	}
 }
 
@@ -1813,6 +1987,16 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 // node's allow_repos and nothing else: the rest of the published policy is
 // written back as it was read, under the ETag the read returned, so a
 // concurrent publisher is refused rather than overwritten.
+//
+// It is a writer, so it takes every refusal `policy publish` takes before it
+// writes anything: the shared config and a database that is not this
+// project's (openProjectBudget, whose comment above says why), and the
+// deployed rules marker (requirePolicyRules) — a policy written to a
+// deployment whose marker is absent or older than this Fugaro is one the runs
+// it bounds cannot read, and an edit to the allow-list is a publish of the
+// list. Without that last gate `repos add`/`repos rm` were the one way to
+// write the shared node the runner reads on a deployment `policy publish`
+// would refuse to touch.
 func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string, remove bool) error {
 	ctx := cmd.Context()
 	// openProjectBudget, not openBudget: this writes the published policy node,
@@ -1822,6 +2006,11 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	// must be this project's.
 	lc, db, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
+		return err
+	}
+	// The same read `policy publish` makes first, and for the same reason: the
+	// marker says the deployed rules are new enough to read what is written.
+	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()

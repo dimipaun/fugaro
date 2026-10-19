@@ -127,7 +127,7 @@ func TestModelPricesCatalogJSONOfAnEmptyBlock(t *testing.T) {
 // administrator who writes a slash-free ID by hand is not made to escape it.
 func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 	const id = "claude-sonnet-4-5-20250929@20250929" // a model ID with no "." or "/" in it
-	p, found, err := Decode([]byte(`{"version": 1, "model_prices": {"` + id + `": {"input_per_m": 1, "output_per_m": 2}}}`))
+	p, found, err := Decode([]byte(`{"version": 2, "model_prices": {"` + id + `": {"input_per_m": 1, "output_per_m": 2}}}`))
 	if err != nil || !found {
 		t.Fatalf("a hand-written node was refused: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 	}
 	// An escaped key is read as what it escapes, and the two spellings of the
 	// same model ID land on the same entry rather than on two.
-	escaped, _, err := Decode([]byte(`{"version": 1, "model_prices": {"` + escKey("deepseek/deepseek-v4.1-flash") + `": {"input_per_m": 1, "output_per_m": 2}}}`))
+	escaped, _, err := Decode([]byte(`{"version": 2, "model_prices": {"` + escKey("deepseek/deepseek-v4.1-flash") + `": {"input_per_m": 1, "output_per_m": 2}}}`))
 	if err != nil {
 		t.Fatalf("an escaped hand-written key was refused: %v", err)
 	}
@@ -144,10 +144,10 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 		t.Errorf("Prices = %v, want the escaped key read back as the model ID", escaped.Prices)
 	}
 	// A bad escape is an error, not a silently different model ID.
-	if _, _, err := Decode([]byte(`{"version": 1, "model_prices": {"a%2": {"input_per_m": 1, "output_per_m": 2}}}`)); err == nil {
+	if _, _, err := Decode([]byte(`{"version": 2, "model_prices": {"a%2": {"input_per_m": 1, "output_per_m": 2}}}`)); err == nil {
 		t.Error("a truncated escape was accepted")
 	}
-	if _, _, err := Decode([]byte(`{"version": 1, "model_prices": {"a%zz": {"input_per_m": 1, "output_per_m": 2}}}`)); err == nil {
+	if _, _, err := Decode([]byte(`{"version": 2, "model_prices": {"a%zz": {"input_per_m": 1, "output_per_m": 2}}}`)); err == nil {
 		t.Error("a bad escape was accepted")
 	}
 }
@@ -160,9 +160,9 @@ func TestModelPricesReadsAHandWrittenKey(t *testing.T) {
 // way.
 func TestModelPricesRefusesCaseFoldedMembers(t *testing.T) {
 	for name, raw := range map[string]string{
-		"a case-folded rate beside the real one": `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "INPUT_PER_M": 1000, "output_per_m": 1}}}`,
-		"a rate written twice":                   `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "input_per_m": 1000, "output_per_m": 1}}}`,
-		"a case-folded tier member":              `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "long_context": {"above_input_tokens": 100000, "input_per_m": 2, "INPUT_PER_M": 3, "output_per_m": 4}}}}`,
+		"a case-folded rate beside the real one": `{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "INPUT_PER_M": 1000, "output_per_m": 1}}}`,
+		"a rate written twice":                   `{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "input_per_m": 1000, "output_per_m": 1}}}`,
+		"a case-folded tier member":              `{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "long_context": {"above_input_tokens": 100000, "input_per_m": 2, "INPUT_PER_M": 3, "output_per_m": 4}}}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
@@ -174,7 +174,7 @@ func TestModelPricesRefusesCaseFoldedMembers(t *testing.T) {
 		}
 	}
 	// The documented spelling, tier and all, is read as before.
-	p, found, err := Decode([]byte(`{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "long_context": {"above_input_tokens": 100000, "input_per_m": 2, "output_per_m": 4}}}}`))
+	p, found, err := Decode([]byte(`{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "long_context": {"above_input_tokens": 100000, "input_per_m": 2, "output_per_m": 4}}}}`))
 	if err != nil || !found || p == nil {
 		t.Fatalf("a correctly spelled price entry was refused: (%v, %v, %v)", p, found, err)
 	}
@@ -196,7 +196,7 @@ func TestModelPricesRefusesCaseFoldedMembers(t *testing.T) {
 // the next writer of that list would have no reason to notice. Listed, the
 // spelling is refused like any other.
 func TestModelPricesRefusesACaseFoldedTierMemberAlone(t *testing.T) {
-	const raw = `{"version": 1, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, ` +
+	const raw = `{"version": 2, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, ` +
 		`"long_context": {"ABOVE_INPUT_TOKENS": 100000, "input_per_m": 2, "output_per_m": 4}}}}`
 	p, found, err := Decode([]byte(raw))
 	if err == nil || p != nil || !found {
@@ -221,9 +221,9 @@ func TestModelPricesRefusesACaseFoldedTierMemberAlone(t *testing.T) {
 func TestModelPricesRefusesOneModelPricedTwice(t *testing.T) {
 	const id = "deepseek/deepseek-v4.1-flash"
 	for name, raw := range map[string]string{
-		"the escaped spelling beside the literal one": `{"version": 1, "model_prices": {"` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}, "` + id + `": {"input_per_m": 99, "output_per_m": 2}}}`,
-		"the literal spelling first":                  `{"version": 1, "model_prices": {"` + id + `": {"input_per_m": 99, "output_per_m": 2}, "` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}}}`,
-		"the same key twice":                          `{"version": 1, "model_prices": {"deepseek/*": {"input_per_m": 1, "output_per_m": 2}, "deepseek/*": {"input_per_m": 99, "output_per_m": 2}}}`,
+		"the escaped spelling beside the literal one": `{"version": 2, "model_prices": {"` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}, "` + id + `": {"input_per_m": 99, "output_per_m": 2}}}`,
+		"the literal spelling first":                  `{"version": 2, "model_prices": {"` + id + `": {"input_per_m": 99, "output_per_m": 2}, "` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}}}`,
+		"the same key twice":                          `{"version": 2, "model_prices": {"deepseek/*": {"input_per_m": 1, "output_per_m": 2}, "deepseek/*": {"input_per_m": 99, "output_per_m": 2}}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
@@ -236,7 +236,7 @@ func TestModelPricesRefusesOneModelPricedTwice(t *testing.T) {
 	}
 	// The same two keys under two different models are two entries and are
 	// read: the refusal is the collision, not the spelling.
-	raw := []byte(`{"version": 1, "model_prices": {"` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}, "deepseek/other": {"input_per_m": 99, "output_per_m": 2}}}`)
+	raw := []byte(`{"version": 2, "model_prices": {"` + escKey(id) + `": {"input_per_m": 1, "output_per_m": 2}, "deepseek/other": {"input_per_m": 99, "output_per_m": 2}}}`)
 	p, found, err := Decode(raw)
 	if err != nil || !found || p == nil || len(p.Prices) != 2 {
 		t.Fatalf("Decode(%s) = (%v, %v, %v), want both entries", raw, p, found, err)
@@ -245,7 +245,7 @@ func TestModelPricesRefusesOneModelPricedTwice(t *testing.T) {
 	// was used: the escaped form is what this package writes, the literal one
 	// is what a person writes.
 	for _, key := range []string{escKey(id), id} {
-		raw := []byte(`{"version": 1, "model_prices": {"` + key + `": {"input_per_m": 7, "output_per_m": 2}}}`)
+		raw := []byte(`{"version": 2, "model_prices": {"` + key + `": {"input_per_m": 7, "output_per_m": 2}}}`)
 		p, found, err := Decode(raw)
 		if err != nil || !found || p == nil {
 			t.Fatalf("Decode(%s) = (%v, %v, %v), want it read", raw, p, found, err)

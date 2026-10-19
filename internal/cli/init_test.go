@@ -1816,7 +1816,7 @@ func TestPlanRepoThreadsReadyToFirstBuild(t *testing.T) {
 func TestPlanRepoGatesOnAPublishedPolicy(t *testing.T) {
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":2,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	// The local config holds the database (so the policy can be read) but no
 	// web API key, so its jobs carry neither of what a run needs.
 	p := newRepoPlanRig(t, names(3), sandboxBaseRelease, "budget: { mode: off, rtdb_url: "+db.URL+" }\n", changedRepoBuild)
@@ -2013,5 +2013,30 @@ func TestInitPrintVarsNotesProvidersOpenToEveryRepository(t *testing.T) {
 	want := "note: provider openrouter has no allow_data_to, so every repository of the project may mount its key and send it code"
 	if n := strings.Count(errOut, want); n != 1 {
 		t.Errorf("the note appears %d times, want once:\n%s", n, errOut)
+	}
+}
+
+// TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames is the stack
+// review's init-level pin of infra.RefuseProjectJobDeletes: a plan that
+// replaces a project job (a profile renamed, or its account changed) would
+// remove the job's launcher grant and then fail on the job's deletion
+// protection. The init stage refuses it even with --allow-delete naming both
+// the job and the grant, and nothing is applied.
+//
+// Mutation (run, restore): guard passes RefuseProjectJobDeletes(nil) — the
+// plan is applied.
+func TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	mod := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"]`
+	job := mod + ".google_cloud_run_v2_job.this"
+	grant := mod + `.google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"]`
+	r.setPlan(t, change(grant, "delete"), change(job, "delete", "create"))
+	_, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", job, "--allow-delete", grant)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "retiring a project job is not supported yet") {
+		t.Fatalf("exit %d, err %v; want the project-job refusal", ExitCode(err), err)
+	}
+	if len(r.ran(t, "apply")) != 0 {
+		t.Fatal("a plan deleting a project job and its launcher grant was applied")
 	}
 }

@@ -47,7 +47,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkNodeModules } from './lib/build.mjs'
+import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -62,10 +62,20 @@ const RELEASES_DIR = path.join(REPO, 'docs', 'releases')
 // out of the expectation by the same rule that filtered it out of the answer (W0.6).
 const NON_RELEASE = 'README.md'
 
-// The heading the files use to separate the operator steps from the user bullets. It is the
-// one content line the page does not render verbatim: the page prints it as the block's own
-// heading, which is the same words.
-const OPERATORS_HEADING = '### For operators'
+// The sections a release file may carry after its Highlights, by title: the two headings
+// `docs/releases/README.md` names — the operator steps, and the release's known limits —
+// both optional, in the order the file writes them. Each heading is a content line the page
+// does not render verbatim: it becomes an `<h3>` whose text is the heading's own words, and
+// a `### Known limits` line printed as text instead is the defect the page gate below
+// catches. The `###` is the file's level; GoReleaser puts the file under its own
+// `## Highlights` in the release body, so a `##` in the file would be a second top-level
+// heading beside it.
+const SECTION_TITLES = ['For operators', 'Known limits']
+
+/** The file line that opens a section, from its title: `For operators` -> `### For operators`. */
+function sectionHeading(title) {
+  return `### ${title}`
+}
 
 // The heading of the summary block P4 put above the list (D189). It is the page's own word
 // — the block is the page's summary of the newest releases, not a line of any one of them —
@@ -77,7 +87,7 @@ const SUMMARY_HEADING = 'The newest releases'
 // module's own tree and test data, the console application, and the installed and built
 // directories (the last two are symlinked and rebuilt instead). The same sets W1.3's layout
 // test uses — a copy has to be the shape of the repository, minus what no page reads.
-const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
+const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
 
 // ---------------------------------------------------------------------------------------
@@ -102,6 +112,9 @@ function build() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
+      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
+      // quotes the skills (website/test/lib/build.mjs).
+      if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
     },
@@ -291,6 +304,52 @@ function summaryItems(html) {
   return items
 }
 
+/**
+ * One entry's body, element by element, in the order the page renders it: the text of each
+ * `<h3>`, `<p>` and `<li>` inside that entry's own `<article>`, with the tags, the entities
+ * and the inline markers of both sides stripped by `plain()`.
+ *
+ * Reading the entry out of its own `<article>` — which opens at the heading its tag carries
+ * — is what lets the case below compare one release's rendering against one release file:
+ * the sequence of elements is the file's lines, in the file's order, with each section
+ * heading as the heading element it is. The "not yet released" marker is the page's own
+ * line rather than a release file's and is left out here as it is left out of the gate above.
+ */
+function entryElements(html, tag) {
+  const at = html.indexOf(`<h2 id="${tag}"`)
+  assert.notEqual(at, -1, `the page carries no entry for ${tag}`)
+  const article = html.slice(html.lastIndexOf('<article', at), html.indexOf('</article>', at))
+
+  const out = []
+  for (const match of article.matchAll(/<(h3|p|li)\b([^>]*)>([\s\S]*?)<\/\1>/g)) {
+    if (match[2].includes('release-status')) continue
+    const text = decodeEntities(match[3].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
+    if (text.length > 0) out.push({ kind: match[1], text: plain(text) })
+  }
+  return out
+}
+
+/**
+ * What that entry must be, read from the release file alone: every content line of the file
+ * in order, each one the element the page renders it as — a `### ` heading as an `<h3>`, a
+ * bullet as a list item, any other line as a paragraph of its own (W1.9 step 3). This is
+ * the file's shape rather than the generator's, so a page that drops a line, reorders the
+ * sections or prints a heading's `###` as text differs from it.
+ */
+function fileElements(fileName) {
+  const out = []
+  for (const line of contentLines(fileName)) {
+    const title = SECTION_TITLES.find((candidate) => line === sectionHeading(candidate))
+    if (title !== undefined) {
+      out.push({ kind: 'h3', text: plain(title) })
+      continue
+    }
+    const bullet = /^[-*]\s+(.*)$/.exec(line)
+    out.push(bullet === null ? { kind: 'p', text: plain(line) } : { kind: 'li', text: plain(bullet[1]) })
+  }
+  return out
+}
+
 // ---------------------------------------------------------------------------------------
 // The cases.
 // ---------------------------------------------------------------------------------------
@@ -387,17 +446,39 @@ test('the summary block renders the newest releases’ first Highlights line', (
   }
 })
 
-test('the changelog page renders every line of every release file', () => {
-  const text = pageText(builtPage())
+test('the changelog page renders each release file, line for line and in the file’s order', () => {
+  const html = builtPage()
 
+  // One comparison per release, of the whole entry against the whole file: every content
+  // line is rendered, none is added, and the order is the file's — the Highlights, then
+  // each section heading as its own `<h3>` with its lines under it, in the order the file
+  // writes the two sections. A `### Known limits` line that leaks into the page as text, a
+  // section rendered before the one the file puts first, or a line left out all differ from
+  // the file here, in the element that differs.
   for (const fileName of releaseFiles()) {
-    for (const line of contentLines(fileName)) {
-      if (line === OPERATORS_HEADING) continue
-      assert.ok(
-        text.includes(plain(line)),
-        `docs/releases/${fileName} carries a line the page does not render: ${JSON.stringify(line)}`,
-      )
-    }
+    const tag = tagOf(fileName)
+    assert.deepEqual(
+      entryElements(html, tag),
+      fileElements(fileName),
+      `the entry for ${tag} is not docs/releases/${fileName} rendered, line for line and in the file’s order`,
+    )
+  }
+
+  // And the new section is on the page as a heading rather than only as text somewhere: the
+  // 0.8.5 release file carries the release's known limits, and a reader reads them under
+  // that heading — which is what the release rule asks the page for.
+  const withLimits = releaseFiles()
+    .map(tagOf)
+    .filter((tag) => contentLines(`${tag}.md`).includes(sectionHeading('Known limits')))
+  assert.ok(withLimits.length > 0, 'no release file carries a Known limits section, so this case proves nothing')
+  for (const tag of withLimits) {
+    assert.deepEqual(
+      entryElements(builtPage(), tag).filter((element) => element.kind === 'h3').map((element) => element.text),
+      contentLines(`${tag}.md`)
+        .filter((line) => SECTION_TITLES.some((title) => line === sectionHeading(title)))
+        .map((line) => plain(line.replace(/^#{1,6}\s+/, ''))),
+      `the entry for ${tag} does not render its own section headings, in the file’s order`,
+    )
   }
 })
 

@@ -1,58 +1,56 @@
 ---
 /**
- * website/src/components/Hero.astro — the hero (website plan, Task W1.4).
+ * website/src/components/Hero.astro — the hero (website plan, Task W1.4; changes spec of
+ * 2026-10-18, items 2 and 4).
  *
  * The first screen of the site, and the one place where a marketing site is most tempted to
  * write its own words. So it writes none:
  *
- *   1. **The tagline is README.md's line**, read through the content pipeline (W1.3) and
+ *   1. **The headline is README.md's line**, read through the content pipeline (W1.3) and
  *      rendered byte for byte — not typed in here, which is what the red step of this task
- *      was (F48, D102).
- *   2. **The lead sentence is README.md's sentence** rather than a paraphrase, for the same
+ *      was (F48, D102). It is `Lambdas for coding agents` since the changes spec of
+ *      2026-10-18 (item 2), and it is the README's line that says so.
+ *   2. **The subline is README.md's next line** rather than a paraphrase, for the same
  *      reason: every sentence the site publishes is traceable to a document, and a sentence
- *      written for the page is the one nobody maintains (D102, Global Constraint 6).
- *   3. **The install commands are `website/data/install.yaml`'s commands**, rendered from
- *      the file rather than copied out of it (W0.1, W1.4 step 1). Each path also renders the
- *      note that file carries, so the dev-only path says so where it is offered.
- *   4. **The video slot is empty while `site.yaml` says the video does not exist** (D107):
+ *      written for the page is the one nobody maintains (D102, Global Constraint 6). It is
+ *      the promise under the headline, the site's default description and the cards' — one
+ *      line in the README, three places on the site (changes spec item 2).
+ *   3. **The video slot is empty while `site.yaml` says the video does not exist** (D107):
  *      no player, no poster, no play button, nothing to click that plays nothing. W2.4 flips
  *      the flag and fills the slot in the same commit.
  *
- * The terminal below is `Terminal.astro`, which is the other half of the hero (step 2). The
- * hero holds no fact of its own: what it renders, it reads.
+ * **What is not here, and why.** The hero used to carry the install commands and the agent
+ * chat under the promise, and item 4 asks for the picture of the run to be the page's
+ * centrepiece rather than the fourth thing down: the homepage is now the promise and its
+ * one call to action, then the chat, then the diagram, then the install paths
+ * (`src/pages/index.astro`, which owns that order). The chat leads the three because what
+ * the page offers a reader is a conversation with the agent they already have (review round
+ * 5); the diagram is still the largest thing after the promise and is its own section
+ * directly under the chat. The commands are
+ * `HomeInstall.astro` and the chat is `AgentChat.astro`; both are placed by the page, so a
+ * page can put them where its own shape wants them.
+ *
+ * **The one line the hero writes itself.** The headline and the promise are documents' lines;
+ * the two links under them are the site's own labels for what a reader does next — a link
+ * label is not a sentence about the product, and there is no document that names a call to
+ * action. They are held to the pages they point at by `linkcheck.mjs` like every other
+ * internal link, and to the vocabulary by `website/test/wording.mjs`.
  */
 import { loadSite } from '../content.ts'
-import { copyControlHTML } from '../lib/copy-control.mjs'
-import Terminal from './Terminal.astro'
 
 const site = loadSite()
 const facts = site.facts
-const install = site.install
 
-// The tagline: the pipeline reads it from under README.md's "# Fugaro" title (F48, D102).
+// The headline: the pipeline reads README.md's tagline line, under its "# Fugaro" title,
+// and it is the page's `h1` (F48, D102; changes spec item 2).
 const tagline = site.tagline
 
-// One sentence of what Fugaro is. It is README.md's own sentence, kept whole: the sentence
-// that follows the Latin gloss rather than a shorter one written here, because the site
-// publishes the README's words and `website/test/home.mjs` holds this one to the README.
-const LEAD =
-  'Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop.'
-
-// The two install paths the hero shows: the two that install the CLI with a command. The
-// archive and the cosign block are on the getting-started page, where their notes have room
-// (W1.5) and where a reader who has decided to install goes.
-const HERO_PATHS = ['homebrew', 'go-install']
-const paths = HERO_PATHS.map((id) => {
-  const found = install.paths.find((candidate) => candidate.id === id)
-  if (!found) {
-    // The pipeline validated the file; this is the other failure, and it is this component's
-    // own: the paths named above are the ones this page renders, and one of them is gone.
-    throw new Error(
-      `website/src/components/Hero.astro: website/data/install.yaml carries no install path with id "${id}", which the hero renders`,
-    )
-  }
-  return found
-})
+// The subline: the one sentence under the headline, read from the same place and rendered
+// whole — the hero's lead, the site's default description and the cards' description are
+// one string in the README rather than three copies of a sentence typed here (changes spec
+// item 2, D102). `website/test/home.mjs` holds this page to the README's line, and
+// `website/test/layout.mjs` holds the head to the same one.
+const LEAD = site.subline
 
 // The video slot's flag. Read from site.yaml rather than assumed, so the day the video
 // exists this component changes in one place and the flag is what decides (D107).
@@ -64,32 +62,14 @@ const videoExists = facts.features.video
 
   <p class="hero-lead" data-source="README.md">{LEAD}</p>
 
-  <div class="hero-install" data-source="website/data/install.yaml">
-    {
-      paths.map((path) => (
-        <div class="hero-install-path" data-path={path.id} data-source={path.source}>
-          <p class="hero-install-name">{path.name}</p>
-          {/* Written on one line: whitespace inside `<pre>` is shown, so an indented
-              template would indent the command on the page. The control beside it is
-              `src/lib/copy-control.mjs`'s markup, emitted `hidden` and revealed by the
-              site's script (P6, D183). */}
-          {path.commands.map((command) => (
-            <div class="command-block" data-copy>
-              <Fragment set:html={copyControlHTML('Copy the install command')} />
-              <pre class="hero-install-command"><code>{command}</code></pre>
-            </div>
-          ))}
-          {path.note && <p class="hero-install-note">{path.note}</p>}
-        </div>
-      ))
-    }
-
-    <p class="hero-install-more">
-      <a href="/getting-started/">Every install path, and what each one sets up</a>
-    </p>
-  </div>
-
-  <Terminal />
+  {/* What a reader does next: install it, or read what a run is first. The primary one is
+      filled with the accent, which is the one colour on the page that means "this is the
+      action" — the step numbers and the flow's rail carry the same accent — and the second
+      is a quiet link, because two filled buttons are two primaries. */}
+  <p class="hero-actions">
+    <a class="hero-cta" href="/getting-started/">Get started</a>
+    <a class="hero-cta-quiet" href="/how-it-works/">How it works</a>
+  </p>
 
   {
     videoExists && (
@@ -109,20 +89,36 @@ const videoExists = facts.features.video
      undefined `var()` makes the whole declaration invalid rather than falling back. Every
      name below is declared in `src/styles/tokens.css`, and `website/test/home.mjs` holds the
      built pages to that. */
+  /* The hero's own gutter, and a bottom edge close enough to the diagram that the two read
+     as one screen (item 4: the picture is the thing under the promise, not a section four
+     screens down). `main:has(> .hero)` drops `main`'s padding on this page, so every
+     top-level block here carries the gutter itself. */
   .hero {
     max-width: var(--page-max);
     margin: 0 auto;
-    padding: var(--space-2xl) var(--space-md) var(--space-3xl);
+    padding: var(--space-2xl) var(--space-md) var(--space-lg);
     display: flex;
     flex-direction: column;
-    gap: var(--space-lg);
+    gap: var(--space-md);
   }
 
   .hero-tagline {
     margin: 0;
     max-width: var(--measure);
     font-family: var(--font-sans);
-    font-size: var(--font-size-4xl);
+    /* The tagline is the page's `h1`, and on a phone it is the first thing that has to fit:
+       at the desktop size (`--font-size-4xl`, 56px) the sentence runs to six lines and its
+       own bottom lands below a 390 × 844 first screen, so the promise under it and the
+       first install command were both below the fold (RF5's measurement, P5). The shape is
+       the one the layout's own `h1` rule takes — `clamp(2xl, 6vw, …)`, so a phone gets
+       `--font-size-2xl` and a wide viewport gets the rule's upper end — but the upper end
+       here is the hero's own: this tagline is already the site's largest type at 56px
+       (`--font-size-4xl`), and reading it at the layout's `--font-size-3xl` (44px, what
+       every other page's `h1` takes above about 733px) would shrink the one loud line on
+       the one page whose whole job is the promise, which is a design change and not P5's.
+       What sits between 6vw and the ends is where the two rules agree; what they do at the
+       wide end is the hero's, on purpose. */
+    font-size: clamp(var(--font-size-2xl), 6vw, var(--font-size-4xl));
     line-height: var(--leading-tight);
     letter-spacing: var(--tracking-tight);
     font-weight: var(--weight-semibold);
@@ -137,49 +133,35 @@ const videoExists = facts.features.video
     color: var(--text-muted);
   }
 
-  .hero-install {
+  /* The action row: one filled link and one quiet one, on one line while there is room and
+     wrapping rather than shrinking when there is not. */
+  .hero-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-md);
-  }
-
-  .hero-install-path {
-    flex: 1 1 22rem;
-    padding: var(--space-md);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--ground);
-  }
-
-  .hero-install-name {
-    margin: 0 0 var(--space-2xs);
-    font-family: var(--font-sans);
-    font-size: var(--font-size-sm);
-    font-weight: var(--weight-semibold);
-    color: var(--text-muted);
-  }
-
-  .hero-install-command {
-    margin: 0;
-    padding: var(--space-xs) var(--space-sm);
-    overflow-x: auto;
-    border-radius: var(--radius-sm);
-    background: var(--surface);
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-  }
-
-  .hero-install-note {
+    align-items: center;
+    gap: var(--space-xs) var(--space-md);
     margin: var(--space-2xs) 0 0;
-    font-size: var(--font-size-xs);
-    line-height: var(--leading-normal);
-    color: var(--text-muted);
   }
 
-  .hero-install-more {
-    flex: 1 1 100%;
-    margin: 0;
-    font-size: var(--font-size-sm);
+  /* The primary: the accent as a fill and the ground as its label, which is the pair
+     `a11y.mjs` computes at 4.5:1 for a label a reader reads (the same pair the flow's step
+     numbers are set in). */
+  .hero-cta {
+    padding: var(--space-2xs) var(--space-md);
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--ground);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+    text-decoration: none;
+  }
+
+  /* The second action is a link, not a second button. It keeps the underline `base.css`
+     gives every link in running text, so it reads as a link at a glance rather than as a
+     disabled control beside the filled one. */
+  .hero-cta-quiet {
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-medium);
   }
 </style>

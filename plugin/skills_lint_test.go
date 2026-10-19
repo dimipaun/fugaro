@@ -556,15 +556,15 @@ var (
 
 // ownerCommands are the commands only the user runs, and only from a
 // user-runs block: they change a budget or a published policy, store a
-// secret, or (init) apply. The policy publish is one of them for the same
+// secret, approve a managed project's deletes (allow-delete), or (init) apply. The policy publish is one of them for the same
 // reason the budget commands are — it raises the project-wide ceiling and
 // rewrites the allow_repos allow-list, so an agent told to run it can lift
 // its own spending bound — and the skills' own prose already classifies it
 // as the user's decision (setup/reference/decisions.md, working/reference/status.md).
-var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish"}
+var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.

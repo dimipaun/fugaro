@@ -68,6 +68,13 @@ func (r *run) lockDeadline() time.Time {
 	return r.rec.StartedAt.Add(r.wf.Timeouts.Total.Duration + taskTimeoutSlack + lockSlack)
 }
 
+// acquireLock takes the run's branch lock, keyed by the run's slug (lock.Key
+// below). The key is the slug admissionCheck bound to the job's provider and
+// the task's repository — bootstrap calls the check before this, and nothing
+// else calls either — so a run cannot take a lock under a slug that is not the
+// repository it is for (plan task 3.3 step 2; on a project job the binding is
+// the only thing that says so, the job serving every repository of its
+// profile).
 func (r *run) acquireLock(ctx context.Context) error {
 	if r.d.Bucket == nil {
 		return nil

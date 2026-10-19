@@ -482,8 +482,8 @@ probe account carries predefined grants only).
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no console download link (`features.console_downloads` is false) and no video player (`features.video` is false) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; and the greps for a download link, a player and an unshipped platform printing nothing. **USER-RUN, NOT RUN.** |
-| 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Firebase Analytics behind the consent banner, so `analytics.enabled` is false until W3.2 and today's pass is that no analytics request appears at all) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
-| 70a | The mobile header fits one row (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182, RF3): at **390 × 844** the header is **one row** — the wordmark and the menu toggle, with nothing wrapped under them and no sideways scroll — the drawer opens and closes **by keyboard**, Escape and a click outside close it, the focus goes back to the control that opened it, and the menu reaches every link with **JavaScript disabled** | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at 390 × 844 is one row's (about 56 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than 390, the toggle is focusable and opens the panel, Escape closes it and returns the focus, every link in the three groups is reachable and follows with JavaScript off, and at 1280 × 900 the menu is **visible**: the three groups in the header's one row as the three dropdowns D182 asks for, with no `Menu` toggle and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
+| 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
+| 70a | The mobile header fits one row (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182, RF3): at **390 × 844** the header is **one row** — the wordmark and the menu toggle, with nothing wrapped under them and no sideways scroll — the drawer opens and closes **by keyboard**, Escape and a click outside close it, the focus goes back to the control that opened it, the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at 390 × 844 is one row's (about 56 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than 390, the toggle is focusable and opens the panel, Escape closes it and returns the focus, every link in the three groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the menu is **visible**: the three groups in the header's one row as the three dropdowns D182 asks for, with no `Menu` toggle and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
 | 70c | Every copy control copies its own command (redesign plan §3, part P6; D183, RF13): on the built or deployed site **each kind of control** — the hero's install blocks, Getting Started's code blocks, the docs hub's rendered reference, the caps guide's usage lines and the terminal's own line — puts **that command** on a real clipboard, **by mouse and by keyboard**, the "Copied" state is announced politely and clears itself, and **nothing is shown with JavaScript off** | See "Check 70c" below; run by you, in a browser, against the **built artifact** or the deployed site — read-only, no cloud project touched, and **No agent runs any step of it** | Each control's clipboard content equals the command it sits on and nothing else — no `$` prompt, no caret, no neighbouring line, no page furniture — the copied state appears, is announced and clears, the keyboard reaches every control and the focus ring is visible on it, and with JavaScript disabled every command is still on the page with **no button rendered at all**. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -1001,7 +1001,7 @@ Run by the maintainer with temporary Token Creator grants (removed by the script
 
 Everything about M11's `init`, `doctor`, `update-skills`, the mirror and the plugin wiring ran **offline only**: fakes for Google, a fake registry, a fake `claude`, pty tests. This check is the first time any of it meets a real service, and four facts about Claude Code (V1 to V4 of the plan) have only been checked from the agent's side. **No step below has been run; nothing here is a claim that it works.** The design's §14 items 2 to 6 and 1(a) to 1(d) are what it settles.
 
-**Rules.** Use a throwaway GCP project whose ID you choose (`<p>`, for example `fugaro-live-20261005`), a throwaway GitHub repository (`<owner>/<sandbox>`) and its own GitHub App (named `<yourname>-fugaro-sandbox`: App names are unique across GitHub), never `belong`, `fugaro-dev` or `edge-devel-dimi`. Run every command in your own terminal: typed confirmations, hidden prompts and Claude Code's UI need one, and no value you type reaches an agent. Use a **release build** of `fugaro` (the next tag after M11, or your fork's tag): a development build (`fugaro version` prints `dev`) writes no plugin pin and copies no images. Record `fugaro version`, `claude --version`, the date and the OS first. Before starting: `gcloud auth application-default login`, an existing project of yours as the ADC quota project with the Cloud Billing API on it (`gcloud services enable cloudbilling.googleapis.com --project <quota-project>`, then `gcloud auth application-default set-quota-project <quota-project>`), `terraform` 1.7+ on `PATH`, and a billing account ID you may link (`gcloud billing accounts list`). Do not set `GOOGLE_CLOUD_PROJECT` to anything but `<p>`.
+**Rules.** Use a throwaway GCP project whose ID you choose (`<p>`, for example `fugaro-live-20261005`), a throwaway GitHub repository (`<owner>/<sandbox>`) and its own GitHub App (named `<yourname>-fugaro-sandbox`: App names are unique across GitHub), never `belong`, `fugaro-dev` or `edge-devel-dimi`. Run every command in your own terminal: typed confirmations, hidden prompts and Claude Code's UI need one, and no value you type reaches an agent. Use a **release build** of `fugaro` (the next tag after M11, or your fork's tag): a development build (`fugaro version` prints `dev`) writes no plugin pin and copies no images. Record `fugaro version`, `claude --version`, the date and the OS first. Before starting: `gcloud auth application-default login`, an existing project of yours as the ADC quota project with the Cloud Billing API on it (`gcloud services enable cloudbilling.googleapis.com --project <quota-project>`, then `gcloud auth application-default set-quota-project <quota-project>`), `terraform` 1.9+ on `PATH`, and a billing account ID you may link (`gcloud billing accounts list`). Do not set `GOOGLE_CLOUD_PROJECT` to anything but `<p>`.
 
 **A. The plugin wiring and the four spikes (no cloud).** In a clean clone of `<owner>/<sandbox>` with a release `fugaro`:
 
@@ -4044,9 +4044,11 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 
 1. **Every request's host, in the panel.** Read the panel's host column (group the requests by domain, or write the list down). **FACT:** the host list per page — or "only the canonical host" when that is all it holds.
 
-2. **The consent gate (D93).** Analytics is Firebase Analytics behind W1.12's consent banner, and `analytics.enabled` is **false** in `website/data/site.yaml` until W3.2 turns it on — so today's pass is that **no request to the analytics origin appears at all**, before or after the banner is accepted. Once W3.2 has turned it on, the same panel must show **no request to that origin before consent**, and **exactly that one origin and no other third party after it**; declining the banner must leave it absent, and the choice must survive a reload (W1.12's own tests cover the gate itself). **FACT:** the requests' origins with the banner's state at each point — before accepting, after accepting, after declining, and after a reload — and, when analytics is on, the one origin's requests and nothing beside it.
+2. **The consent gate (D93, W3.2).** Analytics is **Google Analytics 4** behind W1.12's consent banner, and **W3.2 has turned it on**: `analytics.enabled` is `true` in `website/data/site.yaml` and it carries the measurement id the site reports to (a `G-` id, which is a public identifier rather than a secret). So the panel must show **no request to the analytics origin before consent** and **exactly that one origin and no other third party after it**; declining the banner must leave it absent, and the choice must survive a reload (W1.12's own tests cover the gate itself, and `website/test/consent.mjs` runs the site's own script to check the request it builds). The one origin is `https://www.googletagmanager.com` — the `gtag/js` script the gate appends — and the requests that follow it go to the origins of `firebase.json`'s `connect-src` and `img-src` (Google's documented minimum for GA4 without the Advertising features), which are the only hosts the deployed policy admits beside the canonical one. Three more, from W3.2's review: open a page with `?probe=1#frag` in its address, accept, and read the collect request's `dl` and `dr` parameters — they carry the path with **no query and no fragment**; then, on `/privacy/`, decline after accepting, and the panel shows **no further collect request from that page** (Google's `ga-disable-<id>` flag is set); and in the GA4 property's admin, **Enhanced measurement is off** (or reduced to page views) and **Google signals is off**, because the site's code asks for page views only but enhanced-measurement events (scrolls, outbound clicks, downloads) are a property setting the code cannot turn off. **FACT:** the requests' origins with the banner's state at each point — before accepting, after accepting, after declining, and after a reload — the one origin's requests and nothing beside it, the `dl`/`dr` values seen, whether any collect request followed the withdrawal, and the two admin settings.
 
-3. **The page's own head, read as bytes.** The same three pages, fetched, so the check does not rest on the panel's grouping:
+3. **The cookies a withdrawal deletes (owner's ruling of 2026-10-18).** Still on `/privacy/`, and still in the same browser: open the developer tools' **Application** (Chrome/Edge) or **Storage** (Firefox/Safari) panel, **Cookies**, and the site's own origin. Accept analytics, reload, and read the list: it holds the tag's first-party cookies — `_ga`, `_ga_<container id>` (the measurement id from `website/data/site.yaml` without its `G-` prefix), `_gid`, and a `_gat` or `_gat_gtag_<id>` — each at **Path `/`** on the page's own host. Write their names down, and **only their names**: a cookie's value is an identifier and is never pasted anywhere. Then press **Decline** in the banner on that page and read the list again. **FACT:** the cookie names and their Path/Domain before the withdrawal, and whether **every one of the tag's cookies is gone** after it — on the host, and, where a cookie was set on a parent domain (`Domain` naming a registrable parent rather than the host), whether that copy went too. **The production host is the apex `fugaro.dev`, which has no parent domain**, so on the live site the host-scope deletion is the whole of it; a preview channel on a `*.web.app` host is a two-label host under a public suffix, where `site.js` derives a parent the browser refuses to write to and the host-scope deletion still applies. This is the step no hermetic test can take: `website/test/consent.mjs` runs the site's own file against a stub jar, which settles what the code asks a browser to do and not what the browser does with it. **The fix, if a cookie survives, is a bug in `site.js`'s deletion** (its `Path=/`, its host/parent attempts) and never an instruction to the visitor to clear their own cookies.
+
+4. **The page's own head, read as bytes.** The same three pages, fetched, so the check does not rest on the panel's grouping:
 
    ```bash
    for p in / /faq /docs/; do
@@ -4057,11 +4059,11 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 
    **FACT:** every absolute URL the deployed markup carries, and its host. An origin that is not on the list is a failure here even if the panel did not show it because the browser had it cached.
 
-**Passes when:** the panel (steps 1 and 2) and the markup (step 3) hold no origin outside `allowed_hosts` — no font from another origin, no CDN script, no embed, no tracking pixel — and no request to the analytics origin before consent, with `analytics.enabled` false meaning no such request at all.
+**Passes when:** the panel (steps 1 and 2) and the markup (step 4) hold no origin outside `allowed_hosts` — no font from another origin, no CDN script, no embed, no tracking pixel — **and no request to the analytics origin before consent**, with the one admitted origin appearing after an accept and nothing beside it; declining leaves it absent, and the page source (step 4) carries no absolute URL to it either, because the gate is code in the site's own file rather than a tag in the markup. **And the withdrawal leaves nothing of the tag's behind** (step 3): after declining on `/privacy/`, none of `_ga`, `_ga_<container id>`, `_gid` or the `_gat`/`_gat_*` names is in the browser's cookie list for the site's origin (owner's ruling of 2026-10-18).
 
-**Fails when:** any request or any markup URL names a host that is not on the list, or an analytics request appears before consent (or after the banner is declined). What failing looks like: a font or a script someone added from a CDN for one page; a `preconnect` left in a layout; an analytics loader that runs on load instead of after consent — the last is W1.12's rule as well as this check's, so it is a bug in the loader's tests too. **The fix is never "add the host to `allowed_hosts`"**: that list is what the site's build refuses links to, and the CSP in `firebase.json` (`default-src 'self'`, `script-src 'self'`) is what the browser enforces, so a new origin is a decision about the site's privacy page taken by the task that wants it.
+**Fails when:** any request or any markup URL names a host that is not on the list, or an analytics request appears before consent (or after the banner is declined). What failing looks like: a font or a script someone added from a CDN for one page; a `preconnect` left in a layout; an analytics loader that runs on load instead of after consent — the last is W1.12's rule as well as this check's, so it is a bug in the loader's tests too. **The fix is never "add the host to `allowed_hosts`"**: that list is what the site's build refuses links to, and the CSP in `firebase.json` (`default-src 'self'`, `script-src 'self' https://www.googletagmanager.com` — the analytics origin W3.2 pinned, and nothing else) is what the browser enforces, so a new origin is a decision about the site's privacy page taken by the task that wants it.
 
-**Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
+**Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the cookie **names** — and `Path`/`Domain`, never a value — the tag left on `/privacy/` before the withdrawal and what the list held after it; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
 
 
 ## Check 70a: the mobile header fits one row, and the menu is a keyboard drawer (the built artifact or the live site, read-only; run by you; NOT RUN)
@@ -4071,8 +4073,19 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 RF3), and written here rather than left to the redesign's own plan because this is the file
 the owner runs live checks out of. It is the half of P3 no hermetic test can take: the tests
 in `website/test/base-styles.mjs` hold the **structure** — the header does not wrap, the panel
-is out of its flow, the toggle is hidden from 48rem up — and a browser is what measures the
-rendered row.
+is out of its flow, the toggle is hidden from 48rem up — a browser is what measures the
+rendered row, and since the owner's brief of 2026-10-18 (item 1) it is also where the brief's
+own acceptance line runs: **"hovering a top-level item on desktop opens its submenu
+immediately"** is a gesture on a real pointer, and `website/test/nav-hover.mjs` — which runs
+the shipped script in a stub DOM, with no browser — says so and points here for it.
+
+**The touch side of step 6 is part of the acceptance, not an aside.** The script is bound
+only where `matchMedia` reports
+`(hover: hover) and (pointer: fine)`, and the stylesheet scopes the menu's `:hover` rules
+under the same query, so a **touch** device is meant to see no hover behaviour at all — the
+tap is the whole menu there, as it was before the brief. Step 6 checks that side too, by
+emulation or on a phone; what a real touch digitizer does with a tap is the owner's, and
+`website/test/nav-hover.mjs`'s stub is not it.
 
 **Method.** One browser, one built site, two widths, no account and no cloud project. Either
 serve the artifact locally or read the deployed site; both are read-only:
@@ -4087,6 +4100,10 @@ sed -n 's/^canonical_url: *//p' website/data/site.yaml
 # The breakpoint the layout switches at, read from the stylesheet rather than typed: the
 # narrow layout is everything below it, and it is the width step 2 must be under.
 grep -o '@media[^{]*48rem[^{]*' website/dist/index.html | head -1
+# The query the hover behaviour is scoped to, read out of the built page rather than typed:
+# step 6 asks a device that answers this one, and the artifact minifies it (the stylesheet
+# and `site.js` ask the same query, and `website/test/nav-hover.mjs` holds the two together).
+grep -o '@media (hover:hover) and (pointer:fine)' website/dist/index.html | head -1
 # The groups and links the menu shows, read out of the layout rather than typed: the names
 # steps 3 and 5 look for, and the nine links step 3 has to reach.
 sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
@@ -4115,30 +4132,91 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
 
 4. **With JavaScript disabled, the menu still works.** Turn scripting off and reload at 390 ×
    844: the drawer still opens on Enter, the groups still open, every link is still there and
-   still follows. **FACT:** that each of those held with scripting off. The script's only job
-   in the menu is closing on Escape and on a click outside (P3), so with no script the drawer
-   opens and closes by the control's own `<details>` behaviour — the only thing missing is the
-   two closes step 2 checks.
+   still follows. **FACT:** that each of those held with scripting off. The script's jobs in
+   the menu are the two closes step 2 checks **and** the hover-open step 6 checks (the owner's
+   brief of 2026-10-18, item 1), so with no script the drawer opens and closes by the
+   control's own `<details>` behaviour, a group opens by a click on its summary, and the only
+   things missing are the two closes and the hover.
 
 5. **At 1280 × 900, the menu is in the header's one row — and the wide menu is there at all.**
    Widen the viewport to 1280 × 900. The header shows the wordmark and the three groups in
    **one row**, and **no `Menu` control and no overlay panel**: the drawer and the panel it
    opens are the narrow layout's, and from 768 px up the panel is the header's own flex item
    instead. Read the groups: **they are dropdowns at this width too** — three `<summary>`
-   controls, closed, each with its three links behind it (D182's "three top-level sections
+   controls, each with its three links behind it and closed until the pointer arrives at it
+   (step 6) or the focus lands on it (step 7) (D182's "three top-level sections
    with dropdowns", the same two levels as the drawer's menu, which is what makes this a
    two-level menu rather than a row of nine links). **FACT:** the header's height, the three
    group names, that no `Menu` toggle is visible, and that the nine links are not printed in
    the row before anything is opened.
 
-6. **Opening a group at 1280 × 900 shows its links and does not move the page.** Open
-   *Product* by keyboard, read the header's height again, and confirm the three links are
-   visible under it; then close it with Escape and again by clicking elsewhere. Do it for the
+6. **On a hovering pointer, the submenu opens when the pointer arrives (the owner's brief of
+   2026-10-18, item 1 — the brief's acceptance line, and the reason `website/test/nav-hover.mjs`
+   exists).** Still at 1280 × 900, with a mouse or a trackpad — a device that answers the
+   `(hover: hover) and (pointer: fine)` query the method block reads out of the artifact.
+   Move the pointer onto **Product** and **do not click**: its three links appear under the
+   header's row immediately, and the header's height does not change (step 5's number again).
+   Move the pointer **into the list**, onto one of the three links: the submenu is still open —
+   the pointer has not left the group, so nothing closes under it. Move the pointer **out of
+   the menu altogether**, onto the page: the submenu stays open for an instant — the delay is
+   about a fifth of a second, so it is the seam between the summary and the list that a reader
+   crossing it must not fall through — and then closes. Come back onto **Product** within that
+   instant and it stays open. Do the same for the **last** group and read
+   `document.documentElement.scrollWidth` with it open. Then, still on the same page,
+   **emulate a touch device** (Chrome's device toolbar, or the responsive mode's touch
+   emulation — a device that answers "no" to the query) or take a phone: moving a finger onto
+   a group opens nothing, and a **tap** opens and closes it as it always did. Then the device
+   the query answers **yes** for and a finger still uses — a touch laptop, or a phone with a
+   mouse or a trackpad attached: **tap** a group there too, and it opens (the tap's own pointer
+   arrival is not a hover, so the tap's click is the whole of it), and a second tap closes it;
+   then hover the same group with the machine's own mouse or trackpad and it opens on the
+   pointer's arrival as step 6's first half says. Do the same after unplugging the mouse and
+   again after plugging it back in, without reloading: the page re-decides rather than keeping
+   the answer it loaded with. Then, on the mouse again, **click** a group whose submenu is
+   **closed** and whose trigger does **not** already hold the focus — click *Product* once to
+   close what the pointer opened, move the focus to *Reference*'s trigger, then click *Product*
+   again: it opens on that first press. A click moves the focus to the trigger it presses on the
+   way to the click, and a group opened by that focus would be closed again by the click that
+   brought it, so this press is the one that would do nothing at all. The same press on a
+   **touch laptop** is the tap above. Then leave the keyboard where it is: Tab into an open
+   group's links, and with the focus still inside it move the mouse onto that group and away
+   again — the submenu **stays open**, because the pointer's close is owed when nobody is left
+   reading and the reader is still there; Tab on out of the group (to the footer) and it closes
+   a moment later. And Tab back in within that moment: the close is cancelled and the submenu
+   stays.
+   **FACT:** what the pointer's arrival did with no click, whether the list stayed open with
+   the pointer inside it, roughly how long the submenu stayed open after the pointer left and
+   whether coming back kept it, the document's scroll width with the last group open (not
+   wider than the viewport), on the emulated touch device that hovering opened nothing and the
+   tap still toggled, on the touch laptop that a tap opened and a second tap closed the group
+   the query would have called a hover, that a click on a closed group whose trigger did not
+   hold the focus opened it, and what a pointer that left a group the keyboard was standing in
+   did — nothing, until the focus went. **The fix, if a group does not open on hover, is in
+   `public/scripts/site.js` or `src/styles/base.css`** — the query, the binding or the delay —
+   and never in the reader's expectations: this is the behaviour the brief asks for, not a
+   bonus.
+
+7. **Opening a group at 1280 × 900 shows its links and does not move the page.** Reach
+   *Product* by keyboard — Tab to its summary, which opens it exactly as the pointer's arrival
+   does (so the submenu may already be open by the time the key is pressed; Escape closes it
+   and the same Tab opens it again) — read the header's height again, and confirm the three
+   links are
+   visible under it; then close it with Escape and again by clicking elsewhere — and for that
+   second close, first Tab *into* the open group's links so the focus is inside it, then click a
+   paragraph of the page's own text: the group closes and the focus **stays on the page**, on
+   nothing at all, and is not pulled back onto the summary the reader has just dismissed. Do it
+   for the
    **last** group as well, and read `document.documentElement.scrollWidth` with a group open.
+   Then on the **emulated touch device of step 6** — a device that answers the pointer query
+   no — Tab to a group's trigger: its submenu opens there too, because the keyboard is the
+   device's and not the pointer's, and its links are reachable by Tab; open the drawer first on
+   that width, since the groups are inside it.
    **FACT:** the header's height before opening and with the group open — **the same number
    twice**, because the wide dropdown is out of the header's flow, exactly as the narrow
    drawer's panel is — the links that appeared, the document's scroll width with the last
-   group open (not wider than the viewport), and what each of the two closes did.
+   group open (not wider than the viewport), what each of the two closes did, and where the
+   focus was after the click on the page (not on the group's summary, and with no focus ring
+   on it).
 
 **Passes when:** the header at 390 × 844 is one row — roughly 56 px rather than 177, with no
 sideways scroll — the drawer opens by keyboard, closes on Escape and on an outside click with
@@ -4148,36 +4226,72 @@ menu item, and at 1280 × 900 the three groups are in the header's one row with 
 no overlay**, as three dropdowns whose links are behind their summaries, opening a group
 **without changing the header's height** and without a sideways scroll even on the last group
 — and the menu is **visible** at that width at all, which is the thing a wide rule that
-repositions the panel without displaying it takes away.
+repositions the panel without displaying it takes away. **And on a device whose pointer
+hovers, a group's submenu opens when the pointer arrives at it with no click, stays open while
+the pointer is inside the list, closes a moment after the pointer leaves, and opens again if
+the pointer comes back inside that moment — while the same page on a touch device shows no
+hover behaviour at all and keeps its tap.** **And the keyboard's way into a group is not the
+pointer's to give:** on a device that answers the hover query no (step 6's emulated touch
+device), Tab to a group's trigger still opens its submenu, so the links inside a closed group
+are reachable by Tab there too. **And a click on a closed group opens it on the
+first press, whether or not its trigger already held the focus** (the owner's brief of
+2026-10-18, item 1: step 6). **And a close the reader asks for from outside the menu answers
+with nothing:** the focus a reader has put inside an open group is handed back to the trigger
+only when the browser itself closed the group (a sibling opening, or Escape); a click on the
+page's own text — which moves the focus to the body and fires no `focusin` — closes the group
+and leaves the focus where the reader put it, not on the trigger of the menu they have just
+dismissed (step 7).
 
 **Fails when:** the header at 390 × 844 is taller than one row or the document scrolls
 sideways; the drawer does not open, or Escape or an outside click leaves it open, or the focus
 is lost; a group or a link cannot be reached or does not follow; the menu stops working with
-scripting off (which would mean P3 made the menu depend on the script, where the script only
-adds two ways to close it); Privacy has moved into the menu; **at 1280 × 900 there is no menu
+scripting off (which would mean P3 made the menu depend on the script, where the script adds
+two ways to close it and the hover-open); Privacy has moved into the menu; **at 1280 × 900
+there is no menu
 at all** — the wordmark and nothing else, which is what a 48rem block that sets the panel's
 `position` but not its `display` produces, since the base rule hides it and the drawer whose
 `open` attribute would show it is the element that block takes away; the wide viewport still
 shows the `Menu` toggle or an overlay panel hanging over the page; or opening a group there
 **grows the header and shifts the page down**, or makes the document wider than the viewport
-by opening off the right edge. The wide menu's two groups of links are *not* a
+by opening off the right edge. **And on the pointer side (step 6):** a group that does not open
+when the pointer arrives at it, or that closes the instant the pointer crosses from the summary
+into the list (which is what a close with no delay does), or that stays open after the pointer
+has left and gone elsewhere, or one that opens on a **touch** device — where a hover that
+arrives with the tap turns the tap that used to open the group into a close — or a **click** on
+a closed group that does nothing at all, which is what a group opened by the focus the click
+moves and then toggled shut by the click itself looks like — or, on the pointer side of step 7,
+**the focus jumping back onto a closed group's summary** after a click on the page's own text
+dismissed it, which is what a handback that cannot tell the browser's close from the reader's
+looks like. Or, on the keyboard side of step 7, **a device that answers the hover query no
+whose menu the keyboard cannot enter** — a group whose submenu opens only when a hovering
+pointer arrives at it, which leaves the links inside it unreachable by Tab. The wide menu's
+two groups of links are *not* a
 failure: the dropdowns are D182's decision. The **structural** half of each of those is already
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the wide block to
 displaying the panel and to taking the group's list out of the header's flow, and `navFailures`
-holds the menu to its contract — so a failure here that the build did not catch is a
-**rendered** fact — a measurement, a focus behaviour or a browser's own `<details>` — and the
-fix belongs in `src/styles/base.css` or the layout, with the case that would have caught it
-added to that test where the test can see it.
+holds the menu to its contract — and the hover behaviour's own half is refused, without a
+browser, by `website/test/nav-hover.mjs` — so a failure here that the build did not catch is a
+**rendered** fact — a measurement, a focus behaviour, a gesture or a browser's own `<details>`
+— and the
+fix belongs in `src/styles/base.css`, `public/scripts/site.js` or the layout, with the case
+that would have caught it
+added to one of those tests where the test can see it.
 
 **Paste back:** the header's height and the document's scroll width at 390 × 844; what Enter,
 Escape and the outside click each did, and the header's height with the drawer open; the three
-group names, their links, and where Privacy is; what held with JavaScript disabled; and at
+group names, their links, and where Privacy is; what held with JavaScript disabled; at
 1280 × 900 the header's height closed **and** with a group open, the group names, the toggle's
-visibility, and the links that appeared — with the browser and its version, because a
-`<details>` element's keyboard behaviour is the browser's. **No step here changes anything and
+visibility, and the links that appeared; and what the pointer's arrival, its move into the
+list, its departure and its return each did, with roughly how long the submenu stayed open
+after it left and what the emulated touch device did on a hover and on a tap — with the
+browser and its version, because a
+`<details>` element's keyboard behaviour and a pointer's own events are the browser's. **No
+step here changes anything and
 no agent runs any step of it.** Until this check runs, the menu's **rendered** behaviour at
-phone width and at desktop width is **UNVERIFIED** — the artifact's structure is not a
-rendered row — and the row above stays **NOT RUN**.
+phone width, at desktop width and under a hovering pointer is **UNVERIFIED** — the artifact's
+structure is not a
+rendered row, and `website/test/nav-hover.mjs`'s stub DOM is not a pointer — and the row above
+stays **NOT RUN**.
 
 ## Check 70c: every copy control copies its own command, by mouse and by keyboard (the built artifact or the live site; run by you; NOT RUN)
 
@@ -4242,8 +4356,10 @@ with JavaScript disabled every command is still on the page with **no button ren
 neighbouring line, or a whole `<pre>` where one line was meant; a control does nothing, or
 does nothing when reached by keyboard, or has no visible focus ring; the confirmation is not
 announced, interrupts, or never clears; or a button is shown with scripting off. What failing
-looks like: `sourceOf` in `website/public/scripts/site.js` falling back to the whole
-`<pre>` on the terminal because the `[data-copy-source]` mark moved; a block whose markup lost
+looks like: `sourceOf` in `website/public/scripts/site.js` handing the clipboard the wrong
+text — it is `block.querySelector('pre, code')` over the `[data-copy]` wrapper the script
+found, so a block that grew a second `<pre>` ahead of its command, or one whose command moved
+out of the `pre`/`code` the control reads, copies the wrong thing; a block whose markup lost
 its `hidden` attribute, so the button is on the page before the script that drives it. The
 **markup** half of each is already refused by `website/test/copy.mjs`, so a failure here that
 the build did not catch is a **runtime** fact — a clipboard, a live region, a focus ring — and

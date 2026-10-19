@@ -39,7 +39,7 @@ type Secrets struct {
 // SecretInfo describes a secret without its value.
 type SecretInfo struct {
 	ID       string            `json:"id"`
-	Created  time.Time         `json:"created"`
+	Created  time.Time         `json:"created,omitzero"` // absent for a row with no container (secrets ls MISSING)
 	Labels   map[string]string `json:"labels,omitempty"`
 	Versions int               `json:"versions"`         // versions not destroyed
 	Latest   string            `json:"latest,omitempty"` // the newest enabled version, if any

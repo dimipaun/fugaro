@@ -317,6 +317,71 @@ func TestExecutionFromEnvReadsGCPProject(t *testing.T) {
 	}
 }
 
+// TestExecutionFromEnvRefusesAnEmptyJobName: an empty CLOUD_RUN_JOB on Cloud
+// Run is refused here, before anything asks which job the run is in (plan task
+// 3.3, "an empty CLOUD_RUN_JOB on Cloud Run does not land here either"). The
+// distinction is the runner's: "" from ExecutionFromEnv means "this process is
+// not on Cloud Run" — a local invocation, a docker run — and the identity step
+// is skipped for it (R2-9), so an empty name that meant "on Cloud Run but
+// nobody set the variable" would be read as exactly the case the step must not
+// run for. It is refused at the source instead.
+//
+// Mutation (run, restored): drop id.Job from the check below (or let it
+// through as a name). The run proceeds with no job identity at all and the
+// binding is skipped, which is the fail-open this refusal closes.
+func TestExecutionFromEnvRefusesAnEmptyJobName(t *testing.T) {
+	c := CloudRunCodec()
+	env := map[string]string{"CLOUD_RUN_EXECUTION": "fugaro-acme-app-web-x7k2p", "FUGARO_GCP_PROJECT": "my-proj", "FUGARO_REGION": "us-east5"}
+	if name, err := c.FromEnv(func(k string) string { return env[k] }); err == nil {
+		t.Fatalf("an empty CLOUD_RUN_JOB named the execution %q", name)
+	} else if !strings.Contains(err.Error(), "CLOUD_RUN_JOB") {
+		t.Errorf("the refusal does not name CLOUD_RUN_JOB: %v", err)
+	}
+}
+
+// TestJobOfNamesTheJobOrFailsClosed is the runner's one reading of the job it
+// is in (plan task 3.3 step 1): the job out of an execution name this build's
+// codec parses, and an error for anything else. The runner halts on the error
+// rather than treating it as "no Cloud Run execution", because the two mean
+// different things: the first is a process whose platform report cannot be
+// read, the second is a process that is not on the platform at all.
+func TestJobOfNamesTheJobOrFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		execution string
+		job       string
+	}{
+		{"projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-x7k2p", "fugaro-acme-app-web"},
+		{"projects/123456789/locations/europe-west1/jobs/fugaro-p-standard-github-abc123/executions/x", "fugaro-p-standard-github-abc123"},
+	} {
+		job, err := JobOf(tc.execution)
+		if err != nil || job != tc.job {
+			t.Errorf("JobOf(%s) = %q, %v; want %q", tc.execution, job, err, tc.job)
+		}
+	}
+	// A Batch job's resource name is its whole identity (the job is the run,
+	// codec_batch.go), so it names a job too — that is not a leniency this
+	// function added.
+	for _, tc := range []struct {
+		execution, job string
+	}{
+		{"projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web", "fugaro-acme-app-web"},
+	} {
+		if job, err := JobOf(tc.execution); err != nil || job != tc.job {
+			t.Errorf("JobOf(%s) = %q, %v; want %q", tc.execution, job, err, tc.job)
+		}
+	}
+	for _, bad := range []string{
+		"",
+		"fugaro-acme-app-web",
+		"projects/proj-1234/locations/us-east5/jobs//executions/x",
+		"projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/",
+	} {
+		if job, err := JobOf(bad); err == nil {
+			t.Errorf("JobOf(%q) = %q, want an error: a name no codec parses names no job", bad, job)
+		}
+	}
+}
+
 // The platform signal is the platform's own, and the "in the cloud" answer
 // fails closed (design compute-backend.md §2.5, C12).
 func TestPlatformSignalAndFailClosed(t *testing.T) {

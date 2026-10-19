@@ -15,6 +15,9 @@ locals {
       "iam.googleapis.com",
       # Project IAM members need it.
       "cloudresourcemanager.googleapis.com",
+      # The whole-project inventory of a managed project reads through it:
+      # the one query that sees resource types discovery does not know.
+      "cloudasset.googleapis.com",
     ],
     var.enable_vertex ? ["aiplatform.googleapis.com"] : [],
     var.budget == null ? [] : ["billingbudgets.googleapis.com"],
