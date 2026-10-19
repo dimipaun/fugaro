@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // QueuedStuckAfter is how long a queued run may go since its launch claim or
@@ -31,6 +32,9 @@ type QueuedRun struct {
 	// Workflow, Recipe and RequestedBy are read from task.json, when it
 	// parses; each is "" when not known.
 	Workflow, Recipe, RequestedBy string
+	// LaunchedBy is who started the run, as its launch.json recorded it (""
+	// when there is no launch.json, or the one there recorded no launcher).
+	LaunchedBy string
 	// LaunchedAt is when the run entered its claimed or launched state: the
 	// claim's or launch.json's own timestamp, else the run id's mint time.
 	LaunchedAt time.Time
@@ -56,7 +60,8 @@ func queuedRow(q QueuedRun, now time.Time) RunRow {
 		Run: clean(q.Run), Slug: budget.Key(q.Slug),
 		Title: dash(title), Stage: "queued", Round: "-", Verify: "-", Models: "-", Auth: "-",
 		Recipe: clean(q.Recipe), Workflow: clean(q.Workflow), RequestedBy: clean(q.RequestedBy),
-		Age: age, HasAge: true,
+		LaunchedBy: safetext.Field(q.LaunchedBy),
+		Age:        age, HasAge: true,
 		Queued: true, Stuck: q.Stale || age > QueuedStuckAfter,
 		StartedAt: q.LaunchedAt.UnixMilli(),
 	}

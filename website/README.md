@@ -144,30 +144,41 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **979,036 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **1,020,942 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **977,521 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **1,019,427 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
-  measure the build the README named and `website-preview` could not deploy. So the derivation
+  measure the build the README named and `website-preview` could not deploy. Only the no-tags
+  build can be measured here, so `test/budget.mjs` holds the pair to each other instead: it
+  reads both figures **where this repository writes them as figures — this paragraph, and
+  nowhere else** (a figure copied into the gate's own comments or another document is a second
+  place to forget, and this pair was copied in two, which is how the clone figure came to sit
+  the round's bytes behind) — and refuses a pair that is not one changelog page apart: the check
+  the rework of 2026-10-19 needed, when re-deriving the site figure twice in one branch moved
+  this one and left the clone figure behind. So the derivation
   is read over **the gates' own build of the site**: a copy of the repository in a temp
   directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`, which
   carries no `.git` at all and so gives every checkout the same three numbers. The site's own
   `dist/` — whichever of the two shapes it takes — is held to the ceilings below like any other
   artifact, and being the *smaller* of the two builds it passes.
 
-  **What each cause really moves**, measured on that build rather than argued:
+  **What each cause really moves**, measured on that build rather than argued — and stated as a
+  rule rather than as a figure, because a figure here is a figure that has to be re-derived every
+  time the build moves: the numbers the three causes produce are the ones above and in this
+  paragraph, which `test/budget.mjs` reads and holds to the build it makes itself, and the
+  unreleased build's own size is measured by `test/console-option.mjs`:
 
-  - the **1,515 bytes** between the two shapes of the site build are the changelog page's own
-    "not yet released" labels, which a checkout with no tags prints for every release file;
+  - the bytes between the two shapes of the site build are the changelog page's own
+    "not yet released" labels, which a checkout with no tags prints for every release file —
+    this paragraph names that page's own bytes as the whole of the difference;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 977,464 with the flag off to 979,036 with it on:
-    the console option's own markup on the three pages that render it — the console page's
-    downloads section (each artifact's checksum beside its link, and the verification command)
-    1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
-    the **page weight not at all**: the heaviest page is the docs hub, which renders no install
-    option, no download and no hero. The copy the gates build of the unreleased state is
+    moves the **site figure up** by the console option's own markup on the three pages that
+    render it: the console page's downloads section (each artifact's checksum beside its link,
+    and the verification command), Getting Started's option and the homepage's call to action. It
+    moves the **page weight not at all**: the heaviest page is the docs hub, which renders no
+    install option, no download and no hero. The copy the gates build of the unreleased state is
     therefore the smaller of the two, and that is the direction a reader of this list needs:
     the flag's round is the one that added the bytes;
   - the script and the pages that follow are the figures' own subject, and each moved them in
@@ -249,14 +260,34 @@ added or removed without this sentence moving fails there:
     downloads section, Getting Started's console option and the hero's link to the console.
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
+
+  - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
+    figure alone, 977,921 → **979,575**, by the **1,654 bytes** the rework costs: the install
+    section shows the quick path above the fold with the console option beside it, the page
+    carries a "Set up your installation" list of its own, and the other install paths and the
+    platform list moved into a Details section below them. The page weight does not move: the
+    heaviest page is still the docs hub, which renders none of it, and the page that grew is
+    Getting Started's, at 25,871 bytes.
+
+  - **The 0.9.0 integration branch merged into `main`** (#697) and moved the page weight and
+    the site figure, with the script where it was: it regenerated
+    `website/content/cli-reference.md` for the 0.9.0 CLI and extended `content/security.md`.
+    The docs hub renders the whole CLI reference, so the heaviest page went 266,926 →
+    **280,604** (+13,678), and the site figure 979,575 → **1,019,827** (+40,252: the docs hub
+    and the security page). Getting Started's rework above was derived on a branch cut before
+    that merge, which is why the figures it wrote named a build `main` no longer makes; this
+    re-derivation is the commit that moves them. The clone figure moved by the same bytes, the
+    changelog page between the two shapes being unchanged.
+
   - **The console's screenshot slider** (the owner's feedback of 2026-10-19) moved the site
-    figure alone again, 977,921 → **979,036**, by its **1,115 bytes**: the component's
+    figure alone, 1,019,827 → **1,020,942**, by its **1,115 bytes**: the component's
     stylesheet, which Astro inlines into the console page. It is inlined whether or not the
     slider renders, because the page imports the component — so the bytes are there while
     the data file is empty and while it is not, and the figure does not move again when the
     owner adds a screenshot (a picture's own bytes are served from `public/` and are the one
     thing that will move it then). The page weight and the script did not move: the console
-    page is not the heaviest page, and the slider ships no script at all.
+    page is not the heaviest page, and the slider ships no script at all. The clone figure
+    moved by the same bytes.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -281,10 +312,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
-    docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
+    docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,671,385 bytes. Three times 1,223,795 (every file in `dist/`, 979,036
+  - **Whole site:** 3,828,534 bytes. Three times 1,276,178 (every file in `dist/`, 1,020,942
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -342,7 +373,11 @@ added or removed without this sentence moving fails there:
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
-  first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its
+  first `h2` precedes the first `pre`. Its fourth rule is the owner's feedback of 2026-10-19:
+  Getting Started is three bands in the order a reader reads them — `#install` (the command
+  and the console), `#setup` (what a real installation needs, an `ol` whose every step names
+  the document behind it), `#details` (everything else) — so the two things a reader came for
+  cannot drift back down a page that grows. The whole gate is one function over one `dist`, so its
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.
@@ -631,11 +666,13 @@ Adding the first one is two edits:
 **What a screenshot costs, against the three numbers the budget above states:**
 
 - **The whole site:** the file is served from `public/`, so its bytes are in `dist/` and count
-  once against the 3,671,385-byte site ceiling — which is 3.67 MB against a build of 979,036
-  bytes, so a screenshot's size is a thing to keep an eye on rather than the thing that decides.
-- **The console page's weight:** that page weighs 80,721 bytes against the 1,000,974-byte page
-  ceiling, so it has room for the pictures it renders, and it is not the page the ceiling is
-  derived from (the docs hub is).
+  once against the site ceiling the gates above state — several times the size of the build it
+  is derived from, so a screenshot's size is a thing to keep an eye on rather than the thing
+  that decides; `test/budget.mjs` holds the new build to that ceiling and asks for the figure to
+  be re-derived in the commit that adds the file.
+- **The console page's weight:** that page is a fraction of the page ceiling above, so it has
+  room for the pictures it renders, and it is not the page the ceiling is derived from (the
+  docs hub is).
 - **The page's words, and this is the tight one.** The console page stands at **239 of the 250
   words** D188 allows it, and a row's words all count: the caption is text under the picture,
   and the `alt` is counted too, because it is the text a reader gets when the picture does not

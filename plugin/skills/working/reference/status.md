@@ -26,7 +26,7 @@ By default it lists the last 7 days of the configuration's repositories. Narrow 
 - `--batch <name>` for one batch
 - `--pr N` for the runs on one pull request (needs one repository; the window is 90 days)
 
-The JSON has `project`, `runs`, `totals` and `warnings`. Each run has `run`, `repo`, `status`, `stage`, `reason`, `halt` (when halted), `pr_url`, `branch`, `outcome`, `created`, `cost`, `terminal` and `settled`. Print `warnings` to the user: they say an image rebuild or the daily image check failed or is overdue.
+The JSON has `project`, `runs`, `totals` and `warnings`. Each run has `run`, `repo`, `status`, `stage`, `reason`, `halt` (when halted), `pr_url`, `branch`, `outcome`, `created`, `cost`, `terminal`, `settled` and `launched_by` (who started it, when the launch recorded one; absent otherwise, never a value the CLI invents). Print `warnings` to the user: they say an image rebuild or the daily image check failed or is overdue. The plain text listing has a `BY` column for the same fact, in the short form a column has room for (the part before an address's `@`), with `-` where the record holds no launcher.
 
 Group the runs:
 - **Running:** `launching`, `pending`, `running`. Say the stage and the age.
@@ -34,6 +34,14 @@ Group the runs:
 - **Needs attention:** `failed`, `infra_error`, `error`, `halted`, `cancelled`, `unlaunched`. For each, give the `reason` and offer `fugaro diagnose <run>` (`reference/diagnose.md` reads it).
 
 `totals` is what the listed runs cost. Report model spend as such; subscription (`oauth`) spend is notional, never billed.
+
+**Who started them.** `fugaro runs stats` counts the same records by the identity each run's launch recorded — how many runs, how they ended, and the model dollars per person:
+
+```bash
+fugaro runs stats --json
+```
+
+It reads the run records and nothing else (no budget counter, and it writes nothing), and it takes `--repo`, `--all` and `--since` in the same forms as `runs ls` above, plus `--max-runs` (which `runs ls` does not have) and `--all-users`. It shows the caller's own row alone, and the whole table only to an operator of the installation, or with `--all-users`; the table says whose numbers it shows, so repeat that. In its JSON, each row's `counted_usd` is model spend that counts toward the caps and its `notional_usd` is a subscription's, never added together (and compute is attributed to no person), and a run whose launch recorded no launcher is grouped as `unknown` rather than guessed. If it refuses because the CLI cannot tell who you are, report that, or use `--all-users` if the user asks for the table.
 
 ## 2. The budget
 

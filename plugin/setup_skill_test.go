@@ -740,26 +740,26 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	if !strings.Contains(skill, "`checkout`") {
 		t.Error("SKILL.md never mentions the checkout decision")
 	}
-	// The safety claim (the same honesty the named-oauth-tokens docs test
-	// pins): the skill must not tell a user to set a key every current
-	// binary refuses. Both files say clone is not shipped and to leave the
-	// key out.
+	// The honesty claim, inverted by the cloneShipped flip (0.9.0): the
+	// skill must not keep telling a user that an option which works is
+	// unavailable. Both files say clone is shipped, and neither says it is
+	// not.
 	for name, doc := range map[string]string{"decisions.md": topic, "SKILL.md": skill} {
-		for _, want := range []string{"not shipped", "leave the key out"} {
-			if !strings.Contains(doc, want) {
-				t.Errorf("%s never says checkout: clone is %q", name, want)
-			}
+		if !strings.Contains(doc, "is shipped") {
+			t.Errorf("%s never says checkout: clone is shipped", name)
+		}
+		if strings.Contains(doc, "not shipped") {
+			t.Errorf("%s still says checkout: clone %q", name, "not shipped")
 		}
 	}
-	// The gate, and its effect, must be named: this is the claim that stops
-	// the skill pointing a user at a key every current binary refuses.
-	// "refuse such a workflow" and not the bare "refuse", which the topic
-	// also uses for the keys `fugaro validate` refuses under clone — a
-	// different claim. Neither file names the two commands the gate refuses,
-	// on purpose: the plugin lint (skills_lint_test.go, ownerViolation)
-	// rejects an applying `fugaro init` in skill prose, and the claim is the
-	// refusal, not the command line it happens on.
-	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "refuse such a workflow"} {
+	// The gate, and its effect, must be named: this is the claim the flip
+	// changed. The topic names cloneShipped, where it lives, and that the
+	// gate is open — the state a reader has to be able to check against the
+	// constant. It does not name the two commands the gate used to refuse:
+	// the plugin lint (skills_lint_test.go, ownerViolation) rejects an
+	// applying `fugaro init` in skill prose, and the claim is the gate's
+	// state, not the command line it is read on.
+	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "is open"} {
 		if !strings.Contains(topic, want) {
 			t.Errorf("decisions.md's checkout topic never says %q", want)
 		}
@@ -799,5 +799,66 @@ func TestSetupSkillSecretsStepReadsMissingFromSecretsLs(t *testing.T) {
 	}
 	if strings.Contains(text, "It flags every required name") {
 		t.Error("SKILL.md still has the sentence whose pronoun binds to doctor")
+	}
+}
+
+// TestSetupSkillSaysWhoWritesTheManagedMarks (round-2 review, nit 2): a
+// managed project's two marks are written by two operator-run steps — the run
+// that creates the project (managed.WriteManagedLabel) and the owner's
+// flagging command for one that already exists
+// (managed.WriteManagedLabelForFlag, which exists because the creation write
+// refuses a project no run created) — so the sentence listing the marks may
+// not hand both of them to the creating run alone, and the skill and its
+// reference have to keep naming the existing-project route that writes them
+// together. Both directions are pinned: the false sentence coming back fails
+// the first check, and dropping the flag's own claim fails the second.
+func TestSetupSkillSaysWhoWritesTheManagedMarks(t *testing.T) {
+	skill := setupFiles(t)["skills/setup/SKILL.md"]
+	if strings.Contains(skill, "both written by the creating run") {
+		t.Error("SKILL.md gives both managed marks to the creating run alone, and the owner's flagging command writes both too")
+	}
+	reference := setupFiles(t)["skills/setup/reference/managed.md"]
+	const both = "It writes the label `fugaro_managed=true` on the project as well, in the same command"
+	if !strings.Contains(reference, both) {
+		t.Errorf("reference/managed.md does not say the flagging command writes the label too:\nwant %q", both)
+	}
+}
+
+// TestSetupSkillSaysManagedIsGatedOff (round-3 review, medium): both the setup
+// skill and its managed reference describe the managed workflow — the apply,
+// the flag, the creation — and every one of those entry points refuses before
+// any cloud call in this release, because `managedDeployerShipped`
+// (internal/cli/recipes_skew.go) is false. A skill that presents the mode as
+// the working path sends the user's agent at a workflow that cannot run, and
+// the plugin's own convention for a gate is to state its state where the
+// feature is described: decisions.md's checkout topic says `cloneShipped` is
+// open, pinned by TestSetupSkillOffersClone. So both files must name the
+// constant, where it lives, that it is false, the refusal a user will see, and
+// when the gate opens: the redesign is planned for 0.9.5, by the owner's ruling
+// of 2026-10-19, which moved it off 0.9.0 — the release the skill is read in.
+// The release name is the half a reader acts on: without it, "disabled in this
+// release" reads as a temporary state of the tree rather than as 0.9.0's own
+// behaviour, which docs/gcp-setup.md:622, docs/design/managed-projects.md:3 and
+// internal/cli/recipes_skew.go all name as 0.9.5.
+//
+// Mutations (each verified, planted and reverted): drop the gate paragraph from
+// reference/managed.md, and change SKILL.md's "is false" to "is open" — both
+// fail here. Dropping "planned for 0.9.5" from either file fails it too.
+func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
+	for name, doc := range map[string]string{
+		"SKILL.md":             setupFiles(t)["skills/setup/SKILL.md"],
+		"reference/managed.md": setupFiles(t)["skills/setup/reference/managed.md"],
+	} {
+		for _, want := range []string{
+			"managedDeployerShipped",
+			"internal/cli/recipes_skew.go",
+			"is false",
+			"managed projects are disabled in this release",
+			"planned for 0.9.5",
+		} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s never says %q: the managed mode's gate is closed in this release (managedDeployerShipped is false, internal/cli/recipes_skew.go), so the skill has to say where the gate stands beside the workflow it describes", name, want)
+			}
+		}
 	}
 }
