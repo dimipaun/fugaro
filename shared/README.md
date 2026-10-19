@@ -47,6 +47,13 @@ the schema and not
 
 `confirm/` (P6.2) is the spoken-confirmation state machine — the read-back, the fixed phrase, the timeout, the replay ledger and D128's refusals — with its own tests, its own mutation proof and `vectors.json` for P6.7's Go parity test; see `confirm/README.md`. It reuses `lease/`'s timestamp bound, recognises the phrase through `command/` (P6.1) and authorises `mailbox-schema/`'s action record (P6.3) field for field.
 
+`prompts/` (P6.5) is the prompt queue — queue by default, the count across accounts at a
+natural pause, "what's pending" per installation, expiry at D118's mailbox TTL, D173's two
+windows, the reminder schedule and the pending cap — and the interrupt policy: D160's set of
+four events read through D127's local switch. Built on `mailbox/`, `mailbox-schema/`,
+`digest/` and `presence/`, with its own tests (55) and its own mutation proof (93 guards);
+see `prompts/README.md`.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has
