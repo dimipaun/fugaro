@@ -19,7 +19,22 @@ import RunDetail from '../components/RunDetail.astro'
 ---
 
 <Base title="How it works">
-  <h1>How it works</h1>
+  <h1 class="page-title">How it works</h1>
   <ArchitectureDiagram />
   <RunDetail />
 </Base>
+
+<style>
+  /* The page's own title, and the room under it (review round 3, item 3d). This page is the
+     picture and then the detail of it, and the picture is what it opens with: `base.css`'s
+     heading margin (`--space-xs`, 12 px) left the drawing almost against the title — the
+     review measured the gap and found the picture starting 12 px under the `h1`. The room is
+     this page's rather than the diagram's, because the same component is the homepage's
+     picture too, where it sits under the hero's call to action and the review of round 2
+     asked for it to be met early: a margin on the component would move it there as well.
+     `website/test/base-styles.mjs` reads this rule and refuses a title with a heading's
+     margin under it. */
+  .page-title {
+    margin-bottom: var(--space-xl);
+  }
+</style>

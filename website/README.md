@@ -152,7 +152,7 @@ with fixtures that keep its refusals running, and none of them needs the network
     files it fetches: the script above, the logo and the icons), plus 25 %. The 170 bytes it
     moved since the last derivation are the one placement rule the site figure below accounts
     for — `.command-block` — which every page's inlined stylesheet carries.
-  - **Whole site:** 3,056,685 bytes. Three times 1,018,895 (every file in `dist/`, 815,116
+  - **Whole site:** 3,057,045 bytes. Three times 1,019,015 (every file in `dist/`, 815,212
     bytes across 21 files, plus 25 %). The figure moved 1,242 bytes with the second fix
     round on this branch: the homepage's order (the promise and its call to action, then the
     diagram, then the chat, then the install paths — changes spec item 4), the flow's
@@ -168,7 +168,7 @@ with fixtures that keep its refusals running, and none of them needs the network
     and 29 with the fix round's two layout declarations (the watch bar's `flex-direction:
     row-reverse` and the flow's `rotate(-90deg)`) — and each time it was re-derived in the
     commit that moved it, like any other (D192).
-    The third fix round moved it three times, and this is where all three are re-derived,
+    The third fix round moved it four times, and this is where all four are re-derived,
     because only the page figure was re-derived for the first: **1,892 bytes** with the
     round's first commit, which settled the flow's layout (the cards answering to one height,
     the step names at `--font-size-lg` so `Ephemeral cloud job` is one line, the two-by-two
@@ -183,8 +183,10 @@ with fixtures that keep its refusals running, and none of them needs the network
     empty slot, the bar and the note — out of the figure and makes it the figure's sibling),
     and with it the slot's two rules: the one that takes an empty slot out of the page so it
     reserves no height at all, and the one that sizes the image the moment a later task puts
-    one in it. Each of the three was re-derived in the commit that moved it, like any other
-    (D192).
+    one in it. And **96** with the fourth, all of it on How It Works: the detail section gives
+    back the inline padding it was indenting itself with, and the page gains the rule that
+    holds the picture off its title. Each of the four was re-derived in the commit that moved
+    it, like any other (D192).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte

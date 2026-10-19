@@ -174,11 +174,18 @@ function slug(name: string): string {
      the five steps out as a grid of the page's own width rather than as one column of prose.
      `repeat(auto-fit, minmax(18rem, 1fr))` is the same rule the chat's turns use: three
      columns on a desktop, one on a phone, and no breakpoint of this component's own to keep
-     in step with the layout's. */
+     in step with the layout's.
+
+     **And it starts at the page's own left edge** (review round 3, item 3d). This rule used
+     to carry `var(--space-md)` of inline padding of its own — 24 px on top of the gutter
+     `main` already gives it — so "The run, step by step" and the five steps under it were
+     indented 24 px relative to the `h1` and to the picture between them, which is the defect
+     the review measured. The vertical padding stays: the space above the heading is the
+     breathing room between the picture and the detail of it. */
   .run-detail {
     max-width: var(--page-max);
     margin: 0 auto;
-    padding: var(--space-2xl) var(--space-md) var(--space-3xl);
+    padding: var(--space-2xl) 0 var(--space-3xl);
   }
 
   .run-detail-title {

@@ -319,6 +319,10 @@ function appliesAt(width) {
 /** A CSS length as pixels: a token, a `rem`/`px` length, or `calc(var(--x) * n)`. */
 function toPx(value, tokens) {
   if (value === undefined) return NaN
+  // A bare zero is zero pixels, and it is the one length CSS lets a rule write without a unit:
+  // a shorthand that names a side `0` — `padding: var(--space-2xl) 0 var(--space-3xl)` — is a
+  // padding this reader would otherwise read as `NaN`, which passes every comparison.
+  if (/^0(?:px|rem|em|%)?$/.test(value.trim())) return 0
   const variable = /^var\(--([a-z0-9-]+)\)$/.exec(value)
   if (variable) return tokens.get(variable[1]) ?? NaN
   const calc = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\*\s*([\d.]+)\s*\)$/.exec(value)
@@ -1099,6 +1103,118 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
   }
   return out
 }
+
+// ---- How It Works: one left edge, and room under the title (review round 3, item 3d) ------
+//
+// The page is the picture and then the detail of it, and `main` gives all three of its
+// top-level blocks one gutter: the `h1`, the flow's figure (which insets itself by nothing —
+// `max-width` and `margin` only) and the detail section. What the review of round 3 found was
+// the third block adding a gutter of its own on top of that one, so "The run, step by step"
+// and the five steps under it were indented 24 px relative to the title and the picture above
+// them — two left edges on one page, 24 px apart. The other half of the same finding is the
+// gap between the title and the picture: `base.css` gives every `h1` 12 px under it, which is
+// a heading's margin rather than the room a page's opening picture is met with.
+//
+// Both are read here rather than left to the eye: the section's inline padding comes out of
+// the cascade at the desktop width, and the title's own rule is read for the room it declares
+// under itself. The vertical padding of the section is not this check's business — the space
+// between the picture and the detail of it is a rhythm the owner's eye owns (70a-70c).
+
+/**
+ * Every way the How It Works page's three top-level blocks do not share `main`'s left edge, or
+ * its title sits against the picture under it, for one built page's stylesheet and markup.
+ * Returns nothing on a page that carries no detail section (the homepage's content spec item 4
+ * removed it there), so it can be run over every built page.
+ */
+export function runDetailFailures(css, html) {
+  const out = []
+  const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+  const section = [...walk(parse(html))].find((el) => classesOf(el).includes('run-detail'))
+  if (!section) return out
+  const title = [...walk(parse(html))].find((el) => classesOf(el).includes('page-title'))
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const declared = (klass, property) =>
+    rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(80 * 16)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+
+  const padding = declared('run-detail', 'padding')
+  const inset = toPx(inlineToken(padding), tokens)
+  if (Number.isNaN(inset)) {
+    out.push(
+      `the How It Works detail section's inline padding cannot be read from \`padding: ${padding ?? '(nothing declared)'}\`, and a padding this check cannot turn into pixels is one nothing checked (\`NaN\` passes the comparison below) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (review round 3, item 3d)`,
+    )
+  } else if (inset > 0) {
+    out.push(
+      `the How It Works detail section insets its own content by ${Math.round(inset)} px inside the gutter \`main\` already gives it (\`padding: ${padding}\`), and the page's \`h1\` above it and the flow's figure between them start at that gutter: "The run, step by step" and the steps under it are ${Math.round(inset)} px right of the title and of the picture (review round 3, item 3d)`,
+    )
+  }
+
+  if (!title) {
+    out.push(
+      "the How It Works page's `h1` carries no `page-title` class, so the room under it cannot be read: the title and the picture under it are the page's opening, and what separates them is this page's own rule rather than a heading's default margin (review round 3, item 3d)",
+    )
+    return out
+  }
+  const room = toPx(declared('page-title', 'margin-bottom'), tokens)
+  const wanted = tokens.get('space-lg')
+  if (Number.isNaN(room)) {
+    out.push(
+      `the How It Works title's bottom margin cannot be read from \`${declared('page-title', 'margin-bottom') ?? '(nothing declared)'}\`, and a margin this check cannot turn into pixels is one nothing checked (review round 3, item 3d)`,
+    )
+  } else if (room < wanted) {
+    out.push(
+      `the How It Works title has ${Math.round(room)} px under it, and the page opens with the picture item 4 draws: \`base.css\`'s heading margin is a heading's margin, and the picture the page is about is met with the room of a section opening — at least ${wanted} px (\`--space-lg\`) (review round 3, item 3d)`,
+    )
+  }
+  return out
+}
+
+test('the detail under the picture shares the picture’s left edge, and the title has room', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('run-detail')) continue
+    checked += 1
+    failures.push(...runDetailFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the run-detail section, and item 4 puts the detailed explanation under the picture on How It Works')
+  assert.deepEqual(failures, [], `the How It Works page has two left edges:\n  ${failures.join('\n  ')}`)
+})
+
+test('every run-detail refusal fires on the defect it names', () => {
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  const css = pageCss(page)
+  /** The How It Works stylesheet with one fragment replaced — `plant` reads the homepage. */
+  const change = (from, to) => {
+    assert.ok(css.includes(from), `this fixture replaces ${JSON.stringify(from)}, and How It Works' stylesheet no longer carries it`)
+    return css.replace(from, to)
+  }
+  const cases = [
+    // The defect the review of round 3 measured: the section's own gutter on top of `main`'s.
+    [
+      'the section indented inside the page gutter',
+      change('padding:var(--space-2xl) 0 var(--space-3xl)', 'padding:var(--space-2xl) var(--space-md) var(--space-3xl)'),
+      /insets its own content by 24 px/,
+    ],
+    // And the title left with a heading's margin under it, which is where the picture started
+    // 12 px below it.
+    ['the title with a heading’s margin under it', change('margin-bottom:var(--space-xl)', 'margin-bottom:var(--space-xs)'), /px under it, and the page opens with the picture/],
+    // A page whose title lost the class the room is declared on: the rule is the page's, and a
+    // title that no longer carries it is a title nothing measured.
+    ['a title without the page’s own class', css, /carries no `page-title` class/, page.replace('class="page-title"', '')],
+  ]
+  for (const [what, stylesheet, expected, html = page] of cases) {
+    assert.deepEqual(
+      runDetailFailures(stylesheet, html).map((line) => (expected.test(line) ? 'fired' : line)),
+      ['fired'],
+      `${what}: the refusal did not fire, and this is what it said instead`,
+    )
+  }
+})
 
 // ---- the chat is one card, one conversation (review round 3, item 3a) ----------------------
 //
