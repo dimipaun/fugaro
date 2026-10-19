@@ -198,6 +198,66 @@ func TestDocsMobileOrchestratorRecordsTheOwnersAnswers(t *testing.T) {
 	}
 }
 
+// TestDocsMobileOrchestratorNamedTokensAttributeTheShapeRight: §4.4(C) spent a
+// revision attributing the project-level named-token scheme to an owner ruling
+// for 0.9.0, in the owner's own voice ("multiple named tokens per project, like
+// the individual level") — a sentence no document in the tree records — and
+// publishing the names into `config/policy/shared`, which is the project-wide
+// node. The tree records something different and narrower: the owner's release
+// ruling R6 put **phase 5** in 0.9.0, the *shape* is §7 of the project-centric
+// design (whose "individual level" scope is D12, still flagged for the owner),
+// and the admitted account names go per repository into
+// `config/policy/repos/$slug`.
+//
+// The test pins both halves. The document side is the design's own text: the
+// phrase that was quoted as a ruling must not come back, and the attribution it
+// was replaced with must stay. The tree side is the source of truth for it, so a
+// document that is edited to match a tree that has itself moved fails here
+// rather than silently agreeing with itself.
+func TestDocsMobileOrchestratorNamedTokensAttributeTheShapeRight(t *testing.T) {
+	doc := readDoc(t, orchDesign)
+	// The quoted-as-a-ruling phrase, and the claim that the owner ruled the shape.
+	for _, gone := range []string{
+		"like the individual level",
+		"multiple named tokens per project",
+	} {
+		if strings.Contains(doc, gone) {
+			t.Errorf("%s still carries %q as the owner's ruling: the tree records R6 (where phase 5 ships), not a ruling on the shape", orchDesign, gone)
+		}
+	}
+	// What the corrected paragraph must say: the design that owns the shape, the
+	// ruling that is the owner's, and the node the names go to.
+	for _, want := range []string{
+		"§7, \"OAuth tokens (phase 5)\"",
+		"Phases 3, 4, 5 and 6 move to 0.9.0",
+		"cross-project sharing is out of scope and flagged for the owner",
+		// The node, anchored to the sentence that says it is the node: a
+		// paragraph that kept one passing mention of `config/policy/repos/$slug`
+		// somewhere else would slip past a bare substring.
+		"The node is `config/policy/repos/$slug`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer says %q about the named-token scheme", orchDesign, want)
+		}
+	}
+	// The tree: §7 is where the shape is, D12 is the scope question, R6 is the
+	// owner's release ruling, and the names are per repository in the policy.
+	pc := readDoc(t, "docs/design/project-centric.md")
+	for _, want := range []string{"## 7. OAuth tokens (phase 5)", "never repository level", "Cross-project sharing is out of scope and flagged for the owner (D12)"} {
+		if !strings.Contains(pc, want) {
+			t.Errorf("docs/design/project-centric.md no longer carries %q: §4.4(C)'s attribution rests on it", want)
+		}
+	}
+	plan := readDoc(t, "docs/plans/2026-10-14-project-centric.md")
+	if !strings.Contains(plan, "Phases 3, 4, 5 and 6 move to 0.9.0") {
+		t.Errorf("docs/plans/2026-10-14-project-centric.md no longer carries R6's release ruling, which is the only owner ruling §4.4(C) may attribute")
+	}
+	recon := readDoc(t, "docs/credentials-service/reconciliation.md")
+	if !strings.Contains(recon, "per repository in `config/policy/repos/$slug`, the **names** of its admitted accounts") {
+		t.Errorf("docs/credentials-service/reconciliation.md's O4 no longer publishes the admitted account names per repository into config/policy/repos/$slug, which is the node §4.4(C) must cite")
+	}
+}
+
 // TestDocsMobileOrchestratorCitationsExist: the design's load-bearing citations
 // are paths a later implementer has to find — the rules template and its macros,
 // the claim and the mint, the credential mounts, the lease and the MAC, the
@@ -253,6 +313,9 @@ func TestDocsMobileOrchestratorCitationsExist(t *testing.T) {
 		"docs/plans/2026-09-27-m4-gcp-backend.md",
 		"docs/design/budget-token-channel.md",
 		"docs/design/managed-projects.md",
+		// §4.4(C)'s shape: the named-token design and what the owner actually
+		// ruled (where phase 5 ships), as against what is still the design's.
+		"docs/design/project-centric.md",
 		"docs/design/named-oauth-tokens.md",
 		"docs/design/voice.md",
 		// The credentials service: the README for the numbers it holds, and the
