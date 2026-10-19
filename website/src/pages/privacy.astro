@@ -48,7 +48,7 @@
  * flow that does, which is why the page states them and their switch.
  *
  * **The app's paragraph describes the app as it will be, and says so.** Crashlytics and
- * Analytics are the owner's ruling of 2026-10-19 (D193) and are not in the app yet, so the
+ * Analytics are the owner's ruling of 2026-10-19 and are not in the app yet, so the
  * sentences above them are read off the design that will build them, and the page says which
  * version carries the reports rather than implying the build a reader may hold does. When the
  * telemetry plan lands in this repository, the gate's second direction becomes the plan file
@@ -219,8 +219,12 @@ const repo = site.facts.repository
 
     <h3>Deleting your data</h3>
     <p>
-      Everything the software holds lives in your own accounts, your own cloud project and
-      your own devices. Removing the installation removes it.
+      Everything else the software holds lives in your own accounts, your own cloud project and
+      your own devices, and removing the installation removes it. The crash reports and
+      anonymous usage above are the exception, and deleting the app does not remove them:
+      Google holds them for the Fugaro project, under the policy linked above, and uninstalling
+      sends nothing that takes them out. Turning the switch off stops the sending at once, and
+      the issue tracker is where to ask about a report already sent.
     </p>
 
     <h3>Contact</h3>

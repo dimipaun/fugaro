@@ -19,7 +19,8 @@
 //      (`partFailures`).
 //   2. **The app's reporting, and the page and the package agreeing about it.** The app reports
 //      crashes through Firebase Crashlytics and anonymous usage through Firebase Analytics, to a
-//      Firebase project the Fugaro project operates (D193), and this rule holds the page and the
+//      Firebase project the Fugaro project operates (the owner's ruling of 2026-10-19), and this
+//      rule holds the page and the
 //      repository to each other in both directions: a telemetry package the app's dependency list
 //      declares and the page does not name is refused, and the page naming a product that neither
 //      the telemetry plan nor the dependency carries is refused unless it says which version of
@@ -30,7 +31,12 @@
 //      `mobile/`: the page names two reporters, so a third one would be a flow nobody was told
 //      about (`collectingFailures`). The names are listed rather than asked for by pattern,
 //      because a pattern that tried to recognise an analytics SDK would be a pattern that misses
-//      the next one.
+//      the next one. The section a reader deletes an app to find is held too, and held on its
+//      own: "Deleting your data" has to say that the reports are the exception — the Fugaro
+//      project, not the reader, holds them, and deleting the app does not take them out — and
+//      how the reporting is stopped, because the page's other sections made that section's old
+//      first sentence ("everything the software holds lives in your own accounts") false
+//      (`DELETION_CLAIMS`, read from its heading to the next one).
 //   3. **The phone's two credentials, and where they live.** `SECRET_ITEMS` in
 //      `mobile/src/accounts/secret.js` is D111's list, and the page may describe exactly it: two
 //      items, named as the page names them, in secure storage whose own sources say Keychain and
@@ -174,7 +180,10 @@ function depthOf(el) {
 // ---- 2. the app's reporting, and the page and the package agreeing about it ---------------
 //
 // The app reports crashes and usage through Firebase Crashlytics and Firebase Analytics, to a
-// Firebase project the Fugaro project operates (the owner's ruling of 2026-10-19, D193). The
+// Firebase project the Fugaro project operates (the owner's ruling of 2026-10-19, which names
+// no decision number: the ruling is the authority here, not a number, and the repository's own
+// allocation records D193 onward as free — docs/coordinator/README.md — so a number cited for
+// it would be a number nobody gave). The
 // page says so, and this section holds the page and the repository to each other in BOTH
 // directions: a package in the app's dependency list that the page does not name is a page
 // that stopped disclosing something the app does, and a page that names one of these products
@@ -202,18 +211,56 @@ const EARLIER_BUILDS = /\b(?:earlier|previous|older) builds?\b[^.]*\bnothing\b/i
 /** What the page's reporting paragraph must say, and what makes each sentence true. */
 export const TELEMETRY_CLAIMS = Object.freeze([
   { page: 'crash', why: 'Crashlytics reports crashes, and the page may not round that to "usage"' },
-  { page: 'logs, diagnostics and app performance data', why: "D196's allow-list: a crash report is the crash's logs, its diagnostics and its performance data" },
+  { page: 'logs, diagnostics and app performance data', why: "the allow-list the owner's ruling of 2026-10-19 settled: a crash report is the crash's logs, its diagnostics and its performance data" },
   { page: 'which screens were opened', why: 'the usage Analytics collects is the screen set, and nothing about what a reader did there' },
-  { page: 'app-instance identifier', why: 'the identifier Firebase generates for the app instance is what the stores call "Device or other IDs" (D197)' },
-  { page: 'Never sent', why: "D196's ban list, which the page states as what never leaves the device" },
+  { page: 'app-instance identifier', why: 'the identifier Firebase generates for the app instance is what the stores call "Device or other IDs", which the same ruling enumerated' },
+  { page: 'Never sent', why: "the ruling's ban list, which the page states as what never leaves the device" },
   { page: 'message', why: 'no message content is ever sent, and it is the first thing a reader of this page wants to know' },
   { page: 'credentials and your keys', why: "D111's two items are never sent anywhere" },
   { page: 'mailbox', why: 'nothing from the reader\'s own mailbox reaches the Fugaro project' },
   { page: 'no advertising identifier', why: 'google_analytics_adid_collection_enabled is false, and the scan below holds the tree to it' },
-  { page: 'off until you turn it on', why: "D195: collection is off until the reader turns it on, which is the default the page must state" },
+  { page: 'off until you turn it on', why: "the ruling's opt-in: collection is off until the reader turns it on, which is the default the page must state" },
   { page: "the app's settings", why: 'the switch is in the app, and the page has to say where' },
   { page: 'Google holds', why: "the data is held by Google as Firebase's processor for the Fugaro project, which is what the page says rather than restating Google's policy" },
 ])
+
+/** The heading of the section a reader looks at after deleting the app. */
+export const DELETION_SECTION = 'Deleting your data'
+
+/**
+ * What that section owes the reader once the page discloses the reports.
+ *
+ * This is the pair of sentences the page's own contradiction forced: "Everything the software
+ * holds lives in your own accounts … removing the installation removes it" was true of a
+ * project with no reporting, and it is false the moment the app sends crash reports to a
+ * project the Fugaro project operates — those are held by Google, for that project, and
+ * deleting the app does not take them out. Nothing above held the section, so the page could
+ * say both things at once; these four are what stop it.
+ */
+export const DELETION_CLAIMS = Object.freeze([
+  { page: 'the Fugaro project', why: 'the section has to name the project that holds the reports, or "your own accounts" reads as the whole of the answer' },
+  { page: 'does not remove', why: 'the reports are the one thing deleting the app leaves behind, and a reader who deletes the app is owed that sentence' },
+  { page: 'stops the sending', why: 'the section says how the reporting is stopped — the app\'s own switch — rather than leaving deleting the app as the only thing a reader can do' },
+  { page: 'issue tracker', why: 'a report already sent is not the reader\'s to delete, so the section names the route by which they ask' },
+])
+
+/**
+ * The text under the `h3` whose heading is `title`, up to the next `h3`, or null when the page
+ * carries no such heading. Document order over the elements under `main`, because the section's
+ * own markup is the page's business: what the reader meets between the two headings is the
+ * section, whatever sits between them.
+ */
+function sectionTextOf(main, title) {
+  const nodes = [...walk(main)]
+  const at = nodes.findIndex((el) => el.name === 'h3' && textOf(el).replace(/\s+/g, ' ').trim() === title)
+  if (at < 0) return null
+  const next = nodes.findIndex((el, i) => i > at && el.name === 'h3')
+  return nodes
+    .slice(at + 1, next < 0 ? undefined : next)
+    .map(textOf)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+}
 
 /** The package names an app's dependency list declares, as its `dependencies` and `devDependencies`. */
 export function dependencyNames(packageJSON) {
@@ -272,6 +319,26 @@ export function telemetryFailures({ page, packageJSON, planExists }) {
       out.push(
         `the privacy page does not link Google's own Firebase privacy policy (${FIREBASE_PRIVACY}): the page names Google as the holder, and a page that names a holder without pointing at the holder's own statement is a page restating a policy it does not own`,
       )
+    }
+
+    // And the deletion section, which the reporting makes true in a different way: the reports
+    // are the one thing deleting the app does not take with it, and a page that says both that
+    // and "everything lives in your own accounts" is a page contradicting itself. The section
+    // is read on its own — from its heading to the next one — because a sentence anywhere else
+    // on the page is not the answer a reader deletes an app to find.
+    const deletion = sectionTextOf(mainOf(page), DELETION_SECTION)
+    if (deletion === null) {
+      out.push(
+        `the privacy page has no ${JSON.stringify(DELETION_SECTION)} section: the page discloses reports the Fugaro project holds, so it owes the reader the one section that says what deleting the app does and does not take with it`,
+      )
+    } else {
+      for (const claim of DELETION_CLAIMS) {
+        if (!deletion.includes(claim.page)) {
+          out.push(
+            `the privacy page's ${JSON.stringify(DELETION_SECTION)} section does not say ${JSON.stringify(claim.page)}: ${claim.why} — the section is read from its heading to the next one, so a sentence elsewhere on the page does not answer it`,
+          )
+        }
+      }
     }
   }
   return out
@@ -833,15 +900,48 @@ test("the page naming a reporter the repository does not hold, or the app holdin
   // The claims the reader is owed, one planted omission at a time: the ban list, the default,
   // and the link to Google's own policy.
   for (const [what, gone] of [
-    ['the ban list', page.replace('Never sent:', 'Also sent:')],
-    ['the default', page.replace('off until you turn it on', 'on unless you turn it off')],
-    ['Google as the holder', page.replace('Google holds all of it', 'It is held')],
+    ['the ban list', page.replaceAll('Never sent:', 'Also sent:')],
+    ['the default', page.replaceAll('off until you turn it on', 'on unless you turn it off')],
+    ['Google as the holder', page.replaceAll('Google holds', 'It is held')],
   ]) {
     const failures = telemetryFailures({ ...base, page: gone })
     assert.ok(failures.length >= 1, `a page that lost ${what} was not refused`)
   }
   const unlinked = telemetryFailures({ ...base, page: page.replace(FIREBASE_PRIVACY, 'https://example.net/policy') })
   assert.match(unlinked.join('\n'), /does not link Google's own Firebase privacy policy/)
+
+  // And the deletion section, which the reporting makes false in its old form. Each claim is
+  // planted absent on its own, and the section is read on its own: a page that says
+  // "everything lives in your own accounts" while the paragraph above it sends reports to a
+  // project the Fugaro project operates is the contradiction this rule exists for.
+  for (const [, planted] of DELETION_CLAIMS.map((claim) => [claim, page.replaceAll(claim.page, 'something else')])) {
+    const failures = telemetryFailures({ ...base, page: planted })
+    assert.ok(
+      failures.some((line) => line.includes(`"${DELETION_SECTION}" section does not say`)),
+      `a page whose deletion section lost one of its sentences was not refused: ${failures.join('\n')}`,
+    )
+  }
+  // The section gone, and the section emptied of the exception while keeping the words: the
+  // old page's own sentence, which is what a reader deleting the app was told.
+  const noSection = page.replace(/<h3[^>]*>Deleting your data<\/h3>/, '<h3>Something else</h3>')
+  assert.notEqual(noSection, page, 'the fixture did not rename the deletion section, so this case proves nothing')
+  assert.ok(
+    telemetryFailures({ ...base, page: noSection }).some((line) => /has no "Deleting your data" section/.test(line)),
+    'a page that lost the deletion section altogether is accepted, so a reader deleting the app has nothing to read',
+  )
+  const old = page.replace(
+    /Everything else the software holds[\s\S]*?report already sent\./,
+    'Everything the software holds lives in your own accounts, your own cloud project and your own devices. Removing the installation removes it.',
+  )
+  assert.notEqual(old, page, 'the fixture did not replace the deletion section, so this case proves nothing')
+  const oldFailures = telemetryFailures({ ...base, page: old })
+  assert.ok(
+    oldFailures.some((line) => /does not say "the Fugaro project"/.test(line)) &&
+      oldFailures.some((line) => /does not say "does not remove"/.test(line)),
+    `the page whose deletion section contradicts the disclosure above it is accepted: ${oldFailures.join('\n')}`,
+  )
+  // The control: the shipped page passes all of it, so the rule is not one that fails everything.
+  assert.deepEqual(telemetryFailures(base), [])
 })
 
 test('a third credential in SECRET_ITEMS, or a page that stopped naming one, is refused', () => {

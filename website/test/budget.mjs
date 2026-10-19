@@ -118,8 +118,24 @@
 //     own markup: the page is the one the App Store and Play listings link as a privacy policy,
 //     so it carries "The website" and "The software" as two named parts. The page weight and the
 //     script did not move — the heaviest page is still the docs hub — and the word ceiling above
-//     moved with it, 250 → **622**, from that page's own count (497 words plus 25 %), which is
-//     the derivation `wordsCeilingFailures` below holds it to.
+//     moved with it, 250 → **622**, from that page's own count (497 words plus 25 %).
+//   - **The phone app's reporting was written into that part** (the same owner's request, the
+//     same day), and moved the site figure again, 980,195 → **981,543**, by the **1,348 bytes**
+//     those paragraphs add, with the word ceiling re-derived in the same commit, 622 → **842**,
+//     from **673 words** on the page plus 25 %.
+//   - **The deletion section was carved out from under the disclosure** (the same round, on
+//     review), and moved the site figure again, 981,543 → **981,900**, by the **357 bytes** the
+//     carve-out adds, with the words ceiling re-derived in the same commit, 842 → **919**, from
+//     **735 words** on the page plus 25 %.
+//
+// This list is the history, and its figures are the figures of the commits that made it — the
+// round above is the last one, so the README states 981,900 bytes and 919 words today. **The
+// numbers that must not be copied are the current ones, and this comment held two stale copies
+// of them until the round above moved both**: `website/README.md` states the figures,
+// `wordsCeilingFailures` and `derivationFailures` below are the rules that hold the README to
+// the build, and a figure retyped here is a third copy to keep in step. Each round below is
+// written as a delta from the round before it for that reason — the arithmetic a reader can
+// check against the README, rather than a number asserted twice.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:

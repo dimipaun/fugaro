@@ -264,6 +264,14 @@ added or removed without this sentence moving fails there:
     is never sent, the opt-in default and the way back, holds Google as the processor for the
     Fugaro project under Google's own policy (linked, not restated), and says that earlier
     builds send nothing. The page weight, the script and the number of files did not move.
+  - **The deletion section was carved out from under it** (the same round, on review), and the
+    page moved again, 981,543 → **981,900**, by the **357 bytes** the carve-out adds: the
+    section that said "everything the software holds lives in your own accounts … removing the
+    installation removes it" was contradicted by the reports above it, so it now names the
+    reports as the exception, says nothing about them is the reader's to delete, says how the
+    sending is stopped and where to ask about a report already sent — and the words ceiling was
+    re-derived with it, 842 → **919**. The page weight, the script and the number of files did
+    not move.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -291,7 +299,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,680,787 bytes. Three times 1,226,929 (every file in `dist/`, 981,543
+  - **Whole site:** 3,682,125 bytes. Three times 1,227,375 (every file in `dist/`, 981,900
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -323,7 +331,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 842 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 919 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -337,8 +345,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's 250, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **673
-    words** — plus 25 %, rounded up, which is **842**. `budget.mjs`'s
+    site's pitch; the number is that page's own count on the gates' own build — **735
+    words** — plus 25 %, rounded up, which is **919**. `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
@@ -462,7 +470,14 @@ added or removed without this sentence moving fails there:
     "Earlier builds of the app send nothing at all." — the sentence a later task replaces with
     the plan's existence. The paragraphs' claims are each a sentence the file looks for: what is
     collected, the ban list, the opt-in default, the switch that turns it off, Google as the
-    holder, and the link to Google's own Firebase policy rather than a restatement of it;
+    holder, and the link to Google's own Firebase policy rather than a restatement of it — and
+    so is the section a reader deletes an app to find. **"Deleting your data" is read on its own**
+    (from its heading to the next one) and has to say that the reports are the exception: the
+    Fugaro project, not the reader, holds them, deleting the app does not take them out, the
+    switch stops the sending, and the issue tracker is where to ask about a report already sent.
+    Without that, the page said both "everything the software holds lives in your own accounts"
+    and that the app reports to a project the Fugaro project operates, and nothing held the two
+    apart;
   - **no advertising identifier, and no undisclosed reporter** — every executable file, manifest
     and lockfile under `mobile/` is scanned for the analytics, crash-reporting and advertising
     SDKs and for the platform's advertising-identifier APIs, all of them named in the test. The
