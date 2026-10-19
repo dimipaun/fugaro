@@ -2914,3 +2914,180 @@ act.
 
 The `--border`-is-decorative scan is Task 6.4's and the window-background comparison is Task
 6.5's, both for the reasons Task 6.1's section above gives.
+
+## The layout, and the installation rail (Task 6.3)
+
+Task 6.1 wrote the vocabulary and Task 6.2 made the stylesheet a file the console serves and
+every document links; nothing painted yet. This task is the third layer, `base.css`, and it
+is the first that paints: the reset, the document as a two-column grid, the rules for the
+chrome, the focus ring, the responsive layers, and the chrome's `@media (forced-colors:
+active)` block. It is also the task that **draws the installation rail** — the canvas's one
+structural addition, which the owner approved on 2026-10-19.
+
+| Where | What changed |
+|---|---|
+| `src/renderer/theme/base.css` | **new**: the reset, the grid, the chrome, focus, responsive, forced colors — 557 lines, no colour literal of its own |
+| `src/renderer/entry.ts` | **the rail's elements**: twelve exported class hooks, `drawRail`, and the three places the dashboard tells it something (`setState`, `setSpend`) |
+| `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'base.css'`, in the commit that creates the file |
+| `test/unit/theme-selectors.test.ts` | **new**: the §2-inventory selector scan over `base.css` |
+| `test/e2e/entry.spec.ts` | the forced-colors smoke's chrome half, the rail's rows, and the body-children assertion the rail moves |
+| `docs/design/console-styling.md` | §2.1's tables gain `data-collapsed` and `data-state`, and the banner row's order — hooks this task's rules select, added in the PR that wanted them |
+| this file | the section you are reading |
+
+### The document is a two-column grid, and the banner's row can be empty
+
+`body` is `grid-template-columns: auto minmax(0, 1fr)` and `grid-template-rows: auto auto auto
+minmax(0, 1fr)`. The five places are: row 1 spanning both columns for `section.console-skew`,
+row 2 for the rail (column 1) and the installation line (column 2), row 3 for the nav, row 4
+for the panel — the one row that takes what is left, and the one region that scrolls
+(`overflow-y: auto`, with `min-height: 0` so a dense screen does not push the window open).
+
+The banner is drawn only when the mode is not `ok`, so the trick is the **empty row**: an
+`auto` row with no items sizes to nothing, and the four rows below keep their places whether
+the banner is there or not. In **refused** mode the banner is the body's only child and takes
+the whole window, which is `:only-child { grid-row: 1 / -1 }` — a structural pseudo-class,
+not a hook invented for the occasion. The rail spans `2 / -1`, so it is full height under the
+banner and full height without it.
+
+**The rail's 216 px and 56 px are two literals and not tokens.** Like `CONSOLE_WINDOW_SIZE`'s
+1180 x 780 they are facts about this window rather than values a screen reads, so no §3.1
+table gains a row for them. The first column is `auto` and the rail carries its own width, so
+the collapsed state is one rule on the rail rather than a second grid definition.
+
+### The rail: twelve hooks on thirteen elements, and the entry draws them
+
+`aside.console-rail` holds a head (`console-rail-head`, with the `console-rail-title` and the
+`console-rail-collapse` control), the list (`console-rail-list`, with `id="console-rail-list"`
+for the collapse control's `aria-controls`), the foot row (`div.console-rail-add` and the
+`button.console-rail-add` inside it — **one class, two elements**, which is why the count is
+twelve hooks on thirteen elements) and the hint (`p.console-rail-hint`). A row is a
+`button.console-rail-row` carrying `span.console-rail-name`, `span.console-rail-project`,
+`span.console-rail-state` and `span.console-rail-spend`.
+
+**The elements are drawn by `entry.ts` because the rules that select them are this task's.**
+That is §2's licence rule read the other way: a hook nothing emits is not a hook, and a rule
+written against a class a screen declares cannot be reviewed against a class nobody draws.
+The same rule is why §2.1's tables gained `data-collapsed` and `data-state` **in this PR**:
+the collapse rule selects the first and the state's tone selects the second, and a rule that
+wants a hook adds it to the inventory first.
+
+The row's state is the rail's own mark and not a field of any read: the rail knows whether
+the console is reading this installation now, so it opens at `running` and goes `silent` when
+the Live read was refused or the feed has gone quiet. The span carries the **glyph and the
+word** (`● running`, `▲ silent`, `○ idle`) plus `data-state`, so the tone is a second channel
+and never the only one (design §3.5) — which is also the whole of what §4.4's rule 1 asks for
+when the system takes the colours away.
+
+**The selected row's rule is here before the attribute is.**
+`button.console-rail-row[aria-selected='true']` draws the raised surface and the 3 px
+`--accent` left border, and the row reserves that border at the selected width
+(`border-left: 3px solid transparent`) so selecting a row moves no text. The attribute itself
+— with `role="tablist"`, `role="tab"` and the keys — is Task 6.5's, which is the design's
+split: the border is this task's and the mark that turns it on arrives with the tablist
+behaviour.
+
+The collapse control is this task's, so its behaviour is too: it flips the rail's
+`data-collapsed` — the one attribute the 216 px and 56 px rules are selected by — and keeps
+`aria-expanded`, its own `aria-label` and its glyph in step with what it drew. The collapse is
+**name-preserving**: `clip-path: inset(50%)` and a 1 px box rather than `display: none`, so
+the row's accessible name is still the whole of what it draws and the state span keeps its
+glyph visible while its word is clipped away. Nothing the collapsed rail removes from sight
+is a fact it stops announcing.
+
+### What the rail reads: nothing
+
+`installation.current` is the only installation read this document has, it takes no argument
+and names no id, and its answer is the installation the operator chose — so the rail draws
+**one row per installation the dashboard can read, which is one row**, and a console with
+nothing chosen or a store that could not be read draws **no row** rather than an invented
+one. A row per *stored* installation would need a bounded list read on the dashboard's
+bridge, which the design withholds (§4.1, §11) and this task adds no operation for.
+
+So the rail makes **no read of its own**, and that is a test rather than a promise: the
+entry spec's spawn-log case holds a healthy console to exactly two spawns (`version`,
+`watch --json --project P`), and a read at mount would be a third. The two figures the row
+carries come from reads the console was already making:
+
+- the **state** from the Live feed (`rail.setState`), which is the same read the panel draws;
+- the **spend** from the console's own `budget.show` reads — the Spend and Projects paths —
+  through `rail.setSpend`, so the rail shows `n/a` with the caps panel's own sentence
+  (`no budget show document was read`) until one of those screens has been opened.
+
+`setSpend` clears the span's `title` before it writes the reading. The rail is the one
+drawing in this file that is **updated in place** rather than redrawn, and `putReading` writes
+a `title` only for a reading with no value — so without that line the `n/a`'s reason would
+sit under a figure that is now measured. It is a mutation in the table below.
+
+### `+ Add installation` is drawn and not wired, and that is the honest state
+
+The foot row is the design's control and it is drawn where the design draws it, with the label
+the design gives it. The click is the one thing this task cannot add: `+ Add installation`
+opens the add-installation flow, which is the **picker window**, and the dashboard cannot open
+it. The picker is reached from the application menu's `Installations…` item (ruling C9), the
+dashboard's bridge has fourteen operations and none of them opens a window
+(`denyWindowOpen`), and both the design (§11: no Phase-6 task owns the preload or the IPC
+allow-list) and this task's Files keep it that way. So the control is drawn with no handler
+rather than with one that does nothing, and `drawRail`'s docstring says so at the place a
+reader would look. **The console stays read only, and the CSP is unchanged**: no directive is
+added, no `style` attribute is written anywhere, and `screen-literals.test.ts` refuses a
+`.style` write under `src/renderer/` as it did before this task.
+
+### The tests
+
+- `test/unit/theme-selectors.test.ts` is the **§2-inventory selector scan**, and it reads the
+  inventory **out of the design document** rather than keeping a second copy of §2's tables
+  here: every backticked token of every table row in `docs/design/console-styling.md`'s §2 is
+  a hook, every `.name` and `[name` in `base.css` (comments stripped, so the file's own long
+  header is not read as a selector) is checked against it, and two further cases pin the rail
+  at **twelve hooks and no thirteenth** and pin `SCANNED` against `THEME_STYLESHEETS` so a
+  later task cannot add a stylesheet and leave it unscanned.
+- `test/unit/entry-wiring.test.ts`'s rail cases: one row for the readable installation (name,
+  project, `● running`, `data-state`, the `n/a` spend with its reason, and
+  `calls.map(name) === ['subscribeLive']` — no read of the rail's own); **no row** for
+  `{ok: false}`, for `{chosen: false}` and for an unreadable shape, with the rail itself still
+  drawn; the collapse control's `aria-controls`, `aria-expanded` and label in both states; and
+  the two ways the rail goes `silent` (a refused Live read, a stale feed).
+- `test/unit/bundle.test.ts`'s body-children case now reads the rail first, and the planted
+  stray stylesheet is `screens.css` — the file that is still unlisted, since `base.css` is
+  listed now.
+- `test/e2e/entry.spec.ts` gains the **forced-colors smoke's chrome half** and the rail's
+  rows. **Neither could be run in this container**: Electron does not start here
+  (`libglib-2.0.so.0: cannot open shared object file`), so every e2e case in the file fails at
+  launch, this task's included. They are written and typechecked, their expected values are
+  the ones the unit cases above already pin, and they are listed in the pull request as
+  unverified. The smoke is a **smoke and not a golden**: forced-colors rendering is the
+  platform's, and what is asserted is what §4.4 promises — the current view still marked, the
+  chrome's boundary still a boundary (a width that is not `0px`, a colour that is not
+  transparent), and the rail's rows read with them, word and glyph together. The screens' half
+  is Task 6.4's, in each screen's own spec.
+
+### The mutations this task is proved against
+
+Each was planted for real, run, and removed; the failure is the red step.
+
+| Mutation | What fails |
+|---|---|
+| `readable` ignores `chosen` (a row drawn for an unreadable installation) | `entry-wiring.test.ts`, the no-row case — 1 failed |
+| the state span draws the word without its glyph | `entry-wiring.test.ts`, 3 cases |
+| `setSpend` returns without writing (the rail never fills its spend) | `entry-wiring.test.ts`, the spend case — 1 failed |
+| the feed's staleness never reaches the rail | `entry-wiring.test.ts`, the stale-feed case — 1 failed |
+| the collapse control stops announcing (`aria-expanded`/label left alone) | `entry-wiring.test.ts`, the collapse case — 1 failed |
+| the stale `title` is left on the spend span | `entry-wiring.test.ts`, the spend case — 1 failed |
+| `.console-rail-badge` added to `base.css` | `theme-selectors.test.ts`, the unknown-class case — 2 failed |
+| `[data-badge]` selected in `base.css` | `theme-selectors.test.ts`, the unknown-attribute case — 1 failed |
+| a thirteenth `console-rail-*` hook in `base.css` | `theme-selectors.test.ts`, the twelve-and-no-thirteenth case — 2 failed |
+| `span.console-rail-project` dropped from §2.1's table | `theme-selectors.test.ts`, 2 cases |
+| `console-skew` dropped from §2.1's table | `theme-selectors.test.ts`, the unknown-class case — 1 failed |
+| every `data-collapsed` in §2 renamed | `theme-selectors.test.ts`, 2 cases |
+| `base.css` left unlisted in `THEME_STYLESHEETS` | `npm run build`, with `… holds base.css, which THEME_STYLESHEETS does not list` — observed while this task was being written |
+| the stray-`.css` case still planting `base.css` | `bundle.test.ts`, on the planted file — it is listed now, so the case was moved to `screens.css` |
+| the newline-append case destructuring exactly two names | `bundle.test.ts`, on the third stylesheet — the case is generic over the list now |
+
+### What this task does not own
+
+`screens.css` is Task 6.4's, and the rows' and badges' `@media (forced-colors: active)` block
+with it — each stylesheet carries the block for the rules it writes. The `--border`-is-
+decorative scan is 6.4's, the rows' `role`/`aria-selected` and the keys are 6.5's, the
+window-background comparison is 6.5's, and the eight golden frames are 6.6's, which is
+owner-run. **The goldens are held, not unchanged**: this task's layout is exactly the kind of
+change 6.6 exists to record once, at the end, rather than mid-phase.
