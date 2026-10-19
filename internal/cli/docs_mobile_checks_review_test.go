@@ -989,7 +989,7 @@ func TestDocsCheck81RestoreUsesTheFirebaseProject(t *testing.T) {
 	// uids). The call this repository makes is internal/budget's
 	// AuthAdmin.DeleteUsers: accounts:batchDelete, a Bearer credential, and
 	// `{"localIds": [...], "force": true}`.
-	if strings.Contains(codeLines(restore), "?key=$KEY") {
+	if strings.Contains(mobileBlockCommandLines(restore), "?key=$KEY") {
 		t.Errorf("## Check 81: the Restore authenticates an Identity Toolkit admin call with the web API key (`?key=$KEY`): the key signs the client endpoints only, so this answers 401, the two accounts stay behind and the Restore's FACT line is false -- the call needs the owner's own credential as a Bearer token")
 	}
 	if !strings.Contains(restore, `-H "Authorization: Bearer $AT"`) {
@@ -2419,10 +2419,10 @@ func deployDatabaseBody(t *testing.T) string {
 	return body
 }
 
-// codeLines returns a block's command lines without its comments: a comment
+// mobileBlockCommandLines returns a block's command lines without its comments: a comment
 // inside a block quotes the broken form to warn about it (`?key=$KEY here
 // answers 401`), and a claim about what the block does is about its commands.
-func codeLines(block string) string {
+func mobileBlockCommandLines(block string) string {
 	var out []string
 	for _, line := range strings.Split(block, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
