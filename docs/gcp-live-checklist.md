@@ -4309,7 +4309,8 @@ DB=$(sed -n 's|^ *rtdb_url: *||p' "$C" | tr -d "\"'" | sed -e 's|^https://||' -e
 KEY=$(sed -n 's|^ *firebase_api_key: *||p' "$C" | tr -d "\"'" | head -1)
 SA=$(sed -n 's|^ *token_signer: *||p' "$C" | tr -d "\"'" | head -1)
 # FP is the Firebase project id, which is what Identity Toolkit's
-# accounts:signInWithCustomToken and accounts:delete address, and the project
+# accounts:signInWithCustomToken and the Restore's accounts:batchDelete address,
+# and the project
 # the token signer below is an account of (docs/gcp-setup.md: token_signer is
 # fugaro-token-signer@<fp>.iam.gserviceaccount.com, and internal/localcfg
 # requires exactly that shape) — NOT the GCP project id P above (an
@@ -4372,7 +4373,14 @@ p += '=' * (-len(p) % 4)
 print(json.dumps(json.loads(base64.urlsafe_b64decode(p)), indent=2, sort_keys=True))
 PY
 }
-TOK() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }   # the status alone
+# TOK keeps the body and puts the status on a line of its own: the FACT lines
+# of steps 3, 4, 5 and 7 ask for each status **with** the refused body
+# ("Permission denied"), and a status-only helper throws the body away.
+TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
+# CODE is the status alone, for step 6's two columns, where thirty-four bodies
+# would bury the column they are in: the bodies there are the nodes' own (an
+# absent one answers `null`), and the two that carry content are read in step 4.
+CODE() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }
 ```
 
 1. **The two accounts exist, and the tokens carry the claims the rules read.** *(Guard block, then the helpers.)* Add `chk81-alice` and `chk81-bob` as Firebase Auth users by hand — Authentication → Users → Add user in the console, or the Admin SDK; **a `uid` you choose**, not an email you sign in as, since the only sign-in path this project permits is a custom token (`fugaro init --firebase` refuses any public sign-up path). Then mint and decode each token **before** exchanging anything:
@@ -4389,8 +4397,27 @@ TOK() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }   # the status alone
    MSG=$(printf 'chk81-%s' "$(date +%s)")
    curl -sS -X PUT "https://$DB/mailbox/$ALICE/inbox/$MSG.json?auth=$AL" -H 'Content-Type: application/json' \
      -d "{\"id\":\"$MSG\",\"sender\":\"$ALICE\",\"text\":\"check 81 step 2\",\"at\":$(date +%s000)}"
+   # The same PUT again: the write is once-only (`!data.exists()`) -- 401.
+   TOK -X PUT "https://$DB/mailbox/$ALICE/inbox/$MSG.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$MSG\",\"sender\":\"$ALICE\",\"text\":\"check 81 step 2\",\"at\":$(date +%s000)}"
+   # And each wrong shape -- sender not $mb, empty text, id != $msg, at not a
+   # number -- on an id of its own: a refused write leaves nothing behind, so
+   # the path stays empty for the next line. All four are 401.
+   BAD=$(printf 'chk81-bad-%s' "$(date +%s)")
+   TOK -X PUT "https://$DB/mailbox/$ALICE/inbox/$BAD.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$BAD\",\"sender\":\"$BOB\",\"text\":\"x\",\"at\":$(date +%s000)}"      # sender: newData.val() == $mb
+   TOK -X PUT "https://$DB/mailbox/$ALICE/inbox/$BAD.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$BAD\",\"sender\":\"$ALICE\",\"text\":\"\",\"at\":$(date +%s000)}"     # text: length > 0
+   TOK -X PUT "https://$DB/mailbox/$ALICE/inbox/$BAD.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"chk81-other\",\"sender\":\"$ALICE\",\"text\":\"x\",\"at\":$(date +%s000)}"   # id: newData.val() == $msg
+   TOK -X PUT "https://$DB/mailbox/$ALICE/inbox/$BAD.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$BAD\",\"sender\":\"$ALICE\",\"text\":\"x\",\"at\":\"now\"}"            # at: newData.isNumber()
+   # The operator's own read of the whole inbox (IAM bypasses the rules): it
+   # holds exactly the one message, and none of the refused shapes left a node.
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted
+   curl -sS -H "Authorization: Bearer $AT" "https://$DB/mailbox/$ALICE/inbox.json"
    ```
-   **FACT:** the response body (`{"id":...,"sender":...,"text":...,"at":...}`) and the status, 200. A write the rules refuse answers `Permission denied` with 401 (`internal/rtdb`'s `ErrPermission` is the 401 **or** 403 answer). The **same** PUT again must be refused (write-once, `!data.exists()`). And each wrong shape must be refused too, each with a fresh id (a refused write leaves nothing): `sender` naming another uid; `text` empty; `id` not equal to `$msg`; `at` a string. **FACT:** the second PUT's status, each shape refusal's status, and that a read of `mailbox/$ALICE/inbox.json` with the **operator's** credentials (IAM, step 4) still holds exactly the one message.
+   **FACT:** the response body (`{"id":...,"sender":...,"text":...,"at":...}`) and the status, 200. A write the rules refuse answers `Permission denied` with 401 (`internal/rtdb`'s `ErrPermission` is the 401 **or** 403 answer). **FACT:** the second PUT's status (401, write-once `!data.exists()`), each of the four wrong shapes' status (401) with the rule each one fails, and the operator's read of `mailbox/$ALICE/inbox.json`, which holds exactly the one message — no refused shape left a node. (The step 4 seeding reuses `$AT`, which is set here.)
 
 3. **The fence's negative half — what the user may not write.** *(Guard block, helpers, tokens.)* Each line must answer a permission denial; a 200 on any of them is a **failure** of this check, not a question:
 
@@ -4453,15 +4480,20 @@ TOK() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }   # the status alone
             "spend/$DAY/global" "spend/$DAY/global/counted" "spend/$DAY/repos/$NODE" \
             "spend/$DAY/runs/$NODE/chk81-run" "spend/$DAY/runs/$NODE/chk81-run/spent" \
             "spend/$((DAY-1))/repos/$NODE" "spend/$((DAY+1))/global"; do
-     printf '%-52s %s\n' "$p" "$(TOK "https://$DB/$p.json?auth=$AL")"
+     printf '%-52s %s\n' "$p" "$(CODE "https://$DB/$p.json?auth=$AL")"
    done
    for p in "config" "config/caps" "config/caps/repos" "config/kill" "config/kill/repos" \
             "config/limits" "config/limits/policyRules" "config/mode" "config/policy/shared" "config/admin" \
             "spend" "spend/$DAY" "spend/$DAY/repos" \
             "mailbox" "mailbox/$ALICE" "mailbox/$ALICE/inbox" \
             "fugaro" "fugaro/project" "runs/$NODE" "agents/$NODE" "outcomes/$DAY"; do
-     printf '%-52s %s\n' "$p" "$(TOK "https://$DB/$p.json?auth=$AL")"
+     printf '%-52s %s\n' "$p" "$(CODE "https://$DB/$p.json?auth=$AL")"
    done
+   # The second user closes the binding: the node is granted to any `mu` token,
+   # ALICE's mailbox nodes are BOB's to read only if `$mb` were BOB.
+   printf '%-52s %s\n' "config/caps/global"     "$(CODE "https://$DB/config/caps/global.json?auth=$BO")"        # 200: granted to any mu token
+   printf '%-52s %s\n' "mailbox/$ALICE/outbox"  "$(CODE "https://$DB/mailbox/$ALICE/outbox.json?auth=$BO")"     # 401: BOB's mu is BOB
+   printf '%-52s %s\n' "mailbox/$ALICE/heartbeat" "$(CODE "https://$DB/mailbox/$ALICE/heartbeat.json?auth=$BO")"  # 401
    ```
    **FACT:** the two columns. The first thirteen are **200**, with the body being whatever that node holds in this installation or `null` if it holds nothing (nothing here is seeded: step 4's seeding is the mailbox's outbox and heartbeat, so `spend/$DAY/global`, the three other-day/absent-slug paths and `spend/$DAY/runs/$NODE/chk81-run` are `null` unless the installation has real spend under them — **a 200 with `null` is the pass, and it is the whole point of the line: the read was allowed, the node is simply empty**), and the second twenty-one are **401** with `Permission denied`. **`spend/$DAY` is in the denied column and that is the point**: the grant is at `spend/$day/global`, `/repos/$slug` and `/runs/$slug/$run` (and, for the caps and kill nodes, at `config/caps/global`, `config/caps/defaults`, `config/caps/repos/$slug`, `config/kill/global` and `config/kill/repos/$slug` — nothing at `config/caps`, `config/caps/repos`, `config/kill` or `config/kill/repos`), and a 200 on any of those parents would mean the deployed document grants more than D112 says it does. The **second user** closes the binding with three more: `$DB/config/caps/global.json?auth=$BO` is **200** (the node is granted to any `mu` token), while `$DB/mailbox/$ALICE/outbox.json?auth=$BO` and `$DB/mailbox/$ALICE/heartbeat.json?auth=$BO` are **401** (BOB's `mu` is BOB). **FACT:** those three. `config/limits/policyRules` is deliberately in the denied column: the runner reads the marker as a `TOKEN`, and a user that could read it would be reading a node D112's grant does not name. `mailbox` and `mailbox/$ALICE` are in it too — the mailbox's own `outbox` and `heartbeat` are granted, the container above them is not, and step 4 has already read them.
 
@@ -4491,7 +4523,7 @@ TOK() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }   # the status alone
    grep -o '"\.validate": false' "$W/deployed.json" | wc -l    # 5: $other's guard is deployed
    # The comparison the CLI itself makes (infra.SameJSON): the same JSON document,
    # formatting ignored. It needs a checkout of this release, for the golden.
-   python3 - "$W/deployed.json" testdata/rules.golden.json <<'PY'
+   python3 - "$W/deployed.json" internal/budget/rules/testdata/rules.golden.json <<'PY'
    import json, sys
    a, b = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
    if a != b:
@@ -4499,7 +4531,7 @@ TOK() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }   # the status alone
    print("the deployed document is the generated one (JSON-equal)")
    PY
    ```
-   **FACT:** the read-back's byte count — **whatever the API stored**: no number is required of it, because `internal/infra`'s `DB.Plan` compares the deployed document with the generated one through `SameJSON`, which unmarshals both and re-marshals them, i.e. **the same JSON document, formatting ignored** — so a document the API stored with other whitespace is the same document at another byte count, which is what the JSON comparison above is for. The one number that exists is the generator's own **42687** bytes, the size `testdata/rules.golden.json` carries and check 82's step 3's plan line prints. The three counts: **1, 12 and 5** for this release's document, and at least 1 for each in any document that carries the mailbox. **The three patterns are the document's own text, and `auth.token.mu != null` is the one to copy carefully**: the rules render the `USER` predicate expanded, so `mu` is never the first word after a quote and `grep -o '"mu != null"'` matches nothing in a correct document — a pattern that cannot match is a FACT line that reads as a failed deploy of a perfect one, which is why the three counts are the generator's and `internal/cli`'s test for this check derives them from `testdata/rules.golden.json`. A deployed document **without** `mailbox` is the failure this step exists to catch, and it is the one that makes the rest unreadable in the other direction: **step 3's and step 6's refused columns would pass on a document that grants nothing at all**, which is why the two are read together. If it is `mailbox`-less, stop and run **check 82** (the deploy) before reading any other result of this check.
+   **FACT:** the read-back's byte count — **whatever the API stored**: no number is required of it, because `internal/infra`'s `DB.Plan` compares the deployed document with the generated one through `SameJSON`, which unmarshals both and re-marshals them, i.e. **the same JSON document, formatting ignored** — so a document the API stored with other whitespace is the same document at another byte count, which is what the JSON comparison above is for. The one number that exists is the generator's own **42687** bytes, the size `internal/budget/rules/testdata/rules.golden.json` carries and check 82's step 3's plan line prints. The three counts: **1, 12 and 5** for this release's document, and at least 1 for each in any document that carries the mailbox. **The three patterns are the document's own text, and `auth.token.mu != null` is the one to copy carefully**: the rules render the `USER` predicate expanded, so `mu` is never the first word after a quote and `grep -o '"mu != null"'` matches nothing in a correct document — a pattern that cannot match is a FACT line that reads as a failed deploy of a perfect one, which is why the three counts are the generator's and `internal/cli`'s test for this check derives them from `internal/budget/rules/testdata/rules.golden.json`. A deployed document **without** `mailbox` is the failure this step exists to catch, and it is the one that makes the rest unreadable in the other direction: **step 3's and step 6's refused columns would pass on a document that grants nothing at all**, which is why the two are read together. If it is `mailbox`-less, stop and run **check 82** (the deploy) before reading any other result of this check.
 
 **Passes when:** step 2's write and step 5's first ack answer 200; every refused line in steps 3, 4, 5, 6 and 7 answers 401 `Permission denied`; step 6's first thirteen reads answer 200 (some with an absent node's `null`) and its second twenty-one 401, including a 401 on each parent of a granted node (`spend/$DAY`, `config/caps`, `config/kill`) and a 200 on the same granted nodes under another day and an absent slug; the user cannot read its own inbox or the message it wrote; and step 8's JSON comparison finds the deployed document equal to `rules.Generate()`'s output (formatting ignored — `SameJSON`), carrying `mailbox`, the `USER` predicate and `$other`'s guard (its byte count is the API's to choose; only the generated document is 42687 bytes). Step 7's residual succeeding is expected today and does not fail the check.
 
@@ -4507,7 +4539,7 @@ TOK() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }   # the status alone
 
 **Paste back:** every `FACT` line above — the decoded claims (never a token), each status with its refused body, the two read columns and the second user's three, the residual's outcome and which signer minted it, the deployed document's size and its three counts. **Never paste a minted token, an ID token, a refresh token, the web API key, or the signer's token**: a `FACT` line names `$KEY`/`$SA` as variables or not at all. Until this check runs, the mailbox fence is **UNVERIFIED** live — the emulator's cases are the only evidence — and the row above stays **NOT RUN**.
 
-**Restore.** Delete what this check wrote and the two accounts it used, with the operator's credentials (IAM bypasses the rules, so it can remove what the fence itself refused) and in this order:
+**Restore.** Delete what this check wrote and the two accounts it used, with the operator's own credentials — IAM bypasses the rules, so it can remove what the fence itself refused, and the two Auth accounts go through the admin API, which the web API key cannot authenticate — and in this order:
 
 ```bash
 # === Check 81: Restore (operator credentials; re-run the guard block first). ===
@@ -4515,20 +4547,29 @@ AT=$(gcloud auth print-access-token)
 for p in "mailbox/$ALICE" "mailbox/$BOB"; do
   curl -sS -X DELETE "https://$DB/$p.json?access_token=$AT" -o /dev/null -w "$p %{http_code}\n"
 done
-for u in "$ALICE" "$BOB"; do
-  curl -sS -X POST "https://identitytoolkit.googleapis.com/v1/projects/$FP/accounts:delete?key=$KEY" \
-    -H 'Content-Type: application/json' -d "{\"localId\":\"$u\"}" -o /dev/null -w "$u %{http_code}\n"
-done
+# The two Auth accounts go through the Identity Toolkit ADMIN API, which is
+# authenticated: $KEY is the web API key, and it signs the *client* endpoints
+# (accounts:signInWithCustomToken, step 1) -- it is not a credential, so
+# `?key=$KEY` here answers 401 and leaves both accounts behind. This is the
+# call internal/budget's AuthAdmin.DeleteUsers makes: accounts:batchDelete with
+# {"localIds":[...],"force":true} and a Bearer credential that holds
+# roles/firebaseauth.admin -- which the installation owner's own gcloud
+# credential has through the project's basic roles.
+curl -sS -X POST \
+  -H "Authorization: Bearer $AT" -H 'Content-Type: application/json' \
+  "https://identitytoolkit.googleapis.com/v1/projects/$FP/accounts:batchDelete" \
+  -d "{\"localIds\":[\"$ALICE\",\"$BOB\"],\"force\":true}"
+echo
 rm -f "$W"/payload-*.json "$W"/jwt-*.txt "$W"/deployed.json
 ls "$W"    # empty (or only the guard's own files): no token survives
 rmdir "$W" 2>/dev/null || true   # and the 700 directory itself goes
 ```
 
-**FACT:** the four statuses (200 each, or an account's own `USER_NOT_FOUND` if it was already gone — the two `accounts:delete` calls go to `projects/$FP`, the **Firebase** project id the guard reads out of the config, because Identity Toolkit does not address accounts by the GCP project id) and that `/tmp/chk81` holds no token afterwards. Both mailboxes go: nothing else in the project references either, and the two names sit outside the sweeper's `r~<slug>~<run>` shape, so nothing removes them for you. **If a step failed, restore anyway** and record which step's leftovers could not be removed.
+**FACT:** the two RTDB deletes' statuses (200 each) and the `accounts:batchDelete` body — empty when both accounts went, or an `errors` array naming a `localId` and its `message`, where `USER_NOT_FOUND` means that account was already gone, which is the outcome this step wants (the call answers 200 either way: `internal/budget`'s `AuthAdmin.DeleteUsers` says "a 200 can carry per-user errors"). The call is `projects/$FP`, the **Firebase** project id the guard reads out of the config, because Identity Toolkit does not address accounts by the GCP project id — and it carries the owner's own access token, because this is the admin API: with the web API key alone it answers 401 and the two accounts stay, outside the sweeper's reach (`internal/budget/sweep.go` deletes only `r~<slug>~<run>` uids, older than `DefaultUserMaxAge` 48h). And that `/tmp/chk81` holds no token afterwards. Both mailboxes go: nothing else in the project references either, and the two names sit outside the sweeper's `r~<slug>~<run>` shape, so nothing removes them for you. **If a step failed, restore anyway** and record which step's leftovers could not be removed.
 
 ## Check 82: the rules deploy and the marker — `config/limits/policyRules` reads back this release's `RulesVersion` (`fugaro-dev` only, never `belong`; run by you; NOT RUN)
 
-The rules are a **generated artifact** of the CLI, not a file anyone edits: `internal/budget/rules`'s `Generate()` renders `rules.json.tmpl` with `rules.go`'s macros, `testdata/rules.golden.json` (42687 bytes) pins the output, and `TestRulesParity`/`TestRulesGolden`/`TestGeneratedRulesParse` keep the three from drifting. The only path that puts that document on a database is **`fugaro init --firebase`**, as the last write of its database step (`internal/infra`'s `DB.Plan` and `Apply`; docs/gcp-setup.md, "Deploying the rules is an owner step, and it comes after the CLI"). This check is that deploy and the generation it records: `internal/projectpolicy`'s `RulesVersion` (**2** on this release — generation 1 is the policy nodes, generation 2 adds the mailbox), recorded at `projectpolicy.PathRulesMarker()` = `config/limits/policyRules`, which is the generation **check 81's denial cases and P2.2's emulator cases are written against**. A binary whose `RulesVersion` is not 2 would deploy a different document; `internal/cli`'s test for this section ties the number written here to that constant, so a bump breaks the test and the check is rewritten with it.
+The rules are a **generated artifact** of the CLI, not a file anyone edits: `internal/budget/rules`'s `Generate()` renders `rules.json.tmpl` with `rules.go`'s macros, `internal/budget/rules/testdata/rules.golden.json` (42687 bytes) pins the output, and `TestRulesParity`/`TestRulesGolden`/`TestGeneratedRulesParse` keep the three from drifting. The only path that puts that document on a database is **`fugaro init --firebase`**, as the last write of its database step (`internal/infra`'s `DB.Plan` and `Apply`; docs/gcp-setup.md, "Deploying the rules is an owner step, and it comes after the CLI"). This check is that deploy and the generation it records: `internal/projectpolicy`'s `RulesVersion` (**2** on this release — generation 1 is the policy nodes, generation 2 adds the mailbox), recorded at `projectpolicy.PathRulesMarker()` = `config/limits/policyRules`, which is the generation **check 81's denial cases and P2.2's emulator cases are written against**. A binary whose `RulesVersion` is not 2 would deploy a different document; `internal/cli`'s test for this section ties the number written here to that constant, so a bump breaks the test and the check is rewritten with it.
 
 **No agent applies rules.** The database step asks for the project's name typed at a real terminal, and a coding-agent session cannot confirm it whatever flags it passes (`internal/cli`'s `askOrdinary`: an agent session raises `initflow.AgentError` before anything is shown), so this step is yours alone; nothing here is a CI job and no agent's session is one. **`--yes` is the owner's own shortcut, not an agent's**: `ask` does take it for an ordinary step (the step prints `confirmed by --yes`), which is why this check says what to do — read the plan and type the name — rather than claiming the CLI refuses it.
 
@@ -4563,7 +4604,7 @@ echo "Check 82 ready: P=$P firebase=$FP — the operator's token is read and nev
 ```bash
 fugaro version
 fugaro init --firebase "$FP" --print-vars    # read-only: the variables it resolved, nothing written
-wc -c < testdata/rules.golden.json 2>/dev/null || true    # only if you are in a checkout of this release
+wc -c < internal/budget/rules/testdata/rules.golden.json 2>/dev/null || true    # only if you are in a checkout of this release
 ```
 
 1. **The before-state, read-only.** *(Guard block.)* What the database is now, so the deploy's effect is a difference and not an impression:
@@ -4587,7 +4628,7 @@ wc -c < testdata/rules.golden.json 2>/dev/null || true    # only if you are in a
    rules: deploys the security rules (42687 bytes, generated)
    config/limits/policyRules: records the rules generation (config/limits/policyRules = 2)
    ```
-   (the two act lines are `internal/infra/firebasedb.go`'s, printed in this order: `DB.Plan` appends the PutRules action at `:251` and the marker's `PutIfMatch` after it at `:276`, and `deployDatabase` prints the plan's actions in slice order, so the rules line comes **first** and the marker line **last**. The rules line appears only when `SameJSON` says the deployed document differs from the generated one; the marker line appears whenever the marker is absent or holds another generation. The other lines — `writes the Fugaro mark (fugaro/mark)`, `writes the project's name (fugaro/project = fugaro), which every run token's fp claim must equal`, `seeds the mode: observe`, `seeds the largest lease (max reserve) at $5` — are planned before both of these, for the fields that are absent, so they print above the two lines above.) The confirmation sentence names what it does — `writes the database as listed, as you (project owner, editor or budget admin), and then the local config` — and **this check does not take `--yes`**: the step's confirmation is an *ordinary* one (`askOrdinary`, `internal/cli/init.go`'s `ask`), so `--yes` **would** confirm it — the CLI prints `confirmed by --yes` and writes — which is exactly the shortcut this check exists to avoid, because the point is that you read the plan first; what no flag can do is confirm it for a **coding agent's session**, where `askOrdinary` raises `initflow.AgentError` before it prints anything. So: type the project's name. **FACT:** every act line verbatim, in the order printed; the sentence you confirmed; the byte count in the rules line is `rules.Generate()`'s own **42687**, the size `testdata/rules.golden.json` carries; it is **not** the read-back document's size, which the API may store with other formatting — `DB.Plan` compares the two as JSON through `SameJSON`, ignoring formatting, so only the generated bytes have this number; and that the **marker line names 2** — which is how this binary states its own `projectpolicy.RulesVersion`, and the value `internal/projectpolicy` exports. **A rules line whose byte count is not the generated document's is a stop:** it means the plan is not this release's `Generate()` output, and nothing may be confirmed. **The marker is the step's last write, and the rules deploy comes immediately before it** (`DB.Plan` appends the rules action and then the marker's `PutIfMatch`, and `Apply` writes them in that order): that is what makes the marker's presence a statement about the document underneath it, so a deploy that fails on the rules leaves no marker and the runner fails closed instead of reading a generation that is not deployed. A run that prints a **marker** line while no rules line appears above it is the other state: the document already matched, only the marker moved.
+   (the two act lines are `internal/infra/firebasedb.go`'s, printed in this order: `DB.Plan` appends the PutRules action at `:251` and the marker's `PutIfMatch` after it at `:276`, and `deployDatabase` prints the plan's actions in slice order, so the rules line comes **first** and the marker line **last**. The rules line appears only when `SameJSON` says the deployed document differs from the generated one; the marker line appears whenever the marker is absent or holds another generation. The other lines — `writes the Fugaro mark (fugaro/mark)`, `writes the project's name (fugaro/project = fugaro), which every run token's fp claim must equal`, `seeds the mode: observe`, `seeds the largest lease (max reserve) at $5` — are planned before both of these, for the fields that are absent, so they print above the two lines above.) The confirmation sentence names what it does — `writes the database as listed, as you (project owner, editor or budget admin), and then the local config` — and **this check does not take `--yes`**: the step's confirmation is an *ordinary* one (`askOrdinary`, `internal/cli/init.go`'s `ask`), so `--yes` **would** confirm it — the CLI prints `confirmed by --yes` and writes — which is exactly the shortcut this check exists to avoid, because the point is that you read the plan first; what no flag can do is confirm it for a **coding agent's session**, where `askOrdinary` raises `initflow.AgentError` before it prints anything. So: type the project's name. **FACT:** every act line verbatim, in the order printed; the sentence you confirmed; the byte count in the rules line is `rules.Generate()`'s own **42687**, the size `internal/budget/rules/testdata/rules.golden.json` carries; it is **not** the read-back document's size, which the API may store with other formatting — `DB.Plan` compares the two as JSON through `SameJSON`, ignoring formatting, so only the generated bytes have this number; and that the **marker line names 2** — which is how this binary states its own `projectpolicy.RulesVersion`, and the value `internal/projectpolicy` exports. **A rules line whose byte count is not the generated document's is a stop:** it means the plan is not this release's `Generate()` output, and nothing may be confirmed. **The marker is the step's last write, and the rules deploy comes immediately before it** (`DB.Plan` appends the rules action and then the marker's `PutIfMatch`, and `Apply` writes them in that order): that is what makes the marker's presence a statement about the document underneath it, so a deploy that fails on the rules leaves no marker and the runner fails closed instead of reading a generation that is not deployed. A run that prints a **marker** line while no rules line appears above it is the other state: the document already matched, only the marker moved.
 
 4. **The second run writes nothing.** *(Guard block.)* `fugaro init --firebase "$FP"` again, and **do not confirm**: a database already in the wanted state plans no action and asks for no confirmation (`deployDatabase`: `len(acts) == 0 && !idp.missing && !fs.Pending()`), printing exactly
 
@@ -4609,7 +4650,7 @@ wc -c < testdata/rules.golden.json 2>/dev/null || true    # only if you are in a
    # The comparison DB.Plan itself makes (infra.SameJSON): the same JSON document,
    # formatting ignored — so this, and not the byte count, is what says the
    # deployed document is this release's. A checkout of this release holds the golden.
-   python3 - "$W/after.json" testdata/rules.golden.json <<'PY'
+   python3 - "$W/after.json" internal/budget/rules/testdata/rules.golden.json <<'PY'
    import json, sys
    a, b = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
    if a != b:
@@ -4617,7 +4658,7 @@ wc -c < testdata/rules.golden.json 2>/dev/null || true    # only if you are in a
    print("the deployed document is the generated one (JSON-equal)")
    PY
    ```
-   **FACT:** the marker's raw body — **`2`**, `internal/projectpolicy`'s `RulesVersion` for this release — the read-back document's byte count (**whatever the API stored**: no number is required of it, because `infra.SameJSON` compares the read-back with `rules.Generate()`'s output by unmarshalling and re-marshalling both, i.e. the same JSON document ignoring formatting); **42687 is the generator's own size**, the one `testdata/rules.golden.json` holds, and the JSON comparison above is what ties the two together; its `mailbox` count (**1**: the mailbox subtree this generation adds, which check 81 step 8 requires), whether the JSON comparison says the document is the generated one, and whether the document changed in step 3. The marker and the document have to agree: a marker of 2 over a document without `mailbox` is the state this check exists to catch, and it is a **failure** — the runner would read the marker, believe the mailbox grant exists, and the app's writes would be refused (or, on a marker below this binary's, the app would be met with a document that has no mailbox at all).
+   **FACT:** the marker's raw body — **`2`**, `internal/projectpolicy`'s `RulesVersion` for this release — the read-back document's byte count (**whatever the API stored**: no number is required of it, because `infra.SameJSON` compares the read-back with `rules.Generate()`'s output by unmarshalling and re-marshalling both, i.e. the same JSON document ignoring formatting); **42687 is the generator's own size**, the one `internal/budget/rules/testdata/rules.golden.json` holds, and the JSON comparison above is what ties the two together; its `mailbox` count (**1**: the mailbox subtree this generation adds, which check 81 step 8 requires), whether the JSON comparison says the document is the generated one, and whether the document changed in step 3. The marker and the document have to agree: a marker of 2 over a document without `mailbox` is the state this check exists to catch, and it is a **failure** — the runner would read the marker, believe the mailbox grant exists, and the app's writes would be refused (or, on a marker below this binary's, the app would be met with a document that has no mailbox at all).
 
 6. **The generation-1 → 2 transition, if step 1 found generation 1.** *(Guard block.)* Only when step 1's marker read `1` (or `null`): the before-state was `rulesMarkerOlderText`'s sentence, and after the deploy the same command must say nothing about a skew:
 
@@ -4675,7 +4716,6 @@ PY
 ) || exit 1   # the store-identity stop has to be a real stop: sys.exit inside a
                  # command substitution only sets a status, so the guard acts on it
                  # here -- otherwise it would print the reason and read on
-W=/tmp/chk89; mkdir -p "$W"
 echo "Check 89 ready: $TAG at $SHA — $APP"
 ```
 

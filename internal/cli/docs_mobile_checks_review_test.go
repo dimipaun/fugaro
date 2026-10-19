@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -611,15 +612,145 @@ func TestDocsCheck81RestoreUsesTheFirebaseProject(t *testing.T) {
 	doc := readDoc(t, path)
 	section := docSection(t, path, doc, "## Check 81:")
 	guard := codeBlockAfter(t, section, "# === Check 81: setup + guard")
+	restore := codeBlockAfter(t, section, "# === Check 81: Restore")
 
 	if !strings.Contains(guard, "firebase_project") {
 		t.Errorf("## Check 81: the guard block does not read budget.firebase_project out of the project's config: the Restore deletes the two Auth accounts through Identity Toolkit, whose project id is the Firebase project's, not the GCP project's")
 	}
-	if !strings.Contains(section, "projects/$FP/accounts:delete?key=$KEY") {
-		t.Errorf("## Check 81: the Restore does not delete the two accounts under $FP (the Firebase project read from the config): Identity Toolkit's targetProjectId is the Firebase project id, and the GCP project id is not it in general")
+	if !strings.Contains(restore, "projects/$FP/accounts:batchDelete") {
+		t.Errorf("## Check 81: the Restore does not delete the two accounts under $FP (the Firebase project read from the config) through the admin API: Identity Toolkit's targetProjectId is the Firebase project id, and the GCP project id is not it in general")
 	}
-	if strings.Contains(section, "projects/$P/accounts:delete") {
-		t.Errorf("## Check 81: the Restore deletes the two accounts under $P, which the guard hard-codes as the GCP project id fugaro-dev: on an installation whose Firebase project has another id the deletes answer 404 and the two accounts are left behind")
+	if strings.Contains(restore, "projects/$P/accounts:") {
+		t.Errorf("## Check 81: the Restore deletes the two accounts under $P, which the guard hard-codes as the GCP project id fugaro-dev: on an installation whose Firebase project has another id the delete answers 404 and the two accounts are left behind")
+	}
+
+	// The call has to be authorised. `accounts:delete` and `accounts:batchDelete`
+	// are admin endpoints: the web API key ($KEY) authenticates the **client**
+	// endpoints only (accounts:signInWithCustomToken, step 1), so `?key=$KEY` on
+	// one of them answers 401 and leaves both accounts behind -- the Restore's
+	// FACT line would claim a 200 that never came, and the sweeper would not
+	// collect them either (internal/budget/sweep.go deletes only `r~<slug>~<run>`
+	// uids). The call this repository makes is internal/budget's
+	// AuthAdmin.DeleteUsers: accounts:batchDelete, a Bearer credential, and
+	// `{"localIds": [...], "force": true}`.
+	if strings.Contains(codeLines(restore), "?key=$KEY") {
+		t.Errorf("## Check 81: the Restore authenticates an Identity Toolkit admin call with the web API key (`?key=$KEY`): the key signs the client endpoints only, so this answers 401, the two accounts stay behind and the Restore's FACT line is false -- the call needs the owner's own credential as a Bearer token")
+	}
+	if !strings.Contains(restore, `-H "Authorization: Bearer $AT"`) {
+		t.Errorf("## Check 81: the Restore's account delete carries no `Authorization: Bearer $AT`: it is the Identity Toolkit admin API, which is an OAuth2 API -- the web API key is not a credential for it")
+	}
+	if !strings.Contains(restore, `\"localIds\"`) || !strings.Contains(restore, `\"force\":true`) {
+		t.Errorf("## Check 81: the Restore's account delete does not carry the body the repository's own admin call uses (`{\"localIds\": [...], \"force\": true}`): read internal/budget/authadmin.go's DeleteUsers and write the call it makes")
+	}
+	src := readSrc(t, "../budget/authadmin.go")
+	for _, want := range []string{`"localIds": batch, "force": true`, `"/v1/projects/" + a.Project + "/accounts:" + op`} {
+		if !strings.Contains(src, want) {
+			t.Errorf("internal/budget/authadmin.go no longer carries %q: the Restore's admin call is written against that code, so read it again before changing the Restore", want)
+		}
+	}
+}
+
+// TestDocsCheck81TokKeepsTheBody: the `TOK` helper was
+// `curl -sS -o /dev/null -w '%{http_code}'` -- the status alone -- while the
+// FACT lines of steps 3, 4, 5 and 7 ask for each status **with** its body
+// ("each status with its refused body `Permission denied`", "the five 401s and
+// their bodies"). An owner following the check could not record what those
+// lines demand. TOK now keeps the body and puts the status on a line of its
+// own; step 6's two columns, which are thirty-four statuses and no bodies,
+// use CODE (the status alone), and that exception is the check's own.
+func TestDocsCheck81TokKeepsTheBody(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+	helpers := codeBlockAfter(t, section, "# === Check 81: the helpers")
+
+	var tok, code string
+	for _, line := range strings.Split(helpers, "\n") {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(line), "TOK()"):
+			tok = line
+		case strings.HasPrefix(strings.TrimSpace(line), "CODE()"):
+			code = line
+		}
+	}
+	if tok == "" {
+		t.Fatalf("## Check 81: the helpers define no `TOK()`, so this test cannot see whether it keeps the body: read the helper block again")
+	}
+	if strings.Contains(tok, "/dev/null") {
+		t.Errorf("## Check 81: `TOK` still discards the body:\n%s\nthe FACT lines of steps 3, 4, 5 and 7 ask for each status with its body, and a status-only helper cannot produce them", strings.TrimSpace(tok))
+	}
+	if !strings.Contains(tok, "%{http_code}") {
+		t.Errorf("## Check 81: `TOK` does not print the status:\n%s\nit is the helper every refusal line in steps 3, 4, 5 and 7 goes through", strings.TrimSpace(tok))
+	}
+	if code == "" || !strings.Contains(code, "/dev/null") {
+		t.Errorf("## Check 81: there is no `CODE` helper printing the status alone (step 6's two columns are thirty-four statuses; printing a body under each buries the column): got %q", code)
+	}
+
+	steps := []struct{ from, to string }{
+		{"3. **The fence's negative half", "4. **The user reads"},
+		{"4. **The user reads", "5. **The user's second write"},
+		{"5. **The user's second write", "6. **The granted read nodes"},
+		{"7. **A token whose `mu`", "8. **The fence is the deployed"},
+	}
+	for _, st := range steps {
+		step := stepText(t, section, st.from, st.to)
+		if !strings.Contains(step, "body") && !strings.Contains(step, "bodies") {
+			t.Fatalf("check 81 %s: its FACT lines no longer mention a body, so this test's premise (a body is asked for here) is gone", st.from)
+		}
+		if !strings.Contains(step, "TOK ") {
+			t.Errorf("check 81 %s: its FACT lines ask for the bodies and the step calls no `TOK`: the bodies cannot be recorded", st.from)
+		}
+		if strings.Contains(step, "CODE ") {
+			t.Errorf("check 81 %s: the step uses the status-only `CODE` helper and its FACT lines ask for bodies: use TOK here", st.from)
+		}
+	}
+	step6 := stepText(t, section, "6. **The granted read nodes", "7. **A token whose `mu`")
+	if strings.Contains(step6, "TOK ") || !strings.Contains(step6, "CODE ") {
+		t.Errorf("check 81 step 6: the two columns do not use the status-only `CODE` helper: they are thirty-four paths whose evidence is the status, and a body under each one buries the column")
+	}
+}
+
+// TestDocsRunnableBlocksNameFilesThatExist: a runnable block of checks 81 and
+// 82 is run from the checkout root, so every path it names has to be a path
+// that checkout has. The review of PR #580 found both checks comparing the
+// document read back from the database against `testdata/rules.golden.json`,
+// which does not exist from the root -- the golden is
+// internal/budget/rules/testdata/rules.golden.json, where this repository's own
+// rules tests read it. The step would have failed on the owner's machine with a
+// traceback, in a check whose whole subject is the deployed document.
+func TestDocsRunnableBlocksNameFilesThatExist(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	// A file the block names: a repo-relative path with a known extension. A
+	// `$VAR/...` path is the run's own scratch space, and a URL is not a file.
+	fileish := regexp.MustCompile(`\.(json|tmpl|yaml|yml|go|md)$`)
+	for _, heading := range []string{"## Check 81:", "## Check 82:"} {
+		section := docSection(t, path, doc, heading)
+		fenced, found := false, 0
+		for _, line := range strings.Split(section, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "```") {
+				fenced = !fenced
+				continue
+			}
+			if !fenced {
+				continue
+			}
+			for _, field := range strings.Fields(line) {
+				tok := strings.Trim(field, "\"'`()<>|,")
+				if !strings.Contains(tok, "/") || strings.ContainsAny(tok, "$*?") ||
+					strings.HasPrefix(tok, "http") || strings.HasPrefix(tok, "/") || !fileish.MatchString(tok) {
+					continue
+				}
+				found++
+				if _, err := os.Stat(filepath.Join("..", "..", tok)); err != nil {
+					t.Errorf("%s: a runnable block names %s, and this checkout has no such file: the blocks run from the repository root, so a path that is not the checkout's fails on the owner's machine -- the golden is internal/budget/rules/testdata/rules.golden.json", heading, tok)
+				}
+			}
+		}
+		if found == 0 {
+			t.Errorf("%s: no runnable block names a repository file, and check 81's step 8 and check 82's step 5 both read the golden: this test is no longer looking at the paths it exists for", heading)
+		}
 	}
 }
 
@@ -773,6 +904,20 @@ func TestDocsGuardPreamblesNameAConstructTheyUse(t *testing.T) {
 			t.Errorf("%s: the guard block is bash through `${!v}` (indirect expansion -- `${(P)v}` in zsh) and its preamble does not name it: the sentence about pasting into an interactive zsh has to name the construct that is actually there", c.heading)
 		}
 	}
+}
+
+// codeLines returns a block's command lines without its comments: a comment
+// inside a block quotes the broken form to warn about it (`?key=$KEY here
+// answers 401`), and a claim about what the block does is about its commands.
+func codeLines(block string) string {
+	var out []string
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // --- helpers ---------------------------------------------------------------
