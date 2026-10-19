@@ -9,7 +9,7 @@ all of them, and it changes what they built — the hero's headline and its exam
 four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
 The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
-gates pass (297 tests, `npm run check`, on Node 22.22.0, measured 2026-10-19). The three documents of the
+gates pass (299 tests, `npm run check`, on Node 22.22.0, measured at `8cc2278a`). The three documents of the
 first line of work said the opposite, in the present tense — [`../README.md`](../README.md)
 `:3` and `:5`, [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — which is reconciliation
@@ -314,7 +314,7 @@ here goes stale the way the byte budgets did before D192.
     own rules and refuse one whose control is laid out first or wrapped above the command.
   - **the chat is one conversation card, and its caption is under it** (item 3a and the
     caption's place). Three cards with dead space and a `You` line floating mid-card became
-    one card of four turns: a fixed 7 rem speaker column from 35 rem up (a `max-content`
+    one card of three turns: a fixed 7 rem speaker column from 35 rem up (a `max-content`
     column resolves per row and aligns nothing), one column below it, the agent's turn marked
     by the accent's own left border. The caption moved out from under "Watch it run" to
     directly under the conversation, and the whole watch block — heading, item 5's slot, the
