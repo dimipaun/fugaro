@@ -863,9 +863,12 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// (internal/managed/statebucket.go: OperatorStateRole, without which the
 	// apply's inventory read is denied for every operator). It
 	// belongs here for the same reason the marker does: it is setup on the
-	// operator's own credentials, in the managed creation and nowhere else.
-	// The region is the installation's, so the managed state sits where the
-	// rest of the project's storage does. Like the marker, this never changes
+	// operator's own credentials, by the run that creates the project, and no
+	// other command in the tree writes it. "The creation" here is every
+	// project this run creates and not the --managed one alone — the step is
+	// not gated on the flag, for the reason the paragraph below gives for the
+	// mark. The region is the installation's, so the managed state sits where
+	// the rest of the project's storage does. Like the marker, this never changes
 	// the outcome of the run — a project that is marked but has no state
 	// bucket is the fail-closed direction (a managed apply finds nowhere to
 	// keep its state and says so, rather than writing it somewhere else).
