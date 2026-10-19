@@ -316,10 +316,13 @@ func keyMaterial(s string) bool {
 //     on no other. That is the one-token-one-job-account property — a token
 //     readable by two jobs is an account two jobs share — and it is the half
 //     the tftest cannot show, because this is the plan of the whole module;
-//   - and every change is a create: the rollout adds the account's job and
-//     replaces nothing of what the installation already runs (D9), which is
-//     why no existing installation's plan moves (the other goldens are
-//     byte-identical, which the generator's empty diff shows).
+//   - and nothing the installation already runs is replaced: the rollout adds
+//     the account's job, and what else moves in the goldens moves in place —
+//     the project job accounts gain their read-only `tokens/` grant (a new
+//     binding), the runs bucket's lifecycle rule now covers `tokens/`, and each
+//     project job's environment carries this release's variables (D9). No
+//     resource is replaced or deleted; the goldens are regenerated in the same
+//     change, so the generator's diff against them is empty.
 func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 	f := accountsGoldenFixture(t)
 	if len(f.ProjectSecrets) == 0 {
