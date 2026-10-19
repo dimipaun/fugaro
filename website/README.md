@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **845,103 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **841,864 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **843,588 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **840,349 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -212,8 +212,18 @@ added or removed without this sentence moving fails there:
   and it is also why **the page and the site move with the script**: a script every page
   loads is a page's weight as well as its JavaScript.
 
-  - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
-    `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
+  The round after that **took the menu's drawer out** (the owner's brief of 2026-10-19, item
+  1): the "Menu" toggle, the panel it opened and the sibling combinator that showed it are
+  gone, the three group labels stand in the header's row at every width, and the script loses
+  the one branch it kept for the panel. Measured over that round's two builds, file by file:
+  the base stylesheet every page inlines is 278 bytes shorter, the script 181, and the eleven
+  pages are each 459 lower — the stylesheet they carry and the script they fetch, which is
+  what a page's weight is. The page figure is the docs hub's 459; the site figure is 3,239,
+  which is those eleven pages and the script and nothing else, the flag being off in this
+  build.
+
+  - **JavaScript per page:** 148,494 bytes. Three times 49,498: the one script the site ships,
+    `public/scripts/site.js` (39,598 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
     to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
@@ -235,10 +245,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,001,607 bytes. Three times 333,869: the heaviest page, the
-    docs hub, at 267,095 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 999,885 bytes. Three times 333,295: the heaviest page, the
+    docs hub, at 266,636 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,169,137 bytes. Three times 1,056,379 (every file in `dist/`, 845,103
+  - **Whole site:** 3,156,990 bytes. Three times 1,052,330 (every file in `dist/`, 841,864
     bytes across 21 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 

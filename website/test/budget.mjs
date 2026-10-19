@@ -30,15 +30,15 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 845,103 bytes where this repository's own clone, which carries the
-// tags, builds 843,588.
+// deployed site's — builds 841,864 bytes where this repository's own clone, which carries the
+// tags, builds 840,349.
 //
-//   - JavaScript per page: 49,724 bytes. The one script the site ships,
+//   - JavaScript per page: 49,498 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
 //     ruling of 2026-10-18 added to a withdrawal, and that ruling's brief item 1: a group's
 //     submenu opens when the pointer arrives at it, bound only where `matchMedia` reports a
 //     pointer that hovers and only for a pointer that reports itself a mouse or a pen, and
-//     re-decided whenever that answer changes), is 39,779 bytes; × 1.25, rounded up. The event
+//     re-decided whenever that answer changes), is 39,598 bytes; × 1.25, rounded up. The event
 //     that says which pointer arrived, and the query's `change` that says the device's answer has
 //     moved, re-derived all three figures here on 2026-10-19; the same day's second correction
 //     did it again — the focus a click or a tap moves is the pointer's and opens nothing (the
@@ -60,13 +60,13 @@
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: 333,869 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
-//     weighed 267,095 bytes: its HTML (the whole generated CLI reference) plus the first-party
+//   - Page weight per page: 333,295 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
+//     weighed 266,636 bytes: its HTML (the whole generated CLI reference) plus the first-party
 //     files it fetches — the script above and the logo and icons the layout links; × 1.25,
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,056,379 bytes. Every file in `dist/` on that build summed to 845,103
+//   - Whole site: 1,052,330 bytes. Every file in `dist/` on that build summed to 841,864
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up. **It is the build with no tags** — the one the gates make, and the
 //     one the deployed site is — and the changelog page's own "not yet released" labels are
@@ -85,7 +85,16 @@
 //     grew by those 44 bytes and the homepage did not, the declarations having left one of its
 //     own rules for the base one: 440 bytes onto the site figure and 44 onto the page weight,
 //     which is derived from the heaviest page — the docs hub — and that page carries the same
-//     inlined rule. The README states the same figures and the same reason, one bullet up from
+//     inlined rule.
+//     **The round after that took the menu's drawer out** (the owner's brief of 2026-10-19,
+//     item 1): the "Menu" toggle, the panel it opened and the sibling combinator that showed it
+//     are gone, the three group labels stand in the header's row at every width, and the script
+//     loses the one branch it kept for the panel. Measured over that round's two builds, file by
+//     file: the base stylesheet every page inlines is 278 bytes shorter, the script 181, and the
+//     eleven pages are each 459 lower — the stylesheet they carry and the script they fetch,
+//     which is what a page's weight is. So the page figure is the docs hub's 459, and the site
+//     figure 3,239: those eleven pages and the script, and nothing else, the flag being off in
+//     this build. The README states the same figures and the same reason, one bullet up from
 //     this file's name in its gates list, and the case below is what holds the figures to the
 //     build.
 //
@@ -592,8 +601,8 @@ export function derivationFailures(readme, measured) {
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 845,103 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 843,588 with the tags this
+ * builds to two different site figures — 841,864 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 840,349 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation

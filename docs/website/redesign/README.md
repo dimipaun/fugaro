@@ -228,10 +228,13 @@ here goes stale the way the byte budgets did before D192.
   the menu's hover-open and the six corrections that day and the next made to it, which moved
   the same script again. So the figures below are derived once, over the build the merge
   produces, which is the only account of them that is true of the site that ships:
-  **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
-  **page weight per page 1,001,607** (three times 333,869; the docs hub 267,095 bytes) and
-  **whole site 3,169,137** (three times 1,056,379; the gates' own build of the site, 845,103
-  bytes across 21 files). The fix
+  **JavaScript per page 148,494** (three times 49,498; `public/scripts/site.js` 39,598 bytes),
+  **page weight per page 999,885** (three times 333,295; the docs hub 266,636 bytes) and
+  **whole site 3,156,990** (three times 1,052,330; the gates' own build of the site, 841,864
+  bytes across 21 files). The last re-derivation is the owner's brief of 2026-10-19, item 1 —
+  the menu's drawer came out and the three group labels took its place — which is 278 bytes
+  off the base stylesheet every page inlines, 181 off the script, and so 459 off the page
+  figure and 3,239 off the site's. The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
@@ -263,8 +266,8 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **845,103 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **843,588 with the tags this repository's clone carries**,
+  to **841,864 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **840,349 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
