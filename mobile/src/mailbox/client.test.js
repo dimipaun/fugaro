@@ -1443,7 +1443,17 @@ test('nothing in the module reads a clock, a random source, a file or a global',
   assert.equal(FORBIDDEN.some((pattern) => pattern.test(code(control))), true, 'the control is flagged');
   assert.equal(FORBIDDEN.some((pattern) => pattern.test(code(`// Date.now() is not read here`))), false, 'prose is not');
 
-  for (const name of ['client.js', 'paths.js', 'mac.js', 'sha256.js', 'store.js', 'speaker.js', 'redact.js']) {
+  for (const name of [
+    'client.js',
+    'paths.js',
+    'mac.js',
+    'sha256.js',
+    'store.js',
+    'speaker.js',
+    'redact.js',
+    'gate.js',
+    'connection.js',
+  ]) {
     const source = code(readFileSync(new URL(name, import.meta.url), 'utf8'));
     for (const pattern of FORBIDDEN) {
       assert.equal(pattern.test(source), false, `${name}: ${pattern}`);
@@ -1459,3 +1469,252 @@ test('nothing in the module reads a clock, a random source, a file or a global',
 function code(text) {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
+
+// ---------------------------------------------------------------------------
+// The offline gate (P6.10; D167, G21)
+// ---------------------------------------------------------------------------
+//
+// The plan writes this task's verification as three clauses, and they are the
+// three sections below:
+//
+//   * with no connection, or a stale/offline consumer, **nothing is written**
+//     and **the user is told**;
+//   * an **action record is never queued**;
+//   * the client **never relies on the SDK's offline queue** -- a test that
+//     pending writes are never issued.
+//
+// Everything here runs over a fake connection state (`MemoryConnection`) and a
+// store whose SDK queue can be turned on (`MemoryMailboxStore.setOffline`), so
+// the claims are about decisions and not about a network.
+
+/** D169's action record, as P6.2's machine would hand one over. */
+function actionRecord(at) {
+  return {
+    id: 'a-1',
+    verb: 'cancel',
+    target: { run: 'run-42' },
+    confirmation: { id: 'c-1', at },
+  };
+}
+
+test('with no connection nothing is written, and the owner is told why', async () => {
+  const h = await harness();
+  h.connection.setOnline(false);
+  const refused = await h.client.send('cancel the docs refactor');
+  assert.deepEqual(refused, {
+    ok: false,
+    code: GATE_CODES.NO_CONNECTION,
+    field: 'connection',
+    message: OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION],
+    told: true,
+  });
+  // Nothing was written, nothing was read, and no id was minted for it: the
+  // gate is asked before `newId`, so a refused utterance cannot leave a hole in
+  // the id sequence that looks like a lost message.
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.deepEqual(h.store.reads(), [], 'nothing was read');
+  // And the owner heard it. "Says why" is D167's own requirement, and the
+  // speaker is the one port this directory has for saying anything.
+  assert.deepEqual(h.speaker.spoken(), [OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION]]);
+  // D167's "keeps the utterance only as unsent text the user can resend": the
+  // text is there, the REDACTED text, and it is not in the outbox queue.
+  assert.deepEqual(h.client.unsent(), [
+    { text: 'cancel the docs refactor', at: T0, code: GATE_CODES.NO_CONNECTION },
+  ]);
+  assert.deepEqual(h.client.pending(), [], 'unsent is not queued');
+});
+
+test('the connection is asked before the key is, and before anything is written', async () => {
+  // The ordering is the guard rather than a detail: a gate that runs after the
+  // tag is made has already read the pairing key for an utterance that was
+  // never going to be sent, and a gate that runs after the write has already
+  // handed the write to the SDK.
+  const h = await harness({ keys: countingKeys(new SecretStore(new MemorySecureStore())), pair: false });
+  await pair(h.keys, MAC_KEY);
+  h.connection.setOnline(false);
+  const refused = await h.client.send('run 42 finished');
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.deepEqual(h.keys.asked(), [], 'the key was never asked for');
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.deepEqual(h.connection.asked().slice(-1), [false], 'the connection was what was asked');
+});
+
+test('a speak that failed does not change the refusal, and says so', async () => {
+  // The refusal's CODE is what a screen switches on, and it must not depend on
+  // whether the owner happened to be listening. `told` reports that separately.
+  const h = await harness();
+  h.speaker.setFailing(true);
+  h.connection.setOnline(false);
+  const refused = await h.client.send('run 42 finished');
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.equal(refused.told, false);
+  assert.deepEqual(h.store.writes(), []);
+  // The utterance is still kept: the owner can still resend it, and the text
+  // screen (P6.9) shows it even though the speaker did not.
+  assert.equal(h.client.unsent().length, 1);
+});
+
+test('flush writes nothing while the connection is down, and keeps what it has', async () => {
+  // The second half of "nothing is written", and the one a reader is most
+  // likely to miss: a re-send is a write too, and with no connection it goes
+  // into the SDK's queue exactly like a first one.
+  const h = await harness({ db: new MemoryMailboxStore({ failWrites: true }) });
+  const sent = await h.client.send('run 42 finished');
+  assert.equal(sent.ok, false, 'the write did not land');
+  h.db.setFailures({ failWrites: false });
+  const before = h.store.writes().length;
+  h.connection.setOnline(false);
+  const refused = await h.client.flush();
+  assert.deepEqual(refused, { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' });
+  assert.equal(h.store.writes().length, before, 'no write was attempted');
+  assert.equal(h.client.pending().length, 1, 'the record is still there');
+  // And with the connection back, the same record goes out, unchanged.
+  h.connection.setOnline(true);
+  const flushed = await h.client.flush();
+  assert.deepEqual(flushed.written, ['m-1']);
+  assert.equal(h.client.pending()[0].landed, true);
+  assert.equal(h.store.writes().length, before + 1);
+});
+
+test('an offline poll does nothing at all, and hears nothing', async () => {
+  // A poll with no connection would read the SDK's cache (and could believe a
+  // heartbeat that stopped being written) and would ack a message it read out
+  // of that cache. There is nothing it can do that is not wrong, so it does
+  // nothing.
+  const h = await harness();
+  await plantOutbox(h, 'r-1');
+  h.connection.setOnline(false);
+  const refused = await h.client.poll();
+  assert.deepEqual(refused, { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' });
+  assert.deepEqual(h.store.reads(), [], 'nothing was read');
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.deepEqual(h.speaker.spoken(), [], 'and nothing was spoken over the owner');
+});
+
+test('a consumer that has gone quiet since the last poll refuses the sentence', async () => {
+  // The gate reads the LAST poll's heartbeat and judges it AGAIN, at the moment
+  // the owner speaks. A verdict cached at poll time would say "live" for a
+  // consumer that died five minutes ago, which is the sentence D167 is about.
+  const h = await harness();
+  await plantHeartbeat(h);
+  const polled = await h.client.poll();
+  assert.equal(polled.presence.state, STATE.LIVE);
+  assert.equal((await h.client.send('run 42 finished')).ok, true, 'a live consumer is spoken to');
+  h.advance(INTERVAL_MS * 5);
+  const refused = await h.client.send('and another thing');
+  assert.deepEqual(refused, {
+    ok: false,
+    code: GATE_CODES.CONSUMER_STALE,
+    field: 'presence',
+    message: OFFLINE_SPEECH[GATE_CODES.CONSUMER_STALE],
+    told: true,
+  });
+  assert.equal(h.store.writes().length, 1, 'only the first utterance was written');
+});
+
+test('a consumer that is offline, or unsigned, or on another clock, refuses too', async () => {
+  // P1.4's other three states, each through the client rather than through the
+  // gate alone: the presence the client reports is the presence the gate reads.
+  for (const [name, plant, code] of [
+    ['silent', async (h) => { await plantHeartbeat(h); h.advance(INTERVAL_MS * 20); }, GATE_CODES.CONSUMER_OFFLINE],
+    ['empty', async () => {}, GATE_CODES.CONSUMER_OFFLINE],
+    ['unsigned', async (h) => { await plantHeartbeat(h, {}, { raw: { at: h.now() - 1_000, boot: 'boot-0001' } }); }, GATE_CODES.CONSUMER_OFFLINE],
+    ['another node\'s', async (h) => { await plantHeartbeat(h, {}, { direction: 'inbox' }); }, GATE_CODES.CONSUMER_OFFLINE],
+    ['ahead of the server', async (h) => { await plantHeartbeat(h, { at: h.now() + INTERVAL_MS * 5 }); }, GATE_CODES.CONSUMER_CLOCK_DIFFERS],
+  ]) {
+    const h = await harness();
+    await plant(h);
+    const polled = await h.client.poll();
+    assert.equal(polled.presence.state === STATE.LIVE, false, name);
+    const refused = await h.client.send('run 42 finished');
+    assert.equal(refused.code, code, name);
+    assert.deepEqual(h.store.writes(), [], name);
+    assert.deepEqual(h.speaker.spoken(), [OFFLINE_SPEECH[code]], name);
+  }
+});
+
+test('before anything has been observed the phone still sends, and that is named', async () => {
+  // The one place the plan's two conditions do not reach: a phone that has not
+  // polled has observed nothing, and `null` is not evidence that the consumer is
+  // down. Inventing a refusal from it would make a freshly paired phone unable
+  // to say its first sentence. `gate.js` names the limit; this test holds the
+  // behaviour, because a later change to it should be a decision and not an
+  // accident.
+  const h = await harness();
+  assert.equal((await h.client.send('run 42 finished')).ok, true, 'nothing observed yet');
+  // ... and once a poll HAS looked, the same consumer refuses.
+  await plantHeartbeat(h);
+  await h.client.poll();
+  h.advance(INTERVAL_MS * 20);
+  assert.equal((await h.client.send('and another thing')).code, GATE_CODES.CONSUMER_OFFLINE);
+});
+
+test('an action record is written once and never queued', async () => {
+  // D167: "a destructive action record is never queued at all". It is not in
+  // the outbox, so `flush` cannot re-send it, `pending()` cannot offer it and
+  // the next poll cannot retry it -- a destructive command that arrives late is
+  // exactly what the gate exists to prevent, and a retry is the same arrival
+  // with a longer fuse.
+  const h = await harness();
+  const sent = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
+  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
+  assert.equal(h.store.writes()[0].value.kind, 'action');
+  assert.deepEqual(h.store.writes()[0].value.action, actionRecord(T0));
+  assert.deepEqual(h.client.pending(), [], 'an action is not in the outbox queue');
+  assert.deepEqual(h.client.unsent(), [], 'and it is not unsent text either');
+  await h.client.flush();
+  assert.equal(h.store.writes().length, 1, 'flush never re-sends an action');
+});
+
+test('an action whose write did not land is dropped, not retried', async () => {
+  // The same rule from the other side: an action that reaches the store and is
+  // refused is REPORTED and forgotten. The owner confirms again (P6.2), which
+  // is a new action id and a new confirmation -- not a silent retry of this one.
+  const h = await harness({ db: new MemoryMailboxStore({ failWrites: true }) });
+  const refused = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
+  assert.equal(refused.ok, false);
+  assert.deepEqual(h.client.pending(), []);
+  h.db.setFailures({ failWrites: false });
+  await h.client.flush();
+  assert.equal(h.store.writes().length, 1, 'the failed action was not re-sent');
+});
+
+test('a gated action is not kept as unsent text either', async () => {
+  // The two rules meet here. With no connection the action is refused BEFORE
+  // anything is written -- and it is not offered back as text to resend, because
+  // resending a destructive command means confirming it again.
+  const h = await harness();
+  h.connection.setOnline(false);
+  const refused = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.equal(refused.told, true, 'the owner is still told');
+  assert.deepEqual(h.client.unsent(), [], 'but nothing is kept');
+  assert.deepEqual(h.client.pending(), []);
+  assert.deepEqual(h.store.writes(), []);
+});
+
+test('the client never relies on the SDK\'s offline queue: nothing is ever issued', async () => {
+  // G21's hazard made concrete. The store here is the SDK: with an offline flag
+  // set it does not refuse a write, it HOLDS it and resolves it as though it had
+  // landed. The gate's job is that the client never hands it anything -- and the
+  // test is worth nothing unless the queue would have noticed, so the positive
+  // control comes first.
+  const h = await harness();
+  h.db.setOffline(true);
+  await h.db.write(`${INBOX}/handed-over`, { any: 'value' });
+  assert.equal(h.db.pendingWrites().length, 1, 'the queue does notice a write it is given');
+  assert.equal(h.db.cancelPending(), 1);
+
+  h.connection.setOnline(false);
+  const refused = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.deepEqual(h.store.writes(), [], 'no write was issued');
+  assert.deepEqual(h.db.pendingWrites(), [], 'and the SDK is holding nothing of ours');
+  // The reconnect, spelled out: had a write been handed over, this is where it
+  // would have run -- hours later, at a time nobody chose. It is empty.
+  h.db.setOffline(false);
+  assert.deepEqual(h.db.flushQueue(), { applied: [], refused: [] });
+  assert.equal(h.valueAt(`${INBOX}/m-1`), null);
+  assert.equal(h.valueAt(`${INBOX}/handed-over`), null);
+});

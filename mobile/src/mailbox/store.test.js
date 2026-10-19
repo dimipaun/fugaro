@@ -190,3 +190,82 @@ test('a path that is not a path is refused rather than stored under nothing', as
   }
   assert.deepEqual(store.reads(), [], 'nothing was read');
 });
+
+// ---------------------------------------------------------------------------
+// The SDK's offline queue (P6.10, D167; G21)
+// ---------------------------------------------------------------------------
+//
+// The second lie a fake must not tell. `setFailures({failWrites})` models a
+// store that REFUSES; `setOffline(true)` models the Firebase SDK, which does not
+// refuse at all -- it resolves the write locally and sends it whenever the
+// network comes back. That difference is the whole of G21: a caller that is told
+// nothing cannot decide anything. `client.test.js` is where the client's answer
+// to it lives ("issue nothing"); these tests are what makes that answer mean
+// something, by showing what the queue would otherwise have done.
+
+test('a write made with no connection is held, not refused, and not stored', async () => {
+  const store = new MemoryMailboxStore();
+  store.setOffline(true);
+  const written = await store.write(`${INBOX}/m-1`, message('m-1'));
+  // The SDK resolves it: the caller is told the write happened.
+  assert.deepEqual(written, { ok: true });
+  assert.equal(store.valueAt(`${INBOX}/m-1`), null, 'nothing has been sent');
+  assert.deepEqual(store.pendingWrites(), [{ path: `${INBOX}/m-1`, value: message('m-1') }]);
+  // A read answers the cache -- nothing is there -- which is why an offline poll
+  // would have seen an empty outbox and a heartbeat from the last time.
+  assert.deepEqual(await store.read(INBOX), { ok: true, value: null });
+});
+
+test('the queue drains through the same judgement a direct write gets', async () => {
+  const store = new MemoryMailboxStore();
+  store.setOffline(true);
+  // A message, and an ack whose parent is not there: the template's
+  // `data.parent().exists()` must refuse the second when the queue reaches the
+  // database, exactly as it would have refused it at once.
+  await store.write(`${INBOX}/m-1`, message('m-1'));
+  await store.write(`${OUTBOX}/r-1/acked`, true);
+  store.setOffline(false);
+  const drained = store.flushQueue();
+  assert.deepEqual(drained.applied, [`${INBOX}/m-1`]);
+  assert.deepEqual(drained.refused, [{ path: `${OUTBOX}/r-1/acked`, code: STORE_CODES.NO_PARENT }]);
+  assert.deepEqual(store.valueAt(`${INBOX}/m-1`), message('m-1'));
+  // What was refused is still held: the SDK does not silently discard it.
+  assert.deepEqual(store.pendingWrites().map((entry) => entry.path), [`${OUTBOX}/r-1/acked`]);
+  // ... and a re-send held while offline meets the template's `!data.exists()`
+  // when the queue drains, which is exactly the duplicate P1.1's ledger answers.
+  store.setOffline(true);
+  await store.write(`${INBOX}/m-1`, message('m-1'));
+  store.setOffline(false);
+  assert.deepEqual(store.flushQueue().refused, [
+    { path: `${OUTBOX}/r-1/acked`, code: STORE_CODES.NO_PARENT },
+    { path: `${INBOX}/m-1`, code: STORE_CODES.EXISTS },
+  ]);
+});
+
+test('the queue can be cancelled, which is the drop the client does not rely on', async () => {
+  const store = new MemoryMailboxStore();
+  store.setOffline(true);
+  await store.write(`${INBOX}/m-1`, message('m-1'));
+  await store.write(`${INBOX}/m-2`, message('m-2'));
+  assert.equal(store.cancelPending(), 2);
+  assert.deepEqual(store.pendingWrites(), []);
+  assert.deepEqual(store.flushQueue(), { applied: [], refused: [] });
+  assert.equal(store.valueAt(`${INBOX}/m-1`), null);
+  assert.equal(store.cancelPending(), 0);
+});
+
+test('a queued write is not a failed one, and the two switches are not the same', async () => {
+  // The distinction the whole task rests on, asserted next to each other: a
+  // refused write tells the caller, a held one tells nobody.
+  const store = new MemoryMailboxStore({ failWrites: true });
+  const refused = await store.write(`${INBOX}/m-1`, message('m-1'));
+  assert.equal(refused.ok, false);
+  assert.deepEqual(store.pendingWrites(), [], 'a failure is not a queue');
+  store.setFailures({ failWrites: false });
+  store.setOffline(true);
+  assert.deepEqual(await store.write(`${INBOX}/m-1`, message('m-1')), { ok: true });
+  assert.equal(store.pendingWrites().length, 1, 'a queue is not a failure');
+  // The write log carries both, and is what a test asserts "nothing was issued"
+  // against: an attempt is recorded whether it landed, was refused or was held.
+  assert.deepEqual(store.writes().map((entry) => entry.path), [`${INBOX}/m-1`, `${INBOX}/m-1`]);
+});
