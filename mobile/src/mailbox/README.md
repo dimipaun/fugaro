@@ -369,11 +369,15 @@ makes is signed by it. The alternative -- putting `acked` inside the tag -- is
 not available: the ack is written after the tag was made, and a launcher that
 could not ack could not release a prompt either.
 
-## The audio stub (P3.4 is not merged)
+## The audio stub (P3.4 has merged; this client is not wired to it yet)
 
 P3.4 (`mobile/src/audio/`, the AudioIn/STT/TTS interfaces and their fakes, PR
-#592) is **not merged**, and this task may not depend on unmerged code. So
-`speaker.js` is a one-method seam of this task's own -- `speak(text)` returning
+#592) landed after this task: it had no directory in the tree when P3.6 was
+written, and this task may not depend on code that is not on `main`. **It has
+since merged with this change** -- `mobile/src/audio/` is the tree's now -- and
+this client still takes this module's own port rather than P3.4's, because
+nothing has wired the two together. So `speaker.js` is a one-method seam of this
+task's own -- `speak(text)` returning
 `{ ok: true }`, or `{ ok: false, code, field }` with a code from
 `SPEAK_CODES` (`bad-text`, `speak-failed`) -- with `MemorySpeaker` as its
 double. (The refusal shape was written as `{ id, code }` here until the
@@ -381,9 +385,9 @@ review's last round; that is the shape of the client's own `unspoken` list,
 which names the message the refusal is about, not the port's.) What
 P3.6 needs from it is exactly one thing: **whether the utterance was spoken**,
 because the ack is written only after it was. Voices, queues, barge-in,
-interruption and latency are P3.4's and P3.5's, and none of them is here. When
-P3.4 merges, `speaker.js` is the file that goes, and its `MemorySpeaker` is what
-the P3.4 fakes replace.
+interruption and latency are P3.4's and P3.5's, and none of them is here.
+`speaker.js` is the file that goes, and its `MemorySpeaker` is what the P3.4
+fakes replace; the merge has happened and the wiring has not.
 
 The **secure store is not stubbed**: P3.1 is merged and its `SecretStore` is
 reused, with one addition (below).
@@ -510,20 +514,21 @@ from their absence:
   is not a rule of the tree at all but a behaviour of the client library -- and
   nothing else -- no auth, no durability, no listeners, no quota. The deployed
   rules are checks **81/82**, owner-run, and none of them is run here.
-* **The template does not accept `mac` yet, and that is P6.4's task.** This
-  client signs every message because the plan's P3.6 entry requires it (P6.3 and
-  P6.4 "require `mac` on every inbox message, so P3.6 must sign"), and
-  `shared/mailbox-schema` is the merged authority for the record's shape. The
-  template in `internal/budget/rules/rules.json.tmpl` today validates exactly
-  `id`, `sender`, `text`, `at` (plus `acked` on the outbox) with `$other:
-  false`, so **a message this client writes would be denied by the rules as
-  they now stand** until **P6.4** -- proposed, NOT APPROVED, and the task that
-  adds "the same fields in the mailbox subtree" -- lands and is deployed. That
-  is a sequencing fact, not a defect in this module, and it is named here
-  because a reader who tries this against a real project deserves to know it
-  before the rules refuse the write. `store.js`'s double deliberately does not
-  model a field allow-list: the shape is the schema's rule, and P6.3's tests
-  hold it.
+* **No deployment, and the template's allow-list is newer than any deployed
+  one.** This client signs every message because the plan's P3.6 entry requires
+  it (P6.3 and P6.4 "require `mac` on every inbox message, so P3.6 must
+  sign"), and `shared/mailbox-schema` is the merged authority for the record's
+  shape. The template in `internal/budget/rules/rules.json.tmpl` now agrees
+  with it: P6.4 merged on 2026-10-18 and its inbox and outbox message nodes
+  require `id`, `sender`, `text`, `at` **and `mac`**, and carry `kind`,
+  `agent`, `options`, `reply_to` and the action record with `$other: false`.
+  What is *not* true is that anything is running it -- the template is a
+  template, and the deployed rules are checks **81/82**, owner-run and not run
+  here -- so a reader pointing this client at a project whose rules predate
+  P6.4 would still see the write refused. That is a sequencing fact about a
+  deployment, not a defect in this module. `store.js`'s double deliberately
+  does not model a field allow-list either: the shape is the schema's rule,
+  and P6.3's tests hold it.
 * **The Realtime Database adapter does not exist yet, and neither does the
   connection's.** `store.js` is the port and its double, and `connection.js` is
   the second port P6.10 adds; both real adapters are `mobile/index.js`'s wiring,

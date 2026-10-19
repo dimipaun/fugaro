@@ -43,9 +43,11 @@ resource "google_storage_bucket" "runs" {
     }
   }
 
-  # A run's Firebase token object (runs/<slug>/<run>/budget-token) is deleted
-  # by the job when it starts, and dead after an hour. One a job never took
-  # (a run that never started) would otherwise stay as long as its run.
+  # A run's sealed Firebase token object (tokens/<slug>/<run>/budget-token) is
+  # read, never deleted, by the job (its grant on tokens/ is read-only), and
+  # the token in it is dead after an hour; the object goes after a day.
+  # runs/ stays in the rule for the plaintext objects launchers before the
+  # seal left there (docs/design/budget-token-channel.md section 7.2).
   dynamic "lifecycle_rule" {
     for_each = var.enable_budget ? [1] : []
     content {
@@ -54,7 +56,7 @@ resource "google_storage_bucket" "runs" {
       }
       condition {
         age            = 1
-        matches_prefix = ["runs/"]
+        matches_prefix = ["runs/", "tokens/"]
         matches_suffix = ["/budget-token"]
       }
     }

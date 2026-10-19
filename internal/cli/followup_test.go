@@ -73,9 +73,15 @@ func wantRefused(t *testing.T, f *cloudFixture, want string, args ...string) {
 	}
 }
 
+// rootID and fuID are the two runs every follow-up test here (and the run
+// --pr / --retry tests in the neighbouring files) is driven with. They are
+// minted from the wall clock because that is the clock of the window the
+// commands read: run --pr and run --retry resolve the pulled request through
+// resolvePR, which measures followUpLookback back from time.Now() itself and
+// has no seam. recentRunID/runIDAt (lsNow) belong to the listings.
 var (
-	rootID = runIDAt(3, "090000", "aaaa")
-	fuID   = runIDAt(0, "120000", "f00d") // the follow-up the tests launch
+	rootID = wallRunIDAt(3, "090000", "aaaa")
+	fuID   = wallRunIDAt(0, "120000", "f00d") // the follow-up the tests launch
 )
 
 func TestRunPRLaunchesFollowUp(t *testing.T) {
@@ -147,7 +153,7 @@ func TestRunPRNotAFugaroPR(t *testing.T) {
 	seedRoot(t, f, rootID, time.Now())
 	wantRefused(t, f, "not a Fugaro PR", "run", "--repo", "acme/app", "--pr", "9")
 	// A run older than the runs bucket keeps is not found either.
-	old := runIDAt(100, "090000", "bbbb")
+	old := wallRunIDAt(100, "090000", "bbbb")
 	seedSpec(t, f, firstRunSpec(old), false)
 	writeRecord(t, f, old, prRecord(old, "", 8, 1))
 	wantRefused(t, f, "90 days", "run", "--repo", "acme/app", "--pr", "8")
@@ -156,7 +162,7 @@ func TestRunPRNotAFugaroPR(t *testing.T) {
 func TestRunPRRefusesActiveRun(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	active := runIDAt(0, "000100", "bbbb")
+	active := wallRunIDAt(0, "000100", "bbbb")
 	exec := seedSpec(t, f, followUpSpec(active, rootID, rootID, 7), true)
 	writeRecord(t, f, active, &runstore.Record{Version: 1, RunID: active, Repo: "acme/app", Execution: exec, Status: runstore.StatusRunning,
 		Stage: "implement", Branch: "fugaro/" + rootID, PR: &runstore.PRRef{Number: 7}, StartedAt: time.Now(),
@@ -175,7 +181,7 @@ func TestRunPRRefusesActiveRun(t *testing.T) {
 func TestRunPRRefusesErrorRow(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	bad := runIDAt(0, "000100", "bbbb")
+	bad := wallRunIDAt(0, "000100", "bbbb")
 	seedSpec(t, f, followUpSpec(bad, rootID, rootID, 7), false)
 	putBuildObject(t, f, "runs/"+appSlug+"/"+bad+"/result.json", []byte("{not json"))
 	wantRefused(t, f, bad, "run", "--repo", "acme/app", "--pr", "7")
@@ -184,7 +190,7 @@ func TestRunPRRefusesErrorRow(t *testing.T) {
 func TestRunPRRefusesLiveLock(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	putLock := func(expires time.Time) {
 		data, _ := json.Marshal(lock.Holder{RunID: holder, ExpiresAt: expires})
 		putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
@@ -207,7 +213,7 @@ func TestRunPRRefusesLiveLock(t *testing.T) {
 // missing entirely — must still refuse: only the backend's own word on
 // the holder's execution (below) can lift a live lock.
 func TestRunPRForgedRecordNeverBypassesTheLock(t *testing.T) {
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	cases := []struct {
 		name string
 		rec  *runstore.Record
@@ -241,7 +247,7 @@ func TestRunPRForgedRecordNeverBypassesTheLock(t *testing.T) {
 func TestRunPRTakesOverLockWhenBackendConfirmsTermination(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	key := lock.Key(appSlug, "fugaro/"+rootID)
@@ -265,7 +271,7 @@ func TestRunPRTakesOverLockWhenBackendConfirmsTermination(t *testing.T) {
 func TestRunPRRefusesLockWhenExecutionStillRunning(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateRunning)
 	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
@@ -285,7 +291,7 @@ func TestRunPRRefusesLockWhenExecutionStillRunning(t *testing.T) {
 func TestRunPRRefusesLockWhenExecutionUnknown(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	const unknownExec = "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-99999"
 	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: unknownExec, ExpiresAt: time.Now().Add(time.Hour)})
 	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
@@ -323,7 +329,7 @@ func TestCheckBranchLockRequiresTheSameExecutionNamed(t *testing.T) {
 	}
 	env := envOn(t, f, bucket)
 	defer env.Close()
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	env.be = mismatchedNameBackend{Backend: env.be, answerAs: "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/some-other-run"}
@@ -352,7 +358,7 @@ func TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand(t *testing.T) {
 	g := gcpfake.NewGCS(t)
 	env := envOn(t, f, g.Bucket(t, "runs"))
 	defer env.Close()
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	branch := "fugaro/" + rootID
@@ -400,7 +406,7 @@ func TestLockClearMessageNeverReReadsTheGeneration(t *testing.T) {
 	g := gcpfake.NewGCS(t)
 	env := envOn(t, f, g.Bucket(t, "runs"))
 	defer env.Close()
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	branch := "fugaro/" + rootID
@@ -411,7 +417,7 @@ func TestLockClearMessageNeverReReadsTheGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.DenyWrites("runs", "locks/")
-	rival := runIDAt(0, "000200", "cccc")
+	rival := wallRunIDAt(0, "000200", "cccc")
 	var restore func()
 	restore = lock.SetBeforeTakeoverDelete(func() {
 		restore() // fire once
@@ -515,14 +521,14 @@ func TestLockMessagesSanitizeTheRunID(t *testing.T) {
 func TestRunPRRefusesWhenLockChangesDuringTakeover(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	holder := runIDAt(0, "000100", "bbbb")
+	holder := wallRunIDAt(0, "000100", "bbbb")
 	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	key := lock.Key(appSlug, "fugaro/"+rootID)
 	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
 	putBuildObject(t, f, key, data)
 
-	rival := runIDAt(0, "000200", "cccc")
+	rival := wallRunIDAt(0, "000200", "cccc")
 	var restore func()
 	restore = lock.SetBeforeTakeoverDelete(func() {
 		restore() // fire once
@@ -565,8 +571,8 @@ func TestRunPRUnreadableLockIsFine(t *testing.T) {
 func TestRunPRBranchDisagreement(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	other := runIDAt(1, "090000", "cccc")
-	seedFollowUp(t, f, runIDAt(0, "000100", "bbbb"), other, rootID, time.Now(), runstore.StatusSucceeded, true)
+	other := wallRunIDAt(1, "090000", "cccc")
+	seedFollowUp(t, f, wallRunIDAt(0, "000100", "bbbb"), other, rootID, time.Now(), runstore.StatusSucceeded, true)
 	wantRefused(t, f, "disagree", "run", "--repo", "acme/app", "--pr", "7")
 }
 
@@ -574,12 +580,12 @@ func TestRunPRBranchDisagreement(t *testing.T) {
 // must be on that branch.
 func TestRunPRRootBranchMustNameRoot(t *testing.T) {
 	f := newCloudFixture(t)
-	root := runIDAt(2, "090000", "aaaa")
+	root := wallRunIDAt(2, "090000", "aaaa")
 	seedSpec(t, f, firstRunSpec(root), false)
 	rec := prRecord(root, "", 5, 1) // root's own record names another PR and another branch
-	rec.Branch = "fugaro/" + runIDAt(2, "090000", "9999")
+	rec.Branch = "fugaro/" + wallRunIDAt(2, "090000", "9999")
 	writeRecord(t, f, root, rec)
-	seedFollowUp(t, f, runIDAt(0, "000100", "bbbb"), root, root, time.Now(), runstore.StatusSucceeded, true)
+	seedFollowUp(t, f, wallRunIDAt(0, "000100", "bbbb"), root, root, time.Now(), runstore.StatusSucceeded, true)
 	wantRefused(t, f, root, "run", "--repo", "acme/app", "--pr", "7")
 }
 
@@ -603,8 +609,8 @@ func TestRunPRPreM6Record(t *testing.T) {
 // branch, so it is accepted.
 func TestRunPRRootExpired(t *testing.T) {
 	f := newCloudFixture(t)
-	gone := runIDAt(95, "090000", "aaaa")
-	fu1, fu2 := runIDAt(2, "090000", "bbbb"), runIDAt(1, "090000", "cccc")
+	gone := wallRunIDAt(95, "090000", "aaaa")
+	fu1, fu2 := wallRunIDAt(2, "090000", "bbbb"), wallRunIDAt(1, "090000", "cccc")
 	seedFollowUp(t, f, fu1, gone, gone, time.Now().Add(-48*time.Hour), runstore.StatusSucceeded, true)
 	seedFollowUp(t, f, fu2, gone, fu1, time.Now().Add(-24*time.Hour), runstore.StatusFailed, true)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
@@ -617,8 +623,8 @@ func TestRunPRRootExpired(t *testing.T) {
 
 func TestRunPRNeverPushed(t *testing.T) {
 	f := newCloudFixture(t)
-	gone := runIDAt(95, "090000", "aaaa")
-	seedFollowUp(t, f, runIDAt(1, "090000", "bbbb"), gone, gone, time.Now().Add(-24*time.Hour), runstore.StatusFailed, false)
+	gone := wallRunIDAt(95, "090000", "aaaa")
+	seedFollowUp(t, f, wallRunIDAt(1, "090000", "bbbb"), gone, gone, time.Now().Add(-24*time.Hour), runstore.StatusFailed, false)
 	wantRefused(t, f, "pushed", "run", "--repo", "acme/app", "--pr", "7")
 }
 
@@ -628,11 +634,11 @@ func TestRunPRPreviousIsNewestPushed(t *testing.T) {
 	f := newCloudFixture(t)
 	now := time.Now()
 	seedRoot(t, f, rootID, now.Add(-72*time.Hour))
-	older := runIDAt(1, "230000", "bbbb") // its run ID is the later one, but it started first
+	older := wallRunIDAt(1, "230000", "bbbb") // its run ID is the later one, but it started first
 	seedFollowUp(t, f, older, rootID, rootID, now.Add(-10*time.Hour), runstore.StatusFailed, true)
-	infra := runIDAt(1, "010000", "cccc")
+	infra := wallRunIDAt(1, "010000", "cccc")
 	seedFollowUp(t, f, infra, rootID, older, now.Add(-5*time.Hour), runstore.StatusInfraError, true)
-	unpushed := runIDAt(0, "000100", "dddd")
+	unpushed := wallRunIDAt(0, "000100", "dddd")
 	seedFollowUp(t, f, unpushed, rootID, infra, now.Add(-time.Hour), runstore.StatusFailed, false)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
 		t.Fatal(err)
@@ -645,7 +651,7 @@ func TestRunPRPreviousIsNewestPushed(t *testing.T) {
 func TestRunPRWarnsUnlaunched(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	waiting := runIDAt(0, "000100", "bbbb")
+	waiting := wallRunIDAt(0, "000100", "bbbb")
 	seedSpec(t, f, followUpSpec(waiting, rootID, rootID, 7), false)
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID)
 	if err != nil || !strings.Contains(errOut, waiting) || !strings.Contains(errOut, "never launched") {
@@ -807,7 +813,7 @@ func TestRetryFollowUpRefusedWhenSuperseded(t *testing.T) {
 	t.Chdir(t.TempDir())
 	seedRoot(t, f, rootID, time.Now().Add(-2*time.Hour))
 	seedSpec(t, f, followUpSpec(fuID, rootID, rootID, 7), false)
-	newer := runIDAt(0, "130000", "bbbb")
+	newer := wallRunIDAt(0, "130000", "bbbb")
 	seedFollowUp(t, f, newer, rootID, rootID, time.Now().Add(-time.Hour), runstore.StatusSucceeded, true)
 	wantRefused(t, f, "new follow-up", "run", "--retry", fuID)
 }
@@ -815,7 +821,7 @@ func TestRetryFollowUpRefusedWhenSuperseded(t *testing.T) {
 func TestRunPRMaxParallel(t *testing.T) {
 	f := newCloudFixture(t) // max_parallel: 2
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	for _, id := range []string{runIDAt(0, "000100", "1111"), runIDAt(0, "000200", "2222")} {
+	for _, id := range []string{wallRunIDAt(0, "000100", "1111"), wallRunIDAt(0, "000200", "2222")} {
 		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "task"); err != nil {
 			t.Fatal(err)
 		}
@@ -843,8 +849,8 @@ func TestRunPRLockWithoutHolderIsFine(t *testing.T) {
 func TestRunPRUnlaunchedBranchIgnored(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	waiting := runIDAt(0, "000100", "bbbb")
-	seedSpec(t, f, followUpSpec(waiting, runIDAt(1, "090000", "cccc"), rootID, 7), false)
+	waiting := wallRunIDAt(0, "000100", "bbbb")
+	seedSpec(t, f, followUpSpec(waiting, wallRunIDAt(1, "090000", "cccc"), rootID, 7), false)
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID)
 	if err != nil || !strings.Contains(errOut, "never launched") {
 		t.Fatalf("stderr %q, %v", errOut, err)
@@ -956,9 +962,9 @@ func TestRunPRAfterHaltedRun(t *testing.T) {
 	f := newCloudFixture(t)
 	now := time.Now()
 	seedRoot(t, f, rootID, now.Add(-72*time.Hour))
-	halted := runIDAt(1, "230000", "bbbb")
+	halted := wallRunIDAt(1, "230000", "bbbb")
 	seedFollowUp(t, f, halted, rootID, rootID, now.Add(-10*time.Hour), runstore.StatusHalted, true)
-	early := runIDAt(0, "000100", "dddd")
+	early := wallRunIDAt(0, "000100", "dddd")
 	seedFollowUp(t, f, early, rootID, halted, now.Add(-time.Hour), runstore.StatusHalted, false)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
 		t.Fatal(err)

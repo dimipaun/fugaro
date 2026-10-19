@@ -243,6 +243,95 @@ export function textOf(node) {
   return (node.children ?? []).map(textOf).join('')
 }
 
+// The elements a browser lays out as blocks: the text on either side of one is not the same
+// run of words, so a reader's word boundary is there even when the source wrote none.
+// Everything else is inline, and inline markup joins its neighbours verbatim. The document's
+// own containers are here too: a page's `<title>` is not laid out beside its body, so its text
+// is not part of the same run of words as the first thing a reader reads.
+export const BLOCK = new Set([
+  'address', 'article', 'aside', 'blockquote', 'body', 'br', 'dd', 'div', 'dl', 'dt',
+  'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'head', 'header', 'hr', 'html', 'li', 'main', 'nav', 'noscript', 'ol', 'p', 'pre',
+  'section', 'table', 'tbody', 'td', 'template', 'tfoot', 'th', 'thead', 'title', 'tr', 'ul',
+])
+
+/**
+ * The runs of text a reader sees inside a node, in document order, as a flat list of strings:
+ * each direct text child, and the text a leaf element carries, with **no space invented
+ * between them**. Two runs that end up next to each other in this list are adjacent on the
+ * page, so a run that ends in a letter directly followed by one that starts in a letter is one
+ * glued word — `back and<code>fugaro secrets</code>` reads as "andfugaro", in either case.
+ * That defect is invisible in the built file's source and invisible to a reader that joins a
+ * node's children with a space as well, because the space it invents is the space that went
+ * missing (see `spacing.mjs`, whose rule this is).
+ *
+ * An inline element is not a word boundary: `<em>foo</em>bar` is the run `foo` and then the
+ * run `bar`. A block element is laid out apart from its neighbours, so its text is fenced with
+ * a single space on each side and that space is the list's marker for "a boundary a reader
+ * sees". `raw` content (a script or style body) and a `hidden` element contribute nothing,
+ * and an image contributes its alt text, as `textOf` above does.
+ *
+ * `isBlock` is the caller's answer to what is laid out apart, and it defaults to the list
+ * above by tag name. A page whose own stylesheet lays an element out as a block passes its own
+ * answer (`spacing.mjs` reads the page's stylesheet for exactly that), because a class that
+ * the site displays as a block is a boundary a reader sees just as a `<p>` is.
+ */
+export function textRuns(node, isBlock = (el) => BLOCK.has(el.name)) {
+  if (node.raw !== undefined || node.attrs?.has('hidden')) return []
+  if (node.text !== undefined) return [node.text]
+  const children = node.children ?? []
+  if (children.length === 0) return node.name === 'img' ? [node.attrs.get('alt') ?? ''] : []
+  const runs = []
+  for (const child of children) {
+    const inner = textRuns(child, isBlock)
+    if (inner.length === 0) {
+      if (isBlock(child)) runs.push(' ')
+      continue
+    }
+    if (isBlock(child)) runs.push(' ', ...inner, ' ')
+    else runs.push(...inner)
+  }
+  return runs
+}
+
+/** The text a reader sees inside a node, block boundaries included, with nothing invented
+ *  between two neighbours a browser runs together. */
+export function verbatimText(node, isBlock) {
+  return textRuns(node, isBlock).join('')
+}
+
+/**
+ * The places two runs of text are one word to a reader, because the page wrote no space
+ * between them: a run ending in a letter directly against one starting with a letter, in
+ * **either case**. Each finding is `{ before, after, glued }`, where `glued` is the word a
+ * reader reads — the letters on either side of the seam, since a hyphen, a slash or a digit
+ * ends a word.
+ *
+ * **The seam is about letters, not about lower case.** An earlier version of this rule read
+ * only `a`–`z` on both sides, which misses the same defect wherever the element the space was
+ * lost in front of starts a word with a capital — `see the<a>Privacy</a>` reads "thePrivacy"
+ * and passed. That narrowing was not a safety property: it was hiding a hole in what the
+ * caller hands in as `isBlock`, because the site's own flex rows put two capitalised links
+ * side by side (`spacing.mjs` reads the page's stylesheet and treats a flex or grid parent's
+ * children as the boundaries they are, which is what the wide rule needs to stay quiet).
+ */
+export function runTogether(node, isBlock) {
+  const runs = textRuns(node, isBlock)
+  const out = []
+  for (let i = 1; i < runs.length; i++) {
+    const before = runs[i - 1]
+    const after = runs[i]
+    if (before === ' ' || after === ' ') continue
+    const left = before.slice(-1)
+    const right = after.slice(0, 1)
+    if (!/[A-Za-z]/.test(left) || !/[A-Za-z]/.test(right)) continue
+    const tail = /[A-Za-z]+$/.exec(before)?.[0] ?? left
+    const head = /^[A-Za-z]+/.exec(after)?.[0] ?? right
+    out.push({ before, after, glued: tail + head })
+  }
+  return out
+}
+
 export function hasAncestor(node, name) {
   for (let p = node.parent; p; p = p.parent) if (p.name === name) return true
   return false

@@ -38,7 +38,12 @@
 //      markup rather than through a constant in the code.
 //   4. The analytics exception, in two states (D93, D106; the owner's ruling of 2026-10-18 in
 //      the amendment under plan Task W3.2). With `site.yaml`'s `analytics.enabled` false, no
-//      page names an analytics origin or carries the gate's configuration at all. With the
+//      page loads, runs or embeds anything analytics-shaped and none carries the gate's
+//      configuration. An `<a href>` is the one thing not read by that half: a link is a
+//      reference the reader follows, not a request the page makes, and the privacy statement's
+//      software part links Google's own Firebase policy in both states (the owner's request of
+//      2026-10-19) — every external link is still resolved host by host by `linkcheck.mjs`.
+//      With the
 //      flag true — the state the site ships in — the one admitted third-party origin is
 //      Google's tag origin, it appears in the consent banner's own markup as the gate's
 //      configuration (never as a `script[src]`, a preload or a preconnect), no second
@@ -227,7 +232,14 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
         }
       }
       if (name === ANALYTICS_ORIGIN_ATTR) configs.push(el)
-      if (!analyticsEnabled && ANALYTICS_NAMES.test(value)) named.push(`<${el.name} ${name}>`)
+      // An `<a href>` is a reference the reader follows, not something the page loads or runs,
+      // so a LINK is not read here — the privacy statement's software part names Google and
+      // links Google's own Firebase policy in both flag states (the owner's request of
+      // 2026-10-19), and what this rule refuses with the flag off is the site's measurement
+      // reaching a page. Every external link is still resolved, host by host, by
+      // `linkcheck.mjs`.
+      const link = el.name === 'a' && name === 'href'
+      if (!analyticsEnabled && !link && ANALYTICS_NAMES.test(value)) named.push(`<${el.name} ${name}>`)
     }
     switch (el.name) {
       case 'base':
@@ -625,6 +637,26 @@ test('every way a page can fetch from another host is refused', () => {
   for (const [what, fixture, expected] of cases) {
     const failures = failuresOf(page(fixture))
     assert.ok(failures.some((f) => expected.test(f)), `${what} was not refused as expected (${expected}); the check said:\n  ${failures.join('\n  ') || '(nothing)'}`)
+  }
+})
+
+test('with the flag off a link naming a vendor is a reference, and a load of one is still refused', () => {
+  // The privacy statement's software part links Google's own Firebase policy — and names
+  // Firebase — in both flag states (the owner's request of 2026-10-19). A link is not a load:
+  // the reader follows it or does not, and the page fetches nothing from it. Everything that
+  // fetches or runs keeps being refused by name, which is the half worth having.
+  const link = page({ body: '<p>The app reports to <a href="https://firebase.google.com/support/privacy">Google</a>.</p>' })
+  assert.deepEqual(failuresOf(link), [], 'a link naming a vendor is read as an analytics load, so the page cannot point at the holder\'s own policy')
+
+  for (const [what, fixture] of [
+    ['a script that loads one', { head: '<script src="https://firebase.google.com/x.js"></script>' }],
+    ['an inline script naming one', { body: '<script>/* firebase */</script>' }],
+    ['an image pointing at one', { body: '<img src="https://firebase.google.com/x.png" alt="">' }],
+  ]) {
+    assert.ok(
+      failuresOf(page(fixture)).some((f) => /analytics\.enabled is false/.test(f)),
+      `${what} is not refused while the flag is off, so the link exception has widened into a load exception`,
+    )
   }
 })
 

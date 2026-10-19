@@ -1021,6 +1021,43 @@ func TestGitEnvStripsProviderKeys(t *testing.T) {
 	}
 }
 
+// The budget marker (FUGARO_BUDGET_TOKEN) is the run's own secret: once the
+// launcher seals, its value is the launch's seal key, and an agent-written
+// .git/config command is exactly the way to read a git call's environment. It
+// never reaches git or a command git runs, even for a Repo whose StripEnv is
+// empty — StripEnv is the caller's list and this is not the caller's to
+// remember (the runner's own BudgetTokenEnv is this constant).
+func TestGitEnvStripsTheBudgetMarker(t *testing.T) {
+	repo, _ := setup(t)
+	// A fixture value, never a key: this test is about the variable's name and
+	// value reaching a hook, not about the seal.
+	const value = "marker-fixture-never-a-real-key"
+	t.Setenv(BudgetTokenEnv, value)
+	t.Setenv("KEEP_ME", "kept")
+	dump := filepath.Join(t.TempDir(), "env.txt")
+	hook := filepath.Join(t.TempDir(), "fsmonitor.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nenv > "+dump+"\nprintf '\\0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "config", "core.fsmonitor", hook)
+	repo.Env = append(repo.Env, BudgetTokenEnv+"="+value)
+	repo.StripEnv = nil
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the fsmonitor hook never ran: %v", err)
+	}
+	if !strings.Contains(string(b), "KEEP_ME=kept") {
+		t.Fatalf("the hook's env lost an ordinary variable:\n%s", b)
+	}
+	if strings.Contains(string(b), BudgetTokenEnv) || strings.Contains(string(b), value) {
+		t.Errorf("the hook's env holds the budget marker:\n%s", b)
+	}
+}
+
 func TestOpenOrCloneStripsFromTheStart(t *testing.T) {
 	_, remote := setup(t)
 	dir := filepath.Join(t.TempDir(), "w")
