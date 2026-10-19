@@ -1713,6 +1713,7 @@ Subcommands:
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
 - `fugaro project repos` -- The project's allow-list: which repositories may run
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
+- `fugaro project sync` -- Offer the GitHub App's installed repositories that the allow-list does not admit
 
 ## `fugaro project policy`
 
@@ -1930,6 +1931,45 @@ Flags:
 | `--json` | bool | `false` | no | machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project sync`
+
+Offer the GitHub App's installed repositories that the allow-list does not admit
+
+Ask GitHub which repositories the project's GitHub App is installed on (the
+App API, with the App's own credentials) and offer the ones the published
+allow_repos does not admit, as one list confirmed once. The accepted list is
+written through the same ETag-guarded write `project repos add` uses; entries
+are only ever added, so a sync never un-enrolls a repository — including one
+the App is not installed on at all (another provider's, or one whose
+installation was removed). A repository the list already admits, a pattern
+included, is not offered: its runs are admitted already.
+
+Reading the App's private key is --github-app-key: without it, nothing is
+read. Under it the key is read from the project's github-app-key secret with
+your own credentials and held in memory only to sign the App's 9-minute JWT
+(never printed, never passed as an argument, never in an error), and the
+flag is refused in a coding agent's session. The App ID is a number, not a
+secret: --github-app-id, or the one this machine's config already holds.
+
+Usage: `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `--github-app-id` | string | "" | no | the GitHub App's ID (a number, not a secret); default: the one this machine's config holds |
+| `--github-app-key` | bool | `false` | no | read the project's GitHub App private key from Secret Manager to ask GitHub (your own credentials; refused in a coding agent's session) |
+| `-h`, `--help` | bool | `false` | no | help for sync |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--yes` | bool | `false` | no | confirm the batch without typing the project's name |
 
 Subcommands:
 
