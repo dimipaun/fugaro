@@ -684,7 +684,7 @@ asserting both blocks name exactly the same vocabulary (see [§9](#9-alternative
 **Why the entry and not the screens decide.** Today the entry names one theme for every
 drawing (`CONSOLE_THEME`, and `renderLive(…, theme)` and its three siblings take it as an
 argument). That stays: the *argument* is what a golden frame records, and a screen never
-reads the environment. What changes in [Task 6.5](#76-task-65--the-theme-switch-css-only--one-entry-line)
+reads the environment. What changes in [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)
 is the **value**: `CONSOLE_THEME` becomes the answer of a small `themeChoice()` that reads
 `matchMedia('(prefers-color-scheme: dark)')` and subscribes to its `change` event — a
 `matchMedia` read is neither a network call nor a style write, so the CSP is untouched and
@@ -841,7 +841,7 @@ Windows High Contrast and `forced-colors: active` discard author colours. Two ru
 
 This section is the part of the design that touches the **CSP, the protocol handler and
 the build**, so it is flagged `SECURITY-SENSITIVE, independent opus review` in the plan
-([Task 6.2](#72-task-62--the-wiring-security-sensitive)) and is not merged on a
+([Task 6.2](#72-task-62--the-wiring--security-sensitive)) and is not merged on a
 self-review. Nothing here loosens a policy.
 
 ### 5.1 The stylesheet files
@@ -943,7 +943,7 @@ The evidence a reviewer should require, and which the tests provide:
 
 **No inline style attribute and no CSP loosening is introduced, and a test fails if either
 appears** — three of them, in fact: `csp-document.test.ts` already refuses a `<style`
-element and a `style` attribute in any served document; [Task 6.2](#72-task-62--the-wiring-security-sensitive)
+element and a `style` attribute in any served document; [Task 6.2](#72-task-62--the-wiring--security-sensitive)
 extends `console/test/unit/screen-literals.test.ts`'s scan so that a `.style` property write, a
 `setAttribute('style', …)` or a `style` entry in its attribute vocabulary is an offence in
 any file under `src/renderer/`; and the CSP assertions above refuse `'unsafe-inline'` (and
@@ -1043,7 +1043,7 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with three tests:
+`docs_budget_token_channel_test.go`, with four tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -1056,7 +1056,17 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
    `docs/design/desktop-console{,-v2}.md`, `docs/plans/2026-10-15-desktop-console.md`,
    `docs/website/redesign/reconciliation.md` — so a citation that moves is a failing test
    rather than a dead link;
-3. a **plan test** that [Phase 6](#7-the-build-plan-phase-6-unapproved) exists, that its
+3. an **anchor test** that every in-page link in this document — the `#fragment` form —
+   resolves to a heading in it, using GitHub's slug rule — lowercase, drop everything that
+   is not a
+   letter, a digit, a space, a hyphen or an underscore, spaces to hyphens — so an em dash
+   leaves **two** hyphens behind (`— the wiring — SECURITY-SENSITIVE` slugs to
+   `…the-wiring--security-sensitive`), and that no two headings slug to the same name. A
+   citation test stats a file and cannot see a dead fragment, and three of this document's
+   anchors were dead when the test was written — two of them for exactly that missing
+   hyphen, one left over from an earlier revision of §7.5 that named a heading since
+   rewritten;
+4. a **plan test** that [Phase 6](#7-the-build-plan-phase-6-unapproved) exists, that its
    six task headings are there, that the four `theme/*.css` files are in the plan's tree,
    and that the phase names all six of the [§8](#8-open-for-the-owner) questions.
 
@@ -1209,6 +1219,14 @@ matter most, and the mutation each is proved against:
 | `theme-tokens.test.ts` (6.1) | a palette value edited to break one ratio — the test names the pair and the ratio |
 | `bundle.test.ts` / `csp-document.test.ts` (6.2) | `/console.css` dropped from `SERVED_FILES`; a `<link>`'s `href` changed; `style-src` widened by one token |
 | the golden specs' `paintedBackground` assertion (6.6) | the `<link>` removed from `index.html` — the two schemes then paint the same colour and the assertion fails |
+
+**And the four this document's own docs test was proved against, each run for real and
+reverted** ([§6.5](#65-the-docs-test)): the status line replaced with `Status: draft.`; a
+cited path removed from the text, and another moved on disk; an in-page anchor left as the
+broken slug it was written as; Phase 6's heading stripped of `UNAPPROVED`, one of its six
+question markers dropped, and one of its task headings renamed. The seventh is the plan's
+own: `6.2` removed from Global Constraints rule 9's list, which
+`TestPlanRule9ListsEveryFlaggedHeading` catches.
 
 ---
 

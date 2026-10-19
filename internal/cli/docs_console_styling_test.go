@@ -3,8 +3,10 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // TestDocsConsoleStylingDesignIsWritten:
@@ -123,6 +125,84 @@ func TestDocsConsoleStylingCitationsExist(t *testing.T) {
 			t.Errorf("%s cites %s, which is not in the tree: %v", path, cited, err)
 		}
 	}
+}
+
+// TestDocsConsoleStylingAnchorsResolve: every in-page link in the design
+// (`](#…)`) resolves to a heading in the design.
+//
+// The gap this closes is the one the citation test above cannot: a citation test
+// stats a *file*, and a dead `#fragment` is not a file. Three of the design's
+// anchors were wrong when this test was added — two missing the second hyphen an
+// em dash leaves in a GitHub slug (`— the wiring — SECURITY-SENSITIVE` slugs to
+// `…the-wiring--security-sensitive`), and one left over from an earlier revision
+// of §7.5 naming a heading that had been rewritten — and every one of them
+// rendered as a link that went nowhere while the suite stayed green. A document
+// whose own table of contents does not resolve is a document a reader has to
+// trust rather than follow, and this design's whole shape is cross-references.
+//
+// The slug rule is GitHub's, as far as this document needs it: lowercase, drop
+// everything that is not a letter, a digit, a space, a hyphen or an underscore,
+// then spaces to hyphens. That is why an em dash leaves two hyphens behind
+// rather than one.
+func TestDocsConsoleStylingAnchorsResolve(t *testing.T) {
+	const path = "docs/design/console-styling.md"
+	doc := readDoc(t, path)
+
+	slugs := map[string]int{}
+	for _, line := range strings.Split(doc, "\n") {
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		heading := strings.TrimLeft(line, "#")
+		if !strings.HasPrefix(heading, " ") {
+			continue
+		}
+		slug := mdHeadingSlug(heading)
+		if slug == "" {
+			t.Errorf("%s: the heading %q slugs to the empty string, so nothing can link to it", path, line)
+			continue
+		}
+		slugs[slug]++
+	}
+	for slug, n := range slugs {
+		if n > 1 {
+			t.Errorf("%s: %d headings slug to %q: GitHub disambiguates them with a `-1` suffix, so only the first is reachable by the name the document would write", path, n, slug)
+		}
+	}
+
+	for _, m := range mdAnchorLink.FindAllStringSubmatch(doc, -1) {
+		target := m[1]
+		// An anchor to another document's section (`../plans/x.md#y`) is that
+		// document's business, and this test does not read it.
+		if strings.Contains(m[0], ".md#") {
+			continue
+		}
+		if _, ok := slugs[target]; !ok {
+			t.Errorf("%s: `%s` resolves to no heading: the link goes nowhere, and no citation test can see it because a fragment is not a file", path, m[0])
+		}
+	}
+}
+
+// mdAnchorLink finds the in-page links of a Markdown document: the URL of a
+// `](#…)` link, which is the only form that has to resolve inside the file.
+var mdAnchorLink = regexp.MustCompile(`\]\(#([^)\s]+)\)`)
+
+// mdHeadingSlug is GitHub's heading-slug rule, as far as a document of this
+// repository's shape needs it: lowercase, keep letters, digits, spaces, hyphens
+// and underscores, drop everything else, then turn spaces into hyphens. An
+// em dash is dropped and the spaces on either side of it become two hyphens,
+// which is the detail the three links this test was written for got wrong.
+func mdHeadingSlug(heading string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(heading)) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_':
+			b.WriteRune(r)
+		case unicode.IsSpace(r):
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
 }
 
 // TestDocsConsoleStylingPlanTasksAreUnapproved (the console plan's phase 6,
