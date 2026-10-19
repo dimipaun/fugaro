@@ -449,7 +449,7 @@ Model dollars, `NOTIONAL~` (a subscription's list-price figure, never billed) an
 
 ## Claude accounts a project job serves (0.9.0)
 
-0.9.0 lets a profile serve more than the one Claude credential, by naming accounts: each name gets a Cloud Run job of its own, holding that account's token, and the policy bounds which repositories may use it. **It is not in the released CLI — 0.8.6 does not read any of it** — and the operator guide, with the refusal texts and the doctor lines, is [project-claude-accounts.md](project-claude-accounts.md).
+0.9.0 lets a profile serve more than the one Claude credential, by naming accounts: each name gets a Cloud Run job of its own, holding that account's token, and the policy bounds which repositories may use it. **It is not in the released CLI — 0.8.7 does not read any of it** — and the operator guide, with the refusal texts and the doctor lines, is [project-claude-accounts.md](project-claude-accounts.md).
 
 **The profile field.** `profiles.<profile>.claude_accounts` in the project's local config is the list of accounts that profile's jobs serve; `default` is the unsuffixed `claude-oauth-token`, and every other name is a `claude_accounts.<name>` entry of the same file. A profile that lists accounts must also write its own exact `allow_repos` (no wildcard), every account it lists must cover every repository on it, and no Anthropic API key may sit beside them — publish and `fugaro init` refuse otherwise, naming the field. One job per (profile, provider, account) is what `fugaro init` deploys.
 

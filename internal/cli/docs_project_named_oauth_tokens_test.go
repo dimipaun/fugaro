@@ -187,7 +187,7 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		// Which release this is, and where the reader is (the two scopes the
 		// owner requires on every setup command).
 		"**0.9.0, unreleased.**",
-		"The released Fugaro is 0.8.6",
+		"The released Fugaro is 0.8.7",
 		"**per installation**",
 		"**per repository checkout**",
 		// What a named account is.
@@ -245,7 +245,7 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		// does and does not carry (see
 		// TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue for the same
 		// claims tied to the code that makes them true).
-		"**0.8.6 does not read any of it.**",
+		"**0.8.7 does not read any of it.**",
 		"**A GitHub run on a shared job reaches its provider, and it is still not a per-repository job.**",
 		"`FUGARO_GITHUB_APP_ID`",
 		"`projectJobGitHubAppID`",
@@ -409,7 +409,7 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 	doc := readDoc(t, "docs/gcp-setup.md")
 	for _, want := range []string{
 		"## Claude accounts a project job serves (0.9.0)",
-		"**It is not in the released CLI — 0.8.6 does not read any of it**",
+		"**It is not in the released CLI — 0.8.7 does not read any of it**",
 		"(project-claude-accounts.md)",
 		// The profile field.
 		"`profiles.<profile>.claude_accounts` in the project's local config",
