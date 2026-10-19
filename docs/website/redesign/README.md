@@ -295,6 +295,24 @@ here goes stale the way the byte budgets did before D192.
   "not yet released" labels the tag rule drew in the gates' build and the retired "newest
   releases" block are gone. The page weight and the script stay where they were: the changelog
   page is not the heaviest page, and nothing outside it changed.
+  **The rounds after it are the homepage's** (the owner's feedback of 2026-10-19), each of which
+  moved the site figure alone. **The prompt line**: the request the hero renders under the
+  headline, the `>` mark in front of it and the two rules that draw it as the chat's own bubble —
+  the three files it changed all render on that one page, so the page weight and the script stay
+  where they were. **The benefits**: the section, its four names and four lines and the rules
+  that draw the grid, all of them on the homepage; the page weight and the script stay where
+  they were, and the words the section costs that page are what moved D188's word ceiling from
+  250 to 300, in the same commit (the reading below). **The pull request's caption**: the
+  caption's line and the `data-source` it cites with it —
+  `docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)` where the step used to cite
+  `README.md#How it works` — on the two pages that render the flow, the homepage and How It
+  Works; the page weight and the script stay where they were, the docs hub rendering no flow.
+  The caption is two words shorter than the one it replaced, so the homepage measures 294 words
+  where the benefits left it at 296 (the reading below). **The review of round 6**: the
+  benefits' gutter and the room below it are declared in `Benefits.astro` now, the file that
+  renders the section, where the page's rule named the class and never reached the element —
+  Astro scopes a page's selector to the elements the page renders, and the section is rendered
+  by a component. The page weight and the script stay where they were.
   **The figures themselves are the ones `website/README.md` writes, and they are written
   there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
   the build it can measure, and a derivation that names another build fails, which is what
@@ -753,6 +771,100 @@ goes stale the way the byte budgets did before D192.
   move: the heaviest page is still the docs hub, which renders no step. The three numbers are
   `website/README.md`'s, re-derived there in this round's commit, and `website/test/budget.mjs`
   holds each to the gates' own build — this document states the rule and not the bytes.
+
+## The 2026-10-19 home-page feedback: the prompt line, the benefits, the caption
+
+The owner's **feedback of 2026-10-19** is a second message the same day, and it is not the
+brief above: "Home page: sucks. We need a terser way of saying that you use it transparently
+through your agent. Maybe just the `> Fan out these three bug fixes.` Also, we need a section
+with Benefits or somesuch as we have in the README, no?" Plus one correction the message
+names in passing — the diagram's fourth caption claimed more than the repository says. Every
+reading it does not spell out is recorded here, as the brief's readings are above. The
+feedback's own item numbers are not used anywhere in this tree: the brief of the same day has
+an item 1 (the phone's menu) and an item 6 (the console's link), and citing the home page's
+work by a number from the other message is how two documents get confused for one. The three
+changes are cited as the feedback's own.
+
+- **The prompt line is the request, and it is one string.** The hero renders
+  `> Fan out these three bug fixes.` directly under the headline, drawn as the chat's own
+  bubble, and the chat's first turn speaks the same sentence. Both read
+  `src/lib/agent-request.mjs`, which holds the line to the changes spec of 2026-10-18, item 3
+  (the spec's own example of a request) at build time. Two literals would be two lines to keep
+  in step, and the day they drifted the page would show the reader asking for one thing and
+  being answered about another; `website/test/home.mjs` holds the two rendered lines to each
+  other and to the document from outside the build. **Nothing under the line explains it**: the
+  brief asks for the request "as the centrepiece", and the explanation of what it means is the
+  figure below, which shows the sentence being answered.
+- **The benefits are the README's four reasons, and the page may not drop one.**
+  `src/components/Benefits.astro` renders `README.md`'s `## Why Fugaro` — the four names it
+  gives its reasons, with the numbers off, and for each one a sentence out of the paragraph
+  that reason is argued in. Each line is held to **its own reason's paragraph** rather than to
+  the section, so a line that moved from the reason above it to the one below stops the build
+  instead of selling the reader the wrong sentence under the wrong name; and the build stops
+  if the page renders fewer reasons than the README argues, so a claim the README makes cannot
+  quietly leave the page. `website/test/home.mjs` makes both checks against the built page.
+  The four are the claims this repository's own documents carry: the container is in the
+  reader's project (`README.md#How it works`, `docs/design/v1.md`), one job execution per task
+  (the same), the project layer holds the policy (`docs/project-layer.md`), and the base image
+  and the per-role model are the tools' own (`docs/base-image.md`, `docs/multi-model.md`).
+  No fifth reason was added and none was cut.
+- **D188's word ceiling moves from 250 to 300, and that is the reading rather than a
+  loosening.** The benefits are a fourth block the owner's feedback requires on the one page
+  that already carried the three the briefs before it require — the promise, the chat (changes
+  spec item 3) and the flow (item 4) — and the four together measured **296 words** when the
+  section landed, so the homepage was over the number D188 set. `website/README.md` states the
+  rule for exactly this:
+  "a task that needs more raises the number here, in the commit that needs it". The number is
+  therefore the smallest round ceiling above the page that carries every block its briefs
+  require, and it stays a ceiling: the highest page that gained nothing from this feedback is
+  Getting Started at 250 words, and a page that wants the extra fifty has to carry a block its
+  own brief requires for them. The lead ceiling is untouched: the homepage's lead is 23 words
+  (the request, the promise and the two links) against 40, and it grew by the request line the
+  feedback puts there. The caption below takes two words back off that page — it measures **294**
+  words with everything the feedback asks for in place, which is the number `website/README.md`
+  derives the ceiling from.
+- **The diagram's fourth caption said more than the repository says.** It read "each commit is
+  pushed within about a minute while the agent works", which is not what a reader of the picture
+  takes it to mean: what opens the pull request is the run's **first checkpoint push** — within
+  about a minute of the run's first commit — and what a reader gets then is a **draft, marked
+  not verified**, while the run goes on pushing checkpoints as it works
+  (`docs/git-providers.md#Early draft PRs (git.pr.early_draft)` and
+  `#Checkpoint pushes (git.pr.checkpoints)`; `docs/gcp-setup.md` says the same). The caption is
+  now **"the first checkpoint opens the draft PR, marked not verified"**, cited to
+  `docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)`, and the step cites a section
+  of a document other than README.md for the first time — which is why the flow's captions are
+  held per-section rather than to README.md as one file, and why `home.mjs`'s ordering case is
+  now built out of two of README.md's own `## How it works` lines: each step of the shipped flow
+  cites a section of its own, and the rule that a section's lines come in the section's order
+  has to keep holding for the day two steps share one again. **What the caption cannot carry
+  is the rest of the fact** — that the push comes within about a minute of the run's first
+  commit, which is the section above it in the same document and `docs/gcp-setup.md`'s
+  sentence, and that the run goes on pushing checkpoints as it works, which is another sentence
+  of the section the caption cites. A caption is one contiguous quotation of a repository
+  document, and one stitched from two sentences' halves is a sentence the repository never
+  wrote; the flow's step is the pull request, so the caption says what opens and what state it
+  opens in, and the rest is the section it cites. It is recorded here rather than left to the
+  reader of the picture.
+- **The measurements, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round, and no screenshot is committed — this run cannot see one.
+  What the gates read is the artifact and the stylesheet: the homepage's words and its lead's
+  against the ceilings (`budget.mjs`), the section as a named landmark with its heading and its
+  `h3`s read out of the built page (`a11y.mjs`), and the homepage's bytes re-derived from the
+  gates' own build (D192). **Its vertical padding is read out of the built CSS at the three
+  widths the rhythm gate uses, so the block pads the gap above it once and not twice
+  (`base-styles.mjs`)** — and that is true of the shipped artifact as of the fix below, which is
+  also what the review of round 6 found wrong with the reading this paragraph carried: it gave
+  the section's heading an ordinal in the page's outline and cited a padding the artifact did
+  not have, and neither of those is a thing to write down here, because both are things the
+  gates read off the built page. The fix is where the rule lives: the rule that pads the section
+  is the one `Benefits.astro` declares, the file that renders it, where the page's own
+  `.home-benefits` rule named the class and carried the page's scope, so it never matched the
+  element at all (Astro scopes a page's rule to the elements the page renders). `base-styles.mjs`
+  reads a selector against the `data-astro-cid-…` the element carries and refuses a block the
+  stylesheet names and no rule reaches, so a dead rule cannot be read as a block's padding
+  again. **Whether the page then looks right is the owner's check (70a–70c, D190)** — the
+  two-column grid, the rule above each benefit and the prompt line's bubble are the parts of
+  this round a gate can only say is present.
 
 ## The 2026-10-19 changelog brief: the released state, and the summaries
 

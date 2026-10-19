@@ -12,21 +12,25 @@
 // What a hermetic test *can* prove is the ordering and the content the fold claim rests on,
 // and that is what this file does — on the built artifact, which is what a reader receives:
 //
-//   1. **The homepage's lead is the promise and its call to action, and nothing else.**
-//      Between the page's `h1` and its first `h2` there are exactly two elements: the lead
-//      paragraph and the row of links under it. This is the shape P5 gave the hero, with the
-//      one thing the changes spec of 2026-10-18 adds to it (item 4: the promise, its primary
-//      call to action, then the picture), so the promise is the whole of the prose a reader
-//      meets before the first heading — and so the lead ceiling in `budget.mjs` is a ceiling
-//      on the promise rather than on the commands (D188's lead is the region between the two
-//      headings, wherever each of them sits). The first `h2` is the chat's own "Through your
-//      agent" — the chat is the first block under the promise (review round 5) and its
-//      heading is inside it — which is what lets that block sit directly under the promise
-//      without entering the lead region: the block the first `h2` belongs to is taken out of
-//      the region whole, so a figure that lost its heading would push the whole of itself
-//      into the lead and be refused here. A hero whose install block sat between the promise
-//      and that heading would put the commands, the chat and the "every install path" link
-//      inside the lead, and the page would say nothing about the promise above them.
+//   1. **The homepage's lead is the promise, its prompt line and its call to action, and
+//      nothing else.** Between the page's `h1` and its first `h2` there are exactly three
+//      elements: the prompt line the owner's feedback of 2026-10-19 puts under the headline
+//      (item 1), the lead paragraph and the row of links under it. This is the shape P5 gave
+//      the hero, with the one thing the changes spec of 2026-10-18 adds to it (item 4: the
+//      promise, its primary call to action, then the picture) and the one thing the feedback
+//      of 2026-10-19 adds (the request, in the reader's own words, as the centrepiece of
+//      what the page says about driving Fugaro through their agent) — so the promise and the
+//      one line it is made of are the whole of the prose a reader meets before the first
+//      heading, and so the lead ceiling in `budget.mjs` is a ceiling on the two of them rather
+//      than on the commands (D188's lead is the region between the two headings, wherever each
+//      of them sits). The first `h2` is the chat's own "Through your agent" — the chat is the
+//      first block under the promise (review round 5) and its heading is inside it — which is
+//      what lets that block sit directly under the promise without entering the lead region:
+//      the block the first `h2` belongs to is taken out of the region whole, so a figure that
+//      lost its heading would push the whole of itself into the lead and be refused here. A
+//      hero whose install block sat between the promise and that heading would put the
+//      commands, the chat and the "every install path" link inside the lead, and the page
+//      would say nothing about the promise above them.
 //   2. **Getting Started's first section opens with its commands.** Inside `#install`, no
 //      paragraph of the section's own precedes the first command block, and the section's
 //      own sentence is still there, after the paths. P5 moved that sentence from under the
@@ -130,14 +134,17 @@ export function foldFailures(dist) {
         const owner = blockOf(els[firstH2], main)
         const lead = els.slice(h1 + 1, firstH2).filter((el) => !within(el, owner))
         const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : ''))
-        // What the lead region may hold: the promise, the row of links under it, and the
-        // links in that row — nothing else. A `figure`, an `ol`, a `pre` or a section's own
-        // paragraph is what the refusal below is about, and the first of them is named in it.
-        const allowed = ['p.hero-lead', 'p.hero-actions', 'a.hero-cta', 'a.hero-cta-quiet']
+        // What the lead region may hold: the promise, the prompt line the owner's feedback
+        // of 2026-10-19 puts under the headline — with the `>` mark that draws it as something a
+        // reader types, which is a span inside that line rather than a second thing in the
+        // region — the row of links under them, and the links in that row. Nothing else. A
+        // `figure`, an `ol`, a `pre` or a section's own paragraph is what the refusal below is
+        // about, and the first of them is named in it.
+        const allowed = ['p.hero-prompt', 'span.hero-prompt-mark', 'p.hero-lead', 'p.hero-actions', 'a.hero-cta', 'a.hero-cta-quiet']
         const foreign = shape.filter((element) => !allowed.includes(element))
         if (foreign.length > 0) {
           out.push(
-            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape.join(', ')}), and ${JSON.stringify(foreign[0])} is not the promise or its call to action: the lead paragraph and the one link under it are the whole of the page's gist above the fold, so the diagram, the chat and the install block belong below it (changes spec 2026-10-18, item 4; P5, D188)`,
+            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape.join(', ')}), and ${JSON.stringify(foreign[0])} is not the promise, its prompt line or its call to action: the request the page is about, the lead paragraph and the links under them are the whole of the page's gist above the fold, so the diagram, the chat and the install block belong below it (changes spec 2026-10-18, item 4; the owner's feedback of 2026-10-19; P5, D188)`,
           )
         }
         const promise = lead.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-lead'))
@@ -268,7 +275,7 @@ test('each rule refuses the ordering it is about, and passes the page that keeps
   assert.match(of('index.html')[0], /prints a command before its first `h2`/)
   assert.match(
     of('index.html')[1],
-    /holds 4 element\(s\) between its `h1` and its first `h2` \(p\.hero-lead, p\.hero-actions, a\.hero-cta, pre\), and "pre" is not the promise or its call to action/,
+    /holds 4 element\(s\) between its `h1` and its first `h2` \(p\.hero-lead, p\.hero-actions, a\.hero-cta, pre\), and "pre" is not the promise, its prompt line or its call to action/,
   )
 
   assert.equal(of('getting-started/index.html').length, 1, `the install section's broken ordering is not reported:\n${failures.join('\n')}`)
@@ -327,20 +334,21 @@ test('the three bands are refused when they are out of order, or missing, or a s
   )
 })
 
-test('the promise and its call to action above the fold are enough, and nothing else is', (t) => {
+test('the promise, its prompt line and its call to action above the fold are enough, and nothing else is', (t) => {
   // The shape the changes spec of 2026-10-18 asks for (item 4: the promise, its call to
-  // action, then the picture), on its own: the lead region holds the promise and the row of
-  // links, the first `h2` opens the block below it — the chat's own title, on the homepage as
-  // it now stands — and the gate passes it. The
+  // action, then the picture) with the one element the owner's feedback of 2026-10-19 adds to it
+  // (item 1: the request, under the headline), on its own: the lead region holds the prompt
+  // line, the promise and the row of links, the first `h2` opens the block below it — the
+  // chat's own title, on the homepage as it now stands — and the gate passes it. The
   // case beside this one plants the same page with a command block added, so the two together
-  // are what makes "the call to action is allowed and the command is not" a checked rule
-  // rather than a description of today's markup.
+  // are what makes "the prompt line and the call to action are allowed and the command is not"
+  // a checked rule rather than a description of today's markup.
   const dist = distOf(t, {
     'index.html': page(
-      '<h1>t</h1><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><div class="home-chat"><figure class="chat"><h2 class="chat-title">Through your agent</h2></figure></div>',
+      '<h1>t</h1><p class="hero-prompt"><span class="hero-prompt-mark" aria-hidden="true">&gt;</span> Fan out these three bug fixes.</p><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><div class="home-chat"><figure class="chat"><h2 class="chat-title">Through your agent</h2></figure></div>',
     ),
   })
-  assert.deepEqual(foldFailures(dist), [], 'a homepage that keeps the promise and its call to action as its whole lead region was refused')
+  assert.deepEqual(foldFailures(dist), [], 'a homepage that keeps the prompt line, the promise and its call to action as its whole lead region was refused')
 })
 
 test('a homepage with an empty lead, or with no section after its h1, is refused', (t) => {

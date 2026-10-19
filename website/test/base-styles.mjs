@@ -273,6 +273,28 @@ function plant(from, to, which = 'first') {
   return css.replace(from, to)
 }
 
+/**
+ * Today's stylesheet with **one named rule** rewritten — `selector` is a fragment of the rule's
+ * selector, `edit` gets the rule's own text and has to change it. The fixture for a case about
+ * one of several rules that declare the same thing, or about the selector itself: the
+ * homepage's top-level blocks each write `padding:0 var(--space-md) var(--space-3xl)` — the same
+ * declaration, in the rule of the file that renders each one — so a case about the benefits'
+ * padding has nothing to tell it apart from the install's (`plant` takes the first or the last
+ * occurrence of a fragment, and *which* rule that is depends on the order Astro emits the
+ * components in, which is not something a case should rest on).
+ */
+function plantRule(selector, edit) {
+  const css = TODAY()
+  const at = css.indexOf(selector)
+  assert.ok(at !== -1, `this fixture rewrites the rule whose selector carries ${JSON.stringify(selector)}, and the built stylesheet no longer carries it`)
+  const end = css.indexOf('}', at)
+  assert.ok(end !== -1, `the rule whose selector carries ${JSON.stringify(selector)} has no body in the built stylesheet`)
+  const rule = css.slice(at, end + 1)
+  const rewritten = edit(rule)
+  assert.notEqual(rewritten, rule, `this fixture rewrites the rule whose selector carries ${JSON.stringify(selector)}, and the edit changed nothing`)
+  return css.slice(0, at) + rewritten + css.slice(end + 1)
+}
+
 test('the layout rule passes on the built stylesheet, so each refusal below is the one edit it names', () => {
   assert.deepEqual(navLayoutFailures(TODAY()), [])
 })
@@ -1863,6 +1885,17 @@ test('every timeline refusal fires on the defect it names', () => {
 // blank page — the widest gap on the page, and twice the rhythm every other pair of blocks
 // keeps. Whichever of the two blocks owns a gap, only one of them may pad it.
 //
+// **A rule is read against the element it claims to style, scope attribute and all** (review
+// round 6). Astro gives every element a `data-astro-cid-…` for the component that rendered it
+// and appends the page's own to the selectors the page's `<style>` declares, so a page's rule
+// reaches the elements the page renders and no other. `.home-benefits` was declared on the
+// homepage and rendered by `Benefits.astro`: the rule was dead, the section kept no gutter and
+// no room below it, and this reading — which matched a rule to a block by class name — took the
+// dead rule's `padding` for the block's and passed at all three widths. So a selector that
+// names a scope the element does not carry is not in force, and a block the stylesheet names
+// and no rule reaches is a refusal of its own, because the pair reading below can only see a
+// block that declares a padding *somewhere*.
+//
 // It is read from the built page rather than from the sources: the top-level blocks of the
 // homepage's `main`, in document order, and each one's own `padding` out of the cascade.
 // Nothing here is about a *particular* pair — a page whose blocks all pad both sides of their
@@ -1882,8 +1915,10 @@ export const RHYTHM_WIDTHS = [80 * 16, 48 * 16, 375]
 
 /**
  * Every pair of the homepage's top-level blocks that both pad the gap between them, as the
- * sentences a reader of the failure gets. A page with no `main`, or with one block, has no
- * pair to read and is not a failure here.
+ * sentences a reader of the failure gets — and, before the pairs, every top-level block the
+ * stylesheet names and no rule can reach (the round-6 reading: a block whose rule is scoped to
+ * something the element is not). A page with no `main`, or with one block, has no pair to read
+ * and is not a failure here.
  */
 export function homeRhythmFailures(css, html) {
   const out = []
@@ -1893,6 +1928,32 @@ export function homeRhythmFailures(css, html) {
   const blocks = [...walk(main)].filter((el) => el.parent === main)
   const rules = allRules(css)
   const tokens = lengthTokens(css)
+
+  /**
+   * The scope attributes an element carries: Astro writes one `data-astro-cid-…` per component
+   * that rendered it, and appends the page's own to every compound selector the page's `<style>`
+   * declares. So a selector that names a scope the element does not carry **cannot match the
+   * element**, however its class name reads — and that is the shape the review of round 6 found:
+   * `.home-benefits` was declared on the homepage and rendered by `Benefits.astro`, and a
+   * reading that matched on the class alone took the dead rule's padding for the section's.
+   */
+  const scopesOf = (el) => new Set([...el.attrs.keys()].filter((name) => name.startsWith('data-astro-cid-')))
+
+  /** True when one selector — not a list of them — can match an element carrying `scopes`: every
+   *  `[data-astro-cid-…]` it names is one of the element's. A selector with none is unscoped
+   *  (`base.css`, and the rules these cases plant) and matches anything. */
+  const reaches = (selector, scopes) =>
+    [...selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].every(([, scope]) => scopes.has(scope))
+
+  /** True when a rule names one of `classes` in a selector that can reach an element carrying
+   *  `scopes`. A selector list is read one selector at a time: it matches if *any* of them does. */
+  const names = (rule, classes, scopes) =>
+    rule.selector
+      .split(',')
+      .some(
+        (part) =>
+          classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(part)) && reaches(part, scopes),
+      )
 
   /**
    * A block's own vertical padding, out of the declarations in force at `width` on any of its
@@ -1911,9 +1972,8 @@ export function homeRhythmFailures(css, html) {
    */
   const vertical = (block, width) => {
     const classes = classesOf(block)
-    const inForce = rules.filter(
-      (r) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector)) && appliesAt(width)(r),
-    )
+    const scopes = scopesOf(block)
+    const inForce = rules.filter((r) => names(r, classes, scopes) && appliesAt(width)(r))
     let top
     let bottom
     for (const rule of inForce) {
@@ -1942,6 +2002,37 @@ export function homeRhythmFailures(css, html) {
 
   /** The name a block is reported by: its classes, as a reader finds them in the markup. */
   const nameOf = (block) => classesOf(block).map((klass) => `.${klass}`).join('') || block.name
+
+  /**
+   * **A block the stylesheet names and no rule reaches**, which is a failure of its own whatever
+   * the pairs below read (review round 6). The pair reading can only see a block that declares a
+   * vertical padding somewhere, and a block whose padding sits in a rule that cannot match it
+   * declares nothing at all — `vertical` returns `null`, and `null` on either side of a pair
+   * skips that pair **in silence**. That is how every gate passed over a section that padded
+   * nothing on any width: the class was named by `index.astro`'s rule, the `<section>` carried
+   * `Benefits.astro`'s scope, and a block the page means to style reads exactly like a block
+   * that has no padding to give. The refusal names the rule, the scope it is written for and the
+   * scope the element carries, because the two are one line apart in a source file and the fix
+   * is to move the rule, not to change the class.
+   */
+  for (const block of blocks) {
+    const classes = classesOf(block)
+    if (classes.length === 0) continue
+    const scopes = scopesOf(block)
+    const namedBy = rules.filter((r) =>
+      r.selector.split(',').some((part) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(part))),
+    )
+    if (namedBy.length === 0 || namedBy.some((r) => names(r, classes, scopes))) continue
+    const selectors = [...new Set(namedBy.map((r) => r.selector))]
+    const wanted = [
+      ...new Set(
+        selectors.flatMap((selector) => [...selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].map(([, scope]) => scope)),
+      ),
+    ]
+    out.push(
+      `the homepage's ${nameOf(block)} is named by the stylesheet (\`${selectors.join('`, `')}\`) and no selector of ${namedBy.length === 1 ? 'that rule' : 'those rules'} can reach the element: the element carries ${scopes.size ? [...scopes].join(', ') : 'no scope attribute'} where the rule is scoped to ${wanted.join(', ') || 'no scope at all'}. A rule the element cannot be matched by is a rule the block never gets, so the block keeps no gutter and no room below it — and the pair reading above skips it in silence, because a block with no padding of its own reads like a block that has no padding to give (review round 6: a page's scoped rule reaches the elements the page renders, and this block is rendered by a component that carries its own scope)`,
+    )
+  }
 
   for (let i = 1; i < blocks.length; i += 1) {
     const above = blocks[i - 1]
@@ -1982,25 +2073,37 @@ test('the homepage’s blocks pad the gap between them once, and not twice', () 
 test('the rhythm refusal fires on the doubled gap, and the pairs that keep the rhythm pass', () => {
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const cases = [
-    // The defect as it shipped: the install section's own `--space-lg` on top of the flow's
-    // `--space-3xl` under it — the 144 px band the review measured between the last card and
-    // the "Install" heading. `'first'`: `HomeInstall.astro`'s rule is emitted before
-    // `index.astro`'s in the built page, so the install's padding is the earlier occurrence and
-    // the figures' the later one.
+    // The defect as it shipped: the install section's own `--space-lg` on top of the room the
+    // block above it already carries — the 144 px band the review of round 5 measured between
+    // the last block and the "Install" heading, which was the flow's last card then and is the
+    // benefits section now. The plant names the rule rather than the declaration, because all
+    // three blocks write `padding:0 var(--space-md) var(--space-3xl)` (the benefits' rule first
+    // in the built page, the install's second and the page's last) and a case about the
+    // install's declaration is a case about the rule the install's file declares it in.
     [
       'an install section padding the gap the flow above it already pads',
-      plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)'),
-      [/the gap between them is 144 px/],
+      plantRule('.home-install[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/\.home-benefits ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
     ],
-    // And the same edit on the page's own rule for the two figures, which is one rule for both
-    // of them: the chat's top padding over the hero's bottom one, and the flow's over the
-    // chat's — two pairs padded twice by the one declaration, and both refused. It is the same
-    // rule at every width, so it is refused at each of the three — which is what the count
-    // below holds this case and the one above to.
+    // And the same edit on the page's own rule, which is one rule for the two blocks the page
+    // places and no longer names the benefits: the chat's top padding over the hero's bottom
+    // one, and the flow's over the chat's — two pairs padded twice by the one declaration, and
+    // both refused at each of the three widths, which is what the count below holds. **The
+    // benefits are not in this rule, and that is the point of the round-6 fix**: the block is
+    // rendered by `Benefits.astro`, the page's scope does not reach it, and the rule that pads
+    // it is the component's own — which is the next case.
     [
       'the figures padding the gaps the blocks above them already pad',
-      plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)', 'last'),
-      [/the gap between them is 64 px/, /the gap between them is 144 px/],
+      plantRule('.home-chat[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/the gap between them is 64 px/, /\.home-chat ends with 112 px under it and \.home-flow opens with 32 px over it, so the gap between them is 144 px/],
+    ],
+    // The benefits' own rule, in the component that renders the section — the rule the round-6
+    // review found missing (the padding was declared on the page, where it reached nothing). The
+    // gap it pads is the one above it, and one plant refuses the one pair.
+    [
+      'a benefits section padding the gap the flow above it already pads',
+      plantRule('.home-benefits[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/\.home-flow ends with 112 px under it and \.home-benefits opens with 32 px over it, so the gap between them is 144 px/],
     ],
     // **The case the three widths are for.** The same doubled gap, written inside a rule that is
     // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
@@ -2048,6 +2151,42 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
   // And the page as it ships: the pairs above, with the gap padded once, are not refused — so
   // the two cases are the edit and not the check.
   assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships pads one of its gaps twice')
+})
+
+test('the rhythm reading refuses a block whose rule cannot reach it', () => {
+  const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const pageScope = html.match(/class="home-chat" data-astro-cid-(\w+)/)?.[1]
+  assert.ok(pageScope, 'the built homepage no longer carries the page’s scope on `.home-chat`, and this case re-scopes a rule to it')
+
+  // **The defect of round 6, as it shipped**: `.home-benefits` declared in the page's `<style>`
+  // and the `<section>` rendered by `Benefits.astro`, so the rule carried the page's scope
+  // (`[data-astro-cid-lcdefpme]`), the element carried the component's, and the rule reached
+  // neither. The plant is that file's own edit, made to the rule that now belongs to the
+  // component: the selector's scope attribute swapped for the page's.
+  const rescoped = plantRule('.home-benefits[data-astro-cid-', (rule) =>
+    rule.replace(/\[data-astro-cid-\w+\]/, `[data-astro-cid-${pageScope}]`),
+  )
+  // And the other half of the same defect, from the element's side: the section with the scope
+  // attribute its component gives it removed, which is a rule that names a scope nothing on the
+  // element carries. Either way the block is one the stylesheet names and no rule reaches.
+  const unscoped = html.replace(/<section class="home-benefits"([^>]*)>/, (tag, rest) => `<section class="home-benefits"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
+  assert.notEqual(unscoped, html, 'the built homepage’s benefits section no longer carries a scope attribute, and this case takes one off')
+
+  const cases = [
+    ['a rule scoped to the page rather than to the component that renders the block', rescoped, html, /scoped to data-astro-cid-/],
+    ['a block whose scope attribute is gone', TODAY(), unscoped, /the element carries no scope attribute/],
+  ]
+  for (const [what, css, page, expected] of cases) {
+    const failures = homeRhythmFailures(css, page)
+    assert.equal(failures.length, 1, `${what}: the reading refused ${failures.length} thing(s) where this case plants one:\n  ${failures.join('\n  ') || '(nothing)'}`)
+    assert.match(failures[0], /^the homepage's \.home-benefits is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
+    assert.match(failures[0], expected, `${what}: the refusal does not name the scopes it read:\n  ${failures[0]}`)
+  }
+
+  // And the two halves restore the reading: the defect is the scope mismatch and not the class,
+  // so a rule that names the class *and* carries the element's scope is in force — the shipped
+  // page passing is what the test above asserts.
+  assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships carries a block its rules cannot reach')
 })
 
 // ---- the chat is one card, one conversation (review round 3, item 3a) ----------------------

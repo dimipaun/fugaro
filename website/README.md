@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,032,064 bytes in a checkout with no tags** and to **1,032,064 bytes with the
+  commit builds to **1,035,063 bytes in a checkout with no tags** and to **1,035,063 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -318,8 +318,37 @@ added or removed without this sentence moving fails there:
     page is not the heaviest page, and nothing outside it changed. It is also the round that
     made the clone figure the no-tags figure (above).
 
+  - **The homepage's prompt line** (the owner's feedback of 2026-10-19) moved the site
+    figure alone, 1,028,085 → **1,028,787**, by **702 bytes**: the request the hero renders under
+    the headline, the `>` mark in front of it and the two rules that draw it as the chat's own
+    bubble — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
+    because the three files that changed all render on that one page, so the page weight and
+    the script stand where they stood.
+  - **The benefits** (the same feedback) moved the site figure alone again,
+    1,028,787 → **1,030,935**, by **2,148 bytes**: the section's four names and four lines, its
+    heading and its grid, and the scoped stylesheet rules that draw it — all of it on the
+    homepage, which is the one page that renders it. The page weight and the script did not
+    move: the heaviest page is the docs hub, and it carries no benefits. The words the section
+    costs the homepage are what moved the word ceiling above, in the same commit.
+  - **The pull request's caption** (the same feedback) moved the site figure alone again,
+    1,030,935 → **1,031,001**, by **66 bytes**: the caption's own line and the `data-source` it
+    cites with it, `docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)` in place of
+    `README.md#How it works`, on the two pages that render the flow — the homepage and How It
+    Works. The page weight and the script did not move: the heaviest page is the docs hub,
+    which renders no flow. The caption is two words shorter than the one it replaces, which the
+    homepage's word count below carries.
+  - **The benefits' block rule** (the review of round 6) moved the site figure alone,
+    1,031,001 → **1,031,084**, by **83 bytes**: the section's gutter and the room below it are now
+    declared in the component that renders the section, where they were declared on the page and
+    reached nothing — Astro scopes a page's selector to the elements the page renders, so the
+    section, rendered by `Benefits.astro`, never carried the page's scope. The page's rule now
+    names the two blocks the page renders and the section's rule writes the three declarations
+    out again, which is the whole of the 83 bytes. The page weight and the script did not move:
+    the heaviest page is the docs hub, which renders none of this, and it is one page's inline
+    stylesheet either way. The clone figure moved by the same bytes as each of these rounds.
+
   - **The privacy statement gained its software part** (the owner's request of 2026-10-19),
-    and moved the site figure alone, 1,028,085 → **1,030,359**, by the **2,274 bytes** of that
+    and moved the site figure alone, 1,031,084 → **1,033,358**, by the **2,274 bytes** of that
     page's own markup, and the words ceiling below with it, 250 → **622**. The page is the one
     the App Store and Play listings link as a privacy policy, so it now carries two named
     parts — "The website", which is what it always said, and "The software", which covers the
@@ -327,14 +356,14 @@ added or removed without this sentence moving fails there:
     the ceiling. The page weight and the script did not move: the heaviest page is still the
     docs hub, and `public/scripts/site.js` is untouched.
   - **The phone app's reporting was written into that part** (the owner's request of the same
-    day), and moved the site figure again, 1,030,359 → **1,031,707**, by the **1,348 bytes** those
+    day), and moved the site figure again, 1,033,358 → **1,034,706**, by the **1,348 bytes** those
     paragraphs add, with the words ceiling re-derived in the same commit, 622 → **842**: the
     page names Firebase Crashlytics and Firebase Analytics, states what is collected and what
     is never sent, the opt-in default and the way back, holds Google as the processor for the
     Fugaro project under Google's own policy (linked, not restated), and says that earlier
     builds send nothing. The page weight, the script and the number of files did not move.
   - **The deletion section was carved out from under it** (the same round, on review), and the
-    page moved again, 1,031,707 → **1,032,064**, by the **357 bytes** the carve-out adds: the
+    page moved again, 1,034,706 → **1,035,063**, by the **357 bytes** the carve-out adds: the
     section that said "everything the software holds lives in your own accounts … removing the
     installation removes it" was contradicted by the reports above it, so it now names the
     reports as the exception, says nothing about them is the reader's to delete, says how the
@@ -368,7 +397,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,870,240 bytes. Three times 1,290,080 (every file in `dist/`, 1,032,064
+  - **Whole site:** 3,881,487 bytes. Three times 1,293,829 (every file in `dist/`, 1,035,063
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -388,8 +417,9 @@ added or removed without this sentence moving fails there:
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
     one enforced). On the homepage today the first `h2` is the chat's own *Through your
-    agent* — the chat is the first block under the promise — and the region is the promise
-    and its two calls to action: 14 words. A page that carries blocks between its `h1` and
+    agent* — the chat is the first block under the promise — and the region is the request
+    the hero renders under the headline, the promise and its two calls to action: 23 words. A
+    page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
     with no `h2` at all has no such region, and its lead is the paragraphs that follow its
@@ -411,7 +441,7 @@ added or removed without this sentence moving fails there:
     sees. `/docs/`, `/security/`
     and `/changelog/` are exempt, which is D188's own list: each renders a document of this
     repository rather than a page of the site, and the brief allows those to stay long.
-    **The number is no longer D188's 250, and it is derived rather than picked.** The
+    **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
     site's pitch; the number is that page's own count on the gates' own build — **735
@@ -419,13 +449,22 @@ added or removed without this sentence moving fails there:
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
-    the site stays within D188's 250 words, and the same function holds them there, so this
+    the site stays within D188's own number, and the same function holds them there, so this
     number is a ceiling one page reaches and not a licence the rest can grow into. (D188's
-    250 was itself set against the site as it was measured
-    before the redesign — `docs/website/redesign/reconciliation.md` §6: faq 493 words,
-    caps-and-costs 487, getting-started 431, privacy 277, community 268, every one of them
-    over it — and the redesign brought every one of those pages but the privacy statement
-    inside it.)
+    number was itself set against the site as it was measured before the redesign —
+    `docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
+    getting-started 431, privacy 277, community 268, every one of them over it — and the
+    redesign brought every one of those pages but the privacy statement inside it.)
+    **D188's number was 250, and the owner's feedback of 2026-10-19 is what moved it to
+    300.** That brief asks the homepage for a Benefits section, which is a fourth required
+    block on the one page that already carried the three the briefs before it require — the
+    promise, the chat (changes spec item 3) and the flow (item 4) — and the four together
+    measure 294 words. D188's number is therefore the smallest round ceiling above the page
+    that carries every block its briefs require, and it is still a ceiling rather than a
+    target: the highest of the pages that gained nothing from that brief is Getting Started at
+    250 words, and a page that wants the extra 50 has to carry a brief's own block for them.
+    That raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
+    number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
@@ -728,9 +767,10 @@ homepage's call to action to the flag-off half (the row is exactly the two links
 before, and mentions the console nowhere), and `website/test/console-option.mjs` holds Getting
 Started to it in **both** states: the shipped one, read off the built page, and the released
 one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
-(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started sits at
-D188's 250-word ceiling — the owner's flip has to be the whole change and may not be the change
-that breaks the ceiling. A data file that says the console has shipped while the flag says it
+(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started was at the
+ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
+of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
+change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 
 **The flip, in the site's own data, is four values:** `site.yaml`'s
