@@ -143,16 +143,34 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	slices.Sort(startable)
 	slices.Sort(selfCan)
 	read := len(jobs) - withheld - len(unread)
+	// Every count below is over the policies this doctor could read: a job
+	// whose policy the caller may not read (withheld) or whose read failed
+	// (unread) is in none of them. What that leaves out is said beside them
+	// below, so a count over a partial read never reads as a count over the
+	// location — in either direction: a job nobody read is neither one whose
+	// grants were counted nor one no launcher can start.
 	problem := fmt.Sprintf("launcher grants on Cloud Run jobs: %d grant(s) over %d job(s), and a launcher can start %d of them",
 		grants, read, len(startable))
 	switch {
 	case withheld > 0 && read == 0:
-		// Nothing was read, so there is no count to give: only the
-		// caller's own reach.
+		// Every policy was refused: that is the ordinary launcher's view
+		// (fugaroLauncher holds run.jobs.list and not run.jobs.getIamPolicy),
+		// not a fault. Nothing was read, so there is no count to give: only
+		// the caller's own reach, from testIamPermissions.
 		problem = fmt.Sprintf("your credentials may not read the Cloud Run jobs' IAM policies (the launchers' grants are an operator's check); of %d job(s), you can start %d of them", withheld, len(selfCan))
 		if len(selfCan) > 0 {
 			problem += ": " + strings.Join(selfCan, ", ")
 		}
+		if len(unread) > 0 {
+			problem += fmt.Sprintf(" (%d job(s) could not be asked even that: %s)", len(unread), strings.Join(unread, ", "))
+		}
+	case len(jobs) > 0 && read == 0:
+		// Not one policy was read, and not by refusal either: a read that
+		// failed leaves no grant count and no reach of the caller's own, and
+		// "no launcher is granted on any job" would be a claim about policies
+		// nobody read — beside the launcher-jobs-unread warning that names
+		// those jobs and says the answer for them is unknown, not no.
+		problem = fmt.Sprintf("could not read the IAM policy of %d of the location's %d Cloud Run job(s): this line has no grant count to give, and launcher-jobs-unread names them", len(unread), len(jobs))
 	case len(launchers) == 0:
 		// Nothing to compare the policies' members against: a zero here is
 		// the local config's, not the jobs'.
@@ -160,13 +178,26 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	case len(startable) > 0:
 		problem += ": " + strings.Join(startable, ", ")
 	default:
-		problem += " (no launcher is granted on any job, so fugaro run cannot start one)"
+		problem += " (no launcher is granted on any of the jobs whose policy could be read, so fugaro run cannot start one)"
 	}
-	if withheld > 0 && read > 0 {
-		problem += fmt.Sprintf("; of %d job(s) whose policy your credentials may not read, you can start %d", withheld, len(selfCan))
-		if len(selfCan) > 0 {
-			problem += ": " + strings.Join(selfCan, ", ")
+	// What the counts above leave out, and — for the jobs the caller was
+	// refused a policy for but could still ask about — its own reach over
+	// them. A job whose read failed is in neither half: not even its own
+	// permissions could be asked.
+	if left := withheld + len(unread); left > 0 && read > 0 {
+		var which []string
+		if withheld > 0 {
+			s := fmt.Sprintf("%d whose policy your credentials may not read", withheld)
+			if len(selfCan) > 0 {
+				s += ", of which you can start " + strings.Join(selfCan, ", ")
+			}
+			which = append(which, s)
 		}
+		if len(unread) > 0 {
+			which = append(which, fmt.Sprintf("%d whose read failed", len(unread)))
+		}
+		problem += fmt.Sprintf(" (%d of the location's %d job(s) are not in that count: %s)",
+			left, len(jobs), strings.Join(which, " and "))
 	}
 	out := []doctorCheck{{ID: "launcher-jobs", OK: true, Severity: "info", Problem: problem,
 		Fix: "the launcher role's permissions are unchanged by the project-centric model (run.jobs.run, run.jobs.runWithOverrides and the secret metadata list): what changes is how many jobs they attach to, so a grant count that falls while runs still work is a migration doing what it says, and a job a launcher is not granted on is a job fugaro run cannot start. Project-level run roles bypass the jobs' own policies and are not counted here"}}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -46,6 +47,14 @@ type TUIOptions struct {
 	// note, read fresh on every rebuild; nil when the project has no
 	// queued-run source.
 	Queued func() ([]QueuedRun, []FinishedRun, string)
+	// Facts is what each run's own launch.json says about it — the Cloud Run
+	// job it is in, the (profile, provider, account) that job's name was
+	// computed from, and who started it — read fresh on every rebuild like
+	// Queued, and nil in degraded mode, which reads no bucket and so has no
+	// launch.json to take them from. Neither fact is in the registry entry a
+	// live row is built from (facts.go), so without this the screen names no
+	// launcher and no job for a running run.
+	Facts func() Facts
 
 	// All, Keep and KeepCount seed the finished-run filter (design
 	// generic-tool §10.3); Keep <= 0 means 6h, KeepCount <= 0 means 15.
@@ -124,11 +133,15 @@ type model struct {
 	view   View
 	dirty  bool
 	prSeen uint64 // the PRState version the last frame was drawn at
-	frame  string
-	notice string
-	pend   *pending
-	closed bool
-	act    Kind // the kind of the write in flight or pending
+	// factsSeen is the run facts the last frame was drawn from: the scan
+	// answers off this loop, so a new map is a reason to redraw even though
+	// no row and no update changed.
+	factsSeen Facts
+	frame     string
+	notice    string
+	pend      *pending
+	closed    bool
+	act       Kind // the kind of the write in flight or pending
 }
 
 func newModel(ctx context.Context, o TUIOptions) *model {
@@ -217,8 +230,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case renderMsg:
 		// A PR-state answer lands off the render loop; the tick is what turns
 		// it into the next frame, so a merged PR leaves the list within one
-		// redraw period of the answer.
-		if m.dirty || (m.o.PRState != nil && m.o.PRState.Version() != m.prSeen) {
+		// redraw period of the answer. The run facts arrive the same way: a
+		// run that started between two scans gains its job and its launcher
+		// with no change to any row, so the map is part of what a frame says
+		// and so part of what makes one (watchStream, internal/cli).
+		if m.dirty || (m.o.PRState != nil && m.o.PRState.Version() != m.prSeen) || !maps.Equal(m.facts(), m.factsSeen) {
 			m.rebuild()
 		}
 		return m, m.tick()
@@ -261,6 +277,18 @@ func (m *model) live() bool {
 	return k == ConnLive || k == ConnPolling
 }
 
+// facts is the run facts of the latest scan, nil when the screen has no scan
+// to ask (a project with no runs bucket, degraded mode, a hand-built
+// TUIOptions). It is asked directly, never cached here: the scan behind it
+// reads the bucket in its own goroutine and the tick is what notices a new
+// answer (factsSeen).
+func (m *model) facts() Facts {
+	if m.o.Facts == nil {
+		return nil
+	}
+	return m.o.Facts()
+}
+
 // rebuild recomputes the view and the frame.
 func (m *model) rebuild() {
 	v := Build(m.st, m.now, m.o.Config)
@@ -269,6 +297,12 @@ func (m *model) rebuild() {
 		v = MergeQueued(v, m.o.Config, rows, note, m.now)
 		v = MergeFinished(v, m.o.Config, finished, m.now)
 	}
+	// After the rows are merged, so a queued or finished row gets its facts
+	// too, and outside the Queued guard: a live run's facts are in the same
+	// place theirs are (facts.go).
+	facts := m.facts()
+	v = MergeFacts(v, facts)
+	m.factsSeen = facts
 	if m.o.RepoKey != "" {
 		v = FilterRepo(v, m.o.RepoKey)
 	}

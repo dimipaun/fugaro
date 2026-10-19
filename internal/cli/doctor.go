@@ -1626,15 +1626,24 @@ func checksFail(checks []doctorCheck, strict bool) bool {
 	return false
 }
 
-// printDoctorChecks prints one line per failing check (its problem and fix),
-// or a single "ok" line when none failed.
+// printDoctorChecks prints one line per check doctor means to show (its
+// problem and fix), or a single "ok" line when none failed.
+//
+// An ok check with no Severity is doctor's own bookkeeping and stays out of
+// the human output. A Severity is the opposite: it is how the checks that
+// report what doctor measured rather than what it found wrong — the launcher
+// grants over the Cloud Run jobs, the project's Claude account jobs and the
+// repositories each token may be used by — ask to be read, and skipping those
+// by their OK flag left them in --json alone.
 func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 	failed := false
 	for _, c := range checks {
-		if c.OK {
+		if c.OK && c.Severity == "" {
 			continue
 		}
-		failed = true
+		if !c.OK {
+			failed = true
+		}
 		line := c.ID + ": "
 		if c.Severity != "" {
 			line = c.Severity + " " + line

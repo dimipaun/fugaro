@@ -95,9 +95,18 @@ var runTUI = func(ctx context.Context, d *WatchDeps) error {
 	// Who a kill is recorded as, asked before the screen takes the terminal.
 	// A failure must not block the screen: kill and resume then refuse.
 	by := watchActor(ctx, d.LC)
-	return watch.RunTUI(ctx, watch.TUIOptions{
+	return watch.RunTUI(ctx, watchTUIOptions(ctx, d, by))
+}
+
+// watchTUIOptions is what the screen is given. Split out of runTUI so a test
+// can read it: the screen's readers are the deps' own (Queued, Facts), asked
+// again on every rebuild, so a field left out here is a surface that shows
+// less than the plain and JSON frames do — the launcher of a running run as a
+// dash, in Facts' case.
+func watchTUIOptions(ctx context.Context, d *WatchDeps, by string) watch.TUIOptions {
+	return watch.TUIOptions{
 		In: d.In, Out: d.Out, Project: d.LC.Name, Updates: d.Sup.Updates(), Config: d.Config,
-		RepoKey: d.RepoKey, Repo: d.Repo, Queued: d.Queued, PRState: d.PRState,
+		RepoKey: d.RepoKey, Repo: d.Repo, Queued: d.Queued, Facts: d.Facts, PRState: d.PRState,
 		All: d.Filter.All, Keep: d.Filter.Keep, KeepCount: d.Filter.KeepCount, AckPath: watch.AckPath(os.Getenv),
 		ASCII:   watch.UseASCII(d.ASCII, os.Getenv),
 		NoColor: watch.UseNoColor(d.NoColor, os.Getenv),
@@ -105,7 +114,7 @@ var runTUI = func(ctx context.Context, d *WatchDeps) error {
 			return watchExec(ctx, d.DB, req, by)
 		},
 		AltScreen: true,
-	})
+	}
 }
 
 // watchActor is who a kill or resume from the screen is recorded as: the
