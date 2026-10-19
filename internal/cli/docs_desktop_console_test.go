@@ -4637,3 +4637,120 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes: console/test/fixtures/
+// normal.ndjson is the shape of one real 0.8.6 `watch --json` document with
+// every value invented, so its shape is the one thing in it that must stay the
+// CLI's. Every document in it is decoded into the real watch.JSONDoc with
+// DisallowUnknownFields (an unknown key, or a value of the wrong JSON type,
+// fails), and then every level is walked against the struct: each key present
+// is a tag of that struct, in the struct's own order (the CLI marshals in field
+// order), and each tag without omitempty is present. Mutations: an unknown key
+// added to the fixture; a required key dropped; a key moved; a number made a
+// string.
+func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
+	lines := strings.Split(strings.TrimSpace(readDoc(t, "console/test/fixtures/normal.ndjson")), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("normal.ndjson holds %d lines, want a header and at least one record", len(lines))
+	}
+	var docs int
+	for i, line := range lines[1:] {
+		var rec struct {
+			Document json.RawMessage `json:"document"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("record %d: %v", i+1, err)
+		}
+		if rec.Document == nil {
+			continue
+		}
+		docs++
+		dec := json.NewDecoder(bytes.NewReader(rec.Document))
+		dec.DisallowUnknownFields()
+		var doc watch.JSONDoc
+		if err := dec.Decode(&doc); err != nil {
+			t.Fatalf("record %d does not decode into watch.JSONDoc: %v", i+1, err)
+		}
+		checkJSONShape(t, fmt.Sprintf("record %d", i+1), rec.Document, reflect.TypeOf(watch.JSONDoc{}))
+	}
+	if docs == 0 {
+		t.Fatal("normal.ndjson holds no document")
+	}
+}
+
+// orderedJSONKeys returns an object's keys in the order they were written.
+func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		t.Fatalf("not an object: %s", raw)
+	}
+	var keys []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, tok.(string))
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return keys
+}
+
+// checkJSONShape walks one JSON value against a struct type: keys in struct
+// order, required keys present, recursing into nested structs and slices.
+func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.Type) {
+	t.Helper()
+	for rt.Kind() == reflect.Ptr {
+		if string(raw) == "null" {
+			return
+		}
+		rt = rt.Elem()
+	}
+	switch rt.Kind() {
+	case reflect.Slice:
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			t.Errorf("%s: want an array: %v", where, err)
+			return
+		}
+		for i, item := range items {
+			checkJSONShape(t, fmt.Sprintf("%s[%d]", where, i), item, rt.Elem())
+		}
+	case reflect.Struct:
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &members); err != nil {
+			t.Errorf("%s: want an object: %v", where, err)
+			return
+		}
+		type field struct {
+			name     string
+			required bool
+			typ      reflect.Type
+		}
+		var fields []field
+		for i := 0; i < rt.NumField(); i++ {
+			name, opts, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+			fields = append(fields, field{name, !strings.Contains(opts, "omitempty"), rt.Field(i).Type})
+		}
+		var want []string
+		for _, f := range fields {
+			if _, ok := members[f.name]; ok {
+				want = append(want, f.name)
+			} else if f.required {
+				t.Errorf("%s: required key %q is missing (internal/watch/json.go has it without omitempty)", where, f.name)
+			}
+		}
+		if got := orderedJSONKeys(t, raw); !slices.Equal(got, want) {
+			t.Errorf("%s: keys %v, want the struct's order %v", where, got, want)
+		}
+		for _, f := range fields {
+			if v, ok := members[f.name]; ok {
+				checkJSONShape(t, where+"."+f.name, v, f.typ)
+			}
+		}
+	}
+}

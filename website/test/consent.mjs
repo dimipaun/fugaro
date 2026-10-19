@@ -129,6 +129,19 @@ const DOCUMENT_SELECTORS = new Map([
   ['[data-copy-button]', (el) => el.attrs.has('data-copy-button')],
   ['[data-copy-status]', (el) => el.attrs.has('data-copy-status')],
   ['.site-nav details[open]', (el) => el.name === 'details' && el.attrs.has('open')],
+  // The keyboard's way into a group asks for the groups themselves, whatever the device answers
+  // (the pointer's half above asks for the open ones). Every shipped page carries the menu, and
+  // this is the query that proves the keyboard's half is not behind the pointer's: the stub
+  // answers no `matchMedia`, so nothing hover-bound is ever bound here, and the groups are.
+  ['.site-nav-group details', (el) => el.name === 'details'],
+])
+
+// The selectors the site's one script file asks an *element* for, on the same terms as the
+// document's map above: refused rather than matched to nothing. The menu's keyboard half reads
+// each group's own control to know what opens it.
+const ELEMENT_SELECTORS = new Map([
+  ['[data-consent]', (el) => el.attrs.has('data-consent')],
+  ['summary', (el) => el.name === 'summary'],
 ])
 
 // The address a stubbed page is "at", and the page it was reached from: both carry a query
@@ -284,16 +297,23 @@ function stubDOM(html, location = PAGE_LOCATION) {
       classList: { contains: (name) => (node.attrs.get('class') ?? '').split(/\s+/).includes(name) },
       // The selectors the site's scripts use, over the element's own subtree.
       querySelectorAll(selector) {
-        assert.equal(selector, '[data-consent]', `a page script asks for ${selector} on an element: this stub reads only [data-consent]`)
+        const matches = ELEMENT_SELECTORS.get(selector)
+        assert.ok(
+          matches,
+          `a page script asks for ${selector} on an element: this stub reads ${[...ELEMENT_SELECTORS.keys()].join(', ')}, so a new one has to be taught here rather than silently matching nothing`,
+        )
         const out = []
         const walkFrom = (node) => {
           for (const child of node.children) {
-            if (child.attrs.has('data-consent')) out.push(child)
+            if (matches(child)) out.push(child)
             walkFrom(child)
           }
         }
         walkFrom(this)
         return out
+      },
+      querySelector(selector) {
+        return this.querySelectorAll(selector)[0] ?? null
       },
     }
     elements.push(el)
