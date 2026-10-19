@@ -1,24 +1,31 @@
 package cli
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The credentials service's Slice 0 writes two live checks into
 // docs/gcp-live-checklist.md (Checks 90 and 91), and both are instructions a
 // human types against a real subscription token and a real cloud project. The
-// independent review of 2026-10-19 (PR #584) found six defects in them, plus two
-// wording defects in the C0.2 notes and one in the number register. The tests
+// independent review of 2026-10-19 (PR #584) found seven defects in them, plus
+// two wording defects in the C0.2 notes and one in the number register. The tests
 // below pin each fix to the sentence or the command that carries it, so an edit
 // that drops one fails here rather than passing on the section's heading: a
 // guard that leaves an API key in the shell makes the control prove nothing, a
 // recursive delete with no shape check removes a path the reader set, a service
 // deployed without the registry repository its image tag names fails at the
 // build, a token minted once is expired by the probe that runs an hour later,
-// prose that promises a body the commands never fetch measures nothing, and an
-// HTTP/2 row that is not end to end settles U5 wrongly.
+// prose that promises a body the commands never fetch measures nothing, a FACT
+// that asks for a field of a body no flag of the check's own proxy could
+// surface measures nothing either, and an HTTP/2 row that is not end to end
+// settles U5 wrongly.
 
 const (
 	checklistPath = "docs/gcp-live-checklist.md"
@@ -1241,6 +1248,207 @@ func TestCredentialsPlanC03ListsEveryChecklistGuardItsFileHas(t *testing.T) {
 	} {
 		if !strings.Contains(red, want) {
 			t.Errorf("C0.3's red step omits a mutation the guards it lists were proven with: it lacks %q", want)
+		}
+	}
+}
+
+// check90Driver loads the proxy program out of Check 90 step 3's fenced block
+// and prints what its error reader makes of one body. Loading it runs nothing:
+// the program's server starts only under `if __name__ == "__main__"`, which is
+// what makes the reader reachable without a port, a network or a token.
+const check90Driver = `import importlib.util, sys
+spec = importlib.util.spec_from_file_location("chk90proxy", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+body = open(sys.argv[2], "rb").read()
+print("FIELDS:", " | ".join(map(str, mod.error_fields(body))))
+`
+
+// TestChecklistCheck90ProxyPrintsOnlyTheErrorTypeAndMessage: step 7's FACT (U3)
+// asked for "the error's own `type` (and from the body only its `type` and
+// `message`)" while the program step 3 hands the owner printed header names and
+// statuses and read no body at all, and the step supplied no command that could
+// fetch one — a FACT the check's own tooling could not produce (the review of
+// #584). U3 is not optional here: F15's consequence is that reactive exhaustion
+// detection reads the HTTP response — status, **error type**, reset headers —
+// so a check that cannot see the type cannot answer U3. Step 3's program now
+// carries an opt-in `--error-fields`, and this test runs the reader out of the
+// document the owner copies, on the four shapes a body can arrive in: only the
+// error object's `type` and `message` may reach the output, a fixed placeholder
+// stands in when there is no error object or the body is not JSON, and no other
+// value — a credential-shaped one above all — may be printed.
+//
+// Mutation (run, restore): make `error_fields` return the whole parsed body,
+// or read a third key (`request_id`), or drop the isinstance guard on `type`
+// and print the nested value instead of the placeholder — the test fails on
+// each.
+func TestChecklistCheck90ProxyPrintsOnlyTheErrorTypeAndMessage(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	step3 := stepBlock(t, checklistPath, docSection(t, checklistPath, doc, chk90Heading), "### Check 90 step 3:")
+	var src string
+	for _, b := range fencedBlocks(step3) {
+		if strings.Contains(b, "def fact(") {
+			src = b
+		}
+	}
+	if src == "" {
+		t.Fatal("Check 90 step 3 no longer fences the proxy program")
+	}
+	for _, want := range []string{
+		`ap.add_argument("--error-fields"`,
+		"def error_fields(",
+		"def read_capped(",
+		"json.loads(",
+		"resp.status >= 400",
+		`if __name__ == "__main__":`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("Check 90's proxy no longer carries the bounded error-field reader step 7's FACT (U3) needs: it lacks %q", want)
+		}
+	}
+
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not on PATH: the behavioural half of this test did not run")
+	}
+	dir := t.TempDir()
+	proxy := filepath.Join(dir, "proxy.py")
+	if err := os.WriteFile(proxy, []byte(src+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	driver := filepath.Join(dir, "driver.py")
+	if err := os.WriteFile(driver, []byte(check90Driver), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The credential-shaped value a body might carry is the thing this reader
+	// must never print; the key names beside it stand for the other keys of an
+	// error object, which it must not read either.
+	const credential = "not-a-real-credential-0123456789abcdef"
+	for _, tc := range []struct{ name, body, want, wantMessage string }{
+		{
+			"an error object with other keys beside the two",
+			`{"error":{"type":"rate_limit_error","message":"usage limit reached",` +
+				`"access_token":"` + credential + `","request_id":"req_0000"}}`,
+			"type: rate_limit_error", "message: usage limit reached",
+		},
+		{
+			"a body that is not JSON at all",
+			"access_token=" + credential,
+			"(unreadable body: not JSON)", "",
+		},
+		{
+			"valid JSON with no error object",
+			`{"message":"usage limit reached","access_token":"` + credential + `"}`,
+			"(no error object in the body)", "",
+		},
+		{
+			"an error object whose type is not a string",
+			`{"error":{"type":{"nested":"` + credential + `"}}}`,
+			"type: (none)", "",
+		},
+	} {
+		body := filepath.Join(dir, "body")
+		if err := os.WriteFile(body, []byte(tc.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		out, err := exec.CommandContext(ctx, py, driver, proxy, body).CombinedOutput()
+		cancel()
+		if err != nil {
+			t.Errorf("%s: the program's error reader did not run (%v): %s", tc.name, err, out)
+			continue
+		}
+		if !strings.Contains(string(out), tc.want) {
+			t.Errorf("%s: the error reader's output does not carry %q: %s", tc.name, tc.want, out)
+		}
+		if tc.wantMessage != "" && !strings.Contains(string(out), tc.wantMessage) {
+			t.Errorf("%s: the error reader's output does not carry the message, which is one of the two fields it may print: %s", tc.name, out)
+		}
+		for _, leaked := range []string{credential, "access_token", "request_id", "req_0000"} {
+			if strings.Contains(string(out), leaked) {
+				t.Errorf("%s: the error reader printed %q, which is not one of the two fields of an error object it may print: %s", tc.name, leaked, out)
+			}
+		}
+	}
+}
+
+// TestChecklistCheck90StepSevenNamesTheProxyFlagThatRecordsTheErrorType: the
+// other half of the same defect — the fix has to be reachable from the step
+// that asks for the fact, and the documents that describe the check have to
+// agree about it. Step 3 has to say what the flag prints and that nothing else
+// of a body is ever printed, step 7 has to carry the command that turns it on,
+// and the two places that promise what a FACT line may contain (the section's
+// own "never a value" sentence and its paste-back line) have to say which two
+// fields of a body are the exception — as does reconciliation's U3 row, which
+// claims the check records the error type. The register's row and the section's
+// summary already claim the type; this pins that the check can produce it.
+//
+// Mutation (run, restore): drop `--error-fields` from step 7's command, drop
+// the flag from step 3's prose, or return the paste-back's "never a body" to
+// its unqualified form — the test fails on each.
+func TestChecklistCheck90StepSevenNamesTheProxyFlagThatRecordsTheErrorType(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk90Heading)
+	step3 := stepBlock(t, checklistPath, check, "### Check 90 step 3:")
+	for _, want := range []string{
+		"`--error-fields`",
+		"never a header value",
+		"prints the error object's own `type` and `message`",
+		"an **error** response (status ≥ 400)",
+	} {
+		if !strings.Contains(step3, want) {
+			t.Errorf("Check 90's step 3 does not say what its opt-in error-field flag prints: it lacks %q", want)
+		}
+	}
+	step7 := stepBlock(t, checklistPath, check, "### Check 90 step 7:")
+	for _, want := range []string{
+		"--error-fields",
+		"the error's own `type` and `message`",
+		"(no error object in the body)",
+		"(unreadable body: not JSON)",
+	} {
+		if !strings.Contains(step7, want) {
+			t.Errorf("Check 90's step 7 does not carry the way to record the error's own type, which its FACT (U3) asks for: it lacks %q", want)
+		}
+	}
+	// The flag has to be in the command the operator types, not only in the
+	// prose around it: a step that describes a flag its command does not pass
+	// leaves the FACT unobtainable, which is the defect this pins.
+	var turnsItOn bool
+	for _, b := range fencedBlocks(step7) {
+		if strings.Contains(b, "proxy.py") && strings.Contains(b, "--error-fields") {
+			turnsItOn = true
+		}
+	}
+	if !turnsItOn {
+		t.Error("Check 90's step 7 never starts the proxy with --error-fields, so the command it gives cannot produce the error type its FACT (U3) asks for")
+	}
+	// The two sentences that promise what a FACT line may contain, each read
+	// where it stands: an unqualified "never a value" or "never a body" is what
+	// hid the gap, because step 7's FACT asked for a body's fields anyway.
+	for _, want := range []string{
+		"the only body content anywhere in it is step 7's error `type` and `message`",
+		"step 7's `type` and `message` are the only body fields the record carries",
+	} {
+		if !strings.Contains(check, want) {
+			t.Errorf("Check 90's own prose does not bound what a FACT line may take from a body: it lacks %q", want)
+		}
+	}
+	row := docTail(t, checklistPath, doc, "| 90 | The OAuth header swap")
+	row = row[:strings.Index(row, "\n")]
+	if !strings.Contains(row, "the error object's own `type` and `message`") {
+		t.Error("the register's row for Check 90 does not say the check records the error object's own type and message, which is the half of U3 the flag exists for")
+	}
+	if !strings.Contains(check, "the proxy's opt-in `--error-fields`, which reads those two keys and no other") {
+		t.Error("Check 90's summary does not say where the error type it claims to observe comes from")
+	}
+	recon := readDoc(t, "docs/credentials-service/reconciliation.md")
+	u3 := docTail(t, "docs/credentials-service/reconciliation.md", recon, "| U3 | Which response status, error type and headers carry")
+	u3 = u3[:strings.Index(u3, "\n")]
+	for _, want := range []string{"step 7 records the status", "the error object's own `type` and `message`", "--error-fields"} {
+		if !strings.Contains(u3, want) {
+			t.Errorf("reconciliation's U3 row does not say how Check 90 records the error type: it lacks %q", want)
 		}
 	}
 }
