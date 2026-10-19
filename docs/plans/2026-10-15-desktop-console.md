@@ -1386,8 +1386,8 @@ installation's, from `installation.current` — with its state word and its glyp
 no row for an installation it cannot read**: the dashboard's surface has no list read and
 this task does not add one to it, so a case that expects a row per stored installation would
 be a case against a read no file in this commit brings (design §4.1, §11);
-and **the §2-inventory selector scan over `base.css`** — the rail's thirteen hooks are the
-chrome's and the design's §2.1 lists them, so the list the scan checks against is the
+and **the §2-inventory selector scan over `base.css`** — the rail's twelve hooks are the
+chrome's and the design's §2.1 lists them (twelve hooks on thirteen elements), so the list the scan checks against is the
 inventory's tables (the screens' class literals and the chrome's hooks), not the screens'
 literals alone: a scan of the screens' literals sees no rule written against a hook the
 entry draws, which is the one shape of rule this task adds. **Not the computed-background assertion**: it reads a *computed* background off a
@@ -1412,7 +1412,9 @@ any visible change".
 
 **Commit:** `console: the document, the installation rail and the focus rules`
 
-**Reviewer tier:** ordinary.
+**Reviewer tier:** ordinary, against the design's §5.5 rule explicitly (no style write, no
+CSP loosening), because it is one of the two tasks that touch the entry — it draws the
+rail's elements, and Task 6.5 adds their attributes and keys.
 
 **Red step — `Expected: FAIL`** — the forced-colors case before the rules exist.
 
@@ -1448,7 +1450,7 @@ per-screen half).
 
 **Tests.** A case that every selector in `screens.css` names a hook the design's §2
 inventory lists — checked against a list derived from the inventory's tables, the screens'
-own class literals **and the chrome's hooks of §2.1** (the rail's thirteen, which Task 6.3
+own class literals **and the chrome's hooks of §2.1** (the rail's twelve, which Task 6.3
 draws and this scan must see), so a rule that styles a class nothing emits fails; the `--border`-is-decorative scan of
 `base.css` and `screens.css`; the forced-colors smoke per screen — every state word still in
 the DOM and the row boundary still visible. **Not the computed-background assertion**,

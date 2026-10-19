@@ -1227,11 +1227,23 @@ aside.console-rail                        the rail — the grid's first column
   operation and no new file**, and it is not a second way to remove or edit anything.
 - **What the rail draws, and the read the console does not have.** The rail draws **one row
   per installation the dashboard can read**, and today that is **one row: the installation
-  the operator chose**, with its name, its project, its state and its spend. A row carries
-  four fields and the dashboard's one installations read answers all four for that
-  installation and no other: `installation.current` **takes no argument at all and names no
+  the operator chose**, with its name, its project, its state and its spend. **A row carries
+  four fields and no one read answers all four**, so this document names the read behind
+  each rather than implying one. The **name and the project** are what `installation.current`
+  answers, for that installation and no other: it **takes no argument at all and names no
   id**, so a renderer cannot ask about an installation other than the one this console is
-  running (`src/main/ipc.ts`, the fourteenth operation). The stored list is the picker's own
+  running (`src/main/ipc.ts`, the fourteenth operation). **Its payload keeps one label,
+  `project`** — `ActiveInstallation` carries `id`, `project`, `binary`, `config`, `checkout`,
+  the handshake's version and `mode`, and **no display name** — so the row's name span draws
+  that label and the small-text project span draws the same one: the canvas's two-line
+  identity, drawn from the one label the store keeps. The **state word is the rail's own mark
+  and not a field of any read**: the rail knows whether it is reading this installation now —
+  which is why its one row says `running`, or `silent` when that read was refused or the feed
+  has gone quiet — while `idle`, the stored installation nothing is read from, is the word
+  for a row the read the next bullet names would draw. The **spend is the console's own
+  budget read** — `budget.show` on the dashboard's channel, whose counted and spent dollars
+  §2.4's caps panel already draws — and **no field is added to it for the rail**. The stored
+  list is the picker's own
   read (§2.2): `INSTALLATION_OPERATIONS` is registered in `src/main/picker.ts` and each
   channel is gated on **the picker's own document**, so a frame on the dashboard is answered
   `SENDER_REFUSAL` and the two documents cannot reach each other's surface.
@@ -1991,7 +2003,10 @@ element with no keys. 6.6 (the frames) is last and owner-run.
   which the staged console-tests workflow already sets): a layout change is a picture the
   baselines do not have, and re-recording them before the last stylesheet lands is what
   [Task 6.6](#76-task-66--the-golden-frames-re-recorded) exists to stop.
-- **Reviewer tier:** ordinary.
+- **Reviewer tier:** ordinary — but it is one of the two tasks that touch the entry
+  (§7.5 adds the attributes and the keys and this one draws the rail's elements), so it is
+  reviewed against §5.5's "no style, no loosening" rule explicitly: the rail's elements are
+  created with classes and attributes, and the styling is `base.css`'s.
 
 ### 7.4 Task 6.4 — the screens
 
@@ -2013,8 +2028,8 @@ element with no keys. 6.6 (the frames) is last and owner-run.
   `screens.css` selects only hooks the [§2](#2-screen-inventory) inventory names — a scan
   of the stylesheet's selectors checked against a list derived from the inventory's tables,
   the screens' own class literals **and the chrome's hooks of §2.1**, since the rail's
-  thirteen hooks are the entry's and not a screen's — so a rule that styles a class nothing
-  emits fails; the
+  **twelve** hooks — §2.1's twelve, on its thirteen elements — are the entry's and not a
+  screen's, so a rule that styles a class nothing emits fails; the
   `--border`-is-decorative scan.
 - **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
   test:e2e`, with the goldens skipped as in Task 6.3.

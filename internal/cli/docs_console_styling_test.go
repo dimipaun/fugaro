@@ -2397,6 +2397,103 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 			t.Errorf("%s: the document still calls one task the sole owner of the entry (%q); two do — the rail's elements are Task 6.3's and the attributes and keys are Task 6.5's", d.path, m)
 		}
 	}
+
+	// A hook is a class, and the rail has twelve of them on thirteen elements.
+	// The clauses that derive the §2-inventory selector scan are where the list
+	// the scan checks against is defined, so a clause that sends the scan after
+	// "thirteen hooks" licenses a rule against a class the entry never emits —
+	// the thirteen is the *element* count above, and §2.1 states twelve hooks.
+	// All three clauses said thirteen, which is the count this reads back.
+	planTasks := mdTaskSections(t, planPath, planDoc,
+		"### Task 6.1: The token layer",
+		"### Task 6.2: The wiring",
+		"### Task 6.3: The layout",
+		"### Task 6.4: The screens",
+		"### Task 6.5: The theme switch",
+		"### Task 6.6: The golden frames",
+		"## Cross-task dependencies")
+	for _, d := range []struct{ path, text string }{{path, doc}, {planPath, planDoc}} {
+		if flat := mdFlat(d.text); strings.Contains(flat, "thirteen hooks") {
+			t.Errorf("%s: the document sends the selector scan after \"thirteen hooks\"; the tree's thirteen are elements and the hooks are twelve (§2.1, and the count read off the fence above), so a scan written against thirteen styles a class nothing emits", d.path)
+		}
+	}
+	for _, d := range []struct{ path, label, section string }{
+		{path, "§7.4's **Tests**", mdBetween(t, path, doc, "### 7.4 ", "### 7.5 ")},
+		{planPath, "Task 6.3's **Tests**", planTasks[2]},
+		{planPath, "Task 6.4's **Tests**", planTasks[3]},
+	} {
+		clause, ok := mdClause(t, d.path, d.section, "Tests")
+		if !ok {
+			t.Fatalf("%s: %s has no **Tests** clause; the scan's list is derived there", d.path, d.label)
+		}
+		if flat := mdFlat(clause); !strings.Contains(flat, "twelve") {
+			t.Errorf("%s: %s does not state the rail's twelve hooks; the clause is where the scan's list is derived, and a clause that names no count is the sentence that said thirteen", d.path, d.label)
+		}
+	}
+
+	// And the same two facts decide what the row's fields are read from, because
+	// one read cannot supply four fields: `ActiveInstallation` carries a project
+	// and no display name and no spend, and the rail's state word is the rail's
+	// own. A sentence that says one read answers all four is a sentence Task 6.3
+	// is written from, and it cannot be implemented.
+	if !strings.Contains(structure, "no one read answers all four") {
+		t.Errorf("%s: §4.1 does not say that no one read answers the row's four fields; it claimed the dashboard's one installations read answered all four, and `ActiveInstallation` carries neither a spend nor a rail state word", path)
+	}
+	for _, want := range []struct{ has, because string }{
+		{"`budget.show`", "§4.1 does not name the read behind the row's spend; the console's budget read is where those dollars come from, and a field with no read behind it is a field Task 6.3 invents"},
+		{"no display name", "§4.1 draws a name and a project over a payload that keeps one label; the sentence has to say which one the row draws them from"},
+	} {
+		if !strings.Contains(structure, want.has) {
+			t.Errorf("%s: %s", path, want.because)
+		}
+	}
+	for _, d := range []struct{ path, text string }{{path, doc}, {planPath, planDoc}} {
+		if strings.Contains(mdFlat(d.text), "installations read answers all four") {
+			t.Errorf("%s: the document still says the dashboard's one installations read answers all four of the row's fields; that payload carries a project and no spend and no state word, so two of the four have no read in this design", d.path)
+		}
+	}
+
+	// Two tasks touch the entry, so both carry the same reviewer note: 6.3 draws
+	// the rail's elements into `entry.ts`, which is where a `.style` write or a
+	// CSP loosening would have to appear, and §7.5 already says so of itself.
+	// §7.3's tier said a bare "ordinary", and so did the plan's Task 6.3.
+	for _, d := range []struct{ path, label, section string }{
+		{path, "§7.3", mdBetween(t, path, doc, "### 7.3 ", "### 7.4 ")},
+		{planPath, "Task 6.3", planTasks[2]},
+	} {
+		if tier := mdReviewerTier(t, d.path, d.section); !strings.Contains(tier, "§5.5") {
+			t.Errorf("%s: %s's **Reviewer tier** does not name §5.5; it is one of the two tasks that touch the entry, and the rule that no style is written and the CSP is not loosened is what a reviewer of that file has to check", d.path, d.label)
+		}
+	}
+}
+
+// mdReviewerTier reads a task's **Reviewer tier** line. It is not one of the
+// clauses mdClause knows — the tier is not a Scope, Files, Tests, Command,
+// Verification, Depends on or Commit — and it is the sentence that decides what
+// scrutiny a diff gets, so the tasks that touch the entry are read back here.
+var mdReviewerTierRE = regexp.MustCompile(`^(?:- )?\*\*Reviewer tier:\*\*(.*)$`)
+
+func mdReviewerTier(t *testing.T, path, section string) string {
+	t.Helper()
+	lines := strings.Split(section, "\n")
+	for i, line := range lines {
+		m := mdReviewerTierRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		// The note is a paragraph: the design's item indents its continuation
+		// lines, the plan's run at column zero, and a blank line ends both.
+		paragraph := []string{m[1]}
+		for _, next := range lines[i+1:] {
+			if strings.TrimSpace(next) == "" {
+				break
+			}
+			paragraph = append(paragraph, next)
+		}
+		return mdFlat(strings.Join(paragraph, " "))
+	}
+	t.Fatalf("%s: this task has no **Reviewer tier** line; every task in this phase states the scrutiny its diff gets", path)
+	return ""
 }
 
 // TestDocsConsoleStylingRailIsInThePlan:
