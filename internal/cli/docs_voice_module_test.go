@@ -955,6 +955,17 @@ var voiceModuleQuotations = []voiceModuleQuotation{
 		"Paths A and C as tiers B and C",
 		"docs/credentials-service/reconciliation.md",
 	},
+	// #28: the service's scope is the credentials spec's own words, in two
+	// sentences. The document used to credit the design's section 2 with the
+	// first and quote "Its own scope is jobs." as though a source said it.
+	{
+		"the service stays secrets-only. Other always-on features (e.g. the phone client backend) go in sibling services that call it, keeping its attack surface minimal",
+		"docs/credentials-service/spec.md",
+	},
+	{
+		"the single holder of every secret a job needs",
+		"docs/credentials-service/spec.md",
+	},
 }
 
 // voiceModuleQuoteText folds a quotation and its source into one comparable
@@ -1042,8 +1053,13 @@ func TestDocsVoiceModuleReconciliationQuotesAreVerbatim(t *testing.T) {
 	// outside the tree, and which renderings are the only ones used.
 	for _, want := range []string{
 		"**Quotations.** Every quotation in this document was checked word for word against its source",
-		"**Six quotations were not verbatim and are corrected in this revision**",
+		"**Six quotations were not verbatim and were corrected in the revision before this one**",
 		"**nine citations and cross-references were wrong**",
+		// And the accounting a later round added: the design's seven
+		// quotations that were not its words, and its five answered questions.
+		"**A later round found this paragraph's promise broken in two ways, and both are corrected here.**",
+		"**seven quotations were credited to `voice-evaluation-switch.md` that are not its words**",
+		"**the design's five questions were stale**",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q; section 0 is where the quotation audit is accounted for", path, want)
@@ -1128,6 +1144,106 @@ func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
 // voiceModuleFinding returns finding #n's block: its heading up to the next
 // finding or section heading. Findings are addressed by number, so a retitled
 // finding does not move the pin.
+// TestDocsVoiceModuleReconciliationReadsTheDesignAtItsMergeCommit: a cloud
+// review found two things wrong with how this document reads
+// docs/mobile/design/voice-evaluation-switch.md at the commit it cites
+// (80f2b7fa, which is where the file is -- it is not in this branch's tree, so
+// this test pins the corrected text rather than reading the source the way
+// voiceModuleQuotations does).
+//
+// First, seven quotations credited to that design were not its words: the
+// failure-mode sentence says "Every row", the indicator's rule is about being
+// dismissible at all, its states are local / remote (<provider name>) /
+// blocked by project policy, the register's sentence is about what the owner
+// read, the service's scope is the credentials spec's own text, the allow-list
+// admits "a provider name, never a URL", and its default has no serial comma.
+// Second, the design's five questions are all answered -- the owner answered
+// Q0-Q4 on 2026-10-19, each taking the option the design recommended -- while
+// the document still called Q0 unanswered and gating and Q2/Q3/Q4 open.
+func TestDocsVoiceModuleReconciliationReadsTheDesignAtItsMergeCommit(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+	// The corrected quotations, as the design at 80f2b7fa has them, pinned
+	// with the sentence that introduces each one: a quotation corrected in one
+	// place and left standing in another is the failure this catches, so the
+	// pins carry their sites rather than the bare phrases.
+	for _, want := range []string{
+		`§4.3: admitted by name — *"An entry is a provider name, never a URL"* — default-deny, *"Absent, empty, malformed or unreadable all mean **local only**"*`,
+		`§4.2: it *"shows exactly one of **local**, **remote (<provider name>)**, **blocked by project policy**"*, and *"It is not dismissible and it is not a toast"*`,
+		`§4.5: *"Every row is **fail-closed to local**"*`,
+		`applies the same rule in §4.5: *"the network is down | local only, immediately; **nothing is queued for later**, because a queued utterance is a recording, and D118's answer forbids one"*`,
+		`register of retention and training terms — *"The register records what the owner read, and it records that it is a reading"*`,
+		`its *Boundary* bullet reads *"the service stays secrets-only. Other always-on features (e.g. the phone client backend) go in sibling services that call it, keeping its attack surface minimal"*, and it says the service is *"the single holder of every secret a job needs"*`,
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; that is how the design at 80f2b7fa reads", path, want)
+		}
+	}
+	for _, banned := range []string{
+		// The seven misquotations a cloud review found, and the attribution
+		// that went with one of them.
+		"Every one of these is fail-closed to local",
+		"an always-visible indicator, and it must not be dismissible",
+		"cloud requested but refused",
+		"It records a reading, and it does not verify it",
+		"Its own scope is jobs.",
+		`"not by URL"`,
+		"absent, empty, malformed, or unreadable all mean local only",
+		"quotes the service's own boundary in §2",
+		"nothing is queued for later, because a queued utterance is a recording (D118: no audio is stored).",
+		// The same sentence with the design's words trimmed: it says "local
+		// only, immediately", and the reason reaches "and D118's answer
+		// forbids one".
+		"local only; nothing is queued for later",
+		`local only \| nothing is queued for later`,
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s carries %q again; that is not what the cited design says", path, banned)
+		}
+	}
+	// The design's five questions, as section 0, section 1 and the answers
+	// section now state them.
+	for _, want := range []string{
+		"records **Q0–Q4 all answered by the owner on 2026-10-19**",
+		"**The owner gave that acknowledgement on 2026-10-19 — option (a), yes as described —",
+		"took the design's recommendation: option (a), a new minimal service",
+		"answered by the owner on 2026-10-19 as option (a): the two settings are device-local",
+		"the owner's answer of 2026-10-19 is option (a): Check 110",
+		"Of the two gates that stood before them, **one has been answered**",
+		"**All five are answered**",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; the design at 80f2b7fa records Q0-Q4 answered on 2026-10-19", path, want)
+		}
+	}
+	for _, banned := range []string{
+		"thought given to the acknowledgement",
+		"nothing may be built before the design's own **Q0**",
+		"is still unanswered and still gates the build",
+		"**No, and it cannot: the acknowledgement is the owner's, and the design is right to gate on it.**",
+		"the design's Q2 (on `main` (`80f2b7fa`)) stays open",
+		"confirms the design's Q3 as still open",
+		"the design's own Q4 asks whether the remote half takes 66 or 110, and is still open",
+		"and **nothing in this folder presumes Q0 answered**",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s carries %q again; the design's Q0-Q4 were answered on 2026-10-19", path, banned)
+		}
+	}
+	// And the README, which repeated the stale Q0 claim in the present tense.
+	readme := readDoc(t, "docs/voice-module/README.md")
+	for _, want := range []string{
+		"that document's own **Q0**, **which the owner gave on 2026-10-19, option (a), yes as described**",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("docs/voice-module/README.md lacks %q; the acknowledgement it calls pending was given", want)
+		}
+	}
+	if strings.Contains(readme, "that document's own **Q0**, which gates the build") {
+		t.Errorf("docs/voice-module/README.md calls Q0 a gate again; the owner answered it on 2026-10-19")
+	}
+}
+
 // voiceModuleBranchOnlyPRs matches the branch-only shorthand: "⊂ PR #n" or
 // "⊂ **PR #n**", the notation section 2 defines as "on that pull request's
 // branch and not on `main`". Section 2's own definition and section 0's audit
@@ -1459,7 +1575,7 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 71 entries, numbered (1)–(71).
+// Mutation (verified, run and restored): 85 entries, numbered (1)–(85).
 // (64) Giving a merged pull request's work the branch-only shorthand again
 // ("the reader on `main` (`ebe69147`) subscribes" -> "the reader ⊂ PR #590
 // subscribes") fails TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit:
@@ -1488,6 +1604,57 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // is new stored material no redactor covers (F32)") fails the same test from the
 // source side, which is why it reads voice.md rather than trusting the
 // document's own words.
+// And fourteen that pin the quotations and the stale-question claims of the
+// revision before this one, all run and restored.
+// (72) Writing the failure ladder's sentence back as "Every one of these is
+// fail-closed to local" fails
+// TestDocsVoiceModuleReconciliationReadsTheDesignAtItsMergeCommit: the design
+// says "Every row is **fail-closed to local**", and the banned form is the one
+// the document used to carry.
+// (73) Writing the indicator's rule back as "an always-visible indicator, and
+// it must not be dismissible" fails it: the design's sentence is "It is not
+// dismissible and it is not a toast".
+// (74) Writing the register's sentence back as "It records a reading, and it
+// does not verify it" fails it: the design says "The register records what the
+// owner read, and it records that it is a reading".
+// (75) Replacing the indicator's three states with "shows local, remote, or
+// cloud requested but refused" fails it twice -- the ban and the missing
+// "shows exactly one of **local**, **remote (<provider name>)**, **blocked by
+// project policy**" -- so the design's three states cannot be flattened back
+// into a paraphrase.
+// (76) Writing the allow-list's entry rule back as "An entry is a provider
+// name, not by URL" fails it: the design says "never a URL", and the corrected
+// quotation is pinned with its "admitted by name ... default-deny" frame.
+// (77) Adding the serial comma back to the allow-list's default ("absent,
+// empty, malformed, or unreadable all mean local only") fails it: the design
+// has no comma there and no bold.
+// (78) Trimming the queue rule at its site in section 5 to "the network is
+// down | local only; nothing is queued for later" fails it: the design says
+// "local only, immediately" and reaches "and D118's answer forbids one".
+// (79) Trimming the same rule in section 0's quotations table fails it
+// separately: the table row is pinned in its own right, so neither site can
+// drift while the other holds the test up.
+// (80) Replacing the credentials spec's *Boundary* attribution ("its *Boundary*
+// bullet reads") with "quotes the service's own boundary in §2" fails it: the
+// boundary sentence is the spec's, not the design's section 2, and the site
+// frame is pinned.
+// (81) Changing the quoted scope sentence to "the only holder of every secret a
+// job needs" fails it from the source side as well: the quotation is checked
+// both ways against docs/credentials-service/spec.md, which says "the single
+// holder of every secret a job needs".
+// (82) Giving section 1's Q0 row the answer it carried before
+// ("**No, and it cannot: the acknowledgement is the owner's, and the design is
+// right to gate on it.**") fails it: the owner acknowledged Q0 on 2026-10-19,
+// and the banned form is the stale one.
+// (83) Writing "the design's Q2 (on `main` (`80f2b7fa`)) stays open, and the
+// owner has not answered it" back into section 1's Q2 row fails it: the row
+// must record the answer the owner gave, not the question's open state.
+// (84) Replacing "Of the two gates that stood before them, **one has been
+// answered**" with "**none has been answered**" fails it: Q0's gate is answered
+// and D44's egress decision is the one that stands.
+// (85) Putting "which gates the build" back into the README's amendment
+// sentence fails it: the acknowledgement is recorded, and the README bans the
+// present-tense gate it used to state.
 // (53) Reverting #5's consequence to "See #23 for what that costs" fails
 // TestDocsVoiceModuleReconciliationQuotesAreVerbatim: the cost of a nested,
 // separately signed binary is #17, and the document cites #17 for it elsewhere.
