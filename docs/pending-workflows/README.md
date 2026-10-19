@@ -160,8 +160,8 @@ That failure is **pre-existing and already recorded** — `shared/mailbox/README
 | | Node 22.23.3 | Node 26.12.0 |
 |---|---|---|
 | `npm test` (the step that decides the leg) | **1 test fails**, the punycode case above | every test passes |
-| the four proofs that run their own module's suite | pass; every mutation caught | pass; every mutation caught |
-| the three that run the package's `npm test` as their positive control | **refuse**, exit 2 | pass; every mutation caught |
+| the proofs that run their own module's suite (`command`, `mailbox`, `mailbox-sim`, `prompts`) | pass; every mutation caught | pass; every mutation caught |
+| the proofs that run the package's `npm test` as their positive control (`confirm`, `lease`, `mailbox-schema`) | **refuse**, exit 2 | pass; every mutation caught |
 | what the job shows | one red step at the test step; the proofs step skipped | green throughout |
 
 Measured on **2026-10-19**, in this container, on the two lines the job pins (Node 22.23.3 and 26.12.0, installed through `mise`), running exactly what the job runs: `cd shared && npm ci --ignore-scripts --no-audit --no-fund`, then `npm test`, then `bash shared/<module>/mutation-proof.sh` for each of the seven. The suite reported **476 tests: 475 pass and 1 fail on Node 22, 476 pass and 0 fail on Node 26**; the seven proofs reported **448 guards, 448 killed, 0 survived, 0 not applied on Node 26**, and on Node 22 the four module-suite proofs reported 29 + 45 + 109 + 93 killed with none surviving while the three package-suite proofs refused. Those two figures are a record of that run, not a standing claim about the tree — re-run the commands rather than trusting them, and note that nothing goes stale in the *job* when they change, only in this sentence.
