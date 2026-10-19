@@ -935,6 +935,29 @@ test('the chat says on the page that it is an illustration, and claims no more t
     `the chat's caption ${JSON.stringify(caption)} does not say where the agent's behaviour comes from, and the one thing about the figure a reader can check is that the agent's lines are its skills' (changes spec 2026-10-18, item 3)`,
   )
 
+  // And it sits **directly under the conversation** (review round 3, item 3a). It used to be
+  // the figure's last child with the watch block — the heading "Watch it run", the slot, the
+  // command bar and the skill's note — between it and the turns, so a reader met the caption
+  // after the heading of a different thing. It is the figure's last child still (that is the
+  // content model: a `figcaption` comes first or last), and the watch block is the figure's
+  // sibling now, so "last child" and "under the conversation" are the same place.
+  const parsed = parse(page)
+  const figure = findAll(parsed, (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
+  assert.ok(figure, 'the homepage renders no <figure class="chat">, and the caption is the figure\'s own name (changes spec 2026-10-18, item 3)')
+  const named = [...walk(figure)].find((el) => CHAT_CLASSES(el).includes('chat-caption'))
+  const children = (figure.children ?? []).filter((child) => child.name !== undefined)
+  assert.equal(
+    children[children.length - 1],
+    named,
+    "the chat's caption is not the figure's last child, and a `figcaption` is a figure's first or last child: this is the shape the HTML content model allows, and it is kept because the caption has to be reachable under the conversation (changes spec 2026-10-18, item 3a)",
+  )
+  const order = [...walk(parsed)]
+  const heading = order.find((el) => CHAT_CLASSES(el).includes('chat-watch-title'))
+  assert.ok(
+    heading === undefined || order.indexOf(named) < order.indexOf(heading),
+    "the chat's caption comes after the `fugaro watch` heading, and the review of round 3 found it there: the caption is what the conversation above it is, so it belongs at the foot of the conversation rather than under the heading of the block below it (changes spec 2026-10-18, item 3a)",
+  )
+
   // And the fact the caption may not claim, read off the figure itself: the results are not
   // lines of the document the turn that reports them cites. They are the illustration's own
   // labels — a run that has not happened has no pull request numbers — so a caption that
@@ -1008,15 +1031,29 @@ test('the slot for the watch screenshot is marked, empty, and adds no image', ()
     assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook a task and this check read is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
   }
 
-  // "right after the chat": the slot is the element after the turns, inside the chat's own
-  // figure, so the screenshot a later task adds lands where item 3 puts it.
-  const turns = findAll(page, (el) => CHAT_CLASSES(el).includes('chat-turns'))[0]
-  const siblings = (turns.parent.children ?? []).filter((child) => child.name !== undefined)
+  // "right after the chat": the slot opens the block under the conversation, directly beneath
+  // the heading of the thing the screenshot shows — the `fugaro watch` screen — so it is where
+  // item 3 puts it. It used to sit inside the chat's figure, between the turns and the watch
+  // bar; the review of round 3 moved the caption to the foot of the conversation (item 3a),
+  // and a `figcaption` is a figure's first or last child, so the watch block — heading, slot,
+  // bar, note — is the figure's sibling and carries the slot with it.
+  const heading = findAll(page, (el) => CHAT_CLASSES(el).includes('chat-watch-title'))[0]
+  assert.ok(heading, 'the homepage carries no "Watch it run" heading, and the screenshot slot and the command below it belong to a named block (changes spec 2026-10-18, item 3)')
+  const siblings = (heading.parent.children ?? []).filter((child) => child.name !== undefined)
   assert.equal(
-    siblings[siblings.indexOf(turns) + 1],
+    siblings[siblings.indexOf(heading) + 1],
     slot,
-    'the slot for the watch screenshot is not the element after the chat turns, and item 3 puts it right after the chat (changes spec 2026-10-18, item 3)',
+    'the slot for the watch screenshot is not the element after the `fugaro watch` heading, and item 3 puts it right after the chat, with the command bar below it (changes spec 2026-10-18, item 3)',
   )
+  const figure = findAll(page, (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
+  assert.ok(figure, 'the homepage renders no <figure class="chat">, and the conversation and its caption are the figure (changes spec 2026-10-18, item 3)')
+  for (let parent = slot.parent; parent; parent = parent.parent) {
+    assert.notEqual(
+      parent,
+      figure,
+      "the watch screenshot's slot is inside the chat's figure, and the caption under the conversation is the figure's last child: a slot after it is markup the HTML content model rejects, and the slot belongs to the `fugaro watch` block the screenshot is of (changes spec 2026-10-18, item 3a)",
+    )
+  }
 
   // And no image came with it: the wordmark is the homepage's only picture, so a screenshot
   // committed by mistake — the one thing this run must not add — is this failure.

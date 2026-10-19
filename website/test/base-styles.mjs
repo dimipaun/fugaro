@@ -1100,56 +1100,225 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
   return out
 }
 
+// ---- the chat is one card, one conversation (review round 3, item 3a) ----------------------
+//
+// The chat was three cards across the page's column — one turn each, `auto-fit` with an 18 rem
+// minimum — and the review of round 3 found what that draws: dead space inside each card, with
+// the reader's one short line floating in the middle of a card whose height the two long ones
+// set. What a conversation is instead is **one card with one column of lines**, the speaker at
+// the left of every line, at the width a line of prose is set at everywhere else on the site.
+// The three claims the arithmetic below holds are the three that make it that shape:
+//
+//   1. **the list is one column** — a row of anything (`repeat(auto-fit, …)`, more than one
+//      track, a `display: flex` row) is the shape the review refused;
+//   2. **the list is the card** — the border, the radius and the background are the list's,
+//      and a turn with a card of its own is the three-cards defect back again;
+//   3. **the speakers are one column** — the label column is a definite width every row
+//      shares, and the lines start at one edge down the whole conversation.
+//
+// The third is why the column is a fixed length rather than `max-content`, and it is the one
+// claim that is easy to get wrong in a way that looks right: `max-content` on a grid container
+// is resolved **per row**, against that row's own label, so `You` and `Your agent` give two
+// different columns and the two lines under them start 60 px apart. A content-sized column
+// therefore aligns nothing, and this refuses one — and then refuses a definite column too
+// narrow for the widest label in the markup, estimated with `textWidth` at the size the labels
+// are set in, so a longer speaker name fails here rather than wrapping inside the card.
+//
+// The cap is read rather than assumed, as it is for the flow's list: the list is an `<ol>`,
+// `base.css` holds lists to the measure, and the measure is what makes the card a readable
+// width. A rule that opts the list out of it (`max-width: none`) puts the conversation back
+// across the page, which is what the failure names.
+
+/** The margin the widest speaker label must have left in the column, in px. See `NAME_MARGIN`. */
+const LABEL_MARGIN = 4
+
+/** The chat’s turns on one built page, as `{ who }` — the speaker each row is labelled with. */
+export function chatSpeakers(html) {
+  return [...walk(parse(html))]
+    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('chat-turn'))
+    .map((el) => {
+      const who = [...walk(el)].find((child) => (child.attrs.get('class') ?? '').split(/\s+/).includes('turn-who'))
+      return who ? textOf(who).replace(/\s+/g, ' ').trim() : ''
+    })
+}
+
 /**
- * Every way the chat’s row of turns fails to be the row the page asks for. It is the same
- * defect the flow's list shipped with, in the figure beside it: the turns are an `<ol>`, so
- * `base.css`'s measure — `:where(p, ul, ol, dl, blockquote, figcaption) { max-width:
- * var(--measure) }`, 68 ch, about 735 px — reaches the list, and 735 px is narrower than three
- * cards of at least 18 rem with the gaps between them. The cap is invisible on a phone, where
- * the row is one column anyway, and on a wide screen it is a hole beside the third turn, which
- * `auto-fit` puts on a row of its own. So the list has to opt out of the measure itself, and
- * this is what holds it there: the smallest column and the gap come out of the list's own grid
- * rule, the number of cards out of the page, and the `max-width` in force out of the cascade.
+ * Every way the chat fails to be one card holding one conversation, at the width the desktop
+ * layout is read at, for one built page’s stylesheet and markup.
  */
-export function chatRowFailures(css, html) {
-  const turns = [...walk(parse(html))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('chat-turn'))
-  if (turns.length < 3) {
+export function chatConversationFailures(css, html) {
+  const out = []
+  const speakers = chatSpeakers(html)
+  if (speakers.length < 3) {
     return [
-      `the page prints ${turns.length} chat turn(s), and the figure this check sizes is item 3’s three-turn chat: the row it asks for cannot be read from fewer cards`,
+      `the page prints ${speakers.length} chat turn(s), and the figure this check sizes is item 3’s three-turn chat: the conversation it asks for cannot be read from fewer turns`,
     ]
   }
-  const rule = allRules(css).find((r) => /\.chat-turns(?![\w-])/.test(r.selector) && declarations(r)['grid-template-columns'] !== undefined)
-  if (!rule) {
-    return [
-      "no rule lays the chat’s turns out as a grid: three turns in a row is what item 3's figure draws, and without the rule there is no row to size, so a list that is still capped cannot be told from one that is not",
-    ]
-  }
-  const columns = declarations(rule)['grid-template-columns']
-  const gap = declarations(rule)['gap'] ?? '0'
-  const min = /minmax\(\s*([^,()]+?)\s*,/.exec(columns)
+  const rules = allRules(css)
   const tokens = lengthTokens(css)
-  const minPx = min ? toPx(min[1].trim(), tokens) : NaN
-  const gapPx = toPx(firstToken(gap), tokens)
-  if (Number.isNaN(minPx) || Number.isNaN(gapPx)) {
-    return [
-      `the chat’s row cannot be read: ${JSON.stringify(rule.selector)} asks for \`${columns}\` with a gap of \`${gap}\`, and a column or a gap this check cannot turn into pixels is one nothing checked (\`NaN\` passes every comparison below)`,
-    ]
+  const declared = (klass, property, width) =>
+    rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(width)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+
+  const DESKTOP = 80 * 16
+  const PHONE = 390
+
+  // ---- 1. the list is one column of lines --------------------------------------------------
+  const columns = declared('chat-turns', 'grid-template-columns', DESKTOP)
+  const display = declared('chat-turns', 'display', DESKTOP) ?? 'block'
+  if (display === 'flex' && (declared('chat-turns', 'flex-direction', DESKTOP) ?? 'row').startsWith('row')) {
+    out.push(
+      "the chat's turns are a flex row, and a row of cards across the page is the shape the review of round 3 refused: three turns of a quarter of the page each leave dead space inside the cards, with the reader's one short line floating in the middle of a card the long ones sized (changes spec 2026-10-18, item 3a)",
+    )
   }
-  const need = turns.length * minPx + (turns.length - 1) * gapPx
-  const cap = listMaxWidth(css, 80 * 16, listElement(html, 'chat-turns', 'item 3 puts the chat on the homepage'))
+  if (columns !== undefined) {
+    const tracks = splitTop(columns, ' ')
+    const repeats = /repeat\(/.test(columns)
+    if (repeats || tracks.length !== 1) {
+      out.push(
+        `the chat's turns are laid out as ${repeats ? `\`${columns}\`` : `${tracks.length} columns`}, and the conversation is one column of lines in one card: a row of cards is what the review of round 3 found — dead space inside each card, and the reader's one short line floating in the middle of it (changes spec 2026-10-18, item 3a)`,
+      )
+    }
+  }
+
+  // ---- 2. the list is the card, and a turn is a row of it ----------------------------------
+  if (declared('chat-turns', 'background', DESKTOP) === undefined || declared('chat-turns', 'border', DESKTOP) === undefined) {
+    out.push(
+      "the conversation's own list draws no card (`background` and `border` are the card, and one of them is missing): the turns are rows of one card rather than cards of their own (changes spec 2026-10-18, item 3a)",
+    )
+  }
+  for (const klass of ['chat-turn', 'turn-who', 'turn-line', 'turn-status', 'turn-results']) {
+    for (const property of ['background', 'border', 'border-radius']) {
+      const value = declared(klass, property, DESKTOP)
+      if (value === undefined) continue
+      out.push(
+        `a .${klass} draws a card of its own (\`${property}: ${value}\`), and the conversation is one card with the turns as its rows: a card per turn is the shape the review of round 3 refused, whatever the width it is drawn at (changes spec 2026-10-18, item 3a)`,
+      )
+    }
+  }
+
+  // ---- 3. the card is a readable width, not the page ---------------------------------------
+  const cap = listMaxWidth(css, DESKTOP, listElement(html, 'chat-turns', 'item 3 puts the chat on the homepage'))
   if (cap.unreadable) {
     return [
       `the chat’s turns are reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach the cascade reader in \`website/test/base-styles.mjs\` the construct, or write the rule in a shape it reads`,
     ]
   }
-  if (cap.px < need) {
-    return [
-      `the chat’s turns are capped at ${Math.round(cap.px)} px (max-width: ${cap.value}` +
-        `${cap.selector ? `, from ${JSON.stringify(cap.selector)}` : ''}${cap.query ? ` inside ${cap.query}` : ''}), and the ${turns.length} cards with the gaps between them need ${Math.round(need)} px: ` +
-        `the list is an \`<ol>\`, base.css holds lists to the measure, and the row the page asks for is drawn in a box narrower than it — the last turn on a row of its own, with a hole beside it (changes spec 2026-10-18, item 3)`,
-    ]
+  const measurePx = capPixels(tokenText(css).get('measure') ?? '', tokenText(css), lengthTokens(css), elementFontPx(css))
+  if (Number.isNaN(measurePx)) {
+    out.push("the measure this site sets prose to cannot be read from the stylesheet, so 'a readable width' is not a number this check can hold the chat's card to")
+  } else if (cap.px > measurePx) {
+    out.push(
+      `the chat's turns are drawn at ${Number.isFinite(cap.px) ? `${Math.round(cap.px)} px` : 'no cap at all'} (max-width: ${cap.value}` +
+        `${cap.selector ? `, from ${JSON.stringify(cap.selector)}` : ''}${cap.query ? ` inside ${cap.query}` : ''}), and a line of this site's prose is set at the measure, ${Math.round(measurePx)} px: the conversation is one card at a readable width rather than a figure stretched across the page (changes spec 2026-10-18, item 3a)`,
+    )
   }
-  return []
+
+  // ---- 4. the speakers are one column ------------------------------------------------------
+  const turnColumns = declared('chat-turn', 'grid-template-columns', DESKTOP)
+  if (turnColumns === undefined) {
+    out.push(
+      `no rule gives a turn two columns at ${DESKTOP / 16} rem: the speaker is a column of its own at the left of the line it introduces, and without it every line starts wherever its own name ends (changes spec 2026-10-18, item 3a)`,
+    )
+  } else {
+    const tracks = splitTop(turnColumns, ' ')
+    const label = tracks[0] ?? ''
+    const content = /^(?:max-content|min-content|auto|fit-content\(.*\)|[\d.]+fr)$/.test(label) || label.includes('fr')
+    const labelPx = content ? NaN : toPx(label, tokens)
+    const labelSize = toPx(declared('turn-who', 'font-size', DESKTOP), tokens)
+    const widest = speakers.reduce((a, b) => (textWidth(b, labelSize) > textWidth(a, labelSize) ? b : a), '')
+    const need = textWidth(widest, labelSize) + LABEL_MARGIN
+    if (tracks.length !== 2) {
+      out.push(
+        `a turn is laid out as ${tracks.length} column${tracks.length === 1 ? '' : 's'} (\`${turnColumns}\`), and a turn of the conversation is two: its speaker, and what they said (changes spec 2026-10-18, item 3a)`,
+      )
+    } else if (content) {
+      out.push(
+        `the speaker column is \`${label}\`, which a browser sizes per row against that row's own label: \`${speakers[0]}\` and the longest of the labels (${JSON.stringify(widest)}) then give two different columns, and the two lines under them start at two different places — a content-sized column aligns nothing (changes spec 2026-10-18, item 3a)`,
+      )
+    } else if (Number.isNaN(labelPx) || Number.isNaN(labelSize) || Number.isNaN(need)) {
+      out.push(
+        `the speaker column's arithmetic cannot be read: \`${label}\` at a label size of \`${declared('turn-who', 'font-size', DESKTOP) ?? '(nothing declared)'}\` is not a length this check can turn into pixels, and a length it cannot read is a length nothing checked (\`NaN\` passes every comparison) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 3a)`,
+      )
+    } else if (labelPx < need) {
+      out.push(
+        `the speaker column is ${Math.round(labelPx)} px and the widest speaker label in the markup (${JSON.stringify(widest)}, at ${labelSize} px, estimated at ${Math.round(textWidth(widest, labelSize))} px) needs ${Math.round(need)} px with the margin this check asks for: the labels are one column, so the column has to hold the widest of them on one line (changes spec 2026-10-18, item 3a)`,
+      )
+    }
+    for (const klass of ['turn-line', 'turn-status', 'turn-results']) {
+      const column = declared(klass, 'grid-column', DESKTOP)
+      if (column === undefined || !/^2(\s*\/\s*-?1)?$/.test(column.trim())) {
+        out.push(
+          `a .${klass} is not in the second column of its turn (\`grid-column: ${column ?? '(nothing declared)'}\`), so what the speaker said starts under its own label rather than at the edge every line of the conversation shares (changes spec 2026-10-18, item 3a)`,
+        )
+      }
+    }
+  }
+
+  // ---- 5. on a phone the label goes above the line ------------------------------------------
+  //
+  // The label column is a fixed length, and a fixed length that suits a 1056 px card takes a
+  // third of a 390 px one. Below the layout's own breakpoint a turn is one column, so the
+  // speaker is a line above what they said; this is the end that says the desktop rule is
+  // inside a breakpoint rather than in force everywhere.
+  const phoneColumns = declared('chat-turn', 'grid-template-columns', PHONE)
+  if (phoneColumns !== undefined && splitTop(phoneColumns, ' ').length > 1) {
+    out.push(
+      `at ${PHONE} px a turn is laid out as \`${phoneColumns}\`, ${splitTop(phoneColumns, ' ').length} columns on a ${PHONE} px screen: the speaker column is a fixed length sized for a card of a thousand pixels, and below the layout's own breakpoint the label goes above the line it introduces (changes spec 2026-10-18, item 3a)`,
+    )
+  }
+  return out
+}
+
+// ---- the watch slot reserves no space until the image lands (review round 3, item 3b) ------
+
+/**
+ * Every way the `fugaro watch` slot breaks the two rules that make it a slot rather than a
+ * placeholder. It is empty until a later task adds the screenshot — that is item 3's own
+ * arrangement and PR #622's image — and the review of round 3 found the cost of getting it
+ * wrong: about 140 px of blank page between the chat and the command bar under it. So:
+ *
+ *   - **nothing draws a box around an empty slot.** `:empty { display: none }` is what takes
+ *     it out of the page while it holds nothing, and any rule that gives the slot itself a
+ *     height, a padding, a border, a background or a margin is the blank rectangle coming
+ *     back. Rules about what is *inside* the slot (`> img`) are the other half and are let
+ *     through;
+ *   - **the image that lands in it is sized already.** A rule for the slot's own `img` is here,
+ *     so the later task's change is one `<img>` line in the markup and no CSS that nobody has
+ *     looked at.
+ */
+export function chatSlotFailures(css, html) {
+  const out = []
+  const slot = [...walk(parse(html))].find((el) => el.attrs.get('data-slot') === 'watch-screenshot')
+  if (!slot) return out // the markup's slot is `test/home.mjs`'s subject, not this one's
+  const own = allRules(css).filter((rule) => /\.chat-shot(?![\w-])/.test(rule.selector))
+  const empty = own.find((rule) => rule.selector.includes(':empty'))
+  if (empty === undefined || declarations(empty)['display'] !== 'none') {
+    out.push(
+      "no rule takes the watch screenshot's slot out of the page while it is empty (`.chat-shot:empty { display: none }`): the slot holds nothing until the image lands, and an empty element that still takes space is blank page between the conversation and the command bar (review round 3, item 3b)",
+    )
+  }
+  for (const rule of own) {
+    if (rule.selector.includes(':empty')) continue
+    if (rule.selector.includes('>')) continue // a rule about the image inside the slot
+    const declarations_ = declarations(rule)
+    for (const property of ['height', 'min-height', 'aspect-ratio', 'padding', 'border', 'background', 'margin']) {
+      const value = declarations_[property]
+      if (value === undefined) continue
+      out.push(
+        `\`${rule.selector}\` gives the watch screenshot's slot a \`${property}: ${value}\`${rule.query ? ` inside ${rule.query}` : ''}, and the slot is empty until the image lands: a slot with a box of its own is blank page in the meantime, which is what the review of round 3 measured at about 140 px (review round 3, item 3b)`,
+      )
+    }
+  }
+  if (!own.some((rule) => /(^|[^\w-])img(?![\w-])/.test(rule.selector))) {
+    out.push(
+      "no rule sizes the image that goes into the watch screenshot's slot (`.chat-shot > img`): the image is a separate task's to add, and the rule that draws it belongs beside the slot so that adding it is one line of markup (review round 3, item 3b)",
+    )
+  }
+  return out
 }
 
 /** The step names one built page prints, in the flow's order. */
@@ -1207,54 +1376,100 @@ test('the four-across flow has room for the step names it prints', () => {
   assert.deepEqual(failures, [], `the flow cannot render its own step names:\n  ${failures.join('\n  ')}`)
 })
 
-test('the chat’s turns are the row the page asks for, not a box the measure squeezes', () => {
+test('the chat is one card holding one conversation, at a readable width', () => {
   const failures = []
   let checked = 0
   for (const { rel, html } of builtPages()) {
     if (!html.includes('class="chat-turn"')) continue
     checked += 1
-    failures.push(...chatRowFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+    failures.push(...chatConversationFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+    failures.push(...chatSlotFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
   }
   assert.ok(checked > 0, 'no built page carries the chat, and item 3 puts it on the homepage')
-  assert.deepEqual(failures, [], `the chat’s row cannot be drawn as the page asks for it:\n  ${failures.join('\n  ')}`)
+  assert.deepEqual(failures, [], `the chat is not the one conversation card the page asks for:\n  ${failures.join('\n  ')}`)
 })
 
-test('every chat-row refusal fires on the defect it names', () => {
+test('every chat-conversation refusal fires on the defect it names', () => {
   const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const css = pageCss(home)
+
+  /** Today's stylesheet with one declaration added to the first rule whose selector matches. */
+  const declaring = (pattern, property) => {
+    const next = css.replace(pattern, (match) => `${match.slice(0, -1)};${property}}`)
+    assert.notEqual(next, css, `this fixture adds \`${property}\` to the first rule matching ${pattern}, and the built stylesheet no longer carries one`)
+    return next
+  }
+  const onChatTurns = (property) => declaring(/\.chat-turns\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, property)
+
   const cases = [
-    // The defect this check was written for: the measure reaching the chat’s list, which is an
-    // `<ol>` like the flow's, so `auto-fit` fits the two columns the cap leaves and the third
-    // turn's card lands on a row of its own with a hole beside it.
+    // The defect the review of round 3 found: the turns are three cards across the page.
+    ['the row of cards comes back', onChatTurns('grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))'), /laid out as `repeat\(auto-fit/, home],
+    // And the other way of writing the same row: a flex row of the same cards.
+    ['the turns are a flex row', onChatTurns('display:flex;flex-direction:row'), /a flex row/, home],
+    // And the cap opted out of, which puts the conversation back across the page.
+    ['the measure opted out of', onChatTurns('max-width:none'), /a line of this site's prose is set at the measure/, home],
+    // A card per turn, which is the same defect drawn with borders.
     [
-      'the measure’s cap on the chat’s turns',
-      {
-        css: plant(
-          'grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));max-width:none',
-          'grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))',
-        ),
-        html: home,
-      },
-      /the chat’s turns are capped at \d+ px/,
+      'a card per turn',
+      declaring(/\.chat-turn\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, 'background:var(--surface)'),
+      /draws a card of its own/,
+      home,
     ],
-    // A grid that asks for no minimum column, or a gap this reader cannot turn into pixels, is
-    // refused rather than carried into the sum as `NaN` — which passes every comparison below.
+    // The speaker column sized by the row's own content, which aligns nothing.
     [
-      'a grid rule this reader cannot turn into pixels',
-      { css: plant('repeat(auto-fit,minmax(18rem,1fr))', 'repeat(auto-fit,minmax(0,1fr))'), html: home },
-      /the chat’s row cannot be read/,
+      'a content-sized speaker column',
+      plant('grid-template-columns:7rem minmax(0,1fr)', 'grid-template-columns:max-content minmax(0,1fr)'),
+      /a content-sized column aligns nothing/,
+      home,
+    ],
+    // And a definite column too narrow for the widest label — the mutation-proved end of the
+    // arithmetic above: the widest speaker label in the markup no longer fits on one line.
+    [
+      'a speaker column too narrow for the labels',
+      plant('grid-template-columns:7rem minmax(0,1fr)', 'grid-template-columns:2rem minmax(0,1fr)'),
+      /the widest speaker label in the markup/,
+      home,
+    ],
+    // A line that starts under its own label rather than at the shared edge. One rule carries
+    // the three parts of a turn, so all three are refused: that is the reading, part by part.
+    ['a line outside the second column', plant('{grid-column:2}', '{grid-column:1}'), /is not in the second column/, home, 3],
+    // The desktop column in force on a phone, where it would take a third of the screen.
+    [
+      'the two columns in force at 390 px',
+      declaring(/\.chat-turn\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/, 'grid-template-columns:7rem minmax(0,1fr)'),
+      /below the layout's own breakpoint/,
+      home,
     ],
     // And the page's own side: fewer than the three turns item 3's figure draws.
-    [
-      'a page whose chat is not the figure’s three turns',
-      { css: pageCss(home), html: home.replace('class="chat-turn"', 'class="chat-turn-solo"') },
-      /prints 2 chat turn\(s\)/,
-    ],
+    ['a page whose chat is not the figure’s three turns', css, /prints 2 chat turn\(s\)/, home.replace('class="chat-turn"', 'class="chat-turn-solo"')],
   ]
-  for (const [what, { css, html }, expected] of cases) {
+  for (const [what, stylesheet, expected, html, count = 1] of cases) {
     assert.deepEqual(
-      chatRowFailures(css, html).map((line) => (expected.test(line) ? 'fired' : line)),
-      ['fired'],
+      chatConversationFailures(stylesheet, html).map((line) => (expected.test(line) ? 'fired' : line)),
+      Array(count).fill('fired'),
       `${what}: the refusal did not fire, and this is what it said instead`,
+    )
+  }
+
+  // The slot's two rules, each planted: the rule that takes an empty slot out of the page, and
+  // the rule that sizes the image a later task adds.
+  const nothingPainted = css.replace(
+    /\.chat-shot\[data-astro-cid-[a-z0-9]+\]:empty\{display:none\}/,
+    '.chat-shot[data-astro-cid-6fbtmsuw]:empty{display:block}',
+  )
+  assert.notEqual(nothingPainted, css, "this fixture turns the slot's `:empty` rule into one that still draws it, and the built stylesheet no longer carries that rule")
+  const noImageRule = css.replace(/\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img[^{]*\{[^}]*\}/, '')
+  assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the image in the slot, and the built stylesheet no longer carries one")
+  const slotCases = [
+    ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
+    ['a box drawn around the empty slot', `${css}\n.chat-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
+    ['the image rule removed with the slot still empty', noImageRule, /no rule sizes the image that goes into the watch screenshot's slot/],
+  ]
+  for (const [what, stylesheet, expected] of slotCases) {
+    const failures = chatSlotFailures(stylesheet, home)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
     )
   }
 })

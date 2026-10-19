@@ -102,7 +102,11 @@ const TURNS = [
     status: 'Fugaro: launching 3 jobs',
   },
   {
-    who: 'Your agent, a few minutes later',
+    // The same speaker as the turn above, and the same label: the two lines a label is read
+    // against are one column of the conversation, so the labels are the two speakers' names
+    // and the timing — "a few minutes later" — is what the results under the third line say
+    // (a label that names a time instead of a speaker is a third column width for one row).
+    who: 'Your agent',
     turn: 'agent',
     line: 'It always ends with a pull request, a draft one when it is not sure.',
     source: WORKING,
@@ -212,14 +216,41 @@ if (!source('README.md').includes(WATCH)) {
     }
   </ol>
 
+  {/* The caption is the figure's last child, and it is **directly under the conversation**:
+      it says what the picture is rather than leaving a reader to take it for a session that
+      happened (D184's rule for the transcript this component replaced), and a reader meets it
+      before the `fugaro watch` block below rather than after it (review round 3, item 3a: the
+      caption used to sit under "Watch it run", which is a different thing's heading). It
+      claims nothing about where the lines come from, because not every line is a quotation:
+      the request is item 3's own example of one, and the three results are the
+      illustration's — a run that has not happened has no pull request numbers to quote. Only
+      the two turns the agent speaks (and the launch under them) are the skills' sentences,
+      which is what the second half of the caption says. The caption is the site's own
+      sentence rather than a quotation, so `website/test/home.mjs` holds it to the shape it
+      has to keep and `website/test/wording.mjs` refuses the claim it used to make. */}
+  <figcaption class="chat-caption">
+    An illustration of the workflow, not a recording of a session: what you type, and the
+    shape of what your agent does and reports. The agent's behaviour comes from the skills
+    Fugaro installs.
+  </figcaption>
+</figure>
+
+{/* The `fugaro watch` block: the heading, the slot the screenshot goes into, the command and
+    the skill's note about it. **It is outside the figure**, because the caption above is the
+    figure's last child — HTML content model — and the caption belongs under the
+    conversation. The block is still the same page and the same component, and
+    `website/test/home.mjs` reads it there. */}
+<div class="chat-watch-block">
+  <h3 class="chat-watch-title">Watch it run</h3>
+
   {/* Where the `fugaro watch` screenshot goes (changes spec item 3): a separate task adds the
       image, and until it exists this element carries nothing at all — no placeholder, no
       empty frame, no request for a file the build does not produce. `data-slot` is the hook
       that task and `website/test/home.mjs` read; it is deliberately not a class, so it is not
-      something the stylesheet can start drawing. */}
+      something the stylesheet can start drawing. The rule below sizes the image the moment
+      the slot holds one, and an empty slot takes no space at all, so adding the image is
+      `<img src="…" alt="…">` on the line inside this element and nothing else. */}
   <div class="chat-shot" data-slot="watch-screenshot"></div>
-
-  <h3 class="chat-watch-title">Watch it run</h3>
 
   <div class="chat-watch command-block" data-copy>
     <Fragment set:html={copyControlHTML('Copy the command')} />
@@ -229,37 +260,29 @@ if (!source('README.md').includes(WATCH)) {
   {/* The skill's own line about the screen, with the command in the site's code style rather
       than in markdown backticks (the line `WATCH_NOTE` above is held to the skill). */}
   <p class="chat-watch-note"><code>{WATCH}</code> {WATCH_TAIL}</p>
-
-  {/* The caption is the figure's last child and its name: it says what the picture is rather
-      than leaving a reader to take it for a session that happened (D184's rule for the
-      transcript this component replaced). **It claims nothing about where the lines come
-      from, because not every line is a quotation**: the request is item 3's own example of
-      one, and the three results are the illustration's — a run that has not happened has no
-      pull request numbers to quote. Only the two turns the agent speaks (and the launch under
-      them) are the skills' sentences, which is what the second half of the caption says. The
-      caption is the site's own sentence rather than a quotation, so `website/test/home.mjs`
-      holds it to the shape it has to keep and `website/test/wording.mjs` refuses the claim it
-      used to make. */}
-  <figcaption class="chat-caption">
-    An illustration of the workflow, not a recording of a session: what you type, and the
-    shape of what your agent does and reports. The agent's behaviour comes from the skills
-    Fugaro installs.
-  </figcaption>
-</figure>
+</div>
 
 <style>
   /* Tokens only (W1.2). The chat is quieter than the diagram above it — it is an illustration
      of what happens next rather than the picture of the run — and the accent marks the
      agent's turns, which is where the work leaves the reader's hands.
 
-     **The figure takes the page's column, and its turns take the row.** It used to be a
-     68 ch column with the right two-thirds of the page empty beside it, which is what the
-     review of this branch saw: a figure that is the page's third block should use the page.
-     Three turns fit the row as three cards, so they do; the prose under them (the note and
-     the caption) keeps the measure, because a line of 68 ch is a line a reader can follow and
-     a line of 1000 px is not. */
+     **One card, one conversation, at a readable width** (review round 3, item 3a). The turns
+     were three cards across the page's column, and three cards of a quarter of the page each
+     left dead space inside them: the reader's one short line floated in the middle of a card
+     whose height its neighbours set. A conversation is one card with the speaker at the left
+     of every line, so the column is the measure — the width a line of prose is set at
+     everywhere else on the site, and the width a chat is read at — and the figure, the
+     caption and the watch block under it all take it. */
   .chat {
-    max-width: var(--page-max);
+    max-width: var(--measure);
+    margin: 0 auto;
+  }
+
+  /* The watch block below the figure: the same column as the conversation it belongs to, so
+     its heading, its command and its bar share the card's left edge rather than the page's. */
+  .chat-watch-block {
+    max-width: var(--measure);
     margin: 0 auto;
   }
 
@@ -271,36 +294,60 @@ if (!source('README.md').includes(WATCH)) {
     color: var(--text);
   }
 
-  /* The turns as one row of cards wherever there is room for three: `auto-fit` with an 18 rem
-     minimum gives three columns on the page's column and one on a phone's, with no breakpoint
-     of this component's own to keep in step with the layout's. */
+  /* **The list is the card.** One border, one background and one radius around the whole
+     conversation, with the turns as its rows — no `max-width: none`: the cap `base.css` puts
+     on a list is the measure, and the card this column is drawn at is the measure, so the cap
+     is the shape rather than something to opt out of. */
   .chat-turns {
-    /* The list is an `<ol>`, and `base.css` caps every `ul`, `ol` and `dl` at `--measure`
-       (68 ch, about 735 px) — narrower than the row the three turns ask for. The cap is
-       invisible on a phone, where the row is one column anyway, and on a wide screen it is a
-       hole where the third turn's card should be: the row has to opt out of it. */
-    max-width: none;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-    gap: var(--space-xs);
+    grid-template-columns: minmax(0, 1fr);
     margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .chat-turn {
-    display: grid;
-    gap: var(--space-3xs);
-    padding: var(--space-sm);
+    padding: var(--space-sm) 0;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface);
+    list-style: none;
   }
 
-  /* The agent's turns carry the accent as a rail: the reader's own turn is the flat card,
-     and the two turns where Fugaro does the work are the ones marked. */
+  /* A turn is one row of it. The rail is declared on every row and coloured on the agent's,
+     rather than added to the agent's alone: a rail only the marked rows carry would move the
+     reader's own line 2 px left of the agent's, and the four lines of one conversation are
+     one column (review round 3, item 3a). */
+  .chat-turn {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3xs);
+    padding: var(--space-2xs) var(--space-md);
+    border-left: calc(var(--border-width) * 2) solid transparent;
+  }
+
   .chat-turn[data-turn='agent'] {
-    border-left: calc(var(--border-width) * 2) solid var(--accent);
+    border-left-color: var(--accent);
+  }
+
+  /* From the layout's own 35 rem up, the speaker is a column of its own at the left of the
+     line it introduces, and what they said starts at one edge down the whole conversation.
+     **The column is a fixed 7 rem and not `max-content`**, and that is the whole of "the
+     labels are aligned": a `max-content` column is resolved per row against that row's own
+     label, so two speakers of two different lengths give two different column widths and the
+     lines start at two different places. `website/test/base-styles.mjs` reads this rule and
+     refuses a content-sized column for exactly that reason — and reads the label at the size
+     this component sets it to (`.turn-who`, the smallest mono size) and requires the column
+     to be wide enough for the widest label in the markup with room to spare, so a longer
+     speaker name fails the build rather than wrapping in a column too narrow for it. */
+  @media (min-width: 35rem) {
+    .chat-turn {
+      grid-template-columns: 7rem minmax(0, 1fr);
+      column-gap: var(--space-sm);
+      align-items: baseline;
+    }
+
+    /* Everything but the label is in the second column, under the line it belongs to. */
+    .turn-line,
+    .turn-status,
+    .turn-results {
+      grid-column: 2;
+    }
   }
 
   .turn-who {
@@ -344,11 +391,33 @@ if (!source('README.md').includes(WATCH)) {
   }
 
   .chat-watch-title {
-    margin: var(--space-md) 0 var(--space-3xs);
+    margin: var(--space-lg) 0 var(--space-3xs);
     font-family: var(--font-sans);
     font-size: var(--font-size-base);
     font-weight: var(--weight-semibold);
     color: var(--text);
+  }
+
+  /* The slot the `fugaro watch` screenshot goes into, and **a slot that takes no space until
+     the image lands** (review round 3, item 3b). `:empty` is
+     what makes that true: the element is written empty and stays empty until a later task puts
+     the screenshot in it, and a slot that reserved a height, a frame or a background would be
+     a blank rectangle on the page in the meantime — about 140 px of it, which is what the
+     review saw. `website/test/home.mjs` reads the rules that reach this slot and refuses any
+     that gives it a box of its own, so a placeholder cannot come back.
+     The rule under it is the other half: what sizes the image the moment the slot holds one,
+     so adding it is `<img src="…" alt="…">` inside the element and no CSS at all. */
+  .chat-shot:empty {
+    display: none;
+  }
+
+  .chat-shot > img {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: var(--space-sm) 0 0;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
   }
 
   /* One bar around the block `base.css` lays out: the command at the left and its control at

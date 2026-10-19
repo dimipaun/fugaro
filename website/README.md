@@ -150,9 +150,9 @@ with fixtures that keep its refusals running, and none of them needs the network
   - **Page weight per page:** 927,834 bytes. Three times 309,278: the heaviest page, the
     docs hub, at 247,422 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %. The 170 bytes it
-    moved since the last derivation are the placement rule below, which every page's inlined
-    stylesheet carries.
-  - **Whole site:** 3,054,207 bytes. Three times 1,018,069 (every file in `dist/`, 814,455
+    moved since the last derivation are the one placement rule the site figure below accounts
+    for — `.command-block` — which every page's inlined stylesheet carries.
+  - **Whole site:** 3,056,685 bytes. Three times 1,018,895 (every file in `dist/`, 815,116
     bytes across 21 files, plus 25 %). The figure moved 1,242 bytes with the second fix
     round on this branch: the homepage's order (the promise and its call to action, then the
     diagram, then the chat, then the install paths — changes spec item 4), the flow's
@@ -161,22 +161,30 @@ with fixtures that keep its refusals running, and none of them needs the network
     of being clipped; and then 15 with that round's last edit, `max-width: none` on the
     chat's turns, which is the same cap the flow's list had already opted out of — the turns
     are an `<ol>` too, and the measure drew them two across with a hole beside the third.
+    (That declaration is gone again in the third round, where the turns stop being cards and
+    the measure is the card's own width.)
     Before that it moved 52 bytes with the chat's caption, rewritten so
     that it says what the figure is rather than claiming every line of it is a quotation —
     and 29 with the fix round's two layout declarations (the watch bar's `flex-direction:
     row-reverse` and the flow's `rotate(-90deg)`) — and each time it was re-derived in the
     commit that moved it, like any other (D192).
-    The third fix round moved it twice more, and this is where both are re-derived, because
-    only the page figure was re-derived for the first: **1,892 bytes** with the round's first
-    commit, which settled the flow's layout (the cards answering to one height, the step
-    names at `--font-size-lg` so `Ephemeral cloud job` is one line, the two-by-two from
-    35 rem up and the arrow moved out of the flow into the gap), and **1,775 now**. Of
-    those 1,775, **1,870** is the one placement rule `base.css` gained — `.command-block` and
-    its `pre`, which is in every page's inlined stylesheet at 170 bytes each — and the
-    homepage gives 95 back for it, because the watch bar's own rule no longer writes the four
-    declarations that rule now owns and pays 14 for the class name it gained. That is the
-    whole point of the change (review round 3, item 3c): one placement, written once,
-    instead of one per component.
+    The third fix round moved it three times, and this is where all three are re-derived,
+    because only the page figure was re-derived for the first: **1,892 bytes** with the
+    round's first commit, which settled the flow's layout (the cards answering to one height,
+    the step names at `--font-size-lg` so `Ephemeral cloud job` is one line, the two-by-two
+    from 35 rem up and the arrow moved out of the flow into the gap); **1,775** with the
+    second, the one placement rule `base.css` gained — `.command-block` and its `pre`, which
+    is in every page's inlined stylesheet at 170 bytes each, 1,870 in all, less the 95 the
+    homepage gives back because the watch bar's own rule no longer writes the four
+    declarations that rule now owns and pays 14 for the class name it gained; and **661**
+    with the third, all of it on the homepage alone. That last one is the chat drawn as one
+    conversation card (one card instead of three, the speaker column the labels share, and the
+    caption moved to the foot of the conversation, which takes the watch block — heading, the
+    empty slot, the bar and the note — out of the figure and makes it the figure's sibling),
+    and with it the slot's two rules: the one that takes an empty slot out of the page so it
+    reserves no height at all, and the one that sizes the image the moment a later task puts
+    one in it. Each of the three was re-derived in the commit that moved it, like any other
+    (D192).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
