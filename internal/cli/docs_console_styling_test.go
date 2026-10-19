@@ -254,6 +254,70 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	if strings.Contains(indexRow, "and nothing else") {
 		t.Errorf("%s: §1.1's row on the served document says the head holds one script \"and nothing else\"; the head also holds `<meta charset=\"utf-8\">`, the CSP `<meta http-equiv>` copy and `<title>`", path)
 	}
+
+	// Five sentences of this document were about files that do not support them,
+	// and each was found by reading the file rather than the sentence beside it:
+	// a helper named for Spend alone that all four screens share; a token offered
+	// for the direction it does not go; a unit the breakpoints are written in and
+	// the table never converts; and a bundler described as having a mechanism that
+	// is nowhere in it. The fifth, §6.2's account of how the golden specs choose a
+	// theme, is pinned in TestDocsConsoleStylingPhaseOrdering, with the dependency
+	// it justified. Each pin below is the sentence that replaced the claim, and
+	// each was proved by putting the claim back and watching the case fail by name.
+
+	// §1.1: the class is written in every screen's `make`, and `cell` calls it.
+	evidence := mdFlat(mdBetween(t, path, doc, "### 1.1 ", "### 1.2 "))
+	if !strings.Contains(evidence, "inside that file's **`make`** helper") {
+		t.Errorf("%s: §1.1 does not name each screen's `make` helper as where the class is written; it is the one line all four screens share (`live.ts` 804, `spend.ts` 1317, `projects.ts` 879, `run.ts` 708), and a screen named with a different helper is a reader sent to look at a function that only calls that one", path)
+	}
+	for _, screen := range []string{"`live.ts`", "`spend.ts`", "`projects.ts`", "`run.ts`"} {
+		if !strings.Contains(evidence, screen) {
+			t.Errorf("%s: §1.1's screens paragraph does not name %s; all four have the same `make`/`cell` pair, and the sentence is about what they have in common", path, screen)
+		}
+	}
+	if strings.Contains(evidence, "its own `cell`") {
+		t.Errorf("%s: §1.1 keeps the claim that `spend.ts` writes its class \"at its own `cell`\"; `cell` only calls `make`, which is where the class is set, and all four screens share the shape", path)
+	}
+
+	// §3.8: the compact token is shorter, so it is not the answer for a taller row.
+	density := mdFlat(mdBetween(t, path, doc, "### 3.8 ", "### 3.9 "))
+	for _, want := range []struct{ has, because string }{
+		{"a shorter row says `--row-height-compact`", "§3.8 sends a *shorter* row to `--row-height-compact`; §3.1 defines it as `20px` against `--row-height`'s `24px`, so it cannot be the token for a taller one"},
+		{"a taller row says an explicit multiple", "§3.8 gives the taller row an explicit multiple, which is the only construct that goes that way — no token is taller than `--row-height`"},
+	} {
+		if !strings.Contains(density, want.has) {
+			t.Errorf("%s: §3.8 does not say %q — %s", path, want.has, want.because)
+		}
+	}
+	if strings.Contains(density, "wants a taller row says `--row-height-compact`") {
+		t.Errorf("%s: §3.8 sends a taller row to `--row-height-compact`, which is 20px against `--row-height`'s 24px — 4px shorter; the escape hatch for a taller row does not exist", path)
+	}
+
+	// §4.2: the breakpoints are written in `em`, and the table says which `em`.
+	narrow := mdFlat(mdBetween(t, path, doc, "### 4.2 ", "### 4.3 "))
+	for _, want := range []string{"62.5em", "48.75em", "35em"} {
+		if !strings.Contains(narrow, want) {
+			t.Errorf("%s: §4.2 does not give %s among the breakpoints; the section says they are written in `em` against the root size, so the `em` value is what the task that writes the media queries needs, and a table of pixel widths alone leaves the unit unresolved", path, want)
+		}
+	}
+	if strings.Contains(narrow, "≤ 1000 px") {
+		t.Errorf("%s: §4.2's table still gives a bare pixel width; the queries are written in `em`, and the conversion (1000 ÷ 16 = 62.5em at the 16px default) is what the two are tied together by", path)
+	}
+
+	// §5.2: the bundler owns an output directory, it does not hold an allow-list.
+	wiring := mdFlat(mdBetween(t, path, doc, "### 5.2 ", "### 5.3 "))
+	for _, want := range []struct{ has, because string }{
+		{"owned set computed at run time", "§5.2 describes the bundler's real shape: the owned set is computed at run time from the outputs, the `siblings` and the served documents"},
+		{"`SERVED_FILES`", "§5.2 names `SERVED_FILES` as where an ordered, frozen list actually lives, rather than implying the bundler has one"},
+		{"`OUTPUTS`", "§5.2 names the e2e suite's `OUTPUTS` as the second frozen list, beside `SERVED_FILES`"},
+	} {
+		if !strings.Contains(wiring, want.has) {
+			t.Errorf("%s: §5.2 does not say %q — %s", path, want.has, want.because)
+		}
+	}
+	if strings.Contains(wiring, "an ordered, frozen allow-list, and a refusal for anything else") {
+		t.Errorf("%s: §5.2 describes the bundler as an ordered, frozen allow-list; it has neither — `owned` is a `Set` built at run time from the outputs and the `siblings`, and the frozen lists in this area are `SERVED_FILES` and the suite's `OUTPUTS`", path)
+	}
 }
 
 // mdCodeSpanRE matches one code span and captures its contents.
@@ -881,6 +945,36 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 	}
 	if !strings.Contains(mdFlat(design), "This case is [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)'s and not Task 6.1's") {
 		t.Errorf("%s: §6.3 does not say the window-background case is Task 6.5's; a design that leaves the owner unnamed is a design a reader can implement in the wrong task", designPath)
+	}
+
+	// §6.2's account of the golden specs, and the dependency it justified. The
+	// claim was that the two schemes cannot paint differently until Task 6.5
+	// replaces `CONSOLE_THEME`, because every screen stamped `'dark'` in both
+	// schemes. The source says the opposite: each spec draws its screen with the
+	// theme it names and the screen stamps that argument on its root, so the light
+	// run has always said `'light'`, and `CONSOLE_THEME` (entry.ts 76) is the
+	// app's boot path, which none of the four specs reads. The frames are identical
+	// because no stylesheet paints anything (§1.3) — which is the dependency the
+	// task has: the stylesheet, not the theme switch.
+	flatDesign, flatPlan := mdFlat(design), mdFlat(plan)
+	if !strings.Contains(flatDesign, "The four golden specs never read it") {
+		t.Errorf("%s: §6.2 does not say the golden specs never read `CONSOLE_THEME`; the assertion's dependency is the stylesheet, and a reader who is told the theme switch is its precondition wires the wrong task", designPath)
+	}
+	if !strings.Contains(flatDesign, "already says `data-theme='light'` today") {
+		t.Errorf("%s: §6.2 does not say the light run's root already carries `data-theme='light'`; each spec draws its screen with the theme it names (`mount(theLastFrame(), 'light')`) and `renderLive` stamps that argument, so the two runs already disagree about the attribute", designPath)
+	}
+	for _, stale := range []struct{ doc, path, claim string }{
+		{flatDesign, designPath, "in a light-scheme run the root still says"},
+		{flatDesign, designPath, "Written in Task 6.3 or 6.4 it would fail"},
+		{flatPlan, planPath, "every screen stamped its root `data-theme='dark'` in both schemes"},
+		{flatPlan, planPath, "they cannot until Task 6.5 wires"},
+	} {
+		if strings.Contains(stale.doc, stale.claim) {
+			t.Errorf("%s: the document still carries %q; the golden specs pass the theme to the renderer themselves and never read `CONSOLE_THEME`, so neither the claim nor the dependency it supported holds", stale.path, stale.claim)
+		}
+	}
+	if clause, ok := mdClause(t, planPath, planTasks[5], "Depends on"); !ok || !strings.Contains(clause, "Task 6.4 (**hard**)") {
+		t.Errorf("%s: Task 6.6's **Depends on** does not name Task 6.4 as its hard dependency; the computed-background assertion reads a painted screen root, and the last rules that paint one land with Task 6.4's `screens.css`", planPath)
 	}
 
 	// And §6.5 counts this file, so the count is checked against the file rather

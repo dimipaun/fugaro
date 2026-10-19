@@ -38,12 +38,13 @@ could carry one:
 | `mediaTypeFor` in `protocol.ts` already maps `'.css': 'text/css; charset=utf-8'`, so the handler could serve a stylesheet the day one exists — the type is the only piece that is ready. | `protocol.ts` |
 
 The screens are the other half of the same fact. Every one of them emits **class hooks and
-`data-*` readings and nothing that paints**: `live.ts` writes a class only at
-`element.setAttribute('class', classes.join(' '))` inside its `make` helper, `spend.ts` at
-its own `cell`, `projects.ts` and `run.ts` likewise, and each of the four sets
-`data-theme` on its root and nothing else theme-shaped. The headers of those files say so
-in their own words — `console/src/renderer/screens/live.ts`: "no stylesheet and no
-colour"; `console/src/renderer/app.ts`'s `ElementLike` is deliberately narrower than
+`data-*` readings and nothing that paints**: in all four — and in the degraded screens with
+them — a class is written at exactly one line, `element.setAttribute('class',
+classes.join(' '))`, inside that file's **`make`** helper (`live.ts` 804, `spend.ts` 1317,
+`projects.ts` 879, `run.ts` 708), and the `cell` helper beside it only calls `make`; each of
+the four sets `data-theme` on its root and nothing else theme-shaped. The headers of those
+files say so in their own words — `console/src/renderer/screens/live.ts`: "no stylesheet
+and no colour"; `console/src/renderer/app.ts`'s `ElementLike` is deliberately narrower than
 `HTMLElement` with "no style and no event handler", and `entry.ts`'s header repeats it:
 "the element it wraps exposes a text slot and attributes — no markup parsing, no
 navigating attribute, no style and no event handler". Nothing anywhere under
@@ -923,8 +924,12 @@ character by character; prose never is.
 ### 3.8 Spacing and density
 
 `--row-height: 24px` is the design's own number (§6.1 rule 2) and is a token, so a rule
-that wants a taller row says `--row-height-compact` or an explicit multiple rather than a
-new number. The density rules the stylesheet keeps:
+that wants a different row height reads a token or an explicit multiple of this one rather
+than a new number — and the two directions are not the same token: **a shorter row says
+`--row-height-compact`** (`20px`, §3.1: four pixels shorter, for a caption row or a dense
+control), while **a taller row says an explicit multiple** (`calc(2 * var(--row-height))`
+for a row that carries two lines), because no taller token exists and the compact one is
+shorter, not taller. The density rules the stylesheet keeps:
 
 - a table row is `--row-height` (24 px) with `--space-2xs` vertical padding, no horizontal
   padding between related figures, and one hairline between rows;
@@ -1023,13 +1028,19 @@ appends:
 
 There is no responsive layer today and the window is fixed at 1180 × 780, but the
 operator can resize one, and the content is tables. Three breakpoints, in `base.css` and
-`screens.css`, in `em` against the root size:
+`screens.css`, written in `em` against **the root size** — the document sets no root
+`font-size`, so the root is the browser's 16 px default and each `em` figure below is that
+default's multiple: 1000 ÷ 16 = **62.5em**, 780 ÷ 16 = **48.75em**, 560 ÷ 16 = **35em**.
+`em` rather than `px` because a media query in `em` is measured against the *root* size, so
+an operator who has raised the default text size gets the narrow layout at the same
+*measure of text* rather than at the same pixel width — which is the point of the layout
+and is lost the moment a query is written in `px`:
 
 | Width | What changes |
 |---|---|
-| ≤ 1000 px | the widest tables (the Log and Jobs tables, `spend-rows`) drop their least load-bearing columns; a repository block's burn sparkline narrows before a figure does |
-| ≤ 780 px | the nav wraps to two rows, the installation line drops to project · mode, and any three-column figure group becomes two |
-| ≤ 560 px | the ledger, the caps panel and the panels' source lines stack; **no figure is ever dropped or truncated** — what is dropped is a column, and a dropped column is one whose value is repeated in a `title` |
+| ≤ 62.5em (1000 px at the 16 px default) | the widest tables (the Log and Jobs tables, `spend-rows`) drop their least load-bearing columns; a repository block's burn sparkline narrows before a figure does |
+| ≤ 48.75em (780 px) | the nav wraps to two rows, the installation line drops to project · mode, and any three-column figure group becomes two |
+| ≤ 35em (560 px) | the ledger, the caps panel and the panels' source lines stack; **no figure is ever dropped or truncated** — what is dropped is a column, and a dropped column is one whose value is repeated in a `title` |
 
 **The rule that outranks the breakpoints: a figure is never hidden to make a layout fit.**
 A dense console that hides a cap on a narrow window is the console lying about spend,
@@ -1096,9 +1107,17 @@ work for one page paint.
 
 ### 5.2 How the bundler emits it
 
-`console/tools/bundle-renderer/index.ts` gains a **stylesheet step** with the same shape as
-everything else in that file — an ordered, frozen allow-list, and a refusal for anything
-else:
+`console/tools/bundle-renderer/index.ts` gains a **stylesheet step**. The bundler itself has
+no allow-list to copy, and saying otherwise would send the task looking for a mechanism that
+is not there: its shape is an **owned set computed at run time** from what the run writes —
+`basename(out)`, the `siblings` (the other bundles) and the served documents it emits — with
+a `BundleRefusal` for any file in the output directory that is not in it (`bundleRenderer`,
+`index.ts` 291-310). `console.css` needs no new kind of mechanism for that reason: it joins
+the owned set, which is what the last bullet below says. The **ordered, frozen** lists in
+this area are two, and neither is in the bundler — `SERVED_FILES` (`src/main/protocol.ts`
+113), the served root's own list, and the e2e suite's `OUTPUTS` (`test/support/built.ts`
+62), which mirrors a build's files — and the list this step does need is a list of *theme
+files* rather than of outputs, so it is stated here rather than borrowed:
 
 ```ts
 /** THEME_STYLESHEETS is the theme directory's whole contents, in the order the
@@ -1278,16 +1297,28 @@ which passes today with no stylesheet at all. The new assertion fails **the mome
 stylesheet stops being served, stops being linked, or stops switching** — which is exactly
 the regression that could otherwise be recorded as a fresh golden and never noticed.
 
-**This assertion is [Task 6.6](#76-task-66--the-golden-frames-re-recorded)'s, and it cannot
-be an earlier task's.** It asserts that the two schemes paint *different* backgrounds, and
-until Task 6.5 changes `CONSOLE_THEME` from the literal `'dark'` to the media query's
-answer the two schemes **cannot** differ: every screen stamps its own root with the theme
-it was drawn for (`root.setAttribute('data-theme', theme)`, in all four screens), so in a
-light-scheme run the root still says `data-theme='dark'`, `color-scheme` is still `dark`,
-and both runs paint the dark ground. Written in Task 6.3 or 6.4 it would fail, and a case
-that has to be skipped until a later task lands is not a case that task owns. It belongs
-with the recording it guards: 6.6 is the first task at which the light and dark goldens are
-different pictures, which is the same fact as this assertion passing.
+**This assertion lands in [Task 6.6](#76-task-66--the-golden-frames-re-recorded), with the
+recording it guards — but what it waits for is the stylesheet, not Task 6.5's theme
+choice.** It reads a *computed* background off a screen root, so it can pass only once a
+rule paints one, and the rules that paint a screen root are the stylesheet's: `palette.css`
+gives each theme its `--ground` and its `color-scheme`, and `base.css` and `screens.css`
+spend them. Task 6.5 is a different subject — it changes `CONSOLE_THEME` in `entry.ts` from
+the literal `'dark'` to the media query's answer, which is the **app's** boot path and the
+window's own `backgroundColor`.
+
+The four golden specs never read it. Each draws its screen directly with the theme it
+names — `mount(theLastFrame(), 'light')`, `renderSpend(factory, model, 'light')` and their
+two siblings — and every screen stamps the theme it was handed on its own root
+(`root.setAttribute('data-theme', theme)`; `live.ts` 1108-1109 and the same line in the
+other three), so **the light run's root already says `data-theme='light'` today** and the
+two runs already disagree about the attribute. They are byte-identical pictures for the
+reason §1.3 gives, and not because the theme never varies: no stylesheet is served or
+linked, so no rule reads `data-theme` and every computed background is `rgba(0, 0, 0, 0)`.
+An earlier revision of this section said the light run still stamped `'dark'` and that the
+assertion "would fail in Task 6.3 or 6.4"; both were wrong, and the hard dependency they
+justified — on Task 6.5 — was wrong with them. The assertion belongs with the recording it
+guards because 6.6 is where the goldens are re-made, and it could not land before the rules
+it reads: the phase's own ordering, not the theme switch, is what puts it last.
 
 ### 6.3 Contrast as unit tests
 
@@ -1629,8 +1660,11 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 ### 7.6 Task 6.6 — the golden frames, re-recorded
 
 - **Scope:** the eight baselines per platform and the per-spec computed-background
-  assertion (§6.2) — the assertion this task owns, because it is the first task at which
-  the two schemes paint different backgrounds. The forced-colors smoke is **not** here: it
+  assertion (§6.2) — the assertion this task owns as the guard on the recording it
+  re-makes, and not because the theme *choice* arrives here: the four golden specs draw
+  their screens with the theme they name and never read `CONSOLE_THEME`, so what the
+  assertion needs is the stylesheet Tasks 6.1–6.4 write, and Task 6.5 changes no picture
+  these specs take (§6.2). The forced-colors smoke is **not** here: it
   landed with the rules it tests, its chrome half in Task 6.3 and its per-screen half in
   Task 6.4.
 - **Files:** `console/test/e2e/{live,spend,projects,run}.spec.ts`; the committed

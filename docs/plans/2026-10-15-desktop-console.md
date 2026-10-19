@@ -1168,8 +1168,10 @@ task is shaped the way it is.**
   `--border`-is-decorative case reads `base.css` and `screens.css` and is Task 6.4's; the
   window-background case compares `consoleWindowOptions`' two literals against the two
   `--ground` values and is Task 6.5's, because `backgroundColor` does not exist before it;
-  the computed-background e2e assertion is Task 6.6's, because it asserts the two schemes
-  paint *different* backgrounds and they cannot until Task 6.5 wires the theme choice; and
+  the computed-background e2e assertion is Task 6.6's, because it reads a computed
+  background off a screen root and lands with the recording it guards — its dependency is
+  the **stylesheet** (6.1 to 6.4), not Task 6.5's theme choice, which the four golden specs
+  never read (design §6.2); and
   the forced-colors smoke lands in halves with the rules it tests, its chrome half in 6.3
   and its per-screen half in 6.4. No task's Files, Tests or Command line names a later
   task's artefact.
@@ -1452,8 +1454,9 @@ regression.
 **Depends on:** Task 6.2 (the served, linked stylesheet the switch chooses between — a
 theme choice is a choice about a document that has one) and Task 6.1 (the two `--ground`
 values its case compares the window's literals against). It needs nothing later in the
-phase: the pictures it changes belong to the phase's last task, which is why this task's own
-run skips the goldens.
+phase: this task's own run skips the goldens, and the re-recording is the phase's last
+task — which is a sequence, not a dependency: the last task's assertion waits on the
+stylesheets, not on this task's theme choice (design §6.2).
 
 **Commit:** `console: the OS chooses the theme, and the window paints its ground first`
 
@@ -1467,11 +1470,16 @@ loosening).
 **Scope.** The eight baselines per platform that the four golden specs already name, and
 the per-spec assertion that the **computed background colour differs between the schemes**
 — the assertion the suite is missing today, since every spec reads `data-theme` off the
-screen root and passes with no stylesheet at all. **This task owns it because it is the
-first at which it can pass**: it asserts the two schemes paint *different* backgrounds, and
-until Task 6.5 changed `CONSOLE_THEME` from the literal `'dark'` to the media query's answer
-every screen stamped its root `data-theme='dark'` in both schemes, so both runs painted the
-dark ground (design §6.2). The forced-colors smoke is **not** in this task: it landed with
+screen root and passes with no stylesheet at all. **This task owns it as the guard on the
+recording it re-makes**, and its precondition is the stylesheet rather than the theme
+switch: the assertion reads a *computed* background off a screen root, and the rules that
+paint one are Tasks 6.1 to 6.4's. The four golden specs draw their screens directly with the
+theme they name — `mount(theLastFrame(), 'light')`, `renderSpend(factory, model, 'light')`
+and their two siblings — and every screen stamps that argument on its own root, so the light
+run has said `data-theme='light'` since the screens were written and `CONSOLE_THEME` appears
+in none of them. The frames are identical today only because nothing paints: no stylesheet
+is served or linked, so every computed background is `rgba(0, 0, 0, 0)` (design §1.3,
+§6.2). The forced-colors smoke is **not** in this task: it landed with
 the rules it tests, its chrome half in Task 6.3 and its per-screen half in Task 6.4.
 
 **Files.** `console/test/e2e/{live,spend,projects,run}.spec.ts`; the committed
@@ -1483,10 +1491,14 @@ darwin set**, which is a picture of the unstyled tree — pending the owner's Q4
 
 **Command:** `cd console && npm run test:e2e` after the owner records.
 
-**Depends on:** Task 6.5 (**hard**). The computed-background assertion it lands asserts that
-the two schemes paint *different* backgrounds, and they cannot until the theme choice is
-wired; the baselines are a picture of the stylesheets this phase has finished writing, which
-is why this is the phase's last task and the owner's to run.
+**Depends on:** Task 6.4 (**hard**). The computed-background assertion it lands reads a
+computed background off a screen root, and the last rules that paint one land in Task 6.4's
+`screens.css`; before that the reading is `rgba(0, 0, 0, 0)` in both schemes and the case
+could only be skipped. It does **not** depend on Task 6.5: the four golden specs draw their
+screens with the theme they name and never read `CONSOLE_THEME`, so the theme switch changes
+no picture these specs take (design §6.2). It is still the phase's last task — the baselines
+are a picture of every stylesheet the phase writes, and the recording is the owner's to run —
+which is why Task 6.5 precedes it, as sequence rather than as dependency.
 
 **Commit:** `console: the golden frames, re-recorded in both themes`
 
