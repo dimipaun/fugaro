@@ -59,7 +59,7 @@ func newProjectCmd() *cobra.Command {
 		Short: "The project's policy, its allow-list and the repositories enrolled",
 		Args:  cobra.NoArgs,
 	}
-	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd())
+	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd())
 	return cmd
 }
 

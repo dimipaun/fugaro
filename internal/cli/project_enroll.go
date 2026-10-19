@@ -15,11 +15,13 @@ package cli
 // runs/ grant a run of a profile can write those prefixes).
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -462,4 +464,67 @@ func asciiLower(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// ---------------------------------------------------------------- seen, sync
+
+// seenRepo is one repository the installation has seen a run of, and where
+// that was read.
+type seenRepo struct {
+	// Name is the canonical name ("github/acme/app") when this machine's
+	// config names the repository, and the storage slug otherwise: a slug is
+	// a hash of the provider and the canonical name (task.Slug) and cannot be
+	// turned back into one.
+	Name string
+	// Provider is the git provider the name carries, and "" for a slug:
+	// nothing durable records which provider a slug was hashed from.
+	Provider string
+	// Sources are the durable sources that recorded a run of it, in the
+	// order they are printed.
+	Sources []string
+}
+
+// seenRepos reads the two durable sources of "which repositories have run
+// here": the runs bucket's runs/<slug>/ prefixes and Firestore's spendDaily.
+// The notes are what one of them could not answer.
+func seenRepos(ctx context.Context, lc *localcfg.Config, now time.Time) ([]seenRepo, []string, error) {
+	_ = ctx
+	_ = lc
+	_ = now
+	return nil, nil, nil
+}
+
+// projectSyncOptions are `project sync`'s flags.
+type projectSyncOptions struct {
+	cloud cloudOptions
+	// githubAppID is the App to list; "" takes the one this machine's config
+	// holds for its repositories.
+	githubAppID string
+	// githubAppKey is --github-app-key: it allows reading the project's
+	// GitHub App private key from Secret Manager with the operator's own
+	// credentials. Without it nothing is read.
+	githubAppKey bool
+	yes          bool
+}
+
+func newProjectSyncCmd() *cobra.Command {
+	var o projectSyncOptions
+	cmd := &cobra.Command{
+		Use:   "sync [--github-app-id <id>] [--github-app-key] [--yes]",
+		Short: "Offer the GitHub App's installed repositories that the allow-list does not admit",
+		Args:  cobra.NoArgs,
+		RunE:  func(cmd *cobra.Command, _ []string) error { return runProjectSync(cmd, &o) },
+	}
+	f := cmd.Flags()
+	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID (a number, not a secret); default: the one this machine's config holds")
+	f.BoolVar(&o.githubAppKey, "github-app-key", false, "read the project's GitHub App private key from Secret Manager to ask GitHub (your own credentials; refused in a coding agent's session)")
+	f.BoolVar(&o.yes, "yes", false, "confirm the batch without typing the project's name")
+	addCloudFlags(cmd, &o.cloud)
+	return cmd
+}
+
+func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
+	_ = cmd
+	_ = o
+	return nil
 }
