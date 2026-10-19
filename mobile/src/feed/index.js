@@ -34,7 +34,11 @@
 // day-break and the degraded document both make it `null`, so a screen cannot
 // draw the zero §10.7 forbids by forgetting a check.
 
-export { AVAILABILITY_CODES, GAP_MARK, STATE, isFigure, isEmpty, measured, notional, unavailable } from './availability.js';
+// `shown` is on the door for P3.3: the job list is the first screen that prints
+// a figure, and `availability.js` says the one function a screen uses is this
+// one -- so a screen reaches it here rather than through a second reading of
+// the five states. Nothing else about the vocabulary moves.
+export { AVAILABILITY_CODES, GAP_MARK, STATE, isFigure, isEmpty, measured, notional, shown, unavailable } from './availability.js';
 
 export { FAMILIES, PATH_CODES, dayDate, dayKey, familyOf } from './paths.js';
 

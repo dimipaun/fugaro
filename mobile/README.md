@@ -4,20 +4,21 @@ The Expo (React Native) app for the phone. It is **its own artifact**: outside
 the Go module, with its own release path, and it merges without touching the
 CLI (mobile plan D125, Phase 3).
 
-**Status.** Phase 3: tasks **P3.1** (the app skeleton and the account store), **P3.2**
-(the feed reader and the contract's document rules), **P3.4** (the audio
-interfaces), **P3.5** (the voice screen) and **P3.6** (the mailbox client) are
-here ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
-P3.3 (the job list) is not. What exists is the shell, the account model, the two
-device ports, the fences around them, the feed (the four granted families read
-directly from the Realtime Database, the document they add up to, and the
-screen's rules over it), the phone's mailbox client -- which is the only place
-in the app that writes to the database -- the three voice ports with the fakes
-the voice screen's logic is written and tested against, and the voice screen
-itself: the interrupt switch (D127), the queue it gates, P1.4's offline refusal
-and P1.2's lease. It ships **without an engine**: the first store build is
-voiceless (the owner's ruling of 2026-10-19), so what is here is the screen's
-logic over the interfaces, which is what D126 asks CI to hold.
+**Status.** Phase 3: tasks **P3.1** (the app skeleton and the account store),
+**P3.2** (the feed reader and the contract's document rules), **P3.3** (the job
+list), **P3.4** (the audio interfaces), **P3.5** (the voice screen) and **P3.6**
+(the mailbox client) are here
+([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
+What exists is the shell, the account model, the two device ports, the fences
+around them, the feed (the four granted families read directly from the Realtime
+Database, the document they add up to, and the screen's rules over it), the job
+list (numbers and states, and no run row), the phone's mailbox client -- which
+is the only place in the app that writes to the database -- the three voice
+ports with the fakes the voice screen's logic is written and tested against, and
+the voice screen itself: the interrupt switch (D127), the queue it gates, P1.4's
+offline refusal and P1.2's lease. It ships **without an engine**: the first
+store build is voiceless (the owner's ruling of 2026-10-19), so what is here is
+the screen's logic over the interfaces, which is what D126 asks CI to hold.
 
 **The store path is here too (Task P4.4, added 2026-10-19).** The MVP is
 voice-less and goes to **internal testing** first, so `app.config.js` (the
@@ -72,6 +73,7 @@ module plugged in by `index.js` at the bottom of the tree.
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
+| `src/jobs/` | The job list (P3.3): the field table (`fields.js`), the project's row (`row.js`), the heartbeat line (`heartbeat.js`), the list and its wiring (`list.js`), what the screen says (`lines.js`) and the scope scan (`scope.test.js`). `index.js` is the one door; the section below is the rule sheet. |
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/voice/` | The voice screen (P3.5): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — and the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
@@ -538,6 +540,183 @@ that decided nothing — it is gone, and a test asserts it is not exported again
 names five availability states, and `availability.js` now says in place that the
 constructor has no caller in P3.2 and that the day break §10.7 calls a gap is
 drawn as `drawable: null` instead.
+
+## The job list: numbers and states, and nothing else
+
+The list is what the phone is for — the spend, the cap, the kill switch and
+whether the other end is alive — and the resolution of 2026-10-17 fixed its
+scope in one sentence: **numbers and states only**, "with no run titles, no
+repositories, no queued rows, no finished rows and no PR link". `src/jobs/` is
+that screen's module, and its files are:
+
+| File | What it holds |
+| --- | --- |
+| `fields.js` | the table: one entry per field on the row, each carrying the granted family it is read from (`JOB_FIELDS`), plus the closed vocabularies (`KILL_STATES`, `HEARTBEAT_STATES`) and the caption `NOTHING` |
+| `row.js` | the project's row, built from P3.2's document: every field must be a **figure** the feed built, and a field that is not is a refusal rather than a coerced value |
+| `heartbeat.js` | P3.6's presence reading as one state. `unknown` when nothing has read the mailbox — which is **not** `offline` (rule 3, "silence is not death", seen from this side) |
+| `list.js` | `jobList()` — the pure judgement of a snapshot plus a presence reading — and `createJobList()`, the wiring the feed's door names as this task's |
+| `lines.js` | the screen's lines, printed through the feed's own `shown` |
+| `index.js` | the door |
+| `scope.test.js` | the scan below |
+| `row.test.js`, `heartbeat.test.js`, `list.test.js`, `lines.test.js` | the behavioural half |
+
+### The row, and the three absences that must not be confused
+
+`n/a` is what `shown` says for a field the document **did not carry**
+(`unavailable`) — the feed owns that word, which is why this module defines no
+second copy of it; `—` (`GAP_MARK`) is what a screen draws when the **series
+broke**; and `not known` (`NOTHING`) is what a line says when the **thing
+itself** is absent: the day, the project. Three absences, three different
+strings — a test holds them apart, because two of them spelled the same would be
+a screen a reader has to guess at. A `0` is a measurement and appears only where
+a counter measured zero.
+
+That difference is the whole of §10.7's "must not draw the zero": on a day
+break the reader assembles the new day's document, which carries a zero counter,
+and `jobList` draws `row: null` for it — so the zero cannot reach a screen that
+forgot to check. A degraded feed (§10.8) draws no row either, and never a spend
+of zero.
+
+**A degraded feed is not a broken series.** §10.8's state is its own: the feed's
+view reports `broken: false` beside `degraded: true`, and the Series line has a
+third word, `degraded`. What the two share is that neither can draw a row — that
+is `row === null`, one flag for the screen's word and one for the drawing, and
+folding them together is how "break" reached a screen whose feed never said its
+series broke. A degraded document is also the one thing that names its project
+and carries the CLI's static `notice`, and both are on the list: the view's
+`note` belongs to a skipped or refused line and a successful ingest clears it,
+so the sentence would otherwise be lost between the document and the screen.
+
+### What the list deliberately does not show
+
+**No repository row and no repository name.** This is the reading of "no
+repositories" this task took, and it is the smaller one: `config/caps/repos/$slug`
+and `spend/$day/repos/$slug` *are* granted and P3.2's document carries a block
+built from them, but nothing in `src/jobs/` reads that block — not the slug it is
+keyed by, and not the repository's own name. A reviewer who reads the resolution
+as "per-repository rows, without their identity" would want a row per slug with
+no name on it; that reading needs the document's `repos` block and a screen that
+draws it, and it is a bigger change than this task's text describes. The
+project's own row is what is left, and `scope.test.js` refuses the token `repos`
+in this module's production files so the choice is a line of code a later task
+edits on purpose rather than a drift.
+
+**No link of any kind.** The rows that carry a PR link live in the runs bucket
+and the grant does not cover them — but the sharper reason is P0.3: any link the
+app ever opens goes through `shared/url/index.js`'s validator, so a link built
+here would be a link built around the gate. Nothing in this module imports it,
+because nothing here builds a link. **P0.3 stays a dependency of P3.3**: the day
+a row on this list wants a URL, the door to it is that validator and not a
+`Linking.openURL`.
+
+**No run title, and no code path that asks for one.** The plan's own test case
+for this task, held as a scan (below) and as behaviour: the fake port records
+every path the wiring asks for, and every one of them passes the grant's own
+gate.
+
+### The wiring
+
+`createJobList({ port, account, repositories, registry, readPresence, now })`
+builds P3.2's `FeedReader` from a **port it is handed** — no database SDK and no
+`firebase` module is imported by this module, so a second subscription to the
+same project is not something an import can buy — and takes P3.6's presence
+report as a **function**. `poll()` stores the raw reading and `snapshot()`
+judges it once, so the heartbeat has one judge and not two that can disagree. A
+refusal from the mailbox client is passed through unchanged: its codes are its
+own, and this module does not re-label another module's decision.
+
+### The heartbeat line, and a negative age
+
+**A negative age is a reading, not a claim smuggled in**, and it is why neither
+`heartbeat.js` nor `lines.js` floors one at zero. P1.4 computes
+`ageMs = now - at`, so a heartbeat stamped *after* the phone's clock arrives
+negative: `live` while the skew is inside its future tolerance (P1.4's own test
+pins `ageMs = -60000`) and `clock-differs` beyond it — that branch is
+`ageMs < -futureToleranceMs` and nothing else, which is D117's fourth state and
+the reason it exists. Refusing the sign made the wiring drop a good reading back
+into `unknown` and made `jobList` refuse the whole list — spend, caps and the
+kill switch — for the one phone whose clock is ahead. The reading is judged on
+what it is made of (`'3s'`, `NaN`, `Infinity` are refused), not on its sign.
+
+The screen draws it the other way round: **an age the phone cannot state is not
+printed as one.** The state is printed alone for a negative age, because
+`live (-60s ago)` and `clock-differs (-600s ago)` are durations with a minus
+sign on them, and for `clock-differs` the age is not a fact this phone can state
+at all. The sign is P1.4's arithmetic; the state is the fact. A reading with an
+age the phone *can* state keeps it — `stale (190s ago)`.
+
+### The scan: the resolution's "not shown" as rules
+
+`scope.test.js` holds what no behavioural test can hold on its own — that no
+line reaches for these tomorrow — the way P3.1's boundary scan holds the
+credentials: **tokens that may appear in a named list of files and nowhere
+else**, read over the module's **code and not its prose** (this tree's comments
+discuss the very tokens the rules forbid), with a **positive control per rule**
+so a mistyped pattern cannot pass for a clean tree, and with test files exempt
+(a test that proves a denied family is never requested has to name it).
+
+| Rule | Why |
+| --- | --- |
+| `agents` / `outcomes` | the two families the read grant does not name (tension (b1)) |
+| `repos` | the resolution's "no repositories" |
+| `pr_url`, `prUrl`, `pr_number`, `prNumber`, `Linking`, `openURL`, `openExternal`, `WebBrowser` | the runs bucket's fields, and every way of opening a link |
+| `../feed/` other than `../feed/index.js` | the feed is reached through its **door**: `paths.js`'s gate and `nodes.js`'s raw readers are the feed's business, and a screen that composed a path would be composing a read |
+
+Two rules are not token rules. The door's surface is asserted as an **exact set**
+(the rule P3.2's `index.test.js` gives) and **no name on it may be dead** — used
+nowhere. The first version of that rule counted a name's own declaration as a use
+and the scan file's own enumeration of the names as another, so it could not fail
+and three dead exports (`NO_VALUE`, `PRINTED_FIELDS`, `jobField`) were on the door
+behind it. The declarations are stripped before the search now, the scan file is
+excluded from it, and the rule's three controls are the two shapes a dead export
+has (declared-and-unused, and declared nowhere) and the shape that must not be
+flagged (declared and used).
+
+The second walks the **members of an exported vocabulary** rather than the door's
+names, which is the gap `LIST_CODES.BAD_NOW` shipped through: a refusal code
+declared beside the five that are used, exported on the door as part of
+`LIST_CODES`, and produced by no code path here -- the clock refusal a caller
+actually sees is `reader.js`'s own `READER_CODES.BAD_NOW`. A member nothing
+produces is a member a reader has to check is still true.
+
+### The job list's mutations
+
+Each was planted, the run went red, the bug was removed. Three were planted
+**after** the rest and found claims with no test behind them: the tests they
+went red against did not exist yet, so fixing that was writing them. The last
+four are the review's own pass over the module's surface: three dead exports
+(`NO_VALUE`, `PRINTED_FIELDS`, `jobField`, all gone), a caption mark spelled the
+same as the contract's gap mark, and the dead-name rule itself — which passed a
+planted dead export, that being the finding that the rule could not fail.
+
+| Mutation | Went red |
+| --- | --- |
+| a field that is not a figure is put on the row anyway | `a figure the feed did not build is refused, not put on the row` |
+| a rate marked `known` over no number renders as "not shown" | `a rate marked known over no number is refused…` |
+| the kill switch always reads `off` | `a kill switch is on or off…` |
+| a document flagged `degraded` is built into a row | `a row is only built from a live document` |
+| a field with no figure prints a `0` | `a missing field prints n/a, and never a 0` |
+| a field the feed did not build is printed as its bare value | `a field the feed did not build is not printed as a number` |
+| a broken series draws the rollover document | `a broken series draws the gap mark…` |
+| a degraded feed is drawn as a live one | `a degraded feed renders as degraded…` |
+| every snapshot claims the day did not change | `the list is built from the feed and the mailbox…` |
+| an unread mailbox is reported `offline` | `the heartbeat is unknown until something has read it…` |
+| an unsigned reading counts as verified | `an unsigned heartbeat is carried as unverified…` |
+| a negative age is refused, so a skewed clock is no reading at all | `a negative age is carried, because P1.4 is where one comes from`, and the same case through the wiring |
+| the age is printed with its sign (`live (-60s ago)`) | `an age the phone cannot state is not printed as one` |
+| the module reaches for a repository | `no repository row and no repository name` |
+| a screen reaches around the feed's door | `the feed is reached through its door…` |
+| a run is named | `no run is named, and neither family the grant denies is asked for` |
+| the kill switch's two words are swapped (`KILL_STATES`) | `a kill switch is on or off…` |
+| the caption mark becomes the gap mark | `the three absences are three different strings` |
+| the door re-exports a name nothing uses | `the door carries the module's surface, and no dead name` |
+| a declared-and-unused export on the door survives the rule | the same test, whose control asserts the two shapes are flagged |
+| a degraded feed is folded back into `broken` | `a degraded feed is degraded, and not a broken series` |
+| the Series line has no word for a degraded read | the same test |
+| a degraded read draws a row after all | the same test |
+| the degraded document's project is discarded | `a degraded read still says which project it is about, and why` |
+| the degraded document's notice is discarded | the same test |
+| a refusal code nothing produces is declared again (`BAD_NOW`) | `every member of an exported vocabulary is produced somewhere` |
 
 ## Which files may write a credential
 
@@ -1147,3 +1326,14 @@ the two apart -- so it is written down here rather than claimed as a kill.
   the orchestrator restarted — is check **84** (P4.2)'s rule, which has a real
   clock and a real database. A heartbeat that is not there is a node that is not
   there, and this task does not call that "the orchestrator is down".
+* **The job list on a screen (P3.3).** `src/jobs/` fixes what the list *says*
+  — `lines.js` returns the labelled strings a screen draws — and mounts nothing:
+  no React tree, no component, no device, and no renderer has run. "No run title
+  is on screen" is therefore a fact about a string list and a scan over the
+  module's code, not about pixels. The list's heartbeat is P3.6's **reading**,
+  handed in as a function; no mailbox has been read for it here, and the MAC
+  check behind the reading is the mailbox client's (check **84**'s, owner-run).
+  And **P0.3's validator is a dependency this task does not exercise**: nothing
+  on the list is a link, so nothing calls `shared/url/index.js` — the day a row
+  wants a URL, that module is the gate, and there is no test here that says it
+  works.
