@@ -118,6 +118,7 @@ test('the pattern accepts a reverse-DNS name and refuses everything else', () =>
   // The Android package is stricter by exactly one rule: Play refuses a segment
   // that starts with a digit, and this package can never be changed later.
   assert.equal(isIdentifier('dev.1app', 'android'), false, 'Play refuses a digit-starting segment');
+  assert.equal(isIdentifier('1dev.fugaro', 'android'), false, '... in the first segment as well as the last');
   assert.equal(isIdentifier('dev.fugaro.app', 'android'), true);
   assert.equal(ID_PATTERNS.android.source !== ID_PATTERNS.ios.source, true);
   assert.equal(isIdentifier(IOS, 'windows'), false, 'an unknown platform is not an identity');
@@ -143,7 +144,11 @@ for (const [platform, variable] of Object.entries(ID_VARIABLES)) {
     const env = build();
     delete env[variable];
     const message = refusal(() => resolveConfig(EXPO, env));
-    assert.match(message, new RegExp(variable), 'the message names the variable');
+    // The variable's name is the FIRST thing the message says: a reader of a
+    // build log has two variables to choose between, and "which one is
+    // missing" is the whole answer. Mutation: a message that names the
+    // variable only in the command it suggests (or names neither) is red here.
+    assert.equal(message.startsWith(variable), true, `the message begins by naming ${variable}: ${message}`);
     assert.equal(message.includes(other), false, 'and not the other one');
     assert.match(message, /eas env:create/, 'and says where to set it');
   });
