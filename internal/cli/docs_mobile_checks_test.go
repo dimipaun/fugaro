@@ -249,22 +249,28 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 		t.Errorf("## Check 82: prints the marker line before the rules line, which is the reverse of the plan's order (DB.Plan plans PutRules first, the marker last): the check tells the owner to record the act lines in the order printed, so it has to show them that way")
 	}
 
-	// Check 81 is the live half of P2.2's emulator cases, and it names them.
-	emulator := readSrc(t, "../budget/rules/emulator_mailbox_test.go")
+	// Check 81 is the live half of P2.2's and P6.4's emulator cases, and it
+	// names them. P6.4 moved the mailbox's tag and device-node cases into
+	// emulator_pairing_test.go and renamed the residual, so each name carries
+	// the file it has to be in: a name checked against the wrong file passes on
+	// a case that is not there.
 	section81 := docSection(t, path, doc, "## Check 81:")
-	for _, name := range []string{
-		"TestMailboxPhoneWritesItsOwnInbox",
-		"TestMailboxMessageShape",
-		"TestMailboxPhoneAcksWhatItSpoke",
-		"TestMailboxClaimMismatchIsAdmittedNowhere",
-		"TestMailboxReadsAreTheGrantedSet",
-		"TestMailboxResidualMintedTokenPassesUntilPhase6",
+	for _, c := range []struct{ file, name string }{
+		{"emulator_mailbox_test.go", "TestMailboxPhoneWritesItsOwnInbox"},
+		{"emulator_mailbox_test.go", "TestMailboxMessageShape"},
+		{"emulator_mailbox_test.go", "TestMailboxPhoneAcksWhatItSpoke"},
+		{"emulator_mailbox_test.go", "TestMailboxClaimMismatchIsAdmittedNowhere"},
+		{"emulator_mailbox_test.go", "TestMailboxReadsAreTheGrantedSet"},
+		{"emulator_mailbox_test.go", "TestMailboxResidualMintedTokenNeedsTheDeviceNode"},
+		{"emulator_pairing_test.go", "TestDeviceNodeGatesEverythingUserReaches"},
+		{"emulator_pairing_test.go", "TestMailboxMessagesRequireTheTag"},
 	} {
-		if !strings.Contains(emulator, "func "+name+"(") {
-			t.Errorf("internal/budget/rules/emulator_mailbox_test.go has no %s: check 81 says it is the live half of these cases, and a case that was renamed or removed leaves the claim naming nothing", name)
+		src := readSrc(t, "../budget/rules/"+c.file)
+		if !strings.Contains(src, "func "+c.name+"(") {
+			t.Errorf("internal/budget/rules/%s has no %s: check 81 says it is the live half of these cases, and a case that was renamed or moved leaves the claim naming nothing", c.file, c.name)
 		}
-		if !strings.Contains(section81, name) {
-			t.Errorf("## Check 81: does not name %s, one of the P2.2 cases it is the live counterpart of", name)
+		if !strings.Contains(section81, c.name) {
+			t.Errorf("## Check 81: does not name %s, one of the P2.2/P6.4 cases it is the live counterpart of", c.name)
 		}
 	}
 }

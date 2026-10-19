@@ -57,7 +57,8 @@ import (
 // utterance is not sent" back; put §4.5's "the text is not sent" back; restore
 // §2's "not shipped"; restore §2's "checked field by field through PARENTKIND";
 // restore §2's "rules.go:583-590"; rename a `## Check 49:` heading; delete a
-// `| 49 |`, `| 57 |` or `| 11b |` summary row; rename `## Check 19:`; add a
+// `| 49 |`, `| 57 |`, `| 11b |`, `| 81 |`, `| 82 |` or `| 89 |` summary row;
+// rename `## Check 19:`; add a
 // `| 48 |` row or a `## Check 69c` section; restore §13's "the register says so
 // of itself"; drop "11 also carries **11b**" from §13's run; add a `| 67a |`
 // row, a `## Check 68:` section or a `## Check 57:` section; stop the `| 57 |`
@@ -73,12 +74,13 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 
 	// 1. The numbers the design names as written, each a summary row AND a
 	// `## Check` section — the eight written since the baseline a573870 (49,
-	// 50, 52, 58, 69a, 69b, 70a, 70c), which is every number §13 names as
-	// written and so the whole list this half pins. Both halves, the way
-	// TestWebsiteChecklistHasCheck69aAnd69b pins 69a and 69b: a check that
-	// exists as a section but not as a row is one nobody reads first, and a row
-	// with no section is a command nobody can follow.
-	for _, n := range []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c"} {
+	// 50, 52, 58, 69a, 69b, 70a, 70c) plus the mobile work's 81, 82 and 89,
+	// which §13's 80–89 row names as written by Task P4.2a — which is every
+	// number §13 names as written and so the whole list this half pins. Both
+	// halves, the way TestWebsiteChecklistHasCheck69aAnd69b pins 69a and 69b: a
+	// check that exists as a section but not as a row is one nobody reads
+	// first, and a row with no section is a command nobody can follow.
+	for _, n := range []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c", "81", "82", "89"} {
 		if !strings.Contains(checklist, "## Check "+n+":") {
 			t.Errorf("%s has no `## Check %s:` section, but %s §13 names %s as written; correct the design's reading or this test's list", checklistPath, n, designPath, n)
 		}
@@ -117,7 +119,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			wantRows = append(wantRows, strconv.Itoa(i))
 		}
 	}
-	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70c")
+	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70c", "81", "82", "89")
 	for _, n := range wantRows {
 		if !rows[n] {
 			t.Errorf("%s's summary table has no `| %s |` row, but %s §13's row run names %s as one; correct the design's reading or this test's list", checklistPath, n, designPath, n)
@@ -131,7 +133,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			t.Errorf("%s now has a `| %s |` summary row, so §13's count of the row run (\"19–23 and 26–38 (24 and 25 have `## Check` sections but no summary row)\") is stale and must be recounted", checklistPath, n)
 		}
 	}
-	wantSections := []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c"}
+	wantSections := []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c", "81", "82", "89"}
 	for i := 19; i <= 47; i++ {
 		if i != 39 { // 39 is written as 39a–39f in the retire-image-mirror plan, not here
 			wantSections = append(wantSections, strconv.Itoa(i))
@@ -166,9 +168,14 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// The numbers §13 names as in neither half of the register: a row or a
 	// section for any of them means the design's reading is stale. (85 is the
 	// bake-off, which §13 says is written nowhere; 110 is the number this
-	// document names and writes nothing into.)
+	// document names and writes nothing into. 81, 82 and 89 are excluded from
+	// the 80–89 run because §13's row names them as written by Task P4.2a, and
+	// the first half above requires their rows and sections.)
 	absent := []string{"48", "51", "53", "54", "55", "56", "69c", "70b", "85", "110"}
 	for i := 80; i <= 89; i++ {
+		if i == 81 || i == 82 || i == 89 {
+			continue
+		}
 		absent = append(absent, strconv.Itoa(i))
 	}
 	for _, n := range absent {

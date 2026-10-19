@@ -47,15 +47,11 @@ func TestDocsCheck81ReadColumnsAreWhatTheRulesGrant(t *testing.T) {
 	if len(granted) == 0 || len(denied) == 0 {
 		t.Fatalf("check 81 step 6's columns are %d and %d paths long; a column that empty is a loop the test read wrongly", len(granted), len(denied))
 	}
-	if len(granted) != 13 || len(denied) != 21 {
-		t.Errorf("check 81 step 6 lists %d granted and %d refused paths, and its FACT line says \"The first thirteen are **200**\" and \"the second twenty-one are **401**\": a list and its count move together", len(granted), len(denied))
-	}
-	for _, want := range []string{"The first thirteen are **200**", "the second twenty-one are **401**"} {
-		if !strings.Contains(step, want) {
-			t.Errorf("check 81 step 6 does not carry %q: the FACT line is what the owner pastes back, so the counts in it are part of the columns", want)
-		}
-	}
-
+	// The columns' own counts are held by
+	// TestDocsCheck81Step6CountsItsReadColumns, which reads the two loops out of
+	// the same step and compares the numbers to them: this test's subject is the
+	// golden rules, and a copy of the count here would be a second place for it
+	// to rot.
 	root := goldenRules(t)
 	for _, p := range granted {
 		if !readableInGolden(root, p) {
@@ -93,8 +89,8 @@ func TestDocsCheck81FingerprintsMatchTheGoldenRules(t *testing.T) {
 	}
 	re := regexp.MustCompile(`grep -o '([^']+)' [^\n]*# (\d+):`)
 	found := re.FindAllStringSubmatch(step, -1)
-	if len(found) != 3 {
-		t.Fatalf("check 81 step 8 carries %d `grep -o '<pattern>' ... # <n>:` lines, want the three the step is about (mailbox, the USER predicate, $other's guard): the test reads the patterns and their counts from the step, and a line it cannot parse is a line it does not hold to the golden", len(found))
+	if len(found) != 6 {
+		t.Fatalf("check 81 step 8 carries %d `grep -o '<pattern>' ... # <n>:` lines, want the six the step is about (mailbox, the USER predicate, $other's guard, D166's device allowlist, D165's pairing subtree, and the mac the messages carry): the test reads the patterns and their counts from the step, and a line it cannot parse is a line it does not hold to the golden", len(found))
 	}
 	for _, m := range found {
 		pattern, want := m[1], m[2]
@@ -114,6 +110,20 @@ func TestDocsCheck81FingerprintsMatchTheGoldenRules(t *testing.T) {
 		if fmt.Sprint(got) != want {
 			t.Errorf("check 81 step 8 says `%s` appears %s time(s) in the deployed document, and rules.Generate()'s document contains it %d time(s): the count is the document's, so a change to the template moves both", pattern, want, got)
 		}
+	}
+
+	// The step prints the six counts a second time, as one list ("The six
+	// counts: **1, 12, 13, 12, 1 and 3**"), and the list is the same six
+	// numbers in the same order. Nothing held the two together, so a template
+	// change could move the lines and leave the summary counting the old
+	// document.
+	nums := make([]string, 0, len(found))
+	for _, m := range found {
+		nums = append(nums, m[2])
+	}
+	want := fmt.Sprintf("The six counts: **%s**", strings.Join(nums[:len(nums)-1], ", ")+" and "+nums[len(nums)-1])
+	if !strings.Contains(step, want) {
+		t.Errorf("check 81 step 8's summary of its counts is not %q: `grep -o` lines above are the same six numbers in that order, and the summary is what the owner pastes back -- a list that is not theirs makes the deployed document's fingerprint a number the check itself no longer prints", want)
 	}
 }
 
@@ -209,13 +219,15 @@ func TestDocsCheck82RulesDeployComesBeforeTheMarker(t *testing.T) {
 
 	// The support the sentence cites: the parenthesis after "never before".
 	// docs/gcp-setup.md's "Deploying the rules is an owner step" states the
-	// step's order the other way round -- it calls the rules the last write of
+	// step's order the other way round -- it called the rules the last write of
 	// the database step -- so it cannot be the support for this one; the
 	// review of PR #580 found the preamble citing it for exactly that, and an
 	// owner who followed the citation landed on the inverted order. The
 	// paragraph now names the code for the order and warns about the page in
-	// its own words; the page's correction is a change of its own, and if it
-	// is made, this clause is revisited with it.
+	// its own words. The page itself is corrected in this round and pinned by
+	// TestGcpSetupDatabaseStepOrderIsTheCodes, so this clause is now about the
+	// citation rather than about a page that disagrees: the order belongs in
+	// the check, next to the steps it governs.
 	_, cited, ok := strings.Cut(section, "the marker is written **after** the rules, never before (")
 	if !ok {
 		t.Fatalf("## Check 82: the preamble no longer carries the sentence stating that the marker is written after the rules: this test reads the support it cites from it, and the check needs the sentence")
@@ -237,6 +249,87 @@ func TestDocsCheck82RulesDeployComesBeforeTheMarker(t *testing.T) {
 	}
 	if rules > marker {
 		t.Errorf("DB.Plan plans the marker write (%d) before the rules action (%d): check 82's preamble says the marker is written after the rules, and this test holds the sentence to the code -- if the order really changed, rewrite the sentence with it", marker, rules)
+	}
+}
+
+// TestGcpSetupDatabaseStepOrderIsTheCodes: the third finding of the PR #580
+// review, on the page check 82's preamble had cited for the deploy order.
+// docs/gcp-setup.md's "Deploying the rules is an owner step" bullet called the
+// rules the database step's **last write**, where the marker is, and said a
+// database whose rules already match "reports `No changes`" -- a line
+// `applyRoot` prints for an empty Terraform root, not this step's sentence.
+// Both claims were the reverse of the code, and an owner who read the page
+// before running the step expected a plan without a marker write and a settled
+// database that prints a line it never prints.
+//
+// The bullet is now written from the code, and this test holds it there: the
+// order it states is read against `DB.Plan` in internal/infra/firebasedb.go,
+// the two lines it distinguishes against internal/cli/init_firebase.go's
+// `deployDatabase` (the settled line and its `len(acts) == 0 && !idp.missing &&
+// !fs.Pending()` guard) and `applyRoot`'s "No changes", and the act line it
+// quotes against the format `DB.Plan` prints.
+func TestGcpSetupDatabaseStepOrderIsTheCodes(t *testing.T) {
+	const path = "../../docs/gcp-setup.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bullet string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "Deploying the rules is an owner step") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatalf("%s has no line saying \"Deploying the rules is an owner step\": this test holds that bullet's account of the database step to the code, so it cannot check a page that no longer carries it", path)
+	}
+
+	// The order, as the plan makes it.
+	src := readSrc(t, "../infra/firebasedb.go")
+	rules := strings.Index(src, `Path: "rules"`)
+	marker := strings.Index(src, "d.put(projectpolicy.PathRulesMarker()")
+	if rules < 0 || marker < 0 {
+		t.Fatalf("internal/infra/firebasedb.go no longer plans the rules action and the marker (got %d and %d): the page's account of the order is written against them", rules, marker)
+	}
+	if rules > marker {
+		t.Errorf("DB.Plan plans the marker write (%d) before the rules action (%d): docs/gcp-setup.md says the rules go first and the marker after, and this test holds the sentence to the code -- if the order really changed, rewrite the page with it", marker, rules)
+	}
+	for _, want := range []string{
+		"then the rules, and **then the generation marker**",
+		"the marker is written **after** the rules and never before",
+	} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("%s: the \"Deploying the rules is an owner step\" bullet does not say %q: `DB.Plan` appends the rules action and then the marker's `PutIfMatch`, and the marker being last is what makes its presence a statement about the document under it -- the page an owner reads before the step has to say the same thing", path, want)
+		}
+	}
+	if strings.Contains(bullet, "last write") {
+		t.Errorf("%s: the bullet calls a write the database step's \"last write\": the marker is the last one, and a page that names the rules there has the owner read a missing marker as a deploy that landed", path)
+	}
+
+	// The two lines the bullet distinguishes: the stage's "No changes" and the
+	// database step's settled sentence.
+	const settled = "The database already has the rules, mark, project name and mode."
+	if !strings.Contains(readSrc(t, "init_firebase.go"), settled) {
+		t.Errorf("internal/cli/init_firebase.go no longer prints %q: the page quotes it as what a database step with nothing pending prints", settled)
+	}
+	if !strings.Contains(bullet, settled) {
+		t.Errorf("%s: the bullet does not quote %q, the line a database step with nothing pending prints: it is the line the reader is told to expect, and the page's account of the step is what they compare their run against", path, settled)
+	}
+	if !strings.Contains(bullet, "`No changes` is `fugaro init`'s line for a stage with nothing to do, not this step's") {
+		t.Errorf("%s: the bullet does not say that `No changes` is a stage's line rather than the database step's (internal/cli's `init_firebase.go` prints it for a Terraform root with an empty plan, and the database step's own no-op sentence is %q): the sentence it replaced said a database whose rules match \"reports `No changes`\", which no run of the step prints", path, settled)
+	}
+	if !strings.Contains(bullet, "**no rules line**") || !strings.Contains(bullet, "the **marker** write") {
+		t.Errorf("%s: the bullet does not say that a database whose rules already match prints no rules line but still plans the marker write when the marker is absent or holds another generation (`DB.Plan` plans the marker whenever `!markerFound || markerGen != RulesVersion`): that run is the one an owner of a pre-generation-3 installation is about to see, and the page has to describe it", path)
+	}
+
+	// The act line the bullet tells the reader to look for, as the plan prints
+	// it.
+	if !strings.Contains(src, "deploys the security rules (%d bytes, generated)") {
+		t.Errorf("internal/infra/firebasedb.go no longer prints the rules act line as \"deploys the security rules (%%d bytes, generated)\": docs/gcp-setup.md tells the owner to confirm the step when it lists that line")
+	}
+	if !strings.Contains(bullet, "deploys the security rules (… bytes, generated)") {
+		t.Errorf("%s: the bullet does not name the act line the reader confirms the step on (\"deploys the security rules (… bytes, generated)\", `DB.Plan`'s own wording with the byte count elided): the page tells them what to look for, so it has to be the line the CLI prints", path)
 	}
 }
 
@@ -1061,15 +1154,18 @@ func TestDocsCheck81Step5CountsItsTokLines(t *testing.T) {
 		return out
 	}
 
-	// Step 3: ten refusals, counted by `TOK` line. Its FACT line said "these
-	// eleven refusals" over a block of ten, and nothing read it -- steps 4, 5
-	// and 7 were counted here and step 3 was not.
+	// Step 3: fourteen refusals, counted by `TOK` line. Its FACT line said
+	// "these eleven refusals" over a block of ten, and nothing read it --
+	// steps 4, 5 and 7 were counted here and step 3 was not. The four lines
+	// generation 3's device conjunct added (the allowlist write and the three
+	// `$BO` refusals) are `TOK` lines like the rest, so the count moved with
+	// them.
 	step3 := stepText(t, section, "3. **The fence's negative half", "4. **The user reads")
 	toks3 := tokLines(step3, "ID2=$(printf 'chk81-%s'")
-	if len(toks3) != 10 {
+	if len(toks3) != 14 {
 		t.Fatalf("check 81 step 3's block has %d `TOK` lines, and this test counts the refusals its FACT line states by them: the count cannot be checked against a block it does not read", len(toks3))
 	}
-	for _, phrase := range []string{"the ten statuses", "these ten refusals"} {
+	for _, phrase := range []string{"the fourteen statuses", "these fourteen refusals"} {
 		if !strings.Contains(step3, phrase) {
 			t.Errorf("check 81 step 3's block is %d `TOK` lines and its FACT line does not say %q: the review of PR #580 found it saying \"these eleven refusals\" over a block of ten, so both the count at the top of the FACT line and the one in the read-back sentence are the block's own", len(toks3), phrase)
 		}
@@ -1148,10 +1244,14 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		pred string
 	}{
 		{11, `"TOKEN || USER"`}, {12, `"TOKEN || USER"`},
-		{22, `"TOKEN || USER"`}, {65, `"TOKEN || USER"`},
-		{132, `"RUN || USER"`},
-		{30, `"RUN"`}, {153, `"RUN"`},
-		{207, `"MAILBOX"`}, {223, `"MAILBOX"`},
+		{22, `"TOKEN || USER"`}, {87, `"TOKEN || USER"`},
+		{13, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{23, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{107, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{154, `"RUN || USER"`},
+		{52, `"RUN"`}, {175, `"RUN"`},
+		{257, `"MAILBOX"`}, {301, `"MAILBOX"`},
+		{44, `"PAIRING"`},
 	} {
 		if want.n < 1 || want.n > len(lines) {
 			t.Fatalf("rules.json.tmpl has %d lines and the paragraph cites line %d", len(lines), want.n)
@@ -1161,10 +1261,10 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		}
 	}
 	if !strings.Contains(para, "`RUN || USER`") {
-		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 132): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
+		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 154): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
 	}
 	if !strings.Contains(para, "`RUN`") {
-		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 30 and 153), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
+		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 52 and 175), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
 	}
 }
 
@@ -1401,10 +1501,10 @@ func TestDocsCheck82NamesTheTestsThatCoverTheRefusal(t *testing.T) {
 }
 
 // TestDocsCheck81StatedCountsMatchTheirBlocks: the rest of check 81's stated
-// counts -- step 2's four wrong shapes, step 4's two 200s, step 6's three
-// reads by the second user, step 7's two tokens and the Restore's two deletes.
-// Each counts something in the step's own block, so each is read from the
-// block here: the review of PR #580 found step 3 stating "these eleven
+// counts -- step 2's six wrong shapes, step 4's two 200s, step 6's three
+// reads by the second user, step 7's two tokens and the Restore's four
+// deletes. Each counts something in the step's own block, so each is read from
+// the block here: the review of PR #580 found step 3 stating "these eleven
 // refusals" over a block of ten, and that is the shape a count nothing derives
 // has wherever it sits -- a number in a FACT line that no command in the step
 // produces, which is what the owner is asked to record.
@@ -1428,12 +1528,12 @@ func TestDocsCheck81StatedCountsMatchTheirBlocks(t *testing.T) {
 
 	// Step 2: the wrong shapes, each on an id of its own, all 401.
 	step2 := stepText(t, section, "2. **The fence's positive half", "3. **The fence's negative half")
-	if n := toks(step2, "inbox/$BAD.json"); n != 4 {
-		t.Errorf("check 81 step 2's block makes %d refused writes of the wrong shapes (`TOK` lines writing `inbox/$BAD.json`) and the step counts them as four (\"All four are 401\", \"the four wrong shapes' status (401)\"): the count is the block's, and a step that adds a shape without the count reads as a check that made one more refusal than it did", n)
+	if n := toks(step2, "inbox/$BAD.json"); n != 6 {
+		t.Errorf("check 81 step 2's block makes %d refused writes of the wrong shapes (`TOK` lines writing `inbox/$BAD.json`) and the step counts them as six (\"All six are 401\", \"the six wrong shapes' status (401)\"): the count is the block's, and a step that adds a shape without the count reads as a check that made one more refusal than it did", n)
 	}
-	for _, want := range []string{"All four are 401", "the four wrong shapes"} {
+	for _, want := range []string{"All six are 401", "the six wrong shapes"} {
 		if !strings.Contains(step2, want) {
-			t.Errorf("check 81 step 2 does not say %q: it is one of the two places the step counts its four wrong shapes, and the count is read against the block", want)
+			t.Errorf("check 81 step 2 does not say %q: it is one of the two places the step counts its six wrong shapes, and the count is read against the block", want)
 		}
 	}
 
@@ -1471,14 +1571,16 @@ func TestDocsCheck81StatedCountsMatchTheirBlocks(t *testing.T) {
 		t.Errorf("check 81 step 7 does not say \"Two tokens, minted and exchanged only here\": its block makes two `signin` calls, and the sentence is what tells the owner how many custom tokens this step handles")
 	}
 
-	// The Restore: two RTDB deletes, one per mailbox.
+	// The Restore: four RTDB deletes, one per node the check wrote -- the two
+	// mailboxes and the two device nodes generation 3 needs before an account
+	// can read anything at all.
 	restore := section[strings.Index(section, "**Restore.**"):]
 	loops := forInLoops(restore)
-	if len(loops) != 1 || len(loops[0]) != 2 {
-		t.Fatalf("check 81's Restore has %d `for p in` loops of %v paths, and its FACT line says \"the two RTDB deletes' statuses (200 each)\": the deletes are the two mailboxes, so the loop is what the count is read from", len(loops), loops)
+	if len(loops) != 1 || len(loops[0]) != 4 {
+		t.Fatalf("check 81's Restore has %d `for p in` loops of %v paths, and its FACT line says \"the four RTDB deletes' statuses (200 each)\": the deletes are the two mailboxes and the two device nodes, so the loop is what the count is read from", len(loops), loops)
 	}
-	if !strings.Contains(restore, "the two RTDB deletes") {
-		t.Errorf("check 81's Restore does not say \"the two RTDB deletes\": its loop deletes two paths (`%s`), and the FACT line is what the owner pastes back", strings.Join(loops[0], " "))
+	if !strings.Contains(restore, "the four RTDB deletes") {
+		t.Errorf("check 81's Restore does not say \"the four RTDB deletes\": its loop deletes four paths (`%s`), and the FACT line is what the owner pastes back", strings.Join(loops[0], " "))
 	}
 }
 
@@ -1515,6 +1617,27 @@ func TestDocsGeneratorSizeAndMailboxCountAreTheGoldens(t *testing.T) {
 		}
 		if m[1] != fmt.Sprint(c.want) {
 			t.Errorf("%s: states %s as %s, and `rules.Generate()`'s own document (internal/budget/rules/testdata/rules.golden.json) gives %d: the number is a FACT line the owner pastes back, so a template change has to move it here too", c.heading, c.what, m[1], c.want)
+		}
+	}
+
+	// The two places the document's size is rounded to kilobytes rather than
+	// printed: check 82's cost paragraph ("one rules deploy of about N KB") and
+	// the register row, which the owner reads to decide what the run costs.
+	// Generation 3 grew the document past the round number generation 2 had, and
+	// the paragraph kept saying "about 42 KB" while the row said "about 53 KB":
+	// the two are the same number, read from the same file, so both are held to
+	// it here.
+	kb := fmt.Sprint((len(golden) + 512) / 1024)
+	for _, c := range []struct{ what, text string }{
+		{"## Check 82's cost paragraph", docSection(t, path, doc, "## Check 82:")},
+		{"the register row for check 82", registerRow(t, doc, "82")},
+	} {
+		m := regexp.MustCompile(`about (\d+) KB`).FindStringSubmatch(c.text)
+		if m == nil {
+			t.Fatalf("%s: no longer says \"about <N> KB\", which this test holds to the golden's size (%d bytes, about %s KB): the sentence is what tells the owner what the run costs", c.what, len(golden), kb)
+		}
+		if m[1] != kb {
+			t.Errorf("%s: says \"about %s KB\" and `rules.Generate()`'s document is %d bytes, about %s KB: the number is the same one the check prints in full elsewhere, so a template change has to move both", c.what, m[1], len(golden), kb)
 		}
 	}
 }
@@ -1697,7 +1820,7 @@ func TestDocsCheck81TemplateCountsMatchTheTemplate(t *testing.T) {
 }
 
 // TestDocsCheck81Step6CountsItsReadColumns: step 6's FACT line counts its two
-// columns -- "the first thirteen are **200** ... the second twenty-one are
+// columns -- "the first thirteen are **200** ... the second twenty-six are
 // **401**" -- and the Passes paragraph above the section repeats both numbers.
 // The counts are the step's own two `for p in ...; do` loops, and nothing
 // derived them, so a path added to one column would leave the prose counting
@@ -1714,7 +1837,7 @@ func TestDocsCheck81Step6CountsItsReadColumns(t *testing.T) {
 		t.Fatalf("check 81 step 6 has %d `for p in ...; do` loops and its FACT line counts two columns: this test reads the granted column and the denied one out of those loops", len(loops))
 	}
 	granted, denied := len(loops[0]), len(loops[1])
-	words := map[int]string{13: "thirteen", 21: "twenty-one"}
+	words := map[int]string{13: "thirteen", 26: "twenty-six"}
 	gw, ok := words[granted]
 	if !ok {
 		t.Fatalf("check 81 step 6's first loop reads %d paths and this test has no word for that count: write one", granted)
