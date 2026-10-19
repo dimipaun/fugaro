@@ -229,6 +229,69 @@ func TestDocsMobileOrchestratorCheckNumberIsFree(t *testing.T) {
 	}
 }
 
+// orchSlug is the anchor a heading carries in a rendered Markdown document:
+// lowercased, with everything that is not a letter, a digit, a space or a
+// hyphen dropped and spaces turned into hyphens. It is the rule the document's
+// own `](#…)` links depend on.
+func orchSlug(heading string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(heading) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
+// TestDocsMobileOrchestratorAnchorsResolve: every in-document link points at a
+// heading that exists. The document cross-references itself heavily — the
+// envelope (§4.5) and the questions are cited from a dozen places — and a
+// heading whose text is edited without its links is a document whose
+// cross-references silently stop working. That happened once: the §4.5 heading
+// gained ", and a compromised orchestrator" while thirteen links kept the old
+// anchor.
+func TestDocsMobileOrchestratorAnchorsResolve(t *testing.T) {
+	doc := readDoc(t, orchDesign)
+	slugs := map[string]bool{}
+	for _, line := range strings.Split(doc, "\n") {
+		body, ok := strings.CutPrefix(line, "#")
+		if !ok {
+			continue
+		}
+		for strings.HasPrefix(body, "#") {
+			body = body[1:]
+		}
+		body = strings.TrimSpace(body)
+		if body == "" || body == strings.TrimSpace(line) {
+			continue
+		}
+		slugs[orchSlug(body)] = true
+	}
+	// A document with no headings would make this test vacuous.
+	if len(slugs) < 10 {
+		t.Fatalf("%s has %d headings: the anchor check needs the document's real headings", orchDesign, len(slugs))
+	}
+	for i := 0; ; {
+		j := strings.Index(doc[i:], "](#")
+		if j < 0 {
+			break
+		}
+		start := i + j + 3
+		end := strings.Index(doc[start:], ")")
+		if end < 0 {
+			t.Fatalf("%s has an unterminated in-document link at offset %d", orchDesign, start)
+		}
+		slug := doc[start : start+end]
+		if !slugs[slug] {
+			t.Errorf("%s links to #%s, which no heading in the file produces: the heading moved or was reworded and the link was not", orchDesign, slug)
+		}
+		i = start + end
+	}
+}
+
 // TestDocsMobileOrchestratorIsIndexedAndPlanned: the mobile README lists the
 // design with its neighbours, and the plan's Task P5.1 names the file and stays
 // UNSCHEDULED. Both are the point of the document rather than its decoration:
