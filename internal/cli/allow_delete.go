@@ -25,10 +25,12 @@ import (
 // identity of the object approved there, and which is the whole of an
 // approval in a managed project — the object the managed apply reads its
 // allow-list from, rather than its own command line, which belongs to whatever
-// session is applying. An approval is of one object and not of the address, so
-// one entry admits one delete: the object it named is gone afterwards, and the
-// same address carrying another one is not approved by it (tf.DeleteEntry,
-// tf.Approves).
+// session is applying. An approval is of one NAMED object and not of the
+// address: the same address carrying another one — another name, a renamed or
+// replaced resource, one moved in from elsewhere — is not approved by it
+// (tf.DeleteEntry, tf.Approves). What that does not tell apart is a
+// re-creation under the same name, which the package comment of
+// internal/infra/tf/identity.go and the command's own help both state.
 //
 // It is run by the owner, with the owner's own credentials, and it is
 // Fugaro's only writer of the object. What that buys, and what it does not — the plan's step

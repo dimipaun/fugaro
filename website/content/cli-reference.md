@@ -127,13 +127,26 @@ address removes, as in
   fugaro allow-delete 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket'
 
 An approval is of one object and not of the address: the same address carrying
-another object later is not approved by it, so an entry an earlier apply
-already used admits nothing more (the object it named is gone). The identity is
-compared character for character with the one the plan's before view shows, so
-copy it from the refusal rather than retyping it. Nothing else is recorded — no
-note and no reason: the object's own version history is the record of who
-approved what and when, and the identity is what the approved delete is
-identified by.
+another object later — another name, a renamed or replaced resource, one moved
+in from elsewhere — is not approved by it, so an entry an earlier apply already
+used admits nothing more. The identity is compared character for character with
+the one the plan's before view shows, so copy it from the refusal rather than
+retyping it; it is printed there bare, and one surrounding pair of double
+quotes is stripped from it if you paste it quoted anyway, because a shell or a
+message may have added them.
+
+What an approval does not tell apart, said here rather than left to be
+discovered: for every managed type but google_apikeys_key the provider derives
+a resource's id from its configured name, and a plan's before view carries
+nothing else, so an object deleted and then re-created from the same
+configuration under the same name at the same address carries the same
+identity and this entry still approves its removal. The rule is about the
+object at the address, not about one instance of a name; if that matters for a
+resource, review the list rather than rely on the entry having been used up.
+
+Nothing else is recorded — no note and no reason: the object's own version
+history is the record of who approved what and when, and the identity is what
+the approved delete is identified by.
 
 Run it in your own terminal, as an operator, with your own credentials. Pass
 the entries to approve, and they replace the list: an invocation that leaves an

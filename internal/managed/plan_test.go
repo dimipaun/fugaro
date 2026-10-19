@@ -663,25 +663,33 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	}
 }
 
-// The rule Task 6.3 exists for, at the managed Gate: an approval is one
-// delete, not a standing permission to delete whatever is at the address
-// later. The plan removes the object the entry was given for and the removal
-// is admitted; the same plan after that object was re-created — the same
-// address, another id — carries an object the entry is not about, and both
-// halves of the gate refuse it there, naming the object the plan removes,
-// which is what the owner needs to approve the deletion they now mean.
+// The rule Task 6.3 exists for, at the managed Gate: an approval is of the
+// object the owner was shown, not a standing permission to delete whatever is
+// at the address later. The plan removes the object the entry was given for
+// and the removal is admitted; the same address carrying ANOTHER object — a
+// bucket under another name, which is what a state rebuilt from a backup or a
+// `state mv` leaves there — is an object the entry is not about, and both
+// halves of the gate refuse it, naming the object the plan removes, which is
+// what the owner needs to approve the deletion they now mean.
+//
+// The identity is the one the provider really writes for this type — for a
+// bucket `id` IS the name, so the two views differ in both — rather than an
+// id a fixture invents to make the rule look stronger than it is: a same-NAMED
+// re-creation of a bucket carries the same identity and is still approved,
+// which is the residual §6 item 5 and internal/infra/tf/identity.go record and
+// TestAnEntryApprovesASameNamedObjectReCreatedAtTheAddress pins.
 func TestGateRefusesARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
 	const addr = "module.managed.google_storage_bucket.fmgd_data"
 	r := newRig(t)
-	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-0001"}))
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-data"}))
 	approved := r.approving(t, addr)
 	if v := gate(t, r, spec(t, r, managedCover(), approved)); !v.OK {
 		t.Fatalf("the removal the owner's entry was given for is refused: %v", v.Refusals)
 	}
-	// The address now carries another object: a re-created bucket, whose id is
-	// not the one the entry holds. The entry is about the object that is gone,
-	// so it approves nothing.
-	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-0002"}))
+	// The address now carries another object: a bucket under another name,
+	// whose identity the entry does not hold. The entry is about the object
+	// that is gone, so it approves nothing.
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other"}))
 	v := gate(t, r, spec(t, r, managedCover(), approved))
 	if v.OK {
 		t.Fatal("the entry approved a removal of an object it was not given for")
@@ -700,7 +708,7 @@ func TestGateRefusesARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
 	}
 	// The person who can change the answer is the owner, and the refusal says
 	// what they would approve: the identity the plan removes, which is the
-	// object's own id and not the one the entry holds.
+	// object now at the address and not the one the entry holds.
 	if v := gate(t, r, spec(t, r, managedCover(), r.approving(t, addr))); !v.OK {
 		t.Errorf("the entry for the object the plan removes is refused: %v", v.Refusals)
 	}

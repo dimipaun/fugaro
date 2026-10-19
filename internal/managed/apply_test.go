@@ -1064,7 +1064,10 @@ func TestTerraformEnvRefusesAProviderSettingThatPassedTheAllowlist(t *testing.T)
 // carried, per address, and nothing is applied.
 func TestManagedGuardRefusalNamesTheOwnersListAndNoFlag(t *testing.T) {
 	r := newApplyRig(t, plainRoot())
-	r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	// The removal identifies its object, which is what makes the advice true:
+	// an entry the owner could write for this address would admit it, so the
+	// refusal may name the list (tf.ListableEntries).
+	r.planWithChanges(t, deleted(planBucket, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-data"}))
 	req := r.request(t)
 	_, err := Apply(context.Background(), req)
 	if !errors.Is(err, ErrRefused) {
@@ -1277,7 +1280,7 @@ func TestManagedRefusalOfWhatNoListClearsNamesNoListAndNoFlag(t *testing.T) {
 	// that address.
 	r := newApplyRig(t, plainRoot())
 	r.planWithChanges(t, moved(planBucket, "module.managed.google_storage_bucket.old"),
-		change("module.managed.google_storage_bucket.other", "google_storage_bucket", []string{"delete"}, nil))
+		deleted("module.managed.google_storage_bucket.other", "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other"}))
 	_, err := Apply(context.Background(), r.request(t))
 	if err == nil || !strings.HasSuffix(err.Error(), DeleteAdvice(gcpProject)) {
 		t.Errorf("a refusal with an address the owner's list clears does not end with the advice:\n%v", err)
