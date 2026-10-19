@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -25,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -455,42 +455,18 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 
 // repoURL is the https clone URL: the given one, which must be on the
 // provider's host and carry no credentials, else the provider's usual one.
+//
+// The rules are repourl.CloneURL's, and only the error shape is this
+// package's: the deployer and the runner (a project job's clone URL, plan task
+// 3.3 step 3) must give the same answer, so a URL one of them refuses cannot
+// be one the other accepts. A per-repository job's FUGARO_REMOTE is written
+// from here (cloneJobEnv) and a project job's URL is computed there.
 func repoURL(provider, repo, given string) (string, error) {
-	if given == "" {
-		host := map[string]string{gitprov.KindGitHub: "github.com", gitprov.KindBitbucket: "bitbucket.org"}[provider]
-		if host == "" {
-			return "", userErr("git.provider %q is not bitbucket or github", provider)
-		}
-		return "https://" + host + "/" + repo + ".git", nil
-	}
-	u, err := url.Parse(given)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", userErr("the repository URL %s is not an https URL without credentials", gcp.RedactURL(given))
-	}
-	if gitprov.KindForURL(given) != provider {
-		return "", userErr("the repository URL %s is not on %s's host", given, provider)
-	}
-	// The URL is where the build and the check clone from, so it must be
-	// this repository, not only this provider. EscapedPath, not Path: the
-	// run's own admission compares the path git will send, which is the
-	// escaped one (gitprov.SplitRemote returns EscapedPath for exactly this
-	// comparison), so a URL whose path decodes to this repository but is
-	// spelled otherwise — https://bitbucket.org/acme/sandb%6fx.git — would be
-	// accepted here and refuse every run of the job it deployed (the review
-	// finding on this change). The path's punctuation is trimmed by
-	// gitprov.TrimRepoPath, the same function the run's admission asks
-	// (internal/runner's remoteRepoPath): trimming every "/" here read
-	// https://bitbucket.org//acme/sandbox.git as this repository and wrote it
-	// as the job's remote, where the admission's one-per-side trim leaves the
-	// empty segment and refuses every run (the review finding on this change).
-	want, err := task.CanonicalRepo(repo)
+	u, err := repourl.CloneURL(provider, repo, given)
 	if err != nil {
 		return "", userErr("%v", err)
 	}
-	if got, err := task.CanonicalRepo(gitprov.TrimRepoPath(u.EscapedPath())); err != nil || got != want {
-		return "", userErr("the repository URL %s is not %s", given, repo)
-	}
-	return given, nil
+	return u, nil
 }
 
 // withDefaults fills in the outputs the installation has not reported
@@ -623,6 +599,48 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 		out = append(out, SecretMount{s.Name, s.Env})
 	}
 	return out, nil
+}
+
+// WorkflowAccounts are the Claude accounts each of repo's workflows gets a
+// job for: under oauth every account config.AllowedClaudeAccounts allows repo
+// (the default first), and the default alone under every other auth. RepoSpec
+// deploys one job per (workflow, account) from it, and RequiredSecrets reads
+// the same list, so the two cannot disagree about which tokens are mounted.
+func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
+	if cfg.Agent.Auth == "oauth" {
+		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	}
+	return []string{config.DefaultClaudeAccount}
+}
+
+// RequiredSecrets is every logical secret name the jobs of repo's workflows
+// mount and cannot go without, sorted: the union of SecretMounts over each
+// workflow of cfg and each account WorkflowAccounts gives it, with the git
+// credential of cfg's provider (GitSecret), less the optional mounts
+// (OptionalSecret) a job runs without, as readiness treats them. It is what
+// `fugaro secrets ls` checks for MISSING, so that column flags exactly the
+// names a deployed job needs and never one no job of this repository reads. A provider GitSecret does not
+// know, or a workflow SecretMounts refuses, is an error, not a guess.
+func RequiredSecrets(cfg *config.Config, lc *localcfg.Config, repo string) ([]string, error) {
+	git, ok := GitSecret(cfg.Git.Provider)
+	if !ok {
+		return nil, userErr("git.provider %q is not bitbucket or github", cfg.Git.Provider)
+	}
+	set := map[string]bool{}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		for _, tok := range WorkflowAccounts(cfg, lc, repo) {
+			ms, err := SecretMounts(git, cfg, name, tok, cfg.Workflows[name], lc, repo)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range ms {
+				if !OptionalSecret(m.Logical) {
+					set[m.Logical] = true
+				}
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(set)), nil
 }
 
 // workflow is the spec of (name, token): fugaro.yaml's logical workflow
@@ -857,11 +875,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// backstop of the allow-list, design §6b.3). Every other auth kind
 		// has exactly the default account, unchanged from before this field
 		// existed.
-		tokens := []string{config.DefaultClaudeAccount}
-		if in.Cfg.Agent.Auth == "oauth" {
-			tokens = config.AllowedClaudeAccounts(lc.ClaudeAccounts, in.Repo)
-		}
-		for _, tok := range tokens {
+		for _, tok := range WorkflowAccounts(in.Cfg, lc, in.Repo) {
 			ws, err := c.workflow(name, tok)
 			if err != nil {
 				return RepoSpec{}, err

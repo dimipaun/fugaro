@@ -48,6 +48,7 @@ var skillJSONFields = []jsonFieldClaim{
 	{"secrets ls", []secretEntry{}, "[].id"},
 	{"secrets ls", []secretEntry{}, "[].versions"},
 	{"secrets ls", []secretEntry{}, "[].latest"},
+	{"secrets ls", []secretEntry{}, "[].missing"},
 	{"config layer", configLayerDoc{}, "where"},
 	{"config layer", configLayerDoc{}, "generation"},
 	{"config layer", configLayerDoc{}, "sha256"},

@@ -18,6 +18,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
@@ -954,6 +955,9 @@ func TestTestKnobIgnoredInCloud(t *testing.T) {
 	g.deps.GatewayUpstream = "" // as a local run against the real API would be
 	g.deps.Local = false        // the CLI's resolved platform: a Cloud Run execution, or any it can't name
 	g.deps.Project = "aurora"   // and its job names the project, as every job does
+	// The execution the platform reports: the run's own per-repository job,
+	// so the admission places it (a cloud process with none is refused there).
+	g.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
 	g.deps.Env = append(g.deps.Env, "FUGARO_TEST_ALLOW_ROUTING_SETTINGS=1", "CLOUD_RUN_EXECUTION=exec-1")
 	rec, err := g.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "ANTHROPIC_BASE_URL") {

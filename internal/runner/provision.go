@@ -41,6 +41,14 @@ const CheckoutEnv = "FUGARO_CHECKOUT"
 // constant. It carries no credentials (no userinfo, https only:
 // internal/infra's repoURL checks both); the token travels separately, as
 // the credential env cloneVars builds.
+//
+// **A project job does not read it at all** (plan task 3.3 step 3, design
+// §4.1(1)): the remote a project job clones from is computed from task.json's
+// repository, the provider the job's own name pins and the project's policy
+// (internal/runner's cloneURL), because a shared job serves every repository
+// of its profile and its environment is a launcher's to override. The constant
+// stays for the per-repository path, which is every repository until phase 4
+// migrates it (D3); Task 4.4 drops it.
 const RemoteEnv = "FUGARO_REMOTE"
 
 // provisionStage is the name provisioning's own time is recorded under: the

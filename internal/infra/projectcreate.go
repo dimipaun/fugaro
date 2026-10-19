@@ -373,6 +373,16 @@ func SuggestProjectID(id string) string {
 
 // CreateProject creates the project and waits for the operation. An ID held
 // by a project the caller cannot read is a ProjectTaken error.
+//
+// Its return is the creation fact, and the only one: a caller that gets nil
+// here created the project, and a project Fugaro created is a project Fugaro
+// manages (the owner's addendum of 2026-10-15; design D56/D57, Task 0.1 of
+// docs/plans/2026-10-16-managed-projects.md). init turns it into
+// initResult.Created and records it in the runs bucket
+// (internal/infra/managed.WriteMarker, called from init's markCreated);
+// nothing here writes that object, because at this moment the bucket does
+// not exist yet. AddFirebase is deliberately not part of the fact: it runs
+// on projects that already existed (D73).
 func CreateProject(ctx context.Context, pc *ProjectClients, s CreateSpec) error {
 	if err := ValidateNewProjectID(s.ID); err != nil {
 		return err
@@ -456,7 +466,10 @@ func WaitReadable(ctx context.Context, pc *ProjectClients, id string) error {
 	}
 }
 
-// AddFirebase adds Firebase to the project and waits for the operation.
+// AddFirebase adds Firebase to the project and waits for the operation. It
+// is not the creation fact: init calls it for a project it just created and
+// for one that already existed (init_project.go), and only the first makes
+// the project managed (Task 0.1's step 2, D73).
 func AddFirebase(ctx context.Context, pc *ProjectClients, id string) error {
 	op, err := pc.Firebase.Projects.AddFirebase("projects/"+id, &firebase.AddFirebaseRequest{}).Context(ctx).Do()
 	if err != nil {

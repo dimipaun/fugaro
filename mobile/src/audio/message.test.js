@@ -19,19 +19,24 @@ function draft(overrides = {}) {
   return { id: 'm-1', sender: 'phone-installation-a', text: 'running the tests', at: 1_700_000_000_000, ...overrides };
 }
 
-test('the draft supplies exactly the schema\'s required fields', () => {
-  assert.deepEqual([...DRAFT_FIELDS], [...REQUIRED_FIELDS], 'the draft and the protocol cannot disagree');
+test('the draft supplies exactly the schema\'s required fields, less the mac the client signs', () => {
+  assert.deepEqual(
+    [...DRAFT_FIELDS],
+    [...REQUIRED_FIELDS].filter((field) => field !== 'mac'),
+    'the draft and the protocol cannot disagree',
+  );
 });
 
 test('a final transcript becomes a message the shared schema accepts', () => {
   const verdict = messageDraft(draft());
   assert.equal(verdict.ok, true);
-  assert.deepEqual({ ...validateMessage(verdict.message) }, { ok: true, message: verdict.message });
+  const signed = { ...verdict.message, mac: '0'.repeat(64) };
+  assert.equal(validateMessage(signed).ok, true, 'the draft plus a well-formed tag is a message the schema accepts');
   assert.equal(Object.isFrozen(verdict.message), true);
   assert.deepEqual(
     Object.keys(verdict.message).sort(),
-    [...FIELDS].filter((field) => field !== 'acked').sort(),
-    'a draft has no field of its own: not `mac` (P6.3), not `acked` (the consumer\'s)',
+    [...DRAFT_FIELDS].sort(),
+    'a draft has no field of its own: not `mac` (P3.6 signs it), not `acked` (the consumer\'s)',
   );
   assert.equal(verdict.message.text, 'running the tests');
   assert.equal(verdict.message.at, 1_700_000_000_000);

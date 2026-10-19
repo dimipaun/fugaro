@@ -200,6 +200,28 @@ func confirmTyped(cmd *cobra.Command, in *bufio.Reader, lc *localcfg.Config, yes
 	return nil
 }
 
+// confirmTypedStrict is confirmTyped where nothing stands in for the typed
+// name: no flag confirms the step, so the caller passes the sentence saying
+// why (why), and the refusal names no flag at all — a refusal that named one
+// would be read by whoever it refuses as the thing to pass next, and on a
+// command that has no such flag it is advice that cannot be taken.
+func confirmTypedStrict(cmd *cobra.Command, lc *localcfg.Config, why, what string) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
+	if !stdinIsTerminal(cmd.InOrStdin()) {
+		return userErr("%s: %s", initflow.NeedsTerminal("the typed confirmation of this step"), why)
+	}
+	fmt.Fprintf(out, "Type %s to confirm: ", lc.Name)
+	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return userErr("reading the confirmation: %v", err)
+	}
+	if strings.TrimSpace(line) != lc.Name {
+		return userErr("not confirmed (the project's name was not typed); nothing was changed")
+	}
+	return nil
+}
+
 // --------------------------------------------------------------- show
 
 type budgetShowOptions struct {

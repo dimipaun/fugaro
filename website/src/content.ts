@@ -22,10 +22,10 @@
 //   - website/content/costs.json  W0.3's aggregation output, published deliberately and
 //                                 **absent until the owner runs it**: an empty figure is
 //                                 honest, an invented one is not (D96, D97).
-//   - README.md                   the tagline, which is the line under its `# Fugaro`
-//                                 title and is read here rather than copied into a
-//                                 component, so the site and the README cannot drift
-//                                 (F48, D102).
+//   - README.md                   the tagline and the subline, which are the two lines
+//                                 under its `# Fugaro` title and are read here rather
+//                                 than copied into a component, so the site and the README
+//                                 cannot drift (F48, D102; changes spec item 2).
 //
 // Three properties this module is written to hold:
 //
@@ -892,32 +892,92 @@ function loadCosts(minRuns: number): CostsFacts | null {
 // ---------------------------------------------------------------------------------------
 
 /**
- * The tagline: **README.md's own tagline line, the line under its `# Fugaro` title**
- * (F48, D102). It is read rather than copied into a component, because a tagline typed
- * into a template is a second copy of the README's line and the one that drifts — and
- * because every other sentence the site prints has to be traceable to a document or a
- * command, starting with this one.
+ * The two lines the site's promise is written in, read from the one place they are
+ * written: **README.md's own opening**, under its `# Fugaro` title.
  *
- * The line's markdown emphasis is not part of the sentence, so the `**` that makes it
- * bold in the README is stripped: what a page renders is the text a reader reads.
+ *   - the **headline** is the README's tagline line — the first non-empty line under the
+ *     title, the bold one — and it is the hero's `h1` (F48, D102);
+ *   - the **subline** is the line under it: one sentence saying what the product is, which
+ *     is the hero's lead, the site's default page description and the `og:description` a
+ *     shared link shows — the card included, since the head emits one `twitter:card` and no
+ *     second description tag, so the card reads the OpenGraph one (the changes spec of
+ *     2026-10-18, item 2; `website/test/home.mjs` holds both to the README's line and
+ *     asserts there is no `twitter:description`).
+ *
+ * Both are read rather than copied into a component, because a promise typed into a
+ * template is a second copy of the README's line and the one that drifts — and because
+ * every other sentence the site prints has to be traceable to a document or a command,
+ * starting with these. Both also have to be there: a README whose title is followed by one
+ * line, or by none, stops the build naming the file rather than rendering a page with a
+ * hole in its first screen.
+ *
+ * The same goes for the *shape* of the two lines, and it is checked rather than assumed:
+ * the README is markdown and what a page renders is text, so a promise that is a line of
+ * markdown *structure* — a heading, a list item, a quote, a table row, a rule or a fence,
+ * an image or a raw tag — would print its own markers on the first screen. Either line
+ * being one stops the build naming the file, which is the behaviour
+ * `website/test/home.mjs` holds to a case (a README that puts its promise under the title
+ * as `## Install` fails the build rather than rendering "## Install" under the headline).
+ *
+ * The markdown emphasis is not part of either sentence, so the `**` that makes the tagline
+ * bold in the README is stripped: what a page renders is the text a reader reads. The
+ * subline is the whole of the line: it is one sentence, and a second one on the same line
+ * would be rendered whole, so the README's own line breaks are what fixes where it ends.
  */
-export function loadTagline(): string {
+function loadPromiseLines(): { tagline: string; subline: string } {
   const file = 'README.md'
-  const lines = readBytes(path.join(REPO_ROOT, 'README.md'), 'the tagline: the line under its `# Fugaro` title, which the site renders rather than restating (F48, D102)').split('\n')
+  const lines = readBytes(
+    path.join(REPO_ROOT, 'README.md'),
+    'the tagline and the subline: the two lines under its `# Fugaro` title, which the site renders rather than restating (F48, D102; changes spec item 2)',
+  ).split('\n')
 
   const title = lines.findIndex((line) => line.trim() === '# Fugaro')
   if (title === -1) {
-    throw new Error(`${file}: no "# Fugaro" title, and the site's tagline is the line under it (F48, D102, W1.3 step 1).`)
+    throw new Error(`${file}: no "# Fugaro" title, and the site's tagline and subline are the two lines under it (F48, D102, W1.3 step 1).`)
   }
-  const line = lines.slice(title + 1).find((candidate) => candidate.trim() !== '')
-  if (line === undefined) {
-    throw new Error(`${file}: the "# Fugaro" title is the last thing in the file, and the tagline is the line under it (F48, D102).`)
+
+  const unemphasized = (line: string) => line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
+  // Markdown that organises a document rather than saying something. Both lines are rendered
+  // as plain text, so one of these would print its own markers on the first screen.
+  const STRUCTURE = /^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s?|\||`{3,}|<|={3,}|-{3,}$)/
+  const under = lines.slice(title + 1).filter((candidate) => candidate.trim() !== '')
+  if (under.length < 2) {
+    throw new Error(
+      `${file}: the "# Fugaro" title is followed by ${under.length} non-empty line(s), and the site renders the two under it: the tagline (the hero's headline) and the subline (the promise under it, which is the site's page description). Add the missing line, or this build has no promise to render (changes spec item 2, F48).`,
+    )
   }
-  const tagline = line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
-  if (tagline === '') {
-    throw new Error(`${file}: the line under the "# Fugaro" title is empty, and the site renders that line as its tagline (F48, D102).`)
+
+  const tagline = unemphasized(under[0])
+  const subline = unemphasized(under[1])
+  if (tagline === '' || subline === '') {
+    throw new Error(`${file}: one of the two lines under the "# Fugaro" title is empty, and the site renders both (F48, D102; changes spec item 2).`)
   }
-  return tagline
+  for (const [what, line] of [
+    ['tagline', tagline],
+    ['subline', subline],
+  ] as const) {
+    if (STRUCTURE.test(line)) {
+      throw new Error(
+        `${file}: the ${what} is ${JSON.stringify(line)}, which is markdown structure — a heading, a list item, a quote, a table row, a rule or fence, an image or a tag — rather than the sentence the site renders as plain text: the markers would be printed on the first screen, where the promise is. The two lines are the README's opening under its "# Fugaro" title: one line saying what the product is, and the sentence under it (changes spec item 2, F48, D102).`,
+      )
+    }
+  }
+  return { tagline, subline }
+}
+
+/** README.md's tagline line: the site's headline, the hero's `h1` (F48, D102). */
+export function loadTagline(): string {
+  return loadPromiseLines().tagline
+}
+
+/**
+ * README.md's subline: the one sentence under the tagline, rendered as the hero's lead and
+ * as the site's default page description (changes spec item 2). It is provider-neutral on
+ * purpose — "cloud jobs", not a named cloud — because where a run happens is the
+ * architecture's business and is explained further down the page.
+ */
+export function loadSubline(): string {
+  return loadPromiseLines().subline
 }
 
 /**
@@ -973,8 +1033,10 @@ export function loadSitemapHref(canonicalURL: string): string | null {
 export interface Site {
   facts: SiteFacts
   install: InstallFacts
-  /** README.md's tagline line, the site's default page description. */
+  /** README.md's tagline line: the site's headline, the hero's `h1`. */
   tagline: string
+  /** README.md's subline: the hero's lead and the site's default page description. */
+  subline: string
   /** The generated documents under content/, keyed by file name. */
   documents: { [name: string]: GeneratedDocument }
   /** The aggregation's published figures, or null while the owner has not run it. */
@@ -987,7 +1049,7 @@ let loaded: Site | null = null
 
 /**
  * The whole pipeline: the site's facts, the install facts, the generated documents, the
- * aggregation's figures, the tagline, the fonts and the sitemap — each read from its own
+ * aggregation's figures, the tagline and the subline, the fonts and the sitemap — each read from its own
  * source, each validated, and any one of them missing or malformed a build error naming
  * the file.
  *
@@ -1002,6 +1064,7 @@ export function loadSite(): Site {
     facts,
     install: loadInstallFacts(),
     tagline: loadTagline(),
+    subline: loadSubline(),
     documents: loadGeneratedDocuments(),
     costs: loadCosts(facts.minRuns),
     fonts: loadFonts(),

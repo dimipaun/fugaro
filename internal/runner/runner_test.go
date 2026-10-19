@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -99,7 +100,14 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	bucket := memblob.OpenBucket(nil)
 	t.Cleanup(func() { bucket.Close() })
 	if spec == nil {
-		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature"}
+		// The workflow is the fixture's only one (testdata/fixture-repo's
+		// fugaro.yaml), which is also what SelectWorkflow resolves a task that
+		// names none to. It is written out because a run's job is named from it
+		// (a per-repository job is gcp.JobName of the slug and the workflow's
+		// variant): a task naming no workflow cannot be placed in the job it is
+		// in, and every test here that gives the run a Cloud Run execution
+		// would stop on that instead of on what it is about.
+		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
@@ -362,6 +370,22 @@ func TestUncommittedWorkIsCommittedButNotVerified(t *testing.T) {
 	}
 	if got := testutil.Git(t, h.remote, "log", "-1", "--format=%s", "refs/heads/fugaro/"+runID); got != "fugaro: uncommitted work at finalize" {
 		t.Fatalf("last pushed commit = %q", got)
+	}
+	// The record's set of changed paths is read once the run's own commits
+	// are final, so the file the agent forgot is in it too: it is this run's
+	// work, and a set that stopped at the agent's last commit would miss it
+	// (design D27).
+	cf := rec.ChangedFiles
+	if cf == nil {
+		t.Fatal("the record carries no changed-file set")
+	}
+	for _, want := range []string{"feature.txt", "forgotten.txt"} {
+		if !slices.Contains(cf.Paths, want) {
+			t.Fatalf("changed files = %v, want %s among them", cf.Paths, want)
+		}
+	}
+	if cf.Truncated || cf.Total != len(cf.Paths) {
+		t.Fatalf("a two-file run: %+v", cf)
 	}
 }
 

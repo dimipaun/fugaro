@@ -318,6 +318,24 @@ type AgentError struct{ Marker string }
 
 func (e *AgentError) Error() string { return AgentRefusal(e.Marker) }
 
+// AgentProceeded is the other half of AgentRefusal: the sentence for the one
+// case in which a step in a coding agent's session runs all the same — D55's
+// answer, the managed project whose plan the gate admitted (Managed.Removes).
+// It sits beside AgentRefusal because both are about the same marker, and
+// because the reason is decided here: a caller that printed its own sentence
+// would be a second copy of this rule.
+//
+// It names the marker, says what the step is proceeding on, and names no
+// marker, variable or flag a reader could unset to get here — the same rule
+// IDEHint follows, and for the same reason: a recipe for getting past the
+// check has no business in text an agent reads. What it does NOT say is that
+// the step is safe: the three things that replace the refusal (the gate, the
+// owner's delete list, the marker) are named where they are decided, and the
+// session that reads this is the one that could go around all three.
+func AgentProceeded(marker string) string {
+	return "a coding agent's session is present (" + marker + " is set), and this step proceeds: the project is managed and the plan passed the deterministic gate, which is what replaces the confirmation here (not a person's approval, and not a flag to pass)"
+}
+
 // ConfirmClass is who may confirm a step.
 type ConfirmClass int
 
@@ -338,16 +356,81 @@ type Conditions struct {
 	Agent                               string // a coding agent's environment marker, "" for none
 }
 
-// CanConfirm reports whether a step of the class can be confirmed under the
-// conditions. A coding agent's environment confirms nothing.
-func CanConfirm(class ConfirmClass, c Conditions) bool {
+// Managed is the managed-project state a step's confirmation is decided
+// under: the two facts about the plan that is about to be applied, which a
+// caller has read and passes in. It exists so D55's answer — the coding
+// agent's refusal is removed in a managed project — is one case of one rule
+// rather than a second copy of it, and so a caller that has read nothing
+// passes the zero value and keeps today's behaviour exactly.
+//
+// It is not a field of Conditions, and that is deliberate: Conditions is what
+// a RUN says about who is there — its five fields are enumerated exactly by
+// internal/cli's completeness test, and the property test runs over the whole
+// product of them — while these two facts are about a plan ONE step is about
+// to apply. A run has one Conditions, and one Managed per applying step.
+//
+// The zero value is "not managed", so every caller that does not know about
+// managed projects — init's embedded roots, the plugin stage — refuses under a
+// coding agent's marker as it did before this type existed, and the only
+// caller that can reach the managed case is the managed apply itself.
+type Managed struct {
+	// Managed is whether the creation-fact read answered managed: true only
+	// with a nil error (infra/managed.IsManaged's contract). A marker that is
+	// absent, unreadable, of another project or of a version this build does
+	// not know is false, and false is the answer that keeps the refusal.
+	Managed bool
+	// Admitted is whether the gate's verdict admitted THE PLAN OF THE STEP
+	// BEING CONFIRMED (managed.Verdict.OK, Tasks 1.0-1.3). It is about this
+	// step's plan and not about the project: a verdict for another plan, or a
+	// refusal, or a gate that was never run, is false.
+	Admitted bool
+}
+
+// Covers reports whether the gate covers a step of the class. The gate judges
+// a saved plan, which is what an ordinary applying step is; a Typed step is
+// money or permanent — a new project, billing, a secret, a Firestore location,
+// a billable image build — and no plan gate says anything about any of them,
+// so its confirmation is never removed. This is a method rather than a caller's
+// field for that reason: the class is the step's own, and a caller that could
+// assert coverage could assert it for a secret.
+func (m Managed) Covers(class ConfirmClass) bool { return class == YesOrTyped }
+
+// Removes reports whether the managed case removes the coding-agent refusal
+// for a step of the class: all three conditions of D55's answer, held at once.
+// Any other combination keeps today's AgentRefusal exactly.
+func (m Managed) Removes(class ConfirmClass) bool {
+	return m.Managed && m.Admitted && m.Covers(class)
+}
+
+// CanConfirmManaged is the whole of the confirmation rule: CanConfirm is this
+// function with a zero Managed, and the managed case is the branch below
+// rather than a rule of its own. A step of a class the gate covers, in a
+// project the marker read says is managed, whose plan the gate admitted,
+// proceeds under a coding agent's marker — and every other combination
+// refuses, which is the direction the mistake has to fall in.
+//
+// Everything else is unchanged, and that is the property the tests hold: for
+// every Conditions, a zero Managed decides what CanConfirm decided before the
+// managed case existed.
+func CanConfirmManaged(class ConfirmClass, c Conditions, m Managed) bool {
 	switch {
 	case c.Agent != "":
-		return false
+		// A coding agent's environment confirms nothing (AgentAdvice): it is
+		// a mitigation against the accident, not a barrier against the
+		// adversary, and the managed case does not claim to be one either.
+		return m.Removes(class)
 	case class == Typed:
 		return c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON
 	}
 	return c.Yes || (c.Terminal && !c.NonInteractive)
+}
+
+// CanConfirm reports whether a step of the class can be confirmed under the
+// conditions. A coding agent's environment confirms nothing, unless the
+// caller says (Managed) that the project is managed and the gate admitted the
+// step's plan, which is the case CanConfirmManaged holds.
+func CanConfirm(class ConfirmClass, c Conditions) bool {
+	return CanConfirmManaged(class, c, Managed{})
 }
 
 // CanConfirmRun reports whether the run's one confirmation (the project's

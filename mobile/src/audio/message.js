@@ -11,7 +11,7 @@
 // message is is the failure the schema exists to prevent.
 //
 // **So the honest shape of this function is small.** It composes the four
-// fields the schema requires -- `id`, `sender`, `text`, `at` -- from values it
+// fields the schema requires of a draft (the fifth, `mac`, is P3.6's) -- `id`, `sender`, `text`, `at` -- from values it
 // is given, and hands the result to `validateMessage`. It does not trim, does
 // not redact, does not generate the id, does not read a clock, and does not
 // add a field. What it adds is one thing the schema cannot: a **refusal of a
@@ -34,7 +34,7 @@
 // accepted into the void* is a consequence of the protocol rather than a rule
 // restated here (and `pipeline.js` has a test for exactly that turn).
 
-import { REFUSALS, validateMessage } from '../../../shared/mailbox-schema/index.js';
+import { MAC_MAX, REFUSALS, REQUIRED_FIELDS, validateMessage } from '../../../shared/mailbox-schema/index.js';
 import { refuse } from './refusal.js';
 
 /**
@@ -44,7 +44,16 @@ import { refuse } from './refusal.js';
  * module's tests, so a fifth required field cannot be added to the protocol
  * without a failing test here.
  */
-export const DRAFT_FIELDS = Object.freeze(['id', 'sender', 'text', 'at']);
+export const DRAFT_FIELDS = Object.freeze(REQUIRED_FIELDS.filter((field) => field !== 'mac'));
+
+/**
+ * The schema now requires a `mac` on every message (P6.3), and a draft is
+ * unsigned: P3.6's client signs it where it is written. So the draft is judged
+ * by the schema with a well-formed stand-in tag (the right length and
+ * alphabet), which the schema checks for shape only, and the stand-in is
+ * dropped from the result: the draft that comes back carries no `mac`.
+ */
+const UNSIGNED_STAND_IN = '0'.repeat(MAC_MAX);
 
 /**
  * Compose a mailbox message from one final transcript.
@@ -80,7 +89,8 @@ export function messageDraft(draft) {
   for (const field of DRAFT_FIELDS) {
     if (Object.hasOwn(draft, field)) candidate[field] = draft[field];
   }
-  const verdict = validateMessage(candidate);
+  const verdict = validateMessage({ ...candidate, mac: UNSIGNED_STAND_IN });
   if (!verdict.ok) return refuse(verdict.code, verdict.field);
-  return Object.freeze({ ok: true, message: verdict.message });
+  const { mac: _stoodIn, ...message } = verdict.message;
+  return Object.freeze({ ok: true, message: Object.freeze(message) });
 }

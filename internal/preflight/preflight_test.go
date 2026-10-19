@@ -157,11 +157,14 @@ func TestSupportedTerraform(t *testing.T) {
 	}{
 		{"1.6.6", false},
 		{"1.7.0-beta1", false},
+		{"1.7.0", false},
+		{"1.8.5", false},
+		{"1.9.0-beta1", false},
 		{"0.15.5", false},
 		{"2.0.0", false},
 		{"2.0.0-alpha1", false},
 		{"garbage", false},
-		{"1.7.0", true},
+		{"1.9.0", true},
 		{"1.16.4", true},
 	} {
 		if got := supportedTerraform(tc.version); got != tc.ok {

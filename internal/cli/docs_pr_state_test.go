@@ -21,6 +21,11 @@ import (
 // the code cannot drift apart in either direction, and the host is not written
 // twice here for one of them to rot.
 func TestDocsDesignDocPinsTheHostOfThePRStateLookup(t *testing.T) {
+	// This test is about the argv gh was given, not about how fast a loaded
+	// machine can fork and exec it: it owns the lookup's budget (and the
+	// --once wait, which must outlast it) so a slow exec is never read as a
+	// lookup that answered nothing.
+	longPRStateBudget(t)
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
 	run := runID(10*time.Minute, "ff01")
@@ -28,12 +33,13 @@ func TestDocsDesignDocPinsTheHostOfThePRStateLookup(t *testing.T) {
 	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
 	calls := fakeWatchGH(t, "echo OPEN\n")
 
-	if _, _, err := execute(t, "watch", "--once", "--plain"); err != nil {
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
 		t.Fatal(err)
 	}
 	argv := ghWatchCalls(t, calls)
 	if len(argv) != 1 {
-		t.Fatalf("calls = %v, want one lookup of the ready row", argv)
+		t.Fatalf("calls = %v, want one lookup of the ready row\nframe:\n%s", argv, plain)
 	}
 	repo := repoArgument(t, argv[0])
 	// The property the doc has to carry: the repository gh is asked for is

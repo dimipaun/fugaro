@@ -18,7 +18,10 @@ bucket grant from one repository's prefixes to a whole prefix (plan Task 3.2 ste
 that job can then read, and delete, any other run's budget token. D13 accepted that exposure and
 sent it to SECURITY.md's own words beside D4; phase 3b designs the channel that replaces it. One
 half of D13 stands whatever this document decides, and the recommendation below does not touch it:
-inside a shared job the profile is the isolation boundary.
+inside a shared job the profile is the isolation boundary for secrets only. It is not one for bucket
+objects — every project job account holds the same whole `runs/`, `cache/` and `locks/` prefixes
+(SECURITY.md, bucket-iam.md §10) — so D13's "separate profiles" mitigation is open for the owner to
+re-rule.
 
 Every symbol below was read on `next` on 2026-10-15 and is cited by name rather than by line
 number, because the lines move.
@@ -479,8 +482,8 @@ the second half of the recommendation moves the object:
 
 - D13's paragraph in SECURITY.md stays, narrowed to what it still describes: the *other* objects a
   shared job's account can read across repositories — task specs, launch records, logs, cache,
-  locks. Inside a shared job the profile is the isolation boundary, and this document does not move
-  it. If phase 3 lands with this design, the paragraph says the token is sealed and says why the
+  locks. Inside a shared job the profile is the isolation boundary for secrets only, not for those
+  objects (an open owner question, SECURITY.md), and this document does not move it. If phase 3 lands with this design, the paragraph says the token is sealed and says why the
   rest is not.
 - The mint, the claims, the rules, the exchange, the marker's *presence* semantics and the fail-closed
   parse are unchanged. The budget's model does not move.
