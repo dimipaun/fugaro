@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -8,9 +9,11 @@ import (
 // TestDocsVoiceSwitchRegisterClaims pins the claims the P5.3 design
 // (docs/mobile/design/voice-evaluation-switch.md) makes about other files,
 // against those files: §13's register reading against the register it reads
-// (docs/gcp-live-checklist.md), §2's account of the mailbox's fields and of
-// which rule reads which node against the rules template and rules.go, §4.5 and
-// §5's redaction sentences against `internal/agent/redact.go`, and §3's table
+// (docs/gcp-live-checklist.md) — in both directions, the rows and sections it
+// says the register carries and the numbers it says are not in the register —
+// §2's account of the mailbox's fields, of which check reads which node and of
+// where that check lives against the rules template and rules.go, §4.5 and §5's
+// redaction sentences against `internal/agent/redact.go`, and §3's table
 // against them all. Each half exists because a review round found the design
 // contradicting the file it cited — §13's 67–68 row said "67 is written as 67a
 // and 67b" while the checklist carries no `## Check 67a`, no `## Check 67b` and
@@ -19,8 +22,10 @@ import (
 // §2 called `mac` and `kind` "not shipped" when P6.4 (#601, `371038f`) is
 // merged into this branch, and attributed the kind check to PARENTKIND when the
 // rules validate it inline; §5 rule 4 promised a redaction gate on the STT path
-// that §3's own table says cannot exist; and §4.5 said the redactor stops the
-// text, when it substitutes and hands it on.
+// that §3's own table says cannot exist; §4.5 said the redactor stops the
+// text, when it substitutes and hands it on; and §13 attributed its own count
+// of the row run to the register ("the register says so of itself"), which the
+// register never says of itself.
 //
 // The register half is two-sided and both-halved, the way
 // TestWebsiteChecklistHasCheck69aAnd69b is: every number the design names as
@@ -28,20 +33,26 @@ import (
 // check with no row is one nobody reads first, a row with no section is a
 // command nobody can follow), and the numbers it names as reserved must have
 // neither (a design that invents a section it did not write is the bug this
-// pins).
+// pins). Both halves are read from the register's own summary table and
+// headings, so deleting a row or renaming a heading fails here.
 //
-// The written list is deliberately the design's own claims rather than "every
+// The list of numbers is deliberately the design's own claims rather than "every
 // number in the register": a later check written elsewhere in the repository
-// must not fail this test — only the design's own statements are pinned, and
-// the count it gives ("36 `## Check` sections, counted at `07022b1`") is a
-// historical statement about a named commit, so it is not recounted here.
+// must not fail this test — only the design's own statements are pinned (and
+// only in the direction the design states them: nothing here requires the
+// register to carry no row beyond the run §13 writes out), while the count it
+// gives ("36 `## Check` sections, counted at `07022b1`") is a historical
+// statement about a named commit, so it is not recounted here.
 //
 // Mutation (verified, each run and restored): put "67 is written as 67a and
 // 67b" back into §13's row; put rule 4's "on the STT path a hit means the
 // utterance is not sent" back; put §4.5's "the text is not sent" back; restore
 // §2's "not shipped"; restore §2's "checked field by field through PARENTKIND";
-// rename a `## Check 49:` heading; or delete a `| 49 |` summary row — each
-// fails this test.
+// restore §2's "rules.go:583-590"; rename a `## Check 49:` heading; delete a
+// `| 49 |`, `| 57 |` or `| 11b |` summary row; rename `## Check 19:`; add a
+// `| 48 |` row or a `## Check 69c` section; restore §13's "the register says so
+// of itself"; or drop "11 also carries **11b**" from §13's run — each fails
+// this test.
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
 	const checklistPath = "docs/gcp-live-checklist.md"
@@ -78,27 +89,97 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		}
 	}
 
-	// 1b. The summary table's own gaps, which §13's count now states: 24 and 25
-	// carry a `## Check` section each and no summary row, so the row run skips
-	// 23→26. A reading that gives the rows as "19–38" is wrong for exactly
-	// these two numbers.
+	// 1b. §13's reading of the register, read from the register rather than
+	// trusted — both directions of it. The row run it writes out is 1 (and 1b),
+	// 2–18 (11 also carries 11b), 19–23 and 26–38, 40–47, 49, 50, 52, 57, 58,
+	// 69a, 69b, 70a and 70c, so every one of those must have a row; and every
+	// number it says is written as a `## Check` section (19–47 with 39 living
+	// in the retire-image-mirror plan as 39a–39f, plus the eight written since
+	// the baseline) must have one. Without this half the test pins only what
+	// the register must NOT have: deleting `| 57 |`, `| 11b |` or `## Check 19`
+	// left it green.
+	rows := summaryRows(t, checklistPath, checklist)
+	wantRows := []string{"1", "1b", "11b"}
+	for _, run := range []struct{ from, to int }{{2, 23}, {26, 38}, {40, 47}} {
+		for i := run.from; i <= run.to; i++ {
+			wantRows = append(wantRows, strconv.Itoa(i))
+		}
+	}
+	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70c")
+	for _, n := range wantRows {
+		if !rows[n] {
+			t.Errorf("%s's summary table has no `| %s |` row, but %s §13's row run names %s as one; correct the design's reading or this test's list", checklistPath, n, designPath, n)
+		}
+	}
+	// 24 and 25 are the reverse — a `## Check` section each and no summary row,
+	// so the row run skips 23→26. A reading that gives the rows as "19–38" is
+	// wrong for exactly these two numbers.
 	for _, n := range []string{"24", "25"} {
-		if strings.Contains(checklist, "\n| "+n+" |") {
+		if rows[n] {
 			t.Errorf("%s now has a `| %s |` summary row, so §13's count of the row run (\"19–23 and 26–38 (24 and 25 have `## Check` sections but no summary row)\") is stale and must be recounted", checklistPath, n)
 		}
 	}
-	// Both halves of the corrected reading: the row run with its gap, and the
-	// sentence naming the two numbers that make it a gap. Scoped to §13, since
-	// the withdrawn wording is quoted verbatim in §11's round-12 entry and in
-	// the sentence itself.
+	wantSections := []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c"}
+	for i := 19; i <= 47; i++ {
+		if i != 39 { // 39 is written as 39a–39f in the retire-image-mirror plan, not here
+			wantSections = append(wantSections, strconv.Itoa(i))
+		}
+	}
+	for _, n := range wantSections {
+		if !strings.Contains(checklist, "## Check "+n+":") {
+			t.Errorf("%s has no `## Check %s:` section, but %s §13 names %s as written (19–47 written, 39 as 39a–39f in the retire-image-mirror plan)", checklistPath, n, designPath, n)
+		}
+	}
+	// 39 is the one number in that run whose section is not in the register, and
+	// the design says where it lives instead. A `## Check 39` section written
+	// later makes that sentence stale.
+	if strings.Contains(checklist, "## Check 39:") {
+		t.Errorf("%s now has a `## Check 39:` section, but %s §13 says 39 is written as 39a–39f in the retire-image-mirror plan; recount the section", checklistPath, designPath)
+	}
+	if !strings.Contains(readDoc(t, "docs/plans/2026-10-13-retire-image-mirror.md"), "live checks 39a–39f") {
+		t.Errorf("%s §13 says 39 is written as 39a–39f in docs/plans/2026-10-13-retire-image-mirror.md, which no longer names them that way", designPath)
+	}
+	// The other half of the 1–18 row: those numbers are rows WITHOUT a section,
+	// 1b and 11b included. A `## Check 1` written later makes §13's row wrong,
+	// which is what this pins.
+	rowOnly := []string{"1b", "11b"}
+	for i := 1; i <= 18; i++ {
+		rowOnly = append(rowOnly, strconv.Itoa(i))
+	}
+	for _, n := range rowOnly {
+		if strings.Contains(checklist, "## Check "+n+":") {
+			t.Errorf("%s now has a `## Check %s:` section, but %s §13 says 1–18 (and 1b, 11b) are summary rows with no section; recount the row", checklistPath, n, designPath)
+		}
+	}
+	// The numbers §13 names as in neither half of the register: a row or a
+	// section for any of them means the design's reading is stale. (85 is the
+	// bake-off, which §13 says is written nowhere; 110 is the number this
+	// document names and writes nothing into.)
+	absent := []string{"48", "51", "53", "54", "55", "56", "69c", "70b", "85", "110"}
+	for i := 80; i <= 89; i++ {
+		absent = append(absent, strconv.Itoa(i))
+	}
+	for _, n := range absent {
+		if rows[n] {
+			t.Errorf("%s now has a `| %s |` summary row, but %s §13 says %s is not in the register; recount the row", checklistPath, n, designPath, n)
+		}
+		if strings.Contains(checklist, "## Check "+n+":") {
+			t.Errorf("%s now has a `## Check %s:` section, but %s §13 says %s is not in the register; recount the section", checklistPath, n, designPath, n)
+		}
+	}
+	// The sentences that carry the reading. Scoped to §13, since the withdrawn
+	// wording is quoted verbatim in §11's round-12 and round-13 entries.
 	checks := docSection(t, designPath, design, "## 13. The checks this would need")
-	for _, want := range []string{"19–23 and 26–38", "24 and 25"} {
+	for _, want := range []string{"19–23 and 26–38", "24 and 25", "11 also carries **11b**", "counted here from the file"} {
 		if !strings.Contains(checks, want) {
-			t.Errorf("%s's §13 no longer gives the summary row run as %q, so a reader cannot repeat the count from it", designPath, want)
+			t.Errorf("%s's §13 no longer says %q, so a reader cannot repeat the count from it", designPath, want)
 		}
 	}
 	if strings.Contains(checks, "rows for 1 (and 1b), 2–18, 19–38,") {
 		t.Errorf("%s's §13 gives the row run as \"19–38\", and the register has no `| 24 |` or `| 25 |` row", designPath)
+	}
+	if strings.Contains(checks, "the register says so of itself") {
+		t.Errorf("%s's §13 attributes its own count of the row run to the register, which says no such thing of itself", designPath)
 	}
 
 	// 2. The reservation the review round corrected: 67 is reserved as 67a
@@ -201,13 +282,22 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	for _, want := range []string{
 		"not** through `PARENTKIND`",
 		"those three are what `PARENTKIND` gates",
+		// The line citation, which an earlier revision gave as `583-590`: 583 is
+		// the tail of the KINDREQ case, `case "PARENTKIND":` is 584, and the
+		// `parent()` read is 592 — outside the range it cited.
+		"rules.go:584-592",
 	} {
 		if !strings.Contains(exists, want) {
-			t.Errorf("%s's §2 does not say %q, so it no longer says which check reads the kind field", designPath, want)
+			t.Errorf("%s's §2 does not say %q, so it no longer says which check reads the kind field, or where that check is", designPath, want)
 		}
 	}
-	if strings.Contains(exists, "checked field by field through `PARENTKIND`") {
-		t.Errorf("%s's §2 says `kind` is checked through PARENTKIND, and the rules validate it inline on its own node", designPath)
+	for _, bad := range []string{
+		"checked field by field through `PARENTKIND`",
+		"rules.go:583-590",
+	} {
+		if strings.Contains(exists, bad) {
+			t.Errorf("%s's §2 carries %q, which the rules contradict: `kind` is validated inline on its own node, and PARENTKIND's case and its parent() read are at rules.go:584 and :592", designPath, bad)
+		}
 	}
 
 	// 6. The redactor masks; it does not block. `internal/agent/redact.go`'s
@@ -232,4 +322,39 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	if !strings.Contains(rules, "it masks, it does not block") {
 		t.Errorf("%s's §5 rule 4 no longer says the redactor masks rather than blocks", designPath)
 	}
+}
+
+// summaryRows returns the check numbers the checklist's summary table carries
+// as rows, read from the table itself (`| N | Check | Command | Expected |`,
+// one row per check, ending at the first blank line). They are read rather than
+// searched for one string at a time because §13's count is a statement about
+// the run of rows: a row that is deleted is exactly what must fail here.
+func summaryRows(t *testing.T, path, checklist string) map[string]bool {
+	t.Helper()
+	rows := map[string]bool{}
+	inTable := false
+	for _, line := range strings.Split(checklist, "\n") {
+		if strings.HasPrefix(line, "| # | Check | Command | Expected |") {
+			inTable = true
+			continue
+		}
+		if !inTable {
+			continue
+		}
+		if strings.HasPrefix(line, "|-") { // the header's separator
+			continue
+		}
+		if !strings.HasPrefix(line, "|") {
+			break // the table ends at the first line that is not a row
+		}
+		n := strings.TrimSpace(strings.Split(strings.TrimPrefix(line, "|"), "|")[0])
+		if n == "" {
+			continue
+		}
+		rows[n] = true
+	}
+	if len(rows) == 0 {
+		t.Fatalf("%s's summary table (`| # | Check | Command | Expected |`) was not found, so §13's row run cannot be read from it", path)
+	}
+	return rows
 }
