@@ -152,7 +152,7 @@ with fixtures that keep its refusals running, and none of them needs the network
     files it fetches: the script above, the logo and the icons), plus 25 %. The 170 bytes it
     moved since the last derivation are the one placement rule the site figure below accounts
     for — `.command-block` — which every page's inlined stylesheet carries.
-  - **Whole site:** 3,057,045 bytes. Three times 1,019,015 (every file in `dist/`, 815,212
+  - **Whole site:** 3,059,394 bytes. Three times 1,019,798 (every file in `dist/`, 815,838
     bytes across 21 files, plus 25 %). The figure moved 1,242 bytes with the second fix
     round on this branch: the homepage's order (the promise and its call to action, then the
     diagram, then the chat, then the install paths — changes spec item 4), the flow's
@@ -186,7 +186,10 @@ with fixtures that keep its refusals running, and none of them needs the network
     one in it. And **96** with the fourth, all of it on How It Works: the detail section gives
     back the inline padding it was indenting itself with, and the page gains the rule that
     holds the picture off its title. Each of the four was re-derived in the commit that moved
-    it, like any other (D192).
+    it, like any other (D192). And **626** with the fifth, which is the review of round 4: the
+    two-by-two's own shape — the two placements that put step 3 under step 2 and step 4 at the
+    end of the run, and the rule that turns step 3's arrow back along the bottom row — which
+    only the two pages that draw the flow carry, at about 313 bytes each.
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte

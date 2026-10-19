@@ -379,19 +379,43 @@ const STEPS = [
     }
   }
 
-  /* The two-by-two: `1 2` over `3 4`, at the widths between a phone's stack and the page's
+  /* The two-by-two: `1 2` over `4 3`, at the widths between a phone's stack and the page's
      own column. Four stacked cards are over 400 px of picture at 768 px, which is what a
      reader scrolls past to reach the chat, and four across is not possible yet (see the row
      below): two rows of two are the shape the run has there, and the arrows follow it —
-     `1 -> 2` and `3 -> 4` along a row, `2 -> 3` down from the top row to the bottom one. The
-     arrows are absolutely positioned in the gaps for the same reason they are in the row:
-     in the flow they would make the two cards of a row different heights, because the last
-     step of the flow carries no arrow at all. */
+     `1 -> 2` along the top row, `2 -> 3` down its right-hand side, `3 -> 4` back along the
+     bottom row. The arrows are absolutely positioned in the gaps for the same reason they
+     are in the row: in the flow they would make the two cards of a row different heights,
+     because the last step of the flow carries no arrow at all.
+
+     **The bottom row is `4 3` and not `3 4`, which is what makes the down arrow true.** The
+     grid used to be `1 2` over `3 4` with step 2's arrow drawn below it: step 2 is above step
+     *4* in that grid, so the arrow that leaves step 2 landed on step 4 — the picture read
+     `1 -> 2 -> 4`, step 3 had no arrow pointing into it and step 4 had two (review round 4).
+     With step 3 under step 2 the arrow lands on its successor, and step 3's own arrow turns
+     to point left at step 4, which is now beside it on the other side. The DOM order is
+     untouched — it is the run's order, and it is what a screen reader reads; only the
+     drawing is a snake. `website/test/base-styles.mjs` reads the grid's own placements, works
+     out which cell each step's successor is in, and refuses an arrow drawn on a side of its
+     card where the next step does not sit. */
   @media (min-width: 35rem) and (max-width: 71.98rem) {
     .flow-steps {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: var(--space-lg) var(--space-md);
+    }
+
+    /* Steps 3 and 4, placed rather than left to the grid's own row-major order, because the
+       run wraps here: step 3 sits under step 2 (the arrow down the right-hand side) and step
+       4 to its left, at the end of the run. */
+    .flow-step:nth-child(3) {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .flow-step:nth-child(4) {
+      grid-column: 1;
+      grid-row: 2;
     }
 
     .step-card {
@@ -422,6 +446,18 @@ const STEPS = [
       top: 100%;
       left: 50%;
       margin: calc(var(--space-lg) / 2 - var(--space-2xs)) 0 0 calc(-1 * var(--space-2xs));
+    }
+
+    /* And the one that turns back along the bottom row: step 3's, at its left edge, pointing
+       left at step 4. `90deg` is a quarter turn clockwise, which takes the drawn-down arrow
+       to the left — the mirror of the odd rule above, which is the same turn the other way
+       for the arrows that travel rightwards. The margin centres the box in the gap on that
+       side of the card, and it is negative because the box starts at the card's own edge. */
+    .flow-step:nth-child(3) .step-arrow {
+      top: 50%;
+      left: 0;
+      margin-left: calc(-1 * var(--space-md) / 2 - var(--space-2xs));
+      transform: rotate(90deg);
     }
   }
 

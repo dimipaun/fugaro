@@ -205,13 +205,14 @@ here goes stale the way the byte budgets did before D192.
   the flow's stylesheet changes — so all three figures move with it, from the build of
   2026-10-19: **JavaScript per page 76,086** (three times 25,362; `public/scripts/site.js`
   20,289 bytes, unmoved since the second round), **page weight per page 927,834** (three times
-  309,278; the docs hub 247,422 bytes) and **whole site 3,057,045** (three times 1,019,015;
-  815,212 bytes across 21 files — re-derived again in the second fix round on this branch,
+  309,278; the docs hub 247,422 bytes) and **whole site 3,059,394** (three times 1,019,798;
+  815,838 bytes across 21 files — re-derived again in the second fix round on this branch,
   which moved the homepage's order, the flow's treatment, the chat's launch line, the install
   command's wrapping and the chat's own turns out of the measure's cap, and a fourth time
   across the third fix round, whose four commits moved the site figure to 814,455, 815,116 and
   815,212 bytes and the page figure with it, each re-derived in the commit that shipped the
-  bytes). The
+  bytes, and a fifth time by the fourth round, whose fix for the two-by-two's wrap arrow moved
+  it 626 bytes on the two pages that draw the flow). The
   figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site
@@ -312,3 +313,28 @@ here goes stale the way the byte budgets did before D192.
   Nothing in this round was verified visually: this run cannot see an image, the rounds before
   it are what a browser measured, and whether the page now *looks* right is the owner's check
   (70a–70c), as D190 requires.
+- **The fourth round is a code review's, and it found the two-by-two's wrap arrow pointing at
+  the wrong step.** The band was `1 2` over `3 4` with step 2's arrow drawn below step 2 — and
+  in that grid the cell below step 2 is step *4*'s, so the arrow landed on step 4: the picture
+  read `1 -> 2 -> 4`, step 3 had no arrow pointing into it and step 4 had two. **Nothing
+  caught it because the gate read the angle an arrow is turned to and never the box it is
+  drawn in.** "Down" is the right angle for the step the arrow was meant to point at, and the
+  arrow was drawing it at the wrong cell: an angle alone cannot tell two cells apart. The fix
+  is the reviewer's own second option — the bottom row is `4 3`, so step 3 sits under step 2
+  (where the down arrow lands on it) and step 4 sits beside step 3, which is why step 3's
+  arrow turns back along the row (`rotate(90deg)`, the mirror of the `-90deg` the rightward
+  arrows use) and points at step 4. The DOM order is untouched: it is the run's order, and it
+  is what a screen reader reads — only the drawing is a snake. The gate now reads both halves
+  of the question. `flowCells(css, shape, width)` reads the grid's own
+  `grid-template-columns` and each step's `grid-area`/`grid-row`/`grid-column` (and auto-places
+  the steps the stylesheet does not place, the way a browser does), so "the next step" is the
+  cell it actually occupies in that shape rather than a rule in the test; `towards` names the
+  side of a card that cell is on; and the arrow's own box — its `top`, its `left` and the sign
+  of its margin — has to leave from that side *as well as* point that way. A placement in a
+  shape the reader cannot evaluate (`span`, a named line, half a placement) and a box it
+  cannot place against the card are refused rather than guessed. Four cases plant their
+  defects: the grid left in its own row-major order, which is the defect itself; a wrap arrow
+  drawn on the far side of its step; an arrow centred over its own card; and a placement
+  written with a `span`. The whole-site budget moved 626 bytes with the fix, re-derived in the
+  same commit (D192). This round was a reading of the stylesheet and of the gate, not a look at
+  the page — the same limit as the round above.

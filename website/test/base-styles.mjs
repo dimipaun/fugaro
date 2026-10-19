@@ -1867,6 +1867,44 @@ test('every flow-layout refusal fires on the defect it names', () => {
       plant('{width:1.5rem;height:2rem;margin:var(--space-2xs) auto;display:block}', '{transform:rotate(-90deg);width:1.5rem;height:2rem;margin:var(--space-2xs) auto;display:block}'),
       /points right below the flow’s first breakpoint/,
     ],
+    // **The defect of review round 4, and the reason this gate reads the box as well as the
+    // angle:** the two-by-two drawn `1 2` over `3 4`, which is what the stylesheet says with
+    // the two placements taken out and the grid left to its own row-major order. The wrap
+    // arrow is still below step 2 and still points down — and step 3 is not below step 2 any
+    // more, it is in the next row and the other column, so the arrow lands on step 4. Every
+    // check in this file passed on that picture for as long as it was shipped.
+    [
+      'the two-by-two left in its own row-major order, with the wrap arrow below step 2',
+      TODAY().replace(/\{grid-area:2\/2\}/, '{}').replace(/\{grid-area:2\/1\}/, '{}'),
+      /step 2 and step 3, its successor, are not beside each other/,
+    ],
+    // The other half of the same reading: the steps beside each other and the arrow on the
+    // wrong side of its card. Step 3's arrow moved to its right, where step 4 is not.
+    [
+      'a wrap arrow drawn on the far side of the step it leaves',
+      TODAY().replace(
+        /\.flow-step\[data-astro-cid-[a-z0-9]+\]:nth-child\(3\) \.step-arrow\[data-astro-cid-[a-z0-9]+\]\{[^}]*\}/,
+        '.flow-step:nth-child(3) .step-arrow{top:50%;left:100%;margin:calc(-1 * var(--space-2xs)) 0 0 calc(var(--space-md) / 2 - var(--space-2xs));transform:rotate(-90deg)}',
+      ),
+      /leaves the right of its card/,
+    ],
+    // And a box this reader cannot place against the card at all: step 2's arrow moved to the
+    // middle of its card, where it is over the card rather than in a gap beside it.
+    [
+      'an arrow centred over its own card',
+      TODAY().replace(
+        /(\.flow-step\[data-astro-cid-[a-z0-9]+\]:nth-child\(2\) \.step-arrow\[data-astro-cid-[a-z0-9]+\]\{[^}]*?)top:100%/,
+        '$1top:50%',
+      ),
+      /is drawn in a box this check cannot place against its card/,
+    ],
+    // And a placement the cell reader cannot evaluate: a `span` is a cell this check would have
+    // to guess, and a guessed cell is every check below it guessed too.
+    [
+      'a step placed with a span this reader cannot count',
+      TODAY().replace('{grid-area:2/2}', '{grid-area:2/span 1}'),
+      /the cells the four steps occupy .* cannot be read/,
+    ],
   ]
   for (const [what, css, expected] of cases) {
     const failures = [...flowLayoutFailures(css, names, wrappers, element), ...arrowDirectionFailures(css, home)]
@@ -1939,14 +1977,129 @@ function points(vector) {
 }
 
 /**
- * Every way the flow's arrows point the wrong way down the run, for one built page: the
+ * Which cell each step occupies in one of the flow's three shapes, in the run's order, as
+ * `[{ column, row }, …]` with 1-based numbers — or `{ unreadable }` when the stylesheet
+ * states something this reader cannot turn into a cell.
+ *
+ * The phone's column and the four-across row are not read out of the stylesheet: they are the
+ * run's order drawn one way or the other, so the cells are `1, 2, 3, 4` down one column or
+ * across one row. **The two-by-two is read**, because that is where the run wraps and where
+ * the drawing and the DOM order can disagree: the grid's own `grid-template-columns` gives the
+ * number of columns, each step's `grid-area`/`grid-row`/`grid-column` (whatever the minifier
+ * left of them) gives the cells the stylesheet places by hand, and the steps it does not place
+ * are auto-placed the way a browser does it — the first free cell in row-major order, in the
+ * run's order. A placement in a shape this reader cannot evaluate (`span 2`, a named line, a
+ * negative index, half a placement) is refused rather than guessed: a cell this reader gets
+ * wrong is a cell every check below gets wrong with it.
+ */
+export function flowCells(css, shape, width, steps = 4) {
+  const numbers = Array.from({ length: steps }, (_, i) => i + 1)
+  if (shape === 'column') return numbers.map((n) => ({ column: 1, row: n }))
+  if (shape === 'row') return numbers.map((n) => ({ column: n, row: 1 }))
+
+  const rules = allRules(css)
+  const list = rules.find(
+    (r) => /\.flow-steps(?![\w-])/.test(r.selector) && declarations(r)['grid-template-columns'] !== undefined,
+  )
+  if (list === undefined) return { unreadable: 'no rule states the two-by-two’s `grid-template-columns`' }
+  const tracks = declarations(list)['grid-template-columns'].trim().split(/\s+/)
+  if (tracks.length < 2 || tracks.some((track) => !/^[\d.]+(?:fr|rem|px)$/.test(track))) {
+    return { unreadable: `the two-by-two’s tracks, \`${declarations(list)['grid-template-columns']}\`, are not a list of lengths this check can count` }
+  }
+
+  /** The declarations in force on step `n`'s own `<li>` at the width: the base rule, then the step's own. */
+  const declsOf = (n) => {
+    const out = {}
+    for (const rule of rules) {
+      if (!appliesAt(width)(rule)) continue
+      const nth = /\.flow-step(?![\w-])[^{]*:nth-child\(\s*(\d+)\s*\)/.exec(rule.selector)
+      const base = /\.flow-step(?![\w-])(?![^{]*:nth-child)/.test(rule.selector)
+      if (nth ? Number(nth[1]) !== n : !base) continue
+      Object.assign(out, declarations(rule))
+    }
+    return out
+  }
+
+  /** A step's stated cell, `null` when it states none, or `{ unreadable }` when it is a shape this reader cannot read. */
+  const stated = (decls) => {
+    const area = decls['grid-area']
+    const row = decls['grid-row']
+    const column = decls['grid-column']
+    if (area !== undefined) {
+      const parts = area.split('/').map((part) => part.trim())
+      if (parts.length === 2 && parts.every((part) => /^\d+$/.test(part))) {
+        return { row: Number(parts[0]), column: Number(parts[1]) }
+      }
+      return { unreadable: `\`grid-area: ${area}\` on a step` }
+    }
+    if (row === undefined && column === undefined) return null
+    if (!/^\d+$/.test((row ?? '').trim()) || !/^\d+$/.test((column ?? '').trim())) {
+      return { unreadable: `\`grid-row: ${row ?? '(nothing)'}; grid-column: ${column ?? '(nothing)'}\` on a step` }
+    }
+    return { row: Number(row), column: Number(column) }
+  }
+
+  const cells = {}
+  const taken = new Set()
+  for (const n of numbers) {
+    const at = stated(declsOf(n))
+    if (at !== null && at.unreadable !== undefined) return at
+    if (at === null) continue
+    cells[n] = at
+    taken.add(`${at.row}/${at.column}`)
+  }
+  // The browser's own auto-placement, for the steps the stylesheet does not place: the first
+  // free cell, scanning row by row and left to right, in the run's order.
+  for (const n of numbers) {
+    if (cells[n] !== undefined) continue
+    let row = 1
+    let column = 1
+    while (taken.has(`${row}/${column}`)) {
+      column += 1
+      if (column > tracks.length) {
+        column = 1
+        row += 1
+      }
+    }
+    cells[n] = { row, column }
+    taken.add(`${row}/${column}`)
+  }
+  return numbers.map((n) => cells[n])
+}
+
+/**
+ * Which way step `b` sits from step `a`, as the **side of `a`'s card** it is on: `'right'`,
+ * `'left'`, `'bottom'` or `'top'`, and `null` when the two are not neighbours at all — a step
+ * in the next row and another column, which no arrow drawn out of one of `a`'s four sides can
+ * point at. The sides are the card's rather than the compass's, because that is the thing the
+ * stylesheet writes: an arrow is drawn at a `left`, a `top` or in the flow below its card.
+ * `SIDE_OF_ARROW` below is the same four, in the words an arrow's own direction is read in.
+ */
+function towards(a, b) {
+  if (a.row === b.row && b.column === a.column + 1) return 'right'
+  if (a.row === b.row && b.column === a.column - 1) return 'left'
+  if (a.column === b.column && b.row === a.row + 1) return 'bottom'
+  if (a.column === b.column && b.row === a.row - 1) return 'top'
+  return null
+}
+
+/** The side of a card a step sits on, in the words an arrow's direction is read in. */
+const SIDE_OF_ARROW = { right: 'right', left: 'left', bottom: 'down', top: 'up' }
+
+/** How a step that sits on one side of another is described, for the refusals below. */
+const WHERE_NEXT = { right: 'to its right', left: 'to its left', bottom: 'below it', top: 'above it' }
+
+/**
+ * Every way the flow's arrows fail to point at the step after theirs, for one built page: the
  * direction is read for **each step** and at **each of the three layouts**, because the arrows
  * are addressed per step and the run travels differently in each shape.
  *
  *   - **The phone's column**: one step under the next, so every arrow points down. A sideways
  *     arrow in a column draws an order the list does not have.
- *   - **The two-by-two** (`1 2` over `3 4`): along the top row, down the right-hand side, along
- *     the bottom row — the odd steps' arrows point right and the second step's points down.
+ *   - **The two-by-two**: the run wraps, so the arrows follow the wrap. Where the next step is
+ *     is not a rule of this file but a reading of the grid — `flowCells` — so a two-by-two that
+ *     puts step 3 beside step 2 and step 4 under it (or any other arrangement) is checked
+ *     against its own placements rather than against `1 2 / 3 4`.
  *   - **The row**: the run travels left to right and each arrow points right. This is the one
  *     that shipped wrong: the arrow is drawn pointing down, `rotate(90deg)` is clockwise, and
  *     the arrow between each pair therefore pointed back at the step before it — four steps
@@ -1954,12 +2107,22 @@ function points(vector) {
  *     clockwise on the axis the picture is drawn on, so the turn that points right is negative
  *     (`rotate(-90deg)`, or `270deg` written the long way round).
  *
+ * **Two things are read for each arrow, and the second is the one that was missing.** The
+ * *direction* it points is the markup's own shaft turned by the rotation in force; the *box it
+ * is drawn in* is where its own `top`/`left`/margins put it, which is what says which of its
+ * card's four sides the arrow leaves from. Both have to agree with the side the next step is
+ * on. Reading only the direction is what let the two-by-two's wrap arrow ship drawn below step
+ * 2 — pointing down, and down was what the run does next — while step 3 sat in the *other*
+ * column: the arrow landed on step 4, the picture read `1 -> 2 -> 4`, and every check here
+ * passed, because an angle alone cannot tell the two cells apart (review round 4).
+ *
  * The width each layout is read at comes out of the stylesheet — the row's own breakpoint and
  * the two-by-two's — rather than out of this file, so a layout that moves its breakpoint is
- * read where it now starts. The rotation is the last rule **that reaches that step's arrow**
- * among those in force, which is one property read the way a browser reads it. An arrow whose
- * `transform` is neither `none` nor a plain `rotate(<angle>)` is refused rather than passed:
- * the direction would be a guess, and the direction is the subject.
+ * read where it now starts. The rotation and the box are the last rules **that reach that
+ * step's arrow** among those in force, which is how a browser reads them. An arrow whose
+ * `transform` is neither `none` nor a plain `rotate(<angle>)`, and one whose box is not on a
+ * side of its card this reader can name, are refused rather than passed: both would be a guess,
+ * and which step the arrow points at is the subject.
  */
 export function arrowDirectionFailures(css, html) {
   const out = []
@@ -1992,44 +2155,81 @@ export function arrowDirectionFailures(css, html) {
     return /^\d+$/.test(arg) ? Number(arg) === step : true
   }
 
+  /** Every declaration in force on step `n`'s arrow at a width, the last rule that states one winning. */
+  const declsAt = (width, step) => {
+    const out = {}
+    for (const rule of arrowRules) {
+      if (!appliesAt(width)(rule)) continue
+      if (!reachesStep(rule.selector, step)) continue
+      Object.assign(out, declarations(rule))
+    }
+    return out
+  }
+
   /** The `transform` in force on step `n`'s arrow at a width, in degrees: `null` when it is not a rotation. */
   const rotationAt = (width, step) => {
-    const value = (
-      arrowRules
-        .filter(appliesAt(width))
-        .filter((r) => reachesStep(r.selector, step))
-        .map((r) => declarations(r)['transform'])
-        .filter((declared) => declared !== undefined)
-        .at(-1) ?? 'none'
-    ).trim()
+    const value = (declsAt(width, step)['transform'] ?? 'none').trim()
     if (value === 'none' || value === '') return 0
     const rotate = /^rotate\(\s*(-?[\d.]+)deg\s*\)$/.exec(value)
     return rotate ? Number(rotate[1]) : null
   }
 
-  // The layouts the arrows are read at, each with the way the run travels in it. The column is
-  // below the flow's first breakpoint, and it is hard-coded the way it always was: it is what
-  // the flow is with neither of the other two blocks in force, so there is no rule to read a
-  // start from — the two-by-two is the block that ends it.
+  /**
+   * Which side of its own card step `n`'s arrow leaves from at a width: the box the
+   * stylesheet draws, read rather than the angle. An arrow left in the flow sits under its
+   * card (the phone's column, and what the base rule gives every layout); one positioned
+   * absolutely is on the side its own `top`/`left` and margin put it, and `null` when the
+   * combination is one this reader cannot name — the box would be inside the card or centred
+   * over it, and which neighbour it points at would be a guess.
+   */
+  const sideAt = (width, step) => {
+    const decls = declsAt(width, step)
+    if (decls['position'] !== 'absolute') return 'bottom'
+    const left = (decls['left'] ?? '').trim()
+    const top = (decls['top'] ?? '').trim()
+    // The box's near edge against the card's own edge is what makes the side: `left: 100%` is
+    // the card's right edge, `top: 100%` its bottom, and `left: 0` with a negative margin is
+    // the card's left edge with the box pushed out into the gap beside it.
+    if (left === '100%') return 'right'
+    if (top === '100%') return 'bottom'
+    const negative = (value) => /^-\s*[\d.]/.test(value) || /^calc\(\s*-/.test(value)
+    if (left === '0' || left === '0px' || negative(left)) {
+      const marginLeft = (decls['margin-left'] ?? shorthandParts(decls['margin'] ?? '')[3] ?? '').trim()
+      return negative(marginLeft) || negative(left) ? 'left' : null
+    }
+    return null
+  }
+
+  // The layouts the arrows are read at, and the shape each one draws the four steps in. The
+  // column is below the flow's first breakpoint, and it is hard-coded the way it always was: it
+  // is what the flow is with neither of the other two blocks in force, so there is no rule to
+  // read a start from — the two-by-two is the block that ends it.
   const layouts = flowLayouts(css)
   const bands = [
-    { width: 390, where: 'below the flow’s first breakpoint, where the four steps are a column', way: () => 'down' },
+    { width: 390, shape: 'column', where: 'below the flow’s first breakpoint, where the four steps are a column' },
   ]
   if (layouts.grid !== null && layouts.grid.from !== null) {
-    bands.push({
-      width: layouts.grid.from,
-      where: `at ${layouts.grid.from / 16} rem, where the four steps are a two-by-two`,
-      way: (step) => (step % 2 === 1 ? 'right' : 'down'),
-    })
+    bands.push({ width: layouts.grid.from, shape: 'grid', where: `at ${layouts.grid.from / 16} rem, where the four steps are a two-by-two` })
   }
   if (layouts.row !== null && layouts.row.from !== null) {
     for (const width of [layouts.row.from, 80 * 16]) {
-      bands.push({ width, where: `at ${width / 16} rem, where the four steps are a row`, way: () => 'right' })
+      bands.push({ width, shape: 'row', where: `at ${width / 16} rem, where the four steps are a row` })
     }
   }
   if (layouts.row === null) return out // `flowLayoutFailures` names the missing row; there is no row to read here
 
   for (const band of bands) {
+    // Where each step is in this shape, which is what "the next step" means here: the run's
+    // order is the DOM's, and the shape is the stylesheet's, and the two can disagree — the
+    // two-by-two is where they do.
+    const cells = flowCells(css, band.shape, band.width, arrows.length)
+    if (cells.unreadable !== undefined) {
+      out.push(
+        `the cells the four steps occupy ${band.where} cannot be read — ${cells.unreadable} — and which step an arrow points at is a cell this check has to know (changes spec 2026-10-18, item 4; review round 4)`,
+      )
+      continue
+    }
+
     for (const { step, drawn, vector } of arrows) {
       // A step with no arrow is the flow's own shape — the last step is where the run ends —
       // and the count of arrows is `website/test/home.mjs`'s check rather than this one's.
@@ -2040,6 +2240,15 @@ export function arrowDirectionFailures(css, html) {
         )
         continue
       }
+      const expected = towards(cells[step - 1], cells[step])
+      const next = step + 1
+      if (expected === null) {
+        const at = (cell) => `row ${cell.row}, column ${cell.column}`
+        out.push(
+          `step ${step} and step ${next}, its successor, are not beside each other ${band.where} (step ${step} is at ${at(cells[step - 1])}, step ${next} at ${at(cells[step])}): the arrow out of step ${step} leaves one of its card's sides, and the step it lands on is whichever cell is on that side — with the two-by-two drawn \`1 2\` over \`3 4\` the arrow below step 2 lands on step 4 and the picture reads \`1 -> 2 -> 4\`, with step 3 skipped and step 4 carrying two arrows (changes spec 2026-10-18, item 4; review round 4)`,
+        )
+        continue
+      }
       const rotation = rotationAt(band.width, step)
       if (rotation === null) {
         out.push(
@@ -2047,12 +2256,24 @@ export function arrowDirectionFailures(css, html) {
         )
         continue
       }
+      const side = sideAt(band.width, step)
+      if (side === null) {
+        out.push(
+          `the arrow out of step ${step} is drawn in a box this check cannot place against its card ${band.where}, so the side it leaves from — and the step it lands on — is a guess (changes spec 2026-10-18, item 4; review round 4)`,
+        )
+        continue
+      }
+      if (side !== expected) {
+        out.push(
+          `the arrow out of step ${step} leaves the ${side} of its card ${band.where}, and step ${next} is ${WHERE_NEXT[expected]}: the arrow is drawn in the gap between two steps, so an arrow on the wrong side points at a step that is not the next one (changes spec 2026-10-18, item 4; review round 4)`,
+        )
+      }
       const way = points(turn(vector, rotation))
-      const expected = band.way(step)
-      if (way === expected) continue
+      const travels = SIDE_OF_ARROW[expected]
+      if (way === travels) continue
       const how = rotation === 0 ? 'no rotation at all' : `transform: rotate(${rotation}deg), which turns the arrow the markup draws pointing down ${rotation > 0 ? 'clockwise' : 'anticlockwise'}`
       out.push(
-        `the arrow out of step ${step} points ${way} ${band.where} (${how}), and there the run travels ${expected}: item 4's run goes left to right along a row and down a column, and an arrow drawn the other way reads the four steps in the opposite order (changes spec 2026-10-18, item 4)`,
+        `the arrow out of step ${step} points ${way} ${band.where} (${how}), and there the run travels ${travels}: item 4's run goes left to right along a row and down a column, and an arrow drawn the other way reads the four steps in the opposite order (changes spec 2026-10-18, item 4)`,
       )
     }
   }
