@@ -193,8 +193,8 @@ func TestDocsCoordinatorTakesNoDecisionNumber(t *testing.T) {
 
 // coordinatorCitationRE finds a backtick-quoted repository path, with or
 // without a trailing line or line-range suffix: `internal/budget/model.go:1-2`,
-// `console/src/main/protocol.ts:132-143`, `SECURITY.md:40`,
-// `internal/budget/rules/rules.json.tmpl`. The extension set is the one this
+// `SECURITY.md:40`, `internal/budget/rules/rules.json.tmpl`, and the console's
+// own files (the renderer's CSP module, the IPC table). The extension set is the one this
 // repository's cited files use; a backticked token without one (a node path
 // such as `config/policy/shared`, a package name, a symbol) is not a citation
 // of a file and is left alone.
