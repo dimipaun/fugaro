@@ -780,6 +780,145 @@ export function loadReleaseSummaries(): ReleaseSummaries {
 }
 
 // ---------------------------------------------------------------------------------------
+// website/data/console-screens.yaml — the console's screenshots (owner feedback 2026-10-19).
+// ---------------------------------------------------------------------------------------
+
+/**
+ * One screenshot of the console: the file, the two texts a reader gets for it, and its own
+ * pixel dimensions.
+ */
+export interface ConsoleScreen {
+  /** The file's name under `public/images/console/`, as the data file writes it. */
+  file: string
+  /** The site path the browser fetches: derived here from `file`, and written down nowhere. */
+  src: string
+  /** What a reader gets when the picture does not arrive, and what a screen reader reads. */
+  alt: string
+  /** The line under the picture. */
+  caption: string
+  /** The file's own width in pixels, so the browser can reserve the box. */
+  width: number
+  /** The file's own height in pixels. */
+  height: number
+}
+
+/** website/data/console-screens.yaml, validated. */
+export interface ConsoleScreensFacts {
+  screens: ConsoleScreen[]
+}
+
+const SCREENS_FILE = 'website/data/console-screens.yaml'
+
+/** Where a screenshot's file lives under `public/`, and the site path it is served at. */
+const SCREENS_DIR = 'images/console'
+
+const SCREENS_KEYS = ['screens', 'version']
+
+/**
+ * The formats the slider serves. A console screenshot is a raster image, and these are the
+ * ones a browser renders without a second thought: PNG is what the site's own captures are
+ * (`public/images/fugaro-watch.png`, `logo.png`), and the three after it are the same
+ * picture in fewer bytes — which is the whole of what the budget has to say about a format,
+ * since it counts raw bytes and does not care how they were encoded.
+ *
+ * SVG is deliberately not on the list: it is a document rather than a picture, it can carry
+ * script and external references, and a slider of screenshots has no use for one.
+ */
+const SCREEN_FORMATS = ['avif', 'jpeg', 'jpg', 'png', 'webp']
+
+/**
+ * The console's screenshots, in the order the slider shows them.
+ *
+ * **An empty list is a legal document and not a failure**, and that is the one place this
+ * reader differs from the install and site readers beside it: the console's screenshots are
+ * the owner's to take from the released console, no build can make one (D190), and the file
+ * ships empty until they do. So `screens: []` is read as the state it is — the console page
+ * renders no slider and no placeholder — and it is the state `website/test/console-screens.mjs`
+ * builds the page in.
+ *
+ * Everything else is refused by name: a `file` that is a path or a URL rather than a name
+ * under `public/images/console/` (the site path is derived from it, so a URL here would be a
+ * second copy of a fact the build composes — Global Constraint 9), a format the slider does
+ * not serve, an `alt` or a `caption` nobody could read, and a size that is not a positive
+ * whole number of pixels.
+ */
+export function loadConsoleScreens(): ConsoleScreensFacts {
+  const file = SCREENS_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'console-screens.yaml'), "the console's screenshots: the files, their alt text, their captions and their sizes (the owner's feedback of 2026-10-19)"), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, SCREENS_KEYS, file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const screens = asList(doc.screens, file, 'screens').map((entry, index) => {
+    const what = `screens[${index}]`
+    const screen = asMap(entry, file, what)
+    refuseUnknownKeys(screen, ['alt', 'caption', 'file', 'height', 'width'], `${file} ${what}`)
+
+    const name = asString(screen.file, file, `${what}.file`)
+    // A NAME and not a path: the site path is `/${SCREENS_DIR}/${name}` below, and a name
+    // carrying a separator, a scheme or a `..` is a file the derivation would not reach, or
+    // a URL written into a data file (Global Constraint 9).
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+      throw new Error(
+        `${file}: ${what}.file is ${JSON.stringify(name)}, and it is the file's NAME under website/public/${SCREENS_DIR}/ — letters, digits, dots, dashes and underscores, with no directory, no scheme and no space. The site path the browser fetches is derived from the name, so a name that is a path or a URL is a fact this file is not allowed to carry (Global Constraint 9).`,
+      )
+    }
+    // The dot is required before the format is read. With no dot at all `lastIndexOf` answers
+    // -1 and `slice(0)` hands back the whole name, so a name that IS a served format — `png`,
+    // `jpg`, `webp` — would pass a check that only asks whether the extension is one of them,
+    // and the row would render a picture at `/images/console/png`. There is no dot, so there is
+    // no extension and no picture either.
+    const dot = name.lastIndexOf('.')
+    const format = dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
+    if (!SCREEN_FORMATS.includes(format)) {
+      throw new Error(
+        `${file}: ${what}.file is ${JSON.stringify(name)}, and the slider serves ${SCREEN_FORMATS.join(', ')} — the raster formats a browser renders as a picture. An SVG is a document that can carry script and references, and a name with no extension at all is not a picture either.`,
+      )
+    }
+
+    const alt = asString(screen.alt, file, `${what}.alt`)
+    const caption = asString(screen.caption, file, `${what}.caption`)
+    if (alt.trim() === '') {
+      throw new Error(
+        `${file}: ${what}.alt is empty, and every slide carries alt text: it is what a reader gets when the picture does not arrive and what a screen reader reads instead of it, and a screenshot nobody can identify is a picture a reader cannot use.`,
+      )
+    }
+    if (caption.trim() === '') {
+      throw new Error(
+        `${file}: ${what}.caption is empty, and every slide carries a caption: it is the line under the picture that says what a reader is looking at, and the owner asked for one on each slide.`,
+      )
+    }
+
+    // Both dimensions, each named on its own: they are the two numbers the browser
+    // reserves the picture's box with, so a zero or a negative one is a box that collapses
+    // and a page that jumps when the file lands — and the message says which of the two to
+    // fix.
+    const width = asInt(screen.width, file, `${what}.width`)
+    const height = asInt(screen.height, file, `${what}.height`)
+    if (width < 1) {
+      throw new Error(
+        `${file}: ${what}.width is ${width}, and a screenshot's width is the file's own pixels: a positive whole number, which is half of what the browser reserves the box with so the page does not jump when the file lands.`,
+      )
+    }
+    if (height < 1) {
+      throw new Error(
+        `${file}: ${what}.height is ${height}, and a screenshot's height is the file's own pixels: a positive whole number, which is half of what the browser reserves the box with so the page does not jump when the file lands.`,
+      )
+    }
+
+    return { file: name, src: `/${SCREENS_DIR}/${name}`, alt, caption, width, height }
+  })
+
+  return { screens }
+}
+
+// ---------------------------------------------------------------------------------------
 // website/content/ — the generated documents, and the aggregation's published output.
 // ---------------------------------------------------------------------------------------
 

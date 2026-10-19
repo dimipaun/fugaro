@@ -275,7 +275,14 @@ here goes stale the way the byte budgets did before D192.
   that checks a download against the release's sums file — Getting Started's console option
   and the hero's link to the console. The page weight and the script stay where they were: the
   heaviest page is the docs hub, which renders none of the three. **And a later round is the
-  2026-10-19 changelog brief** (its own section below), which moved the site figure alone:
+  console's screenshot slider** (the owner's feedback of 2026-10-19: a slider at the top of the
+  console page, data-driven from `website/data/console-screens.yaml` and shipping empty until
+  the owner takes the pictures), which moved the site figure alone once more, by the
+  component's stylesheet: Astro inlines it into the console page that imports it, whether or
+  not the slider renders, so the bytes are in the build while the list is empty and while it is
+  not. The page weight and the script stay where they were: the console page is not the
+  heaviest page, and the slider ships no script at all.
+  **And the round after it is the 2026-10-19 changelog brief** (its own section below), which moved the site figure alone:
   every release now renders its product summary and wraps the release file's own Highlights in
   a `<details>` block — a summary and a notes label per release onto `/changelog/` — while the
   "not yet released" labels the tag rule drew in the gates' build and the retired "newest
