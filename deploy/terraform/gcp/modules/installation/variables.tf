@@ -291,7 +291,7 @@ variable "project_secrets" {
 }
 
 variable "managed_deployer_scoped" {
-  description = "Whether to create the managed deployer's scoped role (fugaroDeployerScoped) and its one conditioned binding. OFF by default in 0.8.6, and fugaro init never sets it: the fmgd- prefix fence that binding carries cannot be expressed as a GCP IAM condition today (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would reject it and stop the whole apply. Managed projects stay disabled until the fence is redesigned and measured live; 0.9.0 ships with them still disabled, and no release is promised for the redesign."
+  description = "Whether to create the managed deployer's scoped role (fugaroDeployerScoped) and its one conditioned binding. OFF by default since 0.8.6, and fugaro init never sets it: the fmgd- prefix fence that binding carries cannot be expressed as a GCP IAM condition today (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would reject it and stop the whole apply. Managed projects stay disabled until the fence is redesigned and measured live (0.9.5)."
   type        = bool
   default     = false
   nullable    = false

@@ -128,12 +128,11 @@ const catalogSince = "0.7.5"
 // docs/release.md's checklist line for catalogSince in that commit too.
 const catalogShipped = false
 
-// managedDeployerShipped is false: no release has shipped a managed deployer
-// IAM that can actually be created. The owner's ruling of 2026-10-18 ("Gate it
-// off by default; redesign for 0.9.0") named 0.9.0 as the release that would
-// carry the redesign, and 0.9.0 ships with this constant still false, so the
-// fence is still to be redesigned and measured against a live project. The
-// deployer's
+// managedDeployerShipped is false until the release that ships a managed
+// deployer IAM can actually create: 0.9.5, by the owner's ruling of
+// 2026-10-19, which moved the redesign off 0.9.0 (the ruling of 2026-10-18,
+// "Gate it off by default; redesign for 0.9.0"). 0.9.0 therefore ships with
+// the scoped role still gated off, as 0.8.6 and 0.8.7 do. The deployer's
 // scoped role is bound under an fmgd- prefix condition that GCP rejects as
 // written (17 logical operators where IAM allows 12, resource.name.contains()
 // is not a supported function, and resource.name is not supported for most of
@@ -170,11 +169,10 @@ func refuseManagedNotShipped() error {
 	return userErr("%s", managedDisabled)
 }
 
-// batchProvisionShipped is false: the Batch backend's reaper is still to be
-// redesigned, and no release in the tree promises one. 0.8.6's notes said the
-// Batch backend would return in 0.9.0, and 0.9.0 ships with this constant still
-// false; do not put a version back into the refusal below — the user reading it
-// is running the release it would name. The compute module fugaro init --provision-batch
+// batchProvisionShipped is false until a later release, the one that
+// redesigns the Batch backend's reaper: the Cloud Batch backend is excluded
+// from 0.9.0 (the owner's ruling of 2026-10-18), so no release this tree names
+// carries the fix yet. The compute module fugaro init --provision-batch
 // applies gives the reaper a custom role naming batch.jobs.cancel, which is
 // not a permission GCP has (it lists batch.jobs.create, delete, get and list
 // only), so creating that role fails and the apply cannot complete. While it
@@ -190,7 +188,7 @@ var batchProvisionOpen = batchProvisionShipped
 
 // batchProvisionDisabled is init's refusal of --provision-batch while
 // batchProvisionShipped is false.
-const batchProvisionDisabled = "--provision-batch is disabled in this release: the Batch backend's reaper role names batch.jobs.cancel, a permission Google does not have, so its provisioning cannot complete (docs/design/compute-backend.md); the reaper is still to be redesigned, and the installation's ordinary steps are unaffected"
+const batchProvisionDisabled = "--provision-batch is disabled in this release: the Batch backend's reaper role names batch.jobs.cancel, a permission Google does not have, so its provisioning cannot complete (docs/design/compute-backend.md); it returns in a later release, and the installation's ordinary steps are unaffected"
 
 // refuseBatchProvisionNotShipped is batchProvisionDisabled as an error, nil
 // once the Batch provisioning ships.
