@@ -74,6 +74,11 @@ function stringsOf(screen, name, props = {}) {
     .flatMap((one) => one.children.filter((child) => typeof child === 'string'));
 }
 
+/** The elements carrying one `SCREEN` name -- a container, not its strings. */
+function elementsOf(screen, name, props = {}) {
+  return walk(screen(props)).filter((one) => one.props !== null && one.props.type === name);
+}
+
 /** The strings one element and everything under it would show. */
 function renderOf(node) {
   return walk(node)
@@ -287,20 +292,18 @@ test('a read-back is drawn once, and the one instruction on it is the TYPED one'
   // One line, drawn once: a second cue under the read-back is how the
   // "Say" and "Type" pair got onto this screen in the first place.
   assert.deepEqual(stringsOf(screen, SCREEN.READ_BACK, { confirmation }), [readBack]);
-  const box = walk(screen({ confirmation })).filter(
-    (one) => one.props !== null && one.props.type === SCREEN.CONFIRMATION,
-  );
+  const box = elementsOf(screen, SCREEN.CONFIRMATION, { confirmation });
   assert.equal(box.length, 1);
   assert.equal(box[0].children.length, 1, 'the confirmation is one line, not a line and a cue');
   // And with nothing waiting, there is no read-back and no cue at all.
   const quiet = render(screen);
   assert.equal(quiet.includes(TYPE_CUE), false);
-  assert.equal(stringsOf(screen, SCREEN.CONFIRMATION).length, 0);
+  assert.equal(elementsOf(screen, SCREEN.CONFIRMATION).length, 0);
   // A confirmation with no sentence is the same case: an empty box on screen
   // would read as "something is waiting" with nothing in it to act on.
   for (const empty of [{ readBack: '' }, { readBack: null }, { deadline: 1 }]) {
     assert.equal(
-      stringsOf(screen, SCREEN.CONFIRMATION, { confirmation: empty }).length,
+      elementsOf(screen, SCREEN.CONFIRMATION, { confirmation: empty }).length,
       0,
       JSON.stringify(empty),
     );
