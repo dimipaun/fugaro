@@ -45,16 +45,30 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // bucket called fugaro-runs-<gcpProject> in a project of their own and put a
 // perfect marker in it. So the read takes the GCP project's own number from
 // Resource Manager, requires the bucket's own project number to be that
-// number, and requires the bucket to carry the installation's fugaro=managed
-// label; only then does it look at the object, and only then does it believe
-// it. (The number is read here rather than taken as a parameter because
+// number, requires the project itself to carry the fugaro_managed label the
+// creating run writes on it (Task 3.0), and requires the bucket to carry the
+// installation's fugaro=managed label; only then does it look at the object,
+// and only then does it believe it. (The number and the project's labels are
+// read here rather than taken as parameters because
 // IsManaged's interface is (project, gcpProject) — and this package must not
 // import internal/infra, whose ProjectNumber answers it; the six lines below
 // are that function's read.)
 //
+// The label is the verdict and not the whole read: without it the project is
+// not managed whatever the runs bucket holds, and the object is still read for
+// one reason only — a version-2 marker about this project whose recorded
+// figure fails Budget.Check is answered as that figure, which is the more
+// specific sentence (the label's own sentence sends its owner to a backfill,
+// which would leave them with a managed project whose amount nothing can be
+// compared against). So a label-less project whose bucket or object cannot be
+// read is answered with the label's reason and no error: the label already
+// decided it, and an error there would fail a command for a project that is
+// not managed.
+//
 // It fails closed, and every way of not being managed is an answer rather
-// than a failure: no bucket, a bucket in another project, a bucket without
-// the label, an absent object, an object that cannot be read, an object this
+// than a failure: a project with no fugaro_managed label, a project whose
+// label says something else, no bucket, a bucket in another project, a bucket
+// without the label, an absent object, an object that cannot be read, an object this
 // build cannot parse, a gcp_project field that is not the one asked about, a
 // version this build does not know — all false, each with a one-line reason
 // (the shape initflow's Status.Detail uses) a person can act on. 404 and 403
@@ -192,7 +206,7 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// The number first: without it there is nothing to check the bucket
 	// against, and a bucket of the right name in a stranger's project would
 	// be believed.
-	number, err := gcpProjectNumber(ctx, c, gcpProject)
+	number, labels, err := gcpProjectNumber(ctx, c, gcpProject)
 	if err != nil {
 		var ge *googleapi.Error
 		if errors.As(err, &ge) && (ge.Code == http.StatusForbidden || ge.Code == http.StatusNotFound) {
@@ -209,6 +223,66 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 		return Marker{}, false, fmt.Sprintf("GCP project %s came back with no number, so gs://%s cannot be proved to be its own runs bucket (%s is not managed)", gcpProject, bucket, project), nil
 	}
 
+	// The project's own label, the second half of the creation fact (Task
+	// 3.0), and the rule is that it can only narrow: it is required, and its
+	// absence and any other value are both answers about this project, never
+	// a managed verdict. It is checked here, with the number and before the
+	// bucket, because it is a property of the project the one call above
+	// already answered, and a project that does not carry it cannot be
+	// managed whatever the runs bucket holds. The two ways of disagreeing are
+	// told apart, and neither is a failure: a caller prints both.
+	labelWhy := ""
+	if v, ok := labels[ProjectLabelKey]; !ok {
+		// The condition and not a command: this string is the one piece of
+		// the label that reaches a coding agent's session, and a sentence
+		// naming the write would invite it from the side that must never make
+		// it. That is the settled, VETOABLE decision §5 of
+		// docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md, and
+		// TestTheNoLabelReasonNamesNoCommand pins it. The line a person runs
+		// is in the setup document, which the reason names, and neither
+		// writer of the label is this string's to name.
+		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project)
+	} else if v != ProjectLabelValue {
+		labelWhy = fmt.Sprintf("GCP project %s carries %s=%s, not %s, so %s is not managed", gcpProject, ProjectLabelKey, v, ProjectLabelValue, project)
+	}
+
+	// Without the label the answer is this one, and it is the answer for every
+	// state of the object below but one — which is why the object is still
+	// read for it. A version-2 marker about this project carrying a figure
+	// Budget.Check refuses is reported as that figure, and not as the missing
+	// label: "a managed creation could not have chosen this amount" is the
+	// more specific of the two sentences, and the label's sends the owner to
+	// the backfill in docs/gcp-setup.md, which would leave them with a managed
+	// project whose recorded amount nothing can be compared against. The cost
+	// is a bucket and an object read for a project that has no label — the
+	// state every project marked before Task 3.0 is in (decisions §5) — and it
+	// is paid for the reason: the verdict is the same either way (never
+	// managed), so what the read buys is only the better sentence.
+	m, ok, reason, err = readFactObject(ctx, s, project, gcpProject, number)
+	switch {
+	case labelWhy == "":
+		return m, ok, reason, err
+	case err == nil && m.Budget != nil && m.Budget.Check() != nil:
+		// ReadBudgetAnswer's own condition, deliberately: the pair of
+		// functions has to agree about which refusals carry a figure back.
+		return m, false, reason, nil
+	}
+	// Everything else, including a bucket or object read that failed: the
+	// label alone decides this project, and a read that could not answer
+	// cannot change a verdict the label already gave. The error is dropped
+	// rather than returned — a caller failing a command for a project the
+	// label has already refused would be reporting the wrong thing.
+	return Marker{}, false, labelWhy, nil
+}
+
+// readFactObject is the second half of readFact: everything the answer needs
+// once the project's number and the label have been read. It is split out so
+// that readFact can order its two refusals (see there) without either of them
+// being judged twice, and it keeps readFact's decisions exactly as they were —
+// each return is one of the ways IsManaged lists of being "not managed", with
+// readFact's own doc as the account of them.
+func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject string, number uint64) (m Marker, ok bool, reason string, err error) {
+	bucket := runsBucketName(gcpProject)
 	b, err := s.Buckets.Get(bucket).Context(ctx).Do()
 	if err != nil {
 		var ge *googleapi.Error
@@ -420,15 +494,23 @@ func checkObjectShape(dec *json.Decoder, allowed objectShape) error {
 	return nil
 }
 
-// gcpProjectNumber is the GCP project's own number, which its buckets carry.
+// gcpProjectNumber is the GCP project's own number, which its buckets carry,
+// and its labels, which Task 3.0's half of the fact lives in.
 // It is internal/infra.ProjectNumber's read, repeated because this package
 // knows nothing of internal/infra (see marker.go's WriteMarker, which takes
 // the number as a parameter for the same reason), and wrapped the same way so
 // a failure reads the same whichever side of the boundary it is reported on.
-func gcpProjectNumber(ctx context.Context, c *crm.Service, gcpProject string) (uint64, error) {
+//
+// Both come back from the one call, and that is the point of the signature
+// rather than an accident of it: the project label is a field of an object
+// this read already fetches for its number check, so the second half of what
+// "managed" means costs **no new call and no new permission** — which is the
+// first thing a reviewer of a new condition on this read should be able to
+// see. A nil map is a project with no labels.
+func gcpProjectNumber(ctx context.Context, c *crm.Service, gcpProject string) (uint64, map[string]string, error) {
 	p, err := c.Projects.Get(gcpProject).Context(ctx).Do()
 	if err != nil {
-		return 0, fmt.Errorf("reading project %s: %w", gcpProject, err)
+		return 0, nil, fmt.Errorf("reading project %s: %w", gcpProject, err)
 	}
-	return uint64(p.ProjectNumber), nil
+	return uint64(p.ProjectNumber), p.Labels, nil
 }

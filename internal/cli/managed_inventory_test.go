@@ -456,6 +456,51 @@ func TestManagedAccountedReadsTheProjectsOwnStateBuckets(t *testing.T) {
 	}
 }
 
+// A state bucket the project's config names is NOT the one the inventory
+// believes. The config is local state anything can edit, and a bucket it named
+// would be read as the accounted side: a "state" there that accounts for every
+// resource of the project would make a foreign resource the project's own, and
+// the managed apply would drop its confirmations. The inventory reads the
+// derived fugaro-tfstate-<gcp_project> whatever terraform.state_bucket says
+// (managed creation and `fugaro managed flag` refuse any other name, so no
+// managed project has one).
+//
+// Mutation: read lc.Terraform.StateBucket (when set) instead of the derived
+// name in managedInventory's managedAccounted call — the configured bucket's
+// forged state accounts for the foreign bucket, the inventory reads clean, and
+// this test fails.
+func TestManagedInventoryDoesNotReadAStateBucketTheConfigNames(t *testing.T) {
+	r, _, _ := inventoryRig(t)
+	const configured = "my-state"
+	const planted = "somebody-elses-bucket"
+	r.appendConfig(t, "terraform: { state_bucket: "+configured+" }\n")
+	// The forged state accounts for everything the project holds, the
+	// installation's runs bucket and the planted one alike.
+	forged := []byte(`{"version":4,"terraform_version":"1.9.8","serial":1,"lineage":"x","outputs":{},"resources":[` +
+		`{"mode":"managed","type":"google_storage_bucket","name":"runs","provider":"provider[\"registry.terraform.io/hashicorp/google\"]",` +
+		`"instances":[{"schema_version":0,"attributes":{"id":"` + initRunsBucket + `"}}]},` +
+		`{"mode":"managed","type":"google_storage_bucket","name":"planted","provider":"provider[\"registry.terraform.io/hashicorp/google\"]",` +
+		`"instances":[{"schema_version":0,"attributes":{"id":"` + planted + `"}}]}]}`)
+	r.gcs.AddBucket(configured, initProjectNumber, map[string]string{"fugaro": "tfstate"})
+	r.gcs.Put(configured, infra.StatePrefixInstallation+"/default.tfstate", forged)
+	stubManagedAssets(t, &fakeManagedAssets{assets: []managedmode.Asset{
+		{Name: "//storage.googleapis.com/" + initRunsBucket, Type: "storage.googleapis.com/Bucket"},
+		{Name: "//storage.googleapis.com/fmgd-data", Type: "storage.googleapis.com/Bucket"},
+		{Name: "//storage.googleapis.com/" + planted, Type: "storage.googleapis.com/Bucket"},
+	}})
+	lc, c := inventoryClients(t, r)
+	if lc.Terraform.StateBucket != configured {
+		t.Fatalf("the config's state bucket is %q, want %q: the fixture did not take", lc.Terraform.StateBucket, configured)
+	}
+	got := managedInventory(context.Background(), lc, c, initProjectNumber)
+	if !got.Fallback() || got.Cause() != managedmode.CauseForeign {
+		t.Fatalf("a bucket only the config's state bucket accounts for = %s, want the foreign fallback", got)
+	}
+	if !strings.Contains(got.Why(), planted) {
+		t.Errorf("the fallback does not name the planted bucket: %s", got.Why())
+	}
+}
+
 // The security-relevant part of the wiring is WHERE the read is made: with the
 // operator's own credential, before the deployer is assumed. The Cloud Asset
 // read role is granted to the operators and to nobody else (iam.tf's

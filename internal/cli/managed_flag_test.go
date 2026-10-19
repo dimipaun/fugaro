@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // managedFlagRig is the installation's own runs bucket, seeded as the write
@@ -51,6 +52,31 @@ func managedFlagArgs(extra ...string) []string {
 	return append([]string{"managed", "flag", initProject, "--budget", "50", "--budget-currency", "USD"}, extra...)
 }
 
+// managedFlagIsManaged is the real read over the rig's fakes — the read the
+// apply-time gate takes, project-number check, bucket label, label and all —
+// so a test can ask what the command did to a PROJECT rather than what the
+// fakes hold. A test that asserted only the fakes' label map would pass for a
+// write the read still refuses.
+func managedFlagIsManaged(t *testing.T, r *initRig) bool {
+	t.Helper()
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := newInitClients(t.Context(), lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, reason, err := managed.IsManaged(t.Context(), c.Storage, c.CRM, lc.Name, lc.GCPProject)
+	if err != nil {
+		t.Fatalf("the managed read failed: %v", err)
+	}
+	if !ok {
+		t.Logf("the managed read says not managed: %s", reason)
+	}
+	return ok
+}
+
 // TestManagedFlagWritesTheMarker is the write the command exists for: the
 // exact project ID typed at a terminal writes gs://<runs bucket>/fugaro/
 // managed.json, in the version that carries the amount the owner stated —
@@ -84,6 +110,143 @@ func TestManagedFlagWritesTheMarker(t *testing.T) {
 	// project-number check, before the command says it is done.
 	if !strings.Contains(out, "read back") {
 		t.Errorf("the command does not say the marker was read back:\n%s", out)
+	}
+}
+
+// TestManagedFlagWritesTheLabelToo is the other half of the statement this
+// command makes (Task 3.0), and the half it used to leave out: a managed
+// project carries BOTH marks — the object in its runs bucket and the label on
+// the project itself — and the read requires both, so a flag that wrote the
+// object alone left the project exactly as unmanaged as it was, holding a
+// marker whose command can no longer be run again (this command replaces only
+// the version-1 fact that records no amount, and it had just written the
+// version that records one). The label is therefore written by the same
+// command, at the same moment, under the same gate.
+func TestManagedFlagWritesTheLabelToo(t *testing.T) {
+	r := managedFlagRig(t)
+	// Labels of the project's own, which the write has to keep: a Resource
+	// Manager update replaces the whole map, so this is what a write that
+	// sent only its own key back would drop.
+	r.crm.SetLabels(initProject, map[string]string{"environment": "prod"})
+	// And a display name, which the label write has to keep for the same
+	// reason and by the same mechanism: an update replaces the project's
+	// editable fields, so a body that carried the labels alone would take the
+	// owner's name off the project (the round-2 review's should-fix, and
+	// internal/infra/managed's own test of both writers).
+	r.crm.SetDisplayName(initProject, "Belong production")
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := r.crm.Labels(initProject)[managed.ProjectLabelKey]; got != managed.ProjectLabelValue {
+		t.Errorf("the project carries %s=%q, want %q", managed.ProjectLabelKey, got, managed.ProjectLabelValue)
+	}
+	if got := r.crm.Labels(initProject)["environment"]; got != "prod" {
+		t.Errorf("the project's own environment label is %q after the flag, want it kept", got)
+	}
+	if got := r.crm.DisplayName(initProject); got != "Belong production" {
+		t.Errorf("the project's display name is %q after the flag, want it kept", got)
+	}
+	// The confirmation says it before it happens: the operator typing the ID
+	// is agreeing to both writes, so both are in the text they read.
+	if !strings.Contains(out, managed.ProjectLabelKey+"="+managed.ProjectLabelValue) || !strings.Contains(out, "on the project itself") {
+		t.Errorf("the confirmation does not say the label is written:\n%s", out)
+	}
+	// The assertion the contradiction was, and the only one that settles it:
+	// the real read the apply gate takes. The marker alone does not make a
+	// project managed, whatever the fakes hold.
+	if !managedFlagIsManaged(t, r) {
+		t.Error("the managed read does not believe a project this command flagged")
+	}
+	// And the undo is about both writes, because this command made both: the
+	// object in the runs bucket and the label on the project. It said only
+	// the first, which is half an undo for a command whose whole point is
+	// that the two go together — and either one alone does make the project
+	// unmanaged again, because the read requires both.
+	if !strings.Contains(out, "undo:") {
+		t.Fatalf("the command prints no undo for what it just wrote:\n%s", out)
+	}
+	for _, want := range []string{
+		"delete the object gs://" + initRunsBucket + "/" + managed.MarkerObject,
+		"no command of ours removes the marker in this release",
+		"gcloud projects update " + initProject + " --remove-labels=" + managed.ProjectLabelKey,
+		"UNVERIFIED",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the undo does not say %q:\n%s", want, out)
+		}
+	}
+	// The one line of it no test can run live says so itself, rather than
+	// reading like the half of the undo that is a command of ours.
+	undo := out[strings.Index(out, "undo:"):]
+	if line := strings.SplitN(undo, "\n", 2)[0]; !strings.Contains(line, "UNVERIFIED") {
+		t.Errorf("the undo's live-unverified line is not marked as such: %q", line)
+	}
+}
+
+// TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused: the two writes
+// are one statement, and a credential that may write the object but not the
+// project's labels (resourcemanager.projects.update is the owner's, design
+// finding 14) can leave half of it written. The command must not report that
+// as done — the read requires both marks, so the project is not managed — must
+// not take the marker back (the object is the authority and it is there), and
+// must say which half is missing and where the owner's one line is, because
+// here the operator runs this command themselves and the recovery is theirs.
+// It also must not be mistaken for a state a second flag finishes: the marker
+// is now the version this command refuses to replace.
+func TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused(t *testing.T) {
+	r := managedFlagRig(t)
+	r.crm.DenyUpdate(initProject)
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err == nil {
+		t.Fatalf("the flag reported success with no label written:\n%s", out)
+	}
+	// A remote failure and not the operator's error: they typed what they were
+	// asked to type, and half of the statement was written. The exit code says
+	// the command did not do what it was asked, without blaming the input.
+	if ExitCode(err) != ExitRemoteError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitRemoteError)
+	}
+	// The marker is there — WriteFlag wrote it before the label was attempted,
+	// in markCreated's order — and the command says so rather than claiming
+	// nothing happened.
+	if _, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok {
+		t.Errorf("the marker was taken back after the label was refused (out:\n%s)", out)
+	} else if !strings.Contains(err.Error(), "wrote gs://"+initRunsBucket+"/"+managed.MarkerObject) {
+		t.Errorf("the refusal does not say the object was written: %v", err)
+	}
+	// Which half is missing, and that the read requires both: without it the
+	// project is not managed and nothing is skipped for it.
+	for _, want := range []string{managed.ProjectLabelKey, "requires both", "is not managed yet"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The recovery: the owner's own terminal, and the doc with the line.
+	for _, want := range []string{"owner's own terminal", "docs/gcp-setup.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "not a second run of this command") {
+		t.Errorf("the refusal does not say a second flag cannot finish it: %v", err)
+	}
+	// And the truth of it: the project is not managed, whatever the object
+	// says. This is the fail-closed direction, and it is what makes the
+	// refusal an error rather than a note.
+	if managedFlagIsManaged(t, r) {
+		t.Error("the managed read believed a project whose label was never written")
+	}
+	// A second run of the command is refused by the marker itself, so the
+	// state is not one this command can finish.
+	out, _, err = executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err == nil {
+		t.Fatalf("the command replaced the v2 marker it had just written:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "already there") {
+		t.Errorf("the second run's refusal is not the marker's: %v", err)
 	}
 }
 
@@ -133,6 +296,14 @@ func TestManagedFlagRefusesInsideAFugaroRun(t *testing.T) {
 			}
 			if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
 				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+			}
+			// Neither half, and this is the assertion that covers the new
+			// one: a run's process holds the credentials the label needs, so
+			// a refusal that happened after the label write would leave the
+			// project labelled by a run — the write D58 and design finding 14
+			// keep to the owner's own terminal.
+			if got := r.crm.Labels(initProject)[managed.ProjectLabelKey]; got != "" {
+				t.Errorf("a refused run wrote %s=%q on the project", managed.ProjectLabelKey, got)
 			}
 		})
 	}
@@ -431,6 +602,57 @@ func TestManagedFlagNeedsTheDefaultRunsBucket(t *testing.T) {
 	}
 }
 
+// TestManagedFlagNeedsTheDerivedStateBucket: the runs bucket's rule, applied to
+// the other bucket a managed project's objects live in, and the reason a
+// creation refused for --state-bucket cannot be answered with "create it
+// unmanaged and flag it later". An unmanaged creation resolves
+// terraform.state_bucket out of this same config (infra.Installation's firstOf),
+// so flagging that project would be flagging one whose installation state the
+// managed read cannot find — managedAccounted reads gs://fugaro-tfstate-
+// <gcp_project> by that derived name and Inventory.installationCreated
+// recognises the same name — leaving every apply of it on the typed
+// confirmation flagging exists to take away. A project whose state is in
+// another bucket is refused here rather than flagged into that state.
+func TestManagedFlagNeedsTheDerivedStateBucket(t *testing.T) {
+	r := managedFlagRig(t)
+	const other = "fugaro-tfstate-elsewhere"
+	r.appendConfig(t, "terraform: { state_bucket: "+other+" }\n")
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err == nil {
+		t.Fatalf("a project whose installation state nothing reads was flagged:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	all := out + err.Error()
+	for _, want := range []string{initStateBucket, other} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the refusal does not name %s: %s", want, all)
+		}
+	}
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+	}
+}
+
+// The control beside it: the derived name written out in the config is the
+// value a creation that passes no flag resolves to anyway, so recording it
+// explicitly is not a reason to refuse — the check is about which bucket the
+// state is in, not about the field being set.
+func TestManagedFlagAcceptsTheDerivedStateBucketRecordedExplicitly(t *testing.T) {
+	r := managedFlagRig(t)
+	r.appendConfig(t, "terraform: { state_bucket: "+initStateBucket+" }\n")
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok {
+		t.Errorf("no %s in gs://%s for a config that records the derived state bucket:\n%s", managed.MarkerObject, initRunsBucket, out)
+	}
+}
+
 // TestManagedFlagReplacesTheCreationFactThatRecordsNoAmount: a project Fugaro
 // created without --managed holds the version-1 creation fact and no amount,
 // and the apply's gate refuses it for exactly that (internal/managed's
@@ -452,6 +674,17 @@ func TestManagedFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 	}
 	if !strings.Contains(out, "replaced the creation fact") || !strings.Contains(out, "recorded no budget amount") {
 		t.Errorf("the command did not say it replaced the creation fact:\n%s", out)
+	}
+	// The replacement writes the label too, and the read believes the project
+	// afterwards: a project Fugaro created without --managed had the object
+	// and no label (0.8.5's state), and the replacement is what makes it
+	// managed rather than half-marked. The owner's ruling allows exactly this
+	// direction — a version-1 fact to version 2, never a version 2 again.
+	if got := r.crm.Labels(initProject)[managed.ProjectLabelKey]; got != managed.ProjectLabelValue {
+		t.Errorf("the project carries %s=%q after the replacement, want %q", managed.ProjectLabelKey, got, managed.ProjectLabelValue)
+	}
+	if !managedFlagIsManaged(t, r) {
+		t.Error("the managed read does not believe a project whose version-1 fact this command replaced")
 	}
 }
 

@@ -523,7 +523,7 @@ func TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue(t *testing.T) {
 			"only the profile's project-wide ones",
 		}},
 		{"docs/project-layer.md", layer, []string{
-			"**The provider stop is gone (`projectJobGitHubAppID`).**",
+			"**The provider gate is open (`projectJobGitHubAppID`).**",
 			"`FUGARO_GITHUB_APP_ID`",
 			"internal/infra/projectjobs.go",
 		}},

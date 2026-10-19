@@ -1104,6 +1104,19 @@ var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/b
 // tokens/ — each on one of this run's buckets. The modules never set a
 // description, and a condition known only after apply is not covered.
 //
+// What a tokens/<slug>/ clause is *not* checked against is the grant's own
+// repository. A job account's ID is derived and does not read back: a project
+// job's is the profile/provider/account triple (gcp.ProjectServiceAccountID),
+// a per-repository one the slug and workflow sanitised and clipped
+// (gcp.ServiceAccountID). So what this can hold is the clause's shape —
+// exactly one clause, tokens/ with one slug segment, no trailing text, on one
+// of this run's buckets — and not the pairing: a grant to one repository's job
+// account whose clause names a *different* repository's tokens/<slug>/ is
+// accepted here, because nothing in the plan says which repository the
+// account serves. That pairing is a fact about internal/infra's own writers
+// (projectjobs.go, build.go), which is where it is checked; nothing a plan
+// alone can read makes it checkable here.
+//
 // createdSAIDs are the (module, account ID) pairs this plan creates and
 // heldSAIDs the pairs each module holds after it: the widened condition is
 // accepted only for the project module's own account, so a plan that widened

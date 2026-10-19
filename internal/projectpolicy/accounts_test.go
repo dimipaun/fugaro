@@ -1,6 +1,7 @@
 package projectpolicy
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -465,5 +466,59 @@ func TestDeriveAccounts(t *testing.T) {
 	got, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github"}}}, accounts, secrets)
 	if err != nil || got != nil {
 		t.Fatalf("a project serving no account derived %v, %v", got, err)
+	}
+}
+
+// TestCheckWrittenAccountFieldsReturnsTheReadError: the member-spelling check
+// reads an entry as a map, and an entry it cannot read that way is an error —
+// the same error checkWrittenProfileFields returns for the profiles block, and
+// never a check that quietly does not run. A spelling check skipped for the
+// entry it was written for is the check a case-folded or misspelt member walks
+// past, which is the whole failure the check exists to stop, and
+// decodeAccountBlock's other guards are not something this one may lean on:
+// they are what a later change to that function can remove.
+//
+// The error is unreachable through Decode (the strict decode refuses anything
+// that is not an object first, which TestAccountsBlockStrictDecode's "an entry
+// that is not an object" case pins), so the guard is held here, where it can be
+// reached, rather than through a document no Parse can produce. The mutation is
+// restoring the `err == nil` guard this function was extracted from: the four
+// cases below then pass silently.
+func TestCheckWrittenAccountFieldsReturnsTheReadError(t *testing.T) {
+	for name, raw := range map[string]string{
+		"an entry that is not an object": `["github/acme/app"]`,
+		"a number":                       `5`,
+		"a string":                       `"github/acme/app"`,
+		"an object with trailing data":   `{"allow_repos":["github/acme/app"]} junk`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := checkWrittenAccountFields("ops", json.RawMessage(raw))
+			if err == nil {
+				t.Fatalf("%s was read as an entry whose members are spelled correctly: the spelling check did not run", name)
+			}
+			if !strings.Contains(err.Error(), "accounts.ops") {
+				t.Errorf("the refusal does not name the entry it is about: %v", err)
+			}
+		})
+	}
+
+	// The two refusals the check itself makes, unchanged by the extraction: a
+	// member spelled in another case, and a name no member answers to.
+	for name, tc := range map[string]struct{ raw, want string }{
+		"a case-folded member": {`{"Allow_Repos":["github/acme/app"]}`, "write allow_repos"},
+		"an unknown member":    {`{"allow_repo":["github/acme/app"]}`, `unknown field "allow_repo"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := checkWrittenAccountFields("ops", json.RawMessage(tc.raw))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("want a refusal naming %q, got %v", tc.want, err)
+			}
+		})
+	}
+
+	// And the documented spelling passes, so the error is the reader's and not
+	// a blanket refusal of the block.
+	if err := checkWrittenAccountFields("ops", json.RawMessage(`{"allow_repos":["github/acme/app"]}`)); err != nil {
+		t.Errorf("the documented spelling was refused: %v", err)
 	}
 }

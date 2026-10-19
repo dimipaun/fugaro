@@ -15,6 +15,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	// The managed-mode package of internal/managed, aliased because this file
+	// already imports internal/infra/managed as managed: the state bucket's
+	// derived name is its own (managedmode.InstallationsStateBucket), the same
+	// function init's check and the inventory's read use.
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -119,6 +124,18 @@ managed apply rather than applied without a budget control. The amount is the
 budget ALERT amount the installation's Terraform creates and nothing else —
 this command does not create or change a budget, and it makes no billing call.
 
+It writes BOTH marks a managed project carries, in one step: that object and
+the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
+requires both — the label is what a project can be narrowed by, and a project
+without it is not managed whatever its runs bucket holds — so writing the
+object alone would leave this project exactly as unmanaged as it was. The
+label is written on the project, by the account running this command, which is
+why the account needs resourcemanager.projects.update on it; the project's
+other labels are kept. A project that already carries that key with another
+value is refused rather than overwritten — the label someone else put there is
+a statement, not an empty slot — and the object written first is not taken
+back, so that refusal says which half is there and which is missing.
+
 What flagging gives up, stated before it writes: the marker is what turns the
 typed confirmation off (D55), so from this project's next apply on, the
 deterministic gate, the whole-project inventory, the owner-written delete list
@@ -220,6 +237,24 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		return userErr("project %s names the runs bucket %q, and a managed project's marker lives in %s: the managed read locates the project's runs bucket by that name, so a marker written into another bucket would be read by nobody. Check runs_bucket in the project config",
 			safetext.Field(lc.Name), safetext.Field(got), safetext.Field(bucket))
 	}
+	// And the installation's own state bucket, by the same rule and for the
+	// same reason: the managed apply's inventory reads the installation's state
+	// out of gs://fugaro-tfstate-<gcp_project> by that derived name
+	// (managedAccounted, and Inventory.installationCreated on the other half of
+	// the comparison), so a project whose state lives in another bucket is one
+	// whose state read fails (CauseStateUnread) and whose every apply falls back
+	// to the typed confirmation this command exists to take away — the very
+	// thing flagging gives up (D55, printed below). This command has no
+	// --state-bucket of its own: what a project created with `fugaro init
+	// --state-bucket <other>` recorded is the local config's
+	// terraform.state_bucket, which is what infra.Installation resolves for it
+	// and what is left to check here. The refusal is the rule fugaro restore
+	// already keeps about the same field.
+	stateBucket := managedmode.InstallationsStateBucket(lc.GCPProject)
+	if got := lc.Terraform.StateBucket; got != "" && got != stateBucket {
+		return userErr("nothing was written: project %s records the Terraform state bucket %q, and a managed project's installation state must live in %s: the managed apply reads the installation's state out of that bucket by its derived name — a function of the GCP project, never of a flag or of the project's config — so state kept anywhere else reads as state that could not be read at all, and every managed apply of %s would fall back to the typed confirmation this command exists to take away. A project whose installation state is in another bucket cannot be managed: move the state to %s, or leave this project unmanaged",
+			safetext.Field(lc.Name), safetext.Field(got), safetext.Field(stateBucket), safetext.Field(lc.Name), safetext.Field(stateBucket))
+	}
 	c, err := newInitClients(ctx, lc)
 	if err != nil {
 		return err
@@ -237,6 +272,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// that the marker is what turns the confirmation off, so the second half
 	// is printed rather than left to be inferred.
 	fmt.Fprintf(w, "⚠ CONFIRM (project %s): flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(lc.Name), safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject)
+	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
 	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s\n", amount, safetext.Field(currency))
 	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
 	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
@@ -248,6 +284,36 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	replaced, err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
 	if err != nil {
 		return managedFlagErr(lc, bucket, err)
+	}
+	// The other half of the same statement, in the same step (Task 3.0): the
+	// label on the project itself. Both are what the read requires, so a flag
+	// that wrote the marker alone would leave the project exactly as
+	// unmanaged as it was, with a marker whose command can no longer be run
+	// again (this command replaces only the version-1 fact). It is written
+	// here, after the marker, in markCreated's order and for markCreated's
+	// reason: the object is the authority and goes first, and the label is
+	// the narrowing mark that completes it.
+	//
+	// The gate is this command's own and not WriteManagedLabel's: the owner
+	// typed this project's GCP project ID at a real terminal to get here, and
+	// this process is neither a coding agent's session nor a Fugaro run's
+	// (both refused above, before anything was read). WriteFlag's marker was
+	// gated on the same thing. What the label may write is unchanged: other
+	// labels are kept, and a value someone else put there is refused rather
+	// than overwritten.
+	if err := managed.WriteManagedLabelForFlag(ctx, c.CRM, lc.GCPProject); err != nil {
+		// The marker is on disk from here on and the project is NOT managed
+		// (readFact requires both marks), so this is not a success, and it is
+		// not a state a second `fugaro managed flag` can finish: the marker
+		// is now the version that records an amount, and that is the one
+		// object this command refuses to replace. The refusal says what is
+		// missing, that only the project's owner writes it at their own
+		// terminal, and where that one line is — the condition and not the
+		// command, the rule Task 3.0's refusal text keeps, because this
+		// command's output is the operator's (a coding agent's session is
+		// refused above and never reaches it).
+		return remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/gcp-setup.md has that one line; it is not a second run of this command, which replaces only the creation fact that records no amount",
+			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name)))
 	}
 	// Read back through the managed read itself, with its project-number
 	// check (the plan's step 3): a marker the apply would not believe, or one
@@ -274,7 +340,14 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	}
 	fmt.Fprintf(w, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
 		wrote, amount, safetext.Field(currency))
-	fmt.Fprintf(w, "undo: there is no command that removes the marker in this release — delete gs://%s/%s yourself as the operator to make the project unmanaged again\n", safetext.Field(bucket), managed.MarkerObject)
+	// The undo names both writes, because this command made both (Task 3.0):
+	// the object in the runs bucket and the label on the project. Either one
+	// alone makes the project unmanaged again — the read requires both — and
+	// they come off differently: the object has no command of ours, and the
+	// label has a gcloud line that no test can run, so it is marked
+	// UNVERIFIED as the backfill in docs/gcp-setup.md is.
+	fmt.Fprintf(w, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — delete the object gs://%s/%s yourself as the operator, since no command of ours removes the marker in this release, and take the label %s=%s off the project itself with gcloud projects update %s --remove-labels=%s, which is UNVERIFIED until an operator has run it live (docs/gcp-setup.md carries the same line)\n",
+		safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
 	return nil
 }
 

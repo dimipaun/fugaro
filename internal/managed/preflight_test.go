@@ -179,6 +179,95 @@ func TestPreflightRefusesWhatWouldRunBeforeTheGate(t *testing.T) {
 	}
 }
 
+// A .tf file that is a symlink is refused: the scan reads the root's own files
+// and nothing else (localModule refuses a symlinked module directory for the
+// same reason), and os.ReadFile would follow the link, so the content that
+// decides the scan would be a file the root does not hold — a root that passes
+// review and an apply that reads a different tree.
+//
+// Mutation: delete the `e.Type()&fs.ModeSymlink` branch in scanRoot's walk —
+// both roots below are then read through the link and admitted, and this test
+// (the package's only caller of that branch) fails.
+func TestPreflightRefusesASymlinkedTFFile(t *testing.T) {
+	const body = "resource \"google_storage_bucket\" \"b\" {\n  name     = \"fmgd-x\"\n  location = \"US\"\n}\n"
+	for _, tc := range []struct{ name, target string }{
+		{"a symlink to a file outside the root", body},
+		// A dangling link is refused by the same rule, and not by the read
+		// failing: the refusal says what is wrong with the root.
+		{"a dangling symlink", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "root")
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(dir, "outside.tf")
+			if tc.target != "" {
+				writeFile(t, outside, tc.target)
+			}
+			if err := os.Symlink(outside, filepath.Join(root, "main.tf")); err != nil {
+				t.Fatal(err)
+			}
+			res, err := scanRoot(root)
+			if err == nil {
+				t.Fatalf("a root whose main.tf is a symlink was admitted: %v", res)
+			}
+			if !strings.Contains(err.Error(), "is a symlink") {
+				t.Errorf("the refusal %v does not say the file is a symlink", err)
+			}
+		})
+	}
+}
+
+// A module tree nested deeper than maxModuleDepth is refused rather than
+// walked: the bound is what keeps a root whose modules nest without end (a
+// cycle the seen-map does not catch, since each directory is a different one)
+// from taking the applier's stack down before terraform is ever started.
+//
+// Mutation: delete the `depth > maxModuleDepth` bound in scanRoot's walk — the
+// tree below is walked to its end, and the walk stops on a missing directory
+// rather than on the bound.
+func TestPreflightRefusesATreeNestedDeeperThanTheBound(t *testing.T) {
+	root := t.TempDir()
+	dir := root
+	// The root, then maxModuleDepth+2 directories under it, each a local
+	// module of the next: the walk reaches a depth one past the bound.
+	for i := 0; i <= maxModuleDepth+1; i++ {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(dir, "main.tf"), "module \"next\" {\n  source = \"./m\"\n}\n")
+		dir = filepath.Join(dir, "m")
+	}
+	res, err := scanRoot(root)
+	if err == nil {
+		t.Fatalf("a tree %d modules deep did not stop the walk at the bound: %v", maxModuleDepth+2, res)
+	}
+	if !strings.Contains(err.Error(), "nest deeper than 32") {
+		t.Errorf("the refusal %v does not name the bound", err)
+	}
+}
+
+// A .tf.json nested deeper than maxJSONDepth is refused: parseJSON is a
+// recursive descent over whatever the file holds, and a root is a document a
+// person (or a generator) wrote by hand.
+//
+// Mutation: delete the `depth > maxJSONDepth` bound in jvalue — the document
+// below parses, its locals block is admitted, and this test fails.
+func TestPreflightRefusesAJSONNestedDeeperThanTheBound(t *testing.T) {
+	dir := t.TempDir()
+	deep := strings.Repeat("[", maxJSONDepth+2) + strings.Repeat("]", maxJSONDepth+2)
+	writeFile(t, filepath.Join(dir, "main.tf.json"), `{"locals": {"x": `+deep+`}}`)
+	res, err := scanRoot(dir)
+	if err == nil {
+		t.Fatalf("a .tf.json %d levels deep was admitted: %v", maxJSONDepth+2, res)
+	}
+	if !strings.Contains(err.Error(), "nests deeper than 256") {
+		t.Errorf("the refusal %v does not name the bound", err)
+	}
+}
+
 // ordinaryRoot is a root the preflight admits, written to exercise the
 // scanner: nested quotes, heredocs with interpolations and directives, a for
 // expression, a variable's type constraint, a function of the allowlist, both

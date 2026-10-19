@@ -421,6 +421,53 @@ func TestDeleteObjectForbiddenIsNotSilentSuccess(t *testing.T) {
 	}
 }
 
+// A delete that fails for any other reason (the 503 of an overloaded backend,
+// not the 403 of a grant) is reported too, and it is neither ErrForbidden nor
+// silent success: the launcher's cleanup must not report a token removed that
+// is still in the bucket.
+func TestDeleteObjectReportsOtherFailures(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	g, b := bucket(t)
+	c := claims()
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(9)); err != nil {
+		t.Fatal(err)
+	}
+	g.FailObjectDeletes(1)
+	err := token.DeleteObject(ctx, b, c.Slug, c.Run)
+	if err == nil || errors.Is(err, blobx.ErrForbidden) {
+		t.Fatalf("a delete the backend refused with 503 = %v, want a plain failure", err)
+	}
+	if !strings.Contains(err.Error(), "deleting the token object failed") {
+		t.Errorf("err = %v, want it to say the delete failed", err)
+	}
+	if _, _, rerr := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); rerr != nil {
+		t.Fatalf("the object should still be there: %v", rerr)
+	}
+}
+
+// A put that fails other than by finding the object already there is reported
+// with the bucket's own status, and nothing of it is left: the launcher
+// replaces an earlier attempt's object only under its own key (D17), so a
+// create the grant refuses must not read as a written token.
+func TestPutObjectReportsAWriteFailure(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	g, b := bucket(t)
+	c := claims()
+	g.DenyWrites("runs", token.ObjectPrefix)
+	err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(11))
+	if err == nil || errors.Is(err, token.ErrObjectExists) {
+		t.Fatalf("a create the grant refuses = %v, want a plain failure", err)
+	}
+	if !strings.Contains(err.Error(), "writing the token object failed") {
+		t.Errorf("err = %v, want it to say the write failed", err)
+	}
+	if _, _, rerr := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); !errors.Is(rerr, blobx.ErrNotExist) {
+		t.Fatalf("a refused create left an object: %v", rerr)
+	}
+}
+
 // ObjectPresent's three answers, and the one it must never give: a refused
 // read is not "no token object". A job account whose tokens/ grant is missing
 // — the repository not re-applied since the budget token moved there — is

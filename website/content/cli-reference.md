@@ -132,11 +132,13 @@ list, because an empty list is what an absent one already means.
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
 1.5), so a managed apply can take its allow-list from the owner's object
-instead of from the command line of whatever session is applying. That apply is not built yet — the managed apply
-is Task 3.1, and until it lands fugaro init still honours its own flag. What
-this does not do: a coding agent's session holds the operator's credentials,
-so it can write this object directly (gcloud storage cp) or unset its agent
-marker and run this command itself. The refusal below is a speed bump against
+instead of from the command line of whatever session is applying: fugaro
+managed apply reads this object and takes no address flag of its own, so the
+session that applies cannot widen the list. (fugaro init still honours its own
+--allow-delete on its own command line, where the addresses go to tf.Guard
+directly.) What this does not do: a coding agent's session holds the
+operator's credentials, so it can write this object directly (gcloud storage
+cp) or unset its agent marker and run this command itself. The refusal below is a speed bump against
 an agent that uses the program, not a boundary against one that goes around it
 (SECURITY.md records the wider Owner/Editor bypass).
 
@@ -1597,6 +1599,18 @@ opens the gate on: a marked project that records no amount is refused by every
 managed apply rather than applied without a budget control. The amount is the
 budget ALERT amount the installation's Terraform creates and nothing else —
 this command does not create or change a budget, and it makes no billing call.
+
+It writes BOTH marks a managed project carries, in one step: that object and
+the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
+requires both — the label is what a project can be narrowed by, and a project
+without it is not managed whatever its runs bucket holds — so writing the
+object alone would leave this project exactly as unmanaged as it was. The
+label is written on the project, by the account running this command, which is
+why the account needs resourcemanager.projects.update on it; the project's
+other labels are kept. A project that already carries that key with another
+value is refused rather than overwritten — the label someone else put there is
+a statement, not an empty slot — and the object written first is not taken
+back, so that refusal says which half is there and which is missing.
 
 What flagging gives up, stated before it writes: the marker is what turns the
 typed confirmation off (D55), so from this project's next apply on, the

@@ -332,6 +332,68 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 	})
 }
 
+// TestTheSealGateJudgesACloneJobImage is sealGate's `checkout: clone` branch:
+// such a job is never built, so it has no build record to judge — the image a
+// clone launch runs is the installation's own base_images.base ref, and that
+// ref is the judge (checkCloneImageSince). The branch is reached by a launch
+// whose workflow is `checkout: clone`, which no other test drives, so the gate
+// is called directly with the spec such a launch carries.
+//
+// Two things the branch must get right: a release older than the seal is
+// refused (the fall of the seal is the key in the marker, which that runner
+// echoes into the run's record), and a development base is warned about *once*,
+// by the seal's own warning, which carries the stake and the cure — falling
+// through to checkCloneImageSince as well would print two warnings saying one
+// thing.
+//
+// Mutation (run, restored): return nil from the clone branch before
+// checkCloneImageSince — "a release before the seal" launches.
+// Mutation (run, restored): let a development base fall through to
+// checkCloneImageSince as well as the seal's warning — "a development base"
+// warns twice and fails on the count.
+func TestTheSealGateJudgesACloneJobImage(t *testing.T) {
+	previousRelease := "ghcr.io/dimipaun/fugaro-base:0.8.1"
+	for _, tc := range []struct {
+		name, base string
+		refused    string
+		warns      string
+	}{
+		{"a release before the seal", previousRelease, "release 0.8.1", ""},
+		{"the seal's release", releaseSeal, "", ""},
+		{"a development base", devSealBase, "", "is not a release base image"},
+		{"no base image", "", "is not set", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			if tc.base != "" {
+				f.appendConfig(t, "base_images: {base: "+tc.base+"}\n")
+			}
+			env := memEnv(t, f.cloudFixture)
+			spec := raceSpec(t, env)
+			var warn bytes.Buffer
+			err := env.sealGate(context.Background(), appSlug, spec, "web", true, &warn)
+			if tc.refused == "" {
+				if err != nil {
+					t.Fatalf("err = %v, want no refusal (stderr %q)", err, warn.String())
+				}
+				if tc.warns != "" && !strings.Contains(warn.String(), tc.warns) {
+					t.Fatalf("stderr = %q, want a warning that says %q", warn.String(), tc.warns)
+				}
+				if n := strings.Count(warn.String(), "not a release base image"); n > 1 {
+					t.Fatalf("stderr = %q: the base image is said not to be a release %d times, want once", warn.String(), n)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.refused) {
+				t.Fatalf("err = %v, want a refusal saying %q", err, tc.refused)
+			}
+			if warn.Len() != 0 {
+				t.Fatalf("a refused launch warned too (%q): the gate refuses or warns, never both", warn.String())
+			}
+		})
+	}
+}
+
 // devSealBase is a development base image (not a release): its age is the
 // build record's built_at, the only thing the seal gate can tell from it.
 const devSealBase = "europe-docker.pkg.dev/p/r/fugaro-base:dev-abc"

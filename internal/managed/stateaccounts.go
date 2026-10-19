@@ -43,10 +43,13 @@ import (
 // What is NOT here, stated rather than left to a reader: the resources the
 // creating run makes outside Terraform (the two state buckets of
 // internal/infra's statebucket steps, the Firestore database and the Firebase
-// project of infra.AddFirebase), and the objects a job writes into the runs
-// bucket at run time. None is in any state, so none is accounted for here, and
-// each of them falls a managed apply back to its confirmations until a task
-// accounts for it. That is the safe direction, and Check 67a is where the
+// project of infra.AddFirebase, and the creation fact and allow-delete list
+// internal/infra/managed writes into the runs bucket), and the records a job
+// writes into the runs bucket at run time. None is in any state, so none is
+// accounted for here; each of the named ones is claimed by the inventory's own
+// rule instead (Inventory.installationCreated — this function never claims
+// what no state entry names), and what remains falls a managed apply back to
+// its confirmations. That is the safe direction, and Check 67a is where the
 // owner reads what the live listing of a real managed project answers with.
 
 // AccountsOfState decodes one Terraform state document — the JSON a state

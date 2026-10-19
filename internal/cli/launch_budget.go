@@ -342,15 +342,20 @@ func (e *cloudEnv) sealGate(ctx context.Context, slug string, spec *task.Spec, k
 	const subject = "a launch that mints a budget token (the token is sealed and its key is in FUGARO_BUDGET_TOKEN)"
 	const knows = "the sealed budget token"
 	if clone {
-		if err := checkCloneImageSince(e.lc, spec, sealSince, subject, knows, "", warn); err != nil {
-			return err
+		// A development base is judged by the seal's own warning here, not by
+		// checkCloneImageSince: that judge would warn that the ref is not a
+		// release and that whether its runner knows the seal is not checked —
+		// the same fact, without the stake or the cure — and the launch would
+		// then carry two warnings saying one thing. Everything
+		// checkCloneImageSince does beyond that warning (a missing base image,
+		// a release older than the seal) is about refs that are releases, or
+		// about none at all, so it still runs for them.
+		ref := e.lc.BaseImage(config.BaseKind)
+		if _, release := releaseOf(ref); ref != "" && !release {
+			fmt.Fprintf(warn, "warning: the checkout: clone job image %s is not a release base image: %s\n", pluginwire.Printable(ref), sealDevNote(spec, true))
+			return nil
 		}
-		if ref := e.lc.BaseImage(config.BaseKind); ref != "" {
-			if _, ok := releaseOf(ref); !ok {
-				fmt.Fprintf(warn, "warning: the checkout: clone job image %s is not a release base image: %s\n", pluginwire.Printable(ref), sealDevNote(spec, true))
-			}
-		}
-		return nil
+		return checkCloneImageSince(e.lc, spec, sealSince, subject, knows, "", warn)
 	}
 	return checkImageSinceDev(ctx, e, slug, spec, kind, sealSince, subject, knows, "", sealDevRefusal(spec), warn)
 }

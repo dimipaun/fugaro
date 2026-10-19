@@ -102,15 +102,21 @@ func managedInventory(ctx context.Context, lc *localcfg.Config, c *infra.Clients
 // Both names are functions of the GCP project and are never taken from a flag
 // or from the project's config (managed.ManagedStateBucketName,
 // managed.InstallationsStateBucket): a bucket a caller could name is a bucket
-// this command would believe instead of the project's own.
+// this command would believe instead of the project's own. A project whose
+// config names another installation state bucket (terraform.state_bucket) is
+// not one a managed creation or `fugaro managed flag` admits — both refuse a
+// state bucket that is not the derived name — so the derived name is the
+// installation's state bucket for every managed project.
 //
 // What LEAVES this list is written down where the table of Terraform types is
 // (internal/managed/stateaccounts.go): the state holds no entry for the
-// Firebase project infra.AddFirebase adds, and none for an object a job writes
-// into the runs bucket at run time, so neither can be accounted for here. The
-// resources a creating run makes outside Terraform that DO have a name this
-// program derives — the two state buckets themselves and the default Firestore
-// database Firebase provisions — are the inventory's third category and are
+// Firebase project infra.AddFirebase adds, nor for the creation fact and
+// allow-delete list internal/infra/managed writes into the runs bucket, nor
+// for the records a job writes there at run time, so none can be accounted for
+// here. The resources a creating run makes outside Terraform that DO have a
+// name this program derives — the two state buckets themselves, the default
+// Firestore database Firebase provisions, and those two well-known objects
+// under the runs bucket — are the inventory's third category and are
 // ignored by their exact names (managed.Inventory's installationCreated), not
 // by this function: the state says no word about them, and building them into
 // Accounted would make the state read out to be something it is not. What
