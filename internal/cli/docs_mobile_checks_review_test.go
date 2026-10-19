@@ -207,6 +207,27 @@ func TestDocsCheck82RulesDeployComesBeforeTheMarker(t *testing.T) {
 		}
 	}
 
+	// The support the sentence cites: the parenthesis after "never before".
+	// docs/gcp-setup.md's "Deploying the rules is an owner step" states the
+	// step's order the other way round -- it calls the rules the last write of
+	// the database step -- so it cannot be the support for this one; the
+	// review of PR #580 found the preamble citing it for exactly that, and an
+	// owner who followed the citation landed on the inverted order. The
+	// paragraph now names the code for the order and warns about the page in
+	// its own words; the page's correction is a change of its own, and if it
+	// is made, this clause is revisited with it.
+	_, cited, ok := strings.Cut(section, "the marker is written **after** the rules, never before (")
+	if !ok {
+		t.Fatalf("## Check 82: the preamble no longer carries the sentence stating that the marker is written after the rules: this test reads the support it cites from it, and the check needs the sentence")
+	}
+	support, _, ok := strings.Cut(cited, ")")
+	if !ok {
+		t.Fatalf("## Check 82: the sentence stating the order has no closing parenthesis after it, so the support it cites cannot be read")
+	}
+	if strings.Contains(support, "docs/gcp-setup.md") {
+		t.Errorf("## Check 82: the order sentence's support cites docs/gcp-setup.md:\n%s\nits \"Deploying the rules is an owner step\" paragraph calls the rules the database step's last write, where the marker is, so it supports the opposite of the claim it is cited for and the owner who follows it lands on the inverted order", support)
+	}
+
 	// The order the sentence describes, read out of the file it names.
 	src := readSrc(t, "../infra/firebasedb.go")
 	rules := strings.Index(src, `Path: "rules"`)
@@ -1224,6 +1245,72 @@ func TestDocsCheck82IdentityPlatformFailureComesAfterTheDeploy(t *testing.T) {
 	}
 
 	// The order the bullet describes, read out of the function it names.
+	body := deployDatabaseBody(t)
+	apply, idp := strings.Index(body, "db.Apply(ctx)"), strings.Index(body, "idp.initialize(ctx)")
+	if apply < 0 || idp < 0 {
+		t.Fatalf("deployDatabase no longer calls db.Apply and idp.initialize: got %d and %d, and check 82's bullet is about their order", apply, idp)
+	}
+	if apply > idp {
+		t.Errorf("deployDatabase calls idp.initialize (%d) before db.Apply (%d): check 82's \"What failing looks like\" says an uninitialized Identity Platform fails the step **after** the rules, and this test holds the sentence to the code -- if the order really changed, rewrite the bullet with it", idp, apply)
+	}
+}
+
+// TestDocsCheck82SettledLineNeedsNothingPending: check 82's cost paragraph
+// attached the settled line -- "The database already has the rules, mark,
+// project name and mode." -- to "an installation whose rules already match
+// this binary's document". The sentence the same bullet goes on to describe,
+// the run that still writes the marker, is exactly a run with an act line to
+// show and a confirmation to ask for, and `deployDatabase` prints the settled
+// line only under `len(acts) == 0 && !idp.missing && !fs.Pending()`
+// (internal/cli/init_firebase.go) -- which is what this check's own step 4
+// says ("the \"already has\" sentence is printed only when nothing at all is
+// pending"). The review of PR #580 found the bullet attaching it to the rules'
+// state. The trigger is read out of the code here, so a guard that changed
+// fails this test until the paragraph is rewritten with it.
+func TestDocsCheck82SettledLineNeedsNothingPending(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	const line = "The database already has the rules, mark, project name and mode."
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 82:")
+
+	var cost string
+	for _, para := range paragraphsOf(section) {
+		if strings.Contains(para, "**What changes in the project, and its cost.**") {
+			cost = para
+			break
+		}
+	}
+	if cost == "" {
+		t.Fatalf("## Check 82: no paragraph says what changes in the project and what it costs: this test holds its account of the settled line to the code")
+	}
+	if !strings.Contains(cost, line) {
+		t.Fatalf("## Check 82: the cost paragraph no longer names the settled line %q: this test holds the trigger it is attached to, so it cannot check a paragraph that does not carry it", line)
+	}
+	if !strings.Contains(cost, "nothing at all is pending") || !strings.Contains(cost, "len(acts) == 0 && !idp.missing && !fs.Pending()") {
+		t.Errorf("## Check 82: the cost paragraph does not give the settled line's trigger as nothing at all being pending (`deployDatabase`: `len(acts) == 0 && !idp.missing && !fs.Pending()`): an owner who reads the rules' state as the trigger expects that line from a run that is about to write the marker, and that run prints its act line and asks for the confirmation instead")
+	}
+	if strings.Contains(cost, "it plans **no** rules write and prints `"+line+"`") {
+		t.Errorf("## Check 82: the cost paragraph still attaches the settled line to the rules matching: the same bullet's next clause is the run that writes the marker, and a run with a pending action never prints it")
+	}
+
+	// The guard, read out of the function the paragraph names.
+	body := deployDatabaseBody(t)
+	guard := strings.Index(body, "if len(acts) == 0 && !idp.missing && !fs.Pending() {")
+	printed := strings.Index(body, `"`+line+`"`)
+	if guard < 0 || printed < 0 {
+		t.Fatalf("deployDatabase no longer guards the settled line with `len(acts) == 0 && !idp.missing && !fs.Pending()` (guard %d, line %d): check 82's account of what the line means is written against that guard", guard, printed)
+	}
+	if guard > printed || strings.Contains(body[guard:printed], "\n\t}") {
+		t.Errorf("deployDatabase prints the settled line outside its `len(acts) == 0 && !idp.missing && !fs.Pending()` guard: the line is the step's for a database with nothing pending, not its line for one whose rules match, and check 82's cost paragraph and step 4 both say so")
+	}
+}
+
+// deployDatabaseBody returns the body of internal/cli/init_firebase.go's
+// `deployDatabase`, up to the next top-level function: check 82's account of
+// the database step (the order of the rules deploy and the marker, and the
+// guard on the settled line) is written against it, and two tests read it.
+func deployDatabaseBody(t *testing.T) string {
+	t.Helper()
 	src := readSrc(t, "init_firebase.go")
 	i := strings.Index(src, "func (r *initRun) deployDatabase(")
 	if i < 0 {
@@ -1233,13 +1320,7 @@ func TestDocsCheck82IdentityPlatformFailureComesAfterTheDeploy(t *testing.T) {
 	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
 		body = body[:j+1]
 	}
-	apply, idp := strings.Index(body, "db.Apply(ctx)"), strings.Index(body, "idp.initialize(ctx)")
-	if apply < 0 || idp < 0 {
-		t.Fatalf("deployDatabase no longer calls db.Apply and idp.initialize: got %d and %d, and check 82's bullet is about their order", apply, idp)
-	}
-	if apply > idp {
-		t.Errorf("deployDatabase calls idp.initialize (%d) before db.Apply (%d): check 82's \"What failing looks like\" says an uninitialized Identity Platform fails the step **after** the rules, and this test holds the sentence to the code -- if the order really changed, rewrite the bullet with it", idp, apply)
-	}
+	return body
 }
 
 // codeLines returns a block's command lines without its comments: a comment
