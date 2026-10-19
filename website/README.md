@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **977,921 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **979,036 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **976,406 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **977,521 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -162,7 +162,7 @@ added or removed without this sentence moving fails there:
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 976,349 with the flag off to 977,921 with it on:
+    moves the **site figure up by 1,572 bytes**, from 977,464 with the flag off to 979,036 with it on:
     the console option's own markup on the three pages that render it — the console page's
     downloads section (each artifact's checksum beside its link, and the verification command)
     1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
@@ -249,6 +249,14 @@ added or removed without this sentence moving fails there:
     downloads section, Getting Started's console option and the hero's link to the console.
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
+  - **The console's screenshot slider** (the owner's feedback of 2026-10-19) moved the site
+    figure alone again, 977,921 → **979,036**, by its **1,115 bytes**: the component's
+    stylesheet, which Astro inlines into the console page. It is inlined whether or not the
+    slider renders, because the page imports the component — so the bytes are there while
+    the data file is empty and while it is not, and the figure does not move again when the
+    owner adds a screenshot (a picture's own bytes are served from `public/` and are the one
+    thing that will move it then). The page weight and the script did not move: the console
+    page is not the heaviest page, and the slider ships no script at all.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -276,7 +284,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,667,206 bytes. Three times 1,222,402 (every file in `dist/`, 977,921
+  - **Whole site:** 3,671,385 bytes. Three times 1,223,795 (every file in `dist/`, 979,036
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -484,6 +492,8 @@ Three things about those commands are worth stating rather than leaving to the t
   fact in the repository, then the value here, in one commit. `site.yaml`'s
   `features.console_downloads` is held to the hand-kept `content/downloads.json`'s
   `available` by the build itself, which refuses the two disagreeing (below).
+  `console-screens.yaml` is the third, and it is the owner's own list rather than a fact
+  another file states: it ships empty, and the build renders whatever rows it carries (below).
 - **`website/data/console-sha256sums.txt` is the release's, copied rather than written.** It is
   the `console-sha256sums.txt` asset of the console's `console-vX.Y.Z` release, byte for byte —
   one `<64 hex>  <published name>` line per artifact, the shape `sha256sum` writes and
@@ -575,6 +585,72 @@ The console is built for macOS and nothing else (`console/README.md`,
 platform, and not an invented second one, is the word each button carries. Its release is a
 **draft until the owner publishes it** (the workflow creates `console-vX.Y.Z` with `--draft`),
 so the buttons land with the published release and not with the draft.
+
+## Adding a console screenshot
+
+The console page opens with a screenshot slider (the owner's feedback of 2026-10-19: *"Console:
+we need a screenshot slider at the top"*). It is **data-driven and ships empty**:
+`src/components/ScreenshotSlider.astro` renders the rows of `data/console-screens.yaml` and
+nothing else, and that file's list is empty, so the page a reader gets today carries no slider,
+no heading and no placeholder — the page as it was before the component existed. Nothing in the
+build can make a screenshot: the owner takes them from the released console, on their own Mac
+(D190), and **no screenshot is committed**.
+
+Adding the first one is two edits:
+
+1. **The file**, under `public/images/console/`. Create that directory with the first file:
+   git carries no empty directory, and a placeholder in it would be a file the site serves and
+   the budget counts. The name is letters, digits, dots, dashes and underscores; the extension
+   is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`. A capture from macOS's own
+   `screencapture` is a PNG and is served as it comes; a WebP or an AVIF of the same picture is
+   fewer bytes for the same pixels, which is the whole of the choice. An SVG is refused: it is a
+   document that can carry script and references, and the site renders pictures.
+2. **The row**, in `data/console-screens.yaml`, in the order the slider shows them:
+
+   ```yaml
+   screens:
+     - file: runs-list.png
+       alt: A list of runs with their stage, age and spend.
+       caption: Every run, with what it is doing and what it has cost.
+       width: 1440
+       height: 900
+   ```
+
+   `file` is the file's **name** and not a path or a URL: the site path is derived from it at
+   build time, so no file under `website/` carries a URL (Global Constraint 9). `alt` and
+   `caption` are both required and neither may be empty: `alt` is what a reader gets when the
+   picture does not arrive and what a screen reader reads instead of it, and the caption is the
+   line under the picture. `width` and `height` are the file's own pixels, which is what lets
+   the browser reserve the box before the file lands. `src/content.ts`'s `loadConsoleScreens()`
+   refuses a name that is a path or a URL, a format the slider does not serve, an empty `alt` or
+   caption, a size that is not a positive whole number, and any key no reader reads; every
+   refusal names the row it refused, and the build stops.
+
+**What a screenshot costs, against the three numbers the budget above states:**
+
+- **The whole site:** the file is served from `public/`, so its bytes are in `dist/` and count
+  once against the 3,671,385-byte site ceiling — which is 3.67 MB against a build of 979,036
+  bytes, so a screenshot's size is a thing to keep an eye on rather than the thing that decides.
+- **The console page's weight:** that page weighs 80,721 bytes against the 1,000,974-byte page
+  ceiling, so it has room for the pictures it renders, and it is not the page the ceiling is
+  derived from (the docs hub is).
+- **The page's words, and this is the tight one.** The console page stands at **239 of the 250
+  words** D188 allows it, and a caption is visible text, so its words count — `alt` is not
+  visible text and does not. Eleven words of caption is the whole of the room there is, so the
+  first screenshot with a caption of its own needs the page ceiling raised in the same commit
+  that adds it, which is D188's own rule: the number moves where the need is, and a build that
+  needs more fails until it moves.
+
+The slider's own bytes do **not** move when a screenshot is added: the component's stylesheet is
+inlined into the console page whether or not the slider renders, which is the 1,115 bytes the
+site figure's last round names. What moves the site figure then is the picture's own bytes.
+
+`website/test/console-screens.mjs` holds both states: the empty one this checkout ships — no
+element marked `data-slot="console-screens"`, no track, no dots and no `<img>` in the page's own
+article — and a two-slide one, built from a copy of the repository whose data file carries two
+fixture rows. The fixture build writes no image bytes at all, because a test may not commit a
+picture either: it asserts the `src` the loader derives from the row's file name, and the `alt`,
+the caption, the size and the dot that each row produces.
 
 ## The rule this directory is written to
 

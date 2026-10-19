@@ -1,0 +1,28 @@
+# website/data/console-screens.yaml — the console's screenshots (owner feedback 2026-10-19).
+#
+# One row per screenshot, in the order the slider shows them. The rows are what the console
+# page's slider renders and nothing else: the component reads this file, invents no picture
+# and draws no placeholder, and an empty list is a legal document that renders no slider at
+# all — which is the state this file ships in, because the console's screenshots are the
+# owner's to take from the released console and no build can make one (D190).
+#
+# website/README.md, "Adding a console screenshot", says how to add a row and what the file
+# it names has to be.
+#
+#   - `file` is the file's NAME under `public/images/console/`, and it is a name rather than
+#     a path or a URL: the site path the browser fetches is derived from it when the page is
+#     built (`src/content.ts`), so no file under `website/` carries one (Global Constraint 9).
+#     Letters, digits, dots, dashes and underscores only, and one of the formats the loader
+#     serves: png, jpg, jpeg, webp or avif.
+#   - `alt` is what a reader gets when the picture does not arrive, and `caption` is the line
+#     under it. Both are required: a screenshot a reader cannot identify is not worth its
+#     bytes, and `alt` is also the text a screen reader reads instead of the picture.
+#   - `width` and `height` are the file's own pixel dimensions, which is what lets the
+#     browser reserve the box before the file lands, so the page does not jump as it arrives.
+#
+# Every byte of every file named here is served by this site and counted by
+# `website/test/budget.mjs`: the picture's bytes are part of the whole-site budget and part
+# of the console page's weight, and the caption and the alt text are words the page ceiling
+# counts. Both ceilings are in website/README.md, with the numbers.
+version: 1
+screens: []

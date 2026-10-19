@@ -1,0 +1,203 @@
+---
+/**
+ * website/src/components/ScreenshotSlider.astro — the console's screenshots (owner feedback
+ * 2026-10-19: "Console: we need a screenshot slider at the top").
+ *
+ * **What it is: a scroll container with snap points, and dots that are anchors.** There is
+ * no script here and none is needed to use it. The track is a horizontally scrolling box
+ * with `scroll-snap-type: x mandatory`, so a swipe, a trackpad, a scrollbar drag and the
+ * keyboard's own arrow keys all move it and the browser lands on a whole screenshot rather
+ * than halfway between two; each dot is an `<a href="#…">` pointing at its slide, so a
+ * reader who would rather not scroll gets there in one press. That is the whole of the
+ * control, which is why the site's one script file (D183) knows nothing about it.
+ *
+ * **Keyboard and screen reader.** The track is focusable (`tabindex="0"`) and named, which
+ * is what makes a scroll container scrollable by arrow keys at all and what tells a screen
+ * reader what the box is; the dots carry no text of their own — they are drawn as dots — so
+ * each one carries an accessible name; every picture carries `alt` and every slide a
+ * `<figcaption>`, both read out of the data file rather than written here.
+ *
+ * **No autoplay, and the reduced-motion path is the site's own.** Nothing here moves on its
+ * own: there is no timer, no animation and no carousel behaviour, and the only motion the
+ * component declares is `scroll-behavior: smooth` on the track, which `Base.astro`'s global
+ * `prefers-reduced-motion: reduce` rule neutralises for a visitor who asked for less motion
+ * (D105). The stylesheet declares no `animation` at all.
+ *
+ * **The slides are data, and the data file ships empty.** `website/data/console-screens.yaml`
+ * carries one row per screenshot — the file's name under `public/images/console/`, its
+ * `alt`, its caption and its own pixel dimensions — and this component renders the rows it
+ * is handed and nothing else. The console's screenshots are the owner's to take from the
+ * released console, so the list is empty today and the console page renders **no slider and
+ * no placeholder** while it is: no section, no heading, no empty frame and no `<img>`. The
+ * empty state is the `screens.length > 0` guard below, and `website/test/console-screens.mjs`
+ * builds both states — the empty one, and one with two fixture slides.
+ *
+ * The facts come in as props rather than being read here, the way `Downloads.astro` takes
+ * its own: `website/src/pages/console.astro` loads and validates the data file through
+ * `src/content.ts`'s `loadConsoleScreens()`, and this component renders what it was handed.
+ * No `src` is composed here either — the loader derives each one from the row's file name,
+ * so no file under `website/` carries a URL (Global Constraint 9).
+ *
+ * **A current-slide indicator would need code, and this slider has none.** Which dot is the
+ * slide the reader is on is not something a stylesheet can know about a scroll position, so
+ * the dots are navigation and the scroll position is shown by the browser's own scrollbar
+ * and by the picture itself. That is a deliberate trade: the site's rule is that a page can
+ * be read with JavaScript off, and a slider that only worked with it would not be one.
+ */
+import type { ConsoleScreen } from '../content.ts'
+
+interface Props {
+  /**
+   * The slides, in the order the data file lists them. An empty list renders nothing at
+   * all, which is the state the console page ships in.
+   */
+  screens: ConsoleScreen[]
+}
+
+const { screens } = Astro.props
+
+// The section's own heading and the hook `website/test/console-screens.mjs` reads: the
+// section is the slider, and "there is no slider" is a statement about this element.
+const HEADING = 'Screenshots'
+const SLOT = 'console-screens'
+
+// Each slide's id: what its dot points at, and what an anchor from anywhere else can name.
+const slideId = (index: number) => `console-screen-${index + 1}`
+---
+
+{
+  screens.length > 0 && (
+    <section class="screens" data-slot={SLOT} aria-labelledby="console-screens-heading">
+      <h2 id="console-screens-heading">{HEADING}</h2>
+
+      {/* The track. `tabindex="0"` is not decoration: a scroll container that cannot be
+          focused cannot be scrolled by the keyboard, and the slides off the right-hand edge
+          would be reachable only with a pointer. The label says what the box is, because a
+          focusable region is announced as an unnamed group without one. */}
+      <ul
+        class="screens-track"
+        tabindex="0"
+        aria-label={`${HEADING} of the console. Scroll sideways to see the rest.`}
+      >
+        {screens.map((screen, index) => (
+          <li class="screen" id={slideId(index)}>
+            <figure class="screen-figure">
+              <img
+                class="screen-image"
+                src={screen.src}
+                alt={screen.alt}
+                width={screen.width}
+                height={screen.height}
+                loading={index === 0 ? 'eager' : 'lazy'}
+                decoding="async"
+              />
+              <figcaption class="screen-caption">{screen.caption}</figcaption>
+            </figure>
+          </li>
+        ))}
+      </ul>
+
+      {/* One dot per slide, and none at all for a single slide: a control that can only
+          take a reader where they already are is noise. Each dot is an anchor into its
+          slide, so the whole control is the browser's own — and it carries its name in an
+          `aria-label`, because a dot drawn by the stylesheet has no text for a screen
+          reader to announce. */}
+      {
+        screens.length > 1 && (
+          <ul class="screens-dots">
+            {screens.map((screen, index) => (
+              <li class="screen-dot-item">
+                <a
+                  class="screen-dot"
+                  href={`#${slideId(index)}`}
+                  aria-label={`Show screenshot ${index + 1} of ${screens.length}`}
+                />
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </section>
+  )
+}
+
+<style>
+  /* Tokens only (W1.2): every colour below is the palette in force, so the contrast check
+     in `website/test/a11y.mjs` is about the colours this slider actually paints. */
+  .screens {
+    margin: 0 0 var(--space-lg);
+  }
+
+  /* **The track is the scroller.** `grid-auto-flow: column` with a full-width column puts
+     one slide per "page" of the box, and `scroll-snap-type: x mandatory` makes the browser
+     land on one of them: a swipe that ends halfway through a screenshot settles on the
+     nearest edge, so a reader never sits between two pictures. `overscroll-behavior-x`
+     keeps a swipe at the end of the track from turning into the browser's back gesture on
+     the phones that do that. */
+  .screens-track {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    overscroll-behavior-x: contain;
+  }
+
+  .screen {
+    scroll-snap-align: start;
+  }
+
+  /* The figure is the slide: its picture and the line under it, and no margin of its own —
+     the track's padding is the only space around it. */
+  .screen-figure {
+    margin: 0;
+  }
+
+  /* The picture takes the slide's width and its own aspect ratio, which the `width` and
+     `height` attributes reserve before the file lands (base.css caps an image at its
+     container's width and keeps its ratio). The border is what separates a screenshot from
+     the page it sits on, including the ones whose own background is the page's colour. */
+  .screen-image {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+
+  .screen-caption {
+    margin: var(--space-2xs) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The dots: one per slide, in a row under the track. They are the second way to a slide
+     and the only control here that is a link, so they take the focus ring `base.css` gives
+     every `:focus-visible` element. */
+  .screens-dots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2xs);
+    margin: var(--space-sm) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .screen-dot {
+    display: block;
+    width: var(--space-xs);
+    height: var(--space-xs);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+  }
+
+  .screen-dot:hover {
+    border-color: var(--accent);
+  }
+</style>
