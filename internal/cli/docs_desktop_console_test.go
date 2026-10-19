@@ -569,8 +569,7 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 		}},
 		{"cancel's document is compact, outside that set", []string{
 			"**Its document is compact — one object per line**",
-			"printCancel",
-			"cancel.go:474",
+			"`printCancel` marshals the struct with `json.Marshal`",
 			"the only one outside the console's set",
 		}},
 		{"every other document in the console's set is indented", []string{
@@ -4756,6 +4755,24 @@ func TestDocsDesktopConsoleContractCitesRunsStatsBySymbol(t *testing.T) {
 	// next insertion above it, and the console cannot tell the two apart.
 	if m := regexp.MustCompile(`runs_stats\.go:\d+`).FindString(section); m != "" {
 		t.Errorf("%s's runs stats section cites %s instead of a symbol: a line number here rots the moment anything is inserted above the symbol it means", path, m)
+	}
+}
+
+// TestDocsDesktopConsoleContractCitesBySymbolNotLine: a file:LINE citation in
+// the contract is right the day it is written and wrong at the next insertion
+// above the symbol it means, and the console cannot tell the two apart. Section
+// 6.10 was the first section held to symbol names only; this holds the whole
+// document to it, after a round of line pins had already gone stale
+// (json.go:97, json.go:91-92, runview.go:57, runview.go:109, queued.go:17 —
+// each pointed at an unrelated line by the time it was checked).
+//
+// Mutation (verified, run and restored): put `json.go:97` back beside a
+// `JSONDoc` citation — this fails naming the citation.
+func TestDocsDesktopConsoleContractCitesBySymbolNotLine(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	if ms := regexp.MustCompile(`[A-Za-z0-9_./-]+\.go:[0-9]+`).FindAllString(doc, -1); len(ms) > 0 {
+		t.Errorf("%s cites %s: name the symbol (the function, type or constant) instead, so the anchor survives an insertion above it", path, strings.Join(ms, ", "))
 	}
 }
 
