@@ -148,10 +148,10 @@ describe('the served root npm run build leaves', () => {
     // `THEME_STYLESHEETS` is in it **in list order** with its own banner, and
     // nothing is in it that is not one of those bytes.
     //
-    // The list is read rather than four names written out, which is what makes
-    // this case true here with two files in it and true again when Tasks 6.3
-    // and 6.4 append `base.css` and `screens.css` -- no later task has to
-    // rewrite it, and none of them can land a file the list does not name.
+    // The list is read rather than its names written out, which is what makes
+    // this case true of the directory as it stands and true again as each later
+    // task appends its file -- no later task has to rewrite it, and none of them
+    // can land a file the list does not name.
     expect(
       THEME_STYLESHEETS.length,
       'THEME_STYLESHEETS names nothing: the walk below would be vacuous',

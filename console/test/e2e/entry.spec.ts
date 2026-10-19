@@ -609,11 +609,11 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
       // And the window holds the entry's drawing and nothing the document
       // shipped: the installation rail (Task 6.3 -- the canvas's structural
-      // addition, the grid's first column and the body's first content child),
-      // the installation line, the navigation and the panel, in that order. Task
-      // 1.1's placeholder -- "The console's window is up. It has no data yet." --
-      // would be a fifth child here, a second `<h1>` and a sentence this task
-      // made false, printed above the figures.
+      // addition, the grid's first column and the body's first content child
+      // when there is no banner), the installation line, the navigation and the
+      // panel, in that order. Task 1.1's placeholder -- "The console's window is
+      // up. It has no data yet." -- would be a fifth child here, a second `<h1>`
+      // and a sentence this task made false, printed above the figures.
       expect(shape.bodyChildren).toEqual([
         'console-rail',
         'console-installation',

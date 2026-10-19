@@ -2704,8 +2704,8 @@ one does not, and that is the phase's own order rather than an omission:
 | `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (the section at the foot of this file) |
 | `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (not yet) |
 
-**As of Task 6.2 these two files are read, served and linked, and the paragraph that follows
-is the record of the stage before that.** Each is named by `THEME_STYLESHEETS` in
+**As of Task 6.2 the theme's stylesheets are read, served and linked, and the paragraph
+that follows is the record of the stage before that.** Each is named by `THEME_STYLESHEETS` in
 `tools/bundle-renderer/index.ts`, the bundler's stylesheet step concatenates them (in list
 order) into `dist/bundle/console.css`, `/console.css` is one of the entries `SERVED_FILES`
 names — the list `test/unit/bundle.test.ts` holds the served root to, not a filter the
@@ -2784,8 +2784,8 @@ governs it. What it does, in four pieces:
 
 ### One file, in cascade order, and the list is the directory's whole contents
 
-The theme is four source files under `src/renderer/theme/` and the served root is a flat
-allow-list, so the four are emitted as **one** file. `THEME_STYLESHEETS` is the list, and
+The theme is a set of source files under `src/renderer/theme/` and the served root is a flat
+allow-list, so they are emitted as **one** file. `THEME_STYLESHEETS` is the list, and
 it is **the directory's whole contents**, which is what makes both of its refusals hold:
 
 - a `.css` file in the theme directory that is **not** on the list is a `BundleRefusal`,
@@ -2794,13 +2794,14 @@ it is **the directory's whole contents**, which is what makes both of its refusa
   rather than silently dropping a layer of the cascade — and, equally, so the list cannot
   run ahead of the files it names.
 
-**That second refusal is why the list has two entries here and four later.** A task that
-landed all four names before Tasks 6.3 and 6.4 create `base.css` and `screens.css` would
-turn `npm run build` red the moment it merged. So `base.css` is appended by Task 6.3 and
-`screens.css` by Task 6.4, each in the commit that creates the file, and every
-intermediate state is a real build of the files that exist.
-`test/unit/bundle.test.ts` reads the list rather than four hard-coded names, so its case is
-true here with two files in it and stays true when the other two are appended.
+**That second refusal is why the list is introduced with the files the directory already
+holds, and each later task appends its own.** A task that named a file before the file exists
+would turn `npm run build` red the moment it merged, so `THEME_STYLESHEETS` names the files
+Task 6.1 wrote — Task 6.2 introduces the list, and the bundler step with it — and each later
+task appends the file it creates in the commit that creates it: every intermediate state is a
+real build of the files that exist. `test/unit/bundle.test.ts` reads the list rather than
+hard-coded names, so its case is true of the directory as it stands and stays true as each
+task appends its file.
 
 The step also refuses four things in any theme file, and the first is what makes the
 other three hold: a **backslash**, an **`@import`**, a **quoted string that names a URL**

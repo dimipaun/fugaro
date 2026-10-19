@@ -4,9 +4,10 @@
 // This is the file the dashboard document loads, and **its first call is
 // `startConsole`, and it draws nothing before that promise settles** (plan step
 // 5). Everything a screen may draw is behind the gate `startConsole` hands back.
-// The refusal screen or the reduced-mode banner is drawn, then one line saying
-// which installation the console is showing, or that none is chosen, and then --
-// Task 3.4c -- the navigation, the header and the screens themselves.
+// The refusal screen or the reduced-mode banner is drawn, then the installation
+// rail (Task 6.3), then one line saying which installation the console is
+// showing, or that none is chosen, and then -- Task 3.4c -- the navigation and
+// the screens themselves.
 //
 // Three things this file decides, each for a reason a reviewer can check:
 //
@@ -560,9 +561,11 @@ export interface RailView {
 
 /**
  * drawRail draws the installation rail: the canvas's one structural addition
- * (design section 4.1, approved by the owner on 2026-10-19), and the body's
- * first content child -- the grid's first column, appended before the
- * installation line so the tab order is the order a reader sees.
+ * (design section 4.1, approved by the owner on 2026-10-19), and the grid's
+ * first column -- the body's first content child when there is no banner, and
+ * its second when there is one, because `startConsole` appends the skew banner
+ * to the same mount first. It is appended before the installation line so the
+ * tab order is the order a reader sees.
  *
  * **It draws one row per installation the dashboard can read, which is one
  * row.** `installation.current` is the only installation read this document
@@ -845,11 +848,14 @@ export interface DashboardScope {
  * `test/unit/entry-wiring.test.ts` with a fake document and a fake bridge, and
  * in `test/e2e/entry.spec.ts` in the real window.
  *
- * What it draws, in order: the refusal or the banner (`startConsole`'s), which
- * installation the console is showing (`drawInstallation`), the navigation, and
- * the Live screen. A refused console draws the refusal and **stops**: no
- * navigation, no header, and not one read -- which is the whole of D7 from this
- * side.
+ * What it draws, and what it appends to the mount (`document.body`) in that
+ * order, so DOM order and tab order agree with the layout: `startConsole`'s
+ * refusal or banner first (it appends that itself), then the installation rail
+ * (`drawRail`, Task 6.3), then the line saying which installation the console is
+ * showing (`drawInstallation`), and then -- `mountDashboard`'s -- the navigation
+ * and the panel with the Live screen in it. A refused console draws the refusal
+ * and **stops**: no rail, no installation line, no navigation, no panel, and not
+ * one read -- which is the whole of D7 from this side.
  */
 export async function bootDashboard(scope: DashboardScope): Promise<void> {
   const surface = domSurface(scope.document)
