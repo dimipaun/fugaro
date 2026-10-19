@@ -28,6 +28,15 @@ const accountAdmissionsYAML = "claude_accounts:\n" +
 // remove it.
 const withoutTheAccountsYAML = "profiles: {}\n"
 
+// oneAccountYAML is accountAdmissionsYAML with spare gone: one account admits
+// acme/app instead of two. It is what a revocation looks like on this project —
+// the same child, narrowed — and it is the config the tightening test publishes
+// when the shared node's write fails.
+const oneAccountYAML = "claude_accounts:\n" +
+	"  ops: { allow_data_to: [acme/app] }\n" +
+	"profiles:\n" +
+	"  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, claude_accounts: [ops], allow_repos: [\"github/acme/app\"] }\n"
+
 // TestPolicyAdmissionsPublishedNamesOnly: O4's publishing half, end to end.
 // Each repository some account admits gets a node of its own under
 // config/policy/repos/$slug — keyed by the slug the repository's own run token
@@ -294,28 +303,180 @@ func TestPolicyPublishRefusesACredentialsBlockItCannotRead(t *testing.T) {
 	}
 }
 
-// TestPolicyAdmissionsAreWrittenBeforeTheSharedNode: the two writes of a
+// TestPolicyPublishRefusesToNarrowANodeItCannotRead: the tightening phase reads
+// a child's accounts to compute what to take away, so a child it cannot decode
+// is a child whose narrowing it cannot compute — and the tempting alternative,
+// writing the config's names over it, is a publish that changed an admission it
+// could not read (and, in the widening direction, one that would have written
+// the loose value first). The publish refuses and names the node, and writes
+// nothing at all: neither the child nor the shared node.
+//
+// Mutation (verified, run and restored): let the tightening phase write the
+// desired names over a child that does not decode (skip the refusal) — this
+// test fails, the publish succeeds and the node it could not read is gone.
+func TestPolicyPublishRefusesToNarrowANodeItCannotRead(t *testing.T) {
+	f := newProjectFixture(t, accountAdmissionsYAML)
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A child at the slug the config admits, holding a document DecodeRepo
+	// refuses: an admission whose accounts are written as an empty list.
+	ghost := map[string]any{"credentials": map[string]any{"accounts": []any{}}}
+	f.db.Set(projectpolicy.PathRepo(slug), ghost)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a publish that had to narrow a node it cannot read succeeded:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), slug) {
+		t.Errorf("the refusal does not name the node: %v", err)
+	}
+	b, _ := json.Marshal(f.db.Value(projectpolicy.PathRepo(slug)))
+	if got, want := string(b), `{"credentials":{"accounts":[]}}`; got != want {
+		t.Errorf("the node this Fugaro cannot read was written over: %s, want %s", got, want)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("the shared node was written although the publish was refused")
+	}
+}
+
+// TestPolicyPublishWarnsBeforeTheMembersOlderReadersRefuse: the plan's C1.2
+// skew section ends by handing this decision to the review of the task ("The
+// review of this task decides whether `fugaro project policy publish` warns
+// before publishing either"), and the review asked for the line in the diff.
+// The two members are the ones an older Fugaro does not refuse *around* but
+// refuses *whole*:
+//
+//   - `credentials`: an older CLI does not know the key, so it refuses every
+//     launch and every publish of the project;
+//   - `routing.claude.via: cascade`: the older shape check refuses the node for
+//     a value it does not know, so an older CLI refuses launch and publish and
+//     an older runner halts the run with that routing error.
+//
+// So a publish that puts either on the node is a publish that stops the
+// installation until it is upgraded, and the diff — the one thing the operator
+// reads — has to say so. The line lives in the diff, which this command prints
+// after the write (the review finding that made it a claim about the node as it
+// now is): the operator reads this warning about what they have just published,
+// not about what they are about to.
+//
+// Mutation (verified, run and restored): drop the skewWarning loop in
+// printPolicyDiff — the two cases fail; and print the lines unconditionally —
+// the third case fails.
+func TestPolicyPublishWarnsBeforeTheMembersOlderReadersRefuse(t *testing.T) {
+	// The operator's own config writes the cascade switch (D150, O3), so this
+	// is the route by which a cascade reaches the node in this release.
+	f := newProjectFixture(t, "routing:\n  claude:\n    via: cascade\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("publish: %v\n%s", err, out)
+	}
+	for _, want := range []string{"warning", "routing.claude.via: cascade", "upgrade the CLI", "runner image"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the publish of a cascade switch does not warn with %q:\n%s", want, out)
+		}
+	}
+	// The credentials member reaches the node by the carry-over (nothing in
+	// this release writes one), and it is the narrower warning: the CLI, not
+	// the runner image.
+	f = newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"credentials": map[string]any{"fallback": "oauth-only"},
+	})
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("publish: %v\n%s", err, out)
+	}
+	for _, want := range []string{"warning", "credentials member", "upgrade the CLI"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the publish of a credentials member does not warn with %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "runner image") {
+		t.Errorf("the credentials member's warning claims a runner requirement it does not have (the runner ignores the key):\n%s", out)
+	}
+	// Neither member: no warning at all. A warning printed beside every publish
+	// is a warning an operator stops reading.
+	f = newProjectFixture(t, "")
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("publish: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "warning") {
+		t.Errorf("a publish of neither member warns anyway:\n%s", out)
+	}
+}
+
+// TestPolicyAdmissionsAreTightenedBeforeTheSharedNode: the two writes of a
 // publish are not one transaction (the shared node is one compare-and-set, the
-// admissions are a multi-path patch), so their order is the security decision.
-// The children go first, in one patch, and only then the shared node.
+// admissions are a multi-path patch), so their order is the security decision —
+// and the decision is direction-aware. Taking an admission away is written
+// *before* the shared node, so a publish that dies between the two has still
+// revoked it: a child the config no longer admits, left admitting an account,
+// is a revocation that silently did not happen, on the node the service reads
+// to decide whether a run may be handed somebody's subscription token (C1.11).
 //
-// The dangerous direction is a child that admits an account the shared node no
-// longer covers: a revocation that silently did not happen, on the node the
-// service reads to decide whether a run may be handed somebody's subscription
-// token. Writing the children first makes the failure mode of a half-applied
-// publish the harmless one — the children are a copy of an admission the shared
-// node implied, so a publish that dies after them leaves the installation as
-// tight as the config asked for. The other order leaves the loose child behind.
+// The test drives the failure: a project whose child admits ops and spare, a
+// config that has dropped spare, and a shared node whose compare-and-set is
+// refused. The child must already have lost spare, and the failure must say so
+// — the operator's next publish will not (the child already reads as narrowed),
+// so this message is the only place it is said.
 //
-// The test drives the failure: the shared node's compare-and-set is refused, and
-// the admissions are still there. Mutation (verified, run and restored): swap
-// the two writes in runProjectPolicyPublish (publish the shared node first) —
-// this test fails, the admissions never written.
-func TestPolicyAdmissionsAreWrittenBeforeTheSharedNode(t *testing.T) {
+// Mutations (verified, run and restored): swap the phases (widen before the
+// shared node) — the child keeps spare and this test fails; drop the narrowed
+// note from the failure message — the message assertion fails.
+func TestPolicyAdmissionsAreTightenedBeforeTheSharedNode(t *testing.T) {
+	f := newProjectFixture(t, accountAdmissionsYAML)
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the first publish: %v\n%s", err, out)
+	}
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The config drops spare: only ops admits acme/app any more.
+	rewriteProjectExtra(t, f, accountAdmissionsYAML, oneAccountYAML)
+	f.db.Deny(projectpolicy.PathShared())
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the publish succeeded although the shared node's write was refused:\n%s", out)
+	}
+	b, _ := json.Marshal(f.db.Value(projectpolicy.PathRepo(slug)))
+	if got, want := string(b), `{"credentials":{"accounts":["ops"]}}`; got != want {
+		t.Errorf("after a publish that could not write the shared node, %s is %s, want %s: the children are narrowed first, so the revocation of spare landed even though the config's own node did not", projectpolicy.PathRepo(slug), got, want)
+	}
+	// And the omission is real: the shared node still carries the accounts of
+	// the publish that succeeded, spare among them.
+	if node, ok := f.db.Value(projectpolicy.PathShared()).(map[string]any); !ok {
+		t.Fatal("the shared node of the first publish is gone")
+	} else if accounts, _ := node["accounts"].(map[string]any); accounts["spare"] == nil {
+		t.Errorf("the shared node no longer admits spare, so this test does not drive the state it is about: %v", node["accounts"])
+	}
+	// The failure says what landed: the narrowed child, by name.
+	for _, want := range []string{"narrowed", slug, "spare"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the failure does not name what it narrowed (%q missing): %v", want, err)
+		}
+	}
+}
+
+// TestPolicyAdmissionsAreNotWidenedBeforeTheSharedNode is the other direction,
+// and the review finding that made the order direction-aware: a publish that
+// *adds* an admission must not leave the child ahead of the shared node, or a
+// failure between the two writes leaves a repository admitted to an account the
+// node does not cover. Nothing is written before the node's own write, so the
+// installation after this failure is exactly the one before it.
+//
+// Mutation (verified, run and restored): write every child first (the order
+// this test was written against) — the child appears although the shared node
+// was refused, and this test fails.
+func TestPolicyAdmissionsAreNotWidenedBeforeTheSharedNode(t *testing.T) {
 	f := newProjectFixture(t, accountAdmissionsYAML)
 	f.db.Deny(projectpolicy.PathShared())
-	_, _, err := execute(t, "project", "policy", "publish")
-	if err == nil {
+	_, _, perr := execute(t, "project", "policy", "publish")
+	if perr == nil {
 		t.Fatal("the publish succeeded although the shared node's write was refused")
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
@@ -325,9 +486,45 @@ func TestPolicyAdmissionsAreWrittenBeforeTheSharedNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.Marshal(f.db.Value(projectpolicy.PathRepo(slug)))
-	if got, want := string(b), `{"credentials":{"accounts":["ops","spare"]}}`; got != want {
-		t.Errorf("the admissions written before the shared node are %s, want %s: the children are written first, so a publish that cannot write the shared node still leaves the admissions the config asked for", got, want)
+	if v := f.db.Value(projectpolicy.PathRepo(slug)); v != nil {
+		t.Errorf("a publish that could not write the shared node admitted an account anyway: %s holds %v. An addition has to follow the node it copies, because a child ahead of its source admits an account the shared node does not cover", projectpolicy.PathRepo(slug), v)
+	}
+	// And the failure does not claim more than it did: nothing was narrowed
+	// either, so it says the shared node is as it was and no more.
+	if strings.Contains(perr.Error(), "narrowed") {
+		t.Errorf("the failure claims a narrowing that did not happen: %v", perr)
+	}
+}
+
+// TestPolicyPublishSaysWhatLandedWhenTheAdmissionsCannotBeWritten: the mirror
+// of the tightening case — the shared node's write succeeds, so the publish
+// cannot be undone, and the widening patch is then refused. The command has to
+// fail (the config is not what is published), and it has to say which half it
+// got: the node was set, the admissions were not, and the repositories that
+// lost an account are still admitted to the others.
+//
+// Mutation (verified, run and restored): swallow the widening error — the
+// publish reports success with admissions that are missing, and this test
+// fails.
+func TestPolicyPublishSaysWhatLandedWhenTheAdmissionsCannotBeWritten(t *testing.T) {
+	f := newProjectFixture(t, accountAdmissionsYAML)
+	f.db.Deny(projectpolicy.PathRepos())
+	_, _, perr := execute(t, "project", "policy", "publish")
+	if perr == nil {
+		t.Fatal("the publish succeeded although its admissions could not be written")
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Error("the shared node was not written, so this test does not drive the state it is about")
+	}
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := f.db.Value(projectpolicy.PathRepo(slug)); v != nil {
+		t.Errorf("the admissions were written although their patch was refused: %v", v)
+	}
+	if msg := perr.Error(); !strings.Contains(msg, "was set") || !strings.Contains(msg, projectpolicy.PathRepos()) {
+		t.Errorf("the failure does not say that the shared node was set and the admissions were not: %v", perr)
 	}
 }
 

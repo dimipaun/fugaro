@@ -238,11 +238,18 @@ func (c policyWriteFails) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // TestProjectPolicyPublishPrintsNoDiffItDidNotWrite: the diff is a claim about
 // the node, so it goes out after the write that makes it true. On a write that
-// failed the operator reads the failure and "nothing was written", not a full
-// diff of a policy the node does not hold — a diff printed first reads as a
-// change that happened (the review finding on this change; `project repos
+// failed the operator reads the failure and that the node is as it was, not a
+// full diff of a policy the node does not hold — a diff printed first reads as
+// a change that happened (the review finding on this change; `project repos
 // edit` prints its line after its write for the same reason,
 // TestProjectReposEditRefusesAConcurrentWriter).
+//
+// "The node is as it was" and not "nothing was written" is deliberate, and it
+// is the other half of the review finding this change answers: the admissions
+// are a second write, narrowed before this one, and a failure here does not
+// undo them — so the sentence names what *this* write did not do, and the
+// admissions are named beside it when there were any (this fixture has none;
+// TestPolicyAdmissionsAreTightenedBeforeTheSharedNode is the case with them).
 func TestProjectPolicyPublishPrintsNoDiffItDidNotWrite(t *testing.T) {
 	f := newProjectFixture(t, "")
 	budgetTransport = policyWriteFails{rt: http.DefaultTransport}
@@ -252,8 +259,11 @@ func TestProjectPolicyPublishPrintsNoDiffItDidNotWrite(t *testing.T) {
 	if err == nil {
 		t.Fatal("a write the database refused was reported as a successful publish")
 	}
-	if !strings.Contains(err.Error(), "nothing was written") {
-		t.Errorf("err = %v, want it to say nothing was written", err)
+	if !strings.Contains(err.Error(), projectpolicy.PathShared()+" is as it was") {
+		t.Errorf("err = %v, want it to say the node is as it was", err)
+	}
+	if strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("err = %v claims nothing was written: the admissions are another write, and this message does not know they were not made", err)
 	}
 	for _, marker := range []string{"not published yet", "allow_repos", "set "} {
 		if strings.Contains(out, marker) {

@@ -112,6 +112,14 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"config/policy/repos children are removed too, shared node or not: a delete\n" +
 			"that failed on the shared node leaves them behind, and this is what clears\n" +
 			"them.\n\n" +
+			"Each repository some account's allow_data_to admits also gets a child under\n" +
+			"config/policy/repos/$slug, holding the NAMES of its admitted accounts and\n" +
+			"nothing else. The children are narrowed before the shared node and widened\n" +
+			"after it, so a publish that stops between the two writes leaves the\n" +
+			"installation tighter than the config asked, never looser. When the node this\n" +
+			"publish writes carries a member an older Fugaro refuses whole — a credentials\n" +
+			"block, or routing.claude.via: cascade — the diff warns: older launchers (and,\n" +
+			"for the cascade, older runner images) stop until they are upgraded.\n\n" +
 			"routing.claude is written where the operator writes it: this config. A publish\n" +
 			"refuses to drop an active route the config does not account for, and refuses\n" +
 			"a config that writes a routing block naming no Claude switch in the same\n" +
@@ -162,6 +170,12 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		return err
 	}
 	out := cmd.OutOrStdout()
+	// narrowedSoFar is what the tightening phase has already written when a
+	// later write of this publish fails: the failure message has to say it,
+	// because the operator's next publish will not (the child already reads as
+	// narrowed). It is accumulated across the retries of the loop, because a
+	// narrowing that landed stays landed.
+	var narrowedSoFar []string
 	for attempt := 1; attempt <= setAttempts; attempt++ {
 		etag, exists, raw, err := readPolicyNode(ctx, db, lc)
 		if err != nil {
@@ -196,24 +210,42 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err := checkPolicyBytes(body); err != nil {
 			return err
 		}
-		// The per-repository admissions (O4) are written *before* the shared
-		// node, and the direction is the whole of the reasoning: the child is a
-		// copy of an admission the shared node already implies (inverted from
-		// accounts.<name>.allow_repos), and a publish that stops between the two
-		// writes leaves the copy ahead of its source. Ahead in the shrinking
-		// direction is what a publish is for — a repository whose account the
-		// operator just removed stops being admitted here first — while the
-		// other order can leave a child admitting an account the shared node no
-		// longer covers, which is a revocation that silently did not happen.
-		// The children are one atomic patch, so they are never half-written.
-		admissions, err := publishAdmissions(ctx, db, lc, pol)
+		// The per-repository admissions (O4) and the shared node are two writes,
+		// not one transaction (the children are a multi-path patch, the node is
+		// a compare-and-set), so what a half-applied publish leaves behind is a
+		// decision — and the decision is that a publish never *grants* anything
+		// the shared node does not already carry. The children are narrowed
+		// first (the accounts a child admits that the config no longer admits,
+		// and the children of repositories no account admits any more) and
+		// widened only after the node's own write has landed. A failure between
+		// the two therefore leaves the installation tighter than the config
+		// asked, never looser: the direction that is a security decision is a
+		// revocation that silently did not happen, and it cannot happen here.
+		// (The review of this change: writing every child first had that
+		// direction too — a child added ahead of the shared node admits an
+		// account the node does not cover yet.)
+		desired, err := repoAdmissions(pol)
 		if err != nil {
 			return err
 		}
+		var existing map[string]json.RawMessage
+		if _, err := db.Get(ctx, projectpolicy.PathRepos(), &existing); err != nil {
+			return dbErr(lc, err, false)
+		}
+		now, narrowed, err := tightenAdmissions(ctx, db, lc, desired, existing)
+		if err != nil {
+			return err
+		}
+		narrowedSoFar = append(narrowedSoFar, narrowed...)
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
-			for _, line := range admissions {
+			admissions, err := widenAdmissions(ctx, db, lc, desired, now)
+			if err != nil {
+				return fmt.Errorf("%w; %s was set, but the admissions at %s are not as the config asks: they were narrowed first and never widened, so the repositories that lost an account stay admitted to the accounts they kept; run the publish again",
+					err, projectpolicy.PathShared(), projectpolicy.PathRepos())
+			}
+			for _, line := range append(append([]string{}, narrowed...), admissions...) {
 				fmt.Fprintln(out, line)
 			}
 			// The diff is printed after the write, not before it (the review
@@ -230,11 +262,13 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			continue
 		default:
 			// And because nothing was printed, the failure has to say what the
-			// operator is not seeing: the node is as it was.
-			return fmt.Errorf("%w; nothing was written: %s is as it was", dbErr(lc, err, true), projectpolicy.PathShared())
+			// operator is not seeing — which is not "nothing": the children
+			// were narrowed before this write, and a narrowing is not undone by
+			// the node's write failing.
+			return fmt.Errorf("%w; %s is as it was%s", dbErr(lc, err, true), projectpolicy.PathShared(), narrowedNote(narrowedSoFar))
 		}
 	}
-	return remote(fmt.Errorf("the policy node kept changing under the write (%d attempts); nothing further was written; run it again", setAttempts))
+	return remote(fmt.Errorf("the policy node kept changing under the write (%d attempts); the shared node is as it was%s; run it again", setAttempts, narrowedNote(narrowedSoFar)))
 }
 
 // requirePolicyRules refuses a publish without the deployed rules marker
@@ -1120,10 +1154,11 @@ func patchPolicyJSON(raw []byte, key string, val any) ([]byte, error) {
 
 // ------------------------------------------------- per-repository admissions
 
-// publishAdmissions writes each repository's admitted Claude account names into
-// its own node under config/policy/repos (O4), and removes the children of the
-// repositories no account admits any more. It returns the lines the caller
-// prints once the shared node's own write has succeeded.
+// A publish writes each repository's admitted Claude account names into its own
+// node under config/policy/repos (O4), and removes the children of the
+// repositories no account admits any more. Two functions do it, in this order:
+// tightenAdmissions before the shared node's own write, widenAdmissions after
+// it.
 //
 // The admissions are the accounts block inverted: accounts.<name>.allow_repos
 // says which repositories an account's token may be used by, and the service
@@ -1139,50 +1174,127 @@ func patchPolicyJSON(raw []byte, key string, val any) ([]byte, error) {
 // config/policy/repos/$slug is written under — so the repository whose run may
 // read a child is exactly the repository the child is about.
 //
-// A repository some account covers has a child; one no account covers has
-// none. The absence is the whole statement ("this repository is admitted to no
-// account"), and it is what a node with an empty list would have to mean
-// anyway — DecodeRepo refuses that spelling rather than reading it.
+// A repository some account covers has a child; one no account covers has none.
+// The absence is the whole statement ("this repository is admitted to no
+// account"), and it is what a node with an empty list would have to mean anyway
+// — DecodeRepo refuses that spelling rather than reading it.
+
+// tightenAdmissions is the first of the admissions' two writes: it takes away
+// what the config no longer admits, and it writes *before* the shared node.
+// `now` is what each existing child holds once it has run, so the widening
+// phase knows what it still has to write; `lines` says what it narrowed, and
+// the caller repeats them in the failure message when a later write of the same
+// publish fails (a narrowing is not undone by that failure, and the operator is
+// not told about it anywhere else).
 //
-// The children are written in one Patch, so a set of admissions is never
-// half-applied; a stale child is removed only after it decodes as this shape,
-// because a node this Fugaro cannot read is not a node it may delete (it is
-// named instead, and the operator removes it by hand).
-func publishAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, pol *projectpolicy.Policy) ([]string, error) {
-	desired, err := repoAdmissions(pol)
-	if err != nil {
-		return nil, err
+// The direction is the security decision. A child is what the service reads to
+// decide whether a repository's run may be handed somebody's subscription token
+// (C1.11), so a child left admitting an account the shared node does not cover
+// is a revocation that silently did not happen; a child *not* yet admitting an
+// account the shared node does cover costs a repository tier A until the next
+// publish, which is the fail-closed direction. The children are one atomic
+// patch, so the set of narrowings is never half-applied.
+//
+// An existing child this Fugaro cannot read is refused, not written over: the
+// set of accounts it admits is exactly what this function has to narrow, and a
+// node whose meaning is unknown is a node whose narrowing cannot be computed.
+// (Removing such a child is refused by the same rule, below.)
+func tightenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, desired map[string][]string, existing map[string]json.RawMessage) (now map[string][]string, lines []string, err error) {
+	now = make(map[string][]string, len(existing))
+	updates := make(map[string]any, len(existing))
+	for _, key := range slices.Sorted(maps.Keys(existing)) {
+		decoded, found, err := projectpolicy.DecodeRepo(existing[key])
+		if err != nil {
+			return nil, nil, userErr("%s/%s is a node this Fugaro cannot read (%v), so this publish cannot say what it admits: it will not be narrowed and it will not be removed. A node this reader does not understand is a node whose admissions it cannot compute, and a publish that wrote over it would be a publish that changed an admission it could not read; fix it by hand, or remove it with 'fugaro project policy publish --delete'",
+				projectpolicy.PathRepos(), key, err)
+		}
+		if !found {
+			continue // a null child is no child
+		}
+		admitted := decoded.AdmittedAccounts()
+		// What the child may keep: the accounts it admits today that the config
+		// still admits for this repository. A repository the config no longer
+		// admits at all keeps none of them.
+		var keep []string
+		for _, name := range admitted {
+			if slices.Contains(desired[key], name) {
+				keep = append(keep, name)
+			}
+		}
+		if len(keep) == len(admitted) {
+			// Nothing to take away: this child is left for the widening phase
+			// (which writes it only if it is missing something), so the child
+			// is not written twice with the same value.
+			now[key] = admitted
+			continue
+		}
+		if len(keep) == 0 {
+			updates[key] = nil
+			now[key] = nil
+			lines = append(lines, fmt.Sprintf("  admits %s: removed (no account admits this repository)", key))
+			continue
+		}
+		updates[key] = projectpolicy.RepoPolicy{Credentials: &projectpolicy.RepoCredentials{Accounts: keep}}
+		now[key] = keep
+		lines = append(lines, fmt.Sprintf("  admits %s: narrowed to %s (%s no longer admits this repository)", key, strings.Join(keep, ", "), strings.Join(accountsWithout(admitted, keep), ", ")))
 	}
-	var existing map[string]json.RawMessage
-	if _, err := db.Get(ctx, projectpolicy.PathRepos(), &existing); err != nil {
-		return nil, dbErr(lc, err, false)
+	if len(updates) == 0 {
+		return now, nil, nil
 	}
+	if err := db.Patch(ctx, projectpolicy.PathRepos(), updates); err != nil {
+		return nil, nil, dbErr(lc, err, true)
+	}
+	return now, lines, nil
+}
+
+// widenAdmissions is the second write: the children brought up to what the
+// config admits, and it runs only once the shared node carries that config.
+// Every repository the config admits is reported (that line is the statement of
+// who may use a token, and an operator reading a publish has to see it), but a
+// child that already holds the desired names is not written again — so a
+// publish of an unchanged config writes no child at all, and cannot fail on
+// one.
+func widenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, desired, now map[string][]string) ([]string, error) {
 	updates := make(map[string]any, len(desired))
 	var lines []string
 	for _, slug := range slices.Sorted(maps.Keys(desired)) {
-		updates[slug] = projectpolicy.RepoPolicy{Credentials: projectpolicy.RepoCredentials{Accounts: desired[slug]}}
 		lines = append(lines, fmt.Sprintf("  admits %s: %s", slug, strings.Join(desired[slug], ", ")))
-	}
-	for _, key := range slices.Sorted(maps.Keys(existing)) {
-		if _, ok := desired[key]; ok {
+		if cur := now[slug]; len(cur) == len(desired[slug]) && slices.Equal(cur, desired[slug]) {
 			continue
 		}
-		if _, found, err := projectpolicy.DecodeRepo(existing[key]); err != nil {
-			return nil, userErr("%s/%s is a node this Fugaro cannot read (%v), so it will not be removed: this publish is what removes a repository's admissions, and a node it does not understand is one it cannot say the meaning of; fix it by hand, or remove it with 'fugaro project policy publish --delete'",
-				projectpolicy.PathRepos(), key, err)
-		} else if !found {
-			continue // a null child is no child
-		}
-		updates[key] = nil
-		lines = append(lines, fmt.Sprintf("  admits %s: removed (no account admits this repository)", key))
+		updates[slug] = projectpolicy.RepoPolicy{Credentials: &projectpolicy.RepoCredentials{Accounts: desired[slug]}}
 	}
 	if len(updates) == 0 {
-		return nil, nil
+		return lines, nil
 	}
 	if err := db.Patch(ctx, projectpolicy.PathRepos(), updates); err != nil {
 		return nil, dbErr(lc, err, true)
 	}
 	return lines, nil
+}
+
+// accountsWithout is the elements of have that keep does not hold, in have's
+// order: the accounts a narrowing took away, for the line that says so.
+func accountsWithout(have, keep []string) []string {
+	var out []string
+	for _, name := range have {
+		if !slices.Contains(keep, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// narrowedNote is the tail of a failure message that follows the tightening
+// phase: nothing at all when it narrowed nothing, and otherwise what it did,
+// because that write is not undone by whatever failed afterwards and no other
+// line of this command reports it.
+func narrowedNote(narrowed []string) string {
+	if len(narrowed) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; the admissions at %s were narrowed first, and a narrowing is not undone by this failure:\n%s",
+		projectpolicy.PathRepos(), strings.Join(narrowed, "\n"))
 }
 
 // repoAdmissions is the accounts block inverted: the slug of each repository an
@@ -1287,6 +1399,16 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.Credentials != nil {
 		fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
 	}
+	// And the two members that stop older readers (the plan's C1.2 skew
+	// section, which hands this warning to the review of this task; the review
+	// asked for it): publishing either is a decision with a cost that is paid
+	// by every run of the project until the CLI and the runner image are
+	// upgraded, and a diff that named the values without naming that cost would
+	// be a diff an operator can read and still not know what they are
+	// publishing.
+	for _, line := range skewWarning(new) {
+		fmt.Fprintln(out, line)
+	}
 	for _, r := range new.AllowRepos {
 		if src, ok := sources[r]; ok {
 			fmt.Fprintf(out, "  allow_repos %s (%s)\n", r, src)
@@ -1330,6 +1452,41 @@ func credentialsText(c *projectpolicy.Credentials) string {
 		return "written with every member absent: the defaults"
 	}
 	return strings.Join(parts, ", ")
+}
+
+// skewWarning is the lines that tell the operator what publishing these
+// members costs every *other* Fugaro in the installation (the plan's C1.2 skew
+// section: "the review of this task decides whether `fugaro project policy
+// publish` warns before publishing either"; the review asked for the line).
+// Both are members an older reader refuses rather than ignores, so this is not
+// a version-skew nicety — it is the difference between a project that publishes
+// and a project whose every launch, every publish and every run stops until the
+// CLI and the runner image are upgraded:
+//
+//   - a `credentials` member: an older CLI does not know the key, lists it and
+//     refuses every launch of the project, cascade or not, and refuses to
+//     publish over the node.
+//   - `routing.claude.via: cascade`: a new value inside the routing block an
+//     older reader knows, refused whole by the older shape check — an older CLI
+//     refuses launch and publish, and an older runner refuses the policy it
+//     reads, which halts the run with that routing error rather than a skew
+//     sentence.
+//
+// The line names the requirement and not a version number: this binary has no
+// version to name (the release that carries the cascade decides that), and a
+// number written here would be a second place to keep in step with it.
+func skewWarning(p *projectpolicy.Policy) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	if p.Credentials != nil {
+		out = append(out, "  warning: this node carries a credentials member, which a Fugaro older than the one publishing it does not know: an older CLI refuses every launch and every publish of this project until it is upgraded — upgrade the CLI (and, for a project whose runs read the node, anything else that reads it) before this publish")
+	}
+	if p.Routing != nil && p.Routing.Claude != nil && p.Routing.Claude.ViaValue() == projectpolicy.RouteCascade {
+		out = append(out, "  warning: this node carries routing.claude.via: cascade, which a Fugaro older than the one publishing it refuses whole: an older CLI refuses every launch and every publish of this project, and an older runner halts every run it launches with that routing error — upgrade the CLI and the runner image before this publish")
+	}
+	return out
 }
 
 // accountLines is one line per account of the accounts block, for the diff
