@@ -19,7 +19,9 @@
 // site has one scale rather than a number per component.
 //
 // **What this file holds, over the built CSS of every page:** the scale is declared and in
-// order; the header is positioned and carries the header layer, which is what makes it a
+// order — the header's layer a positive integer, above every layer a page's own rules declare,
+// because a `z-index` of 0 paints in the page's own step and the defect would be back; the
+// header is positioned and carries the header layer, which is what makes it a
 // stacking context; the reader's chrome — the skip link and the consent banner — carries the
 // chrome layer and nothing else does; and **no other rule declares a `z-index` at all**. That
 // last rule is the one this defect needed: it refuses a content component a layer of its own,
@@ -60,12 +62,19 @@ const LAYERS = [
 
 const TOKEN = /^--z-[\w-]+$/
 
-/** Whether one part of a selector list is the rule `name`'s own headline class. */
+/**
+ * Whether a selector names the rule's own class, **wherever it sits**: alone (`.site-header`),
+ * in a compound in any position (`header.site-header`, `.site-header:hover`, `.site-header[x]`)
+ * or after any combinator (`body > .site-header`). The head of the selector is not the only
+ * place a rule can take a property off a box — a later rule in any of those shapes wins the
+ * cascade just the same — so reading only the head was a hole: `header.site-header{position:static}`
+ * un-positioned the header with this file still reporting success. The trailing lookahead keeps
+ * a longer class (`.site-header-inner`) from counting as this one; nothing else can match, since
+ * `.site-header` with a dot in front of it is the class selector and not a suffix of a name.
+ */
 function owns(selector, name) {
-  return selector.split(',').some((part) => {
-    const simple = part.trim()
-    return simple === name || simple.startsWith(`${name}[`) || simple.startsWith(`${name}:`)
-  })
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`${escaped}(?![\\w-])`).test(selector)
 }
 
 /** The CSS a built page carries: its inline `<style>` blocks and any stylesheet it links. */
@@ -103,8 +112,8 @@ export function stackingFailures(dist) {
   for (const { rel, html } of builtPages(dist)) {
     const layers = readLayers(pageCss(html, dist))
 
-    // 1. The scale itself: two integer layers, the chrome above the header. A page that
-    //    carries neither has no layer to put its header on.
+    // 1. The scale itself: two integer layers, the header positive and the chrome above the
+    //    header. A page that carries neither has no layer to put its header on.
     const header = layers.tokens.get(HEADER)
     const chrome = layers.tokens.get(CHROME)
     for (const [token, value] of [
@@ -121,6 +130,31 @@ export function stackingFailures(dist) {
       out.push(
         `${rel} puts ${CHROME} at ${chrome} and ${HEADER} at ${header}: the reader's chrome is above the header's row, and the header above the page (src/styles/tokens.css)`,
       )
+    }
+
+    // 1b. And the header's layer is a row **above the page's own blocks**, which is the half
+    //     of the scale the check above does not reach: `--z-header: 0` is an integer and is
+    //     below the chrome, so it reads as a scale — yet a positioned box at `z-index: 0`
+    //     paints in the same step as a later positioned block with `z-index: auto`, in tree
+    //     order, and the header is the first of them: the step's card covers the open panel
+    //     again, exactly the defect this file exists for. The header's layer is therefore a
+    //     **positive** integer, and strictly above every layer a page's own rules declare.
+    if (/^\d+$/.test(header ?? '')) {
+      const value = Number(header)
+      if (value < 1) {
+        out.push(
+          `${rel} puts ${HEADER} at ${header}: a header layer of 0 or less paints the header in the page's own step, in tree order, where a block drawn after it covers the menu (src/styles/tokens.css)`,
+        )
+      }
+      for (const rule of layers.zIndex) {
+        if (LAYERS.some((entry) => owns(rule.selector, entry.name))) continue
+        const block = Number(rule.value)
+        if (Number.isFinite(block) && block >= value) {
+          out.push(
+            `${rel} puts ${HEADER} at ${header} with ${rule.selector} at ${rule.value}: the header sits strictly above every layer a page's own blocks declare, or a block at the header's row covers the menu (src/styles/tokens.css)`,
+          )
+        }
+      }
     }
 
     // 2. The header's own rule: positioned, so a `z-index` applies to it at all, and carrying
@@ -254,6 +288,9 @@ function failuresOf(t, html) {
 /** The fixture page with the page's own rules given one more rule after them. */
 const withRule = (css) => fixturePage(css)
 
+/** The fixture page with another rule after the page's own, and the scale replaced. */
+const withScale = (scale, css) => fixturePage(css).replace(SCALE, scale)
+
 /** The fixture page with `find` replaced by `replace` in its stylesheet. */
 const withReplaced = (find, replace) => fixturePage().replace(find, replace)
 
@@ -298,6 +335,23 @@ test('a header that cannot paint above the page is refused, however it is broken
   )
 })
 
+test('a header rule the class does not lead is refused, wherever the class sits', (t) => {
+  // The same un-positioning, written so that `.site-header` is not the head of the selector:
+  // an element selector in front of it (`header.site-header`), and a combinator in front of it
+  // (`body > .site-header`). Both win the cascade exactly as the head-of-selector rule does,
+  // and both were read as "the header is not mentioned at all" while `owns` looked only at the
+  // head — a `position: static` on the header this file stayed green on. `owns` matches the
+  // class anywhere in the selector now, which is what these two shapes hold it to.
+  assert.match(
+    failuresOf(t, withRule('header.site-header{position:static}')),
+    /leaves \.site-header position: static/,
+  )
+  assert.match(
+    failuresOf(t, withRule('body > .site-header{position:static}')),
+    /leaves \.site-header position: static/,
+  )
+})
+
 test('chrome drawn under the header is refused', (t) => {
   // A skip link the header it skips past is drawn over, and a banner the page's blocks cover.
   assert.match(
@@ -317,4 +371,18 @@ test('a scale that is not the scale is refused', (t) => {
     /puts --z-chrome at 5 and --z-header at 10/,
   )
   assert.match(failuresOf(t, withReplaced(SCALE, ':root{--z-chrome:20}')), /declares no integer --z-header/)
+  // A layer of zero: an integer, and below the chrome, so the order above reads it as a scale
+  // — but a box at `z-index: 0` paints in the page's own step, in tree order, which is the
+  // defect. `--z-header:0` in a copy of the built site is this case, and the built gate said
+  // ok before this check existed.
+  assert.match(
+    failuresOf(t, withReplaced(SCALE, ':root{--z-header:0;--z-chrome:20}')),
+    /puts --z-header at 0: a header layer of 0 or less[\s\S]*covers the menu/,
+  )
+  // And a block of a page's own at or over the header's row: the header's layer is strictly
+  // above every layer a page's rules declare, not level with the first one under it.
+  assert.match(
+    failuresOf(t, withScale(':root{--z-header:1;--z-chrome:20}', '.flow-step{position:relative;z-index:5}')),
+    /puts --z-header at 1 with \.flow-step at 5: the header sits strictly above/,
+  )
 })
