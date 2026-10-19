@@ -367,6 +367,14 @@ func TestTelemetryPlanCitesOnlyPathsThatExist(t *testing.T) {
 	}
 }
 
+// telemetryPlain strips markdown emphasis, so an assertion about a PHRASE does
+// not turn on whether the document happens to bold a word inside it. It caught
+// itself: "a **step 7b** in the approval gate" and "a step **7b** in the
+// approval gate" say the same thing and one of them failed the search.
+func telemetryPlain(s string) string {
+	return strings.NewReplacer("*", "", "_", "").Replace(s)
+}
+
 // TestTelemetryPlanAgreesWithItsOwnRegistration pins the three agreements a
 // review of this change found broken, each between two documents this change
 // edits. They are the failure mode a plan plus a registration always has: the
@@ -396,9 +404,9 @@ func TestTelemetryPlanAgreesWithItsOwnRegistration(t *testing.T) {
 	// (1) No P7.6 anywhere: the phase is five tasks, and running a check is not
 	// one of them.
 	for _, tc := range []struct{ path, text string }{
-		{telemetryPlan, doc},
-		{"docs/mobile/implementation-plan.md", plan},
-		{telemetryMobileReadme, index},
+		{telemetryPlan, telemetryPlain(doc)},
+		{"docs/mobile/implementation-plan.md", telemetryPlain(plan)},
+		{telemetryMobileReadme, telemetryPlain(index)},
 	} {
 		if strings.Contains(tc.text, "P7.6") {
 			t.Errorf("%s names P7.6: Phase 7 is five tasks (P7.1–P7.5) and no sixth is defined anywhere — running checks 105–107 is the owner's, it merges nothing, and it must not be written as a task", tc.path)
@@ -406,13 +414,13 @@ func TestTelemetryPlanAgreesWithItsOwnRegistration(t *testing.T) {
 	}
 
 	// (2) One gate, one label, and it is the one the step itself carries.
-	if !strings.Contains(plan, "step 7b") {
+	if !strings.Contains(telemetryPlain(plan), "step 7b") {
 		t.Errorf("docs/mobile/implementation-plan.md does not say \"step 7b\": the gate step this phase adds is labelled 7b in the gate itself, and the Phase 7 intro has to agree with it")
 	}
-	if strings.Contains(plan, "step 8") || strings.Contains(doc, "step 8") {
+	if strings.Contains(telemetryPlain(plan), "step 8") || strings.Contains(telemetryPlain(doc), "step 8") {
 		t.Errorf("the telemetry plan or the mobile plan says \"step 8\": the gate's seven steps were not renumbered and this phase adds one sub-step, labelled 7b — a reader told to look for a step 8 finds none")
 	}
-	if !strings.Contains(doc, "step 7b") {
+	if !strings.Contains(telemetryPlain(doc), "step 7b") {
 		t.Errorf("%s does not say \"step 7b\": it tells the reader which gate step its phase enters, and the label has to be the one the gate carries", telemetryPlan)
 	}
 
