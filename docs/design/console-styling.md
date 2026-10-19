@@ -502,10 +502,27 @@ font from anywhere" — holds here for a stronger reason.
 ### 3.2 The dark value set — the console's first screen
 
 Derived from the website's palette in force ([`palette-logo.css`](../../website/src/styles/palette-logo.css),
-the logo's sampled hue, [reconciliation §5](../website/redesign/reconciliation.md)), with
-the six tokens the console needs added: the second surface, the control border and the
-five state colours. Everything the website already names keeps **its exact value**, so the
-console and the site are one product.
+the logo's sampled hue, [reconciliation §5](../website/redesign/reconciliation.md)). The
+fourteen rows below are accounted for exactly, and which of them is new is a thing a reader
+should be able to check rather than assume:
+
+- **Seven reuse a value the website already ships, byte for byte**: `--ground` `#0A0E16`,
+  `--surface` `#121A26`, `--text` `#E6EEF5`, `--text-muted` `#9FB2C4`, `--accent` `#17A8E6`,
+  `--border` `#24303F`, and `--warn` `#F5A524`. The amber is the one that is easy to get
+  wrong: it is the site's, not this design's invention, and it is reused precisely because
+  "attention" means the same thing on both sides of the product.
+- **One reuses a value under a different name**: the website's `--accent-on-dark` `#6FD8F5`
+  is the console's `--accent-ink`. The console has two grounds, so "on-dark" would name the
+  wrong one of them.
+- **Six are invented here**, because the website has no equivalent: `--surface-alt`
+  `#18222F` and `--border-strong` `#5B7491`, and the four state colours the console needs
+  and the site does not — `--ok` `#4CC38A`, `--error` `#F2648C`, `--halted` `#C9A0FF`,
+  `--stale` `#8A9AAB`.
+
+Seven plus one plus six is the fourteen rows below. Everything the website already names
+keeps **its exact value**, so the console and the site are one product; and of the six that
+are new, the four state colours are the only ones a later change can move without touching
+the site at all. One of them did move, and [§3.4](#34-contrast-computed) is where and why.
 
 | Token | Value | Hue | Role |
 |---|---|---|---|
@@ -520,7 +537,7 @@ console and the site are one product.
 | `--border-strong` | `#5B7491` | 212° | a border that marks a **control's extent** |
 | `--ok` | `#4CC38A` | 151° | measured and inside the cap |
 | `--warn` | `#F5A524` | 37° | attention: near deadline, silent, a cap approaching |
-| `--error` | `#FF6B6B` | 0° | failed, lost, an infra error |
+| `--error` | `#F2648C` | 343° | failed, lost, an infra error |
 | `--halted` | `#C9A0FF` | 266° | killed — a **deliberate stop**, not a failure |
 | `--stale` | `#8A9AAB` | 211° | the last-known values after the feed stopped |
 
@@ -529,10 +546,32 @@ console and the site are one product.
 The website has no light ground ("the site has one, dark, appearance, and the brief does
 not ask for a second", RF19), so this is the first light set in the product and it is
 derived from the same sampled hue: the accent moves from 198° to **199.6°** and is darkened
-until it clears 4.5:1 as text and 3:1 as a boundary on either light ground. `#17A8E6` on a
-light ground is **2.70:1** — the exact figure reconciliation §5.3 records while noting "the
-accent is never text on a light ground" — which is why light needs its own accent step
-rather than the same value.
+until it clears 4.5:1 as text and 3:1 as a boundary on **each of the three light surfaces**,
+not on "a light ground" in general, because the three do not have the same luminance.
+
+**The figure the accent step answers, on the right background.** `#17A8E6` on **white** is
+**2.70:1** — the figure [reconciliation §5.3](../website/redesign/reconciliation.md)
+records, and it records it for white exactly: the site has no light ground, so white is the
+only light surface the accent was ever measured against, and the note it adds — "the accent
+is never text on a light ground" — is a note about the site. On **this set's own ground**
+`#F2F6FA` the same value is **2.49:1**, and on `--surface-alt` `#E7EEF5` it is **2.31:1**.
+2.49 is therefore the number this design has to answer for, and 2.70 is cited here only as
+the white figure it is. None of the three clears any text requirement, which is why light
+needs its own accent step rather than the same value:
+
+- **`--accent` `#0B6E9E`** is the light accent: **5.17:1** on `--ground`, **5.62:1** on
+  `--surface`, **4.80:1** on `--surface-alt`. It clears 4.5:1 as text on all three and 3:1
+  as a boundary, so **on a light ground the accent may be a rule, a focus ring, a filled
+  control's background and text** — the light set does not need the dark set's split.
+- **`--accent-ink` `#085A82`** is the darker step for the places the accent is text inside
+  a hovered or tinted control: **6.92 / 7.51 / 6.42**. The pair exists on the light set for
+  the same reason it exists on the dark one — a fill and a text tone carry different
+  contrast requirements — but the roles are not mirrored: on the dark set the ink is the
+  *lighter* tone, on the light set it is the *darker* one.
+- **`--accent` is never body text on `--surface-alt` in the light set without the ink
+  step**: 4.80:1 clears 4.5:1, but only just, and a hovered row is exactly where the
+  background stops being the value the table measured. §3.4 is the table; it is computed on
+  the surface, not on the hover.
 
 | Token | Value | Hue | Role |
 |---|---|---|---|
@@ -547,7 +586,7 @@ rather than the same value.
 | `--border-strong` | `#6F8497` | 209° | a control's extent |
 | `--ok` | `#0F7A4D` | 155° | |
 | `--warn` | `#8A5600` | 37° | |
-| `--error` | `#C0272D` | 358° | |
+| `--error` | `#B01F45` | 344° | |
 | `--halted` | `#7A3E9D` | 278° | |
 | `--stale` | `#5C6B7A` | 210° | |
 
@@ -569,7 +608,7 @@ and for any boundary that marks a control's extent.**
 | `--border-strong` | **4.00** | **3.62** | **3.33** | 3 ✓ |
 | `--ok` | **8.72** | **7.89** | **7.24** | 4.5 ✓ |
 | `--warn` | **9.46** | **8.56** | **7.86** | 4.5 ✓ |
-| `--error` | **6.96** | **6.30** | **5.78** | 4.5 ✓ |
+| `--error` | **6.42** | **5.81** | **5.33** | 4.5 ✓ |
 | `--halted` | **9.16** | **8.29** | **7.61** | 4.5 ✓ |
 | `--stale` | **6.71** | **6.07** | **5.57** | 4.5 ✓ |
 | `--border` (decorative) | 1.44 | 1.31 | 1.20 | **not admissible as a control boundary** — 1 px hairlines only |
@@ -585,7 +624,7 @@ and for any boundary that marks a control's extent.**
 | `--border-strong` | **3.57** | **3.87** | **3.31** | 3 ✓ |
 | `--ok` | **4.94** | **5.37** | **4.59** | 4.5 ✓ |
 | `--warn` | **5.67** | **6.16** | **5.26** | 4.5 ✓ |
-| `--error` | **5.42** | **5.88** | **5.03** | 4.5 ✓ |
+| `--error` | **6.18** | **6.71** | **5.74** | 4.5 ✓ |
 | `--halted` | **6.44** | **6.99** | **5.98** | 4.5 ✓ |
 | `--stale` | **5.04** | **5.47** | **4.67** | 4.5 ✓ |
 | `--border` (decorative) | 1.24 | 1.35 | 1.15 | 1 px hairlines only |
@@ -599,14 +638,86 @@ set — light-on-dark and dark-on-light, as the two sets are inverses:
 | `--accent` | **7.16** | **5.62** | 4.5 ✓ |
 | `--ok` | **8.72** | **5.37** | 4.5 ✓ |
 | `--warn` | **9.46** | **6.16** | 4.5 ✓ |
-| `--error` | **6.96** | **5.88** | 4.5 ✓ |
+| `--error` | **6.42** | **6.71** | 4.5 ✓ |
 | `--halted` | **9.16** | **6.99** | 4.5 ✓ |
 | `--stale` | **6.71** | **5.47** | 4.5 ✓ |
 
 The website's `--warn`/`--accent` pair is preserved: `--warn` is 37° and `--accent` 198°,
-**161° apart**, "so the two can never be mistaken for each other". The five state colours
-are ≥ 60° apart from each other in both sets, which is the secondary defence behind
-[§3.5](#35-never-colour-alone).
+**161° apart**, "so the two can never be mistaken for each other".
+
+**State separation, computed.** Hue is the second channel that matters here, and the
+distance between two states in it is computed below rather than asserted — the earlier
+revision of this section asserted a minimum, and the assertion was false in both sets (the
+dark set's `--warn`/`--error` pair was **37.0°** apart, its `--halted`/`--stale` pair
+**55.0°**, and the light set's `--warn`/`--error` pair **39.7°**). What this design holds
+instead is a rule and a number:
+
+> **Any two of the five state colours are at least 50° apart in hue.** Where a future pair
+> cannot clear 50° — the amber-to-red arc is the crowded one — the fallback is **at least
+> 3:1 of luminance contrast** between the two, which is the second column of the table
+> below and the same 3:1 [§4.4](#44-forced-colors-and-high-contrast) leans on.
+
+50° is chosen as the point where two hues stop reading as "the same colour, shaded"; it is
+satisfiable without moving `--warn`, which is reused verbatim from the website, and it
+leaves the primary defence where [§3.5](#35-never-colour-alone) puts it: the word and the
+icon every state carries. This table is the secondary defence — the thing that holds when a
+reader has the glyph and the fill and no label, or reads the two fills side by side in a
+chart legend.
+
+**One pair failed that rule when it was first computed, and the token moved rather than the
+rule.** `--error` was `#FF6B6B` at **0.0°**, 37.0° from `--warn`'s 37.0° in the dark set,
+and `#C0272D` at **357.6°**, 39.7° from `--warn`'s 37.4° in the light set — inside the 50°
+minimum in both, and at a luminance contrast of **1.36** and **1.05**, so neither channel
+separated them and no amount of marker text would have made the two *fills* tell apart.
+`--error` is now **`#F2648C` (343.1°) in the dark set** and **`#B01F45` (344.3°)** in the
+light set, **53.9°** and **53.1°** from `--warn`, and every pair below clears 50°. The hue
+stays in the red family — a crimson rather than a fire-engine red — which is what `--error`
+means: failed, lost, an infrastructure error, distinct from the deliberate stop that is
+`--halted`. Nothing else in either set moved.
+
+The two sets do **not** share their hues closely enough for one table to serve both: the
+light set's `--halted` is 278° where the dark set's is 266°, 12° away, and its `--ok` is
+3.5° away, so both sets are tabulated.
+
+**Dark: the ten pairs of state colours**
+
+| Pair | Hue apart | Luminance contrast | Separated by |
+|---|---|---|---|
+| `--ok` / `--warn` | 114.2° | 1.09 | hue |
+| `--ok` / `--error` | 168.2° | 1.36 | hue |
+| `--ok` / `--halted` | 114.6° | 1.05 | hue |
+| `--ok` / `--stale` | 59.6° | 1.30 | hue |
+| `--warn` / `--error` | 53.9° | 1.47 | hue |
+| `--warn` / `--halted` | 131.1° | 1.03 | hue |
+| `--warn` / `--stale` | 173.9° | 1.41 | hue |
+| `--error` / `--halted` | 77.2° | 1.43 | hue |
+| `--error` / `--stale` | 132.2° | 1.04 | hue |
+| `--halted` / `--stale` | 55.0° | 1.37 | hue |
+
+**Light: the ten pairs of state colours**
+
+| Pair | Hue apart | Luminance contrast | Separated by |
+|---|---|---|---|
+| `--ok` / `--warn` | 117.4° | 1.15 | hue |
+| `--ok` / `--error` | 170.5° | 1.25 | hue |
+| `--ok` / `--halted` | 123.1° | 1.30 | hue |
+| `--ok` / `--stale` | 55.2° | 1.02 | hue |
+| `--warn` / `--error` | 53.1° | 1.09 | hue |
+| `--warn` / `--halted` | 119.5° | 1.14 | hue |
+| `--warn` / `--stale` | 172.6° | 1.13 | hue |
+| `--error` / `--halted` | 66.4° | 1.04 | hue |
+| `--error` / `--stale` | 134.3° | 1.23 | hue |
+| `--halted` / `--stale` | 67.9° | 1.28 | hue |
+
+Circular hue distance is `min(|Δh|, 360°−|Δh|)` over the HSL hue of the literal values in
+§3.2 and §3.3, and the luminance column is the same `(L1+0.05)/(L2+0.05)` as every other
+table in this section, taken **between the two states** rather than against a surface. The
+reading a reviewer should check rather than take on trust: **every pair clears 50°, and the
+luminance column never does the work** — no two state fills are told apart by lightness in
+either set, and that is deliberate, because lightness is the channel a colour-blind operator
+and a forced-colors mode keep, and a state pair that leaned on it would collapse to the same
+grey the moment either took it away. The states are told apart by hue, and by the word
+[§3.5](#35-never-colour-alone) puts beside each one.
 
 ### 3.5 Never colour alone
 
@@ -634,6 +745,16 @@ The rules this makes binding on the stylesheet: (1) **a colour never replaces a 
 always drawn beside its own percentage, so the colour is redundant by construction;
 (4) `--ok` is used for *measured and inside the cap*, never decoratively, per §6.1 rule 3
 ("never decoratively").
+
+**This list is the primary defence; the separation table in [§3.4](#34-contrast-computed)
+is the secondary one.** The rule is not that the states are far apart in hue — an earlier
+revision of §3.4 said so, and the arithmetic did not support it, which is a reminder that a
+spacing claim is only worth the number printed beside it. The rule is that **no state is
+ever told apart by colour alone**: every state above carries a word, a mark or a number the
+code already emits, so the design survives a reader who sees no hue difference at all. The
+hue spacing is what keeps two *unlabelled* fills from colliding when they are compared
+side by side — a chart legend, a filled button row — and it is stated as a computed minimum
+there because that is the only way to state it honestly.
 
 ### 3.6 How the theme is chosen
 
@@ -1043,7 +1164,7 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with four tests:
+`docs_budget_token_channel_test.go`, with eight tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -1069,6 +1190,36 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
 4. a **plan test** that [Phase 6](#7-the-build-plan-phase-6-unapproved) exists, that its
    six task headings are there, that the four `theme/*.css` files are in the plan's tree,
    and that the phase names all six of the [§8](#8-open-for-the-owner) questions.
+
+And **four that read §3.4's numbers rather than its prose**, which is the half the review of
+the first revision asked for. They recompute WCAG 2.1's relative luminance
+(`(L1+0.05)/(L2+0.05)`) and circular hue distance
+(`min(|Δh|, 360°−|Δh|)`) from the literal values in §3.2 and §3.3, in four lines of Go each,
+deliberately not shared with the console's own token test: that one is TypeScript under
+`console/`, and the boundary is the same one the paragraph below explains.
+
+5. a **contrast test** that every ratio §3.4 prints is the ratio the literals compute, to
+   two decimals; that each token clears the requirement its role carries — 4.5:1 for the
+   text tones and the five state colours on all three surfaces, 3:1 for `--accent` and
+   `--border-strong`, 4.5:1 for `--ink-on-fill` on every fill; and that `--border` is
+   **still below** 3:1, because a hairline that cleared it would be a boundary this design
+   should have named as one;
+6. a **state-separation test** that the ten pairs of state colours in each set are the ten
+   the literals make, and that every one clears the 50° minimum §3.4 states — the claim the
+   first revision got wrong, now a table of computed numbers rather than a sentence;
+7. a **provenance test** that reads [`palette-logo.css`](../../website/src/styles/palette-logo.css)
+   and checks §3.2's accounting against it: the seven values reused byte for byte, the one
+   reused under another name (`--accent-on-dark` → `--accent-ink`), the six that are new
+   and therefore absent from the website's palette, and the fourteen the three add up to;
+8. an **accent-on-a-light-ground test** that `#17A8E6` is 2.70:1 on white and 2.49:1 on
+   this set's own `--ground`, and that the light set's accent clears 4.5:1 on all three
+   surfaces — the finding that the right figure was in the wrong place, made runnable.
+
+**The citation test stats a file; these four read the file**, which is the difference
+between a citation that exists and a citation that is true. Neither substitutes for the
+console's own token test in [§6.3](#63-contrast-as-unit-tests), which is the one that will
+run against `palette.css` once it exists; these read the design's own tables, and the point
+of both is that no number in this document is a number nobody computed.
 
 **The citations to the console's own files are deliberately not stat'ed, and the reason is
 a boundary rather than a preference.** `TestConsoleIsOutsideTheGoModule` in
