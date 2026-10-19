@@ -98,6 +98,10 @@ func TestWebsiteChecklistHasCheck70bRow(t *testing.T) {
 			"fold",
 			"40 words",
 			"250 words",
+			// The page ceiling is not the whole of it since 2026-10-19: the privacy
+			// statement is the store listings' privacy policy, so the row names it as
+			// the page whose own derived ceiling the README carries instead.
+			"privacy statement",
 		} {
 			if !strings.Contains(row, want) {
 				t.Errorf("the %q row does not carry %q: %s", "70b", want, row)
@@ -153,10 +157,13 @@ func TestWebsiteChecklistHasCheck70bSection(t *testing.T) {
 		"firstCommandBottom",
 		"390 × 844",
 		"1280 × 900",
-		// The word ceilings, from the site's own gate.
+		// The word ceilings, from the site's own gate: the lead's 40, the 250 every page
+		// but the privacy statement and the three exempt ones is held to, and the
+		// privacy statement, whose ceiling the README derives from that page's own count.
 		"website/test/budget.mjs",
 		"40 words",
 		"250 words",
+		"privacy statement",
 		"/docs/",
 		"/security/",
 		"/changelog/",
