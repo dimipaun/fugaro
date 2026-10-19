@@ -28,11 +28,22 @@ export const NORMAL_PSEUDONYM_KEY = 'normal-fixture-scrubbed-not-a-secret'
 export const NORMAL_NOTE =
   'normal: the shape of one real fugaro watch --json document; every value is invented (see the scrub-fixture tool)'
 
-/** normalFixture builds the fixture text from the raw document. */
+/**
+ * normalFixture builds the fixture text from the raw document.
+ *
+ * `shiftMs` is this run's clock offset. Left out -- which is what the command
+ * line does -- the scrub draws its own (randomTimeShiftMs), so two runs on the
+ * same input produce two different files. It is a parameter at all so that a
+ * test can enumerate the draws: the fixture's clock, its run IDs and the
+ * header's digest all follow it, so a test that wants to walk many draws has to
+ * be able to name them (see `normal-fixture.test.ts`). Like the scrub's own
+ * parameter, this is deliberately NOT a command-line argument: an offset an
+ * operator can choose is an offset an operator can write down.
+ */
 export function normalFixture(
-  raw: unknown, cli: string, onRemoved?: (removed: readonly string[]) => void,
+  raw: unknown, cli: string, onRemoved?: (removed: readonly string[]) => void, shiftMs?: number,
 ): { text: string; scrubbed: JSONDoc } {
-  const scrubbed = scrubDocument(raw)
+  const scrubbed = shiftMs === undefined ? scrubDocument(raw) : scrubDocument(raw, shiftMs)
   onRemoved?.(removedValues(raw, scrubbed))
   const redactor = createRedactor([SCRUB_PROJECT], { pseudonymKey: NORMAL_PSEUDONYM_KEY })
   const document = redactor.redactDocument(scrubbed) as JSONDoc

@@ -16,7 +16,10 @@
 //     file of hashes of removed values is a dictionary oracle and is not kept.
 //   - **the scrub refuses what it does not know**, and is deterministic once its
 //     clock shift is given -- the shift itself is drawn per run (see
-//     scrub-vocabulary.test.ts and the README).
+//     scrub-vocabulary.test.ts and the README). The scan's own draws are the
+//     exception, and are seeded here: a test that draws its own randomness can
+//     only fail on a machine that was unlucky, which is what this file did
+//     (CLOCK_SEED).
 
 import { readFileSync } from 'node:fs'
 
@@ -27,6 +30,7 @@ import type { JSONDoc } from '../../src/source/source'
 import { normalFixture } from '../../tools/scrub-fixture/index'
 import {
   CONNECTION_REASONS, INVENTED_CONNECTION_REASON, QUEUED_NOTE_SHAPE, VOCAB, isKnownVerifySummary, scrubDocument,
+  timeShiftFromDraw,
 } from '../../tools/scrub-fixture/scrub'
 
 const FIXTURE = 'test/fixtures/normal.ndjson'
@@ -155,6 +159,43 @@ const DIGIT_RUN = /(?<![0-9a-f])\d{12,}(?![0-9a-f])/
  * the time, so one run in fourteen. */
 const DIGEST_WITH_A_DIGIT_RUN = 'abcdef' + '123456789012' + 'ab'.repeat(23)
 
+/**
+ * DERIVED_TOKEN is the shape of a token the scrub DRAWS rather than copies out
+ * of the recording: the clock it shifts -- the header's `recorded`, the
+ * envelope's `at`, the document's `now` and `day`, and `kill.at` -- the run IDs
+ * it stamps from that shifted clock, and the SHA-256 digest of the body it
+ * wrote.
+ *
+ * The removed-values rule below is a SUBSTRING rule, and a substring rule
+ * cannot tell "this text was copied out of the recording" from "this text fell
+ * out of the arithmetic by coincidence". Inside a drawn token only the second
+ * is possible -- nothing of the recording is in there, the token is a function
+ * of the shift and of the invented document -- so the rule is not run over
+ * them. It is still run over `removed.includes(raw)`: an invented token equal,
+ * whole, to a removed value would be a coincidence worth failing on (it takes
+ * an offset of exactly zero for a timestamp, which the draw cannot produce).
+ *
+ * The coincidence is rare and it is what this file flaked on (CI run
+ * 39231293918, `iteration 252`): the recording's `day` is a removed value as
+ * soon as the drawn offset moves the clock off that date, and its `kill.at`
+ * sits one hour before its `now` -- so an offset between 22 and 23 hours puts
+ * the shifted `kill.at` back on the recording's own date while the shifted
+ * `now` lands on the next one, and the scan read the removed day inside
+ * `kill.at`. One draw in 19200, so about one run in sixty of the 300 draws
+ * below; CLOCK_SEED's walk holds one, and the regression case below names it.
+ *
+ * The exemption is the shape of the value the FIXTURE CARRIES, never which
+ * removed value it is: a removed day that survives where a day does not belong
+ * -- in a title, a name -- is still a removed value, and the case in "nothing
+ * real is in it" holds that.
+ *
+ * The pseudonym shapes (`r-...`, `slug-...`) are NOT exempt: those are keyed
+ * hashes of values that do not move with the clock, so they are the same every
+ * draw and a collision there is fixed rather than a fresh draw -- it would fail
+ * on the first run of this file, not on one run in sixty.
+ */
+const DERIVED_TOKEN = /^(\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z|\d{8}-\d{6}-(ee|ff)\d{2}|[0-9a-f]{64})$/
+
 /** normalise is NFKC, lowercase, zero-width characters stripped. */
 function normalise(text: string): string {
   return text.normalize('NFKC').replace(/[\u200b-\u200f\u2060\u2062-\u2064\ufeff\u00ad]/g, '').toLowerCase()
@@ -223,7 +264,8 @@ function stringsOf(value: unknown, into: Array<{ text: string; key: boolean }> =
 /** scan decodes every line and returns what is not clean: a forbidden substring
  * (in a key or a string value, after NFKC, case and zero-width folding), a string
  * outside the positive allow-list of shapes, an unknown key, and, when the scrub
- * run's own removed values are given, any of them. */
+ * run's own removed values are given, any of them -- by substring, except inside
+ * a token the scrub drew rather than copied (DERIVED_TOKEN). */
 function scan(text: string, removed: readonly string[] = []): string[] {
   const found: string[] = []
   for (const line of text.split('\n')) {
@@ -243,7 +285,9 @@ function scan(text: string, removed: readonly string[] = []): string[] {
         if (!KEYS.has(raw)) found.push('an unknown key')
       } else {
         if (!SHAPES.some((shape) => shape(raw))) found.push('a string outside the allow-list')
-        for (const r of removed) if (r.length >= 4 && n.includes(normalise(r))) found.push('a removed value')
+        if (!DERIVED_TOKEN.test(raw)) {
+          for (const r of removed) if (r.length >= 4 && n.includes(normalise(r))) found.push('a removed value')
+        }
         if (removed.includes(raw)) found.push('a removed value')
       }
     }
@@ -351,16 +395,72 @@ describe('the normal fixture: nothing real is in it', () => {
   it('finds a removed value with a changed prefix, and a removed number', () => {
     expect(scan(line('PREFIX real-title-x'), ['real-title-x'])).toContain('a removed value')
     expect(scan(`{"at":"x","document":{"spent_usd":9.37,"x":1}}\n`, ['9.37'])).toContain('a removed number')
+    // The exemption from the removed-value rule is the SHAPE of a token the
+    // scrub draws, not the value in it: the recording's own day, standing where
+    // a day does not belong, is still a removed value. A version of the rule
+    // that mapped a derived token to the values inside it -- or the other way
+    // round, that dropped a removed value from the rule because the fixture
+    // carries it somewhere -- would pass the regression case below and fail
+    // here.
+    // (the verify line's name slot is the one the allow-list leaves open, so
+    // the removed day riding in it is refused by this rule and nothing else)
+    const carried = line(`fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: ${RAW_DAY})`)
+    expect(scan(carried), 'without the rule the line is clean').toEqual([])
+    expect(scan(carried, [RAW_DAY])).toEqual(['a removed value'])
   })
 })
 
+/**
+ * RAW_DAY is the day this file's synthetic recording carries, and RAW_KILL is
+ * its kill timestamp -- an hour before its `now`. Both are removed values in
+ * every draw that moves the clock off that date, and the hour between them is
+ * what makes the scan's removed-value rule fire by coincidence (DERIVED_TOKEN).
+ */
+const RAW_DAY = '2026-10-19'
+const RAW_KILL = '2026-10-19T01:00:00Z'
+
+/** CLOCK_SEED seeds every draw this file makes. It is committed, and it is not
+ * a nice number on purpose: it was found by walking seeds until the 300 draws
+ * held both draws the walk is for -- a digest with twelve digits in it, and the
+ * offset that puts the shifted kill.at back on the recording's day -- and 0xf0
+ * is the first of them. A seed whose walk stops covering one of those fails the
+ * walk's own two counts, so this cannot quietly become a walk of 300 draws that
+ * test nothing. */
+const CLOCK_SEED = 0xf0
+/** CROSSING_ITERATION is where CLOCK_SEED's walk crosses the date, which the
+ * named regression case uses: the draw CI run 39231293918 failed on. */
+const CROSSING_ITERATION = 13
+
+/**
+ * clockShifts is `count` clock offsets drawn from a committed seed: mulberry32,
+ * which is here for one property only -- the same 300 offsets on every run, on
+ * every machine. Every other draw in this file is deterministic (the scrub's
+ * offsets are passed in), so this file has no uncommitted randomness left.
+ */
+function clockShifts(seed: number, count: number): number[] {
+  const out: number[] = []
+  let state = seed >>> 0
+  for (let i = 0; i < count; i++) {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = Math.imul(state ^ (state >>> 15), state | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    out.push(timeShiftFromDraw(((t ^ (t >>> 14)) >>> 0) / 2 ** 32))
+  }
+  return out
+}
+
+/** digestOf is the SHA-256 the fixture's header carries. */
+function digestOf(text: string): string {
+  return /[0-9a-f]{64}/.exec(text.split('\n')[0]!)?.[0] ?? ''
+}
+
 describe('the scrub', () => {
   const raw = (): Record<string, unknown> => ({
-    project: 'real-project', mode: 'enforce', day: '2026-10-19', now: '2026-10-19T02:00:00Z',
+    project: 'real-project', mode: 'enforce', day: RAW_DAY, now: '2026-10-19T02:00:00Z',
     connection: { state: 'live', age_seconds: 0.1 },
     total: {
       counted_usd: 9.37, spent_usd: 9.37, notional_usd: 0, daily_cap_usd: 77.5, percent: 11, burn: { known: false, usd_per_min: 0, fast: false },
-      kill: { by: 'Real Person', at: '2026-10-19T01:00:00Z', reason: 'because real' }, runs: 1, run_hours: 1,
+      kill: { by: 'Real Person', at: RAW_KILL, reason: 'because real' }, runs: 1, run_hours: 1,
     },
     repos: [{
       slug: 'real-slug', repo: 'real-org/real-repo', counted_usd: 9.37, spent_usd: 9.37, notional_usd: 0, daily_cap_usd: 77.5,
@@ -409,7 +509,7 @@ describe('the scrub', () => {
     expect(total['spent_usd']).toBe(run['spent_usd'])
     expect(total['percent']).toBeCloseTo(((total['counted_usd'] as number) / 50) * 100, 6)
     expect(total['kill']).toEqual({
-      by: 'redacted@example.invalid', at: `${new Date(Date.parse('2026-10-19T01:00:00Z') + SHIFT).toISOString().slice(0, 19)}Z`,
+      by: 'redacted@example.invalid', at: `${new Date(Date.parse(RAW_KILL) + SHIFT).toISOString().slice(0, 19)}Z`,
       reason: 'example reason',
     })
   })
@@ -477,8 +577,11 @@ describe('the scrub', () => {
   })
 
   it('hands the removed values to an injected callback, in memory, and writes no hash or file', () => {
+    // SHIFT is passed here and in the cases below: the scrub's own draw is held
+    // (its randomness is held elsewhere -- see the walk), so a scan of a whole
+    // scrub run has nothing left in it that varies between runs.
     let removed: readonly string[] = []
-    const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r })
+    const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r }, SHIFT)
     for (const real of ['real-project', 'real-org/real-repo', '# Task: real secret plan', '9.37', '77.5', 'real@person.example', 'Real Person']) {
       expect(removed).toContain(real)
     }
@@ -500,7 +603,7 @@ describe('the scrub', () => {
       const doc = raw()
       at(doc, 'connection')['state'] = 'offline'
       at(doc, 'connection')['reason'] = wrote
-      const { text, scrubbed } = normalFixture(doc, '0.8.6')
+      const { text, scrubbed } = normalFixture(doc, '0.8.6', undefined, SHIFT)
       const out = at(scrubbed as unknown as Record<string, unknown>, 'connection')
       expect(out['reason'], wrote).toBe(committed)
       if (committed !== wrote) expect(text, wrote).not.toContain(wrote)
@@ -529,7 +632,7 @@ describe('the scrub', () => {
         const label = `${what} = ${value}`
         const doc = raw()
         set(doc, value)
-        const { text } = normalFixture(doc, '0.8.6')
+        const { text } = normalFixture(doc, '0.8.6', undefined, SHIFT)
         // ...and the value really is in what would be committed, so the scan
         // below is reading it and not passing on a document without it.
         expect(text, label).toContain(JSON.stringify(value))
@@ -538,24 +641,65 @@ describe('the scrub', () => {
     }
   })
 
-  it('scans 300 scrubs with a fresh drawn clock each, and never trips the digit rule', () => {
-    // The clock offset is drawn per run and never given here, so every iteration
-    // writes a different header digest (and different run IDs, and a different
-    // `recorded`). 300 of them is the flake this test is for: with a bare
+  it('scans 300 drawn clocks, and trips neither the digit rule nor the removed-values rule', () => {
+    // 300 draws, because one draw is not a test of either rule: with a bare
     // /\d{12}/ the scan read twelve digits inside the hex digest as a leaked
-    // number about 7% of the time (145 of 2000 scrubs, measured), so three
-    // hundred draws caught it with near certainty while a single run of the test
-    // above did not.
-    for (let i = 0; i < 300; i++) {
+    // number about 7% of the time (145 of 2000 scrubs, measured), and the
+    // removed-values rule fires on a coincidence of the offset about one draw
+    // in 19200 (DERIVED_TOKEN) -- neither is visible in a single scrub.
+    //
+    // The offsets come from CLOCK_SEED, not from the scrub's own draw, and that
+    // is the fix this test needed: it used to draw its own randomness, so it
+    // failed on the machines that were unlucky and passed on the rest, and CI
+    // run 39231293918 is one of the unlucky ones. The scrub's draw is still
+    // random, and the cases that hold that are `scrub-vocabulary.test.ts` (the
+    // offset is an integer inside the range) and `is deterministic once the
+    // shift is given, and draws a fresh one when it is not` above.
+    const shifts = clockShifts(CLOCK_SEED, 300)
+    let digitRuns = 0
+    let crossings = 0
+    for (const [i, shift] of shifts.entries()) {
       let removed: readonly string[] = []
-      const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r })
-      expect(scan(text, removed), `iteration ${i}`).toEqual([])
+      const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r }, shift)
+      // what the walk is made of, so that a seed that stopped covering the two
+      // draws above fails here rather than passing quietly:
+      //   - a digest carrying twelve digits, counted with the bare rule the
+      //     scan used to apply (the draw DIGIT_RUN is written for),
+      //   - the shifted kill.at landing back on the recording's own day (the
+      //     draw DERIVED_TOKEN is written for).
+      if (/\d{12}/.test(digestOf(text))) digitRuns += 1
+      if (removed.includes(RAW_DAY) && text.includes(RAW_DAY)) crossings += 1
+      expect(scan(text, removed), `iteration ${i} (shift ${shift})`).toEqual([])
     }
+    expect(digitRuns, 'the walk draws digests with a twelve-digit run').toBeGreaterThan(0)
+    expect(crossings, 'the walk draws the shifted kill.at onto the recording day').toBeGreaterThan(0)
+  })
+
+  it('does not read the recording day, inside the shifted kill.at, as a removed value', () => {
+    // The draw CI run 39231293918 failed on (`iteration 252: expected [ "a
+    // removed value" ] to deeply equal []`): the offset puts the shifted
+    // kill.at back on the recording's own day while `now` lands on the next
+    // one, so the recording's day is a removed value AND a substring of a
+    // timestamp the scrub drew. The walk above carries the draw; this case
+    // names it, so the rule that reads it right is held by a case that fails
+    // when the rule is restored to the substring-only one.
+    const shift = clockShifts(CLOCK_SEED, 300)[CROSSING_ITERATION]!
+    const shifted = (iso: string): string => new Date(Date.parse(iso) + shift).toISOString().slice(0, 19) + 'Z'
+    // the premise, so this case cannot pass on some other draw: `now` is off the
+    // recording's day and `kill.at`, an hour behind it, is on it.
+    expect(shifted(raw()['now'] as string).slice(0, 10)).not.toBe(RAW_DAY)
+    expect(shifted(RAW_KILL).slice(0, 10)).toBe(RAW_DAY)
+    let removed: readonly string[] = []
+    const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r }, shift)
+    expect(text).toContain(JSON.stringify(shifted(RAW_KILL)))
+    expect(removed).toContain(RAW_DAY)
+    expect(scan(text, removed)).toEqual([])
   })
 
   it('the scan on the scrub output catches a scrub that keeps a real title or a real amount', () => {
+    // A held clock, so the text this doctors is the same text every run.
     let removed: readonly string[] = []
-    const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r })
+    const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r }, SHIFT)
     const title = text.replace('# Task: example task 1', '# Task: real secret plan')
     expect(scan(title, removed).length).toBeGreaterThan(0)
     const amount = text.replace('"spent_usd":0.15', '"spent_usd":9.37')
