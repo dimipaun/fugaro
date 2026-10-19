@@ -206,16 +206,18 @@ run "the tag is the keyed one, not a placeholder" \
   "    const record = Object.freeze({ ...base, mac: tag.result });" \
   "    const record = Object.freeze({ ...base, mac: 'f'.repeat(64) });"
 run "the text is redacted before it is signed and written" \
-  "    const base = Object.freeze({ id, sender: from, text: body.text, at });" \
-  "    const base = Object.freeze({ id, sender: from, text, at });"
+  "      ? { id, sender: from, text: body.text, at, kind: 'action', action: opts.action }
+      : { id, sender: from, text: body.text, at });" \
+  "      ? { id, sender: from, text, at, kind: 'action', action: opts.action }
+      : { id, sender: from, text, at });"
 run "the message goes to the inbox, and not to the outbox" \
   "    const written = await store.write(paths.inboxMessage(id), record);" \
   "    const written = await store.write(paths.outboxMessage(id), record);"
 run "a message that is already there is landed, not a failure" \
   "    if (written.ok || written.code === STORE_CODES.EXISTS) {
-      outbound.set(id, { record, landed: true });" \
+      if (!isAction) outbound.set(id, { record, landed: true });" \
   "    if (written.ok) {
-      outbound.set(id, { record, landed: true });"
+      if (!isAction) outbound.set(id, { record, landed: true });"
 
 # 4. The retry: the same record, until the outbox answers or the TTL passes.
 run "the re-send is the same record, never re-stamped" \
