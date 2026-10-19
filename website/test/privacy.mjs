@@ -223,7 +223,7 @@ export const TELEMETRY_CLAIMS = Object.freeze([
   { page: 'no switch inside the app', why: "the owner's ruling of 2026-10-19: the versions that carry these reports send them whether or not a reader wants them sent, so the page has to say there is no switch rather than leave the reader looking for one" },
   { page: 'uninstalling the app stops them', why: "uninstalling is the one thing that stops the reports, so the page owes a reader that sentence and not a switch the app does not have" },
   { page: 'not installing it avoids them', why: 'a reader who has not installed the app is owed the other half: the reports arrive with the installation, and not installing the version is what keeps them away' },
-  { page: 'the command line tool and the console are unaffected', why: "the reports are the app's alone, and the page has to say the site and the two other tools send nothing rather than leave a reader of the software part guessing" },
+  { page: 'carry none of these reports', why: "the reports are the app's alone: the two other tools the software part covers carry none of them, and the page says so rather than leaving a reader of that part to guess. The clause names those two and not the website, whose own measurement is part one's subject — a software-part sentence calling the website unmeasured would contradict the half above it, and the flag that decides that half is not this gate's to read" },
   { page: 'Google holds', why: "the data is held by Google as Firebase's processor for the Fugaro project, which is what the page says rather than restating Google's policy" },
 ])
 
@@ -901,16 +901,24 @@ test("the page naming a reporter the repository does not hold, or the app holdin
   )
 
   // The claims the reader is owed, one planted omission at a time: the ban list, the absence of
-  // a switch in the versions that carry the reports, what a reader can do instead, and the link
-  // to Google's own policy.
-  for (const [what, gone] of [
-    ['the ban list', page.replaceAll('Never sent:', 'Also sent:')],
-    ['the absence of a switch', page.replaceAll('no switch inside the app', 'a switch in the settings')],
-    ['what a reader can do instead', page.replaceAll('uninstalling the app stops them', 'the app stops them')],
-    ['Google as the holder', page.replaceAll('Google holds', 'It is held')],
+  // a switch in the versions that carry the reports, what a reader can do instead, what a reader
+  // who has not installed the app gets, the two other tools carrying none of the reports, and
+  // the link to Google's own policy. Each case asserts the refusal names the claim it planted
+  // absent, and not merely that something failed: a case that only counts failures proves a
+  // sentence is refused by *a* rule, which is not the same as the rule written to hold it.
+  for (const [what, gone, claim] of [
+    ['the ban list', page.replaceAll('Never sent:', 'Also sent:'), 'Never sent'],
+    ['the absence of a switch', page.replaceAll('no switch inside the app', 'a switch in the settings'), 'no switch inside the app'],
+    ['what a reader can do instead', page.replaceAll('uninstalling the app stops them', 'the app stops them'), 'uninstalling the app stops them'],
+    ['what not installing the app avoids', page.replaceAll('not installing it avoids them', 'installing it is what avoids them'), 'not installing it avoids them'],
+    ['the two other tools carrying none of the reports', page.replaceAll('carry none of these reports', 'send nothing of their own'), 'carry none of these reports'],
+    ['Google as the holder', page.replaceAll('Google holds', 'It is held'), 'Google holds'],
   ]) {
     const failures = telemetryFailures({ ...base, page: gone })
-    assert.ok(failures.length >= 1, `a page that lost ${what} was not refused`)
+    assert.ok(
+      failures.some((line) => line.includes(`does not say ${JSON.stringify(claim)}`)),
+      `a page that lost ${what} was not refused for that claim: ${failures.join('\n')}`,
+    )
   }
   const unlinked = telemetryFailures({ ...base, page: page.replace(FIREBASE_PRIVACY, 'https://example.net/policy') })
   assert.match(unlinked.join('\n'), /does not link Google's own Firebase privacy policy/)
