@@ -38,6 +38,17 @@
 //      today — so no page opens with a command that nothing above it names. This is the
 //      general form of the two cases above and the rule a future page keeps: a command block
 //      belongs to a section, and the section's heading is what a reader reads before it.
+//   4. **Getting Started is three bands, in the order a reader reads them** (the owner's
+//      feedback of 2026-10-19, which is what the bands are for): `#install` — the command and
+//      the console, which is what the fold claim above is about — then `#setup`, what a real
+//      installation needs in order, then `#details`, everything else. The middle band is an
+//      `ol` and every step in it names the document that carries its detail, so a step is a
+//      line a reader can act on rather than a line about a document. The order is the whole
+//      of what this rule says: how tall each band is, and whether it fits a first screen, is
+//      still 70b's measurement and the word ceilings' business (D187, D188). The rule is what
+//      keeps the three from drifting back into one list: the page was a single install section
+//      with every path in it, and a reader who came for the command had to read past four
+//      paths, a note each and a platform list to find the two steps that come after it.
 //
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file, and
 // `foldFailures()` is the whole of the gate: one function over one directory, so the refusals
@@ -160,6 +171,33 @@ export function foldFailures(dist) {
           }
         }
       }
+
+      // Rule 4: the page's three bands, in the order a reader reads them, and the steps of the
+      // middle one each naming where their detail lives (the owner's brief of 2026-10-19). The
+      // ids are compared as one list rather than searched for one by one, because the order IS
+      // the rule: a page that moved the steps under the details would pass every "does this
+      // section exist" check and put the two things a reader came for at the bottom.
+      const bands = els.filter((el) => el.name === 'section' && el.attrs.has('id'))
+      const order = bands.map((el) => el.attrs.get('id'))
+      if (order.join(',') !== 'install,setup,details') {
+        out.push(
+          `${page.rel} does not carry its three bands in the order a reader reads them: its sections are ${JSON.stringify(order)}, where the page is the command and the console above the fold (#install), then what a real installation needs in order (#setup), then everything else (#details) (the owner's brief of 2026-10-19)`,
+        )
+      } else {
+        const setup = bands[1]
+        if (![...walk(setup)].some((el) => el.name === 'ol')) {
+          out.push(
+            `${page.rel}'s #setup section lists no steps in order: the steps a real installation takes are a sequence, and an \`ol\` is what a sequence is written as (the owner's brief of 2026-10-19)`,
+          )
+        }
+        for (const step of [...walk(setup)].filter((el) => el.name === 'li')) {
+          if (![...walk(step)].some((el) => el.name === 'a')) {
+            out.push(
+              `${page.rel}'s #setup section carries a step with nothing to click (${JSON.stringify(textOf(step).trim())}): each step names the document that carries its detail, and a step that links nowhere is a line the reader cannot act on (the owner's brief of 2026-10-19)`,
+            )
+          }
+        }
+      }
     }
   }
 
@@ -191,6 +229,14 @@ function distOf(t, files) {
 
 const page = (body) => `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main>${body}</main></body></html>`
 
+// The two bands that follow the install band on a page rule 4 is about, in the shape rule 4
+// asks for: the steps a real installation takes, each naming the document behind it, and the
+// details after them. A fixture that plants a defect in the install band wraps that band in
+// this, so the page is refused for the defect it planted and not for the bands around it.
+const SETUP_STEP = '<ol><li><a href="/docs/">a step</a></li></ol>'
+const afterInstall = (install) =>
+  `${install}<section id="setup"><h2>Set up your installation</h2>${SETUP_STEP}</section><section id="details"><h2>Details</h2></section>`
+
 test('each rule refuses the ordering it is about, and passes the page that keeps it', (t) => {
   // The three defects are the three orderings P5 fixed, planted one per rule, beside a page
   // that keeps every one of them: the gate has to report each defect and leave the good page
@@ -206,7 +252,7 @@ test('each rule refuses the ordering it is about, and passes the page that keeps
     // (rule 2, the ordering P5 changed). Its own closing sentence is there as well, so the
     // one failure this page earns is the ordering and not the other half of the rule.
     'getting-started/index.html': page(
-      '<h1>t</h1><section id="install"><h2>Install</h2><p>a sentence about the section</p><pre>brew install fugaro</pre><p>and the section\'s own sentence</p></section>',
+      `<h1>t</h1>${afterInstall('<section id="install"><h2>Install</h2><p>a sentence about the section</p><pre>brew install fugaro</pre><p>and the section\'s own sentence</p></section>')}`,
     ),
     // And a page that keeps all three rules: a promise, then the heading, then the command,
     // then the section's own sentence.
@@ -241,12 +287,44 @@ test('a page that drops the install section\'s own sentence is refused too', (t)
   // pass a page that deleted it, which is the failure a "the section opens with the commands"
   // check is most likely to have.
   const dist = distOf(t, {
-    'getting-started/index.html': page('<h1>t</h1><section id="install"><h2>Install</h2><pre>brew install fugaro</pre></section>'),
+    'getting-started/index.html': page(`<h1>t</h1>${afterInstall('<section id="install"><h2>Install</h2><pre>brew install fugaro</pre></section>')}`),
   })
   const failures = foldFailures(dist)
 
   assert.equal(failures.length, 1, failures.join('\n'))
   assert.match(failures[0], /carries no sentence of its own after the commands/)
+})
+
+test('the three bands are refused when they are out of order, or missing, or a step has no document behind it', (t) => {
+  // Rule 4, planted one defect at a time: the steps under the details, no steps at all, a
+  // step with no link, and the steps as a bulleted list. Each page keeps every other rule, so
+  // the one failure it earns is the one it planted — and the install band is the one the other
+  // cases above use, so a failure here is never one of theirs.
+  const install = '<section id="install"><h2>Install</h2><pre>brew install fugaro</pre><p>Then set up your installation.</p></section>'
+  const details = '<section id="details"><h2>Details</h2></section>'
+  const steps = (inner) => `<section id="setup"><h2>Set up your installation</h2>${inner}</section>`
+  const failuresOf = (html) => {
+    const failures = foldFailures(distOf(t, { 'getting-started/index.html': page(`<h1>t</h1>${html}`) }))
+    assert.equal(failures.length, 1, `the planted defect is not the only one reported:\n${failures.join('\n')}`)
+    return failures[0]
+  }
+
+  assert.match(
+    failuresOf(`${install}${details}${steps(SETUP_STEP)}`),
+    /does not carry its three bands in the order a reader reads them: its sections are \["install","details","setup"\]/,
+  )
+  assert.match(
+    failuresOf(`${install}${details}`),
+    /does not carry its three bands in the order a reader reads them: its sections are \["install","details"\]/,
+  )
+  assert.match(
+    failuresOf(`${install}${steps('<ol><li><a href="/docs/">a step</a></li><li>A step with no document behind it.</li></ol>')}${details}`),
+    /carries a step with nothing to click \("A step with no document behind it\."\)/,
+  )
+  assert.match(
+    failuresOf(`${install}${steps('<ul><li><a href="/docs/">a step</a></li></ul>')}${details}`),
+    /lists no steps in order/,
+  )
 })
 
 test('the promise and its call to action above the fold are enough, and nothing else is', (t) => {

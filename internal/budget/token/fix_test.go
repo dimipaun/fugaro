@@ -20,44 +20,51 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 )
 
-func TestTwoConcurrentTakersExactlyOneWins(t *testing.T) {
+// TestConcurrentTakersAllReadTheSameToken: the read-only take (D16) hands
+// every taker that holds the key the same token and leaves the object, so
+// two takers can no longer race each other into a lost token; what keeps a
+// token to one execution is that the key is delivered to one (§7.2). A taker
+// with no key reads nothing.
+func TestConcurrentTakersAllReadTheSameToken(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	g, gcs := bucket(t)
-	_ = g
+	_, gcs := bucket(t)
 	for name, b := range map[string]*blobx.Bucket{"gcs": gcs, "mem": blobx.Wrap(memblob.OpenBucket(nil))} {
-		for round := 0; round < 20; round++ {
-			c := claims()
-			c.Run = "run-" + name + "-" + string(rune('a'+round))
-			tok := e.mint(t, c, t0)
-			if err := token.PutObject(ctx, b, c.Slug, c.Run, tok); err != nil {
-				t.Fatal(err)
-			}
-			const n = 8
-			var wins, lost atomic.Int32
-			var wg sync.WaitGroup
-			start := make(chan struct{})
-			for i := 0; i < n; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					<-start
-					got, err := token.TakeObject(ctx, b, c.Slug, c.Run)
-					switch {
-					case err == nil && got == tok:
-						wins.Add(1)
-					case errors.Is(err, token.ErrNoToken) && got == "":
-						lost.Add(1)
-					default:
-						t.Errorf("%s: unexpected (%v, %v)", name, got != "", err)
-					}
-				}()
-			}
-			close(start)
-			wg.Wait()
-			if wins.Load() != 1 || lost.Load() != n-1 {
-				t.Fatalf("%s round %d: %d takers got the token, %d lost", name, round, wins.Load(), lost.Load())
-			}
+		c := claims()
+		c.Run = "run-" + name
+		tok := e.mint(t, c, t0)
+		key := sealKey(0x11)
+		if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, key); err != nil {
+			t.Fatal(err)
+		}
+		const n = 8
+		var wins, keyless atomic.Int32
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				k := key
+				if i%2 == 1 {
+					k = nil
+				}
+				got, err := token.TakeObject(ctx, b, c.Slug, c.Run, k)
+				switch {
+				case k != nil && err == nil && got == tok:
+					wins.Add(1)
+				case k == nil && errors.Is(err, token.ErrSealedNoKey) && got == "":
+					keyless.Add(1)
+				default:
+					t.Errorf("%s: unexpected (%v, %v)", name, got != "", err)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if wins.Load() != n/2 || keyless.Load() != n/2 {
+			t.Fatalf("%s: %d keyed takers read the token, %d keyless takers were refused", name, wins.Load(), keyless.Load())
 		}
 	}
 }

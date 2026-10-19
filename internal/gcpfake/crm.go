@@ -9,8 +9,12 @@ import (
 	"testing"
 )
 
-// CRM is a fake of the Cloud Resource Manager v1 call Fugaro makes:
-// projects get, for the project's number.
+// CRM is a fake of the Cloud Resource Manager v1 calls Fugaro makes:
+// projects get, for the project's number, its display name and its labels,
+// and projects update, for the label the run that created a project writes on
+// it. An update replaces the project's editable state with what the request
+// carries, as the real API does, so a caller must send back the project it
+// read (see handle, and TestProjectUpdateReplacesTheProjectsEditableFields).
 //
 // Like the real API, it answers a project it doesn't know with 403, not
 // 404, so a caller can't tell a missing project from one it may not read.
@@ -19,9 +23,13 @@ type CRM struct {
 
 	mu       sync.Mutex
 	projects map[string]int64
+	labels   map[string]map[string]string
+	names    map[string]string // the display name, as the v1 API answers it under "name"
+	named    map[string]bool   // whether the fake knows a name; a project only added answers its ID
 	policies map[string][]Binding
 	states   map[string]string
 	noGet    map[string]bool // projects whose plain read answers 403 (the policy stays readable)
+	noUpdate map[string]bool // projects whose update answers 403 (the plain read stays readable)
 
 	// PropagationReads is how many reads of a project answer 403 right
 	// after its creation, as happens while a new project propagates.
@@ -30,12 +38,13 @@ type CRM struct {
 	// done yet.
 	PendingPolls int
 
-	noPolicy map[string]bool   // projects whose getIamPolicy answers 403 (the plain read stays readable)
-	taken    map[string]bool   // IDs held by projects the caller cannot read
-	creates  []CreatedProject  // creates accepted, in order
-	failNew  *apiError         // answers every create (an organization policy, say)
-	hide     map[string]int    // reads still refused per new project
-	ops      map[string]*crmOp // operations by name
+	noPolicy map[string]bool      // projects whose getIamPolicy answers 403 (the plain read stays readable)
+	taken    map[string]bool      // IDs held by projects the caller cannot read
+	creates  []CreatedProject     // creates accepted, in order
+	failNew  *apiError            // answers every create (an organization policy, say)
+	failGet  map[string]*apiError // answers the plain read of a project with an error of the test's own words
+	hide     map[string]int       // reads still refused per new project
+	ops      map[string]*crmOp    // operations by name
 	nextOp   int
 	nextProj int64
 }
@@ -69,8 +78,9 @@ var (
 // NewCRM starts a Resource Manager fake that lives until the test ends.
 func NewCRM(t *testing.T) *CRM {
 	t.Helper()
-	f := &CRM{projects: map[string]int64{}, policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
-		noPolicy: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
+	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, names: map[string]string{}, named: map[string]bool{},
+		policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
+		noPolicy: map[string]bool{}, noUpdate: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
 		nextProj: FirstCreatedProjectNumber - 1}
 	f.Server = newServer(t, f.handle)
 	return f
@@ -81,6 +91,62 @@ func (f *CRM) AddProject(id string, number int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.projects[id] = number
+}
+
+// SetLabels makes project carry labels, as its own read answers them. It adds
+// to what is there rather than replacing it, so a test can set the label a
+// project was created with and the ones an update adds without one wiping the
+// other.
+func (f *CRM) SetLabels(project string, labels map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.labels[project] == nil {
+		f.labels[project] = map[string]string{}
+	}
+	for k, v := range labels {
+		f.labels[project][k] = v
+	}
+}
+
+// Labels is what project carries now, as a copy: a test reads it to see what
+// an update left behind.
+func (f *CRM) Labels(project string) map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string]string, len(f.labels[project]))
+	for k, v := range f.labels[project] {
+		out[k] = v
+	}
+	return out
+}
+
+// SetDisplayName gives project a display name of its own, the field the v1
+// API answers as "name" and an update replaces whole (see handle).
+func (f *CRM) SetDisplayName(project, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.names[project] = name
+	f.named[project] = true
+}
+
+// DisplayName is the project's display name as the fake answers it: the name
+// it was given, and its own ID for a project that only exists (AddProject
+// makes a project exist and nothing more, which is what this fake answered
+// before it knew about display names at all). It is "" for a project whose
+// name an update took off it, which is the state a caller that sends a
+// body without one leaves behind.
+func (f *CRM) DisplayName(project string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.displayName(project)
+}
+
+// displayName is DisplayName's answer. The caller holds mu.
+func (f *CRM) displayName(id string) string {
+	if !f.named[id] {
+		return id
+	}
+	return f.names[id]
 }
 
 // SetPolicy sets the bindings of project's IAM policy.
@@ -96,6 +162,33 @@ func (f *CRM) DenyGet(project string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.noGet[project] = true
+}
+
+// DenyUpdate makes project's update answer 403 while its plain read stays
+// readable: a caller that holds resourcemanager.projects.get and not
+// resourcemanager.projects.update, which is every credential a run holds —
+// the write permission the project label needs (Task 3.0, design finding 14)
+// and the one no run account may have.
+func (f *CRM) DenyUpdate(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noUpdate[project] = true
+}
+
+// FailGet makes the plain read of project answer code, status and msg: an
+// API error whose words are the test's, so a caller's handling of the far
+// end's own text (a hostile message, say) can be exercised. A code of 0 lifts
+// it.
+func (f *CRM) FailGet(project string, code int, status, msg string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failGet == nil {
+		f.failGet = map[string]*apiError{}
+	}
+	delete(f.failGet, project)
+	if code != 0 {
+		f.failGet[project] = &apiError{code: code, status: status, msg: msg}
+	}
 }
 
 // DenyPolicy makes project's getIamPolicy answer 403 while its plain read
@@ -251,8 +344,12 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	m := crmProjectRE.FindStringSubmatch(r.URL.Path)
-	if r.Method != http.MethodGet || m == nil {
+	if m == nil || (r.Method != http.MethodGet && r.Method != http.MethodPut) {
 		f.unhandled(w, r)
+		return
+	}
+	if e := f.failGet[m[1]]; e != nil {
+		writeError(w, e.code, e.status, e.msg)
 		return
 	}
 	n, ok := f.projects[m[1]]
@@ -260,9 +357,47 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"projectId": m[1], "projectNumber": strconv.FormatInt(n, 10), "lifecycleState": cmpOr(f.states[m[1]], "ACTIVE"), "name": m[1],
-	})
+	if r.Method == http.MethodPut {
+		if f.noUpdate[m[1]] {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return
+		}
+		var in struct {
+			Name   string            `json:"name"`
+			Labels map[string]string `json:"labels"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a project is required")
+			return
+		}
+		// The real API replaces the project's editable state with what the
+		// request carries — the display name and the whole label map — not
+		// just the fields the caller meant to change. That is what makes a
+		// writer that sends only its own key drop every other label, and one
+		// that sends a project object it built rather than the one it read
+		// take the owner's display name off the project. gcloud and Terraform
+		// send the whole object back, which is why they change one field.
+		f.names[m[1]] = in.Name
+		f.named[m[1]] = true
+		f.labels[m[1]] = in.Labels
+	}
+	writeJSON(w, http.StatusOK, f.projectJSON(m[1], n))
+}
+
+// projectJSON is a project as the v1 API answers it: the number is a string,
+// and the display name (the resource's "name") and labels are there only when
+// the project carries any — the client's omitempty, on the way back.
+func (f *CRM) projectJSON(id string, n int64) map[string]any {
+	out := map[string]any{
+		"projectId": id, "projectNumber": strconv.FormatInt(n, 10), "lifecycleState": cmpOr(f.states[id], "ACTIVE"),
+	}
+	if name := f.displayName(id); name != "" {
+		out["name"] = name
+	}
+	if ls := f.labels[id]; len(ls) > 0 {
+		out["labels"] = ls
+	}
+	return out
 }
 
 func cmpOr(v, def string) string {

@@ -45,13 +45,24 @@ type Codec interface {
 	On(getenv func(string) string) bool
 	// ParseInRegion parses name and refuses it unless it is a name of this
 	// backend's shape, in region, spelled the way this backend's platform
-	// accepts. It binds no job: a caller that knows the run binds it with
-	// ValidateRun.
+	// accepts. It binds no job, and under the project-centric model there is
+	// no job binding left to add (design §4.1): a caller that knows the run
+	// binds the name to it by the run's own FUGARO_RUN
+	// (gcp.CheckRunExecution), which is what the CLI's checkExecution
+	// applies.
 	ParseInRegion(name, region string) (ExecID, error)
 	// ValidateRun is ParseInRegion plus the job binding: name must be a run
 	// of job. An empty job is refused, not skipped -- an unbound name is
 	// what a caller that forgot the run's job would pass, and following it
 	// would point the operator's cancel or logs at another job.
+	//
+	// It has **no production caller** since jobs became shared: an
+	// execution's job no longer says which run it is (design §4.1, plan task
+	// 3.4 step 2), so checkExecution binds a name by the run's own FUGARO_RUN
+	// instead (gcp.CheckRunExecution, internal/backend/backend.go's
+	// Execution.Run). A caller that needs to bind a name to a run — Task 8's
+	// replacement of checkExecution's Cloud Run call among them — takes this
+	// codec's ParseInRegion plus that correlation, and not this method.
 	ValidateRun(name, region, job string) (ExecID, error)
 }
 
@@ -128,7 +139,8 @@ var runPartRE = regexp.MustCompile(`^[a-z0-9-]+$`)
 // objects a run's own service account can write (result.json, launch.json),
 // so without this check a run could point the operator's cancel or logs at
 // any job in the project. It binds no job: a caller that knows the run
-// binds it with ValidateRun.
+// binds it by the run's own FUGARO_RUN (ValidateRun's job binding is unused,
+// see the Codec interface).
 func (cloudRunCodec) ParseInRegion(name, region string) (ExecID, error) {
 	id, ok := CloudRunCodec().Parse(name)
 	if !ok {
@@ -149,6 +161,10 @@ func (cloudRunCodec) ParseInRegion(name, region string) (ExecID, error) {
 // empty job is refused: gcp.JobName never returns one, so it means the
 // caller lost the run's job, and a name that is not bound to a job is
 // exactly the name this check exists to refuse.
+//
+// No production caller: the CLI binds a name to a run by FUGARO_RUN now
+// (Codec's own doc, gcp.CheckRunExecution), and an execution's job no longer
+// names the run it belongs to.
 func (c cloudRunCodec) ValidateRun(name, region, job string) (ExecID, error) {
 	if job == "" {
 		return ExecID{}, fmt.Errorf("execution %s is not bound to a job: the run's job name is required", name)

@@ -226,16 +226,16 @@ here goes stale the way the byte budgets did before D192.
   what the artifact weighs — the terminal's transcript goes, the chat comes, `site.js` loses
   bytes, the flow's stylesheet changes — and then `main` came back into the branch, with
   the menu's hover-open and the six corrections that day and the next made to it, which moved
-  the same script again. So the figures are derived once, over the build the merge
-  produces, which is the only account of them that is true of the site that ships: the three
-  numbers are the ones `website/README.md` states, and **this document does not restate them** —
-  they are re-derived in every commit that moves the bytes, so a copy of them here is a copy
-  that goes stale on the next round (they had; this section carried the build of 2026-10-18 for
-  four parts after the artifact had moved). `website/test/budget.mjs` reads the figures out of
-  `website/README.md` and holds each to the build it can measure, and a derivation that names
-  another build fails there, which is what stops the page and the site figures drifting down as
-  pages grow. The rounds below say what moved and why; the bytes are the gate's. The fix round
-  after the merge re-derived all three over the build that branch ships — the chat moved
+  the same script again. So the figures were derived once, over the build the merge produces,
+  which is the only account of them that is true of the site that ships. **The three figures
+  themselves are written in `website/README.md`** ("The gates"), each with the rule it is
+  derived by, and `website/test/budget.mjs` reads them from there and holds each to the build
+  it makes itself; **this document states none of its own**, and that is the correction of
+  2026-10-19 — a figure copied into a document here drifted the last time the build moved,
+  because nothing reads it there. What follows is the **record of the rounds that moved the
+  figures**, with each round's own deltas, re-derived in the commit that shipped the bytes
+  (D192), rather than a statement of what the site weighs now. The fix
+  round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
   rather than its URL — and the round after *that* re-derived the site figure once more, again
@@ -269,37 +269,44 @@ here goes stale the way the byte budgets did before D192.
   artifact's published name as a link, the release's own SHA-256 beside it, and the command
   that checks a download against the release's sums file — Getting Started's console option
   and the hero's link to the console. The page weight and the script stay where they were: the
-  heaviest page is the docs hub, which renders none of the three. **And the round after *that* is
-  the run's own timeline** (the owner's feedback of 2026-10-19): the site figure alone moves once
-  more, by the rail, the connector, the rule that stops it at the last step and the markup that
-  places them, on the one page that renders a run — the page weight and the script stay where
-  they were, the heaviest page being the docs hub, which renders no step. **Every figure this
-  paragraph used to carry has been taken out of it**: the numbers are `website/README.md`'s and
-  `website/test/budget.mjs`'s, and the ones that were here were the branch's build of the day,
-  which is no longer what ships — they had already drifted once: page weight and whole site still
-  named the build of 2026-10-18 after four parts had added bytes to it.
+  heaviest page is the docs hub, which renders none of the three. **And a later round is the
+  console's screenshot slider** (the owner's feedback of 2026-10-19: a slider at the top of the
+  console page, data-driven from `website/data/console-screens.yaml` and shipping empty until
+  the owner takes the pictures), which moved the site figure alone once more, by the
+  component's stylesheet: Astro inlines it into the console page that imports it, whether or
+  not the slider renders, so the bytes are in the build while the list is empty and while it is
+  not. The page weight and the script stay where they were: the console page is not the
+  heaviest page, and the slider ships no script at all.
+  **And the round after *that* is the run's own timeline** (the owner's feedback of
+  2026-10-19): the site figure alone moves once more, by the rail, the connector, the rule that
+  stops it at the last step and the markup that places them, on the one page that renders a
+  run — the page weight and the script stay where they were, the heaviest page being the docs
+  hub, which renders no step.
+  **The figures themselves are the ones `website/README.md` writes, and they are written
+  there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
+  the build it can measure, and a derivation that names another build fails, which is what
+  stops the page and the site figures drifting down as pages grow (they had — page weight and
+  whole site still named the build of 2026-10-18 after four parts added bytes to it).
   **Which build that is, is the 2026-10-19 correction**: the figures are derived over the
   gates' own build of the site — a copy of the repository in a temp directory, built with the
   site's Astro by `test/lib/build.mjs`'s `buildCopy`, which carries no `.git` — and not over
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  **two different site figures** — the larger in a checkout with no tags, which is
-  `website-preview.yml`'s default checkout and so the deployed site, and the smaller with the
-  tags this repository's clone carries, the changelog page's own labels being the whole of the
-  difference (the exact bytes are the ones the derivation measures; they are not written here
-  for the reason above). A figure derived from one is
+  to two site figures a changelog page's own bytes apart — the larger in a checkout with no
+  tags, `website-preview.yml`'s default checkout and so the deployed site, and the smaller with
+  the tags this repository's clone carries — and `website/README.md` writes that pair and the
+  page's own bytes as the whole of the difference, with `website/test/budget.mjs` holding the
+  pair to that arithmetic in the one place it is written. A figure derived from one build is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
   the artifact gates over a copy with the console's flag flipped off — the state the checkout
-  built until the console's release turned it on — and that copy is a different build, **smaller
-  at the site figure** than the gates' own by the console option's own markup on the three pages
-  that render it (the counts are the gate's, not this document's), and the page weight where it
-  was — rather than another copy of this one.
-  **The direction is the one the flag's own round gave it, read the other way:** turning the
-  flag on added those bytes, so the copy that turns it back off is the smaller build
-  (2026-10-19).
+  built until the console's release turned it on — and that copy is a different build rather
+  than another copy of this one: turning the flag on added the console option's markup to the
+  pages that render it (the console page's downloads section, Getting Started's option and the
+  homepage's call to action), so the copy that turns it back off is the smaller build, with the
+  page weight where it was (2026-10-19).
 - **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
   acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
   `fugaro run` transcript the homepage carried (`Terminal.astro`, D184) is removed from it —
@@ -547,9 +554,11 @@ The only processing is a lossless-to-near-lossless size reduction: the PNG was q
 without dithering and stripped of metadata (ImageMagick), from 510,664 bytes to 130,533 bytes. The text
 stays sharp and the green and yellow words keep their colours. No row or text was cropped or edited.
 
-Size: 130,533 bytes, inside the enforced byte budgets (`website/README.md` states the three, and
-`website/test/budget.mjs` re-derives each over the gates' own build, so the numbers are not
-repeated here — the two assets and the `<img>` moved the site figure and nothing else, above).
+Size: 130,533 bytes, inside the enforced byte budgets: the three ceilings and the rule each is
+derived by are written in `website/README.md`, and `website/test/budget.mjs` is the case that
+reads them from there and holds them to the build it makes itself — no figure of them is copied
+here, for the reason the byte-budget bullet above gives. Placing the two assets and the `<img>`
+moved the site figure and nothing else (above).
 
 **It is on the homepage now** (`website/src/components/AgentChat.astro`): the slot
 `[data-slot="watch-screenshot"]` under the chat holds it, so the block that was empty until the asset

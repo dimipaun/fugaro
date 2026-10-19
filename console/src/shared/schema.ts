@@ -87,6 +87,20 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   requested_by: 'person',
   // A run record's own fields (`runview.Row`, the degraded shape).
   oauth_account: 'person',
+  // 0.9.0's keys on the live run shapes (`JSONRun`/`JSONFinished`, the Live
+  // screen's feed) and on `runview.Row`. `job`, `profile` and `provider` are
+  // the Cloud Run job a run is in and the (profile, provider) its name was
+  // computed from -- identifiers a policy wrote, drawn as labels, the class
+  // `workflow` and `batch` carry. `account` and `launched_by` are people: the
+  // account a run used, and who started it, as its own `launch.json` recorded
+  // them -- the same kind of value as `requested_by` above, and the class the
+  // recorder already gives them (`account` by name, `launched_by` by its `_by`
+  // suffix, `src/source/redact.ts`).
+  job: 'label',
+  profile: 'label',
+  provider: 'label',
+  account: 'person',
+  launched_by: 'person',
   branch: 'branch',
   log_url: 'url',
   // A pull request's URL. It is *text* -- design section 4.3's gap 7 is that
@@ -641,7 +655,26 @@ export const REPO_KEYS = [
   'burn',
   'kill',
 ]
-const RUN_KEYS = [
+/** RUN_KEYS is **every** JSON key of `JSONRun` (`internal/watch/json.go`), in
+ * the struct's own order -- `runs[]`, the Live screen's feed. It is closed for
+ * `RECORD_KEYS`'s reason and fails the same way: a key the struct writes and
+ * this list does not have makes `closed()` refuse the whole document, so the
+ * Live screen draws the skew state for a document it simply had not been told
+ * about.
+ *
+ * **`job`, `profile`, `provider`, `account` and `launched_by` arrived with
+ * 0.9.0** (the project-centric job triple, and who launched a run), and this
+ * list did not have them: every 0.9.0 `watch --json` document was refused whole
+ * as `runs[0].launched_by`. They are accepted and not read, like `title` on
+ * `runview.Row`: no Live-screen column draws them yet. They are classified in
+ * `WIRE_TEXT_CLASSES` all the same -- `job`, `profile` and `provider` as
+ * labels, `account` and `launched_by` as people -- because a string this shape
+ * may carry is a string the sanitizer must have a class for the moment a screen
+ * draws it.
+ *
+ * Exported so `schema.test.ts` can pin it against the struct, as it pins
+ * `RECORD_KEYS` and `REPO_KEYS`. */
+export const RUN_KEYS = [
   'run',
   'slug',
   'repo',
@@ -662,8 +695,19 @@ const RUN_KEYS = [
   'stuck',
   'workflow',
   'requested_by',
+  'job',
+  'profile',
+  'provider',
+  'account',
+  'launched_by',
 ]
-const FINISHED_KEYS = [
+/** FINISHED_KEYS is **every** JSON key of `JSONFinished`
+ * (`internal/watch/json.go`), in the struct's own order -- `finished[]` and
+ * `ready[]`, the Live screen's other two lists. It carries 0.9.0's five new
+ * keys too, for `RUN_KEYS`'s reason and with the same classification: a reader
+ * that follows a run out of `runs[]` must not be refused the row it lands on.
+ * Exported so `schema.test.ts` can pin it against the struct. */
+export const FINISHED_KEYS = [
   'run',
   'slug',
   'repo',
@@ -674,6 +718,11 @@ const FINISHED_KEYS = [
   'pr_url',
   'pr_number',
   'age_seconds',
+  'job',
+  'profile',
+  'provider',
+  'account',
+  'launched_by',
 ]
 const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', 'total_usd', 'compute_not_estimated']
 /**
@@ -690,10 +739,11 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * console happens to read, and a key the CLI adds in a later version is *still*
  * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
- * list. Keys accepted and not read (`title`, `project_layer`, `config_sha256`,
- * `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`,
- * `pr`, `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`,
- * `stale_draft`, `execution`, `batch`, `halt`, `previous_run`, `base_branch`)
+ * list. Keys accepted and not read (`title`, `launched_by`, `project_layer`,
+ * `config_sha256`, `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`,
+ * `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`, `draft_fallback`,
+ * `pr_status_at`, `stale_draft`, `execution`, `batch`, `halt`, `previous_run`,
+ * `base_branch`)
  * are the ones this screen has no use for yet; they are listed so that a
  * document carrying them is read rather than thrown away.
  *
@@ -712,6 +762,15 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * list without it would turn every 0.8.5 `runs ls --json` document into the
  * skew state. It is accepted and not read: the Runs screen's rows are this
  * document's records, and nothing here renders a record's title yet.
+ *
+ * **`launched_by` arrived with 0.9.0**, between `requested_by` and `pr_url` in
+ * the struct, and is written on every row whose `launch.json` recorded a
+ * launcher -- which is every launched run. This is `title`'s omission again,
+ * and it fails the same way: a list without the key refuses a real
+ * `runs ls --json` document whole, as `runs[0].launched_by`. It is accepted
+ * and not read (no screen draws who launched a run yet), and it is classified
+ * as a person's text in `WIRE_TEXT_CLASSES` -- the class `requested_by`
+ * carries, and the class the recorder already gives it by its `_by` suffix.
  */
 export const RECORD_KEYS = [
   'run',
@@ -729,6 +788,7 @@ export const RECORD_KEYS = [
   'halt',
   'batch',
   'requested_by',
+  'launched_by',
   'pr_url',
   'execution',
   'log_url',

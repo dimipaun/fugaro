@@ -14,13 +14,17 @@ import (
 // unreachable: every path into it passes through Request.Enable, whose zero
 // value is closed.
 //
-// What it is opened WITHOUT, by the owner's ruling of 2026-10-18: the
-// whole-project inventory (Task 4.1, inventory.go) is built and tested but is
-// NOT consulted by the managed apply, so D59's fallback to confirmations for a
-// resource created outside Fugaro does not happen in this release. The ruling
-// accepts that for 0.8.5, where a managed project is one `fugaro init
-// --create-project --managed` created fresh; wiring the inventory into the
-// apply is the plan's Task 4.5 (UNSCHEDULED, targeted at 0.9.0 with Task 6.1).
+// What it is opened WITH, as of Task 4.5 (the plan's wiring of the
+// whole-project inventory, in 0.9.0 as the owner's ruling of 2026-10-18 set):
+// the managed apply now also consults the whole-project inventory
+// (inventory.go, Task 4.1), so a resource the installation's own state does
+// not account for falls that run back to its confirmations and the gate's
+// opening buys an agent's session nothing there (D55, D59). The ruling's own
+// record — in 0.8.5 the inventory was a library only, and the gate opened
+// without it — is kept where it belongs, in the plan's Task 4.5 and the
+// design's D59 row. The gate here is still about the budget and nothing else:
+// the inventory's answer is not an input to Enable, it is read by the command
+// and handed to Apply beside this gate's own answer.
 //
 // Task 4.4 is the task that opens it, and it opens it in exactly one way: the
 // apply-time budget read of internal/managed/budget.go succeeded. The gate is
