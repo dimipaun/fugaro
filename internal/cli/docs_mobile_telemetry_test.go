@@ -55,7 +55,8 @@ import (
 // `mobile/GoogleService-Info.plist` (the file the shape filter cannot see) or
 // `mobile/google-services.json`; state a check number the register does not
 // write as its highest section; un-date the Check 110 row's "nothing above 109"
-// claim; or cite a path the tree does not have — this test fails, each of them.
+// claim; record 105, 106 and 107 as taken in the coordinator's checks row; or
+// cite a path the tree does not have — this test fails, each of them.
 const telemetryPlan = "docs/plans/2026-10-19-mobile-telemetry.md"
 
 // telemetryBlockRE is the plan's own statement of the block it takes, in the
@@ -415,6 +416,20 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 		if strings.Contains(row.text, "nothing above 109 is claimed") {
 			t.Errorf("docs/mobile/README.md's %s says \"nothing above 109 is claimed\", and the numbers above 109 that are claimed are 110 and the telemetry plan's 111–113: the claim is a dated reading of the register on 2026-10-19 and has to say so, or the two rows of this table disagree", row.name)
 		}
+	}
+
+	// **The coordinator's table says the same thing.** It is the one table in this
+	// repository that lists every work's block and every work's checks, and the
+	// next writer reads the free block out of it — so a cell still saying the
+	// telemetry plan took 105, 106 and 107 is how the reserved block gets taken a
+	// second time. This assertion is here because the drift was real: with the
+	// cell put back to its old words, the whole package stayed green.
+	coordinatorCell := telemetryIndexRow(t, readDoc(t, telemetryCoordinator), "| **Checks 1–109** |")
+	if !strings.Contains(coordinatorCell, "111, 112 and 113") {
+		t.Errorf("docs/coordinator/README.md's checks row does not name 111, 112 and 113: %s takes them and this table is where the next writer reads what is free, so a cell that does not record them is a cell that invites 105 to be taken again", telemetryPlan)
+	}
+	if strings.Contains(coordinatorCell, "105, 106 and 107") {
+		t.Errorf("docs/coordinator/README.md's checks row still records 105, 106 and 107 as taken by the telemetry plan: 105–109 are reserved and unused, the plan takes none of them, and this table is what the next writer reads")
 	}
 
 	// The plan: Phase 7, proposed, with its tasks and their dependency rows.
