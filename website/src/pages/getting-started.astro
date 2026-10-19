@@ -123,6 +123,19 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
 // rest are the paths a reader chooses between once they know what they are choosing.
 const [quickPath, ...otherPaths] = install.paths
 
+// The two commands the setup steps name, read from the path that owns them rather than typed
+// into a step: `fugaro init` and `/fugaro:setup` are the plugin path's own commands, and a step
+// that printed its own spelling of either would be the fourth copy of the install instructions
+// this page's header refuses. A file that stopped carrying them stops the build here, where the
+// failure names the file, rather than rendering a step about a command that is not in it.
+const pluginPath = install.paths.find((path) => path.id === 'plugin')
+if (pluginPath === undefined || pluginPath.commands.length < 2) {
+  throw new Error(
+    "website/data/install.yaml carries no `plugin` path with its two commands (`fugaro init` and `/fugaro:setup`), which the page's setup steps render",
+  )
+}
+const [initCommand, setupCommand] = pluginPath.commands
+
 // The steps a real installation needs, in the order `docs/gcp-setup.md` puts them. Each one
 // is a precondition or a step of that runbook or of the plugin's `setup` skill, said in one
 // line, with the link carrying the detail: the page states what to do and the document
@@ -208,8 +221,10 @@ const doc = (path: string, fragment: string): string =>
       and `docs/gcp-setup.md` is the runbook that walks them through it. The steps below are
       that runbook's own preconditions and short path in its own order, one line each, and
       every one of them links to the document that carries it — the page states what to do
-      and the document states how, so the two cannot drift. No secret is named here, and no
-      value is anywhere on this site. */}
+      and the document states how, so the two cannot drift. The two commands the last steps
+      name are rendered from `install.yaml`'s plugin path rather than typed here, so those
+      steps move with the file too. No secret is named here, and no value is anywhere on this
+      site. */}
   <section id="setup">
     <h2>Set up your installation</h2>
 
@@ -230,7 +245,7 @@ const doc = (path: string, fragment: string): string =>
         the shared budget.
       </li>
       <li>
-        <a href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}>Run <code>fugaro init</code></a>
+        <a href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}>Run <code>{initCommand}</code></a>
         in your own terminal.
       </li>
       <li>
@@ -238,8 +253,8 @@ const doc = (path: string, fragment: string): string =>
         prompts.
       </li>
       <li>
-        <a href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}>Run <code>/fugaro:setup</code></a>,
-        merge, run <code>fugaro init</code> again.
+        <a href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}>Run <code>{setupCommand}</code></a>,
+        merge, run <code>{initCommand}</code> again.
       </li>
     </ol>
   </section>

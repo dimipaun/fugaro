@@ -146,10 +146,15 @@ added or removed without this sentence moving fails there:
   file's **"not yet released"** state wherever `git tag --list` finds no tag
   (`src/lib/changelog.mjs`), so the same commit builds to **979,575 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **978,048 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **978,060 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
-  measure the build the README named and `website-preview` could not deploy. So the derivation
+  measure the build the README named and `website-preview` could not deploy. Only the no-tags
+  build can be measured here, so `test/budget.mjs` holds the pair to each other instead: it
+  reads both figures wherever this repository writes them — this paragraph and that file's two
+  spellings of it — and refuses a pair that is not one changelog page apart: the check the
+  rework of 2026-10-19 needed, when re-deriving the site figure twice in one branch moved this
+  one and left the clone figure 12 bytes behind. So the derivation
   is read over **the gates' own build of the site**: a copy of the repository in a temp
   directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`, which
   carries no `.git` at all and so gives every checkout the same three numbers. The site's own
@@ -162,7 +167,7 @@ added or removed without this sentence moving fails there:
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 976,349 with the flag off to 977,921 with it on:
+    moves the **site figure up by 1,572 bytes**, from 978,003 with the flag off to 979,575 with it on:
     the console option's own markup on the three pages that render it — the console page's
     downloads section (each artifact's checksum beside its link, and the verification command)
     1,100, Getting Started's option 386 and the homepage's call to action 86. It moves

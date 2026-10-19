@@ -33,7 +33,7 @@
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
 // deployed site's — builds 979,575 bytes where this repository's own clone, which carries the
-// tags, builds 978,048.
+// tags, builds 978,060.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -68,7 +68,7 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,222,402 bytes. Every file in `dist/` on that build summed to 977,921
+//   - Whole site: 1,224,469 bytes. Every file in `dist/` on that build summed to 979,575
 //     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
 //     `fugaro watch` assets); × 1.25, rounded up. **It is the build with no tags** — the one
 //     the gates make, and the one the deployed site is — and the changelog page's own "not yet
@@ -144,6 +144,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { DIST, SITE, builtPages, filesUnder, find, parse, servedFile, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
 import { DOCUMENT_PAGES } from './lib/exempt.mjs'
@@ -571,7 +572,7 @@ test('the README budget lines are read strictly', () => {
 // site was in before the console's release, which the checkout no longer builds — and runs the
 // artifact gates over that copy, so the flag's two states are both held to the ceilings. A
 // derivation held to that copy would be the flag's own bytes rather than the site's: measured on
-// this build, **1,572 bytes smaller** at the site figure — 976,349 against the 977,921 below — the
+// this build, **1,572 bytes smaller** at the site figure — 978,003 against the 979,575 below — the
 // console option's markup on the three pages that render it (the console page's downloads
 // 1,100, Getting Started's option 386 and the homepage's call to action 86), and
 // nothing at all at the page weight. The direction is the flag's own: turning
@@ -630,8 +631,8 @@ export function derivationFailures(readme, measured) {
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 977,921 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 976,406 with the tags this
+ * builds to two different site figures — 979,575 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 978,060 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation
@@ -694,6 +695,65 @@ test('a budget raised without re-deriving it is refused', () => {
       derivationFailures(readme, { ...now, [key]: Math.floor(now[key] / 2) }).join('\n'),
       /re-derive it/,
       `a ${key} derivation far above the real build is not refused`,
+    )
+  }
+})
+
+// ---- the site's two build shapes, held to each other ------------------------------------
+//
+// The derivation above is measured on ONE build, on purpose: a copy of the repository with no
+// `.git`, which is the no-tags shape every environment builds the same way. The site's other
+// shape — a checkout whose tags let the changelog render the released state — is the smaller
+// one, and its figure is not gate-enforced (nothing here can tag a build), so it drifted once:
+// a round re-derived the site figure by the bytes it added and left the clone figure where it
+// was, putting the two 12 bytes further apart than the changelog page they differ by. What can
+// be held without a tagged build is their own arithmetic, in every place this repository writes
+// the pair: the clone build is the no-tags build less the changelog page's "not yet released"
+// labels, which the README names as the whole of the difference.
+const SHAPES = [
+  ['website/README.md', /\*\*([\d,]+) bytes in a checkout with no\s+tags\*\*[\s\S]*?\*\*([\d,]+) bytes with the tags this repository's own clone carries\*\*/],
+  ['website/test/budget.mjs', /builds ([\d,]+) bytes where this repository's own clone[\s\S]*?tags, builds ([\d,]+)\./],
+  ['website/test/budget.mjs', /builds to two different site figures — ([\d,]+) bytes in a checkout with no tags[\s\S]*?and ([\d,]+) with the tags this[\s\S]*?repository/],
+]
+const CHANGELOG_DELTA = /the changelog page's ([\d,]+) bytes being the whole of the difference/
+
+test('the site’s two build shapes are stated with one pair of figures, a changelog page apart', () => {
+  const texts = {
+    'website/README.md': readFileSync(path.join(SITE, 'README.md'), 'utf8'),
+    'website/test/budget.mjs': readFileSync(fileURLToPath(import.meta.url), 'utf8'),
+  }
+  const n = (s) => Number(s.replace(/,/g, ''))
+
+  const stated = SHAPES.map(([file, re]) => {
+    const m = re.exec(texts[file])
+    assert.ok(
+      m,
+      `${file} no longer states the site's two build shapes in the form this case reads, so the pair below is checked in fewer places than it is written: the README's "**N bytes in a checkout with no tags** … **N bytes with the tags this repository's own clone carries**", and this file's two spellings of it`,
+    )
+    return { file, noTags: n(m[1]), clone: n(m[2]) }
+  })
+
+  const delta = CHANGELOG_DELTA.exec(texts['website/README.md'])
+  assert.ok(delta, "website/README.md no longer names the changelog page's own bytes as the whole of the difference between the site's two builds")
+  const changelog = n(delta[1])
+  assert.ok(changelog > 0, 'the difference between the two builds is zero bytes, which no changelog page is')
+
+  const [first] = stated
+  for (const shape of stated) {
+    assert.equal(
+      shape.noTags,
+      first.noTags,
+      `${shape.file} states the no-tags build as ${shape.noTags} bytes where the README states ${first.noTags}: the figure is gate-enforced above, and a second spelling of it that moves with nothing is the one a reader is left with`,
+    )
+    assert.equal(
+      shape.clone,
+      first.clone,
+      `${shape.file} states the clone build as ${shape.clone} bytes where the README states ${first.clone}: the two figures are one pair, and each is re-derived in the commit that moves it (D192)`,
+    )
+    assert.equal(
+      shape.noTags - shape.clone,
+      changelog,
+      `the site's two builds are ${shape.noTags - shape.clone} bytes apart in ${shape.file} and the README names the changelog page's ${changelog} bytes as the whole of the difference: the smaller figure is the no-tags one less that page, so a re-derivation that moves one of them moves the other`,
     )
   }
 })
