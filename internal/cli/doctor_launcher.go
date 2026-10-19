@@ -33,7 +33,11 @@ import (
 // jobs' policies say, and the jobs' policies cannot show that. The launcher
 // role's own permissions are a fact of the installation module, not of any
 // job, so this check reports grants and does not judge them: it is an info
-// line, and only a read that fails is a warning.
+// line — not a failure under --strict, and still printed, which is what makes
+// the surface readable at all (the check carries a Problem and is not OK for
+// exactly that reason: printDoctorChecks prints the checks that are not OK,
+// so a line a person must be able to read cannot be an OK one). Only a read
+// that fails is a warning.
 //
 // Read-only, and metadata only: job names and their IAM policies, never an
 // execution, an override or an env var. A test configuration (no_auth with
@@ -51,7 +55,7 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	if err != nil {
 		return unchecked(err)
 	}
-	launchers := lc.Terraform.Launchers
+	launchers := launcherMembers(lc.Terraform.Launchers, lc.Terraform.Operators)
 	parent := fmt.Sprintf("projects/%s/locations/%s", lc.GCPProject, lc.Region)
 	var (
 		jobs      []string // every job in the location, by name
@@ -129,11 +133,17 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	case len(launchers) == 0:
 		// Nothing to compare the policies' members against: a zero here is
 		// the local config's, not the jobs'.
-		problem += " (the local config lists no launcher, so no grant could be attributed to one; run doctor with the operator's config to see the launchers' reach)"
+		problem += " (the local config lists no launcher and no operator, so no grant could be attributed to one; run doctor with the operator's config to see the launchers' reach)"
 	case len(startable) > 0:
 		problem += ": " + strings.Join(startable, ", ")
+	case grants > 0:
+		// A launcher IS named on a job's policy, on a role that cannot start
+		// one (roles/run.viewer, say — counted as a grant and never as a job a
+		// launcher can start). Saying "no launcher is granted on any job" here
+		// would be false about the very lines this one is read beside.
+		problem += fmt.Sprintf(" (the %d grant(s) are on roles that cannot start a job, so fugaro run cannot start one of them)", grants)
 	default:
-		problem += " (no launcher is granted on any job, so fugaro run cannot start one)"
+		problem += " (no launcher or operator is named in the policy of any job whose policy could be read, so fugaro run cannot start one of them)"
 	}
 	if withheld > 0 && read > 0 {
 		problem += fmt.Sprintf("; of %d job(s) whose policy your credentials may not read, you can start %d", withheld, len(selfCan))
@@ -141,7 +151,11 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 			problem += ": " + strings.Join(selfCan, ", ")
 		}
 	}
-	out := []doctorCheck{{ID: "launcher-jobs", OK: true, Severity: "info", Problem: problem,
+	// Not OK, and Severity "info": printDoctorChecks prints the checks that are
+	// not OK, and an "info" one never fails doctor, with or without --strict
+	// (checksFail). An OK check carrying this Problem is a line nobody ever
+	// reads, which is the one thing this check cannot be.
+	out := []doctorCheck{{ID: "launcher-jobs", Severity: "info", Problem: problem,
 		Fix: "the launcher role's permissions are unchanged by the project-centric model (run.jobs.run, run.jobs.runWithOverrides and the secret metadata list): what changes is how many jobs they attach to, so a grant count that falls while runs still work is a migration doing what it says, and a job a launcher is not granted on is a job fugaro run cannot start. Project-level run roles bypass the jobs' own policies and are not counted here"}}
 	if len(public) > 0 {
 		slices.Sort(public)
@@ -163,6 +177,20 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 // with overrides (the run's FUGARO_RUN), so run.jobs.run alone does not start
 // a Fugaro run.
 var launchPermissions = []string{"run.jobs.run", "run.jobs.runWithOverrides"}
+
+// launcherMembers is the members a job's policies are compared against: the
+// local config's launchers AND its operators, each once. The installation
+// grants the job runner role to both — internal/infra's launchersWithOperators
+// is what the roots render, "operators get everything launchers get" (they
+// run, watch and cancel runs too) — so a binding naming an operator is a grant
+// the installation made, and a job only an operator can start is still a job
+// Fugaro can start. Comparing against lc.Terraform.Launchers alone read every
+// operator-only binding as no grant at all.
+func launcherMembers(launchers, operators []string) []string {
+	out := slices.Concat(launchers, operators)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
 
 // launcherGrantsOn is the (job, launcher) grants job's own policy carries and
 // whether a launcher can start it. Members are compared as IAM spells them
