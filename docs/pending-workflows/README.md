@@ -159,11 +159,15 @@ step's. The `release` job, in order:
    `APPLE_TEAM_ID` before anything is signed, `npm run package` (Task 4.1's
    script: `--mac --universal --publish never`, the hardened runtime,
    `console/entitlements.mac.plist`, `-c.extraMetadata.version=X.Y.Z` from the
-   tag; electron-builder notarises and staples the
-   `.app` **before** it builds the `.dmg` and the `.zip`), the signature's
-   TeamIdentifier and the bundle's staple checked, then the `.dmg` signed with
-   `codesign --timestamp`, submitted with `xcrun notarytool submit --wait` and
-   stapled; its exit trap removes the key material;
+   tag, and `-c.mac.notarize=false` plus `--dir` on the bundle-only pack:
+   electron-builder signs the `.app` and notarises nothing, because its own
+   notarise-and-staple is inside `npm run package` and its staple cannot be
+   retried on its own — `console/scripts/notarize-and-staple.sh` submits, staples
+   and validates the bundle instead, and the second pack builds the `.dmg` and
+   the `.zip` **from the stapled bundle**, `--prepackaged "$APP"`), the
+   signature's TeamIdentifier checked, then the `.dmg` signed with
+   `codesign --timestamp`, submitted, stapled and validated by the same script;
+   its exit trap removes the key material;
 4. verifies what ships — the SHA-256 of the `.dmg` and the `.zip`, the bundle
    inside the mounted `.dmg` and the extracted `.zip` (`codesign --verify
    --deep --strict`, `spctl --assess --type execute`, `xcrun stapler
@@ -174,14 +178,21 @@ step's. The `release` job, in order:
    `images.yml` use).
 
 **Re-copy required: the staged file changed on 2026-10-18 and the copy under
-`.github/workflows/` did not.** Three consecutive release runs failed at
-Apple's ticket-delivery lookup — `xcrun stapler staple` and `xcrun stapler
-validate` printing `NSURLErrorDomain Code=-1005 "The network connection was
-lost"` against
-`.../com.apple.gk.ticket-delivery/production/public/records/lookup`, followed
-by the signing step's "carries no stapled ticket: refusing to publish artifacts
-that would carry it unstapled" — a network failure to Apple, not a rejection
-(the notarisation had been accepted). The staged file now retries those calls;
+`.github/workflows/` did not.** Release runs failed at Apple's ticket-delivery
+lookup — `NSURLErrorDomain Code=-1005 "The network connection was lost"`
+against `.../com.apple.gk.ticket-delivery/production/public/records/lookup`,
+error 68: the fourth attempt died in **the packer's own staple, inside
+`npm run package`** (`@electron/notarize`, "Failed to staple your application
+with code: 68"), and the fifth in a `xcrun stapler validate`, which the signing
+step then refused with "carries no stapled ticket: refusing to publish
+artifacts that would carry it unstapled". A network failure to Apple, not a
+rejection: the notarisation itself had been accepted. (Only those two runs
+reached Apple at all: earlier attempts failed on setup — missing `APPLE_API_*`
+secrets, and a certificate import with the wrong password.) That is why the
+packer's notarisation is now off in the workflow and the staple, the validation
+**and the submission** are the staged file's own: the packer's staple is one
+call inside its process, where nothing can retry it. The staged file retries
+the two `xcrun stapler` calls;
 **the applied copy is the older text, so until the owner re-copies the staged
 file in, `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`'s byte-identity
 clause fails** (its last assertion compares the two files and says they
@@ -194,43 +205,39 @@ refused, **the CLI's releases included**, until the owner copies the staged
 file in. The PR carrying this change is a draft for exactly that reason, and
 its own CI is red until then.
 
-**Every `xcrun stapler` call is retried, bounded — and no other call is.** One
-shell function, `retry_apple_network`, is defined once in the signing step and
-once — character for character the same — in the verification step, and it
-wraps the two `xcrun stapler` calls this file makes: `xcrun stapler staple "$DMG"`
-(the disk image's, which is this file's own) and `xcrun stapler validate` (the
-`.app`'s in the signing step; the bundle inside the mounted `.dmg`, the one
-inside the extracted `.zip` and the disk image itself in the verification
-step). It makes up to **five** attempts with a growing pause between them
-(**15, 30, 60, 90** seconds), prints each attempt's number and exit code
-(`apple-network attempt 2 of 5: … exited 68`), and returns the failure only
-after the fifth — so a ticket that is genuinely absent, or a notarisation that
-was really rejected, still refuses to publish. In the verification step each
-call is inside `record`, so the attempts land in `console-verification.txt`
-with the rest of the evidence.
+**Every `xcrun stapler` call in the pipeline is retried, bounded — and no
+other call is.** The signing step does its notarising, stapling and validating
+through `console/scripts/notarize-and-staple.sh`, which holds one shell
+function, `retry_apple_network` — defined once more, character for character
+the same, in the verification step. It wraps every `xcrun stapler staple` and
+`xcrun stapler validate` on the way to a release: the bundle's and the disk
+image's in the script, and the bundle inside the mounted `.dmg`, the one inside
+the extracted `.zip` and the disk image itself in the verification step. It
+makes up to **five** attempts with a growing pause between them (**15, 30, 60,
+90** seconds), prints each attempt's number and exit code (`apple-network
+attempt 2 of 5: … exited 68`), and returns the failure only after the fifth —
+so a ticket that is genuinely absent still refuses to publish. In the
+verification step each call is inside `record`, so the attempts land in
+`console-verification.txt` with the rest of the evidence. The test also runs
+the helper: `TestDocsConsoleReleaseRetryHelperIsBounded`.
 
-**The other Apple-network calls are deliberately not retried, and that is not
-an oversight.** `xcrun notarytool submit --wait` *is* the submission: a
-rejection is final, re-submitting is not this file's business, and the line
-after it (`retry_apple_network xcrun stapler staple "$DMG"`) is where a
-rejected .dmg still refuses, five attempts later. The `.app`'s own notarise and
-staple happen inside `npm run package`, in the same command as every
-`codesign`, so they cannot be retried on their own — and the copies of that
-bundle which actually ship are the ones inside the `.dmg` and the `.zip`,
-already built by then, which the verification step's retried validations
-guard. The signing step therefore retries only the `.app`'s **validation**, and
-does not re-staple the loose `.app`: that would attach a ticket to a copy
-nobody downloads, while adding a network call that can refuse a build which is
-already correct.
+**The submission is deliberately not retried, and that is not an
+oversight.** `xcrun notarytool submit --wait` *is* the submission: a rejection
+is final and re-submitting is not this file's business. The script reads
+Apple's answer as JSON (`--output-format json`) and refuses at once — with the
+answer printed and no staple — unless the status is exactly `Accepted`, so a
+rejected notarisation cannot be stapled over. A test runs the script with a
+fake `xcrun` and proves that too: a status that is not `Accepted` exits
+non-zero with no `stapler` call at all and no pause.
 
-**Nothing outside those two calls is retried at all**: `codesign`, the
-TeamIdentifier checks, `scripts/release-gate.sh`, the fail-closed secret check
-and the `spctl`/`hdiutil`/`ditto` assessments all fail at once, exactly as
-before, and the helper is called nowhere else in either job. The test reads
-this both ways: every line naming the helper is one of the retried calls, and
-**every line that calls `xcrun stapler` names it**, so a fresh, un-retried
-`xcrun stapler validate` added to either step fails the test rather than
-quietly missing the retry.
+**Nothing else is retried at all**: `codesign`, the TeamIdentifier checks,
+`scripts/release-gate.sh`, the fail-closed secret check and the
+`spctl`/`hdiutil`/`ditto` assessments all fail at once, exactly as before, and
+the helper is called nowhere else in either job. The test reads this both ways
+over the script and over every step: every line naming the helper is one of the
+retried calls, and **every line that calls `xcrun stapler` names it**, so a
+fresh, un-retried `xcrun stapler validate` added anywhere fails the test rather
+than quietly missing the retry.
 
 The `publish` job (`needs: release`) downloads that artifact (download-artifact
 at the pin `images.yml` uses), re-checks every asset with `sha256sum --strict
@@ -239,7 +246,7 @@ publishes the console's **own release, `console-vX.Y.Z`**, never touching the
 CLI's.
 
 **The version is the tag's.** `console/package.json` says `0.0.0` and nothing
-in it is a release version, so both packs are stamped with
+in it is a release version, so every pack is stamped with
 `-c.extraMetadata.version=X.Y.Z` (through `env:`, never an inlined `${{ }}`):
 the `.dmg` and `.zip` file names carry the real version (`Fugaro
 Console-X.Y.Z-universal.dmg`), the app's version is it, the job refuses
@@ -339,22 +346,28 @@ repository builds, signs, notarises or verifies a bundle. What *is* verified is
 its text,
 through `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` and
 `TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, `TestDocsConsoleReleasePublishRefusesToClobber`,
-`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (both run the staged scripts under bash with a faked `gh`) and
+`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (both run the staged scripts under bash with a faked `gh`),
 `TestDocsConsoleReleaseRetryHelperIsBounded` (which runs the Apple-network retry
 helper under bash with a fake `sleep` and a command that fails a set number of
-times) in
+times) and `TestDocsConsoleNotarizeAndStapleScript` (which runs
+`console/scripts/notarize-and-staple.sh` end to end with fake `xcrun`, `ditto`
+and `sleep` binaries on `PATH`: it recovers after lost connections, gives up
+after five attempts, and refuses a submission whose status is not `Accepted`
+without making a single `stapler` call) in
 `internal/cli/docs_desktop_console_test.go` (both picked up by the
 `-run 'Docs|Lint'` filter): the trigger surface, the ancestry check and the
 gate first, every install and download before the one step that holds the
 secrets, the secret names and their bindings, the fail-closed check, no `if:`,
 `continue-on-error`, stray `|| true`, inlined `${{ }}` or shell tracing, no
 line that prints the key material, the keychain and its trust list, the team
-checks, the packed bundle's staple, the disk image's signature, notarisation
-and staple, the bounded retry around the staple and validate calls (five
+checks, the bundle-only pack with the packer's notarisation off, the script's
+submission and its `Accepted` check, its staple and validation of the bundle
+and of the disk image (and that the targets are packed from the stapled
+bundle), the bounded retry around the staple and validate calls (five
 attempts, growing pauses, attempt number and exit code, and nothing else
 wrapped), the verification and its checksums, the separate `console-vX.Y.Z`
 release and its re-run refusals, the two-job split and each job's token,
-the version stamp on both packs, the four action pins, the permissions, and
+the version stamp on every pack, the four action pins, the permissions, and
 byte-identity with the copy under `.github/workflows/` once it exists.
 
 Accepted residuals: the keychain password (`security create-keychain -p`,
@@ -372,8 +385,13 @@ Unverified offline and left to Check 59a: that electron-builder accepts
 `codesign` signs with only `apple-tool:,apple:` in the partition list; that the
 unsigned warm-up pack leaves everything the signed pack needs in the cache; and
 that `-c.extraMetadata.version` reaches the bundle's version and the
-artifact names as described; and that the signed, stapled DMG passes
-`spctl --assess --type open --context context:primary-signature`.
+artifact names as described; that the signed, stapled DMG passes
+`spctl --assess --type open --context context:primary-signature`; and, added
+2026-10-19, that `npm run package -- --dir -c.mac.notarize=false` builds and
+signs the universal `.app` and no targets, and that `npm run package --
+--prepackaged "release/mac-universal/Fugaro Console.app"
+-c.mac.notarize=false` then packs the `.dmg` and the `.zip` from that bundle
+with the tag's version still in their names.
 
 The 2026-10-18 retry leaves one thing for Check 59a to confirm on a real runner,
 because it cannot be observed here: that a `xcrun stapler` call which does meet
@@ -381,10 +399,12 @@ a transient CloudKit failure recovers inside the five attempts. What is
 verified offline is the helper's own behaviour — its bound, its pauses, its
 per-attempt reporting and its returning the failure only after the fifth — run
 under bash with a fake `sleep`; the real service's timing is not. The retry
-adds no new command to the pipeline: the three `xcrun stapler validate` calls,
-the `.dmg`'s `xcrun stapler staple` and the `.app`'s staple inside
-`npm run package` are the ones it already made, and the first four are what the
-helper wraps.
+wraps only `xcrun stapler`: the two calls in
+`console/scripts/notarize-and-staple.sh` (the bundle's and the disk image's)
+and the three `xcrun stapler validate` calls in the verification step. The
+submission is not among them, and the 2026-10-19 change is why the `.app`'s
+staple is a call the pipeline makes itself instead of one inside
+`npm run package`.
 
 Two things a reader must not take from those tests: the pinned SHAs are read
 against upstream by the person copying the file in (see "Before you copy" below —
