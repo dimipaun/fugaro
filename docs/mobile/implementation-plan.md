@@ -573,7 +573,9 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 
 ### Task P5.2: Push — UNSCHEDULED
 
-**Depends on.** D121 answered "yes". **Files.** None yet. **Verification.** Check 88. **Reviewer tier.** SECURITY-SENSITIVE, when it is scheduled.
+**Depends on.** The owner's **later, separate yes to push**. **D121 was answered "no push in v1" on 2026-10-17** (reconciliation.md), and the answer defers push to "a separate decision with its own service, its own device-token store and its own retention question" — which is this task. Its **design is written**: [design/push-notifications.md](../design/push-notifications.md), **design only; nothing is implemented**, whose **Q1–Q9** are open for the owner and which allocates no decision number.
+**Files.** The design and its documentation test `internal/cli/docs_mobile_push_test.go` — **docs only: no service, no token store, no rules change, no app code**. A later, scheduled implementation would touch a new sender in `internal/cli` (draining a pending-push node) or an extension of the history sweep job (`internal/cli/history.go`, `deploy/terraform/gcp/modules/installation/history.tf`), the device node `config/admin/devices/$uid` of P6.4 (`internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/rules.go`, `internal/projectpolicy/version.go`), the app's registration path under `mobile/src/`, and a disclosure in `SECURITY.md` (which today says nothing about the phone).
+**Verification.** **Check 88** — named by the design and **not written by it**; the register (`docs/gcp-live-checklist.md`) carries no `## Check 88` section and no `| 88 |` row today, and this task writes the check into the register when it is scheduled, per P4.2's rule that a check's text is written before it is run. **Reviewer tier.** SECURITY-SENSITIVE, when it is scheduled.
 
 ### Task P5.3: The cloud STT/TTS allow-list — UNSCHEDULED
 
