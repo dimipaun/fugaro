@@ -491,13 +491,14 @@ func TestPRStateDisabled(t *testing.T) {
 	}
 }
 
-// Many rows resolve, and never more than Concurrency gh processes at a time.
+// Many rows resolve, never more than Concurrency gh processes run at once, and
+// two of them really do run at once.
 //
-// The timeout is prStateTestTimeout: a gh here deliberately takes its time
-// (each one holds its slot for a moment), and one killed at a short timeout
-// would never run its own decrement — the counter would leak, and the peak
-// would read as a bound that is not there. Nothing here is about how long a
-// lookup takes.
+// The timeout is prStateTestTimeout: this test asserts an ANSWER (the peak), so
+// it must not also be a test of how fast a loaded machine can fork and exec a
+// shell. A gh killed at a short budget would answer nothing, and a killed gh
+// never runs its own decrement, which would leave the counter reading a peak
+// that is not there.
 func TestPRStateBoundsConcurrency(t *testing.T) {
 	dir := t.TempDir()
 	live := filepath.Join(dir, "live")
@@ -532,11 +533,12 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	if n := len(ghCalls(t, calls)); n != len(rows) {
 		t.Fatalf("calls = %d, want %d", n, len(rows))
 	}
-	// The bound is what is read, not the exact peak: whether two lookups
-	// really do overlap in a given run is up to the scheduler, and the
-	// counter can only ever over-count — a gh killed before its decrement
-	// leaves the count high, never low — so a peak above the bound is a
-	// violation and a peak below it is a quiet machine, not a bug.
+	// The peak is read exactly. Two is the semaphore's bound, so a higher
+	// reading is a lookup that ran outside it; and the bound has to be
+	// *reached*: eight rows with a gh that holds its slot for 0.2s must put
+	// two lookups in flight at once, and a peak of one would mean this test no
+	// longer sees the overlap it exists for. A one-sided check would let that
+	// pass as a quiet machine.
 	b, err := os.ReadFile(peak)
 	if err != nil {
 		t.Fatal(err)
@@ -545,8 +547,8 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("peak concurrency = %q, want a number", b)
 	}
-	if n > 2 {
-		t.Fatalf("peak concurrency = %d, want at most 2", n)
+	if n != 2 {
+		t.Fatalf("peak concurrency = %d, want exactly 2: the semaphore's bound, and the overlap it exists to allow", n)
 	}
 }
 
