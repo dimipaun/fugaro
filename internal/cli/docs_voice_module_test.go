@@ -2,6 +2,9 @@ package cli
 
 import (
 	"os"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -84,6 +87,12 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 		"## 2. The table: what the spec asks for, and what the tree already has",
 		"## 4. Resolutions",
 		"## 5. Open for the owner",
+		// The owner's answer of 2026-10-19, right after the questions it
+		// answers, and the two things it has to state.
+		"## 5a. Owner's answers",
+		"### What it changes in this spec's sections",
+		"### What the answer does not do",
+		"**Q1 — answered 2026-10-19",
 		"## 6. Verification: the providers' public documentation, 2026-10-19",
 		"## 7. UNVERIFIED",
 		// The five classifications, and the standing of the unverifiable ones.
@@ -100,6 +109,29 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 			t.Errorf("docs/voice-module/reconciliation.md lacks %q", want)
 		}
 	}
+
+	// The README's list of the checks this module touches and finding #44's must
+	// be the same list -- the index says what the document says, and a check
+	// that appears in one and not the other is how "103" went missing from the
+	// index. #44 states its list in bold, so the numbers are read from the
+	// document rather than repeated here.
+	i := strings.Index(recon, "**#44 —")
+	if i < 0 {
+		t.Fatal("docs/voice-module/reconciliation.md has no finding #44 to read the check list from")
+	}
+	finding44 := recon[i:]
+	if j := strings.Index(finding44, "\n## "); j >= 0 {
+		finding44 = finding44[:j]
+	}
+	checks := regexp.MustCompile(`\*\*(\d+)\*\*`).FindAllStringSubmatch(finding44, -1)
+	if len(checks) < 5 {
+		t.Fatalf("finding #44 names only %d checks in bold; the parse or the document changed shape", len(checks))
+	}
+	for _, m := range checks {
+		if !strings.Contains(readme, m[1]) {
+			t.Errorf("docs/voice-module/README.md does not list check %s, which finding #44 lists for this work", m[1])
+		}
+	}
 }
 
 // TestDocsVoiceModuleReconciliationAllocatesNoDecisions: the brief's rule is
@@ -108,6 +140,11 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 // allocated by this document (this repository's D-numbers are the owner's to
 // hand out). Q1 must be the gate (the second explicit egress decision D44
 // reserved), Q13 the last, and Q14 must not exist.
+//
+// "Recommendation first" is checked PER QUESTION, on the first option bullet of
+// each Q-block. A document-wide search for the marker would pass while twelve
+// of the thirteen questions had lost theirs, which is what an earlier revision
+// of this test did.
 func TestDocsVoiceModuleReconciliationAllocatesNoDecisions(t *testing.T) {
 	const path = "docs/voice-module/reconciliation.md"
 	recon := readDoc(t, path)
@@ -127,8 +164,6 @@ func TestDocsVoiceModuleReconciliationAllocatesNoDecisions(t *testing.T) {
 		"### Q13 —",
 		// The statement of the rule, in the document's own words.
 		"No D-number is allocated",
-		// Every question recommends first -- the brief's ordering.
-		"*(Recommended.)*",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q", path, want)
@@ -137,6 +172,233 @@ func TestDocsVoiceModuleReconciliationAllocatesNoDecisions(t *testing.T) {
 	if strings.Contains(recon, "### Q14 —") {
 		t.Error("docs/voice-module/reconciliation.md grew a Q14; re-read this test and the document's numbering rule")
 	}
+
+	// Every question recommends first, and this is the per-question half.
+	questions := regexp.MustCompile(`(?m)^### Q\d+ — .*$`).FindAllStringIndex(recon, -1)
+	if len(questions) == 0 {
+		t.Fatal("no owner question headings found: the parse or the document changed shape")
+	}
+	for i, q := range questions {
+		heading := recon[q[0]:q[1]]
+		block := recon[q[1]:]
+		if i+1 < len(questions) {
+			block = recon[q[1]:questions[i+1][0]]
+		} else if j := strings.Index(block, "\n## "); j >= 0 {
+			block = block[:j]
+		}
+		first := strings.Index(block, "\n- **(")
+		if first < 0 {
+			t.Errorf("%s: %s has no option bullet", path, heading)
+			continue
+		}
+		bullet := block[first+1:]
+		if end := strings.Index(bullet, "\n- **("); end >= 0 {
+			bullet = bullet[:end]
+		}
+		if !strings.Contains(bullet, "*(Recommended.)*") {
+			t.Errorf("%s: %s does not recommend first: its first option bullet lacks %q", path, heading, "*(Recommended.)*")
+		}
+	}
+}
+
+// voiceModuleRowAudit is one row of the hand audit behind
+// TestDocsVoiceModuleReconciliationFindingsResolve: a distinctive substring of
+// the row's first cell, and the finding numbers that discuss that row.
+type voiceModuleRowAudit struct {
+	row      string
+	findings []int
+}
+
+// voiceModuleSection1Audit is §1's table: which findings back each of the
+// design's own questions. Derived by reading §3's findings, not by trusting the
+// table -- which is how six of §2's citations were found to name findings about
+// something else.
+var voiceModuleSection1Audit = []voiceModuleRowAudit{
+	// Q0 is the design's own gate; the spec is silent on it and no finding
+	// covers it.
+	{"**Q0** —", nil},
+	{"**Q1** —", []int{20, 31}},
+	{"**Q2** —", []int{28, 29, 30, 31, 32}},
+	{"**Q3** —", []int{8, 19}},
+	{"**Q4** —", []int{44}},
+}
+
+// voiceModuleSection2Audit is §2's table, one entry per spec concept, in the
+// spec's own order.
+var voiceModuleSection2Audit = []voiceModuleRowAudit{
+	{"Hands-free voice interface", []int{1}},
+	{"Pipeline, not speech-to-speech", []int{1, 20}},
+	{"One common interface per direction", []int{2}},
+	{"a separable module", []int{3}},
+	{"App stays in the foreground", []int{4}},
+	{"Apple SpeechAnalyzer", []int{5, 33}},
+	{"Android on-device SpeechRecognizer", []int{20}},
+	{"whisper.cpp on Linux/Windows", []int{20}},
+	{"Deepgram and AssemblyAI", []int{6}},
+	{"Silero VAD", []int{21}},
+	{"Wake word", []int{7, 34, 35}},
+	{"Kokoro on all platforms", []int{20, 39}},
+	{"Cartesia; ElevenLabs later", []int{6, 31}},
+	{"A cloud icon on the voice screen", []int{8, 19}},
+	{"Record raw session audio", []int{22}},
+	{"Log latency to first partial", []int{41}},
+	{"Provider keys at project level", []int{28, 29}},
+	{"Short-lived temporary tokens", []int{14, 30, 31}},
+	{"Rules-based classifier", []int{9}},
+	{"Debounce window", []int{10}},
+	{"A small fast LLM (Haiku)", []int{11, 26}},
+	{"On-demand digest", []int{10}},
+	{"Interrupt switch", []int{12}},
+	{"Echo cancellation", []int{37, 38}},
+	{"Phone: routing, interruptions", []int{42}},
+	{"No destructive voice commands", []int{18, 43}},
+}
+
+// TestDocsVoiceModuleReconciliationFindingsResolve: every "#N" the document
+// cites must be a finding §3 defines, and each row of §1's and §2's tables must
+// cite exactly the findings that discuss that row. The second half is the one
+// that catches a real defect rather than a typo: the document once cited #33 --
+// Apple's OS 26 floor -- for the Haiku summariser, and #36 -- the
+// dependency-licence gap -- for the provider retention register, and both are
+// numbers that exist, so only a per-row audit finds them.
+func TestDocsVoiceModuleReconciliationFindingsResolve(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+
+	// §3's findings, parsed from their headings. They run #1..#N with no gap
+	// and no repeat: a document that cites #45 when findings stop at #44 fails
+	// here, and so does one that renumbers a finding.
+	titles := map[int]string{}
+	for _, m := range regexp.MustCompile(`(?m)^\*\*#(\d+) — (.+?) \([^)]*\)\*\*$`).FindAllStringSubmatch(recon, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("%s: unparsable finding number %q", path, m[1])
+		}
+		if _, dup := titles[n]; dup {
+			t.Errorf("%s: finding #%d is defined twice", path, n)
+		}
+		titles[n] = m[2]
+	}
+	if len(titles) == 0 {
+		t.Fatal("no finding headings parsed: the parse or the document changed shape")
+	}
+	for n := 1; n <= len(titles); n++ {
+		if _, ok := titles[n]; !ok {
+			t.Errorf("%s: finding #%d is missing; the findings must run #1..#%d with no gap", path, n, len(titles))
+		}
+	}
+
+	// Every "#N" in the prose is a finding that exists. The document writes
+	// pull-request numbers as three-digit numbers -- the oldest in flight here
+	// is #584 -- so a one- or two-digit "#N" is a finding reference and must be
+	// one §3 defines. That is the half which catches "#45" in a document whose
+	// findings stop at #44.
+	for _, m := range regexp.MustCompile(`#(\d+)`).FindAllStringSubmatchIndex(recon, -1) {
+		n, err := strconv.Atoi(recon[m[2]:m[3]])
+		if err != nil {
+			t.Fatalf("%s: unparsable citation %q", path, recon[m[0]:m[1]])
+		}
+		if n >= 100 {
+			continue
+		}
+		if _, ok := titles[n]; !ok {
+			t.Errorf("%s cites #%d, which §3 does not define: the findings run #1..#%d", path, n, len(titles))
+		}
+	}
+
+	// §1's and §2's tables, row by row.
+	section := func(heading, next string) string {
+		i := strings.Index(recon, heading)
+		if i < 0 {
+			t.Fatalf("%s lacks the heading %q", path, heading)
+		}
+		j := strings.Index(recon[i:], next)
+		if j < 0 {
+			t.Fatalf("%s lacks %q after %q", path, next, heading)
+		}
+		return recon[i : i+j]
+	}
+	// cellIdx is negative-counted from the end, because a cell may itself
+	// contain a pipe: the last cell before the closing one is the finding
+	// column in §2, and §1's is the second.
+	rows := func(section string, cellIdx int) map[string]string {
+		out := map[string]string{}
+		for _, line := range strings.Split(section, "\n") {
+			if !strings.HasPrefix(line, "|") {
+				continue
+			}
+			cells := strings.Split(line, "|")
+			if len(cells) < 4 || strings.HasPrefix(strings.TrimSpace(cells[1]), "---") {
+				continue
+			}
+			i := cellIdx
+			if i < 0 {
+				i = len(cells) + i
+			}
+			out[cells[1]] = cells[i]
+		}
+		return out
+	}
+	audit := func(label, body string, cellIdx int, wants []voiceModuleRowAudit) {
+		table := rows(body, cellIdx)
+		for _, w := range wants {
+			concept, cell := "", ""
+			for c, v := range table {
+				if strings.Contains(c, w.row) {
+					concept, cell = c, v
+					break
+				}
+			}
+			if concept == "" {
+				t.Errorf("%s: no row of %s matches %q; the table or the audit moved", path, label, w.row)
+				continue
+			}
+			var got []int
+			for _, m := range regexp.MustCompile(`#(\d+)`).FindAllStringSubmatch(cell, -1) {
+				n, err := strconv.Atoi(m[1])
+				if err != nil {
+					t.Fatalf("%s: unparsable citation %q in the %s row %q", path, m[1], label, concept)
+				}
+				got = append(got, n)
+			}
+			slices.Sort(got)
+			want := slices.Clone(w.findings)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s: the %s row %q cites %v; the audit, read from §3's findings, expects %v", path, label, concept, got, want)
+			}
+			for _, n := range got {
+				if _, ok := titles[n]; !ok {
+					t.Errorf("%s: the %s row %q cites #%d, which §3 does not define", path, label, concept, n)
+				}
+			}
+		}
+	}
+	audit("§1", section("## 1. ", "## 2. "), 2, voiceModuleSection1Audit)
+	audit("§2", section("## 2. ", "## 3. "), -2, voiceModuleSection2Audit)
+
+	// The register the brief caught: the design's provider retention-and-training
+	// register is a condition on the cloud rows, and the findings that carry it
+	// are the summariser's ungoverned egress (#26) and the credentials service's
+	// jobs-only scope (#28) -- not the dependency-licence gap (#36), which is
+	// what an earlier revision of §1's table cited for it. This is prose, not a
+	// table row, so it is pinned by its own paragraph rather than by the audit.
+	i := strings.Index(recon, "**One condition in the design is not one of its questions")
+	if i < 0 {
+		t.Fatal("§1's paragraph stating the register as a condition is gone")
+	}
+	para := recon[i:]
+	if j := strings.Index(para, "\n\n"); j >= 0 {
+		para = para[:j]
+	}
+	for _, want := range []string{"(#26)", "(#28)"} {
+		if !strings.Contains(para, want) {
+			t.Errorf("%s: §1's register paragraph does not name %s, the finding behind it", path, want)
+		}
+	}
+	if strings.Contains(para, "#36") {
+		t.Error("§1's register paragraph cites #36, which is the dependency-licence gap: the register's findings are #26 and #28")
+	}
 }
 
 // TestDocsVoiceModuleReconciliationCitationsExist: the reconciliation's
@@ -144,7 +406,7 @@ func TestDocsVoiceModuleReconciliationAllocatesNoDecisions(t *testing.T) {
 // on-main path below is stat'ed, not merely required as text, so a document
 // that is renamed out from under §1 or §2 fails here.
 //
-// Three cited paths are deliberately NOT stat'ed: docs/mobile/design/cloud-stt-tts.md
+// Three cited paths are deliberately NOT stat'ed: docs/mobile/design/voice-evaluation-switch.md
 // (PR #633), docs/design/console-styling.md (PR #634) and
 // docs/design/project-named-oauth-tokens.md (PR #584) exist only on their
 // branches, not on this tree's main. The document says so in its own words and
@@ -195,7 +457,7 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 		// links. project-named-oauth-tokens.md is the third: a review caught it
 		// annotated as #584's base when it is on that branch and on neither its
 		// base nor main.
-		"../mobile/design/cloud-stt-tts.md",
+		"../mobile/design/voice-evaluation-switch.md",
 		"../design/console-styling.md",
 		"../design/project-named-oauth-tokens.md",
 		"**Three paths cited below are not on `main`",
@@ -207,7 +469,27 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): six, all run and restored.
+// Mutation (verified, run and restored): eight, all run and restored.
+// (7) Pointing §2's Haiku row at #33 (Apple's OS 26 floor) instead of #26 fails
+// TestDocsVoiceModuleReconciliationFindingsResolve with `the §2 row " A small
+// fast LLM (Haiku) turns a batch into one spoken line " cites [11 33]; the
+// audit, read from §3's findings, expects [11 26]`. (8) Writing "#45" back into
+// #18's consequence fails it with `cites #45, which §3 does not define: the
+// findings run #1..#44`. (9) Pointing §1's Q3 row at #25 instead of #19 fails
+// it on the §1 row's own line. (10) Replacing the register paragraph's
+// (#26)/(#28) with (#36) fails it three times: both names missing, and the
+// paragraph citing the dependency-licence gap. (11) Dropping
+// "*(Recommended.)*" from Q5's first option bullet fails
+// TestDocsVoiceModuleReconciliationAllocatesNoDecisions with `### Q5 — Which
+// wake word ... does not recommend first`. (12) Renaming §5a's heading fails
+// TestDocsVoiceModuleFolderIsWritten with `lacks "## 5a. Owner's answers"`.
+// (13) Removing "103" from the README's check list fails the same test with
+// `docs/voice-module/README.md does not list check 103`. (14) Reverting every
+// `voice-evaluation-switch.md` link to `cloud-stt-tts.md` fails
+// TestDocsVoiceModuleReconciliationCitationsExist with `does not disclose its
+// branch-only citations`.
+//
+// And six older ones, all run and restored.
 // (4) Putting the marker claim back into the README ("the text between the
 // `=== SPEC TEXT ===` markers") fails TestDocsVoiceModuleFolderIsWritten twice,
 // once for each banned string. (5) Wrapping spec.md in "=== SPEC TEXT ===" and
