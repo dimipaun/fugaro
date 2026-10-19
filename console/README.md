@@ -701,6 +701,44 @@ a pipe that never closes. A torn last line is dropped rather than
 recorded as garbage, while a last line that is a whole JSON document — a CLI
 that wrote its final frame without a newline — is recorded like any other.
 
+### The `normal` fixture: recorded from the real CLI, scrubbed by hand
+
+`test/fixtures/normal.ndjson` is the one fixture of the eight that exists, and
+it is **half real**: the owner ruled on 2026-10-19 "record from the real
+installation, scrub by hand". One snapshot (`fugaro watch --json --once`) was
+read from a real installation with the 0.8.6 CLI (header `cli: 0.8.6`), outside
+this repository, and `tools/scrub-fixture/` replaced every value that could
+identify it. **The shape is the real CLI's** (every key, its type, its order, which
+optional keys are present); **every value that is not a CLI enum is invented.**
+The raw recording is never committed and is deleted after the scrub.
+
+```
+node node_modules/typescript/bin/tsc -p tsconfig.record-fixture.json
+node .record-fixture/tools/scrub-fixture/index.js --in <raw.json, outside the repo> \
+  --out test/fixtures/normal.ndjson --hashes tools/scrub-fixture/normal.scrubbed.json --cli 0.8.6
+```
+
+The scrub (`scrub.ts`) is deterministic and deny-by-default (an unknown key is a
+refusal). It replaces the project, repo, slug, run ID (rebuilt from `document.now`
+minus the run's own age, so IDs agree with the clock), title (`# Task: example
+task N`), models, requester and kill actor, PR URL, workflow, recipe and every
+dollar amount; totals, percentages, `runs` and `run_hours` are recomputed from the
+invented rows so the document's invariants hold. The result then goes through the
+console's redactor with a public key (as `synthetic.ndjson` does), which is why
+the repo and slug read as pseudonyms (`r-...`, `slug-...`) and the project as
+`<project>`. Kept as the CLI wrote them: mode, stage, round, health, deadline,
+auth, verify, day, now, ages, burn, connection and `queued_note`.
+`tools/scrub-fixture/normal.scrubbed.json` holds the SHA-256 of every raw value the
+scrub removed (never the values), which the scan test checks the fixture against.
+
+**Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
+`repo-at-cap` (they need cloud writes), and the other cases still await a
+recording. `normal` is one snapshot: no `finished`, `ready` or queued runs (the
+runs bucket did not answer within 3 s on that read), so those shapes are covered
+by `synthetic.ndjson` and the Go types, not by this file.
+Held by `test/unit/normal-fixture.test.ts` (shape, invariants, scan, scrub) and
+the Go `TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes`.
+
 ### The eight recordings, and why seven of them are missing
 
 Design §9.1 asks for eight cases, one recording each, and `FIXTURE_CASES` in
