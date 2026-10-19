@@ -230,10 +230,23 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		t.Errorf("%s's `| 57 |` row does not point at %q, so it no longer says where the check's body is: %s", checklistPath, want, row57)
 	}
 	compute := readDoc(t, "docs/design/compute-backend.md")
-	for _, want := range []string{"### 7.2 The check", "Check 57: the compute-instance Docker backend"} {
-		if !strings.Contains(compute, want) {
-			t.Errorf("docs/design/compute-backend.md does not carry %q, so %s §13's sentence that 57's section lives in its §7.2 is stale", want, designPath)
+	heading, body := false, ""
+	for _, line := range strings.Split(compute, "\n") {
+		if line == "### 7.2 The check" { // the heading itself, not a renamed one
+			heading, body = true, ""
+			continue
 		}
+		if heading && strings.HasPrefix(line, "### ") {
+			break // the section ends at the next heading
+		}
+		if heading {
+			body += line + "\n"
+		}
+	}
+	if !heading {
+		t.Errorf("docs/design/compute-backend.md has no `### 7.2 The check` heading, so %s §13's sentence that 57's section lives in its §7.2 is stale", designPath)
+	} else if !strings.Contains(body, "Check 57: the compute-instance Docker backend") {
+		t.Errorf("docs/design/compute-backend.md's §7.2 no longer opens with the check's own title, so %s §13's sentence that 57's body lives there is stale", designPath)
 	}
 	row := ""
 	for _, line := range strings.Split(design, "\n") {
