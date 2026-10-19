@@ -122,6 +122,89 @@ func TestSchemaVectorsReplay(t *testing.T) {
 	}
 }
 
+// nest rewrites a decoded record into the other spelling of an object this
+// package has: every object, at every depth, becomes a Record — the package's
+// own exported type. The wire path never produces one (Decode builds
+// map[string]any), so this is the shape a caller who assembles a record in Go
+// produces, and the validators must answer the same question about it.
+func nest(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := Record{}
+		for key, item := range v {
+			out[key] = nest(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = nest(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// TestRecordsNestedInRecordsValidate is the other half of the object question.
+// `Record` and `map[string]any` are assignable but not assertable from one
+// another, so a validator that asked `value.(map[string]any)` refused a record
+// this package's own CanonicalBytes serialises cleanly — a spurious refusal,
+// and a disagreement between the two halves of the package about what an
+// object is. Every accepted vector is replayed here in that spelling: it must
+// validate exactly as before and still produce the same bytes.
+func TestRecordsNestedInRecordsValidate(t *testing.T) {
+	file := loadVectors(t)
+	accepted := 0
+	for _, entry := range list(t, file["cases"], "cases") {
+		vector := object(t, entry, "case")
+		name := text(t, vector["name"], "name")
+		t.Run(name, func(t *testing.T) {
+			record := object(t, vector["message"], "message")
+			direction := text(t, vector["direction"], "direction")
+			wantBytes := text(t, vector["canonical"], "canonical")
+
+			nested, isRecord := nest(record).(Record)
+			if !isRecord {
+				t.Fatalf("nest produced %T, not a Record", nest(record))
+			}
+
+			var refusal *Refusal
+			if _, isHeartbeat := nested["boot"]; isHeartbeat {
+				_, refusal = ValidateHeartbeat(nested)
+			} else {
+				_, refusal = ValidateMessage(nested)
+			}
+			// The same verdict the decoded spelling gets, whichever it is: the
+			// three cases the schema itself refuses must stay refused, and the
+			// rest must stay accepted.
+			if want, refusedBySchema := caseSchemaRefusal[name]; refusedBySchema {
+				if refusal == nil {
+					t.Errorf("the schema refuses this record (%s) and the nested spelling is accepted", want.why)
+				} else if refusal.Code != want.code {
+					t.Errorf("the nested spelling is refused %s, wanted %s (%s)", refusal, want.code, want.why)
+				}
+			} else {
+				if refusal != nil {
+					t.Errorf("a record whose objects are Records is refused %s, and it is the same record", refusal)
+				}
+				accepted++
+			}
+
+			got, err := CanonicalBytes(nested, direction)
+			if err != nil {
+				t.Fatalf("CanonicalBytes: %v", err)
+			}
+			if string(got) != wantBytes {
+				t.Errorf("the nested spelling canonicalises differently:\n got %s\nwant %s", got, wantBytes)
+			}
+		})
+	}
+	if accepted != 21 {
+		t.Fatalf("%d cases were accepted, not the 21 the schema accepts", accepted)
+	}
+}
+
 func TestSchemaVectorDirectionPairs(t *testing.T) {
 	file := loadVectors(t)
 	key := text(t, file["key"], "key")
@@ -330,6 +413,37 @@ func TestKeysSortByByteOrder(t *testing.T) {
 	}
 }
 
+// TestNegativeZeroValidates pins the split the module's README spells out: the
+// schema ACCEPTS -0 as an `at` and canonicalBytes refuses to spell it, so a
+// record carrying one is a valid record that can be neither tagged nor
+// verified. The two halves of this same question live in two different
+// functions, which is exactly why it is worth pinning here.
+func TestNegativeZeroValidates(t *testing.T) {
+	file := loadVectors(t)
+	var plain map[string]any
+	for _, entry := range list(t, file["cases"], "cases") {
+		vector := object(t, entry, "case")
+		if text(t, vector["name"], "name") == "plain message" {
+			plain = object(t, vector["message"], "message")
+		}
+	}
+	if plain == nil {
+		t.Fatal("the vector file carries no \"plain message\" case")
+	}
+	record := Record{}
+	for key, value := range plain {
+		record[key] = value
+	}
+	record["at"] = number("-0")
+
+	if _, refusal := ValidateMessage(record); refusal != nil {
+		t.Errorf("the schema accepts -0 as an `at` and this package refuses it %s", refusal)
+	}
+	if _, err := CanonicalBytes(record, "inbox"); err == nil {
+		t.Error("-0 is canonicalised, and a record carrying it can be neither tagged nor verified")
+	}
+}
+
 func TestCanonicalBytesRefusesValuesWithNoCanonicalForm(t *testing.T) {
 	base := func() Record {
 		return Record{"id": "m-0001", "mac": strings.Repeat("a", MACMax), "at": number("1700000000000")}
@@ -342,7 +456,16 @@ func TestCanonicalBytesRefusesValuesWithNoCanonicalForm(t *testing.T) {
 		{"a null", Record{"id": "m-0001", "landed_at": nil}, "never null"},
 		{"an explicit null where a value belongs", Record{"at": nil, "id": "m-0001"}, "never null"},
 		{"a float", Record{"at": number("1700000000000.5")}, "safe integer"},
+		// Every literal that spells negative zero, not just the plainest one:
+		// the module refuses all of them and a canonicaliser that let `-0.0`
+		// through would write "0" and tag a record the phone will not verify.
 		{"negative zero", Record{"at": number("-0")}, "-0"},
+		{"negative zero with a fraction", Record{"at": number("-0.0")}, "-0"},
+		{"negative zero with trailing zeroes", Record{"at": number("-0.00")}, "-0"},
+		{"negative zero in exponent form", Record{"at": number("-0e0")}, "-0"},
+		{"negative zero in upper exponent form", Record{"at": number("-0E0")}, "-0"},
+		{"negative zero with a signed exponent", Record{"at": number("-0e+0")}, "-0"},
+		{"negative zero in fraction and exponent form", Record{"at": number("-0.000e-5")}, "-0"},
 		{"a number past the safe line", Record{"at": number("9007199254740993")}, "safe integer"},
 		{"a stored direction", Record{"direction": "inbox"}, "the reader supplies it"},
 		{"a lone separator", Record{"text": "a\u2028b"}, "U+2028"},

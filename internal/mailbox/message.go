@@ -208,7 +208,7 @@ func Decode(data []byte) (Record, error) {
 		}
 		return nil, fmt.Errorf("mailbox: reading a record: %w", err)
 	}
-	object, ok := value.(map[string]any)
+	object, ok := asObject(value)
 	if !ok {
 		return nil, ErrNotAnObject
 	}
@@ -678,16 +678,23 @@ const maxSafeInteger = int64(1)<<53 - 1
 // literals whose bytes the two languages disagree about. A literal written in
 // exponent form, or with a trailing `.0`, is accepted when it holds an integer
 // — JSON.parse gives 1e3 as 1000 in JavaScript and JSON.stringify writes
-// "1000" — and refused when it does not. -0 is refused by its own literal,
-// because it is a safe integer to `Number.isSafeInteger` and still has no
-// single spelling.
+// "1000" — and refused when it does not.
+//
+// Negative zero is refused for every literal that spells it — "-0", "-0.0",
+// "-0e0" and the rest — which is why the question is asked of the parsed VALUE
+// and not of the text: these all parse to the one double `-0`, they are all
+// safe integers to `Number.isSafeInteger`, and the module's own canonicalBytes
+// throws for all of them (README: a record carrying -0 "can be neither tagged
+// nor verified"). Refusing only the literal "-0" would let `-0.0` through,
+// canonicalise it to "0" and tag it — a byte-parity hole in the one function
+// whose whole contract is byte parity.
 func serialiseNumber(literal string) (string, error) {
-	if literal == "-0" {
-		return "", errors.New("mailbox: -0 is refused: it is a safe integer with no single spelling")
-	}
 	f, err := strconv.ParseFloat(literal, 64)
 	if err != nil || f != math.Trunc(f) || math.Abs(f) > float64(maxSafeInteger) {
 		return "", errors.New("mailbox: a number must be a safe integer, so both languages spell it the same way")
+	}
+	if f == 0 && math.Signbit(f) {
+		return "", errors.New("mailbox: -0 is refused: it is a safe integer with no single spelling")
 	}
 	return strconv.FormatInt(int64(f), 10), nil
 }
@@ -882,7 +889,7 @@ func agentsField(value any) checked[[]Agent] {
 	seen := map[string]bool{}
 	for i, item := range list {
 		where := indexField("agents", i)
-		entry, isObject := item.(map[string]any)
+		entry, isObject := asObject(item)
 		if !isObject {
 			return bad[[]Agent](CodeNotAnObject, where)
 		}
@@ -942,7 +949,7 @@ func actionField(value any, kind string) checked[*Action] {
 	if kind != "action" {
 		return bad[*Action](CodeFieldNotAllowed, "action")
 	}
-	record, isObject := value.(map[string]any)
+	record, isObject := asObject(value)
 	if !isObject {
 		return bad[*Action](CodeNotAnObject, "action")
 	}
@@ -1013,7 +1020,7 @@ func actionField(value any, kind string) checked[*Action] {
 // to whatever parser sees it. Refusing both families here is what stops a
 // record from choosing the consumer's command line.
 func targetField(value any, verb string) checked[Target] {
-	record, isObject := value.(map[string]any)
+	record, isObject := asObject(value)
 	if !isObject {
 		return bad[Target](CodeNotAnObject, "action.target")
 	}
@@ -1123,7 +1130,7 @@ func positiveIntField(value any, field string) (int64, *Refusal) {
 // itself is the phone's, P6.2's, and deliberately not here: the pending time is
 // phone-local state.
 func confirmationField(value any) checked[Confirmation] {
-	record, isObject := value.(map[string]any)
+	record, isObject := asObject(value)
 	if !isObject {
 		return bad[Confirmation](CodeNotAnObject, "action.confirmation")
 	}
@@ -1247,6 +1254,29 @@ func sortedKeys(value map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// asObject answers "is this value an object?" once, for every place that asks
+// it: the decoder, the validators and the serialiser.
+//
+// It accepts both spellings of an object this package has — `map[string]any`,
+// which is what Decode builds at every depth and what an encoding/json caller
+// hands in, and `Record`, the package's own exported type. `Record` is defined
+// as `map[string]any`, so the two are ASSIGNABLE to each other but not
+// ASSERTABLE from an `any`: a type assertion to a non-interface type requires
+// an identical dynamic type. Without this, a caller who builds a record with a
+// nested Record gets a spurious not-an-object refusal for a record that
+// CanonicalBytes serialises cleanly — the wire path is unaffected, but the two
+// halves of the package would disagree about what an object is.
+func asObject(value any) (map[string]any, bool) {
+	switch v := value.(type) {
+	case map[string]any:
+		return v, true
+	case Record:
+		return v, true
+	default:
+		return nil, false
+	}
 }
 
 // has reports whether a record carries a key at all, which is a different
