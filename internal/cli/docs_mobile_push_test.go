@@ -727,6 +727,11 @@ func TestDocsMobilePushRegistrationTokenHasACarrier(t *testing.T) {
 		"**one of the writers** of the push node",
 		"it writes it at pairing",
 		"The CLI writes `config/admin/push/$uid` during D165/P6.6's pairing",
+		// The field-list claim the review caught: `FIELDS` is NOT the same list
+		// as the inbox node's — it has eleven members to the node's ten, and the
+		// extra one (`acked`) is the outbox's. The paragraph states the
+		// difference; this forbids the old gloss from surviving beside it.
+		"the same closed list",
 	} {
 		if strings.Contains(flat, normSpace(stale)) {
 			t.Errorf("%s still says %q, but D165's pairing flow cannot carry a phone's registration token: the request node admits only the phone's public key and its timestamp (§3.5 (a))", docPath, stale)
