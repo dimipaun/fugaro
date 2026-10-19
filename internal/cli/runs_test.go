@@ -56,7 +56,7 @@ func TestLsFiltersAndTotals(t *testing.T) {
 	e1 := seedRun(t, f, today+"-090000-aaaa", "b1", "someone@example.com", true)
 	seedRun(t, f, today+"-091000-bbbb", "b1", "other@example.com", true)
 	seedRun(t, f, today+"-092000-cccc", "b2", "someone@example.com", false)
-	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since
+	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since // runid-guard:allow
 	f.run.SetState(e1, backend.StateRunning)
 
 	out, _, err := execute(t, "runs", "ls", "--json")
@@ -610,9 +610,14 @@ func TestLsWarnsUnreadableStatus(t *testing.T) {
 	}
 }
 
-// runIDAt is a run ID of the day d days ago, at hhmmss, with suffix hex.
+// runIDAt is a run ID of the day daysAgo days ago, at hhmmss, with suffix
+// hex: recentRunID (runid_test.go) in whole days. Like it, it reads lsNow,
+// the clock the listings are windowed by, so a test that pins that clock mints
+// and lists against the same time. The follow-up commands (run --pr, run
+// --retry) read the wall clock instead: mint their runs with wallRunIDAt
+// (runid_test.go).
 func runIDAt(daysAgo int, hhmmss, hex string) string {
-	return time.Now().UTC().AddDate(0, 0, -daysAgo).Format("20060102") + "-" + hhmmss + "-" + hex
+	return mintRunIDAt(lsNow, daysAgo, hhmmss, hex)
 }
 
 // seedSpec stores spec as its run's task.json and, when launched, starts

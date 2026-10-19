@@ -74,10 +74,16 @@ func (f *budgetFixture) writeResult(t *testing.T, slug, run, status string) {
 		`{"version":1,"run_id":"`+run+`","repo":"acme/app","status":"`+status+`","outcome":"none","started_at":"2026-10-02T09:00:00Z"}`)
 }
 
-// runID is a valid-looking run id minted roughly d ago from now, unique via
-// suffix.
+// runID is a valid-looking run id minted d before the clock watch's recency
+// windows read (watchNow: the queued scan's lookbacks and the degraded view's
+// window), unique via suffix. It is the mint the watch tests use, and the
+// clock is the one watch is windowed by: minting against another clock (lsNow,
+// time.Now) would put the id outside the window a test pinning watchNow pins,
+// and fail for a reason the test never meant. recentRunID (runid_test.go) and
+// runIDAt (runs_test.go) are the same mint against lsNow, the clock the
+// listings are windowed by; all three share mintRunID.
 func runID(d time.Duration, suffix string) string {
-	return time.Now().Add(-d).UTC().Format("20060102-150405") + "-" + suffix
+	return mintRunID(watchNow, d, suffix)
 }
 
 func TestWatchShowsClaimedRunAsQueued(t *testing.T) {
@@ -154,7 +160,17 @@ func TestWatchShowsLaunchedRunAsQueued(t *testing.T) {
 func TestWatchStartedRunNotDuplicatedAsQueued(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
-	run := "20261002-090000-aaaa" // seedWatch's own live run
+	// The run is minted inside the queued scan's listing window
+	// (finishedLookback, 24h) so the scanner really does read it as a queued
+	// candidate and the live row has to win: seedWatch's own 2026-10-02 id is
+	// older than that window, so a fixed id made this pass without ever
+	// reaching the dedup it names (#651). runID, not recentRunID: this window
+	// is watch's, measured from watchNow, and minting against lsNow would put
+	// the id somewhere the pinned window never looks.
+	run := runID(30*time.Second, "a11e")
+	f.db.Set(budget.PathAgent(appSlug, run), map[string]any{
+		"repo": "acme/app", "title": "mine", "stage": "code", "round": 2, "auth": "api_key", "spent": 4 * usd1,
+		"startedAt": time.Now().UnixMilli() - 600_000, "updatedAt": time.Now().UnixMilli(), "requestedBy": "someone@example.com"})
 	f.writeTask(t, appSlug, run, "")
 	f.writeClaim(t, appSlug, run, time.Now().Add(-time.Minute))
 
