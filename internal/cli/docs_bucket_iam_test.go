@@ -100,7 +100,11 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 			"launchers write only `runs/` and, since 0.9.0, `tokens/`",
 		},
 		"../../docs/design/v1.md": {
-			"`roles/storage.objectUser` under the launcher condition",
+			// The widened half is part of the pin, not only the grant's name: a
+			// bullet trimmed back to "under the launcher condition" alone keeps
+			// the name and drops the prefixes, which is exactly the state the
+			// round-3 review found (both v1.md places said runs/ alone).
+			"`roles/storage.objectUser` under the launcher condition — `runs/` and, since 0.9.0, `tokens/`",
 		},
 	}
 	for file, wants := range required {
@@ -117,10 +121,15 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 	// v1.md states the launcher's grant twice — the launch-IAM list under §3.2
 	// and the "Who can do what" launchers bullet — and both said runs/ alone, so
 	// a Contains over one wording would not notice the other being left behind.
+	// The count is over the widened wording, not over the grant's name: counting
+	// "under the launcher condition" alone lets both places drop `tokens/` and
+	// still total 2, which a planted mutation confirmed before this was
+	// tightened.
+	const v1Grant = "`roles/storage.objectUser` under the launcher condition — `runs/` and, since 0.9.0, `tokens/`"
 	if data, err := os.ReadFile("../../docs/design/v1.md"); err != nil {
 		t.Fatal(err)
-	} else if n := strings.Count(string(data), "`roles/storage.objectUser` under the launcher condition"); n != 2 {
-		t.Errorf("../../docs/design/v1.md states the launcher's objectUser grant under the launcher condition %d times, want 2 (the launch-IAM bullet and the \"Who can do what\" launchers bullet): the runs/-only half is back in one of them", n)
+	} else if n := strings.Count(string(data), v1Grant); n != 2 {
+		t.Errorf("../../docs/design/v1.md states the launcher's objectUser grant as `runs/` and `tokens/` under the launcher condition %d times, want 2 (the launch-IAM bullet and the \"Who can do what\" launchers bullet): the runs/-only half is back in one of them", n)
 	}
 }
 

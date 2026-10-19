@@ -316,13 +316,23 @@ func keyMaterial(s string) bool {
 //     on no other. That is the one-token-one-job-account property — a token
 //     readable by two jobs is an account two jobs share — and it is the half
 //     the tftest cannot show, because this is the plan of the whole module;
-//   - and nothing the installation already runs is replaced: the rollout adds
-//     the account's job, and what else moves in the goldens moves in place —
-//     the project job accounts gain their read-only `tokens/` grant (a new
-//     binding), the runs bucket's lifecycle rule now covers `tokens/`, and each
-//     project job's environment carries this release's variables (D9). No
-//     resource is replaced or deleted; the goldens are regenerated in the same
-//     change, so the generator's diff against them is empty.
+//   - and nothing the installation already runs is replaced. The rollout adds
+//     the account's job — its scenario is the new golden
+//     `installation-accounts.plan.json` — and six of the nine goldens that
+//     already existed each moved in place, which is what they now record (the
+//     three firebase ones are untouched):
+//     `google_storage_bucket_iam_member.job_tokens`, a read-only
+//     `roles/storage.objectViewer` binding on the run's sealed budget token,
+//     added to every job account (each workflow's job account on its own
+//     `tokens/<slug>/` — `repo.plan.json`, `repo-adopt.plan.json`,
+//     `repo-scope-move.plan.json` — and each project job account on the whole
+//     `tokens/` prefix, in the four installation scenarios); the runs bucket's
+//     one-day `/budget-token` cleanup rule now matching `tokens/` beside
+//     `runs/`; and each project job's environment gaining this release's
+//     variables, `FUGARO_GITHUB_APP_ID` and `FUGARO_SECRET_ENVS` (D9). Every
+//     one of those changes is an addition or an update in place: no resource is
+//     replaced or deleted, and the goldens are regenerated in the same change,
+//     so the generator's diff against them is empty.
 func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 	f := accountsGoldenFixture(t)
 	if len(f.ProjectSecrets) == 0 {

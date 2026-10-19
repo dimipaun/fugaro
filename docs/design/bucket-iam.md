@@ -29,6 +29,8 @@ The 0.6.0 guard `config publish --executable-changes` is a CLI check. It binds o
 
 **Goal.** Only operators (and the accounts the modules already scope) write installation data. Launchers keep exactly what they need: reading everything they read today, and writing their runs' objects under `runs/`.
 
+> **What 0.9.0 added, and what this goal therefore reads as now.** The sealed budget token is a launcher's own write too (`tokens/<slug>/<run>/budget-token` — [budget-token-channel.md](budget-token-channel.md) §7.2, D16), so `gcp.LauncherBucketCondition` covers `runs/` **and** `tokens/`, and §3's end-state table states that pair. The sentence above is this section's record of the 0.7.0 goal, which was `runs/` alone.
+
 ## 2. What exists today (verified in the code, `origin/main` 65a6a24)
 
 ### 2.1 Principals and their grants on the runs bucket
