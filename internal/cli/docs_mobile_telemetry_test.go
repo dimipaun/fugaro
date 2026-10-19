@@ -51,9 +51,9 @@ import (
 //     in several places; this test requires the rule, the two paths and the word
 //     EAS, and — the half that would otherwise rot — walks BOTH paths itself:
 //     neither may be in the tree and neither may be tracked. It walks them from
-//     its own list rather than from planPaths, because planPaths cannot see the
-//     iOS one at all (see telemetryNativeConfig), and the blind spot is asserted
-//     rather than assumed.
+//     its own list rather than from planPaths, because planPaths drops the iOS
+//     one (isPlanPath does not accept a `.plist`; see telemetryNativeConfig), and
+//     the blind spot is asserted rather than assumed.
 //  5. **the app carries no advertising identifier.** The website's privacy page
 //     promises it, so it is a requirement rather than a hope: the two Android
 //     switches `false`, the `AD_ID` permission removed from the merged manifest,
@@ -70,7 +70,7 @@ import (
 // Mutation (verified, run and restored): change D200 to D199 in the block the
 // plan claims; write a check row or a name for 105 back into §12; add a
 // `## Check 111` heading to the register; delete one flag name from §4.2; commit
-// `mobile/GoogleService-Info.plist` (the file the shape filter cannot see) or
+// `mobile/GoogleService-Info.plist` (the file the extension allow-list drops) or
 // `mobile/google-services.json`; state a check number the register does not
 // write as its highest section; un-date the Check 110 row's "nothing above 109"
 // claim; record 105, 106 and 107 as taken in the coordinator's checks row; take a
@@ -81,7 +81,11 @@ import (
 // "D192's rule" back on P7.4's word ceilings, let either README row claim 110 for
 // its own design, flip a §4.2 ad-ID row to `true`, drop the iOS row's VERIFY, or
 // empty the ad-ID requirement out of §7.4 or out of P7.1 — each of those fails
-// too, run and restored like the rest.
+// too, run and restored like the rest. And for round 5's two corrections: put a
+// `file.md:653` line citation back into §1, drop §1's "cited by symbol" sentence,
+// name a base commit this branch is not built on, name no base at all, narrow
+// planPathRE's class so it stops matching the plist, or widen isPlanPath's
+// extension list so it starts — each of those fails, run and restored.
 const telemetryPlan = "docs/plans/2026-10-19-mobile-telemetry.md"
 
 // The two allocation documents, and the shapes a block is written in there:
@@ -595,13 +599,16 @@ func TestTelemetryPlanAttributesTheWordCeilingsToD188(t *testing.T) {
 
 // telemetryNativeConfig is the two files the plan says are never committed. They
 // are walked from this list rather than from planPaths, and that is the point of
-// the list: **the derivation cannot see the second one at all.** planPathRE's
-// character class is `[A-Za-z0-9_./-]` — no uppercase — so
-// `mobile/GoogleService-Info.plist` never enters planPaths, and the first
-// version of this pin, which trusted the derivation, left the iOS file's half of
-// the rule untested while claiming to require it: committing the plist left the
-// suite green. The blind spot is asserted below, so the day the derivation grows
-// to cover it this list is called out rather than silently doubled.
+// the list: **the derivation cannot see the second one at all.** planPathRE
+// matches it — its class `[A-Za-z0-9_./-]` covers every character in
+// `mobile/GoogleService-Info.plist` — but planPaths keeps a candidate only if
+// isPlanPath accepts it, and isPlanPath accepts a directory or one of this
+// repository's extensions (`.go .js .json .md .tmpl .yml .yaml .ts`). `.plist`
+// is not among them, so the iOS file is dropped and never enters planPaths. The
+// first version of this pin trusted the derivation and left the iOS file's half
+// of the rule untested while claiming to require it: committing the plist left
+// the suite green. The cause is asserted below, both halves of it, so the day
+// either half changes this list is called out rather than silently doubled.
 var telemetryNativeConfig = []string{
 	"mobile/google-services.json",
 	"mobile/GoogleService-Info.plist",
@@ -639,7 +646,7 @@ func TestTelemetryPlanKeepsTheNativeFilesOutOfGit(t *testing.T) {
 	// The rule, checked against the tree — for BOTH files, one by one. A plan
 	// that recommends keeping a file out of git while the file is in git is the
 	// failure this assertion exists to catch, and it caught only half of it while
-	// the iOS path was left to a derivation that cannot spell it.
+	// the iOS path was left to a derivation that drops it on its extension.
 	for _, p := range telemetryNativeConfig {
 		if _, err := os.Stat("../../" + p); err == nil {
 			t.Errorf("%s is in the tree: %s says both native config files are never committed — they name the Fugaro-operated project and carry its key — and this one has been added anyway", p, telemetryPlan)
@@ -648,11 +655,21 @@ func TestTelemetryPlanKeepsTheNativeFilesOutOfGit(t *testing.T) {
 			t.Errorf("%s is tracked by git: %s says both native config files are never committed, and tracking one is the way the rule is broken while the working tree still looks clean", p, telemetryPlan)
 		}
 	}
-	// The blind spot, asserted rather than assumed: the explicit list above is
-	// only necessary while planPaths cannot derive the iOS path. If it can, this
-	// test's own reason for existing has gone and the two must be reconciled.
+	// The blind spot, asserted rather than assumed — and asserted as the two
+	// facts it actually is, because the first version of this comment got the
+	// cause wrong and a wrong cause is a wrong fix the day the derivation
+	// changes. planPathRE does match the plist (its class has A-Z); isPlanPath
+	// is what drops it, on the `.plist` extension. If either half moves, this
+	// list stops being necessary and the two must be reconciled rather than kept
+	// side by side.
+	if !planPathRE.MatchString("`mobile/GoogleService-Info.plist`") {
+		t.Errorf("planPathRE no longer matches `mobile/GoogleService-Info.plist`: telemetryNativeConfig exists because the regexp DOES match this path and isPlanPath drops it, so the comment above and this test both rest on a cause that has changed — rewrite them against what planPaths does now")
+	}
+	if isPlanPath("mobile/GoogleService-Info.plist") {
+		t.Errorf("isPlanPath now accepts mobile/GoogleService-Info.plist: it used to reject it because `.plist` is not one of the extensions the path derivation walks, which is the whole reason telemetryNativeConfig has to name the iOS file itself — if that has changed, planPaths derives it and the two must be reconciled rather than kept side by side")
+	}
 	if slices.Contains(planPaths(doc), "mobile/GoogleService-Info.plist") {
-		t.Errorf("planPaths now derives mobile/GoogleService-Info.plist from %s: telemetryNativeConfig exists because the path derivation cannot see an uppercase segment, and if it can, the derivation and the list must be reconciled rather than kept side by side", telemetryPlan)
+		t.Errorf("planPaths now derives mobile/GoogleService-Info.plist from %s: the derivation used to drop it on its `.plist` extension, and if it no longer does, telemetryNativeConfig's reason for existing has gone and the derivation and the list must be reconciled rather than kept side by side", telemetryPlan)
 	}
 
 	readme := readDoc(t, "mobile/README.md")
@@ -796,9 +813,9 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 // and each is asserted to be still named by the plan.
 //
 // This list excuses only paths the derivation CAN see, which is why
-// `mobile/GoogleService-Info.plist` is not in it: planPathRE matches no
-// uppercase segment, so the plist never reaches planPaths and an entry here
-// would fail the converse walk below. The two native config files are asserted
+// `mobile/GoogleService-Info.plist` is not in it: planPathRE matches it, but
+// isPlanPath drops it on the `.plist` extension, so it never reaches planPaths
+// and an entry here would fail the converse walk below. The two native config files are asserted
 // one by one in TestTelemetryPlanKeepsTheNativeFilesOutOfGit instead — and
 // `mobile/google-services.json` is listed here as well as there, because it IS a
 // path the derivation sees and the excuse has to be given somewhere.
@@ -886,6 +903,53 @@ func TestTelemetryPlanCitesOnlyPathsThatExist(t *testing.T) {
 		if !named[p] {
 			t.Errorf("telemetryWillCreate names %s (%s), which the plan no longer cites: the list must only excuse paths the document actually names", p, why)
 		}
+	}
+}
+
+// telemetryLineCiteRE matches a citation of the form `path/to/file.ext:123` (or
+// `:123-145`). The plan states its own convention in §1 — a file it does not own
+// is cited by symbol or by phrase, never by line — and the round-5 review found
+// the convention stated and then broken eight times over, against a merge base
+// the document had also mis-declared. A line number into a document other work
+// edits is stale the moment that work lands and nothing about the sentence it
+// was written for looks wrong, which is why the convention exists.
+var telemetryLineCiteRE = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(?:go|js|mjs|ts|json|md|yaml|yml|astro|tmpl):[0-9]+(?:-[0-9]+)?`)
+
+// telemetryBaseRE is the commit §1 declares this branch's base to be, written as
+// a bare hex SHA between bold markers. The base is the premise every "read on
+// this branch" fact rests on, so the document has to name one.
+var telemetryBaseRE = regexp.MustCompile(`\*\*` + "`" + `([0-9a-f]{7,40})` + "`" + `\*\*`)
+
+func TestTelemetryPlanCitesBySymbolAndDeclaresItsBase(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+
+	// The convention, stated — and then kept, everywhere in the document.
+	section := planSection(t, doc, "## 1. What is in the tree today, and what this plan therefore builds on")
+	for _, want := range []string{"merge base", "cited by symbol"} {
+		if !strings.Contains(telemetryPlain(section), want) {
+			t.Errorf("%s's §1 does not state %q: the base it read its facts against and the citation convention those facts are written in both have to be on the page, or a reader cannot tell a stale fact from a current one", telemetryPlan, want)
+		}
+	}
+	if cites := telemetryLineCiteRE.FindAllString(doc, -1); len(cites) != 0 {
+		t.Errorf("%s cites %v by line: §1 states that a file this plan does not own is cited by symbol or by phrase, and every file it cites is one it does not own — a line number into a document another change edits goes stale silently, so replace the number with the symbol, the heading or the phrase it points at", telemetryPlan, cites)
+	}
+
+	// The base, checked against the repository rather than trusted: it has to be
+	// a commit this repository actually has, and one this branch is built on.
+	m := telemetryBaseRE.FindStringSubmatch(section)
+	if m == nil {
+		t.Fatalf("%s's §1 names no base commit: the facts in the table below are facts about a tree, and which tree is the one thing a reader cannot recover from the text", telemetryPlan)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Logf("git is not on PATH, so the base %s is unchecked here (it is still required to be named): %v", m[1], err)
+		return
+	}
+	if err := exec.Command("git", "-C", "../..", "cat-file", "-e", m[1]+"^{commit}").Run(); err != nil {
+		t.Logf("the base %s is not in this clone (a shallow or exported tree), so its ancestry is unchecked here: %v", m[1], err)
+		return
+	}
+	if err := exec.Command("git", "-C", "../..", "merge-base", "--is-ancestor", m[1], "HEAD").Run(); err != nil {
+		t.Errorf("%s's §1 declares its base to be %s, which is not an ancestor of this branch's HEAD: the base is where the document's facts were read, so a base this branch is not built on makes every \"read on this branch\" sentence in §1 a claim about a tree nobody is looking at", telemetryPlan, m[1])
 	}
 }
 
