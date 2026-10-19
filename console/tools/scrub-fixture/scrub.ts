@@ -5,11 +5,20 @@
 // stay invented. THIS is for `normal`: the shape is the real CLI's (every key, its
 // type, its order, which optional keys are present are all copied from the
 // recording), and every VALUE that could identify the installation is replaced
-// by an invented one. Nothing here is random: the same recording scrubs to the
-// same bytes.
+// by an invented one. Every invented value is a constant, so the same recording
+// scrubs to the same values -- except the clock, which is shifted by an offset
+// DRAWN AT RANDOM FOR THIS RUN (`randomTimeShiftMs`; owner review of PR #643,
+// item 2). The offset is applied to every timestamp the scrub writes, is never
+// printed, and is never written down, so the committed fixture's real instant
+// is not recoverable from it: a constant here would have been undone by adding
+// it back to the fixture's `now`.
 //
 // Deny by default: a key this file does not know is a refusal, never a pass
 // through, so a CLI that grows a field fails the scrub instead of leaking it.
+// The same rule governs the values it copies (VOCAB, VERIFY_*): each list is
+// derived from the Go source that writes the field, and
+// `TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource` fails when the
+// source and this file disagree.
 //
 // What is replaced, and by what:
 //   project                     example-project  (then `<project>` via the redactor)
@@ -29,9 +38,9 @@
 // enumerated below (anything else is a refusal, never a pass-through): the enums
 // and flags (mode, stage, round, health, deadline, auth, verify, status, outcome,
 // connection.state), the numbers (ages, burn) and queued_note (a fixed sentence).
-// The clock is SHIFTED by a constant offset (TIME_SHIFT_MS) so no real instant
-// survives: now, day, kill.at and the run IDs all come from the shifted clock, and
-// every age_seconds stays as it was, so they stay consistent.
+// The clock is SHIFTED by this run's random offset so no real instant survives:
+// now, day, kill.at and the run IDs all come from the shifted clock, and every
+// age_seconds stays as it was, so they stay consistent.
 //
 // Nothing about a removed value is ever persisted, not even a hash: a bare hash of
 // a low-entropy value (a small integer, an amount, a repo-style name) is recovered
@@ -47,22 +56,174 @@ export const SCRUB_PROJECT = 'example-project'
 export const INVENTED_SPEND: readonly number[] = Object.freeze([0.15, 0.4, 0.11, 0.03, 0.1, 0.07, 0.03, 0.04, 0.01])
 /** INVENTED_CAP_USD is the invented daily cap, in place of the real one. */
 export const INVENTED_CAP_USD = 50
-/** TIME_SHIFT_MS moves the whole recorded clock; the real instant is recorded nowhere. */
-export const TIME_SHIFT_MS = -((41 * 24 + 5) * 3600 + 17 * 60 + 33) * 1000
+/**
+ * TIME_SHIFT_RANGE_MS bounds the clock shift drawn for one run: plus or minus
+ * 400 days. Wide enough that the offset cannot be guessed, and narrow enough
+ * that the invented clock stays a plausible one.
+ */
+const TIME_SHIFT_RANGE_MS = 400 * 24 * 60 * 60 * 1000
 
-/** The fixed CLI vocabulary per field. A value outside it fails the scrub closed. */
+/**
+ * randomTimeShiftMs draws this run's clock offset, in milliseconds.
+ *
+ * Crypto-random, drawn once per scrub, added to every timestamp the scrub
+ * writes. It is deliberately NOT exported as a value and never printed: the
+ * point (owner review of PR #643, item 2) is that the committed fixture cannot
+ * be unshifted, because the offset that made it exists only for the length of
+ * the run. The 32 random bits give 2^32 distinct offsets over the range, so two
+ * runs landing on the same one is not a thing a test can flake on.
+ */
+export function randomTimeShiftMs(): number {
+  const draw = new Uint32Array(1)
+  globalThis.crypto.getRandomValues(draw)
+  return Math.round((draw[0] ?? 0) / 2 ** 32 * (2 * TIME_SHIFT_RANGE_MS + 1)) - TIME_SHIFT_RANGE_MS
+}
+
+/**
+ * VOCAB is the fixed CLI vocabulary per field, derived from the Go source that
+ * writes it. A value outside its list fails the scrub closed. Each list names
+ * its writer; `TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource` reads
+ * this object back out of the file and fails when the two drift apart.
+ */
 export const VOCAB = {
-  mode: ['enforce', 'observe', 'warn'],
+  // internal/budget/model.go: ModeObserve / ModeEnforce are the only two the
+  // watch document can carry (internal/watch/build.go's View.Mode).
+  mode: ['enforce', 'observe'],
   connectionState: ['live', 'stale', 'offline', 'refused', 'polling'],
-  stage: ['queued', 'plan', 'provision', 'implement', 'fix', 'check', 'review', 'render', 'writeback'],
-  auth: ['api-key', 'oauth', '-'],
+  // Every name a run writes as its stage: internal/runner's `r.stage(ctx, ...)`
+  // calls (implement, review, review_first, fix, plan), its `r.rec.Stage`
+  // assignments (plan, render, review, check, finalize, writeback), its
+  // registry's bootstrap entry, provisioning's own stage name, and the
+  // `queued` a runs-bucket row carries (internal/watch/queued.go) before any
+  // registry entry exists.
+  stage: [
+    'bootstrap', 'queued', 'provision', 'plan', 'implement', 'review_first', 'review', 'fix', 'check', 'render',
+    'writeback', 'finalize',
+  ],
+  // internal/config/validate.go's allowed `agent.auth` values, plus the `-`
+  // internal/watch/build.go's `dash` writes for an empty one.
+  auth: ['vertex', 'api-key', 'oauth', '-'],
   health: ['ok', 'silent', 'lost'],
   deadline: ['ok', 'near', 'over'],
   status: ['succeeded', 'failed', 'halted', 'cancelled', 'infra_error'],
   outcome: ['ready', 'draft', 'none', 'reviewed', 'artifacts'],
 } as const
-/** VERIFY_SHAPE is the CLI's verify wording ("-", or one `fugaro verify` line, truncated to 120 chars). */
-export const VERIFY_SHAPE = /^(-|fugaro verify [a-z][a-z-]* #\d{1,4}: (passed|failed)( \(exit \d{1,3}, \d{1,6} tests?, \d{1,6} failures?(; warning: no JUnit reports found under \*\*\/junit\*\.xml, \*\*\/buil)?\)?)?)$/
+
+/** VERIFY_KINDS mirrors internal/verify/verify.go's Kind constants. */
+export const VERIFY_KINDS = ['build', 'test', 'lint'] as const
+/** VERIFY_STATUSES mirrors verify.go's `Record.Summary`: the failure word is
+ * upper case there, and the passing one lower. */
+export const VERIFY_STATUSES = ['passed', 'FAILED'] as const
+/** VERIFY_RERUN_FLAG is verify.go's own suffix for a `--rerun-failed` run. */
+export const VERIFY_RERUN_FLAG = '--rerun-failed'
+/** VERIFY_CLEAN_TREE is verify.go's note for a run that found the tree dirty. */
+export const VERIFY_CLEAN_TREE = 'working tree not clean, so this run cannot mark the PR ready: commit first'
+/**
+ * VERIFY_CLIP_RUNES is internal/runner's `verifySummaryRunes`: the registry
+ * clips the summary to this many runes before the document carries it, so a
+ * long line reaches the fixture cut in the middle of a word.
+ */
+export const VERIFY_CLIP_RUNES = 120
+
+/**
+ * VERIFY_TAIL is the writer's tail, part by part, after the `(exit <code>`
+ * VERIFY_HEAD matches: `Record.Summary` in internal/verify/verify.go, in the
+ * order it appends them. `parts` are the literal texts, `digits` a `%d`, and
+ * `free` a slot the writer fills with text this file cannot know (test names, a
+ * warning sentence) -- and it is filled from repository text, so the shape
+ * accepts it and the fixture's own scan is what a committed value must pass.
+ */
+type VerifyPart = { readonly text: string } | { readonly digits: true } | { readonly free: true }
+const VERIFY_TAIL: readonly (readonly VerifyPart[])[] = [
+  [{ text: ', ' }, { digits: true }, { text: ' tests, ' }, { digits: true }, { text: ' failures' }],
+  [{ text: ': ' }, { free: true }],
+  [{ text: '; flaky: ' }, { free: true }],
+  [{ text: '; timed out' }],
+  [{ text: '; warning: ' }, { free: true }],
+  [{ text: '; ' + VERIFY_CLEAN_TREE }],
+  [{ text: ')' }],
+]
+/** VERIFY_TEST_TAIL_FROM is the index of the first tail part a non-test kind
+ * does not write: only a test run carries the counts. */
+const VERIFY_TEST_TAIL_FROM = 1
+
+/**
+ * VERIFY_HEAD matches the writer's head exactly: the kind, the rerun flag, the
+ * record number, the status and the exit code that opens the parenthesised tail.
+ * It is never itself cut short, which is a consequence rather than a choice: the
+ * whole head is under VERIFY_CLIP_RUNES runes, so a clip can only land after it.
+ */
+export const VERIFY_HEAD = new RegExp(
+  `^fugaro verify (${VERIFY_KINDS.join('|')})( ${VERIFY_RERUN_FLAG})? #\\d+: (${VERIFY_STATUSES.join('|')}) \\(exit \\d+`,
+)
+
+/**
+ * isVerifySummary is the rule for the run's `verify` field: `-` (what
+ * `internal/watch/build.go`'s `dash` writes for an empty one), or one
+ * `Record.Summary` line -- complete, or cut at VERIFY_CLIP_RUNES runes, which
+ * is what the registry does to it.
+ *
+ * It is a matcher rather than one regular expression because the value is a
+ * PREFIX of the writer's line, not the line: every tail part may be absent
+ * (the writer appends it only when it has something to say), and the cut may
+ * land inside any of them, so "is this a prefix of what the writer can write"
+ * is the question, and this walks the parts to answer it.
+ */
+export function isVerifySummary(value: string): boolean {
+  if (value === '-') return true
+  // A control character is not something the writer produces (internal/runner
+  // runs the summary through pluginwire.Printable first).
+  if (/[\u0000-\u001f\u007f]/.test(value)) return false
+  const head = VERIFY_HEAD.exec(value)
+  if (head === null) return false
+  const rest = value.slice(head[0].length)
+  const from = head[1] === 'test' ? 0 : VERIFY_TEST_TAIL_FROM
+  return isPrefixOfTail(VERIFY_TAIL.slice(from), rest)
+}
+
+/** isPrefixOfTail reports whether `rest` is a prefix of some line the groups can
+ * render: every group may be absent, every literal may be cut short, a digit run
+ * is any number of digits (a cut may land inside it), and a free slot absorbs
+ * whatever is left. Memoised on (group, part, offset) -- the free slots make the
+ * walk branch, and the same positions are reached by many routes. */
+function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string): boolean {
+  const width = rest.length + 1
+  const memo = new Map<number, boolean>()
+  const walkGroup = (group: number, at: number): boolean => {
+    const parts = groups[group]
+    if (parts === undefined) return at === rest.length
+    const key = group * width + at
+    const hit = memo.get(key)
+    if (hit !== undefined) return hit
+    // The writer appends this segment only when it has something to say, so it
+    // may be absent; else it is present, possibly with the cut inside it.
+    const out = walkGroup(group + 1, at) || walkPart(group, 0, at)
+    memo.set(key, out)
+    return out
+  }
+  const walkPart = (group: number, part: number, at: number): boolean => {
+    const parts = groups[group]!
+    if (part === parts.length) return walkGroup(group + 1, at)
+    const piece = parts[part]!
+    const tail = rest.slice(at)
+    if ('text' in piece) {
+      if (tail.length <= piece.text.length) return piece.text.startsWith(tail)
+      return tail.startsWith(piece.text) && walkPart(group, part + 1, at + piece.text.length)
+    }
+    if ('digits' in piece) {
+      const run = /^\d+/.exec(tail)?.[0] ?? ''
+      // A cut may land between the text before a `%d` and the digits
+      // themselves (`(exit 0, ` is a prefix of `(exit 0, 0 tests, ...)`), but
+      // only there: with digits still to come, the run is never empty.
+      if (run === '') return tail === '' && walkPart(group, part + 1, at)
+      for (let n = 1; n <= run.length; n++) if (walkPart(group, part + 1, at + n)) return true
+      return false
+    }
+    for (let n = 0; n <= tail.length; n++) if (walkPart(group, part + 1, at + n)) return true
+    return false
+  }
+  return walkGroup(0, 0)
+}
 const ROUND_SHAPE = /^(-|\d{1,2})$/
 /** QUEUED_NOTE_SHAPE is the one queued_note sentence the CLI writes for a slow bucket. */
 export const QUEUED_NOTE_SHAPE = /^queued runs unavailable: the runs bucket did not answer within \d{1,3}s$/
@@ -87,11 +248,17 @@ function round6(n: number): number {
 type Rule = (v: unknown, path: string) => unknown
 
 const num: Rule = (v, path) => (typeof v === 'number' && Number.isFinite(v) ? v : refuse(path, 'not a number'))
+/** nullableNum is `num` for a Go field that is a pointer: the document writes
+ * `null` for it, and refusing that would refuse an ordinary run. */
+const nullableNum: Rule = (v, path) => (v === null ? null : num(v, path))
 const bool: Rule = (v, path) => (typeof v === 'boolean' ? v : refuse(path, 'not a boolean'))
 const oneOf = (allowed: readonly string[]): Rule => (v, path) =>
   typeof v === 'string' && allowed.includes(v) ? v : refuse(path, 'a value outside the CLI vocabulary')
-const shaped = (re: RegExp): Rule => (v, path) =>
-  typeof v === 'string' && re.test(v) ? v : refuse(path, 'a value outside the CLI vocabulary')
+/** shaped accepts a value only if its shape says so -- a plain regular expression
+ * or a matcher (isVerifySummary), which is a function because the verify line is
+ * a prefix of the writer's output rather than a whole one. */
+const shaped = (ok: RegExp | ((value: string) => boolean)): Rule => (v, path) =>
+  typeof v === 'string' && (typeof ok === 'function' ? ok(v) : ok.test(v)) ? v : refuse(path, 'a value outside the CLI vocabulary')
 const invent = (value: unknown): Rule => (v, path) => (typeof v === 'string' ? value : refuse(path, 'not a string'))
 
 /** applyRules copies a key only through its own rule; a key with no rule is refused. */
@@ -112,10 +279,13 @@ const CONNECTION_RULES: Readonly<Record<string, Rule>> = {
   // `reason` is free text in the CLI: no sentence is known to be safe, so it is refused.
 }
 
-function shiftIso(iso: string, path: string): string {
+/** shiftIso moves one timestamp by this run's offset (see randomTimeShiftMs).
+ * The offset is a parameter rather than a module constant on purpose: it must
+ * not be reachable from the module, or a reader could undo the shift. */
+function shiftIso(iso: string, path: string, shiftMs: number): string {
   const t = Date.parse(iso)
   if (!Number.isFinite(t)) return refuse(path, 'not a timestamp')
-  return new Date(t + TIME_SHIFT_MS).toISOString().slice(0, 19) + 'Z'
+  return new Date(t + shiftMs).toISOString().slice(0, 19) + 'Z'
 }
 
 function runStamp(now: string, ageSeconds: number): string {
@@ -124,8 +294,16 @@ function runStamp(now: string, ageSeconds: number): string {
   return `${iso.slice(0, 10).replaceAll('-', '')}-${iso.slice(11, 19).replaceAll(':', '')}`
 }
 
-/** scrubDocument turns one real document into its invented twin. */
-export function scrubDocument(raw: unknown): JSONDoc {
+/**
+ * scrubDocument turns one real document into its invented twin.
+ *
+ * `shiftMs` is the offset applied to every timestamp; left out, it is drawn for
+ * this call (randomTimeShiftMs) and nothing about it survives the call. It is a
+ * parameter at all so that a test can hold it still and check the ages still
+ * agree with the clock -- it is deliberately not a command-line argument of the
+ * tool, because an offset someone can choose is an offset someone can publish.
+ */
+export function scrubDocument(raw: unknown, shiftMs: number = randomTimeShiftMs()): JSONDoc {
   if (!isObj(raw)) refuse('$', 'the document is not an object')
   for (const key of Object.keys(raw)) if (!KNOWN_TOP.includes(key)) refuse(`$.${key}`, 'an unknown key')
 
@@ -143,7 +321,7 @@ export function scrubDocument(raw: unknown): JSONDoc {
   const inventedSlug = (i: number): string =>
     i === 1 ? 'github-com-example-owner-example-repo' : `github-com-example-owner-example-repo-${i}`
 
-  const now = shiftIso(typeof raw['now'] === 'string' ? raw['now'] : refuse('$.now', 'no now'), '$.now')
+  const now = shiftIso(typeof raw['now'] === 'string' ? raw['now'] : refuse('$.now', 'no now'), '$.now', shiftMs)
   const out: Obj = {}
   for (const key of Object.keys(raw)) {
     const value = raw[key]
@@ -164,14 +342,14 @@ export function scrubDocument(raw: unknown): JSONDoc {
         break
       case 'queued_note': out[key] = shaped(QUEUED_NOTE_SHAPE)(value, path); break
       case 'total':
-        out[key] = scrubTotalOrRepo(value, path, undefined)
+        out[key] = scrubTotalOrRepo(value, path, undefined, shiftMs)
         break
       case 'repos': {
         if (!Array.isArray(value)) refuse(path, 'repos is not an array')
         out[key] = value.map((repo, i) => {
           if (!isObj(repo)) return refuse(`${path}[${i}]`, 'a repo that is not an object')
           const n = repoIndex(repo['repo'], `${path}[${i}].repo`)
-          return scrubTotalOrRepo(repo, `${path}[${i}]`, n)
+          return scrubTotalOrRepo(repo, `${path}[${i}]`, n, shiftMs)
         })
         break
       }
@@ -194,29 +372,33 @@ function copyKeys(obj: Obj, path: string, allowed: readonly string[]): void {
   for (const key of Object.keys(obj)) if (!allowed.includes(key)) refuse(`${path}.${key}`, 'an unknown key')
 }
 
-function scrubKill(kill: unknown, path: string): unknown {
+function scrubKill(kill: unknown, path: string, shiftMs: number): unknown {
   if (kill === null) return null
   if (!isObj(kill)) return refuse(path, 'a kill that is neither null nor an object')
   copyKeys(kill, path, ['by', 'at', 'reason'])
   const out: Obj = {}
   for (const key of Object.keys(kill)) {
     if (key === 'by') out[key] = 'redacted@example.invalid'
-    else if (key === 'at') out[key] = shiftIso(String(kill[key]), `${path}.at`)
+    else if (key === 'at') out[key] = shiftIso(String(kill[key]), `${path}.at`, shiftMs)
     else out[key] = 'example reason'
   }
   return out
 }
 
-function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefined): Obj {
+function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefined, shiftMs: number): Obj {
   if (!isObj(value)) return refuse(path, 'not an object')
   const inventedRepo = `example-owner/example-repo${repoN === 1 ? '' : `-${repoN}`}`
   return applyRules(value, path, {
     slug: invent(`github-com-example-owner-example-repo${repoN === 1 ? '' : `-${repoN}`}`),
     repo: invent(inventedRepo),
-    counted_usd: num, spent_usd: num, notional_usd: num, percent: num, runs: num, run_hours: num, // recomputed below
+    counted_usd: num, spent_usd: num, notional_usd: num, runs: num, run_hours: num, // recomputed below
+    // `daily_cap_usd` and `percent` are *float64 in internal/watch/json.go's
+    // JSONTotal and JSONRepo: the document writes null for both when the
+    // repository has no cap.
+    percent: nullableNum,
     daily_cap_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_CAP_USD : refuse(p, 'not a number')),
     burn: (v, p) => (isObj(v) ? applyRules(v, p, BURN_RULES) : refuse(p, 'not an object')),
-    kill: (v, p) => scrubKill(v, p),
+    kill: (v, p) => scrubKill(v, p, shiftMs),
   })
 }
 
@@ -234,13 +416,15 @@ function scrubRun(
     title: invent(`# Task: example task ${i + 1}`),
     stage: oneOf(VOCAB.stage),
     round: shaped(ROUND_SHAPE),
-    verify: shaped(VERIFY_SHAPE),
+    verify: shaped(isVerifySummary),
     models: (v, p) => (v === '-' ? '-' : typeof v === 'string' ? 'claude-sonnet-4-5-20250929' : refuse(p, 'not a string')),
     recipe: invent('example-recipe'),
     auth: oneOf(VOCAB.auth),
     notional: bool,
     spent_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_SPEND[i % INVENTED_SPEND.length] : refuse(p, 'not a number')),
-    age_seconds: num,
+    // AgeSecs is *float64 in JSONRun: a queued row the registry has not
+    // described yet carries null, which is an ordinary document, not a fault.
+    age_seconds: nullableNum,
     health: oneOf(VOCAB.health),
     deadline: oneOf(VOCAB.deadline),
     halted: invent('example halt reason'),

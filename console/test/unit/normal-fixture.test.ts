@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest'
 import { loadFixture } from '../../src/source/fixture'
 import type { JSONDoc } from '../../src/source/source'
 import { normalFixture } from '../../tools/scrub-fixture/index'
-import { QUEUED_NOTE_SHAPE, TIME_SHIFT_MS, VERIFY_SHAPE, VOCAB, scrubDocument } from '../../tools/scrub-fixture/scrub'
+import { QUEUED_NOTE_SHAPE, VOCAB, isVerifySummary, scrubDocument } from '../../tools/scrub-fixture/scrub'
 
 const FIXTURE = 'test/fixtures/normal.ndjson'
 
@@ -131,27 +131,30 @@ function normalise(text: string): string {
   return text.normalize('NFKC').replace(/[\u200b-\u200f\u2060\u2062-\u2064\ufeff\u00ad]/g, '').toLowerCase()
 }
 
-const SHAPES: readonly RegExp[] = [
+/** SHAPES is the positive allow-list: a string value must pass one of these.
+ * The verify line is a matcher rather than a regular expression because it is a
+ * PREFIX of what verify.go writes (the registry clips it); see scrub.ts. */
+const SHAPES: ReadonlyArray<(value: string) => boolean> = [
   /^(<project>|\[redacted-url\])$/,
   /^r-[0-9a-f]{8}\/r-[0-9a-f]{8}$/,
   /^slug-[0-9a-f]{8}$/,
   /^\d{8}-\d{6}-(ee|ff)\d{2}$/,
   /^# Task: example (finished )?task \d{1,3}$/,
   /^(claude-sonnet-4-5-20250929|-)$/,
-  /^(enforce|observe|warn)$/,
+  new RegExp(`^(${VOCAB.mode.join('|')})$`),
   /^\d{4}-\d{2}-\d{2}$/,
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
   new RegExp(`^(${VOCAB.connectionState.join('|')}|${VOCAB.stage.join('|')}|${VOCAB.auth.join('|')}|${VOCAB.health.join('|')}|${VOCAB.deadline.join('|')}|${VOCAB.status.join('|')}|${VOCAB.outcome.join('|')})$`),
   /^\d{1,2}$/,
-  VERIFY_SHAPE,
-  QUEUED_NOTE_SHAPE,
+  isVerifySummary,
+  (value: string) => QUEUED_NOTE_SHAPE.test(value),
   /^(redacted@example\.invalid|example reason|example halt reason|example-recipe|example-workflow)$/,
   /^https:\/\/example\.invalid\/example-owner\/example-repo\/pull\/\d+$/,
   /^(github-com-example-owner-example-repo|example-owner\/example-repo)(-\d+)?$/,
   // the header: the case, the version strings, the digest, the one-sentence note
   /^(normal|fugaro-console-redact\/\d+|\d+\.\d+\.\d+|[0-9a-f]{64})$/,
   /^normal: the shape of one real fugaro watch --json document; every value is invented \(see the scrub-fixture tool\)$/,
-]
+].map((shape) => (typeof shape === 'function' ? shape : (value: string) => shape.test(value)))
 const KEYS = new Set([
   'at', 'document', 'project', 'mode', 'day', 'now', 'connection', 'state', 'age_seconds', 'total', 'counted_usd', 'spent_usd',
   'notional_usd', 'daily_cap_usd', 'percent', 'burn', 'known', 'usd_per_min', 'fast', 'kill', 'by', 'reason', 'runs',
@@ -196,7 +199,7 @@ function scan(text: string, removed: readonly string[] = []): string[] {
       if (key) {
         if (!KEYS.has(raw)) found.push('an unknown key')
       } else {
-        if (!SHAPES.some((re) => re.test(raw))) found.push('a string outside the allow-list')
+        if (!SHAPES.some((shape) => shape(raw))) found.push('a string outside the allow-list')
         for (const r of removed) if (r.length >= 4 && n.includes(normalise(r))) found.push('a removed value')
         if (removed.includes(raw)) found.push('a removed value')
       }
@@ -272,8 +275,14 @@ describe('the scrub', () => {
     queued_note: 'queued runs unavailable: the runs bucket did not answer within 3s',
   })
 
+  /** SHIFT is a shift the tests pass in so that the offset is held still. The
+   * scrub draws its own, random, one when it is not given (scrub-vocabulary
+   * .test.ts holds that); nothing HERE depends on a committed value, which is
+   * the point of review item 2. */
+  const SHIFT = -17 * 24 * 3600 * 1000 - 4242
+
   it('replaces every identity and amount, keeps the key order, and recomputes the totals', () => {
-    const out = scrubDocument(raw())
+    const out = scrubDocument(raw(), SHIFT)
     const text = JSON.stringify(out)
     for (const real of ['real-', 'real secret plan', 'another real plan', 'Real Person', 'because real', 'person.example', 'github.com', 'abcd', 'beef', '77', '9.37']) {
       expect(text).not.toContain(real)
@@ -281,8 +290,8 @@ describe('the scrub', () => {
     expect(Object.keys(out)).toEqual(Object.keys(raw()))
     const run = (out['runs'] as Array<Record<string, unknown>>)[0]!
     expect(Object.keys(run)).toEqual(Object.keys((raw()['runs'] as unknown[])[0] as object))
-    // the clock is shifted by a fixed offset: now, day, the run ID and kill.at all follow it
-    const shifted = new Date(Date.parse('2026-10-19T02:00:00Z') + TIME_SHIFT_MS).toISOString()
+    // the clock is shifted by the offset given: now, day, the run ID and kill.at all follow it
+    const shifted = new Date(Date.parse('2026-10-19T02:00:00Z') + SHIFT).toISOString()
     expect(out['now']).toBe(`${shifted.slice(0, 19)}Z`)
     expect(out['day']).toBe(shifted.slice(0, 10))
     expect(out['now']).not.toBe('2026-10-19T02:00:00Z')
@@ -294,13 +303,14 @@ describe('the scrub', () => {
     expect(total['spent_usd']).toBe(run['spent_usd'])
     expect(total['percent']).toBeCloseTo(((total['counted_usd'] as number) / 50) * 100, 6)
     expect(total['kill']).toEqual({
-      by: 'redacted@example.invalid', at: `${new Date(Date.parse('2026-10-19T01:00:00Z') + TIME_SHIFT_MS).toISOString().slice(0, 19)}Z`,
+      by: 'redacted@example.invalid', at: `${new Date(Date.parse('2026-10-19T01:00:00Z') + SHIFT).toISOString().slice(0, 19)}Z`,
       reason: 'example reason',
     })
   })
 
-  it('is deterministic', () => {
-    expect(JSON.stringify(scrubDocument(raw()))).toBe(JSON.stringify(scrubDocument(raw())))
+  it('is deterministic once the shift is given, and draws a fresh one when it is not', () => {
+    expect(JSON.stringify(scrubDocument(raw(), SHIFT))).toBe(JSON.stringify(scrubDocument(raw(), SHIFT)))
+    expect(scrubDocument(raw())['now']).not.toBe(scrubDocument(raw())['now'])
   })
 
   const at = (doc: Record<string, unknown>, ...path: Array<string | number>): Record<string, unknown> => {
