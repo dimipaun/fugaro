@@ -127,21 +127,26 @@ const FORBIDDEN = [
   'sk-', 'aiza', 'gh' + 'p_', 'xox',
 ]
 /**
- * TWELVE_DIGITS is a run of twelve decimal digits standing on its own: a leaked
- * number (an amount, an identifier, a timestamp) that the allow-list below would
- * otherwise wave through as an invented one.
+ * DIGIT_RUN is twelve or more decimal digits standing on their own: a leaked
+ * number (an amount, an identifier, an epoch-millisecond stamp) that the
+ * allow-list below would otherwise wave through as an invented value.
  *
- * "Standing on its own" is the whole of the rule, and it is what makes this scan
- * deterministic. The header carries a 64-character SHA-256 digest, which is hex,
- * so each of its characters is a digit five eighths of the time: twelve
+ * "Standing on their own" is the whole of the rule, and it is what makes this
+ * scan deterministic. The header carries a 64-character SHA-256 digest, which is
+ * hex, so each of its characters is a digit five eighths of the time: twelve
  * consecutive digits occur inside one about 7% of the time (measured: 145 of
  * 2000 scrubs), and every run draws a fresh clock shift, so the digest is a
  * fresh draw too. A bare /\d{12}/ therefore failed this scan at random -- about
- * one run in fourteen -- while twelve digits with a hex digit beside them are
+ * one run in fourteen -- while a run of digits with a hex digit beside it is
  * part of a longer hex token (a digest, a pseudonym, a commit) and not a number
  * the scan is for.
+ *
+ * `{12,}` and not `{12}`: the run is the whole maximal one, and a longer run has
+ * digits on both sides of every twelve-character window inside it, so a fixed
+ * twelve would match neither lookaround and a thirteen-digit stamp would pass
+ * the scan untouched. The lookarounds exempt hex tokens, not long runs.
  */
-const TWELVE_DIGITS = /(?<![0-9a-f])\d{12}(?![0-9a-f])/
+const DIGIT_RUN = /(?<![0-9a-f])\d{12,}(?![0-9a-f])/
 
 /** DIGEST_WITH_A_DIGIT_RUN is a well-formed 64-hex SHA-256 digest that carries
  * twelve consecutive decimal digits -- what a real digest carries about 7% of
@@ -224,7 +229,7 @@ function scan(text: string, removed: readonly string[] = []): string[] {
     for (const { text: raw, key } of stringsOf(parsed)) {
       const n = normalise(raw)
       for (const word of FORBIDDEN) if (n.includes(word)) found.push(`forbidden substring ${word}`)
-      if (TWELVE_DIGITS.test(n)) found.push('a 12-digit run')
+      if (DIGIT_RUN.test(n)) found.push('a run of 12 or more digits')
       if (key) {
         if (!KEYS.has(raw)) found.push('an unknown key')
       } else {
@@ -276,16 +281,23 @@ describe('the normal fixture: nothing real is in it', () => {
     // digest is the fixture's own header field, and a run of digits inside one
     // is hex, not the number the rule is for. The digest below is the shape the
     // header really carries (64 hex characters) with a twelve-digit run planted
-    // in it, which a real digest produces at random -- see TWELVE_DIGITS.
+    // in it, which a real digest produces at random -- see DIGIT_RUN.
     const header = readFileSync(FIXTURE, 'utf8').split('\n')[0]!
     const planted = header.replace(/[0-9a-f]{64}/, DIGEST_WITH_A_DIGIT_RUN)
     expect(planted).not.toBe(header)
     expect(planted).toContain('123456789012')
     expect(scan(`${planted}\n`)).toEqual([])
-    // ...and a run that stands on its own is still caught, which is what the
-    // hex exemption gives up nothing for.
-    expect(scan(line('123456789012'))).toContain('a 12-digit run')
-    expect(scan(line('acme-123456789012'))).toContain('a 12-digit run')
+    // ...and a run that stands on its own is still caught, whatever its length:
+    // the exemption is for digits inside a hex token, not for long runs. A
+    // thirteen-digit epoch-millisecond stamp is the case a fixed `{12}` missed,
+    // because every twelve-character window inside it has a digit on both sides.
+    for (const run of ['123456789012', '1234567890123', '1750000000000', '12345678901234567890']) {
+      expect(scan(line(run)), run).toContain('a run of 12 or more digits')
+      expect(scan(line(`acme-${run}`)), `acme-${run}`).toContain('a run of 12 or more digits')
+    }
+    // ...and the hex exemption still holds for digits inside a hex token, which
+    // is the digest case the scan would otherwise fail on at random.
+    expect(scan(line('abcdef123456789012abcdef'))).not.toContain('a run of 12 or more digits')
   })
 
   it('refuses a verify line whose slots carry text the CLI does not write there', () => {
@@ -316,6 +328,15 @@ describe('the normal fixture: nothing real is in it', () => {
     // (it writes them unconditionally for a test), so the allow-list refuses it
     // rather than taking it as a clipped or a quiet line.
     expect(scan(line('fugaro verify test #5: passed (exit 0)'))).toContain('a string outside the allow-list')
+    // The name slot is open in the allow-list -- junit.go copies an ID verbatim,
+    // so no vocabulary can hold it -- which leaves the digit rule as the one
+    // guard against a number riding in there as a "name". A test name carrying
+    // an epoch-millisecond stamp is the case to hold: thirteen digits, so the
+    // rule has to read the whole maximal run, not a fixed twelve.
+    expect(scan(line('fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: TestA_1750000000000)')))
+      .toContain('a run of 12 or more digits')
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: 12345678901234567890)')))
+      .toContain('a run of 12 or more digits')
   })
 
   it('finds a removed value with a changed prefix, and a removed number', () => {

@@ -80,8 +80,10 @@ export const TIME_SHIFT_RANGE_MS = 400 * 24 * 60 * 60 * 1000
  * writes. It is deliberately NOT exported as a value and never printed: the
  * point (owner review of PR #643, item 2) is that the committed fixture cannot
  * be unshifted, because the offset that made it exists only for the length of
- * the run. The 53 random bits give 2^53 distinct offsets over the range, so two
- * runs landing on the same one is not a thing a test can flake on.
+ * the run. The draw is 53 bits wide but the mapping below is onto 2R + 1
+ * offsets -- 69,120,000,001 of them, about 2^36 -- so the width costs nothing
+ * and claims nothing: 2^36 offsets still make two runs landing on the same one
+ * not a thing a test can flake on.
  */
 export function randomTimeShiftMs(): number {
   const draw = new Uint32Array(2)

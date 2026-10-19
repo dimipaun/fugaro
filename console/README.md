@@ -848,18 +848,25 @@ read it.
 Held by `test/unit/normal-fixture.test.ts`: the shape, the invariants, a scan of
 every decoded key and string value (after NFKC, case and zero-width folding)
 against forbidden substrings and a positive allow-list of shapes, and the scrub's
-refusals, each mutation-proven. One rule in that scan refuses a run of twelve
-decimal digits — a leaked amount, identifier or stamp the allow-list would
-otherwise take for an invented value — and it reads a number, not a digest: the
-header's SHA-256 is hex, so twelve consecutive digits occur inside it about 7% of
-the time (145 of 2000 scrubs, measured), and the digest is redrawn every run
-because the scrub draws a fresh clock offset. As a bare `\d{12}` the rule failed
-the scan at random, about one run in fourteen; it now matches a run only with no
-hex digit beside it,
-so the digits inside a longer hex token (a digest, a pseudonym, a commit) are not
-a number standing on its own, while a planted `123456789012` still is. The proof
+refusals, each mutation-proven. One rule in that scan refuses a run of twelve or
+more decimal digits — a leaked amount, identifier or epoch-millisecond stamp the
+allow-list would otherwise take for an invented value. It reads a number, not a
+digest: the header's SHA-256 is hex, so twelve consecutive digits occur inside it
+about 7% of the time (1504 of 20000 digests, and 145 of 2000 scrubs, measured),
+and the digest is redrawn every run because the scrub draws a fresh clock
+offset. As a bare `\d{12}` the rule failed the scan at random, about one run in
+fourteen; it now matches a run only with no hex digit beside it, so the digits
+inside a longer hex token (a digest, a pseudonym, a commit) are not a number
+standing on its own — 0 of 20000 digests, measured — while a planted
+`123456789012`, `1234567890123` or `acme-123456789012` still is. The run is the
+whole maximal one (`\d{12,}`): a fixed twelve would match neither lookaround
+inside a thirteen-digit stamp, since every twelve-character window there has a
+digit on both sides, and that stamp is exactly what the rule is for — the verify
+line's name slot is open in the allow-list, because `junit.go` copies an ID
+verbatim, so this rule is the only guard against a number riding in it. The proof
 is a deterministic case (a 64-character digest with a twelve-digit run planted in
-it) plus a loop that scrubs and scans 300 drawings of the clock. Held by `test/unit/scrub-vocabulary.test.ts`: that
+it, plus runs of 12, 13 and 20 digits standing on their own) and a loop that
+scrubs and scans 300 drawings of the clock. Held by `test/unit/scrub-vocabulary.test.ts`: that
 the scrub accepts every stage, auth and mode the CLI writes and refuses what it
 does not, that the verify shape is the one `internal/verify/verify.go` writes
 (every tail variant, the `FAILED` spelling, the `exit -1` a killed process
