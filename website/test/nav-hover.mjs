@@ -36,10 +36,11 @@
 // event a `<details>` fires when its `open` attribute changes, `focusin`, the `change` a
 // `MediaQueryList` reports when the device's answer changes, and a `<summary>`'s own activation
 // behaviour (a click toggles its group). Those are the browser's, not the site's, and the stub
-// states each one where it stands. What a real pointer does on a real screen is the owner's live check: the brief's
-// acceptance line — "hovering a top-level item on desktop opens its submenu immediately" — is a
-// rendered gesture, and **Check 70a's step 6 in `docs/gcp-live-checklist.md` is where the owner
-// runs it** (the register, not this file: no step of that check is run by an agent).
+// states each one where it stands. What a real pointer does on a real screen is the owner's live
+// check: the brief's acceptance line — "hovering a top-level item on desktop opens its submenu
+// immediately" — is a rendered gesture, and **Check 70a's step 6 in `docs/gcp-live-checklist.md`
+// is where the owner runs it** (the register, not this file: no step of that check is run by an
+// agent).
 //
 // It reads the built pages out of `dist/`, which `npm run check` builds first, and the script
 // itself out of `public/scripts/site.js`, which the build copies into `dist/` verbatim — so a
