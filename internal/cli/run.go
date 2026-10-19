@@ -1174,6 +1174,23 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	if name == config.DefaultClaudeAccount {
 		return nil
 	}
+	// The two documents auth can come from are read differently, and only one
+	// of them is validated. The checkout's own config went through
+	// config.Validate (agent.auth is one of vertex, api-key, oauth), while the
+	// ref's bytes are read by config.AgentOf, which decodes strictly and
+	// validates nothing — so an arbitrary string arrives here from a committed
+	// fugaro.yaml. A value this Fugaro cannot place is refused, which is what
+	// the run does with that same file at bootstrap (its own config.Validate)
+	// and so only says so earlier, and it is printed through
+	// pluginwire.Printable: it is a repository's own text, a newline in it
+	// would add a line to a refusal a person reads (safetext.MultiLine keeps
+	// newlines, by design), and an escape sequence would rewrite that line.
+	// The message names what auth may be, because the file's author is the one
+	// who can fix it.
+	if auth != "" && !config.KnownAgentAuth(auth) {
+		return userErr("named Claude account %s cannot be judged against %s's agent.auth, which is %s — not a value this Fugaro knows (agent.auth is one of %s)",
+			pluginwire.Printable(name), repo, pluginwire.Printable(auth), strings.Join(config.AgentAuths, ", "))
+	}
 	if auth != "" && auth != "oauth" {
 		return userErr("named Claude account %s only applies to a workflow whose agent.auth is oauth; %s's agent.auth is %s",
 			pluginwire.Printable(name), repo, auth)

@@ -44,6 +44,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // newProjectReposCmd is `fugaro project repos`: the project's allow-list as
@@ -359,12 +360,22 @@ func spendRepos(ctx context.Context, lc *localcfg.Config, now time.Time) (recs [
 		return nil, "", firestoreErr(lc, err)
 	}
 	for _, d := range docs {
-		// A document this Fugaro cannot read is left out rather than failing
-		// the listing: it is one day of one repository — the bucket still
-		// names the repository, and an operator who has to repair a
-		// spendDaily document does not need this command to stop listing
+		// A document whose *fields* this Fugaro cannot read is left out rather
+		// than failing the listing: it is one day of one repository — the
+		// bucket still names the repository, and an operator who has to repair
+		// a spendDaily document does not need this command to stop listing
 		// what the allow-list holds (report totals such a document as a
 		// warning because its figures are its answer; here they are not).
+		//
+		// What the query itself refuses is not left out, and this is the
+		// distinction the sentence above must not be read as covering: a
+		// document whose *name* is not a name (a slug the registry held with a
+		// "/" in it, so the object's name has more than the two segments
+		// firestore.Client's decode accepts) fails the query, and the listing
+		// reports that error and exits without printing — it fails closed
+		// rather than silently listing a shorter history. That is why the two
+		// durable sources cannot both deliver a multi-segment slug: spendDaily
+		// can only ever name a one-segment one here.
 		if r, err := budget.FromFields(d.Fields); err == nil {
 			recs = append(recs, r)
 		}
@@ -632,9 +643,9 @@ func configRepo(lc *localcfg.Config, arg string) (localcfg.Repo, bool) {
 	if r, ok := lc.Repos[arg]; ok {
 		return r, true
 	}
-	folded := asciiLower(arg)
+	folded := task.ASCIILower(arg)
 	for name, r := range lc.Repos {
-		if asciiLower(name) == folded {
+		if task.ASCIILower(name) == folded {
 			return r, true
 		}
 	}
@@ -687,7 +698,7 @@ func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	// segments refused it with "write it as provider/owner/name", the same way
 	// the cap did, and left the wildcard form as the only way to allow-list a
 	// nested repository.
-	provider, repo := asciiLower(parts[0]), asciiLower(strings.Join(parts[1:], "/"))
+	provider, repo := task.ASCIILower(parts[0]), task.ASCIILower(strings.Join(parts[1:], "/"))
 	canonical := provider + "/" + repo
 	if !strings.Contains(canonical, "*") {
 		// A concrete repository goes through projectpolicy.Canonical, the one
@@ -704,24 +715,6 @@ func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 		return "", userErr("%v", err)
 	}
 	return canonical, nil
-}
-
-// asciiLower lower-cases A–Z only, which is task's own rule for a repository
-// (task.asciiLower, unexported there, reached through
-// projectpolicy.Canonical). strings.ToLower case-folds Unicode instead: it
-// turns a Kelvin sign K (U+212A) into an ASCII "k", so an argument typed with
-// one would come out of here looking canonical while the runner's Canonical —
-// ASCII-only, and the form the allow-list is matched in — refuses to produce
-// that name at all. With this fold the look-alike survives into
-// ValidPattern/Canonical, which refuse it.
-func asciiLower(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b)
 }
 
 // ---------------------------------------------------------------- sync

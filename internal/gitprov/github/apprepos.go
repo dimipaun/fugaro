@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // listingPageSize is what the two listings ask for per page: GitHub's own
@@ -139,7 +140,14 @@ func installationRepositories(ctx context.Context, app *httpjson.Client, token s
 			return nil, fmt.Errorf("listing the repositories of github app installation %d: %w", id, err)
 		}
 		for _, r := range page.Repositories {
-			if name := strings.ToLower(strings.TrimSpace(r.FullName)); name != "" {
+			// ASCII-only folding (task.ASCIILower), not strings.ToLower: every
+			// name this listing returns is compared against — and offered to an
+			// operator as — a repository in task's canonical form, which folds
+			// A–Z and nothing else. Unicode folding merges names that are not
+			// one name (a Kelvin sign K becomes an ASCII "k"), so a repository
+			// GitHub returns with one would come out of here spelled as a
+			// repository nobody has, and the next comparison would not find it.
+			if name := task.ASCIILower(strings.TrimSpace(r.FullName)); name != "" {
 				out = append(out, name)
 			}
 		}

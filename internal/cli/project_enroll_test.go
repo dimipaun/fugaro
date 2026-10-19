@@ -858,6 +858,43 @@ func TestProjectReposLsBoundsHowManyNamesItLists(t *testing.T) {
 	}
 }
 
+// TestProjectReposLsFailsClosedOnADocumentNameItCannotRead: the seen half
+// leaves out a spendDaily document whose *fields* it cannot read (one day of
+// one repository, and the bucket still names the repository), and that is
+// deliberately not the same thing as a document whose *name* it cannot read.
+// firestore.Client's decode takes a document name of exactly two segments
+// after /documents/, so a spendDaily object named with a slug of more than one
+// segment — a slug the registry held with a "/" in it — fails the query
+// itself, and this command reports that error and prints nothing at all. That
+// is the fail-closed half: an operator is told the history could not be read
+// rather than handed a listing of the part of it that could. It is also why
+// the wildcard a run can reach through this source is a single segment ("*"),
+// and not a pattern like "github/*/*".
+//
+// Mutation (verified, run and restored): skip a document the query refused
+// (treat firestore's error as an empty page) — this test fails, the command
+// succeeds and prints a listing of what is left.
+func TestProjectReposLsFailsClosedOnADocumentNameItCannotRead(t *testing.T) {
+	f := newSeenFixture(t)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	f.spent(t, budget.DayDate(budget.Day(f.now)), "github/x/y", "github/x/y")
+
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err == nil {
+		t.Fatalf("the listing did not report a spendDaily document it cannot read:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "unexpected document name") {
+		t.Errorf("the listing failed for another reason than the document's name: %v", err)
+	}
+	if out != "" {
+		t.Errorf("the listing printed before it refused, so it reads as one that finished:\n%s", out)
+	}
+}
+
 // TestProjectShowRunningNamesBoundedAndInert: `project show`'s running list is
 // the run registry's keys, which runs write (a slug, and for a key the
 // database does not take as it stands, budget.Key's percent-escapes of it —

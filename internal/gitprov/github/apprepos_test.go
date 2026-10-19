@@ -160,6 +160,47 @@ func TestAppRepositoriesListsEveryInstallation(t *testing.T) {
 	}
 }
 
+// The listing folds case the way the rest of Fugaro does, and not the way
+// strings.ToLower does. Every name it returns is compared against — and
+// offered to an operator as — a repository in task's canonical form
+// (task.ASCIILower, task.CanonicalRepo), which folds A–Z and nothing else, so
+// Unicode folding here would spell a repository as one nobody has: a Kelvin
+// sign K (U+212A) lower-cases to an ASCII "k" and an "İ" (U+0130) to "i̇", so
+// the name would come back as a repository the canonical form refuses to
+// produce at all, and the sync that offers it would offer a name that cannot
+// be enrolled. The look-alike is left as written, where the fold that decides
+// what a repository is refuses it.
+//
+// Mutation (verified, run and restored): task.ASCIILower's body replaced by
+// strings.ToLower — this test fails on both names, the Kelvin sign folded to
+// "acme/keyboard" and the dotted capital I to "acme/i".
+func TestAppRepositoriesFoldsASCIIOnly(t *testing.T) {
+	// Spelled as runes, so the source stays plain text: both are names GitHub
+	// can return, written the way a person would paste them.
+	kelvin := "acme/" + string(rune(0x212A)) + "eyboard" // KELVIN SIGN, not "K"
+	dotted := "acme/" + string(rune(0x0130))             // I WITH DOT ABOVE, not "I"
+	s := newAppRepoServer(t, appRepoFixture{
+		installPages: [][]int64{{11}},
+		repoPages:    map[int64][][]string{11: {{"ACME/Fixture", kelvin, dotted}}},
+	})
+	got, err := AppRepositories(context.Background(), appRepoOpts(t, s.URL))
+	if err != nil {
+		t.Fatalf("AppRepositories: %v", err)
+	}
+	want := []string{dotted, kelvin, "acme/fixture"}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("AppRepositories = %q, want %q: the names are folded the way the canonical form does, or a repository is returned spelled as one nobody has", got, want)
+	}
+	// And the fold is not the one that merges them: the look-alikes are still
+	// look-alikes, not the ASCII names they resemble.
+	for _, name := range got {
+		if name == "acme/keyboard" || name == "acme/i" {
+			t.Errorf("AppRepositories = %q, in which a Unicode case fold turned a look-alike into a different repository's name", got)
+		}
+	}
+}
+
 // The token that reads the repository list asks for the one permission that
 // call needs. Asking for none at all grants the installation's whole permission
 // set, which would hand this one command a credential that can push code to
