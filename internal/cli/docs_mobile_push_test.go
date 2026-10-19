@@ -128,13 +128,18 @@ func TestDocsMobilePushCitationsExist(t *testing.T) {
 		}
 	}
 
-	// The number the design proposes, read from the register itself: a
-	// `## Check 88` section or a `| 88 |` row in the checklist means another
-	// document has taken it, and this design would be proposing a taken number.
+	// Check 88's register state, read from the register itself. The number is
+	// NOT chosen here: the mobile plan allocates 80-89 to this work in advance
+	// ("a reserved number is never reused and never renumbered") and assigns 88
+	// to P5.2's behaviour, and the plan allocates the *writing* to P4.2. So a
+	// `## Check 88` section or a `| 88 |` row appearing does not mean a new
+	// number must be found — it means P4.2 has written the check into the
+	// register, and the design's §8 sentence that the register is free of it
+	// must be updated to say so (and to record the run, which is the owner's).
 	checklist := readDoc(t, "docs/gcp-live-checklist.md")
-	for _, taken := range []string{"## Check 88", "| 88 |"} {
-		if strings.Contains(checklist, taken) {
-			t.Errorf("docs/gcp-live-checklist.md carries %q, so Check 88 is no longer free and %s must propose the next number", taken, path)
+	for _, written := range []string{"## Check 88", "| 88 |"} {
+		if strings.Contains(checklist, written) {
+			t.Errorf("docs/gcp-live-checklist.md now carries %q: P4.2 has written Check 88 into the register, so %s's §8 must say the check is written (the number is allocated and is never renumbered) and record the owner's run", written, path)
 		}
 	}
 }

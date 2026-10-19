@@ -278,11 +278,17 @@ app-data clear, and occasionally otherwise, and FCM reports a stale token back a
   next pairing. Simple, needs no new write grant — and **stale for exactly the case that
   matters** (a user who reinstalls and never re-pairs gets no pushes).
 - **(b) Re-registration over the authenticated mailbox.** The app, on next open, writes its
-  current token as an ordinary mailbox message; the **consumer** — which already holds admin
-  credentials on the machine beside the orchestrator — updates the device node. No new grant
-  to the app, no admin act for the user, and it reuses the mailbox the design already trusts.
-  This is the recommendation, because it puts the write on the principal that is already
-  allowed to make it.
+  current token as an ordinary mailbox message; a principal holding `roles/firebasedatabase.admin`
+  updates the device node from it. No new grant to the app, no new write path for the phone,
+  and it reuses the mailbox the design already trusts. **The premise is conditional and this
+  document states it as such rather than as a fact:** §3.4 records that, per
+  `deploy/terraform/gcp/modules/firebase/iam.tf`, `roles/firebasedatabase.admin` is held by
+  **`admins` and `budget_admins` only** — the very reason reconciliation G13 and D166 call
+  **pairing itself an admin act**. So where the operator holds that role, the consumer beside
+  the orchestrator writes the node directly; **where the operator does not, re-registration is
+  an admin act in the same sense pairing is** — it needs a principal with the role — and it is
+  not something this design can promise for free. (a)'s reaping is then the fallback, and Q3
+  asks the owner to choose between them, naming the role each depends on.
 - **(c) Let the app write its own push child.** A rules grant for the phone to write
   `config/admin/devices/$uid/push/**` under the `MAILBOX` identity. Cheapest for the user and
   **the one shape this design rejects**: it reopens `config/admin` to a client write, which
@@ -316,31 +322,40 @@ The candidates, priced:
   - *The one place (A) is defensible*: the **gateway**'s threshold case, where the budget
     decision is made in-process — but the gateway shares the run's container and identity, so
     it inherits (A)'s cost. **Reject.**
-- **(B) One cloud sender, draining a pending-push node.**
-  - *Recommended.* The producer **records an intent** — a row saying "device D, category C, at
-    T, key K" — and a single cloud component reads the rows and calls FCM. The natural home is
-    the **history job** (`history.tf`'s `google_cloud_run_v2_job.history`), which already runs
-    every 15 minutes under `fugaroHistory` + `firebasedatabase.admin`, already holds an ambient
-    identity, and already talks to the mailbox's database. It gains exactly one thing: the FCM
-    send permission, held by **one account**, not by every run.
-  - *Latency*: the 15-minute sweep is the floor. For a "run finished" alert that may be
-    enough; for "needs your answer" it is poor, because the prompt expires at D118's 72 hours
-    and a 15-minute delay is usually tolerable but not always. **The fix is to let the
-    producer invoke the sender**: the producer holds `run.jobs.run` on **that one job** and
-    calls it on demand, with the scheduler as the backstop. That is a narrow grant (one job,
-    `run.jobs.run`) rather than a project-wide one — but it is still a grant on a run's
-    account, and Q1 asks the owner whether to take it or to accept the sweep's latency.
-  - *Where the rows live*: **not** in the rules-readable mailbox. A pending-push row is
-    sender-internal state, and `config/admin` (deny-all, IAM-only) is the shape that already
-    fits; §3.4's node is the sibling. The rows must carry **no content** — the category and the
-    device are all a sender needs, and §3.1 already forbids the rest.
-- **(C) A new always-on service.** A Cloud Run service with a socket that the producer pokes.
+- **(B) One cloud sender that derives the events itself.**
+  - *Recommended.* A single cloud component **derives** what to send from state it already
+    reads, and calls FCM. **No producer writes anything** — and that is the point, because
+    the run-side producers (the runner at finalize, the gateway at a threshold) are exactly
+    the accounts (A) refuses to widen. The natural home is the **history job**
+    (`history.tf`'s `google_cloud_run_v2_job.history`), which already runs every 15 minutes
+    under `fugaroHistory` and already holds `roles/firebasedatabase.admin` on the project's
+    database — `deploy/terraform/gcp/modules/firebase/iam.tf`'s `google_project_iam_member.history_database`,
+    whose own comment is "only this account (and no job account) holds one on the FP". It
+    reads the run registry (`internal/budget/registry.go`'s entries), the spend and kill
+    nodes, and the mailbox's outbox — the four categories' sources — and it gains exactly one
+    thing: the FCM send permission, held by **one account**, not by every run.
+  - *Where the sender's own state lives*: a **dedupe and cap ledger**, written **by the
+    sender's own admin identity** and read by it, under `config/admin` (`rules.json.tmpl`'s
+    `"admin": { ".read": false, ".write": false }` — no client write, ever) or in Firestore
+    under its `roles/datastore.user`. **No run and no phone writes it**, so this design
+    widens no run account; and the rows carry **no content** — a device, a category, a
+    timestamp and the state-change key, §3.1's rules applying to the ledger as much as to the
+    payload.
+  - *Latency*: the 15-minute sweep is the floor, and for "needs your answer" it is tolerable
+    but not always — a prompt expires at D118's 72 hours. **The only way to beat the sweep is
+    to let a run-side producer poke the sender**, and the honest price is that this needs
+    `run.jobs.run` on the sender held by a run's account — **the same class of run-account
+    widening (A) is rejected for**, not a free refinement of (B). Q1 puts that trade to the
+    owner as what it is: sweep-only (no widening) against on-demand (a run-account grant).
+- **(C) A new always-on service.** A Cloud Run service with a socket that a producer pokes.
   **Reject**: it is a standing server this repository has never deployed, it is P5.1's
-  orchestrator's problem (unapproved, and behind D55–D78), and it buys latency (B) can buy with
-  one narrow grant.
+  orchestrator's problem (unapproved, and behind D55–D78), and it buys no latency that (B)'s
+  sweep-only shape does not already give for free.
 
-**Recommendation: (B).** One sender, one credential, ambient identity, no key on a laptop, and
-the producer's write is an intent rather than a send. Q1 records the latency/grant trade.
+**Recommendation: (B), sweep-only.** One sender, one credential, ambient identity, no key on a
+laptop, **no producer write and therefore no run-account widening**; latency is bounded by the
+sender's schedule. The one account the design widens is the sender's, with the FCM send
+permission and nothing else. Q1 records the latency/grant trade.
 
 ### 3.7 Rate limiting and dedupe
 
@@ -375,9 +390,11 @@ the producer's write is an intent rather than a send. Q1 records the latency/gra
 
 **How the controls are written** is Q3's rotation question in another guise: the app cannot
 write `config/admin` (§3.4), so the switch is written either by the CLI (an admin act, awkward
-for a toggle the user expects to flip in the app) or by the app through the mailbox and the
-consumer (§3.5's (b)). **Recommendation: (b) again** — the mailbox is the app's only write
-path, and this design does not add a second one.
+for a toggle the user expects to flip in the app) or by the app through the mailbox and a
+principal holding `roles/firebasedatabase.admin` (§3.5's (b), **conditional on that role
+exactly as (b) is**). **Recommendation: (b) again** — the mailbox is the app's only write
+path, and this design does not add a second one; where the role is not held, the switch is an
+admin act like pairing, and this document does not pretend a toggle in the app is free of it.
 
 ## 4. What a push must never carry, and what it must never do
 
@@ -498,15 +515,26 @@ spent in v1.
 
 ## 8. The checks it would need
 
-**Check 88 — and it is free.** `docs/gcp-live-checklist.md` carries **no `## Check 88`
-section and no `| 88 |` row** on `main`, so the number is unclaimed in the register; the
-mobile plan's own check table already proposes **88** for "Push delivery — only if D121 says
-yes", task P5.2. This design **names Check 88 and does not write it**: per the plan's Global
-Constraints and P4.2, a check's text is written by the task that owns it (here, a P5.2 that is
-unscheduled), into `docs/gcp-live-checklist.md`, in the register's own block form, and it is
+**Check 88 — allocated in advance, and this design chooses no number.** The mobile plan's check
+block is **80–89**, "allocated to this work on 2026-10-16, in advance", taken as allocated and
+**never reused and never renumbered** (the plan's "Check numbers this plan takes (80–89)"
+states the rule), and its check table already assigns **88** to "Push delivery — only if D121
+says yes", task **P5.2**. So this design **proposes nothing and renumbers nothing**: it reads
+the number the plan holds. `docs/gcp-live-checklist.md` carries **no `## Check 88` section and
+no `| 88 |` row** on `main` today, because the check has not been written yet — not because
+the number is unclaimed.
+
+**Who writes it: the plan says P4.2, and this design says so too rather than claiming it.**
+The plan allocates the *writing* explicitly — "**checks 80 and 83–88 by P4.2**", and Task
+**P4.2: Checks 80–89, written into the register** — and P4.2 is **scheduled** while **P5.2 is
+not**. So the register entry for 88 is written by P4.2, in the register's own block form, under
+the plan's rule that a check is never run before its text is in the register; the check is
+**run by the owner only if the owner builds push**. This design **names Check 88 and does not write it**,
+and it does not move the writing to a task that may never be scheduled. It is
 **owner-run — no agent performs any step of it**.
 
-**What Check 88 would have to prove** (outline only; the task that writes it owns the steps):
+**What Check 88 would have to prove** (outline only; P4.2 owns the register text the owner
+runs):
 a real notification arrives on a real device for each of §1's four categories; **the payload
 as the provider sees it carries a category and nothing else** (read the FCM/APNs record, not
 the lock screen); the app shows the detail only after the authenticated mailbox fetch; deleting
@@ -528,10 +556,14 @@ privacy page would be the page claiming something that is not its subject.
 **Where a push privacy statement belongs, if the owner wants one:**
 
 - **`SECURITY.md`**, whose trust model currently says **nothing at all about the mobile app,
-  the mailbox or notifications** (a check of the file finds no occurrence of "mailbox",
-  "mobile", "phone", "push" or "notification"). That is a gap this design surfaces but does
-  not close: the natural home for "what the phone sends, what the provider sees" is the trust
-  model, beside the budget-token paragraph and the mailbox residual it already carries.
+  the mailbox or notifications.** Stated exactly, because this document's value is that its
+  stated checks hold: a grep of the file finds **no occurrence of "mailbox", "mobile", "phone"
+  or "notification"**, and the occurrences of "push" are all the **git** verb ("anyone who can
+  push to it", "pushes only to", "can push") and never the notification sense — so the
+  absence this design relies on is of the *subject*, not of the word. That is a gap this
+  design surfaces but does not close: the natural home for "what the phone sends, what the
+  provider sees" is the trust model, beside the budget-token paragraph and the mailbox
+  residual it already carries.
 - **An app-facing statement** in the app or on the install page, if one exists when the app
   ships (D120's store listings are owner-run and are the other natural home).
 
@@ -588,16 +620,25 @@ D160–D179 are not this document's to take.
   lowest latency; **widens every run's shared job account** with the FCM send permission, and
   a run that can send can name a repository in a title — which collapses §5 attacker 2's whole
   argument. **Recommended against.**
-- *(B) one cloud sender — the history job — draining a pending-push node, invoked on demand by
-  the producer*, with the 15-minute sweep as backstop: **recommended.** One account, one
-  credential, ambient identity, no key on a laptop. The open part is the invocation: it needs
-  the producer to hold `run.jobs.run` on that **one** job — a narrow grant, but a grant on a
-  run's account — **or** the owner accepts the sweep's up-to-15-minute latency. Q1's real
-  question is that trade.
+- *(B) one cloud sender — the history job — that derives the events itself and calls FCM*,
+  with its own dedupe and cap ledger written under its own admin identity (`config/admin` or
+  Firestore): **recommended, sweep-only.** One account, one credential, ambient identity, no
+  key on a laptop, **and no producer write** — so no run account is widened and §4 rule 6
+  holds literally. The ledger's writer and its grant are the sender's own
+  (`roles/firebasedatabase.admin` on the installation's database, which
+  `deploy/terraform/gcp/modules/firebase/iam.tf` grants to that account and, in its own words,
+  to no job account); **no run and no phone writes it.**
+- *(B′) (B) plus an on-demand poke*, so a run-side producer can ask the sender to run now
+  rather than wait for the sweep: **not recommended as the default**, and priced honestly
+  rather than as a free refinement — the poke needs the producer to hold `run.jobs.run` on
+  that **one** job, which is a grant on a **run's account**, the same class of widening (A) is
+  rejected for (§3.6). If the owner wants sub-sweep latency, this is the option and this is
+  its price; otherwise the sweep's up-to-15-minute delay is accepted.
 - *(C) a new always-on service*: rejected — a standing server this repository has never
   deployed, behind P5.1 and D55–D78.
-- ***Recommendation: (B).*** *Why:* it is the only shape that keeps §4 rule 6 ("never a
-  widening beyond one sender") true, and the latency cost is a bounded, owner-visible trade.
+- ***Recommendation: (B), sweep-only.*** *Why:* it is the only shape that keeps §4 rule 6
+  ("never a widening beyond one sender") true, and the latency it pays is bounded and
+  owner-visible rather than bought with a run-account grant.
 
 **Q2. Is the push token stored under D166's device node, and does it wait for P6.4?**
 - *(i) Yes — a child of `config/admin/devices/$uid`, riding P6.4's rules generation 3.*
@@ -613,9 +654,15 @@ D160–D179 are not this document's to take.
 write `config/admin`?**
 - *(a) register at pairing; reap `UNREGISTERED`*: no new grant, but a reinstalled-and-not-
   re-paired device goes silent.
-- *(b) re-register over the authenticated mailbox, the consumer writes the node*:
-  **recommended** — the mailbox is the app's only write path, the consumer already holds the
-  admin credential beside the orchestrator, and it reuses the MAC-authenticated channel (D169).
+- *(b) re-register over the authenticated mailbox, and a principal holding
+  `roles/firebasedatabase.admin` writes the node from it*: **recommended** — the mailbox is the
+  app's only write path, it reuses the MAC-authenticated channel (D169), and it puts the write
+  on a principal that already exists. **State the dependency, do not assume it:** per §3.4 and
+  `deploy/terraform/gcp/modules/firebase/iam.tf`, that role is held by **`admins` and
+  `budget_admins` only** — which is why G13 and D166 call pairing an admin act. So (b) is
+  free where the operator holds the role (the consumer beside the orchestrator writes it), and
+  **where the operator does not, it is an admin act like pairing** — the same role, the same
+  person, and no discount for the app's convenience. The design does not claim otherwise.
 - *(c) a rules grant letting the phone write its own push child*: **rejected** — it reopens
   `config/admin` to a client write, which D166 deliberately closed.
 - ***Recommendation: (b), with (a)'s reaping as a net.*** This also answers §3.8's switches:
