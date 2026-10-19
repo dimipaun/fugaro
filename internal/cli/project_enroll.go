@@ -67,9 +67,16 @@ type projectReposOptions struct {
 
 func newProjectReposLsCmd() *cobra.Command {
 	var o projectReposOptions
+	// The Short names the list this command prints, never "running now": that
+	// is `project show`'s list — the run registry's runs in flight — while
+	// what is printed here is the durable seen, the runs bucket's
+	// runs/<slug>/ prefixes and spendDaily, which outlive every run.
+	// docs/project-layer.md §7 words the contrast ("the durable answer is one
+	// command away rather than in that output") and the sibling add/rm
+	// commands point at it.
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List the allow-list and the repositories running now",
+		Short: "List the allow-list and the repositories that have run here",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return runProjectReposLs(cmd, &o) },
 	}

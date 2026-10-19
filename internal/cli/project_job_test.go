@@ -583,6 +583,48 @@ func TestProjectJobAccountComesFromTheRef(t *testing.T) {
 	})
 }
 
+// projectJobLayerAuthRepoYAML is the anchored checkout with an agent block
+// that only names the account and writes no auth of its own: the shape a
+// project that has adopted Claude accounts writes, because agent.auth is the
+// project layer's to set (docs/design/layered-config.md's scopes table, and
+// the fixture layer's defaults say `agent: { auth: oauth }`) while only a
+// repository may name an account (named-oauth-tokens T2 — no layer may).
+func projectJobLayerAuthRepoYAML(token string) string {
+	return strings.Replace(projectJobAnchoredRepoYAML, "git:\n", "agent: { oauth_token: "+token+" }\ngit:\n", 1)
+}
+
+// TestProjectJobNamedAccountJudgedWithTheLayersAuth is the other half of the
+// account rule: the account comes from the ref's own file, but the auth it is
+// judged against is the *layer-resolved* document — the one the run resolves
+// (projectJobAgentAuth) and doctor reports on. Reading the ref's bytes raw
+// answered Fugaro's default for this shape (applyDefaults' vertex, the file
+// naming no auth) and refused the launch with "acme-personal only applies to a
+// workflow whose agent.auth is oauth; acme/app's agent.auth is vertex" — a
+// false refusal, in the direction this gate exists to make safe, of a run the
+// run's own document resolves as oauth.
+//
+// Mutation (run, restore): judge the auth on the ref's raw decode (a.Auth from
+// config.AgentOf, project_cmd's old read) — this launch is refused before the
+// claim, and acme-personal's job is never asked for.
+func TestProjectJobNamedAccountJudgedWithTheLayersAuth(t *testing.T) {
+	f := newProjectJobServingFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f.cloudFixture, projectJobOAuthLayer)
+	projectJobCheckoutYAML(t, projectJobLayerAuthRepoYAML("acme-personal"))
+
+	const run = "20261019-100002-cccc"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); err != nil {
+		t.Fatalf("a launch whose account the repository names and whose auth the project layer sets: %v", err)
+	}
+	profile, provider, account := launchedProjectJob(t, f.cloudFixture)
+	if profile != "standard" || provider != "github" || account != "acme-personal" {
+		t.Errorf("the launch ran the project job of (%s, %s, %q), want (standard, github, acme-personal) — the layer's oauth resolves the name the repository makes", profile, provider, account)
+	}
+	if got := readSpec(t, f.cloudFixture, run).OAuthToken; got != "acme-personal" {
+		t.Errorf("the stored task selects %q, want acme-personal", got)
+	}
+}
+
 // And a checkout that does not hold the ref at all cannot show the document
 // the run resolves: the launch is refused, naming the ref, rather than judged
 // on another ref or on the working tree. Nothing is fetched to make the read —

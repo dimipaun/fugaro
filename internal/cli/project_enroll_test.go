@@ -125,6 +125,29 @@ func listLine(t *testing.T, out, name string) string {
 	return ""
 }
 
+// TestProjectReposLsHelpPointsAtTheDurableList: the command's own help must
+// name the list it prints, and not the other one. "Running now" is
+// `project show`'s registry list — the runs in flight — while what `repos ls`
+// prints is the durable seen, the runs bucket's runs/<slug>/ prefixes and
+// spendDaily, which outlive every run (docs/project-layer.md §7 words the
+// contrast: "the durable answer is one command away rather than in that
+// output"). A Short naming the other surface sends an operator asking about a
+// repository that has run but is not running at this moment to the wrong
+// command, and the CLI reference is generated from that string
+// (website/content/cli-reference.md).
+//
+// Mutation (verified, run and restored): put "and the repositories running
+// now" back in the Short — this test fails, naming it.
+func TestProjectReposLsHelpPointsAtTheDurableList(t *testing.T) {
+	short := newProjectReposLsCmd().Short
+	if strings.Contains(short, "running now") {
+		t.Errorf("`repos ls`'s help names the repositories running now, which is `project show`'s list: %q", short)
+	}
+	if !strings.Contains(short, "have run here") {
+		t.Errorf("`repos ls`'s help does not name the list it prints: %q", short)
+	}
+}
+
 // `project repos ls` prints the allow-list and, against it, the repositories
 // the installation has seen run — from the two durable sources the design
 // names (§4.3): the runs bucket's runs/<slug>/ prefixes and Firestore's

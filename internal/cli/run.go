@@ -1031,19 +1031,22 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // is available here, so --repo X --token N outside any checkout is held to the
 // same rule a checkout's own resolution would be.
 //
-// The document the selection comes from is the run's own, read at the ref the
-// run checks out and out of this checkout's git objects
-// (agentAtRef/checkoutFugaroYAMLAtRef), never the working tree: the run
-// resolves agent.auth from that same file (projectJobAgentAuth), and the
-// account is not a lesser fact about the run. A working tree left on another
-// branch, or carrying an uncommitted edit, would otherwise select the account
-// the launch runs as — the job it lands on holds that account's token, and that
-// account's allow_repos is what decides whether this repository may use it
-// (docs/design/named-oauth-tokens.md T2: the committed fugaro.yaml is the only
-// place that may name an account) — while the run reads a document that names
-// another. The ref is what the *auth* is judged on for the same reason; the
-// two are read from one document here so that a launch cannot judge one of
-// them the run's way and resolve the other the launcher's way.
+// Both halves are the run's, and neither is the working tree's. The account is
+// read at the ref the run checks out, out of this checkout's git objects
+// (agentAtRef/checkoutFugaroYAMLAtRef), because the committed fugaro.yaml is
+// the only place that may name an account (docs/design/named-oauth-tokens.md
+// T2) — a working tree left on another branch, or carrying an uncommitted
+// edit, would otherwise select the account the launch runs as: the job it
+// lands on holds that account's token, and that account's allow_repos is what
+// decides whether this repository may use it. The auth is the *run's* too, and
+// that means the ref's bytes resolved over the project layer (agentAtRef's
+// second answer), not the ref's bytes alone: agent.auth is a project-scope,
+// layerable key (docs/design/layered-config.md's scopes table), so the run
+// resolves it layer-applied (projectJobAgentAuth) — a launcher that read the
+// raw file would answer Fugaro's own default (applyDefaults' vertex) for the
+// shape projects adopt accounts with, a layer whose defaults say
+// `agent.auth: oauth` over a repository that only names an account, and refuse
+// a launch the run resolves as oauth and doctor reports as fine.
 //
 // ref is "" when the launch has no ref yet — the pre-check runRun makes with
 // --pr and an explicit --recipe, before the previous run's ref is known (which
@@ -1054,7 +1057,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // shared project job whose own credential cannot be resolved is refused
 // outright (projectJobAgentAuth) rather than judged on a guess.
 func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, ref string, co *config.Config) (string, error) {
-	a, refAgent := agentAtRef(ctx, repo, ref)
+	a, refAuth, refAgent := agentAtRef(ctx, env, repo, ref)
 	name := flag
 	if name == "" {
 		switch {
@@ -1067,45 +1070,75 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, ref string
 	if name == "" {
 		name = config.DefaultClaudeAccount
 	}
-	// The auth a name is judged against is the run's own too: naming an account
-	// for a workflow whose agent.auth is oauth (claudeAccountAllowed) is a
-	// statement about the document the run resolves, so a checkout that has
-	// moved ahead of the ref cannot make the launch refuse a name the run's own
-	// file allows. With no ref to read, the checkout's own resolution stands.
+	// The auth a name is judged against, as the run resolves it: the document
+	// at the ref over the project layer when that could be read, and the
+	// checkout's own, layer-applied resolution otherwise.
 	auth := ""
 	if co != nil {
 		auth = co.Agent.Auth
 	}
 	if refAgent {
-		auth = a.Auth
+		auth = refAuth
 	}
 	return name, claudeAccountAllowed(env, repo, name, auth)
 }
 
-// agentAtRef is ref's `agent:` block, read out of the checkout of repo this
-// working directory holds (checkoutFugaroYAMLAtRef: git cat-file at
-// refs/remotes/origin/<ref>, else <ref>, never the network and never the
-// working tree), and whether it could be read at all. It is the one read the
-// launcher's half of the named-account rule makes, so the selection a launch
-// resolves and the auth it is judged against are the same document's.
+// agentAtRef is the two agent facts a launch judges a named account with, read
+// at ref: the file's own `agent:` block (i) and agent.auth as the *run*
+// resolves it (ii), with whether the ref could be read at all.
 //
-// Nothing is fetched to make it, so a ref this checkout does not hold, a
+// The document is the checkout's own object database (checkoutFugaroYAMLAtRef:
+// git cat-file at refs/remotes/origin/<ref>, else <ref>, never the network and
+// never the working tree), and the two facts are read differently because the
+// two keys have different scopes. agent.oauth_token is repository-scope — the
+// committed fugaro.yaml is the only place that may name an account
+// (docs/design/named-oauth-tokens.md T2) and no project layer may name one —
+// so the file's own value is the run's, via the strict config.AgentOf. And
+// agent.auth is project-scope and layerable (docs/design/layered-config.md's
+// scopes table): the run composes it from the ref's bytes and the project
+// layer its task carries, through runner.ResolveConfig, exactly as
+// projectJobAgentAuth does, and a launcher that answered from the raw file
+// would answer Fugaro's default where the layer is what says oauth.
+//
+// The layer is the one this command already resolved for that checkout
+// (cachedProjectLayer: checkoutConfig resolved it to tell the repository's
+// provider, and createTask's embedProjectLayer carries that same one into the
+// task), never a fresh bucket read — this gate makes no network call of its
+// own. A layer this command resolved nowhere leaves the file's own value
+// standing, and a document that does not resolve over it leaves it standing
+// too: such a document is one the run itself refuses at bootstrap, and for a
+// shared job the launch gate re-resolves the run's own credential
+// (projectJobAgentAuth) and refuses one that cannot be resolved.
+//
+// Nothing is fetched to make the read, so a ref this checkout does not hold, a
 // repository with no checkout here and a file that does not decode all answer
 // "no" rather than an error: the caller falls back to the working tree, which
 // is the resolution every launch had before this read existed.
-func agentAtRef(ctx context.Context, repo, ref string) (config.Agent, bool) {
+func agentAtRef(ctx context.Context, env *cloudEnv, repo, ref string) (config.Agent, string, bool) {
 	if ref == "" {
-		return config.Agent{}, false
+		return config.Agent{}, "", false
 	}
 	root := checkoutRoot(ctx, repo)
 	if root == "" {
-		return config.Agent{}, false
+		return config.Agent{}, "", false
 	}
 	data, err := readFugaroYAMLAtRef(ctx, root, ref)
 	if err != nil {
-		return config.Agent{}, false
+		return config.Agent{}, "", false
 	}
-	return config.AgentOf(data)
+	a, ok := config.AgentOf(data)
+	if !ok {
+		return config.Agent{}, "", false
+	}
+	auth := a.Auth
+	fl, cached := cachedProjectLayer(ctx, root, env.lc)
+	if cached && fl.Layer != nil {
+		pl := &task.ProjectLayer{SHA256: fl.Layer.SHA256, Generation: fl.Generation, YAML: string(fl.Layer.Raw)}
+		if res := runner.ResolveConfig(data, pl, env.lc.Name); res.LayerErr == nil && len(res.Problems) == 0 {
+			auth = res.Cfg.Agent.Auth
+		}
+	}
+	return a, auth, true
 }
 
 // checkoutAgentAuth is a checkout's own agent.auth as claudeAccountAllowed

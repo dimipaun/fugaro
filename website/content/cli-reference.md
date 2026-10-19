@@ -1827,7 +1827,7 @@ Flags:
 Subcommands:
 
 - `fugaro project repos add` -- Enroll a repository: add it to the policy's allow-list
-- `fugaro project repos ls` -- List the allow-list and the repositories running now
+- `fugaro project repos ls` -- List the allow-list and the repositories that have run here
 - `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
 
 ## `fugaro project repos add`
@@ -1858,7 +1858,7 @@ This command has no subcommands.
 
 ## `fugaro project repos ls`
 
-List the allow-list and the repositories running now
+List the allow-list and the repositories that have run here
 
 Usage: `fugaro project repos ls`
 
