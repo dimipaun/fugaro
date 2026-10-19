@@ -19,11 +19,16 @@ import (
 )
 
 // fugaro allow-delete (design docs/design/managed-projects.md, decisions D72
-// and D74) is the owner's answer to "may this project ever delete or replace
-// this resource?": a list of Terraform addresses, at the root of the runs
-// bucket, that is the whole of an approval in a managed project — the object
-// the managed apply reads its allow-list from, rather than its own command
-// line, which belongs to whatever session is applying.
+// and D74, and the entries rule of its §6 item 5) is the owner's answer to
+// "may this project ever delete or replace this object?": a list at the root
+// of the runs bucket whose entries each hold a Terraform address and the
+// identity of the object approved there, and which is the whole of an
+// approval in a managed project — the object the managed apply reads its
+// allow-list from, rather than its own command line, which belongs to whatever
+// session is applying. An approval is of one object and not of the address, so
+// one entry admits one delete: the object it named is gone afterwards, and the
+// same address carrying another one is not approved by it (tf.DeleteEntry,
+// tf.Approves).
 //
 // It is run by the owner, with the owner's own credentials, and it is
 // Fugaro's only writer of the object. What that buys, and what it does not — the plan's step
@@ -35,8 +40,8 @@ import (
 //     the same holds for the deployer service account the managed apply
 //     impersonates (Task 1.5). An apply through Fugaro's own path therefore
 //     cannot approve its own delete, and the gate that reads this object
-//     (tf.Guard, fed by managed.GuardAllowList) refuses a delete or a
-//     replacement whose address the owner did not name.
+//     (tf.GuardEntries, fed by managed.GuardAllowList) refuses a delete or a
+//     replacement the owner's entries do not approve.
 //   - Against a coding agent's session it is a speed bump, not a boundary.
 //     That session runs under the OPERATOR's credentials: it can write this
 //     object directly — gcloud storage cp — and it can unset the marker in its
@@ -59,7 +64,7 @@ func newAllowDeleteCmd() *cobra.Command {
 	var o cloudOptions
 	cmd := &cobra.Command{
 		Use:   "allow-delete [ADDRESS=IDENTITY...]",
-		Short: "Record the Terraform addresses a run may delete or replace (the project's owner)",
+		Short: "Record the objects a run may delete or replace, by address (the project's owner)",
 		Long: `Record which Terraform addresses the project's owner approves for deletion or
 replacement, and which object at each address is approved, in a managed
 project's fugaro/allow-delete.json at the root of the runs bucket. An approval
@@ -363,7 +368,7 @@ func allowDeleteWriteErr(lc *localcfg.Config, bucket string, err error) error {
 		return userErr("nothing was written for %s: gs://%s/%s changed after this command read it, so another write happened in between: run the command again to see the list as it is now: %s",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(err.Error()))
 	case isAccessDenied(err):
-		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (since 0.7.0 a launcher writes runs/ only, and no run account may write the bucket's root at all): run this as an operator, or ask one to approve the addresses: %s",
+		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (since 0.7.0 a launcher writes runs/ only, and no run account may write the bucket's root at all): run this as an operator, or ask one to approve the entries: %s",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(err.Error()))
 	default:
 		return remote(fmt.Errorf("writing %s in gs://%s for %s: %w", managed.AllowDeleteObject, safetext.Field(bucket), safetext.Field(lc.Name), safetext.FieldErr(err)))
