@@ -194,7 +194,7 @@ A reviewer of a **task** reads its own "Reviewer" line and the Review notes in i
 | `internal/runner/gateway.go` | C1.15 (L3), C1.19 (L4) |
 | `internal/runner/runner.go` | C1.17 (L3), C1.19 (L4), C2.2 (L7) |
 | `internal/runstore/runstore.go` | C1.17 (L3), C1.16 (L4) |
-| `internal/infra/spec.go`, `readiness.go` | C1.20 (L4) |
+| `internal/infra/spec.go`, `readiness.go` | C1.18 (L2, the mount drop only: `MountedByTheCredentialsService` in `workflow()`, pulled forward so the grant and the mount move together), C1.20 (L4) |
 | `internal/cli/accounts.go` | C1.21 (L4) |
 | `deploy/terraform/gcp/modules/workflow/sa.tf` | C1.18 (L2), C2.3 (L3) |
 | `deploy/terraform/gcp/modules/installation/credentials.tf` | C1.18 (L2, creates), C2.3 (L3) |
@@ -493,7 +493,7 @@ Writing the answers approves no task.
 
 ### Task C1.20: The mounts and the owner-run init stage — SECURITY-SENSITIVE
 
-**Files.** `internal/infra/spec.go`, `readiness.go` (no model secret mounted when the service is on; a `cascade` workflow mounts no tier-A token in any case), `internal/cli/init.go` and `internal/cli/init_credentials.go` (**new**, on the `init_compute.go` precedent: a flag like `--provision-batch`, typed at a real terminal, never covered by `--yes`, refused under `agentMarker`; **refused without the `credsRules` marker of C1.3**, naming `fugaro init --firebase`; the service's image is a Terraform variable of C1.18's `credentials.tf`, on the `history.tf` precedent (`var.history.image`), which the stage fills with the released image's reference, so this task needs C1.14's image only when the owner applies it, C1.24), the upgrade note in `internal/cli/upgrade_cloud.go` (a note on `fugaro upgrade`'s cloud step, on the `jobConfigCopyPolicyNote` precedent), tests.
+**Files.** `internal/infra/spec.go`, `readiness.go` (no model secret mounted when the service is on — **the mount drop landed with C1.18**, which pulled it forward so it could not disagree with `modules/workflow/sa.tf`'s grant filter; what is left here is that a `cascade` workflow mounts no tier-A token in any case), `internal/cli/init.go` and `internal/cli/init_credentials.go` (**new**, on the `init_compute.go` precedent: a flag like `--provision-batch`, typed at a real terminal, never covered by `--yes`, refused under `agentMarker`; **refused without the `credsRules` marker of C1.3**, naming `fugaro init --firebase`; the service's image is a Terraform variable of C1.18's `credentials.tf`, on the `history.tf` precedent (`var.history.image`), which the stage fills with the released image's reference, so this task needs C1.14's image only when the owner applies it, C1.24), the upgrade note in `internal/cli/upgrade_cloud.go` (a note on `fugaro upgrade`'s cloud step, on the `jobConfigCopyPolicyNote` precedent), tests.
 **Tests.** `TestNoModelMountsWithService`, `TestCascadeMountsNoOAuthToken`, `TestInitCredentialsStageRefusedInAgent`, `TestInitCredentialsStageNotCoveredByYes`, `TestInitCredentialsStageRefusedWithoutCredsMarker`, `TestUpgradeNoteNamesTheStage`. **Red step.** `TestInitCredentialsStageRefusedInAgent`. **Verification.** `GOFLAGS=-p=2 go test ./internal/infra/... ./internal/cli -run 'Credentials|Mount|Init|Upgrade' -count=1`. **Depends on.** C1.1, C1.3 (the marker), C1.18. **Reviewer.** opus + mandatory independent review.
 **Commit.** `infra, init: no model-secret mounts with the service on; an owner-run init stage to apply it`
 

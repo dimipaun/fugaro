@@ -1478,10 +1478,16 @@ run "credentials_service_off" {
 # because the drop is by logical name — and the job account gets run.invoker
 # on the service instead, which its IAM-checked ingress makes the only way in.
 #
-# The mount stays: dropping a model secret from the job's environment is
-# C1.20's spec.go change, not this one's. So the plan here is a job that
-# mounts a secret it can no longer read, and the assertion below says so out
-# loud rather than letting it be discovered at run time.
+# The mount goes with the grant — for every tfvars this fugaro writes: the
+# drop is internal/infra's (MountedByTheCredentialsService, spec.go), which
+# removes the entry from the job's secret_env as the spec is built. This run's
+# tfvars is hand-written and still names it, which is the case the module's own
+# for_each filter covers: it drops the grant for a secret_env entry the service
+# owns, so a tfvars an older fugaro wrote — or one edited by hand — leaves a job
+# that mounts a secret its account cannot read and dies at instance start,
+# rather than a job that keeps reading a model credential. The assertions below
+# pin both halves as this run reaches them: the grant for the model secret is
+# gone, and the mount is still there.
 run "credentials_service_on" {
   command = plan
 
