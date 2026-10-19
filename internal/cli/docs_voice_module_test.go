@@ -732,13 +732,17 @@ func TestDocsVoiceModuleReconciliationFindingsResolve(t *testing.T) {
 // on-main path below is stat'ed, not merely required as text, so a document
 // that is renamed out from under §1 or §2 fails here.
 //
-// Three cited paths are deliberately NOT stat'ed: docs/mobile/design/voice-evaluation-switch.md
-// (PR #633), docs/design/console-styling.md (PR #634) and
-// docs/design/project-named-oauth-tokens.md (PR #584) exist only on their
-// branches, not on this tree's main. The document says so in its own words and
-// this test pins that disclosure, so a reader who finds the link dead is told
-// why rather than left to guess -- the same convention
-// internal/cli/docs_budget_token_channel_test.go uses for `main`'s files.
+// Three cited paths are deliberately NOT stat'ed, and they are not all
+// branch-only. docs/mobile/design/voice-evaluation-switch.md (PR #633, merged
+// as `80f2b7fa`) and docs/design/console-styling.md (PR #634, merged as
+// `721aa091`) are on `main` now, and this branch (based on `82ba600d`) predates
+// both, so neither file is in this tree and neither can be stat'ed. Only
+// docs/design/project-named-oauth-tokens.md (PR #584) is still branch-only. The
+// document says so in its own words and this test pins that disclosure -- one
+// path not on `main`, the other two "on `main` now" -- so a reader who finds
+// the link dead is told why rather than left to guess. That is the same
+// convention internal/cli/docs_budget_token_channel_test.go uses for `main`'s
+// files.
 func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 	const path = "docs/voice-module/reconciliation.md"
 	recon := readDoc(t, path)
@@ -1244,6 +1248,104 @@ func TestDocsVoiceModuleReconciliationReadsTheDesignAtItsMergeCommit(t *testing.
 	}
 }
 
+// TestDocsVoiceModuleReconciliationHasNoNotationSubstitutionSlips: the "⊂ PR
+// #n" notation was replaced mechanically, and a mechanical replacement leaves
+// sentences without their words -- three of them did: a clause with no subject
+// ("; on `main` (`f67753f9`) now holds questions ...", the subject is
+// `shared/prompts`), a noun with the notation glued to its preposition ("the
+// voice allow-list of on `main` (`80f2b7fa`)"), and a sentence opened with the
+// article that used to follow a comma ("the `docs/design/console-styling.md`
+// now on `main` (`721aa091`)"). Each is pinned here as the corrected sentence,
+// and the two shapes that gave them away are banned outright, so the next pass
+// of the same replacement cannot reintroduce them quietly.
+func TestDocsVoiceModuleReconciliationHasNoNotationSubstitutionSlips(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+	for _, want := range []string{
+		"`shared/prompts` on `main` (`f67753f9`) now holds questions **inside a local queue**",
+		"the voice allow-list of the design on `main` (`80f2b7fa`), extended to name the summariser's endpoint",
+		"The `docs/design/console-styling.md` now on `main` (`721aa091`) states the situation in §1.1",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: the sentence this notation pass left broken, as it reads once repaired", path, want)
+		}
+	}
+	for _, banned := range []string{
+		// A preposition with no noun between it and the notation.
+		" voice allow-list of on `main` (",
+		// A clause that begins at the notation, so its subject was dropped.
+		"; on `main` (`",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s says %q: the notation follows a word that needs a noun before it, which is what the substitution left behind", path, banned)
+		}
+	}
+	// A sentence may not open with the lower-case article the notation
+	// replacement stranded there; every line that opens with one and carries the
+	// notation is reported.
+	for i, line := range strings.Split(recon, "\n") {
+		if line == "" || line[0] < 'a' || line[0] > 'z' || !strings.Contains(line, "on `main` (") {
+			continue
+		}
+		t.Errorf("%s:%d: opens with %q: the line used to be the tail of a sentence, and the notation pass cut it loose", path, i+1, line[:1])
+	}
+}
+
+// voiceModuleOpenQuestionRE and voiceModuleOpenQuestionBeforeRE match a
+// question named in the same sentence as a present-tense claim that it is open,
+// in either order. The gap is bounded and may not cross a full stop, so a
+// sentence that merely sits near another is not one of these.
+var voiceModuleOpenQuestionRE = regexp.MustCompile(`(?i)(the design's (own )?\**Q[0-9]{1,2}|Q[0-9]{1,2})\b[^.!?]{0,80}?(still open|stays open|remains? open|is open|are open|is unanswered|remains? unanswered|still unanswered|gates the build|has not been answered|has yet to be answered)`)
+
+var voiceModuleOpenQuestionBeforeRE = regexp.MustCompile(`(?i)(still open|stays open|remains? open|is open|are open|is unanswered|remains? unanswered|still unanswered|gates the build|has not been answered|has yet to be answered)[^.!?]{0,80}?(the design's (own )?\**Q[0-9]{1,2}|Q[0-9]{1,2})\b`)
+
+// voiceModuleOptionBulletPrefix opens an option in section 5: "- **(1) No — ...".
+// Section 5 keeps every option verbatim as the record of what was asked, and one
+// of them -- Q1's option (1) -- says in its own words that the question "stays
+// open", which is what the owner was asked to decide between and not a claim
+// this document makes. The exemption is the option line and nothing wider.
+const voiceModuleOptionBulletPrefix = "- **("
+
+// TestDocsVoiceModuleReconciliationNeverCallsAnAnsweredQuestionOpen: every
+// question this folder numbers is answered. The design's Q0-Q4 were answered by
+// the owner on 2026-10-19 (that document's own record, quoted in section 1's
+// table), and this document's Q1-Q13 the same day (section 5's headings and
+// section 5a's table). A sentence that names one of them and calls it open in
+// the present tense therefore contradicts the answer recorded a few lines away,
+// which is exactly what a cloud review found in Q12's closing paragraph: the
+// design's Q2 called "still open" forty lines under its own answer.
+//
+// The rule is mechanical on purpose -- it does not try to decide which sentence
+// is "about" a question, it reads each sentence whole -- and it is checked on
+// the README too, whose one question reference is this document's numbering.
+func TestDocsVoiceModuleReconciliationNeverCallsAnAnsweredQuestionOpen(t *testing.T) {
+	for _, doc := range []string{"docs/voice-module/reconciliation.md", "docs/voice-module/README.md"} {
+		lines := strings.Split(readDoc(t, doc), "\n")
+		// Section 5's option lines are blanked, keeping the line count so a
+		// report still points at the line the reader would open.
+		for i, line := range lines {
+			if strings.HasPrefix(line, voiceModuleOptionBulletPrefix) {
+				lines[i] = strings.Repeat(" ", len(line))
+			}
+		}
+		text := strings.Join(lines, "\n")
+		for _, re := range []*regexp.Regexp{voiceModuleOpenQuestionRE, voiceModuleOpenQuestionBeforeRE} {
+			for _, loc := range re.FindAllStringIndex(text, -1) {
+				line := 1 + strings.Count(text[:loc[0]], "\n")
+				t.Errorf("%s:%d: calls an answered question open (%q): the design's Q0-Q4 were answered by the owner on 2026-10-19 and this document's own questions the same day, so the sentence contradicts the answer recorded above it",
+					doc, line, strings.Join(strings.Fields(text[loc[0]:loc[1]]), " "))
+			}
+		}
+	}
+	// The exception this test carves out is real and narrow: section 5's option
+	// text does say Q1 "stays open" verbatim, so the rule above would fail on
+	// the document as it stands if the option lines were not blanked.
+	recon := readDoc(t, "docs/voice-module/reconciliation.md")
+	if !strings.Contains(recon, "- **(1) No — the spec does not take it, and Q1 stays open;") {
+		t.Errorf("docs/voice-module/reconciliation.md no longer keeps Q1's option (1) verbatim; the blanking above assumes it does, and this test would then be looser than it reads")
+	}
+}
+
 // voiceModuleBranchOnlyPRs matches the branch-only shorthand: "⊂ PR #n" or
 // "⊂ **PR #n**", the notation section 2 defines as "on that pull request's
 // branch and not on `main`". Section 2's own definition and section 0's audit
@@ -1575,7 +1677,7 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 85 entries, numbered (1)–(85).
+// Mutation (verified, run and restored): 92 entries, numbered (1)–(92).
 // (64) Giving a merged pull request's work the branch-only shorthand again
 // ("the reader on `main` (`ebe69147`) subscribes" -> "the reader ⊂ PR #590
 // subscribes") fails TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit:
@@ -1604,6 +1706,35 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // is new stored material no redactor covers (F32)") fails the same test from the
 // source side, which is why it reads voice.md rather than trusting the
 // document's own words.
+// And seven that prove a question recorded as answered cannot also be called
+// open, and that the notation pass's broken sentences stay repaired.
+// (86) Putting Q12's closing paragraph back to "the design's own Q2, which is
+// still open" fails
+// TestDocsVoiceModuleReconciliationNeverCallsAnAnsweredQuestionOpen with
+// `reconciliation.md:607: calls an answered question open`: the design's Q2 was
+// answered on 2026-10-19 forty lines above it, which is what the review found.
+// (87) Writing "the design's Q2 is still open and this option cannot proceed"
+// into section 5a's Q12 row fails it at line 655: the rule reads every sentence
+// of the document and the README, not only the paragraph that was reported.
+// (88) Replacing "**All five are answered**" with "**All five remain open**"
+// fails it at line 48 -- the open claim standing BEFORE the question it names,
+// which is why the rule is checked in both orders.
+// (89) Putting "the design's **Q4 is still open**" into the README fails it:
+// the README is read too, and its question references are this document's
+// numbering.
+// (90) Dropping the subject from Q10's consequence again ("`shared/prompts` on
+// `main` (`f67753f9`) now holds questions" -> "on `main` (`f67753f9`) now holds
+// questions") fails
+// TestDocsVoiceModuleReconciliationHasNoNotationSubstitutionSlips twice: the
+// missing sentence and the banned "; on `main` (`" shape.
+// (91) Gluing the notation back to a preposition ("the voice allow-list of the
+// design on `main` (`80f2b7fa`)" -> "the voice allow-list of on `main`
+// (`80f2b7fa`)") fails it on the banned " voice allow-list of on `main` (" and
+// on the missing repaired sentence.
+// (92) Lower-casing the article the substitution stranded ("The
+// `docs/design/console-styling.md` now on `main` (`721aa091`) states" -> "the
+// ...") fails it: a line that opens with a lower-case letter and carries the
+// notation used to be the tail of another sentence.
 // And fourteen that pin the quotations and the stale-question claims of the
 // revision before this one, all run and restored.
 // (72) Writing the failure ladder's sentence back as "Every one of these is
