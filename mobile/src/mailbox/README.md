@@ -112,6 +112,25 @@ omits it), so it is not a tamper case: the rules grant that child to this
 mailbox's own writer, and the phone reads it as "I have already spoken this",
 including after a restart, when it has no memory of its own.
 
+## The double's read: a node named `__proto__` is a node
+
+`store.js` is the thing every rule above is asserted against, so it has to
+answer the way the database does, and one legal key is where plain assignment
+quietly stops doing that. `__proto__` is a legal Realtime Database key --
+`isDatabaseKey('__proto__')` accepts it and the schema's `keyField` does too,
+and `paths.test.js` holds those two rules to each other -- and a listener hands
+a subtree back with it as an **own** key, because the value it hands over is
+what `JSON.parse` builds. An accumulator that assigned the child would instead
+write *through* the key: one level up the node lands on `Object.prototype`,
+polluting the whole test process and vanishing from the read; as a leaf it sets
+the result's **prototype**, so the map has no own keys, `Object.entries` sees no
+message, and the phone would never speak one the database had returned. The
+double now defines every child (`own()` in `store.js`) and replaces a slot that
+does not hold a container, which is what the database does when a write puts a
+child under a scalar. Two tests in `store.test.js` and the consequence test in
+`client.test.js` (a message in a `__proto__` node is read, spoken and acked),
+with three mutations in the proof.
+
 ## Presence, and the one mapping between two modules
 
 `poll()` returns `presence: { state, verified, reason, ageMs, agents }`. A
@@ -221,14 +240,16 @@ P3.6 is the task that needed it; the PR says so.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 20 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 23 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
 fail: `client.js` and `client.test.js` for most of them, and -- since the fix
-round for PR #604 -- `mac.js` with `mac.test.js` (the tag comparison) and
-`src/app/root.js` with `write-path.test.js` (the one-write-path scan), each
-mutation naming its file and its suite. It finds a working node rather than assuming one (this
+round for PR #604 -- `mac.js` with `mac.test.js` (the tag comparison),
+`store.js` with `store.test.js` and, for the read's own-key rule, with
+`client.test.js` (its consequence for the outbox), and `src/app/root.js` with
+`write-path.test.js` (the one-write-path scan), each mutation naming its file
+and its suite. It finds a working node rather than assuming one (this
 repository's base image keeps node off PATH), runs a positive control (the
 pristine suite passes, over tests that ran) and a negative control (a `refuse()`
 that always succeeds must be caught) before any verdict is trusted, and asserts
@@ -257,6 +278,8 @@ than a claim.
 | the schema validation before the write drops | `a control character is refused with the schema's reason, and nothing is written` |
 | a `raw` write function is added to the client object | `the client object is exactly its six names, and nothing else is on it` |
 | `sameTag` compares only the first eight hex characters (in `mac.js`) | `a tag that differs only past the eighth character is refused too` |
+| a read's node is assigned instead of defined (in `store.js`) | `a node named `__proto__` is an own key of the read, and pollutes nothing` -- and, run against `client.test.js`, `a message in a node named `__proto__` is read, spoken and acked like any other` |
+| an intermediate container is assigned instead of defined (in `store.js`) | the same test (the pollution half of it) |
 | a second write path is planted in `src/app/root.js` | the three rules of `write-path.test.js` |
 
 Two of those mutations **survived** when the proof was first run, and both were
