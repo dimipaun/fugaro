@@ -272,7 +272,238 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 	}
 }
 
+// mdTaskSections cuts a document's task list into one string per task, in task
+// order. The markers are each task's heading followed by the marker that ends
+// the last one, so the piece between heading n and heading n+1 is task n's whole
+// body — scope, files, tests, command and the prose around them.
+func mdTaskSections(t *testing.T, path, doc string, marks ...string) []string {
+	t.Helper()
+	parts := mdCut(t, path, doc, marks...)
+	if len(parts) != len(marks)+1 || len(parts) < 8 {
+		t.Fatalf("%s: %d pieces for %d markers; this test reads a task list of six tasks plus the marker that ends it", path, len(parts), len(marks))
+	}
+	return parts[1:len(marks)]
+}
+
+// mdClauseStartRE opens one of a task's labelled clauses, in either document's
+// shape: the plan writes them as paragraphs (`**Files.** …`), the design as list
+// items (`- **Files:** …`).
+var mdClauseStartRE = regexp.MustCompile(`^(?:- )?\*\*(Scope|Files|Tests|Command|Verification)\b`)
+
+// mdClause returns the clause of a task's body that opens with the given label —
+// `**Files.**`, `**Tests:**` and their kin — with the markdown wrapping flattened
+// to single spaces, so a caller can search the sentence rather than the markup
+// and does not break when the paragraph is rewrapped. The second result says
+// whether the clause is there at all; the callers below require one label and
+// take the others as they come, because a task that states no files is a task
+// this test would silently stop checking, while a task whose tests are the specs
+// it lists (Task 6.6, the recording) has no `**Tests**` clause.
+func mdClause(t *testing.T, path, section, label string) (string, bool) {
+	t.Helper()
+	lines := strings.Split(section, "\n")
+	for i := 0; i < len(lines); i++ {
+		m := mdClauseStartRE.FindStringSubmatch(lines[i])
+		if m == nil || m[1] != label {
+			continue
+		}
+		// The clause runs to the next labelled clause, or to the end of its
+		// paragraph. "Paragraph" is spelled differently in the two documents —
+		// the plan's clauses are paragraphs at column zero, the design's are
+		// list items whose continuations are indented — so the end is a blank
+		// line followed by an unindented one, which is the next paragraph in
+		// the plan and the next heading in the design.
+		body := []string{lines[i]}
+		for j := i + 1; j < len(lines); j++ {
+			line := lines[j]
+			if mdClauseStartRE.MatchString(line) {
+				break
+			}
+			if strings.TrimSpace(line) == "" {
+				if k := mdNextNonBlank(lines, j+1); k < 0 || !strings.HasPrefix(lines[k], " ") {
+					break
+				}
+			}
+			body = append(body, line)
+		}
+		return mdFlat(strings.Join(body, "\n")), true
+	}
+	return "", false
+}
+
+// mdNextNonBlank is the index of the first line at or after i that is not blank,
+// or -1 when the rest of the section is blank.
+func mdNextNonBlank(lines []string, i int) int {
+	for ; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			return i
+		}
+	}
+	return -1
+}
+
+// mdFlat collapses every run of whitespace to one space. Both documents wrap
+// their prose at eighty columns, so a claim worth pinning is a claim that is
+// broken across lines; searching the raw text would pin the wrap as well as the
+// words, and a rewrap would fail a test about the meaning.
+func mdFlat(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// mdForwardRefRE matches a named task and the number it carries.
+var mdForwardRefRE = regexp.MustCompile(`Task 6\.([1-6])`)
+
+// TestDocsConsoleStylingPhaseOrdering:
+// **no task may depend on a later one, and this is the round that found two
+// that did.** The plan promised that each of phase 6's six tasks is
+// independently mergeable and green on its own, and two of them were not:
+//
+//   - Task 6.2 landed `THEME_STYLESHEETS` as the whole four-file list while
+//     Tasks 6.3 and 6.4 had not yet created two of the four, and the bundler
+//     refuses a **listed** file that is missing — so a merge of 6.2 as written
+//     left `npm run build` red. The list is the theme directory's whole
+//     contents, so it is introduced with what is in the directory (Task 6.1's
+//     two files) and grows one entry per task, in the commit that creates the
+//     file. The design's §5.2 is where that is stated, and the array literal
+//     there is what this test reads.
+//   - the main-process window-background assertion was assigned to Task 6.1's
+//     `theme-tokens.test.ts` while `backgroundColor` itself arrives in Task
+//     6.5's `console/src/main/window.ts`. A case asserting a key that does not
+//     exist yet is not a case that task owns, so it moved to 6.5.
+//
+// The general rule the two share is checked directly rather than by name: a
+// task's **Files** and **Tests** paragraphs must not name a later task, because
+// a paragraph that names one is a paragraph whose subject is that task's work.
+// Prose that points forward — "not in this task; Task 6.4 adds that case" — is
+// how the plan deliberately explains a deferral and is not a clause this reads.
+// What it does read is the pair of paragraphs that say what a task touches and
+// what proves it, and for those the rule is absolute.
+func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
+	const planPath = "docs/plans/2026-10-15-desktop-console.md"
+	const designPath = "docs/design/console-styling.md"
+	plan, design := readDoc(t, planPath), readDoc(t, designPath)
+
+	planTasks := mdTaskSections(t, planPath, plan,
+		"### Task 6.1: The token layer",
+		"### Task 6.2: The wiring",
+		"### Task 6.3: The layout",
+		"### Task 6.4: The screens",
+		"### Task 6.5: The theme switch",
+		"### Task 6.6: The golden frames",
+		"## Cross-task dependencies")
+	designTasks := mdTaskSections(t, designPath, design,
+		"### 7.1 Task 6.1",
+		"### 7.2 Task 6.2",
+		"### 7.3 Task 6.3",
+		"### 7.4 Task 6.4",
+		"### 7.5 Task 6.5",
+		"### 7.6 Task 6.6",
+		"### 7.7 The red steps")
+
+	// The general rule, over both documents: Files and Tests never name a task
+	// that comes after the one they are in.
+	for _, doc := range []struct {
+		path  string
+		tasks []string
+	}{{planPath, planTasks}, {designPath, designTasks}} {
+		for i, task := range doc.tasks {
+			for _, label := range []string{"Files", "Tests"} {
+				clause, ok := mdClause(t, doc.path, task, label)
+				if !ok {
+					if label == "Files" {
+						t.Errorf("%s: task 6.%d's body has no **Files** paragraph; every task states what it touches, and a task that stops stating it is a task this rule stops checking", doc.path, i+1)
+					}
+					continue
+				}
+				for _, m := range mdForwardRefRE.FindAllStringSubmatch(clause, -1) {
+					later, err := strconv.Atoi(m[1])
+					if err != nil {
+						t.Fatalf("%s: %q is not a task number: %v", doc.path, m[1], err)
+					}
+					if later > i+1 {
+						t.Errorf("%s: task 6.%d's **%s** paragraph names Task 6.%d, which comes after it; a task's files and its tests have to exist when it lands, so this is a dependency on a later task's work", doc.path, i+1, label, later)
+					}
+				}
+			}
+		}
+	}
+
+	// And the two findings, pinned by content rather than by the rule above.
+	//
+	// The list as §5.2 writes it is a prefix of the theme directory, not its
+	// whole contents: two names, and the two Tasks 6.3 and 6.4 append.
+	if !strings.Contains(mdFlat(design), "The list grows with the files") {
+		t.Fatalf("%s: §5.2 no longer says the list grows with the files; without that paragraph the literal below is the only statement of how the list is built, and this test would pass on a snippet that no longer describes the list", designPath)
+	}
+	var list string
+	if i := strings.Index(design, "export const THEME_STYLESHEETS"); i >= 0 {
+		if j := strings.Index(design[i:], "])"); j >= 0 {
+			list = design[i : i+j]
+		}
+	}
+	if list == "" {
+		t.Fatalf("%s: no THEME_STYLESHEETS literal in the document; §5.2 is where the list and its growth are stated", designPath)
+	}
+	for _, want := range []string{"'tokens.css'", "'palette.css'"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("%s: the THEME_STYLESHEETS literal does not hold %s; the list is the vocabulary and the values first, and those are the files that exist when it is introduced", designPath, want)
+		}
+	}
+	for _, bad := range []string{"base.css", "screens.css"} {
+		if strings.Contains(list, bad) {
+			t.Errorf("%s: the THEME_STYLESHEETS literal holds %s, which no task has created yet at the point Task 6.2 lands the list — and the bundler refuses a listed file that is missing, so that merge is a red build rather than an early entry", designPath, bad)
+		}
+	}
+	for _, tc := range []struct {
+		task, file string
+	}{{"6.3", "base.css"}, {"6.4", "screens.css"}} {
+		files, ok := mdClause(t, planPath, planTasks[taskIndex(t, tc.task)], "Files")
+		if !ok {
+			t.Fatalf("%s: Task %s has no **Files** paragraph", planPath, tc.task)
+		}
+		for _, want := range []string{tc.file, "THEME_STYLESHEETS"} {
+			if !strings.Contains(files, want) {
+				t.Errorf("%s: Task %s's **Files** does not name %s; the file and its list entry land in the same commit, because a list that runs ahead of the directory fails the build", planPath, tc.task, want)
+			}
+		}
+	}
+	for _, bad := range []string{"base.css", "screens.css"} {
+		for _, label := range []string{"Scope", "Files"} {
+			if clause, _ := mdClause(t, planPath, planTasks[1], label); strings.Contains(clause, bad) {
+				t.Errorf("%s: Task 6.2's **%s** names %s, and that file does not exist until a later task creates it", planPath, label, bad)
+			}
+		}
+	}
+
+	// The window background: the assertion is Task 6.5's, because the literals
+	// are, and Task 6.1's paragraphs must not be about them.
+	for _, label := range []string{"Scope", "Files", "Tests"} {
+		if clause, _ := mdClause(t, planPath, planTasks[0], label); strings.Contains(clause, "backgroundColor") {
+			t.Errorf("%s: Task 6.1's **%s** names backgroundColor, which arrives with Task 6.5's consoleWindowOptions; the case that compares the two literals against the two --ground values lands in the task that adds them", planPath, label)
+		}
+	}
+	if clause, ok := mdClause(t, planPath, planTasks[4], "Scope"); !ok || !strings.Contains(clause, "backgroundColor") {
+		t.Errorf("%s: Task 6.5's **Scope** does not name backgroundColor; it is the task that adds both literals to console/src/main/window.ts, so a reader of the task would not know it owns the assertion", planPath)
+	}
+	if !strings.Contains(mdFlat(design), "This case is [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)'s and not Task 6.1's") {
+		t.Errorf("%s: §6.3 does not say the window-background case is Task 6.5's; a design that leaves the owner unnamed is a design a reader can implement in the wrong task", designPath)
+	}
+}
+
+// taskIndex maps a task's name to its position among phase 6's six tasks, so a
+// case can name the task it is about rather than an index into the cut.
+func taskIndex(t *testing.T, task string) int {
+	t.Helper()
+	for i, name := range []string{"6.1", "6.2", "6.3", "6.4", "6.5", "6.6"} {
+		if name == task {
+			return i
+		}
+	}
+	t.Fatalf("taskIndex: %q is not one of phase 6's six tasks", task)
+	return 0
+}
+
 // --- the computed numbers of §3.4 -----------------------------------------
+
 //
 // The design's §3.4 is a table of numbers, and a number in a document rots the
 // way a link does — silently, and in the direction of whatever the sentence

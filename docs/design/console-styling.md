@@ -1017,12 +1017,14 @@ Windows High Contrast and `forced-colors: active` discard author colours. Two ru
 
 1. **Every state keeps its word** ([§3.5](#35-never-colour-alone)), so nothing becomes
    unreadable when the colours go away. This is the whole reason that section exists.
-2. `screens.css` carries `@media (forced-colors: active)` blocks that (a) let the system
-   paint backgrounds by setting `background: Canvas` / `color: CanvasText` on the chrome
-   and the row surfaces, (b) map the state badges to `Highlight`/`HighlightText` for the
-   current view and to `LinkText`/`GrayText` where a fill was carrying a meaning, and
-   (c) re-enable the borders the system collapses (`border: 1px solid CanvasText` on a
-   panel) because a hairlines-only table becomes structureless without them.
+2. One `@media (forced-colors: active)` block per stylesheet, each in the task that writes
+   the rules it defends: `base.css` carries the chrome's — let the system paint its
+   backgrounds by setting `background: Canvas` / `color: CanvasText` on the chrome, map the
+   current view to `Highlight`/`HighlightText`, and re-enable the border the system
+   collapses. `screens.css` carries the rows' and badges' — `Canvas`/`CanvasText` on the row
+   surfaces, `LinkText`/`GrayText` where a fill was carrying a meaning, and
+   `border: 1px solid CanvasText` on a panel, because a hairlines-only table becomes
+   structureless without it. Neither block names a colour literal; both read the tokens.
 
 ---
 
@@ -1053,15 +1055,39 @@ else:
 /** THEME_STYLESHEETS is the theme directory's whole contents, in the order the
  * cascade needs: the vocabulary, then the values, then the rules that read them. */
 export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
-  'tokens.css', 'palette.css', 'base.css', 'screens.css',
+  'tokens.css', 'palette.css',
 ])
 ```
+
+**The list grows with the files, one entry per task, and that is forced by the refusal
+below rather than chosen for tidiness.** The list is the theme directory's *whole contents*
+and the bundler refuses a listed file that is missing, so a task that landed the final
+four-name list before the last two files existed would turn `npm run build` red — the
+wiring task cannot list a stylesheet no task has written yet. The list is therefore
+introduced by the task that lands the first two files ([Task 6.2](#72-task-62--the-wiring--security-sensitive))
+and each later task appends its own file in the same commit that creates it:
+
+| Task | Creates | `THEME_STYLESHEETS` after it |
+|---|---|---|
+| 6.1 | `tokens.css`, `palette.css` | *(no list yet — nothing reads the directory)* |
+| 6.2 | the bundler step itself | `tokens.css`, `palette.css` |
+| 6.3 | `base.css` | `tokens.css`, `palette.css`, `base.css` |
+| 6.4 | `screens.css` | `tokens.css`, `palette.css`, `base.css`, `screens.css` |
+
+**Every intermediate state is green**, and each one is a real build: at 6.2 the artefact is
+the two files that exist, concatenated in list order, and the served root grows a
+stylesheet whose only content is the custom properties and `color-scheme` — a file that
+paints nothing yet but is served, linked and asserted. What no state has is a listed file
+that is absent, or a `.css` in the theme directory that is not listed: the first is the
+bundler's own refusal, the second is the same refusal from the other side, and each task
+moves both sides together.
 
 - it reads `src/renderer/theme/` and **refuses a `.css` file that is not on the list**
   (`BundleRefusal`, exactly as the served root refuses a foreign file), so a stylesheet
   nobody reviewed cannot be served;
 - it refuses a **missing** file on the list, so a rename fails the build rather than
-  silently dropping a layer of the cascade;
+  silently dropping a layer of the cascade — and, equally, so a list cannot run ahead of
+  the files it names;
 - it refuses an **`@import`** and a **remote `url()`** in any theme file — the bundle is one
   file and the console is offline (`connect-src 'none'`), so an import would either fail
   at runtime or be a network call the CSP forbids;
@@ -1147,7 +1173,7 @@ any file under `src/renderer/`; and the CSP assertions above refuse `'unsafe-inl
 
 | File | Change |
 |---|---|
-| `console/test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` in order (the same both-directions equality the documents get); a case that the theme directory holds no `.css` outside the list |
+| `console/test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` **read from the list**, in list order — not of four hard-coded names, so the case is already true at 6.2 with two files in it and stays true as 6.3 and 6.4 append theirs; a case that the theme directory holds no `.css` outside the list |
 | `console/test/unit/csp-document.test.ts` | a case that **every** document's `<link>` elements are exactly one, `rel="stylesheet"`, `href="./console.css"`, and carry no `media`/`onload`/`integrity`; the existing "no `<style>`, no `style` attribute" cases stay and now cover the stylesheet's existence too |
 | `console/test/unit/window.test.ts` | unchanged in substance: the CSP/no-`bypassCSP` assertions already cover the CSS response, and the served-document cases still compare byte-identical HTML — its `<link>` is part of that HTML, so the file the window loads is still the file the test read |
 | `console/test/unit/build-files.test.ts` | `bundlerOutputs` gains `'dist/bundle/console.css'`, so `build.files` in `console/package.json` **must** gain it (and `console/README.md`'s list must name it) — the packaged app would otherwise ship without its stylesheet, which is the exact failure this test exists to catch |
@@ -1199,13 +1225,28 @@ which passes today with no stylesheet at all. The new assertion fails **the mome
 stylesheet stops being served, stops being linked, or stops switching** — which is exactly
 the regression that could otherwise be recorded as a fresh golden and never noticed.
 
+**This assertion is [Task 6.6](#76-task-66--the-golden-frames-re-recorded)'s, and it cannot
+be an earlier task's.** It asserts that the two schemes paint *different* backgrounds, and
+until Task 6.5 changes `CONSOLE_THEME` from the literal `'dark'` to the media query's
+answer the two schemes **cannot** differ: every screen stamps its own root with the theme
+it was drawn for (`root.setAttribute('data-theme', theme)`, in all four screens), so in a
+light-scheme run the root still says `data-theme='dark'`, `color-scheme` is still `dark`,
+and both runs paint the dark ground. Written in Task 6.3 or 6.4 it would fail, and a case
+that has to be skipped until a later task lands is not a case that task owns. It belongs
+with the recording it guards: 6.6 is the first task at which the light and dark goldens are
+different pictures, which is the same fact as this assertion passing.
+
 ### 6.3 Contrast as unit tests
 
 `console/test/unit/theme-tokens.test.ts`, in the shape of `website/test/a11y.mjs` (which this file
 should reuse the arithmetic of rather than re-derive):
 
-- it **reads `theme/palette.css` and nothing else** — the literals the window paints, not a
-  copy of them;
+- it **reads `theme/palette.css` for its colour numbers** — the literals the window paints,
+  not a copy of them. **Three of its cases read one further file each, and each of those
+  lands in the task that writes the file it reads** (the `--border` scan of `base.css` and
+  `screens.css` in Task 6.4, the window background against `src/main/window.ts` in Task 6.5),
+  so Task 6.1 writes this file with the palette cases alone and the other two arrive where
+  their subject matter does;
 - one case computes **every pair of §3.4** and asserts the ratio its role requires: 4.5:1
   for `--text`, `--text-muted`, `--accent-ink` and all five state colours on `--ground`,
   `--surface` and `--surface-alt`; 3:1 for `--accent` and `--border-strong` on each; 4.5:1
@@ -1223,7 +1264,14 @@ should reuse the arithmetic of rather than re-derive):
 - a case asserts **the main process's window background equals the ground of the theme it
   is about to paint** ([§4.1](#41-the-windows-structure)) — **both** literals, the dark one
   against the dark `--ground` and the light one against the light `--ground`, rather than
-  the ambiguous "equal to `--ground`" a `--ground` with two values cannot support;
+  the ambiguous "equal to `--ground`" a `--ground` with two values cannot support. **This
+  case is [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)'s
+  and not Task 6.1's**, for the plainest of reasons: the two literals are a change to
+  `console/src/main/window.ts`, and Task 6.5 is the task that makes it — `consoleWindowOptions`
+  gains no `backgroundColor` before then, so a case asserting one in Task 6.1 would be a
+  case about a key that does not exist. It is the third case in this file that reads a file
+  other than `palette.css`, and like the second it lands in the task that puts that file's
+  content there;
 - **a red step, run for real and committed as a case**: the arithmetic is exercised against
   a deliberately failing fixture, in the shape `a11y.mjs` keeps but with a pair this file
   names, and the case asserts it reports
@@ -1246,6 +1294,15 @@ in the DOM (`KILLED by`, `n/a`, `—`, `(partial)`, `queued`), the current view 
 marked, and the row structure still has a visible boundary (`border-bottom-width` is not
 `0px` under forced colors, or the system's `CanvasText` is used). It is a **smoke, not a
 golden**: forced-colors rendering is the platform's and its pixels are not ours to pin.
+
+**It lands in halves, each with the rules it tests**, because a case written for a
+stylesheet that does not exist yet is a case that fails: the chrome's half — the current
+view still marked, the chrome's boundary still visible — is [Task 6.3](#73-task-63--the-layout)'s,
+in `test/e2e/entry.spec.ts`, which is the spec that already drives the dashboard the
+chrome is drawn into; the per-screen half — the state words and the row boundary, in each
+screen's own spec — is [Task 6.4](#74-task-64--the-screens)'s. This is also why §4.4's
+second rule splits the way it does: the chrome's `@media (forced-colors: active)` block is
+in `base.css` and the rows' and badges' is in `screens.css`.
 
 ### 6.5 The docs test
 
@@ -1371,10 +1428,16 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 
 ### 7.2 Task 6.2 — the wiring — SECURITY-SENSITIVE
 
-- **Scope:** the bundler's stylesheet step (§5.2), `SERVED_FILES` (§5.3), the three
-  `<link>` elements (§5.4), `build.files` and the README's list (§5.6), and the tests that
-  pin all of it — `bundle.test.ts`, `csp-document.test.ts`, `build-files.test.ts`, and the
-  `style` scan extension to `screen-literals.test.ts` (§5.5).
+- **Scope:** the bundler's stylesheet step (§5.2) — `THEME_STYLESHEETS` **with the two
+  files that exist at this point** (`tokens.css`, `palette.css`, both from Task 6.1), the
+  refusals, the `dist/bundle/console.css` artefact and its ownership; `SERVED_FILES`
+  (§5.3); the three `<link>` elements (§5.4); `build.files` and the README's list (§5.6);
+  and the tests that pin all of it — `bundle.test.ts`, `csp-document.test.ts`,
+  `build-files.test.ts`, and the `style` scan extension to `screen-literals.test.ts` (§5.5).
+  **The four-name list is not this task's**, and cannot be: the bundler refuses a listed
+  file that is missing, so Tasks 6.3 and 6.4 append their own file, each in the commit that
+  creates it (§5.2's table). What this task lands is a list that is true of the directory
+  on the day it merges, and a build whose artefact is the two files in it.
 - **Files:** `console/tools/bundle-renderer/index.ts`, `console/src/main/protocol.ts`,
   the three `.html` documents, `console/package.json`, `console/README.md`,
   `console/test/unit/{bundle,csp-document,build-files,screen-literals}.test.ts`.
@@ -1398,15 +1461,23 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 ### 7.3 Task 6.3 — the layout
 
 - **Scope:** `theme/base.css` — the reset, the document, the three bands of §4.1, the nav's
-  tab-list styling, the focus ring, the responsive layers of §4.2, and the forced-colors
-  rules of §4.4.
-- **Files:** `theme/base.css`; `THEME_STYLESHEETS` in the bundler (it is already on the
-  list, so a new file only has to exist); `README.md`.
-- **Tests:** the forced-colors smoke (§6.4); the computed-background assertion (§6.2) for
-  the nav chrome.
-- **Verification:** `cd console && npm run test:unit && npm run test:e2e -- entry`; the
+  tab-list styling, the focus ring, the responsive layers of §4.2, and the **chrome's**
+  `@media (forced-colors: active)` block of §4.4.
+- **Files:** `theme/base.css`; `THEME_STYLESHEETS` in the bundler, which gains
+  `'base.css'` in this commit — the list is the theme directory's whole contents and the
+  bundler refuses a listed file that is missing, so the file and its entry move together
+  (§5.2); `README.md`; `test/e2e/entry.spec.ts` (the forced-colors smoke's chrome half).
+- **Tests:** the forced-colors smoke's chrome half (§6.4) — the current view still marked,
+  and the chrome's boundary still visible, both under `emulateMedia({ forcedColors:
+  'active' })` — written first, which is this task's red step.
+- **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
+  test:e2e -- entry`; the
   e2e specs that read the chrome's shape (`entry.spec.ts`'s
-  `['console-installation', 'console-views', 'console-panel']`) still pass.
+  `['console-installation', 'console-views', 'console-panel']`) still pass. The four golden
+  tests are skipped in this task and in the two after it (`FUGARO_CONSOLE_GOLDENS=skip`,
+  which the staged console-tests workflow already sets): a layout change is a picture the
+  baselines do not have, and re-recording them before the last stylesheet lands is what
+  [Task 6.6](#76-task-66--the-golden-frames-re-recorded) exists to stop.
 - **Reviewer tier:** ordinary.
 
 ### 7.4 Task 6.4 — the screens
@@ -1417,16 +1488,21 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
   adding `degraded-num` to the degraded screen's `numberCell`, because that helper prepends
   no class today and the fifth number hook therefore does not exist for a stylesheet to
   select ([§2.10](#210-numbers-money-and-time--what-the-stylesheet-must-align)).
-- **Files:** `theme/screens.css`; `src/renderer/screens/degraded.ts` (that one line);
+- **Files:** `theme/screens.css`; `THEME_STYLESHEETS` in the bundler, which gains
+  `'screens.css'` in this commit (§5.2) — after this task the list is the whole directory
+  and stays still; `src/renderer/screens/degraded.ts` (that one line);
+  `test/e2e/{live,spend,projects,run,degraded}.spec.ts` (the smoke's per-screen half);
   `README.md`; `test/unit/theme-tokens.test.ts` (the `--border`-is-decorative case of §6.3,
   which belongs here rather than to Task 6.1 — it is the one case that reads `base.css` and
   `screens.css`, and neither exists until this task).
-- **Tests:** the computed-background assertion per screen (§6.2); a case that
+- **Tests:** the forced-colors smoke per screen (§6.4) — every state word still in the DOM
+  and the row boundary still visible; a case that
   `screens.css` selects only hooks the [§2](#2-screen-inventory) inventory names — a scan
   of the stylesheet's selectors checked against a list derived from the screens' own class
   literals, so a rule that styles a class nothing emits fails; the
   `--border`-is-decorative scan.
-- **Verification:** `cd console && npm run test:unit && npm run test:e2e`.
+- **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
+  test:e2e`, with the goldens skipped as in Task 6.3.
 - **Reviewer tier:** ordinary.
 
 ### 7.5 Task 6.5 — the theme switch, the window background and the keyboard
@@ -1442,21 +1518,28 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 - **Tests, mutation-proven:** `CONSOLE_THEME` no longer follows the media query → the
   unit test fails; either background literal drifts from **its own** `--ground` (the dark
   one from the dark set's, the light one from the light set's) → the token test fails —
-  one assertion per literal, since "equal to `--ground`" is ambiguous with two grounds;
-  a second roving-tabindex regression → the entry wiring test fails.
+  one assertion per literal, since "equal to `--ground`" is ambiguous with two grounds.
+  **That assertion is this task's and cannot be an earlier one's** (§6.3): the two literals
+  arrive in `src/main/window.ts` here, so this is the first task at which there is anything
+  to compare them against. And a second roving-tabindex regression → the entry wiring test
+  fails.
 - **Note on the CSP and `ElementLike`:** this task writes **attributes only**. A
   `matchMedia` read is not a DOM write and not a network call; `data-theme` is a
   `data-*` attribute, which is what the screens already write; `role`, `aria-*` and
   `tabindex` are attributes. **`ElementLike` needs no widening, no style is written, and
   the CSP is not touched.**
-- **Verification:** `cd console && npm run test:unit && npm run test:e2e`.
+- **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
+  test:e2e` — skipped here too, since this task is what changes what the two schemes paint.
 - **Reviewer tier:** ordinary — but it is the one task that touches the entry, so it is
   reviewed against §5.5's "no style, no loosening" rule explicitly.
 
 ### 7.6 Task 6.6 — the golden frames, re-recorded
 
-- **Scope:** the eight baselines per platform, the per-spec computed-background assertion
-  (§6.2) and the forced-colors smoke (§6.4).
+- **Scope:** the eight baselines per platform and the per-spec computed-background
+  assertion (§6.2) — the assertion this task owns, because it is the first task at which
+  the two schemes paint different backgrounds. The forced-colors smoke is **not** here: it
+  landed with the rules it tests, its chrome half in Task 6.3 and its per-screen half in
+  Task 6.4.
 - **Files:** `console/test/e2e/{live,spend,projects,run}.spec.ts`; the committed
   `console/test/e2e/__screenshots__/**` PNGs.
 - **Owner-run:** the **recording** is owner-run ("recorded by an owner, once on each
@@ -1471,13 +1554,14 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 
 ### 7.7 The red steps
 
-Every task above lands test-first, and each red step was named with it. The three that
+Every task above lands test-first, and each red step was named with it. The four that
 matter most, and the mutation each is proved against:
 
 | Red step | Mutation that must make it fail |
 |---|---|
 | `theme-tokens.test.ts` (6.1) | a palette value edited to break one ratio — the test names the pair and the ratio |
 | `bundle.test.ts` / `csp-document.test.ts` (6.2) | `/console.css` dropped from `SERVED_FILES`; a `<link>`'s `href` changed; `style-src` widened by one token |
+| the forced-colors smoke (6.3's chrome half, 6.4's per screen) | the `@media (forced-colors: active)` block deleted from the stylesheet under it — the boundary collapses and the case fails |
 | the golden specs' `paintedBackground` assertion (6.6) | the `<link>` removed from `index.html` — the two schemes then paint the same colour and the assertion fails |
 
 **And the four this document's own docs test was proved against, each run for real and

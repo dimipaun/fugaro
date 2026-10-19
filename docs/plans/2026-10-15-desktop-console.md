@@ -1149,12 +1149,41 @@ phase** (Task 6.6 last, and owner-run) and **Task 6.2 before any visible change*
 the `<link>` lands, the stylesheet is a file nothing reads and every screen looks exactly
 as it does today.
 
+**Two orderings inside the phase are not preferences but consequences, and each is why a
+task is shaped the way it is.**
+
+- **`THEME_STYLESHEETS` grows one file per task, and no task may land the whole list
+  early.** The list is the theme directory's *whole contents* and the bundler refuses a
+  listed file that is **missing** (design §5.2), so a Task 6.2 that named all four files
+  would turn `npm run build` red the moment it merged — two of the four do not exist until
+  6.3 and 6.4. Task 6.2 therefore lands the list with the two files Task 6.1 created, and
+  **6.3 appends `base.css` and 6.4 appends `screens.css`, each in the commit that creates
+  the file**. Every intermediate state is a real build of the files that exist; design
+  §5.2's table states what the list holds after each task, and its `bundle.test.ts` case
+  reads the list rather than four hard-coded names, so it does not need rewriting either.
+- **A test that asserts a literal lands with the task that writes the literal.** The
+  `--border`-is-decorative case reads `base.css` and `screens.css` and is Task 6.4's; the
+  window-background case compares `consoleWindowOptions`' two literals against the two
+  `--ground` values and is Task 6.5's, because `backgroundColor` does not exist before it;
+  the computed-background e2e assertion is Task 6.6's, because it asserts the two schemes
+  paint *different* backgrounds and they cannot until Task 6.5 wires the theme choice; and
+  the forced-colors smoke lands in halves with the rules it tests, its chrome half in 6.3
+  and its per-screen half in 6.4. No task's Files, Tests or Command line names a later
+  task's artefact.
+
+**The golden tests are skipped while the stylesheets land** (`FUGARO_CONSOLE_GOLDENS=skip`,
+which the staged `docs/pending-workflows/console-tests.yml` already sets on the job — Task
+1.5's copy-in): a layout change is a picture the committed baselines do not have, and the
+recording belongs to Task 6.6, after the last stylesheet. Tasks 6.3 to 6.5 therefore run
+the rest of the e2e pass and say so; 6.6 is where the goldens stop being skipped.
+
 **Six PRs, in the file's own numbering** (this section, `### Task 6.n:` headings, a row in
 the Phase summary, five rows in the PR groups table and a line in the File Structure tree):
 **6.1** the tokens; **6.2** the wiring, SECURITY-SENSITIVE; **6.3** the layout; **6.4** the
 screens; **6.5** the theme switch, the window background and the keyboard; **6.6** the
 golden frames, re-recorded. Each is independently mergeable and green on its own; 6.1 is
-inert until 6.2, which its PR says.
+inert until 6.2, which its PR says; 6.3 and 6.4 each grow `THEME_STYLESHEETS` by their own
+file, which is what keeps them green.
 
 ### Task 6.1: The token layer
 
@@ -1170,26 +1199,35 @@ the literal tables).
 its `build.files` list is already kept true); `console/test/unit/theme-tokens.test.ts`,
 new.
 
-**Tests.** `theme-tokens.test.ts` reads `palette.css` **and nothing else**, so the literals
-it checks are the literals the window paints: every pair of the design's §3.4 with its
-required ratio (4.5:1 for body text and every state colour on the three surfaces, 3:1 for
-the accent and the control border, 4.5:1 for a label on a filled control); the vocabulary
-complete and identical in both sets, so a token added to one and not the other fails by
-name; **the main process's window background against both `--ground` values** (the dark
-literal and the light one, since `--ground` has two), per the design's §4.1; and a
-**deliberately failing fixture**, asserted to report
+**Tests.** `theme-tokens.test.ts` reads `palette.css` for its colour numbers, so the
+literals it checks are the literals the window paints: every pair of the design's §3.4 with
+its required ratio (4.5:1 for body text and every state colour on the three surfaces, 3:1
+for the accent and the control border, 4.5:1 for a label on a filled control); the
+vocabulary complete and identical in both sets, so a token added to one and not the other
+fails by name; and a **deliberately failing fixture**, asserted to report
 **`--text-muted on --surface is 3.1:1, needs 4.5:1`** — one decimal, because that is the
 string `website/test/a11y.mjs` actually formats (`ratio.toFixed(1)`, and its committed
 fixture prints `3.1:1`), and a **fixture pair named in the case** (the precedent's is
 `#646464` on `#14141F`), because the console's real `--text-muted on --surface` is 8.02:1
 dark and 6.27:1 light, so no real value produces that line.
 
-**Not in this task: the `--border`-is-decorative case.** It is the one case in this file
-that reads a file other than `palette.css` — a scan of the CSS text of `base.css` and
-`screens.css` — and both of those are created later, by Tasks 6.3 and 6.4. Task 6.4 adds
-that case, and `theme-tokens.test.ts` is in its Files for it.
-
 **Command:** `cd console && npm run test:unit`
+
+**What this task does not own, and why the cases land later.** Two cases of the design's
+§6.3 read a file this task does not write, so neither can be written here without asserting
+something that does not exist yet:
+
+- **the `--border`-is-decorative case** is Task 6.4's. It is a scan of the CSS text of
+  `base.css` and `screens.css`, and both of those are created later, by Tasks 6.3 and 6.4.
+  Task 6.4 adds that case, and `theme-tokens.test.ts` is in its Files for it.
+- **the window-background case** is Task 6.5's. It compares the two literals
+  `consoleWindowOptions` paints against the two `--ground` values, and `backgroundColor` is
+  a key Task 6.5 adds to `console/src/main/window.ts` — there is nothing to compare before
+  then. Task 6.5 adds that case, and `theme-tokens.test.ts` is in its Files for it too.
+
+So this task writes the file with its palette cases; the file's name is honest about the
+part of it that is here, and the design's §6.3 says which task each of the other two
+arrives with.
 
 **Reviewer tier:** ordinary — it touches no CSP, no protocol and no document.
 
@@ -1198,15 +1236,29 @@ palette value edited to break one ratio (named by the test, then reverted).
 
 ### Task 6.2: The wiring — SECURITY-SENSITIVE, independent opus review
 
-**Scope.** The bundler's stylesheet step (`THEME_STYLESHEETS`, the four-file order, a
-refusal for a `.css` outside the list, a refusal for a missing one, a refusal for an
-`@import` or a remote `url()`, the `dist/bundle/console.css` artefact with its generated-
-file banner, and ownership of it in the output directory); **one** new `SERVED_FILES`
-entry, `/console.css`, giving six where there were five; one `<link rel="stylesheet"
+**Scope.** The bundler's stylesheet step (`THEME_STYLESHEETS` — **the two files that exist
+at this point**, `'tokens.css'` and `'palette.css'`, with the order rule, a refusal for a
+`.css` outside the list, a refusal for a missing one, a refusal for an `@import` or a
+remote `url()`, the `dist/bundle/console.css` artefact with its generated-file banner, and
+ownership of it in the output directory); **one** new `SERVED_FILES` entry, `/console.css`,
+giving six where there were five; one `<link rel="stylesheet"
 href="./console.css">` in the `<head>` of each of the three documents, beside the existing
 CSP `<meta>`; `build.files` in `console/package.json` and the README's list of served
 files; and `bundlerOutputs` in the build-files test, which is what makes a packaged app
 without its stylesheet fail rather than ship.
+
+**The list is not four names here, and must not be.** The bundler refuses a *listed* file
+that is missing, so a task that named `base.css` and `screens.css` before Tasks 6.3 and 6.4
+create them would leave `npm run build` red on merge. The list is the theme directory's
+whole contents, so it is introduced with what is in the directory — Task 6.1's two files —
+and **Task 6.3 appends `'base.css'` and Task 6.4 appends `'screens.css'`, each in the commit
+that creates the file** (design §5.2's table). The test case reads `THEME_STYLESHEETS`
+rather than four hard-coded names, so it holds in every intermediate state: at this task
+`dist/bundle/console.css` is two files concatenated in list order, served, linked and
+asserted, and each later task's build grows by the file it adds. **Verified per task**:
+`npm run build` plus the theme-directory-versus-list equality, which fails in *both*
+directions, so neither a listed file that is absent nor an unlisted `.css` that is present
+can pass.
 
 **Files.** `console/tools/bundle-renderer/index.ts`, `console/src/main/protocol.ts`,
 `console/src/renderer/{index,installations,refusal}.html`, `console/package.json`,
@@ -1214,7 +1266,10 @@ without its stylesheet fail rather than ship.
 
 **Tests, and the mutation each is proved against.** `SERVED_FILES.length` 5 → 6 and the
 directory equality in both directions (`bundle.test.ts`); the concatenation and the order
-of `console.css` (`bundle.test.ts`); exactly one `<link>` per document, same-origin,
+of `console.css`, checked against `THEME_STYLESHEETS` **as a list** rather than against
+four hard-coded names, so the case is true here with two files in it and stays true when
+6.3 and 6.4 append theirs (`bundle.test.ts`); exactly one `<link>` per document,
+same-origin,
 relative, with no `media`, `onload` or `integrity` (`csp-document.test.ts`); the `style`
 scan of `screen-literals.test.ts` extended so that a `.style` write, a
 `setAttribute('style', …)` and a `style` entry in the attribute vocabulary are offences in
@@ -1252,16 +1307,28 @@ entry already appends (`section.console-installation`, `nav.console-views`,
 `div.console-panel`, held in that order by `test/e2e/entry.spec.ts`), the nav styled as the
 tab list its `aria-current` already makes it, the chrome fixed and the panel scrolling, the
 installation line's three states, the focus ring as one `:focus-visible` rule off the
-tokens, the three responsive layers of the design's §4.2, and the forced-colors rules of
-its §4.4.
+tokens, the three responsive layers of the design's §4.2, and **the chrome's**
+`@media (forced-colors: active)` block of its §4.4. **And `THEME_STYLESHEETS` gains
+`'base.css'` in this commit** — the file and its list entry move together, because the
+bundler refuses a listed file that is missing (design §5.2). After this task the artefact
+is three files: the vocabulary, the values, and the first rules that read them.
 
-**Files.** `src/renderer/theme/base.css`, new; `console/README.md`.
+**Files.** `src/renderer/theme/base.css`, new; `THEME_STYLESHEETS` in
+`console/tools/bundle-renderer/index.ts` (one entry); `console/test/e2e/entry.spec.ts`
+(the forced-colors smoke's chrome half); `console/README.md`.
 
-**Tests.** The computed-background assertion (Task 6.6's helper, applied to the chrome);
-the forced-colors smoke's first two legs (the state words survive, the current view is
-still marked); `entry.spec.ts`'s existing body-children assertion.
+**Tests.** The forced-colors smoke's chrome half — the current view still marked and the
+chrome's boundary still visible under `emulateMedia({ forcedColors: 'active' })`, written
+first, which is this task's red step; and `entry.spec.ts`'s existing body-children
+assertion. **Not the computed-background assertion**: it asserts the two schemes paint
+*different* backgrounds, and they cannot until the theme choice is wired, so it belongs to
+the task that wires it and records the two pictures (design §6.2).
 
-**Command:** `cd console && npm run test:unit && npm run test:e2e -- entry`
+**Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
+test:e2e -- entry` — the four golden tests are skipped, as they are in 6.4 and 6.5: this
+task changes pixels the committed baselines do not have, and re-recording them before the
+last stylesheet lands is exactly what Task 6.6 exists to stop. The staged console-tests
+workflow already sets that variable on the job, so CI is green through the phase.
 
 **Reviewer tier:** ordinary.
 
@@ -1287,18 +1354,25 @@ cannot reach them (the design's §2.10). That is why `degraded.ts` is in this ta
 four get. It is the only code change in the styling work, and it is deliberately a class
 and not an attribute rule, so the styling stays a stylesheet problem.
 
-**Files.** `src/renderer/theme/screens.css`, new; `console/src/renderer/screens/degraded.ts`
+**Files.** `src/renderer/theme/screens.css`, new; `THEME_STYLESHEETS` in
+`console/tools/bundle-renderer/index.ts` (one entry — **after this task the list is the
+whole directory and stays still**); `console/src/renderer/screens/degraded.ts`
 (the one-line `degraded-num` above); `console/README.md`;
 `console/test/unit/theme-tokens.test.ts` (the `--border`-is-decorative case the design's
 §6.3 places here, because this is the first task at which both `base.css` and `screens.css`
-exist — Task 6.1 writes the file and leaves that case out for exactly that reason).
+exist — Task 6.1 writes the file and leaves that case out for exactly that reason);
+`console/test/e2e/{live,spend,projects,run,degraded}.spec.ts` (the forced-colors smoke's
+per-screen half).
 
 **Tests.** A case that every selector in `screens.css` names a hook the design's §2
 inventory lists — checked against a list derived from the screens' own class literals, so a
 rule that styles a class nothing emits fails; the `--border`-is-decorative scan of
-`base.css` and `screens.css`; the computed-background assertion per screen.
+`base.css` and `screens.css`; the forced-colors smoke per screen — every state word still in
+the DOM and the row boundary still visible. **Not the computed-background assertion**,
+which belongs to the task that wires the theme choice and records the two pictures, for the
+reason Task 6.3 gives.
 
-**Command:** `cd console && npm run test:unit && npm run test:e2e`
+**Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run test:e2e`
 
 **Reviewer tier:** ordinary.
 
@@ -1335,10 +1409,13 @@ widening and no style is written.
 **Tests.** `CONSOLE_THEME` no longer follows the media query; **the background literal for
 each theme drifting from that theme's `--ground`** (both directions, since there are two
 literals now — the dark one checked against the dark `--ground`, the light one against the
-light `--ground`, and `shouldUseDarkColors` deciding which is set); a roving-tabindex
+light `--ground`, and `shouldUseDarkColors` deciding which is set). **That case is this
+task's and cannot be Task 6.1's**, which the plan said before this round: the two literals
+are added to `console/src/main/window.ts` here, so before this task there is no
+`backgroundColor` to compare with anything (design §6.3, §7.5). And a roving-tabindex
 regression.
 
-**Command:** `cd console && npm run test:unit && npm run test:e2e`
+**Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run test:e2e`
 
 **Reviewer tier:** ordinary, against the design's §5.5 rule explicitly (no style write, no
 loosening).
@@ -1347,10 +1424,15 @@ loosening).
 
 ### Task 6.6: The golden frames, re-recorded
 
-**Scope.** The eight baselines per platform that the four golden specs already name, the
-per-spec assertion that the **computed background colour differs between the schemes** —
-the assertion the suite is missing today, since every spec reads `data-theme` off the
-screen root and passes with no stylesheet at all — and the forced-colors smoke.
+**Scope.** The eight baselines per platform that the four golden specs already name, and
+the per-spec assertion that the **computed background colour differs between the schemes**
+— the assertion the suite is missing today, since every spec reads `data-theme` off the
+screen root and passes with no stylesheet at all. **This task owns it because it is the
+first at which it can pass**: it asserts the two schemes paint *different* backgrounds, and
+until Task 6.5 changed `CONSOLE_THEME` from the literal `'dark'` to the media query's answer
+every screen stamped its root `data-theme='dark'` in both schemes, so both runs painted the
+dark ground (design §6.2). The forced-colors smoke is **not** in this task: it landed with
+the rules it tests, its chrome half in Task 6.3 and its per-screen half in Task 6.4.
 
 **Files.** `console/test/e2e/{live,spend,projects,run}.spec.ts`; the committed
 `console/test/e2e/__screenshots__/**` PNGs.
