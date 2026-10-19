@@ -36,6 +36,12 @@
 //     and `npm test` itself -- so the config resolves without a store account,
 //     and a static identity planted in `app.json` is still dropped.
 //
+// And the fence around the file itself: **the identity is committed nowhere**.
+// Every fixture here is the fictional `com.example.sample`, and the last test
+// walks every tracked file under `mobile/` and `docs/mobile/` for the owner's
+// own value, which belongs in the EAS project and in the two instruction files
+// that tell the owner to set it there -- not in a test, a comment or a doc.
+//
 // Every refusal below is mutation-proven the same way the tree's other guards
 // are: the property is stated as a table, the mutation that breaks it is named
 // in the test's own comment, and the mutated run fails. The scans carry
@@ -43,7 +49,9 @@
 // means the walk can fail rather than meaning the walk found nothing.
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import appConfig, {
@@ -58,9 +66,16 @@ const APP_JSON = JSON.parse(readFileSync(new URL('../app.json', import.meta.url)
 const EXPO = APP_JSON.expo;
 const SOURCE = readFileSync(new URL('../app.config.js', import.meta.url), 'utf8');
 
-/** The owner's own value on 2026-10-19: one reverse-DNS name for both stores. */
-const IOS = 'dev.fugaro.app';
-const ANDROID = 'dev.fugaro.app';
+/**
+ * A **fictional** sample identity: one reverse-DNS name for both stores, of the
+ * shape the two patterns accept. It is deliberately nobody's real value -- the
+ * owner's is set in the EAS project (`eas env:set`) and is committed nowhere,
+ * which the repository-wide pin at the bottom of this file enforces. A test
+ * fixture that spells a real identity out is that identity written into the
+ * tree by the back door.
+ */
+const IOS = 'com.example.sample';
+const ANDROID = 'com.example.sample';
 
 /** An environment as EAS's build servers present it to `app.config.js`. */
 const build = (extra = {}) => ({
@@ -107,48 +122,56 @@ test('the two variables are the ones this task named, and a rename is deliberate
 });
 
 test('each pattern accepts and refuses its own store’s shapes, and not the other’s', () => {
-  // Every shape neither store accepts: one segment, an empty segment, upper
-  // case, a space, a newline an env var picked up on the way in, a stray path
-  // character, a port. Mutation: drop the `+` quantifier or the segment class
-  // and 'dev.fugaro' or 'Dev.Fugaro.App' starts passing.
+  // Every shape neither store accepts: one segment, an empty segment, a space,
+  // a newline an env var picked up on the way in, a stray path character, a
+  // port. Mutation: drop the `+` quantifier or the segment class and
+  // 'com.example' starts passing.
   const refusedByBoth = [
-    'devfugaro', // one segment: not a reverse-DNS name
-    'dev..app', // an empty segment
-    '.dev.app',
-    'dev.app.',
-    'Dev.Fugaro.App', // upper case
-    'dev fugaro.app',
-    'dev.fugaro.app\n',
-    'dev/fugaro.app',
+    'comexample', // one segment: not a reverse-DNS name
+    'com..example', // an empty segment
+    '.com.example',
+    'com.example.',
+    'com example.sample', // a space
+    'com.example.sample\n', // a newline an env var picked up on the way in
+    'com/example.sample',
     '',
-    'dev.fugaro.app:443',
+    'com.example.sample:443',
   ];
   for (const bad of refusedByBoth) {
     assert.equal(isIdentifier(bad, 'ios'), false, JSON.stringify(bad));
     assert.equal(isIdentifier(bad, 'android'), false, JSON.stringify(bad));
   }
 
-  // iOS: Apple allows alphanumerics, hyphens and periods, and **no
+  // Neither store requires lower case: an identifier in either case is a valid
+  // one, and refusing it here would be this file inventing a rule neither
+  // store has. Mutation: put the lower-case-only class back and every line
+  // here goes red.
+  for (const good of ['Com.Example.Sample', 'COM.EXAMPLE.SAMPLE', 'com.Example.sample']) {
+    assert.equal(isIdentifier(good, 'ios'), true, good);
+    assert.equal(isIdentifier(good, 'android'), true, good);
+  }
+
+  // iOS: Apple allows letters, digits, hyphens and periods, and **no
   // underscore**; a segment may start with a digit.
-  for (const good of [IOS, 'a.b', 'x1.y2', 'dev.fugaro-app.io', 'dev.1app']) {
+  for (const good of [IOS, 'a.b', 'x1.y2', 'com.example-sample.io', 'com.1sample']) {
     assert.equal(isIdentifier(good, 'ios'), true, good);
   }
-  for (const bad of ['dev.fugaro_app.io', 'dev._fugaro.io']) {
+  for (const bad of ['com.example_sample.io', 'com._sample.io']) {
     assert.equal(isIdentifier(bad, 'ios'), false, `${JSON.stringify(bad)}: Apple allows no underscore`);
   }
 
-  // Android: the package is a Java package name -- a letter starts every
+  // Android: the package is an application id -- a letter starts every
   // segment, an underscore is a Java identifier character, and a hyphen is
   // not. A digit-starting segment is what Play refuses, and this package can
   // never be changed once the app exists on Play, so it is refused here.
-  for (const good of [ANDROID, 'a.b', 'x1.y2', 'dev.fugaro_app.io']) {
+  for (const good of [ANDROID, 'a.b', 'x1.y2', 'com.example_sample.io']) {
     assert.equal(isIdentifier(good, 'android'), true, good);
   }
   for (const bad of [
-    'dev.1app', // Play refuses a digit-starting segment ...
-    '1dev.fugaro', // ... in the first segment as well as the last
-    'dev._fugaro.io', // a segment has to start with a letter
-    'dev.fugaro-app.io', // a hyphen is not a Java identifier character
+    'com.1sample', // Play refuses a digit-starting segment ...
+    '1com.example', // ... in the first segment as well as the last
+    'com._sample.io', // a segment has to start with a letter
+    'com.example-sample.io', // a hyphen is not a Java identifier character
   ]) {
     assert.equal(isIdentifier(bad, 'android'), false, JSON.stringify(bad));
   }
@@ -156,10 +179,27 @@ test('each pattern accepts and refuses its own store’s shapes, and not the oth
   // The two fences are different rules, not one rule with an exception: each
   // value below is the other platform's shape.
   assert.equal(ID_PATTERNS.android.source !== ID_PATTERNS.ios.source, true);
-  assert.equal(isIdentifier('dev.fugaro-app.io', 'android'), false);
-  assert.equal(isIdentifier('dev.fugaro_app.io', 'ios'), false);
+  assert.equal(isIdentifier('com.example-sample.io', 'android'), false);
+  assert.equal(isIdentifier('com.example_sample.io', 'ios'), false);
   assert.equal(isIdentifier(IOS, 'windows'), false, 'an unknown platform is not an identity');
   assert.equal(isIdentifier(7, 'ios'), false, 'a non-string is not an identity');
+});
+
+test('a platform name inherited from Object.prototype is not an identity', () => {
+  // These are not keys of ID_PATTERNS, but they ARE properties of every object
+  // through `Object.prototype`: a lookup that only asked `pattern !== undefined`
+  // read `Object`'s own constructor (or function) off the prototype and called
+  // `.test` on it, so `isIdentifier('a.b', 'constructor')` threw a TypeError out
+  // of a predicate whose whole job is to answer yes or no. Mutation: put the
+  // prototype-chain lookup back and every line below throws instead of passing.
+  for (const platform of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+    assert.equal(Object.hasOwn(ID_PATTERNS, platform), false, `${platform} is not a pattern this file has`);
+    assert.equal(isIdentifier('com.example.sample', platform), false, platform);
+    assert.equal(isIdentifier(undefined, platform), false, platform);
+  }
+  // ... and the two platforms it does have still answer.
+  assert.equal(isIdentifier(IOS, 'ios'), true);
+  assert.equal(isIdentifier(ANDROID, 'android'), true);
 });
 
 test('an EAS build, or the explicit local switch, is what asks for the identities', () => {
@@ -203,7 +243,7 @@ for (const [platform, variable] of Object.entries(ID_VARIABLES)) {
     // last place a mistyped variable should print.
     // The value the OTHER store accepts and this one does not: an underscore
     // for iOS, a hyphen for Android.
-    const otherShape = platform === 'ios' ? 'dev.fugaro_app.io' : 'dev.fugaro-app.io';
+    const otherShape = platform === 'ios' ? 'com.example_sample.io' : 'com.example-sample.io';
     for (const bad of ['Fugaro', 'devfugaro', 'not a package name', otherShape, 'sk-notAKeyButItLooksLikeOne123456']) {
       const env = build({ [variable]: bad });
       const message = refusal(() => resolveConfig(EXPO, env));
@@ -266,7 +306,7 @@ test('a local eas-cli run gets the identities from the variables, and a typo is 
   // A value that IS set has to be one in this state too -- a mistyped export
   // must not be baked into a dev build either. Mutation: skip validation when
   // the switches are unset and this throws nothing.
-  assert.match(refusal(() => resolveConfig(EXPO, { [ID_VARIABLES.ios]: 'dev.fugaro_app.io' })), /FUGARO_IOS_BUNDLE_ID/);
+  assert.match(refusal(() => resolveConfig(EXPO, { [ID_VARIABLES.ios]: 'com.example_sample.io' })), /FUGARO_IOS_BUNDLE_ID/);
   // ... and one variable set does not drag the other one in.
   const onlyIos = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS });
   assert.equal(onlyIos.ios.bundleIdentifier, IOS);
@@ -284,7 +324,7 @@ test('no environment value but the two identities reaches the config', () => {
   const polluted = build({
     FIREBASE_TOKEN: 'not-a-real-token',
     FUGARO_SETTINGS_KEY: 'not-a-real-key',
-    [ID_VARIABLES.ios + '_EXTRA']: 'dev.fugaro.extra',
+    [ID_VARIABLES.ios + '_EXTRA']: 'com.example.extra',
     NODE_ENV: 'production',
   });
   assert.deepEqual(resolveConfig(EXPO, polluted), resolveConfig(EXPO, build()));
@@ -349,5 +389,78 @@ test("Expo's entry reads process.env, and refuses a call with no static config",
   // wrong.
   for (const context of [undefined, null, {}, { config: null }]) {
     assert.match(refusal(() => appConfig(context)), /static config/);
+  }
+});
+
+// --- the identity is committed nowhere --------------------------------------
+//
+// The two identities are the owner's, and the file above resolves them at build
+// time precisely so that no copy of the app built from this tree ships with one
+// baked in. A test fixture is the back door into that fence: a literal in a
+// test is still a literal in the repository, and the next reader cannot tell a
+// fixture from a value somebody meant to keep. So every identity-shaped literal
+// in the tests is a **fictional sample** (`com.example.sample`), and this pin
+// walks the tree for the owner's own value outside the places whose whole job is
+// to tell the owner to set it.
+
+/**
+ * The owner's value, assembled from parts. It is written this way on purpose:
+ * this file is inside the tree the pin walks, and a pin whose own source spells
+ * the string out would flag itself (or need an allow-list entry that hides a
+ * real occurrence next to it).
+ */
+const OWNER_IDENTITY = ['dev', 'fugaro', 'app'].join('.');
+
+/**
+ * The files that may carry it: **instructions, not configuration.** The runbook
+ * tells the owner which value to set in EAS, and the owner-facing register tells
+ * them what a run should show -- both are read by the owner at their own
+ * terminal, and neither is read by a build. Nothing under `mobile/` may.
+ *
+ * (The register itself is `docs/gcp-live-checklist.md`, outside the two roots
+ * this pin walks, and it names no value either: it prints whatever the guard
+ * resolved out of the owner's own environment.)
+ */
+const IDENTITY_ALLOWED = new Set(['docs/mobile/eas-signing-runbook.md']);
+
+/** The files under the two roots whose text carries the owner's identity. */
+function identityLiterals(files) {
+  return files.filter(({ path, text }) => text.includes(OWNER_IDENTITY) && !IDENTITY_ALLOWED.has(path)).map(({ path }) => path);
+}
+
+/** Every tracked (and untracked-but-not-ignored) file under `mobile/` and
+ * `docs/mobile/`, read from the repository root. */
+function scannedFiles() {
+  const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  const listed = execFileSync(
+    'git',
+    ['ls-files', '-z', '-c', '-o', '--exclude-standard', '--', 'mobile', 'docs/mobile'],
+    { cwd: root, encoding: 'utf8' },
+  );
+  return listed
+    .split('\0')
+    .filter(Boolean)
+    .map((path) => ({ path, text: readFileSync(join(root, path), 'utf8') }));
+}
+
+test('the owner’s identity is committed nowhere under mobile/ or docs/mobile/', () => {
+  // The positive control: the walk flags a planted file, and it does not flag
+  // the allow-listed instruction file. Mutation: make `identityLiterals` return
+  // an empty list and the first line goes red.
+  assert.deepEqual(identityLiterals([{ path: 'mobile/src/x.js', text: `const id = '${OWNER_IDENTITY}';` }]), ['mobile/src/x.js']);
+  assert.deepEqual(identityLiterals([{ path: 'docs/mobile/eas-signing-runbook.md', text: OWNER_IDENTITY }]), []);
+  assert.deepEqual(identityLiterals([{ path: 'mobile/src/x.js', text: 'com.example.sample' }]), []);
+
+  // ... and the real tree: the fixtures here and in `app-config.test.js` are
+  // fictional samples, and nothing else under the app or its docs carries the
+  // owner's value. Mutation: paste the owner's identity into any file under
+  // either root and this fails naming it.
+  const files = scannedFiles();
+  assert.equal(files.length > 50, true, `the walk found ${files.length} files: it is looking at the tree, not at nothing`);
+  assert.deepEqual(identityLiterals(files), [], 'the owner’s identity is set in the EAS project, not committed');
+  // The two files this task owns are among them, so the walk is not skipping
+  // the app's own source.
+  for (const path of ['mobile/app.config.js', 'mobile/eas.json', 'mobile/src/app-config.ids.test.js']) {
+    assert.equal(files.some((file) => file.path === path), true, `${path} is in the walk`);
   }
 });

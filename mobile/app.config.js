@@ -78,21 +78,24 @@ export const ID_VARIABLES = Object.freeze({
 /**
  * The reverse-DNS shapes the two identities must have -- **each store's own
  * rule, not one rule with an Android exception**. Both are at least two
- * dot-separated segments of lower-case letters, digits and one separator:
+ * dot-separated segments, and **neither store requires lower case**: an
+ * identifier in either case is a valid one, and refusing it here would be this
+ * file inventing a rule its stores do not have.
  *
- *   * **iOS**: Apple allows alphanumerics, hyphens and periods -- and **no
- *     underscore**, in any segment. A segment may start with a digit.
- *   * **Android**: the package is a Java package name. Every segment must
- *     start with a **letter** (Play refuses `com.example.1app`), and **no
- *     hyphen** is allowed anywhere (it is not a Java identifier character);
- *     an underscore is.
+ *   * **iOS**: Apple allows letters (`A-Z` and `a-z`), digits, hyphens and
+ *     periods -- and **no underscore**, in any segment. A segment may start
+ *     with a digit.
+ *   * **Android**: the package is an application id, whose segments are Java
+ *     identifiers: letters, digits and underscores -- **no hyphen** (it is not
+ *     a Java identifier character) -- and every segment must start with a
+ *     **letter** (Play refuses `com.example.1app`, and a leading underscore).
  *
  * These two fences are the whole point of the file for the Android package:
  * it **can never change** once the app exists on Play, so a value the store
  * would reject has to be refused here, where the fix is still free.
  */
-const IOS_SEGMENT = '[a-z0-9][a-z0-9-]*';
-const ANDROID_SEGMENT = '[a-z][a-z0-9_]*';
+const IOS_SEGMENT = '[A-Za-z0-9][A-Za-z0-9-]*';
+const ANDROID_SEGMENT = '[A-Za-z][A-Za-z0-9_]*';
 
 export const ID_PATTERNS = Object.freeze({
   ios: new RegExp(`^${IOS_SEGMENT}(?:\\.${IOS_SEGMENT})+$`),
@@ -105,14 +108,14 @@ const FIELDS = Object.freeze({
     field: 'bundleIdentifier',
     what: 'iOS bundle identifier',
     shape:
-      'lower-case letters, digits and hyphens in at least two dot-separated segments ' +
+      'letters (either case), digits and hyphens in at least two dot-separated segments ' +
       '(Apple allows no underscore)',
   },
   android: {
     field: 'package',
     what: 'Android package name',
     shape:
-      'lower-case letters, digits and underscores in at least two dot-separated segments, ' +
+      'letters (either case), digits and underscores in at least two dot-separated segments, ' +
       'each starting with a letter (Play allows no hyphen, and no segment may start with a digit)',
   },
 });
@@ -130,10 +133,19 @@ export function requiresIdentifiers(env = process.env) {
   return Boolean(env.EAS_BUILD) || env.FUGARO_REQUIRE_IDS === '1';
 }
 
-/** Is `value` a usable identity for `platform`? */
+/**
+ * Is `value` a usable identity for `platform`?
+ *
+ * `Object.hasOwn` rather than a lookup that only checks for `undefined`: a
+ * platform name inherited from `Object.prototype` -- `constructor`, `toString`,
+ * `__proto__` -- is not a key of `ID_PATTERNS`, and the old test read the
+ * inherited function off the prototype and called `.test` on it, which throws a
+ * `TypeError` out of a function whose whole contract is "is this a name?".
+ * Anything that is not one of the two platforms is simply not an identity.
+ */
 export function isIdentifier(value, platform) {
-  const pattern = ID_PATTERNS[platform];
-  return typeof value === 'string' && pattern !== undefined && pattern.test(value);
+  if (typeof value !== 'string' || !Object.hasOwn(ID_PATTERNS, platform)) return false;
+  return ID_PATTERNS[platform].test(value);
 }
 
 /** The error a missing variable raises: the variable's name, and where to set it. */

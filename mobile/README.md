@@ -85,8 +85,8 @@ form Expo calls with the `expo` object it read from `app.json`:
 
 | Variable | What it is |
 | --- | --- |
-| `FUGARO_IOS_BUNDLE_ID` | the iOS bundle identifier (`expo.ios.bundleIdentifier`): lower-case letters, digits and hyphens in two or more dot-separated segments — Apple allows **no underscore** |
-| `FUGARO_ANDROID_PACKAGE` | the Android package name (`expo.android.package`): a Java package name — two or more dot-separated segments, each **starting with a letter**, letters/digits/underscores only (**no hyphen**). **It can never change** once the app exists on Play, which is why a shape Play would refuse is refused here, while the fix is still free |
+| `FUGARO_IOS_BUNDLE_ID` | the iOS bundle identifier (`expo.ios.bundleIdentifier`): letters (either case), digits and hyphens in two or more dot-separated segments — Apple allows **no underscore** |
+| `FUGARO_ANDROID_PACKAGE` | the Android package name (`expo.android.package`): an application id — two or more dot-separated segments, each **starting with a letter**, letters/digits/underscores only (**no hyphen**). **It can never change** once the app exists on Play, which is why a shape Play would refuse is refused here, while the fix is still free |
 
 **The owner sets them, once per environment, in the EAS project** — the Expo
 account that owns it, which is the owner's. Both values are the one public

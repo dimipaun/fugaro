@@ -554,7 +554,7 @@ P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 
 ### Task P4.4: The EAS project, the signing keys and the store entries — owner-run
 
-**Files.** None in this repository. **Owner-run.**
+**Files.** `mobile/eas.json` (the EAS build and submit profiles: `development`, `preview`, and `internal` — the store profile, `distribution: store`, an Android `app-bundle` and `submit.internal.android.track: internal`, which is C8's one value) and `mobile/app.config.js` (Expo's dynamic config, which resolves the two store identities — the iOS bundle identifier and the Android package name — from EAS environment variables at build time, so that neither is committed to `app.json`; `src/app-config.ids.test.js` and `src/eas-config.test.js` are their tests). **The EAS project itself, the signing keys, the store entries and the two identity values are the owner's**, and no identity value, no key and no key path is committed in either file — the identities are set with `eas env:set`, per environment, by the owner (`mobile/README.md`, "Building for internal testing"). **Owner-run.**
 **Depends on.** P3.1, P4.2a (check 89's text must be in the register before it is run).
 **Verification.** Check 89: a signed build reaches the store's internal track. **No agent performs any step**, and no signing key or store credential enters an agent's environment (Global Constraint 9).
 **Reviewer tier.** owner.

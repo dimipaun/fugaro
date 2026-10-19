@@ -141,14 +141,18 @@ test('the config is a config, and the entry it needs exists', () => {
 
 test('the identities are resolved through app.config.js, in both modes', () => {
   // A build: `EAS_BUILD` is what EAS's build servers set, and the two
-  // variables are the ones the owner sets in the project's environments.
+  // variables are the ones the owner sets in the project's environments. The
+  // value below is a **fictional sample** -- the owner's own identity is set in
+  // the EAS project and is committed nowhere (the pin in `app-config.ids.test.js`
+  // walks the tree for it).
+  const SAMPLE = 'com.example.sample';
   const resolved = resolveConfig(CONFIG.expo, {
     EAS_BUILD: 'true',
-    [ID_VARIABLES.ios]: 'dev.fugaro.app',
-    [ID_VARIABLES.android]: 'dev.fugaro.app',
+    [ID_VARIABLES.ios]: SAMPLE,
+    [ID_VARIABLES.android]: SAMPLE,
   });
-  assert.equal(resolved.ios.bundleIdentifier, 'dev.fugaro.app');
-  assert.equal(resolved.android.package, 'dev.fugaro.app');
+  assert.equal(resolved.ios.bundleIdentifier, SAMPLE);
+  assert.equal(resolved.android.package, SAMPLE);
   // ... and they are the ONLY difference from the committed file: strip them
   // and `app.json`'s `expo` object is what is left, field for field.
   const ios = { ...resolved.ios };
@@ -170,7 +174,7 @@ test('the identities are resolved through app.config.js, in both modes', () => {
   // configure credentials and to submit), so the switch decides whether the
   // identities are **required**, not whether they are read.
   assert.deepEqual(
-    resolveConfig(CONFIG.expo, { [ID_VARIABLES.ios]: 'dev.fugaro.app', [ID_VARIABLES.android]: 'dev.fugaro.app' }),
+    resolveConfig(CONFIG.expo, { [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }),
     resolved,
   );
 });
