@@ -316,6 +316,20 @@ func TestTheMissingTokenRefusalWithoutTheMarkerReadsRight(t *testing.T) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
+	// The sentence carries two causes and two cures, and they are told apart
+	// rather than run together: the grant's cure (the operator's `fugaro init
+	// --repo`, inside the aside) and the new run that follows either cause.
+	// Reading it as a list — "…not launched with one, or <grant>, then start a
+	// new run…: … reports it; launch the run again" — left the reader to work
+	// out which cure belonged to which cause, and read as though the init were
+	// optional (review finding m5). The dashes are the shape, so they are what
+	// is pinned: an edit that flattens them back into commas fails here.
+	if !strings.Contains(msg, "— either way, start a new run") {
+		t.Errorf("the two causes and the two cures are not told apart: %v", err)
+	}
+	if !strings.Contains(msg, "reports it — and when the grant is the cause") {
+		t.Errorf("the refusal does not say what to do when the grant is the cause: %v", err)
+	}
 	assertBalancedParens(t, msg)
 	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 		t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
