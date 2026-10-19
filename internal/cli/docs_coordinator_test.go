@@ -1133,12 +1133,18 @@ func coordinatorCheckRelativeRef(t *testing.T, doc string, at int, ref, spec, sy
 	return true
 }
 
-// coordinatorChecklist, coordinatorMobileReadme and coordinatorCredentialsReadme are the
-// documents the README's numbers table reads other works' numbers from: the register itself, and
-// the two documents the register does not reach.
+// coordinatorChecklist, coordinatorMobileReadme, coordinatorMobilePlan and
+// coordinatorCredentialsReadme are the documents the README's numbers table reads other works'
+// numbers from: the register itself, and the documents the register does not reach.
+//
+// coordinatorMobilePlan is read for one thing only, and it is the one that had to be corrected
+// rather than re-pinned: the state of **100–104**. The mobile README writes those five as
+// proposed and the plan it belongs to approved all of Phase 6 -- those five checks with it -- on
+// 2026-10-18, so the plan is the document that decides and the row above follows it.
 const (
 	coordinatorChecklist         = "docs/gcp-live-checklist.md"
 	coordinatorMobileReadme      = "docs/mobile/README.md"
+	coordinatorMobilePlan        = "docs/mobile/implementation-plan.md"
 	coordinatorCredentialsReadme = "docs/credentials-service/README.md"
 )
 
@@ -1220,28 +1226,34 @@ var coordinatorCheckBlocks = []coordinatorNumberBlock{
 	{"80–89", coordinatorChecklist, "work holds 80–89 carved out of that range**", "**80–89** mobile's, carved out of that range"},
 	{"90–99", coordinatorCredentialsReadme, "| **Checks 90–99** | reserved for this work's owner-run checks", "**90–99** the credentials service, written **Checks 90–99**"},
 	{"100–109", coordinatorMobileReadme, "| **Checks 100–109** | **the functional spec v0.1**", "**100–109** the mobile functional spec, written **Checks 100–109**"},
-	{"100–104", coordinatorMobileReadme, "**100–104 proposed**", "**100–104** are **proposed, not approved**"},
+	{"100–104", coordinatorMobilePlan, "**6 — APPROVED 2026-10-18 (functional spec v0.1)**", "**100–104** are **approved 2026-10-18**"},
 	{"105–109", coordinatorMobileReadme, "**105–109 reserved and unused**", "**105–109** are **reserved and unused**"},
 	{"", coordinatorChecklist, "**Numbering ruling (owner's assistant, 2026-10-13).**", "the numbering ruling of 2026-10-13"},
 	{"", coordinatorMobileReadme, "Checks 70–79 are unused and deliberately not taken", "records them as unused and not taken"},
 }
 
 // coordinatorSectionCitationRE finds the citations the numbers section makes: a backticked
-// repository document, with the line spec it may carry as a second group. The section used to
-// carry line numbers here, and they are what this test's anchors replaced -- so the line spec is
-// read and refused rather than left unmatched. It was left unmatched once, by a regexp that
-// required the closing backtick straight after `.md`: a `path:line` token in this section matched
-// nothing, so the block's citation was silently attributed to the next block's, and a line number
-// could be put back with every test green.
-var coordinatorSectionCitationRE = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.md)(:[0-9]+(?:[-,+][0-9]*)*)?`")
+// repository document, with the line spec it may carry as a second group -- OR a line spec on its
+// own, with no document in the same token. The section used to carry line numbers here, and they
+// are what this test's anchors replaced, so the line spec is read and refused rather than left
+// unmatched, in both of its shapes.
+//
+// It was left unmatched twice. First by a regexp that required the closing backtick straight
+// after `.md`: a `path:line` token in this section matched nothing, so the block's citation was
+// silently attributed to the next block's, and a line number could be put back with every test
+// green. Then by this regexp, which required a full `path.md` before the line spec and so could
+// not see the other shape the section used: the bare relative reference beside the block
+// (`:25`), which resolves against whatever document happens to precede it and is therefore the
+// more brittle of the two, not the less. Both shapes are now matched, and the assertion below
+// refuses either one.
+var coordinatorSectionCitationRE = regexp.MustCompile("`(?:([A-Za-z0-9_./-]+\\.md)(:[0-9]+(?:[-,+][0-9]*)*)?|(:[0-9]+(?:[-,+][0-9]*)*))`")
 
 // coordinatorSectionProseCitations are the section's citations that are not block citations: the
-// documents the note and the Check 110 row name in prose. They are listed rather than ignored,
+// document the Check 110 row names in prose. They are listed rather than ignored,
 // and an entry that goes unused fails like an unused exception does, so that a citation moving
 // out of a block and into the prose is a failure and not a silence.
 var coordinatorSectionProseCitations = map[string]string{
 	"docs/design/always-on-orchestrator.md": "the Check 110 row names the design claiming that number; the design is in open PR #632 and not on main",
-	"docs/mobile/implementation-plan.md":    "the note names the documents the checklist's register does not reach; the line 100-109's state is read from is the mobile README's",
 }
 
 // coordinatorUnwrittenRE finds the words that call a range's numbers unspoken for. They are the
@@ -1396,17 +1408,39 @@ func TestDocsCoordinatorNumbersTableIsReadFromItsSources(t *testing.T) {
 	}
 	prose := map[string]bool{}
 	for _, m := range cites {
-		doc := section[m[2]:m[3]]
-		// The line spec, which this section must not carry any more: every citation in it is
-		// by content, and a number here is the check this round removed. It is reported
-		// before the path is looked at, because the same token would otherwise be read as a
-		// clean citation of the document and the number would go unmentioned -- which is
-		// what happened while the matcher required the backtick straight after `.md`: the
-		// token matched nothing, the block's citation fell through to the next block's, and
-		// the line number was checked by nothing at all.
-		if m[4] >= 0 {
-			t.Errorf("%s's numbers section cites %s at %s: every citation in it is by content now, and a line number is the brittle citation this round removed -- the anchor in the tables above is what holds the claim, and it needs no number",
-				coordinatorReadme, doc, section[m[4]:m[5]])
+		doc := ""
+		if m[2] >= 0 {
+			doc = section[m[2]:m[3]]
+		}
+		// The line spec, in either of the two shapes this section used to carry: attached to a
+		// document (`docs/mobile/README.md:25`) or bare (`:25`, with the document taken from the
+		// sentence around it). Every citation in the section is by content now, and a number
+		// here is the check this round removed. It is reported before the path is looked at,
+		// because the same token would otherwise be read as a clean citation of the document and
+		// the number would go unmentioned -- which is what happened while the matcher required
+		// the backtick straight after `.md`: the token matched nothing, the block's citation
+		// fell through to the next block's, and the line number was checked by nothing at all.
+		//
+		// The bare shape is the worse of the two and was the longer-lived hole: it names no
+		// document in its own token, so what it points at is whatever document happens to
+		// precede it, and no reader can follow it without reading the sentence. That is the
+		// citation an anchor replaces, and the matcher above could not see it at all while it
+		// required a full `path.md` before the line spec.
+		spec := ""
+		switch {
+		case m[4] >= 0:
+			spec = section[m[4]:m[5]]
+		case m[6] >= 0:
+			spec = section[m[6]:m[7]]
+		}
+		if spec != "" {
+			if doc == "" {
+				t.Errorf("%s's numbers section carries the bare line reference %s: a line number with no document in its own token is read against whatever document precedes it, which is the citation this round replaced with an anchor -- the anchor in the tables above is what holds the claim, and it needs no number",
+					coordinatorReadme, section[m[0]:m[1]])
+			} else {
+				t.Errorf("%s's numbers section cites %s at %s: every citation in it is by content now, and a line number is the brittle citation this round removed -- the anchor in the tables above is what holds the claim, and it needs no number",
+					coordinatorReadme, doc, spec)
+			}
 			continue
 		}
 		if claimed[doc] {
@@ -1457,7 +1491,12 @@ func TestDocsCoordinatorNumbersTableIsReadFromItsSources(t *testing.T) {
 		next, doc := -1, ""
 		for _, m := range cites {
 			if m[0] > off {
-				next, doc = m[0], section[m[2]:m[3]]
+				next = m[0]
+				// A bare line reference names no document: the pin below reads the block
+				// from a document, so it stays "" and the failure names the disagreement.
+				if m[2] >= 0 {
+					doc = section[m[2]:m[3]]
+				}
 				break
 			}
 		}
