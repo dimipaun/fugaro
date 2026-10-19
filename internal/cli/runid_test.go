@@ -27,6 +27,32 @@ func recentRunID(t *testing.T, offset time.Duration, suffix string) string {
 	return lsNow().UTC().Add(-offset).Format("20060102-150405") + "-" + suffix
 }
 
+// TestLsWindowFollowsTheClock proves ls's --since window is measured from
+// lsNow, the seam recentRunID mints against, and not from a wall clock the
+// tests cannot move: it lists a run minted 400 days in the past and gets it
+// back when the clock is moved with it, and not when it is not. A test that
+// hard-codes its date cannot make this claim, which is why the guard above
+// bans it.
+func TestLsWindowFollowsTheClock(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	defer func(old func() time.Time) { lsNow = old }(lsNow)
+	lsNow = func() time.Time { return time.Now().UTC().Add(-400 * 24 * time.Hour) }
+	id := recentRunID(t, time.Minute, "feed")
+	seedRun(t, f, id, "", "someone@example.com", false)
+
+	got, errOut := lsJSON(t)
+	if len(got.Runs) != 1 || got.Runs[0].RunID != id {
+		t.Fatalf("ls at the injected clock = %+v, want %s listed (%q)", got.Runs, id, errOut)
+	}
+	// The same run is 400 days old to the real clock: the default window
+	// drops it, so what listed it above was the injected clock, not luck.
+	lsNow = time.Now
+	if got, _ := lsJSON(t); len(got.Runs) != 0 {
+		t.Fatalf("ls at the real clock = %+v, want the 400-day-old run dropped", got.Runs)
+	}
+}
+
 // TestNoFixedRunIDsInRecencyTests is the guard for recentRunID: it parses
 // this package's own test sources and fails a test that both drives a
 // default-window listing (runs ls / lsJSON / executeWatch with no

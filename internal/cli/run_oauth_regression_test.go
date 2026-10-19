@@ -119,7 +119,10 @@ func TestFollowUpAfterRealNamedLaunch(t *testing.T) {
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 
-	rootID := "20261010-090000-c1c1"
+	// Both are minted inside run --pr's followUpLookback (90d) window, which
+	// resolvePR measures back from now: fixed dates would age out of it and
+	// make the follow-up report "not a Fugaro PR" by the calendar (#651).
+	rootID := recentRunID(t, 2*time.Minute, "c1c1")
 	out, _, err := execute(t, "run", "--run-id", rootID, "--token", "acme-personal", "--json", "Add a feature")
 	if err != nil {
 		t.Fatalf("root launch: %v", err)
@@ -137,7 +140,7 @@ func TestFollowUpAfterRealNamedLaunch(t *testing.T) {
 		PR: &runstore.PRRef{Number: 7, URL: "https://github.com/acme/other/pull/7"}}
 	writeOtherRecord(t, f, rootID, rec)
 
-	fuID := "20261010-120000-c2c2"
+	fuID := recentRunID(t, time.Minute, "c2c2")
 	out, _, err = execute(t, "run", "--repo", "acme/other", "--pr", "7", "--run-id", fuID, "--json", "more work")
 	if err != nil {
 		t.Fatalf("follow-up: %v", err)
