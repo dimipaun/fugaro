@@ -30,11 +30,12 @@ const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 // one of them move, so each is stat'ed here as well as required in the text.
 //
 // Two kinds of citation are deliberately NOT in the list below.
-//   - The files the plan's "File Structure" section says it CREATES
-//     (internal/cli/backends.go, internal/cli/reaper.go,
-//     internal/cli/docs_compute_backend_test.go, deploy/terraform/gcp/modules/compute/reaper.tf):
-//     they do not exist yet, and this plan is docs-only, so stat'ing them would
-//     fail on the tree the plan is written for.
+//   - The files the plan's "File Structure" section says it CREATES and that no
+//     task has created yet (internal/cli/reaper.go, internal/cli/reaper_test.go,
+//     deploy/terraform/gcp/modules/compute/reaper.tf): stat'ing them would fail
+//     until Task 11 lands. The block's other two -- internal/cli/backends.go and
+//     internal/cli/backends_test.go, which the pin test was written before -- are
+//     listed below like any other citation, because Task 8 created them.
 //   - The placeholders and globs (docs/releases/<the 0.9.5 note>,
 //     internal/runner/**, .github/workflows/ci.yml's `for r in …` loop): a
 //     placeholder is not a path and a glob is not a file.
@@ -89,6 +90,10 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 		"internal/cli/init_stages.go",
 		"internal/cli/launch_budget.go",
 		"internal/cli/docs_artifact_runs_test.go",
+		// Task 8's own new files, created by the task the pin test was written
+		// for: the command and the tests that hold its list to the seam's.
+		"internal/cli/backends.go",
+		"internal/cli/backends_test.go",
 		"internal/localcfg/localcfg.go",
 		"internal/localcfg/localcfg_test.go",
 		"internal/infra/compute.go",
@@ -171,6 +176,14 @@ var computeBackendSymbols = map[string][]string{
 	// backend the launch ran on rather than written as Cloud Run's constant.
 	"internal/cli/cloud.go": {"openCloudFor", "checkExecution", "cloudOpeners", "batchOptions", "launchBackend"},
 	"internal/cli/run.go":   {"Backend: launchBackend(env.be)"},
+	// Task 8's command: the two names a project config may select and the
+	// project's own answer, read from localcfg with no cloud call.
+	"internal/cli/backends.go": {"newBackendsCmd", "selectableBackends", "backendsLs", "backendsListDoc"},
+	"internal/cli/backends_test.go": {
+		// The plan's File Structure line for this file: the two names, the
+		// project's own answer, and the refusal for an unknown one.
+		"TestBackendsLsListsTheOpenerMapsNames", "TestBackendsLsMarksTheProjectsOwnBackend",
+	},
 	"internal/cli/recipes_skew.go": {
 		"batchProvisionShipped", "batchProvisionDisabled", "refuseBatchProvisionNotShipped",
 	},

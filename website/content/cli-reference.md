@@ -26,6 +26,7 @@ Subcommands:
 - `fugaro accounts` -- List the named Claude accounts a repository may use
 - `fugaro allow-delete` -- Record the Terraform addresses a run may delete or replace (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
+- `fugaro backends` -- List the compute backends an installation can run its jobs on
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
@@ -265,6 +266,60 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository RUN belongs to (owner/name; needed only for a bare run ID) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro backends`
+
+List the compute backends an installation can run its jobs on
+
+Usage: `fugaro backends`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for backends |
+
+Subcommands:
+
+- `fugaro backends ls` -- List the compute backends this fugaro knows and which one the project uses
+
+## `fugaro backends ls`
+
+List the compute backends this fugaro knows and which one the project uses
+
+List the compute backends a project config's backend: key may name, and
+which one the selected project uses:
+
+  cloud-run    Cloud Run jobs (the default, and the one every installation
+               runs on today)
+  cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
+
+A config that names no backend runs on cloud-run. A config that names
+cloud-batch is refused by this build ("not enabled yet"): the backend and its
+opener are built and tested, and nothing selects them until Fugaro has passed
+the live checklist for it.
+
+This is a local, read-only lookup: it reads the project config and the backend
+names internal/backend defines, and it calls no cloud API. With --json it
+prints one object instead of two lines, carrying the list, the selected project
+and the name its config selects.
+
+Usage: `fugaro backends ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

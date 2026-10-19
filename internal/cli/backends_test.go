@@ -152,6 +152,17 @@ func TestBackendsLsListsTheOpenerMapsNames(t *testing.T) {
 	if !reflect.DeepEqual(sorted, want) {
 		t.Errorf("selectableBackends = %v, want the seam's %v", selectableBackends, want)
 	}
+	// And a name that is not one of them fails closed: never a fallback to the
+	// default, which would run a project's jobs somewhere it did not choose.
+	be, err := backend.Open(ctx, "ecs-fargate", openers)
+	if err == nil || be != nil {
+		t.Fatalf("a name backends ls does not list opened %#v, want a refusal", be)
+	}
+	for _, name := range append(append([]string(nil), sorted...), "ecs-fargate") {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("the refusal %q does not name %s", err, name)
+		}
+	}
 }
 
 // TestBackendsLsSpellsNoNameAsAString: the names are the seam's constants, not
