@@ -16,6 +16,12 @@
 //   - website/data/install.yaml   the install facts (W0.1), pinned to README.md,
 //                                 docs/release.md and .goreleaser.yaml by
 //                                 internal/cli/docs_website_install_test.go.
+//   - website/data/release-summaries.yaml
+//                                 the end-user sentence per release (the owner's brief of
+//                                 2026-10-19), which the changelog page prints above the
+//                                 entry's Highlights: hand-written, one line per release,
+//                                 and the page stops the build when a release file it
+//                                 renders has no line here.
 //   - website/content/*.md        generated documents (W0.4's CLI reference, W0.5's
 //                                 security page), each saying on its first line that it
 //                                 is generated and by what.
