@@ -664,3 +664,51 @@ goes stale the way the byte budgets did before D192.
   83.5 and 59.3 px wide beside the 47 px mark. That is a measurement of the built artifact,
   not a look at it: **whether the page then looks right is the owner's check (70a–70c, D190)**,
   and no screenshot is committed here — this run cannot see one either.
+
+## The owner's 2026-10-19 feedback on How It Works: the run is one vertical timeline
+
+- **"It is a bit better, but not quite there. The run, step by step section does not look
+  good."** The section had the right content and the wrong shape. `RunDetail.astro`'s five
+  steps were a `repeat(auto-fit, minmax(18rem, 1fr))` grid: at 1280 px the five read three
+  blocks beside two with a hole where a sixth would go, at 768 px two-by-two, and no mark
+  joined one step to the next — five short paragraphs, which is a list of facts rather than a
+  run. Item 4 asked for the detail of the picture above it; a grid of boxes under a picture of
+  a sequence shows the reader the sequence nowhere.
+- **The run is now one column at every width, with the steps joined.** Each step is a list
+  item of two grid columns: a numbered marker in a fixed rail on the left, and the step's name
+  and its one quoted line in the column beside it. The line between two steps is the step's
+  own `::before` — `top` at the marker's height, `bottom` at the step's edge — so the segment a
+  reader sees between two markers is exactly the step's own bottom padding, and the last step
+  draws none, because `:not(:last-child)` is what turns the connector on. There is no
+  breakpoint: the timeline is the same shape at 360 px as at 1280, which is what a sequence
+  reads as. The marker is the accent's outline and the connector is `--border`, so the section
+  stays quieter than the picture it details.
+- **Every step is still README.md's own words, in the section's own order** (Global Constraint
+  6, D102): the build-time quotation check is untouched, and the only line reworded is step 3's,
+  which now runs to the end of its sentence so that the review and fix rounds the run repeats
+  are on the page — still a contiguous substring of the section, still searched forward from
+  the step before it. `test/home.mjs`'s built-page check reads the same five headings and lines
+  out of the page, and it no longer strips a leading number back off a heading: the number is
+  the heading's sibling now, and the fixture case for a heading that swallowed it proves the
+  refusal fires.
+- **The shape is a gate, and each claim has a fixture.** `test/base-styles.mjs` gains
+  `runTimelineFailures`, which reads the built stylesheet for three things: one column in force
+  at **360, 768 and 1280 px**; a connector on `.run-step`'s `::before` that is conditional on
+  the step not being the last, is no wider than `--border-width`, declares both its `top` and
+  its `bottom` and paints a token; and no `width`, `min-width` or `white-space: nowrap` in the
+  section wider than a phone's content box — **328 px**, derived as 360 minus `main`'s own
+  inline padding at that width, read from `base.css` rather than assumed. Seven fixtures plant
+  each defect and read the refusal back, and the check was proved red by hand against the old
+  stylesheet, which it refuses four times over.
+- **The widths were read, not looked at.** The built HTML and CSS were examined at 360, 768
+  and 1280 px for the causes of horizontal overflow — a fixed width, a `nowrap`, an absolutely
+  positioned element outside the rail — and there are none: the grid's track is
+  `minmax(0, 1fr)`, the rail is 32 px, and the name and the line both carry
+  `overflow-wrap: anywhere`. That is arithmetic over the artifact. **Whether it now looks good
+  is the owner's check (70a–70c, D190)**, and no screenshot is committed — this run cannot see
+  one either.
+- **The byte budget is re-derived in the commit that moves it (D192).** The site figure alone
+  moved, **977,921 → 978,970**, by **1,049 bytes**: the rail, the connector, the rule that
+  stops it at the last step and the markup that places them, on the one page that renders a
+  run — How It Works is 25,714 bytes against 24,665. The page weight and the script did not
+  move: the heaviest page is still the docs hub, which renders no step.
