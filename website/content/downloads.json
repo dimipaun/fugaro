@@ -3,12 +3,13 @@
   "available": false,
   "name": "The Fugaro desktop console",
   "what": {
-    "text": "A desktop application that is a graphical fugaro watch: live run monitoring and spending graphs, drawn over the CLI's own read-only output. It holds no credential, no database client and no backend of its own — the CLI is the data plane.",
+    "text": "A desktop application that is a graphical fugaro watch: live run monitoring and spending graphs. It has no backend, no service account, no database client and no credential of its own — the CLI is the data plane.",
     "source": "docs/design/desktop-console.md D1"
   },
   "not_released": {
-    "text": "Not released yet. The console is designed and not built — no code, no scaffolding, nothing to run — and this section carries no download link until its own artifact ships.",
-    "source": "docs/releases/v0.8.0.md"
+    "text": "Not released yet. The console is built for macOS and has not been published: this section carries no download link until its own release exists.",
+    "short": "Not released yet.",
+    "source": "docs/website/reconciliation.md D95"
   },
   "properties": [
     {
@@ -30,5 +31,21 @@
       "source": "docs/design/desktop-console.md D11"
     }
   ],
-  "downloads": []
+  "release": {
+    "tag_prefix": "console-v",
+    "version": "0.8.5",
+    "source": "docs/release.md"
+  },
+  "downloads": [
+    {
+      "id": "macos-dmg",
+      "platform": "macOS",
+      "file": "Fugaro Console-{version}-universal.dmg"
+    },
+    {
+      "id": "macos-zip",
+      "platform": "macOS",
+      "file": "Fugaro Console-{version}-universal-mac.zip"
+    }
+  ]
 }

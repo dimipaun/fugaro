@@ -166,6 +166,80 @@ func TestSecretMountsListedProviderStillRefusesUnlistedRepo(t *testing.T) {
 	}
 }
 
+// TestSecretMountsRequiredSecretsIsTheMountSet: RequiredSecrets (what `fugaro
+// secrets ls` checks for MISSING) is exactly the union of what the jobs of
+// the repository's workflows mount, per provider and per auth, less the
+// optional mounts (OptionalSecret) a job runs without, and never a
+// name no job of it mounts: the other provider's git credential, a model
+// credential another auth names, or the bare default token in place of a
+// named account's.
+func TestSecretMountsRequiredSecretsIsTheMountSet(t *testing.T) {
+	lc := &localcfg.Config{
+		Providers: map[string]config.ModelProvider{
+			"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/app"}},
+			"elsewhere":  {Secret: "elsewhere-key", AllowDataTo: []string{"acme/other"}},
+		},
+		ClaudeAccounts: map[string]config.ClaudeAccount{
+			"work":  {AllowDataTo: []string{"acme/app"}},
+			"other": {AllowDataTo: []string{"acme/other"}},
+		},
+	}
+	cfg := func(provider, auth string) *config.Config {
+		return &config.Config{
+			Git:   config.Git{Provider: provider},
+			Agent: config.Agent{Auth: auth},
+			Workflows: map[string]config.Workflow{
+				"web": {Secrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}}},
+				"api": {Secrets: []config.Secret{{Name: "pypi-token", Env: "PYPI_TOKEN"}}},
+			},
+		}
+	}
+	for _, c := range []struct {
+		provider, auth string
+		want           []string
+	}{
+		{"github", "vertex", []string{"github-app-key", "npm-token", "pypi-token"}},
+		{"bitbucket", "vertex", []string{"bitbucket-token", "npm-token", "pypi-token"}},
+		{"github", "oauth", []string{"claude-oauth-token", "claude-oauth-token-work", "github-app-key", "npm-token", "pypi-token"}},
+		// anthropic-api-key is mounted under api-key but optional (OptionalSecret:
+		// the job mounts it only when it has a version), so it is not required.
+		{"github", "api-key", []string{"github-app-key", "npm-token", "openrouter-api-key", "pypi-token"}},
+	} {
+		got, err := RequiredSecrets(cfg(c.provider, c.auth), lc, "acme/app")
+		if err != nil {
+			t.Fatalf("%s/%s: %v", c.provider, c.auth, err)
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s/%s: %v, want %v", c.provider, c.auth, got, c.want)
+		}
+		// The same set the deployed jobs mount, variant by variant, less the
+		// mounts a job may go without.
+		var mounted []string
+		for _, name := range []string{"api", "web"} {
+			for _, tok := range WorkflowAccounts(cfg(c.provider, c.auth), lc, "acme/app") {
+				git, _ := GitSecret(c.provider)
+				ms, err := SecretMounts(git, cfg(c.provider, c.auth), name, tok, cfg(c.provider, c.auth).Workflows[name], lc, "acme/app")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, m := range ms {
+					if !slices.Contains(mounted, m.Logical) && !OptionalSecret(m.Logical) {
+						mounted = append(mounted, m.Logical)
+					}
+				}
+			}
+		}
+		slices.Sort(mounted)
+		if !slices.Equal(got, mounted) {
+			t.Errorf("%s/%s: required %v, mounted %v", c.provider, c.auth, got, mounted)
+		}
+	}
+	// A provider that is neither is refused, not guessed at.
+	if _, err := RequiredSecrets(cfg("gitlab", "vertex"), lc, "acme/app"); err == nil {
+		t.Error("an unknown git provider gave a required set")
+	}
+}
+
 // mounted reports whether the plan's jobs still mount logical: a workflow's or
 // the check job's own secret env, by the logical name each entry resolves
 // through.

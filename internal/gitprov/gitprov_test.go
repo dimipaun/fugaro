@@ -59,6 +59,11 @@ func TestKindForURL(t *testing.T) {
 		// colon before its first "/".
 		"file:///tmp/remote.git": "",
 		"/tmp/acme:web.git":      "",
+		// The userinfo alone names no host, and neither does a path whose
+		// colon is inside it ("/tmp/x:y" is a local path, not a host).
+		"@:acme/web.git":      "",
+		"git@:acme/web.git":   "",
+		"/tmp/x:y/remote.git": "",
 	} {
 		if got := KindForURL(in); got != want {
 			t.Errorf("KindForURL(%q) = %q, want %q", in, got, want)

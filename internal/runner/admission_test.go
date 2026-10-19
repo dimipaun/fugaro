@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -42,7 +43,15 @@ import (
 // credential out first.
 func admissionRun(t *testing.T, kind, slugRepo, mode, capUSD, policy string, script ...anthropicfake.Reply) *bk {
 	t.Helper()
-	b := newBK(t, gwConfig(t, ""), mode, capUSD, script...)
+	return admissionRunCfg(t, kind, slugRepo, mode, capUSD, gwConfig(t, ""), policy, script...)
+}
+
+// admissionRunCfg is admissionRun with the repository's own fugaro.yaml given
+// by the caller, for a test that needs a config the fixture does not have (a
+// workflow's job_profile selection is the one so far).
+func admissionRunCfg(t *testing.T, kind, slugRepo, mode, capUSD, cfg, policy string, script ...anthropicfake.Reply) *bk {
+	t.Helper()
+	b := newBK(t, cfg, mode, capUSD, script...)
 	slug, err := task.Slug(kind, slugRepo)
 	if err != nil {
 		t.Fatal(err)
@@ -55,9 +64,16 @@ func admissionRun(t *testing.T, kind, slugRepo, mode, capUSD, policy string, scr
 	if slug == repoSlug && slugRepo != "acme/app" {
 		t.Fatalf("task.Slug(%q, %q) is the fixture's own slug; the test would check nothing", kind, slugRepo)
 	}
-	b.deps.Execution = "projects/aurora-fp/locations/europe-west1/jobs/fugaro/executions/" + runID
+	// A real per-repository job name, computed from the slug the run carries
+	// and the fixture's workflow — the same recomputation the run itself makes
+	// (gcp.JobName of the slug and gcp.WorkflowVariant of task.json's
+	// workflow, plan task 3.3 step 1). A hand-written job name is a name the
+	// run cannot place, and would halt these runs before the check they are
+	// about (TestJobIdentityRefusesANameItCannotPlace).
+	const workflow = "app"
+	b.deps.Execution = cloudRunExecution(gcp.JobName(slug, gcp.WorkflowVariant(workflow, "")))
 	store := runstore.Open(b.harness.bucket, slug, runID)
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature"}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: workflow, Task: "Add a feature"}
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +195,30 @@ func countAuths(b *bk) *int {
 	return &n
 }
 
+// A process with no Cloud Run execution that the invocation did not name local
+// is in the cloud (backend.Platform.InCloud fails closed): a platform no
+// backend claims, or a job whose environment was edited so that the codec
+// reports nothing. The admission used to read "no execution" as "not on Cloud
+// Run" and skip every check below — the job binding, the slug, the remote and
+// the allow-list — while the git credential stayed scoped to whatever remote
+// that environment named (review C2; main's #453 fixed the same guard for the
+// phase-1 shape). Such a run has no job name to place, so it cannot adopt or
+// rule out a project job's identity, and it stops before any git credential.
+//
+// Mutation (run, restored): make admissionCheck's skip read Execution == ""
+// alone again. The run then goes on to clone and this test fails on the
+// credential counter and on the reason.
+func TestAdmissionRefusesAnUnclaimedProcessWithNoExecution(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
+	b.deps.Execution = ""
+	b.deps.Local = false
+	// A cloud run carries its project (checkProject refuses one without it
+	// after the clone, which would hide where this refusal happens).
+	b.deps.Project = "aurora"
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "no Cloud Run execution", "not a local invocation", "before any git credential")
+}
+
 // A FUGARO_GIT_PROVIDER (the --provider flag's default, internal/cli/exec.go)
 // that agrees with the kind the slug derives is not what the binding trusts —
 // it is derived from the slug either way — and one that disagrees is refused,
@@ -186,7 +226,7 @@ func countAuths(b *bk) *int {
 // launcher-overridable (12a item 2), so a value that could change which
 // repository this run is for is exactly what must not be obeyed.
 func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
-	const policy = `{"version":1,"allow_repos":["github/acme/*"]}`
+	const policy = `{"version":2,"allow_repos":["github/acme/*"]}`
 	t.Run("the agreeing kind runs", func(t *testing.T) {
 		b := admissionRun(t, "github", "acme/app", "off", "", policy)
 		b.deps.ProviderKind = "github"
@@ -221,7 +261,7 @@ func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
 // does not name it. The policy admits the repository the slug names, so the
 // remote is what refused, before any git credential was requested.
 func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
-	b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
+	b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":2,"allow_repos":["bitbucket/acme/*"]}`)
 	guardProviderHost(t, "https://github.com/")
 	b.deps.Remote = "https://github.com/acme/app.git"
 	rec, err := b.run(t)
@@ -237,7 +277,7 @@ func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 // The refusal quotes the repository the remote names, so a launcher that made
 // the edit can see what it named.
 func TestRunnerRefusesARemoteOnAnotherRepositoryOfTheSameHost(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 	guardProviderHost(t, "https://github.com/")
 	b.deps.Remote = "https://github.com/acme/other.git"
 	rec, err := b.run(t)
@@ -252,7 +292,7 @@ func TestRunnerRefusesARemoteOnAnotherRepositoryOfTheSameHost(t *testing.T) {
 // stop every job a launcher deploys. Only the transport is local: git's own
 // insteadOf rule rewrites the URL onto the fixture's bare remote.
 func TestRunnerAdmitsARemoteNamingItsOwnRepository(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 	guardProviderHostTo(t, "https://github.com/acme/app.git", "file://"+b.remote)
 	b.deps.Remote = "https://github.com/acme/app.git"
 	if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
@@ -286,7 +326,7 @@ func TestRunnerRefusesARemoteOffTheProvidersEndpoint(t *testing.T) {
 		{"the authority names a port", "https://github.com:8443/acme/app.git", "https://github.com:8443/", "8443"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 			guardProviderHost(t, tc.guard)
 			b.deps.Remote = tc.remote
 			rec, err := b.run(t)
@@ -307,7 +347,7 @@ func TestRunnerRefusesARemoteOffTheProvidersEndpoint(t *testing.T) {
 // is local: git's insteadOf rule rewrites the URL onto the fixture's remote.
 func TestRunnerAdmitsTheSshSpellingOfItsOwnRemote(t *testing.T) {
 	const remote = "ssh://git@github.com/acme/app.git"
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 	guardProviderHostTo(t, remote, "file://"+b.remote)
 	b.deps.Remote = remote
 	if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
@@ -321,7 +361,7 @@ func TestRunnerAdmitsTheSshSpellingOfItsOwnRemote(t *testing.T) {
 // endpoint check is what the refusal is about, so the text it adds is the text
 // this test reads.
 func TestRunnerRefusesAnEndpointWithoutQuotingItsCredential(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 	// Every https URL in play is this remote, so the guard's prefix is the
 	// scheme: a run that went on would fail its clone locally, whatever
 	// endpoint the remote named.
@@ -389,7 +429,7 @@ func TestRunnerRefusesARemoteWithoutQuotingItsCredential(t *testing.T) {
 		{"an empty authority naming another owner", "https:///x:ATBBsecret@github.com/attacker/malware.git", "github.com/attacker/malware.git", "https://"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
+			b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":2,"allow_repos":["bitbucket/acme/*"]}`)
 			guardProviderHost(t, tc.guard)
 			b.deps.Remote = tc.remote
 			rec, err := b.run(t)
@@ -413,7 +453,7 @@ func TestRunnerRefusesARemoteWithoutQuotingItsCredential(t *testing.T) {
 // only when the job's environment was edited after launch — the environment
 // may only tighten, never change which repository this run is for.
 func TestRunnerRefusesARemoteNamingAnotherRepository(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 	b.deps.Remote = "https://github.com/attacker/malware.git"
 	// Nothing here may reach github.com even if this check regresses: the same
 	// local rewrite TestRunnerRefusesARemoteOnAnotherProvidersHost uses.
@@ -469,7 +509,7 @@ func TestRunnerRefusesARemoteWhosePathIsNotAnOwnerName(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := tc.remote
-			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 			b.deps.Remote = remote
 			// Nothing here may reach github.com even if this check regresses:
 			// the same local rewrite the sibling remote tests use, plus an ssh
@@ -524,7 +564,7 @@ func TestRunnerRefusesARemoteOnAHostNoProviderOwns(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := tc.remote
-			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 			b.deps.Remote = remote
 			// Nothing here may reach that host even if this check regresses:
 			// the https rewrite for the URL shapes, and an ssh command that
@@ -544,12 +584,129 @@ func TestRunnerRefusesARemoteOnAHostNoProviderOwns(t *testing.T) {
 	}
 }
 
+// The kind is not the whole question (a review finding): the derived kind's
+// own host carries every repository of that provider, so a remote that agrees
+// with the kind may still be another repository's, and the run would clone,
+// cache, lock and account under its own slug while doing another repository's
+// work. internal/infra's repoURL refuses this when it builds the job ("it must
+// be this repository, not only this provider"), so it takes an edit of the
+// job's environment after launch, exactly like the cross-provider case above.
+// The policy admits the repository the slug names, which is why this is the
+// remote's refusal and not the allow-list's.
+//
+// A remote whose path is not a repository name this Fugaro can read is refused
+// too (a review finding — it used to be admitted as "not a repository path"):
+// "acme/app/../other" and "acme//other" are resolved by the host into some
+// repository, and the run cannot tell which, so admitting them would risk
+// exactly the cross-repository work this check exists to stop. Nothing genuine
+// is lost — the deployer writes a canonical URL (internal/infra's repoURL), so
+// these arise only from a remote edited after launch, which is the case the
+// check is for.
+//
+// Mutation (run, restored): return "" for a path CanonicalRepo refuses, as this
+// function did before the fix. The two rows whose path CanonicalRepo *refuses*
+// (the ".." one and the doubled slash) then fail: the run goes on and halts on
+// the clone instead, with the reason the test wants nowhere in it. The tree URL
+// is unaffected by that mutation and is here for the other reading — a path
+// CanonicalRepo *accepts* and that is another repository, which the check
+// caught before the fix and must keep catching.
+func TestRunnerRefusesARemoteOfAnotherRepositoryOnTheSameHost(t *testing.T) {
+	for _, tc := range []struct{ remote, display, quotedRepo string }{
+		// https, the form internal/infra writes into FUGARO_REMOTE.
+		{"https://github.com/evil/other.git", "https://github.com/evil/other.git", "evil/other"},
+		// scp-like, which a launcher may write and which git clones just the
+		// same; the refusal quotes its host alone (remoteDisplay), so the
+		// repository the message names is what carries the case.
+		{"git@github.com:evil/other.git", "github.com", "evil/other"},
+		// The same owner, another repository: the near miss worth naming.
+		{"https://github.com/acme/other.git", "https://github.com/acme/other.git", "acme/other"},
+		// A path the host resolves to another repository while CanonicalRepo
+		// refuses it as written (a review finding): the run cannot know which
+		// repository "acme/app/../other.git" fetches, so it refuses rather
+		// than admitting it. The refusal quotes the path it could not read.
+		{"https://github.com/acme/app/../other.git", "https://github.com/acme/app/../other.git", "acme/app/../other.git"},
+		// The same, with the empty segment a doubled slash makes: nothing in
+		// the path says "acme/other", and the host is the one that decides.
+		{"https://github.com/acme//other", "https://github.com/acme//other", "acme//other"},
+		// A path that is not a repository at all is refused for the same
+		// reason: the clone would go to the provider's host with a path the
+		// run cannot match against its own repository.
+		{"https://github.com/acme/app/tree/main", "https://github.com/acme/app/tree/main", "acme/app/tree/main"},
+	} {
+		t.Run(tc.remote, func(t *testing.T) {
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
+			b.deps.Remote = tc.remote
+			// As above: nothing here may reach github.com, not even if the
+			// check this test covers regresses.
+			gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+			if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+			// The scp-like form would otherwise be carried by ssh, which is a
+			// network call before it is anything else: an ssh that exits
+			// immediately keeps a regressed run offline too.
+			t.Setenv("GIT_SSH_COMMAND", "false")
+			rec, err := b.run(t)
+			// "never change which repository it is for" is main's remote binding's
+			// (remoteAdmissionRefusal) wording of next-0.8.5's "it must be this
+			// repository, not only this provider": the merge kept main's one check.
+			refusedAdmission(t, b, rec, err, tc.display, tc.quotedRepo, "github", "acme/app", "FUGARO_REMOTE", "never change which repository it is for", "before any git credential")
+		})
+	}
+}
+
+// The host is the whole of "this provider" (review C3): next-0.8.5's first
+// remote check (remoteOfAnotherKind, now main's remoteAdmissionRefusal) only knew the hosts gitprov.KindForURL recognises, and every other host —
+// a trailing-dot or www spelling of the provider's, the provider's ssh-over-443
+// host, or a host that is nobody's provider at all — used to be admitted as
+// "no disagreement". The git credential is scoped to the remote's host
+// (gitops.CredentialURL), so "https://evil.example/acme/app.git" would have
+// handed the provider token to evil.example, and the alias spellings name a
+// repository the run cannot verify. A remote that names a host is now refused
+// unless that host is exactly the derived kind's own (github.com,
+// bitbucket.org) with no port; a remote with no host at all (a local path)
+// carries no credential and keeps the path it has.
+//
+// Mutation (run, restored): drop the remoteAdmissionErr check in
+// admissionCheck. Every row then goes on past the admission and fails here.
+func TestRunnerRefusesARemoteOffTheProvidersHost(t *testing.T) {
+	// why is main's remote binding's wording (remoteAdmissionRefusal) of
+	// next-0.8.5's "not github's own host": a host no provider kind owns, or a
+	// port the launcher never writes.
+	const offHost, withPort = "is not a host any git provider kind this Fugaro uses owns", "names the port 8443"
+	for _, tc := range []struct{ remote, host, why string }{
+		{"https://github.com./evil/other.git", "github.com.", offHost},
+		{"https://www.github.com/evil/other.git", "www.github.com", offHost},
+		{"ssh://git@ssh.github.com:443/evil/other.git", "ssh.github.com:443", offHost},
+		{"https://evil.example/acme/app.git", "evil.example", offHost},
+		{"git@evil.example:acme/app.git", "evil.example", offHost},
+		{"https://github.com:8443/acme/app.git", "github.com:8443", withPort},
+	} {
+		t.Run(tc.remote, func(t *testing.T) {
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
+			b.deps.Remote = tc.remote
+			// Nothing here may reach the network, not even if the check this
+			// test covers regresses: git rewrites the remote onto a path that
+			// does not exist, and ssh exits at once.
+			gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+			if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = "+tc.remote+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+			t.Setenv("GIT_SSH_COMMAND", "false")
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, tc.host, tc.why, "FUGARO_REMOTE", "before any git credential")
+		})
+	}
+}
+
 // The slug the run was launched for and the repository its task names must
 // agree: FUGARO_RUN is what keys the locks, the cache and the budget session,
 // and a job launched for one repository must not run another repository's
 // work. The policy admitted this repository, so the binding is what refused.
 func TestRunnerRefusesSlugMismatch(t *testing.T) {
-	b := admissionRun(t, "github", "acme/other", "off", "", `{"version":1,"allow_repos":["*"]}`)
+	b := admissionRun(t, "github", "acme/other", "off", "", `{"version":2,"allow_repos":["*"]}`)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, b.deps.Store.Slug(), "acme/app", "provider kind")
 }
@@ -557,7 +714,7 @@ func TestRunnerRefusesSlugMismatch(t *testing.T) {
 // A published policy that does not admit the run's repository stops the run:
 // the project's owner has said which repositories may run here.
 func TestRunnerRefusesSlugNotInAllowList(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/other/*","bitbucket/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/other/*","bitbucket/acme/*"]}`)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "github/acme/app", "allow_repos", "github/other/*", "fugaro project repos add")
 }
@@ -565,13 +722,30 @@ func TestRunnerRefusesSlugNotInAllowList(t *testing.T) {
 // R2-12: a run that is not admitted changes nothing. The refusal lands before
 // the provider is opened (no git credential request), before the lock, and
 // before the budget session exists — so no lease is reserved and no spend is
-// accounted for a repository the project's policy does not admit. This is the
-// mode-on case of the same fixture the refusal tests above use, with the whole
+// accounted for a repository the project's policy does not admit. These are the
+// mode-on cases of the same fixtures the refusal tests use, with the whole
 // ledger asserted (refusedAdmission).
+//
+// The same ordering holds on a project job (plan task 3.3 step 2: the check is
+// before the call to openProvider and before the session takes a lease), and
+// the project case is the one where it is not implied: the provider, the
+// profile and the clone URL all come from a decision this run makes, so an
+// ordering that put any of them after the credential would hand a git
+// credential to a run the profile does not admit. The project fixture brings
+// its host local, so a regression that went on to clone would fail locally
+// rather than at github.com.
 func TestRunnerChecksBeforeTheTokenAndTheLease(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/other/*"]}`)
-	rec, err := b.run(t)
-	refusedAdmission(t, b, rec, err, "github/acme/app", "fugaro project repos add")
+	t.Run("a per-repository job", func(t *testing.T) {
+		b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":2,"allow_repos":["github/other/*"]}`)
+		rec, err := b.run(t)
+		refusedAdmission(t, b, rec, err, "github/acme/app", "fugaro project repos add")
+	})
+	t.Run("a project job", func(t *testing.T) {
+		b := projectRun(t, projectJobOf(), "enforce", "50", projectPolicyFor(`["github/acme/*"]`, `["github/other/*"]`))
+		projectHost(t, b)
+		rec, err := b.run(t)
+		refusedAdmission(t, b, rec, err, "github/acme/app", "standard", "github/other/*", "never widen")
+	})
 }
 
 // A policy this run can see and may not read stops the run (R2-3). It is not
@@ -588,7 +762,7 @@ func TestRunnerChecksBeforeTheTokenAndTheLease(t *testing.T) {
 // (`if false && err != nil`). This test fails on the counter — the run opens
 // its provider and only then halts — and no other test does.
 func TestRunnerRefusesAnUnreadablePolicyBeforeAnyCredential(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":2,"allow_repos":["github/acme/*"]}`)
 	b.db.DenyRead(projectpolicy.PathShared())
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "could not be read", projectpolicy.PathShared(), "older than the marker", "does not start on a ceiling the policy did not set")
@@ -654,7 +828,7 @@ func TestRunnerWithoutAPolicyChecksOnlyTheBinding(t *testing.T) {
 // not the same as an installation that has published nothing, which has no
 // list to be empty (the test above).
 func TestEmptyAllowListInAPublishedPolicyDeniesEverything(t *testing.T) {
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":[]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":[]}`)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "github/acme/app", "empty", "admits no repository at all", "fugaro project repos add")
 }
@@ -711,7 +885,7 @@ func TestRunnerRefusesARemoteWhoseURLNamesNoHostItCanRead(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 			guardProviderHost(t, "https://")
 			t.Setenv("GIT_SSH_COMMAND", "false")
 			b.deps.Remote = tc.remote
@@ -728,7 +902,7 @@ func TestRunnerRefusesARemoteWhoseURLNamesNoHostItCanRead(t *testing.T) {
 // clone on the fixture's own remote, off the network.
 func TestRunnerAdmitsTheScpLikeRemoteWhoseUserinfoHoldsTwoAts(t *testing.T) {
 	const remote = "a@b@github.com:acme/app.git"
-	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 	guardProviderHostTo(t, remote, "file://"+b.remote)
 	t.Setenv("GIT_SSH_COMMAND", "false")
 	b.deps.Remote = remote
@@ -773,7 +947,7 @@ func TestRunnerRefusesARemoteWhoseRefusalIsOneLine(t *testing.T) {
 		"https://github.com/acme/app\n.git",
 	} {
 		t.Run(strconv.Quote(remote), func(t *testing.T) {
-			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 			guardProviderHost(t, "https://")
 			t.Setenv("GIT_SSH_COMMAND", "false")
 			b.deps.Remote = remote
@@ -809,7 +983,7 @@ func TestRunnerRefusesAURLThatNamesNoRepository(t *testing.T) {
 		"https://github.com?@evil.example/acme/app.git",
 	} {
 		t.Run(remote, func(t *testing.T) {
-			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`)
+			b := admissionRun(t, "github", "acme/app", "off", "", `{"version":2,"allow_repos":["github/acme/*"]}`)
 			guardProviderHost(t, "https://")
 			b.deps.Remote = remote
 			rec, err := b.run(t)

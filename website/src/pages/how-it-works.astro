@@ -1,11 +1,13 @@
 ---
-// website/src/pages/how-it-works.astro — the run, stage by stage (website plan, Task W1.4).
+// website/src/pages/how-it-works.astro — the run, step by step (website plan, Task W1.4;
+// redesign part P8, D185).
 //
-// The page is the architecture diagram (step 3) and nothing else, because everything else
-// this page could say is a fact of its own: what each stage costs, what it can reach, what
-// the caps are. Those are pages and sections of their own (W1.5, W1.6, W2.x), and a page
-// that summarised them here would be a second copy of them to keep in step (Global
-// Constraint 6). The diagram's own note says where its words come from.
+// The page is the flow and nothing else, because everything else this page could say is a
+// fact of its own: what each stage costs, what it can reach, what the caps are. Those are
+// pages and sections of their own (W1.5, W1.6, W2.x), and a page that summarised them here
+// would be a second copy of them to keep in step (Global Constraint 6). The flow's own note
+// says where its words come from, and `ArchitectureDiagram.astro` holds every caption to the
+// document it cites at build time.
 import Base from '../layouts/Base.astro'
 import ArchitectureDiagram from '../components/ArchitectureDiagram.astro'
 ---

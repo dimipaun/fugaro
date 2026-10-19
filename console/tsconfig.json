@@ -1,0 +1,36 @@
+{
+  // The console's one tsconfig (desktop-console plan Task 1.0). It covers the
+  // main process, the preload, the renderer and the tests together: the app is
+  // small enough that a project-references split would be more machinery than
+  // either side needs, and lib carries DOM for the renderer while types carries
+  // node for the main process and the tests. No emit: TypeScript is the type
+  // checker here, and the bundler (Task 1.1) and the test runners do the
+  // transform.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  // playwright.config.ts is named here rather than left to the directories: it
+  // sits at the console's root, and a config file that escapes `npm run
+  // typecheck` is a guard nobody can see breaking -- a typo in testDir or
+  // testMatch would silently let Playwright collect the vitest unit tests
+  // again. test/unit/tsconfig.test.ts holds that, file by file.
+  "include": ["playwright.config.ts", "src/**/*.ts", "test/**/*.ts", "tools/**/*.ts"]
+}

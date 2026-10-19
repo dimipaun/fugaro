@@ -1,0 +1,648 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.4",
+ "variables": {
+  "other": {
+   "value": "proj-2"
+  },
+  "project": {
+   "value": "proj-1"
+  }
+ },
+ "planned_values": {
+  "root_module": {
+   "child_modules": [
+    {
+     "address": "module.a",
+     "child_modules": [
+      {
+       "resources": [
+        {
+         "address": "module.a.module.b.google_storage_bucket.b",
+         "mode": "managed",
+         "type": "google_storage_bucket",
+         "name": "b",
+         "provider_name": "registry.terraform.io/hashicorp/google",
+         "schema_version": 4,
+         "values": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "default_event_based_hold": null,
+          "deletion_policy": "DELETE",
+          "effective_labels": {
+           "goog-terraform-provisioned": "true"
+          },
+          "enable_object_retention": null,
+          "encryption": [],
+          "force_destroy": false,
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "labels": null,
+          "lifecycle_rule": [],
+          "location": "US",
+          "logging": [],
+          "name": "fmgd-ab",
+          "requester_pays": null,
+          "retention_policy": [],
+          "storage_class": "STANDARD",
+          "terraform_labels": {
+           "goog-terraform-provisioned": "true"
+          },
+          "timeouts": null
+         },
+         "sensitive_values": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "lifecycle_rule": [],
+          "logging": [],
+          "retention_policy": [],
+          "soft_delete_policy": [],
+          "terraform_labels": {},
+          "versioning": [],
+          "website": []
+         },
+         "identity_schema_version": 1,
+         "identity": {
+          "name": null,
+          "project": null
+         }
+        }
+       ],
+       "address": "module.a.module.b"
+      }
+     ]
+    },
+    {
+     "resources": [
+      {
+       "address": "module.d.google_storage_bucket.b",
+       "mode": "managed",
+       "type": "google_storage_bucket",
+       "name": "b",
+       "provider_name": "registry.terraform.io/hashicorp/google",
+       "schema_version": 4,
+       "values": {
+        "autoclass": [],
+        "cors": [],
+        "custom_placement_config": [],
+        "default_event_based_hold": null,
+        "deletion_policy": "DELETE",
+        "effective_labels": {
+         "goog-terraform-provisioned": "true"
+        },
+        "enable_object_retention": null,
+        "encryption": [],
+        "force_destroy": false,
+        "hierarchical_namespace": [],
+        "ip_filter": [],
+        "labels": null,
+        "lifecycle_rule": [],
+        "location": "US",
+        "logging": [],
+        "name": "fmgd-d",
+        "requester_pays": null,
+        "retention_policy": [],
+        "storage_class": "STANDARD",
+        "terraform_labels": {
+         "goog-terraform-provisioned": "true"
+        },
+        "timeouts": null
+       },
+       "sensitive_values": {
+        "autoclass": [],
+        "cors": [],
+        "custom_placement_config": [],
+        "effective_labels": {},
+        "encryption": [],
+        "hierarchical_namespace": [],
+        "ip_filter": [],
+        "lifecycle_rule": [],
+        "logging": [],
+        "retention_policy": [],
+        "soft_delete_policy": [],
+        "terraform_labels": {},
+        "versioning": [],
+        "website": []
+       },
+       "identity_schema_version": 1,
+       "identity": {
+        "name": null,
+        "project": null
+       }
+      }
+     ],
+     "address": "module.d"
+    },
+    {
+     "resources": [
+      {
+       "address": "module.m.google_storage_bucket.b",
+       "mode": "managed",
+       "type": "google_storage_bucket",
+       "name": "b",
+       "provider_name": "registry.terraform.io/hashicorp/google",
+       "schema_version": 4,
+       "values": {
+        "autoclass": [],
+        "cors": [],
+        "custom_placement_config": [],
+        "default_event_based_hold": null,
+        "deletion_policy": "DELETE",
+        "effective_labels": {
+         "goog-terraform-provisioned": "true"
+        },
+        "enable_object_retention": null,
+        "encryption": [],
+        "force_destroy": false,
+        "hierarchical_namespace": [],
+        "ip_filter": [],
+        "labels": null,
+        "lifecycle_rule": [],
+        "location": "US",
+        "logging": [],
+        "name": "fmgd-m",
+        "requester_pays": null,
+        "retention_policy": [],
+        "storage_class": "STANDARD",
+        "terraform_labels": {
+         "goog-terraform-provisioned": "true"
+        },
+        "timeouts": null
+       },
+       "sensitive_values": {
+        "autoclass": [],
+        "cors": [],
+        "custom_placement_config": [],
+        "effective_labels": {},
+        "encryption": [],
+        "hierarchical_namespace": [],
+        "ip_filter": [],
+        "lifecycle_rule": [],
+        "logging": [],
+        "retention_policy": [],
+        "soft_delete_policy": [],
+        "terraform_labels": {},
+        "versioning": [],
+        "website": []
+       },
+       "identity_schema_version": 1,
+       "identity": {
+        "name": null,
+        "project": null
+       }
+      }
+     ],
+     "address": "module.m"
+    }
+   ]
+  }
+ },
+ "resource_changes": [
+  {
+   "address": "module.d.google_storage_bucket.b",
+   "module_address": "module.d",
+   "mode": "managed",
+   "type": "google_storage_bucket",
+   "name": "b",
+   "provider_name": "registry.terraform.io/hashicorp/google",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "default_event_based_hold": null,
+     "deletion_policy": "DELETE",
+     "effective_labels": {
+      "goog-terraform-provisioned": "true"
+     },
+     "enable_object_retention": null,
+     "encryption": [],
+     "force_destroy": false,
+     "hierarchical_namespace": [],
+     "ip_filter": [],
+     "labels": null,
+     "lifecycle_rule": [],
+     "location": "US",
+     "logging": [],
+     "name": "fmgd-d",
+     "requester_pays": null,
+     "retention_policy": [],
+     "storage_class": "STANDARD",
+     "terraform_labels": {
+      "goog-terraform-provisioned": "true"
+     },
+     "timeouts": null
+    },
+    "after_unknown": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "effective_labels": {},
+     "encryption": [],
+     "hierarchical_namespace": [],
+     "id": true,
+     "ip_filter": [],
+     "lifecycle_rule": [],
+     "logging": [],
+     "project": true,
+     "project_number": true,
+     "public_access_prevention": true,
+     "retention_policy": [],
+     "rpo": true,
+     "self_link": true,
+     "soft_delete_policy": true,
+     "terraform_labels": {},
+     "time_created": true,
+     "uniform_bucket_level_access": true,
+     "updated": true,
+     "url": true,
+     "versioning": true,
+     "website": true
+    },
+    "before_sensitive": false,
+    "after_sensitive": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "effective_labels": {},
+     "encryption": [],
+     "hierarchical_namespace": [],
+     "ip_filter": [],
+     "lifecycle_rule": [],
+     "logging": [],
+     "retention_policy": [],
+     "soft_delete_policy": [],
+     "terraform_labels": {},
+     "versioning": [],
+     "website": []
+    },
+    "after_identity": {
+     "name": null,
+     "project": null
+    }
+   }
+  },
+  {
+   "address": "module.m.google_storage_bucket.b",
+   "module_address": "module.m",
+   "mode": "managed",
+   "type": "google_storage_bucket",
+   "name": "b",
+   "provider_name": "registry.terraform.io/hashicorp/google",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "default_event_based_hold": null,
+     "deletion_policy": "DELETE",
+     "effective_labels": {
+      "goog-terraform-provisioned": "true"
+     },
+     "enable_object_retention": null,
+     "encryption": [],
+     "force_destroy": false,
+     "hierarchical_namespace": [],
+     "ip_filter": [],
+     "labels": null,
+     "lifecycle_rule": [],
+     "location": "US",
+     "logging": [],
+     "name": "fmgd-m",
+     "requester_pays": null,
+     "retention_policy": [],
+     "storage_class": "STANDARD",
+     "terraform_labels": {
+      "goog-terraform-provisioned": "true"
+     },
+     "timeouts": null
+    },
+    "after_unknown": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "effective_labels": {},
+     "encryption": [],
+     "hierarchical_namespace": [],
+     "id": true,
+     "ip_filter": [],
+     "lifecycle_rule": [],
+     "logging": [],
+     "project": true,
+     "project_number": true,
+     "public_access_prevention": true,
+     "retention_policy": [],
+     "rpo": true,
+     "self_link": true,
+     "soft_delete_policy": true,
+     "terraform_labels": {},
+     "time_created": true,
+     "uniform_bucket_level_access": true,
+     "updated": true,
+     "url": true,
+     "versioning": true,
+     "website": true
+    },
+    "before_sensitive": false,
+    "after_sensitive": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "effective_labels": {},
+     "encryption": [],
+     "hierarchical_namespace": [],
+     "ip_filter": [],
+     "lifecycle_rule": [],
+     "logging": [],
+     "retention_policy": [],
+     "soft_delete_policy": [],
+     "terraform_labels": {},
+     "versioning": [],
+     "website": []
+    },
+    "after_identity": {
+     "name": null,
+     "project": null
+    }
+   }
+  },
+  {
+   "address": "module.a.module.b.google_storage_bucket.b",
+   "module_address": "module.a.module.b",
+   "mode": "managed",
+   "type": "google_storage_bucket",
+   "name": "b",
+   "provider_name": "registry.terraform.io/hashicorp/google",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "default_event_based_hold": null,
+     "deletion_policy": "DELETE",
+     "effective_labels": {
+      "goog-terraform-provisioned": "true"
+     },
+     "enable_object_retention": null,
+     "encryption": [],
+     "force_destroy": false,
+     "hierarchical_namespace": [],
+     "ip_filter": [],
+     "labels": null,
+     "lifecycle_rule": [],
+     "location": "US",
+     "logging": [],
+     "name": "fmgd-ab",
+     "requester_pays": null,
+     "retention_policy": [],
+     "storage_class": "STANDARD",
+     "terraform_labels": {
+      "goog-terraform-provisioned": "true"
+     },
+     "timeouts": null
+    },
+    "after_unknown": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "effective_labels": {},
+     "encryption": [],
+     "hierarchical_namespace": [],
+     "id": true,
+     "ip_filter": [],
+     "lifecycle_rule": [],
+     "logging": [],
+     "project": true,
+     "project_number": true,
+     "public_access_prevention": true,
+     "retention_policy": [],
+     "rpo": true,
+     "self_link": true,
+     "soft_delete_policy": true,
+     "terraform_labels": {},
+     "time_created": true,
+     "uniform_bucket_level_access": true,
+     "updated": true,
+     "url": true,
+     "versioning": true,
+     "website": true
+    },
+    "before_sensitive": false,
+    "after_sensitive": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "effective_labels": {},
+     "encryption": [],
+     "hierarchical_namespace": [],
+     "ip_filter": [],
+     "lifecycle_rule": [],
+     "logging": [],
+     "retention_policy": [],
+     "soft_delete_policy": [],
+     "terraform_labels": {},
+     "versioning": [],
+     "website": []
+    },
+    "after_identity": {
+     "name": null,
+     "project": null
+    }
+   }
+  }
+ ],
+ "configuration": {
+  "provider_config": {
+   "google": {
+    "name": "google",
+    "full_name": "registry.terraform.io/hashicorp/google",
+    "version_constraint": "8.4.0",
+    "expressions": {
+     "project": {
+      "references": [
+       "var.project"
+      ]
+     },
+     "region": {
+      "constant_value": "us-east5"
+     }
+    }
+   },
+   "module.a.module.b:google": {
+    "name": "google",
+    "full_name": "registry.terraform.io/hashicorp/google",
+    "module_address": "module.a.module.b",
+    "expressions": {
+     "project": {
+      "references": [
+       "var.project"
+      ]
+     }
+    }
+   },
+   "module.d:google": {
+    "name": "google",
+    "full_name": "registry.terraform.io/hashicorp/google",
+    "module_address": "module.d",
+    "expressions": {
+     "project": {
+      "references": [
+       "var.project"
+      ]
+     }
+    }
+   },
+   "module.m:google": {
+    "name": "google",
+    "full_name": "registry.terraform.io/hashicorp/google",
+    "module_address": "module.m",
+    "expressions": {
+     "project": {
+      "references": [
+       "var.project"
+      ]
+     }
+    }
+   }
+  },
+  "root_module": {
+   "module_calls": {
+    "a": {
+     "source": "./a",
+     "expressions": {
+      "project": {
+       "references": [
+        "var.other"
+       ]
+      }
+     },
+     "module": {
+      "module_calls": {
+       "b": {
+        "source": "./b",
+        "expressions": {
+         "project": {
+          "references": [
+           "var.project"
+          ]
+         }
+        },
+        "module": {
+         "resources": [
+          {
+           "address": "google_storage_bucket.b",
+           "mode": "managed",
+           "type": "google_storage_bucket",
+           "name": "b",
+           "provider_config_key": "module.a.module.b:google",
+           "expressions": {
+            "location": {
+             "constant_value": "US"
+            },
+            "name": {
+             "constant_value": "fmgd-ab"
+            }
+           },
+           "schema_version": 4
+          }
+         ],
+         "variables": {
+          "project": {}
+         }
+        }
+       }
+      },
+      "variables": {
+       "project": {}
+      }
+     }
+    },
+    "d": {
+     "source": "./d",
+     "module": {
+      "resources": [
+       {
+        "address": "google_storage_bucket.b",
+        "mode": "managed",
+        "type": "google_storage_bucket",
+        "name": "b",
+        "provider_config_key": "module.d:google",
+        "expressions": {
+         "location": {
+          "constant_value": "US"
+         },
+         "name": {
+          "constant_value": "fmgd-d"
+         }
+        },
+        "schema_version": 4
+       }
+      ],
+      "variables": {
+       "project": {
+        "default": "proj-2"
+       }
+      }
+     }
+    },
+    "m": {
+     "source": "./m",
+     "expressions": {
+      "project": {
+       "constant_value": "proj-2"
+      }
+     },
+     "module": {
+      "resources": [
+       {
+        "address": "google_storage_bucket.b",
+        "mode": "managed",
+        "type": "google_storage_bucket",
+        "name": "b",
+        "provider_config_key": "module.m:google",
+        "expressions": {
+         "location": {
+          "constant_value": "US"
+         },
+         "name": {
+          "constant_value": "fmgd-m"
+         }
+        },
+        "schema_version": 4
+       }
+      ],
+      "variables": {
+       "project": {}
+      }
+     }
+    }
+   },
+   "variables": {
+    "other": {},
+    "project": {}
+   }
+  }
+ },
+ "timestamp": "2026-10-17T14:46:16Z",
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}

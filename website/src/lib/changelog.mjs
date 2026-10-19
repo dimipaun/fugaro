@@ -39,7 +39,21 @@ export const RELEASES_DIR = path.join(REPO_ROOT, 'docs', 'releases')
 // and F44 exist to prevent.
 const NON_RELEASE = 'README.md'
 
-const OPERATORS_HEADING = '### For operators'
+// The `###` headings a release file may carry inside its body, in full: the operator steps,
+// and the release's known limits (`docs/releases/README.md`). Both are optional, either may
+// appear without the other, and the file may write them in either order.
+//
+// They are `###` and not `##` because GoReleaser puts the file into the release body under
+// its own `## Highlights` (`.goreleaser.yaml`, `release.header`): a `##` inside the file
+// would be a second top-level heading beside it. So the level is the format's, and these
+// two lines are the whole of what this module recognises as a heading: every other line the
+// file writes is its own text and is rendered as written, heading or not.
+const SECTION_HEADINGS = ['### For operators', '### Known limits']
+
+// The title of a section, from the heading line the file writes: the words a reader reads,
+// with the `###` that made the line a heading left behind (it is markup, like a bullet's
+// marker, and the page renders the section as a heading element of its own).
+const HEADING_MARKER = /^#{1,6}\s+/
 
 const RELEASE_FILE = /^v(\d+)\.(\d+)\.(\d+)\.md$/
 
@@ -86,10 +100,33 @@ function releasedTags(cwd) {
   }
 }
 
+// A file's content lines, split the way `docs/releases/README.md` describes the file: the
+// Highlights bullets first, then each `###` section heading with the lines under it, in the
+// order the file writes them. A section is `{title, lines}` and the two headings are the
+// same kind of thing, so they take the same path here — a second one is a second entry in
+// the list, not a second rule. A heading the module does not know is not a heading at all:
+// its line stays the text it is, which is what keeps a typo'd heading visible to a reader
+// and to the site's page gate rather than silently swallowed.
+function splitSections(lines) {
+  const highlights = []
+  const sections = []
+  for (const line of lines) {
+    if (SECTION_HEADINGS.includes(line)) {
+      sections.push({ title: line.replace(HEADING_MARKER, ''), lines: [] })
+      continue
+    }
+    const section = sections[sections.length - 1]
+    if (section === undefined) highlights.push(line)
+    else section.lines.push(line)
+  }
+  return { highlights, sections }
+}
+
 // The entries, newest first by the version in the filename. Each entry is the file's own
-// text and nothing else: `highlights` is what the file says before its `### For operators`
-// heading (the 3 to 6 user-facing bullets) and `for_operators` is what it says after it,
-// verbatim, so no sentence here is one the file does not carry.
+// text and nothing else: `highlights` is what the file says before its first section
+// heading (the 3 to 6 user-facing bullets), and `sections` is every section it writes after
+// that — its title, and its lines verbatim, in the order the file writes them — so no
+// sentence here is one the file does not carry.
 export function buildChangelog({ releasesDir = RELEASES_DIR, cwd = REPO_ROOT } = {}) {
   const tags = releasedTags(cwd)
 
@@ -110,14 +147,14 @@ export function buildChangelog({ releasesDir = RELEASES_DIR, cwd = REPO_ROOT } =
     .sort((a, b) => newestFirst(a, b))
     .map((file) => {
       const lines = contentLines(readFileSync(path.join(releasesDir, file.fileName), 'utf8'))
-      const heading = lines.findIndex((line) => line === OPERATORS_HEADING)
+      const { highlights, sections } = splitSections(lines)
 
       return {
         tag: file.tag,
         version: file.version,
         released: tags.has(file.tag),
-        highlights: heading === -1 ? lines : lines.slice(0, heading),
-        for_operators: heading === -1 ? [] : lines.slice(heading + 1),
+        highlights,
+        sections,
       }
     })
 }

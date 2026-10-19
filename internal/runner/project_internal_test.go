@@ -64,6 +64,18 @@ func TestRemoteHost(t *testing.T) {
 		{"git@bitbucket.org:acme/app.git", "bitbucket.org", "bitbucket", true},
 		{"git@github.com:acme/app.git", "github.com", "github", true},
 		{"github.com:acme/app.git", "github.com", "github", true},
+		// The scp-like form names a host with or without its userinfo, and the
+		// userinfo is cut at the last "@", where git ends it: git ssh's to
+		// evil.example for each of these, so each is a host no kind owns
+		// (next-0.8.5's TestRemoteOffTheKindsHost, asked of main's reader). The
+		// userinfo alone is no host, which is a local path's answer.
+		{"evil.example:acme/app.git", "evil.example", "", true},
+		{"git@evil.example:acme/app.git", "evil.example", "", true},
+		{"a@b@evil.example:acme/app.git", "evil.example", "", true},
+		{"https://github.com./evil/other.git", "github.com.", "", true},
+		{"https://www.github.com/evil/other.git", "www.github.com", "", true},
+		{"@:acme/app.git", "", "", false},
+		{"git@:acme/app.git", "", "", false},
 		// A host no provider kind owns: another forge, a name that only looks
 		// like github.com, and a loopback address — a real host either way, so
 		// the credential would go to it.
@@ -287,6 +299,11 @@ func TestRemoteRepoPath(t *testing.T) {
 		{"github.com:acme/app.git", "acme/app.git", true},
 		{"github.com:/acme/app.git", "acme/app.git", true},
 		{"github.com:acme/app.git/", "acme/app.git", true},
+		// The userinfo is cut where git ends it (the host is github.com, not
+		// "b@github.com"), and the userinfo alone is no host, so no path either.
+		{"a@b@github.com:acme/app.git", "acme/app.git", true},
+		{"@:acme/app.git", "", false},
+		{"git@:acme/app.git", "", false},
 		// Not scp-like: a URL's authority is "//" and a local path has no
 		// colon before its first "/", so neither names a host and a path.
 		//
@@ -319,6 +336,56 @@ func TestRemoteRepoPath(t *testing.T) {
 		got, named := remoteRepoPath(tc.remote)
 		if got != tc.want || named != tc.named {
 			t.Errorf("remoteRepoPath(%q) = (%q, %v), want (%q, %v)", tc.remote, got, named, tc.want, tc.named)
+		}
+	}
+}
+
+// The kind is not the whole question (review finding): a provider's host
+// carries every repository of that provider, so a remote that agrees with the
+// derived kind may still be another repository's. internal/infra's repoURL
+// refuses exactly that when it builds the job ("it must be this repository,
+// not only this provider"), and the run refuses it for the same reason: the
+// slug keys its locks, its cache and its budget session.
+//
+// next-0.8.5 checked this with remoteOfAnotherRepo; main's remote binding
+// (remoteAdmissionErr) is the one check now, so the cases are kept and asked of
+// it: every remote that named another repository on the kind's own host is
+// refused, and the remotes that are this repository, or a local path, are
+// admitted. (The cases where remoteOfAnotherRepo answered "" only because the
+// host was another function's business — another provider's host, an unknown
+// host, a URL with no path — are refusals under remoteAdmissionErr and are
+// covered by TestRemoteAdmissionErr.)
+func TestRemoteOfAnotherRepo(t *testing.T) {
+	for _, tc := range []struct{ kind, repo, remote, other string }{
+		{"github", "acme/app", "https://github.com/acme/app.git", ""},
+		{"github", "acme/app", "git@github.com:acme/app.git", ""},
+		{"github", "acme/app", "https://github.com/ACME/App.GIT", ""}, // canonical: case, ".git"
+		{"github", "acme/app", "https://github.com/evil/other.git", "evil/other"},
+		{"github", "acme/app", "https://github.com/acme/other.git", "acme/other"},
+		{"github", "acme/app", "https://github.com/evil/other", "evil/other"},
+		{"github", "acme/app", "git@github.com:evil/other.git", "evil/other"},
+		// The same scp-like remote with no user: git ssh's to github.com for
+		// it too, so it is the provider's and its path is compared.
+		{"github", "acme/app", "github.com:acme/app.git", ""},
+		{"github", "acme/app", "github.com:evil/other.git", "evil/other"},
+		{"github", "acme/app", "a@b@github.com:evil/other.git", "evil/other"},
+		{"github", "acme/app", "https://github.com/evil/other/tree/main", "evil/other/tree/main"},
+		{"bitbucket", "group/sub/repo", "https://bitbucket.org/group/sub/repo.git", ""},
+		{"bitbucket", "group/sub/repo", "https://bitbucket.org/group/sub/other.git", "group/sub/other"},
+		{"github", "acme/app", "/tmp/fixture.git", ""},
+	} {
+		slug, err := task.Slug(tc.kind, tc.repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = remoteAdmissionErr(tc.remote, tc.kind, tc.repo, slug)
+		switch {
+		case tc.other == "" && err != nil:
+			t.Errorf("remoteAdmissionErr(%q, %q, %q) = %v, want it admitted", tc.remote, tc.kind, tc.repo, err)
+		case tc.other != "" && err == nil:
+			t.Errorf("remoteAdmissionErr(%q, %q, %q) admitted a remote naming %s", tc.remote, tc.kind, tc.repo, tc.other)
+		case tc.other != "" && !strings.Contains(err.Error(), tc.other):
+			t.Errorf("remoteAdmissionErr(%q, %q, %q) = %v, want it to name %s", tc.remote, tc.kind, tc.repo, err, tc.other)
 		}
 	}
 }
@@ -397,6 +464,12 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		{"https:////x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git"},
 		{"HTTPS:///x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git"},
 		{"https:///x:ATBBsecret@github.com/acme/app.git?ref=main#ATBBsecret", "github.com/acme/app.git"},
+		{"a@b@github.com:acme/app.git", "github.com"},
+		// Two colons are git's own reading and not a URL's: the first one ends
+		// the host, so this is ssh to the host "x" and the rest is its path —
+		// the token is not in the userinfo this function drops, and it is not
+		// quoted either, because the host alone is what comes back.
+		{"x:glpat-secret@github.com:acme/app.git", "x"},
 	} {
 		got := remoteDisplay(tc.in)
 		if got != tc.want {
@@ -578,13 +651,17 @@ func TestAdmissionCheckRefusesARunNoBackendClaims(t *testing.T) {
 	t.Run("in the cloud, no execution", func(t *testing.T) {
 		// Deps.Local unset: the cloud. Execution empty: the job environment
 		// cannot say which execution this is. The slug is another
-		// repository's, so the binding has something to refuse.
+		// repository's, so the binding has something to refuse — but with
+		// next-0.8.5's job identity (projectjob.go's jobName, plan task 3.3)
+		// the run is refused one step earlier, before the slug is read: a
+		// process with no job name cannot be placed in a job at all. Either
+		// refusal stops it before any git credential; this pins the earlier.
 		err := newRun(Deps{}).admissionCheck(ctx)
 		if err == nil {
 			t.Fatal("a run no backend claims passed the admission check")
 		}
-		if !strings.Contains(err.Error(), "not the slug of the repository") {
-			t.Fatalf("err = %v, want the slug/repository refusal", err)
+		if !strings.Contains(err.Error(), "reports no Cloud Run execution and is not a local invocation") || !strings.Contains(err.Error(), "before any git credential") {
+			t.Fatalf("err = %v, want the job-identity refusal", err)
 		}
 	})
 

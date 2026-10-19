@@ -33,6 +33,11 @@ output "scheduler_service_account" {
   value       = google_service_account.scheduler.email
 }
 
+output "deployer_service_account" {
+  description = "The email of the account a managed apply assumes (D75). fugaro managed apply impersonates it; an installation that is never managed never uses it."
+  value       = google_service_account.fugaro_deployer.email
+}
+
 output "role_ids" {
   description = "The custom roles' full names (projects/<project>/roles/<id>)."
   value = {
@@ -40,6 +45,9 @@ output "role_ids" {
     job_runner      = google_project_iam_custom_role.job_runner.name
     build_submitter = google_project_iam_custom_role.build_submitter.name
     tag_mover       = google_project_iam_custom_role.tag_mover.name
+    # The whole-project inventory's read role (Task 4.1a): a custom role of
+    # this installation, so it is named here beside the others.
+    cloud_asset_reader = google_project_iam_custom_role.cloud_asset_reader.name
   }
 }
 
@@ -71,4 +79,9 @@ output "history_service_account" {
 output "history_job" {
   description = "The history job's name, or null while it isn't deployed."
   value       = local.deploy_history ? google_cloud_run_v2_job.history[0].name : null
+}
+
+output "project_secrets" {
+  description = "The project-wide secret containers by logical name (their secret IDs), so a consumer waits for the container: the project job module grants each job the ones its profile mounts."
+  value       = { for name, s in google_secret_manager_secret.project : name => s.secret_id }
 }

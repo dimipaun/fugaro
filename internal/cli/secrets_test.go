@@ -330,6 +330,9 @@ func TestSecretsAndCloudCommandsRefuseHTTP2Debug(t *testing.T) {
 			{"logs", "some-run"},
 			{"diagnose", "some-run"},
 			{"cancel", "some-run"},
+			// The owner's own command, and the one whose credential is the
+			// widest: it writes the delete list at the runs bucket's root.
+			{"allow-delete", "google_cloud_run_v2_job.web"},
 		} {
 			_, errOut, err := executeStdin(t, tokenValue, args...)
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") || strings.Contains(err.Error()+errOut, tokenValue) {
@@ -419,14 +422,21 @@ func TestSecretsLs(t *testing.T) {
 	var list []struct {
 		Name, ID, Latest string
 		Versions         int
+		Missing          bool
 		Labels           map[string]string
 	}
+	// Outside a checkout of the repository nothing is known to be required
+	// (the names its jobs mount come from its fugaro.yaml), so the listing is
+	// the two stored containers alone.
 	if err != nil || json.Unmarshal([]byte(out), &list) != nil || len(list) != 2 || strings.Contains(out, tokenValue) {
 		t.Fatalf("ls --json = %s, %v", out, err)
 	}
 	for _, s := range list {
 		if s.ID == claudeSecret && (s.Name != "claude-oauth-token" || s.Latest != "2" || s.Versions != 2 || s.Labels["fugaro"] != "managed") {
 			t.Fatalf("ls --json entry %+v", s)
+		}
+		if s.Missing {
+			t.Fatalf("ls --json marks %+v missing with no checkout to say what is required", s)
 		}
 	}
 	for _, r := range sm.Requests() {
@@ -1007,12 +1017,15 @@ func TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse(t *testing.T) {
 	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
 		t.Fatal(err)
 	}
-	// No container of its own: nothing is listed at all.
+	// No container of its own: the name is not listed. The rows are the
+	// required-and-missing ones Task 5.1 adds, and the project-wide copy of
+	// openrouter-api-key is not among them: this repository may not mount it,
+	// and a copy it may not use is not a value it has.
 	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/other")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "no secrets stored for acme/other") {
+	if strings.Contains(out, gcp.ProjectSecretID("aurora", "openrouter-api-key")) || strings.Contains(out, "openrouter-api-key") {
 		t.Fatalf("a project copy it may not use is listed:\n%s", out)
 	}
 	// With a container of its own (seeded: `secrets set --repo` refuses this
@@ -1028,11 +1041,18 @@ func TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse(t *testing.T) {
 	}
 	var list []struct {
 		Name, ID, Scope string
+		Missing         bool
 	}
 	if err := json.Unmarshal([]byte(out), &list); err != nil {
 		t.Fatalf("ls --json = %s, %v", out, err)
 	}
-	if len(list) != 1 || list[0].Scope != "repo" || list[0].ID != gcp.SecretID(other, "openrouter-api-key") {
+	var own []string
+	for _, s := range list {
+		if !s.Missing {
+			own = append(own, s.Name+" "+s.ID+" "+s.Scope)
+		}
+	}
+	if len(own) != 1 || own[0] != "openrouter-api-key "+gcp.SecretID(other, "openrouter-api-key")+" repo" {
 		t.Fatalf("entries = %+v, want the repository's own container alone", list)
 	}
 }
@@ -1113,6 +1133,294 @@ func TestSecretsLsProjectWideNeverPrintsValue(t *testing.T) {
 		if strings.Contains(r.Path, ":access") {
 			t.Fatalf("ls --project-wide read a value: %s", r.Path)
 		}
+	}
+}
+
+// lsEntry is one entry of `secrets ls --json`, for the MISSING column's
+// tests: the shape secretEntry encodes.
+type lsEntry struct {
+	Name    string
+	ID      string
+	Scope   string
+	Latest  string
+	Missing bool
+}
+
+// lsJSON runs `secrets ls --repo acme/app --json` and decodes it.
+func secretsLsJSON(t *testing.T, args ...string) []lsEntry {
+	t.Helper()
+	out, _, err := execute(t, append([]string{"secrets", "ls", "--repo", "acme/app", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("secrets ls --json: %v", err)
+	}
+	var list []lsEntry
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("secrets ls --json = %s, %v", out, err)
+	}
+	return list
+}
+
+// missingByName maps each listed name to its MISSING flag.
+func secretsMissingByName(list []lsEntry) map[string]bool {
+	got := map[string]bool{}
+	for _, e := range list {
+		got[e.Name] = e.Missing
+	}
+	return got
+}
+
+// appCheckoutAuth is appCheckout with agent.auth set to auth.
+func appCheckoutAuth(t *testing.T, auth string) {
+	t.Helper()
+	appCheckout(t)
+	data, err := os.ReadFile("fugaro.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("fugaro.yaml", append(data, []byte("agent: { auth: "+auth+" }\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSecretsLsMissingIsTheMountSet: "required" is exactly what the jobs of
+// the repository's workflows mount and cannot go without
+// (infra.RequiredSecrets over infra.SecretMounts), per the checkout's provider
+// and auth: the workflow's own secrets and the git credential of its provider
+// always, and the model credential only the auth that mounts it, with every
+// Claude account this repository is allowed under oauth. A name no job of
+// this repository needs is never flagged — the other provider's git
+// credential, the API key (optional under api-key, never mounted under oauth
+// or vertex), another repository's named account — since storing it would
+// change nothing a run reads.
+func TestSecretsLsMissingIsTheMountSet(t *testing.T) {
+	for _, c := range []struct {
+		auth          string
+		accounts      string
+		want, notWant []string
+	}{
+		{"vertex", "", []string{"github-app-key", "npm-token"},
+			[]string{"bitbucket-token", "claude-oauth-token", "anthropic-api-key"}},
+		{"oauth", "claude_accounts:\n  work: { allow_data_to: [acme/app] }\n  elsewhere: { allow_data_to: [acme/other] }\n",
+			[]string{"github-app-key", "npm-token", "claude-oauth-token", "claude-oauth-token-work"},
+			[]string{"bitbucket-token", "anthropic-api-key", "claude-oauth-token-elsewhere"}},
+		// anthropic-api-key is mounted under api-key only when it has a
+		// version (infra.OptionalSecret): a job runs without it, so it is not
+		// required (fugaro validate says when a pin needs it).
+		{"api-key", "", []string{"github-app-key", "npm-token"},
+			[]string{"bitbucket-token", "claude-oauth-token", "anthropic-api-key"}},
+	} {
+		t.Run(c.auth, func(t *testing.T) {
+			secretsFixture(t)
+			if c.accounts != "" {
+				claudeAccountFixture(t, c.accounts)
+			}
+			appCheckoutAuth(t, c.auth)
+			got := secretsMissingByName(secretsLsJSON(t))
+			for _, name := range c.want {
+				if !got[name] {
+					t.Errorf("%s is mounted and stored nowhere, so it must be listed as missing (entries %+v)", name, got)
+				}
+			}
+			for _, name := range c.notWant {
+				if _, ok := got[name]; ok {
+					t.Errorf("%s is mounted by no job of acme/app under %s, yet it is listed: %+v", name, c.auth, got)
+				}
+			}
+			if len(got) != len(c.want) {
+				t.Errorf("entries %+v, want exactly %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestSecretsLsMissingCoversBothSources: the mount set has two halves, the
+// platform's (the provider's git credential) and the repository's own
+// (workflows.<w>.secrets), and a column that reads only one of the two misses
+// half the answer. A required name no enabled version resolves for gets a
+// row of its own — a missing secret has no container to be listed from.
+func TestSecretsLsMissingCoversBothSources(t *testing.T) {
+	secretsFixture(t)
+	appCheckoutAuth(t, "oauth") // declares npm-token
+	got := secretsMissingByName(secretsLsJSON(t))
+	for _, name := range []string{"npm-token", "github-app-key", "claude-oauth-token"} {
+		if !got[name] {
+			t.Errorf("%s is required and stored nowhere, so it must be listed as missing (entries %+v)", name, got)
+		}
+	}
+	if _, ok := got["not-required-token"]; ok {
+		t.Errorf("a name neither source requires is listed: %+v", got)
+	}
+	// A required name that is stored stops being marked.
+	for _, name := range []string{"npm-token", "claude-oauth-token"} {
+		if _, _, err := executeStdin(t, tokenValue, "secrets", "set", name, "--repo", "acme/app"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got = secretsMissingByName(secretsLsJSON(t))
+	for _, name := range []string{"npm-token", "claude-oauth-token"} {
+		if got[name] {
+			t.Errorf("%s is stored, so it is not missing: %+v", name, got)
+		}
+	}
+	if !got["github-app-key"] {
+		t.Errorf("github-app-key is still stored nowhere: %+v", got)
+	}
+	// The human table marks the same rows, and a name with no container has
+	// no SECRET and no CREATED to show.
+	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "MISSING") {
+		t.Errorf("the table has no MISSING column:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "github-app-key") && !strings.Contains(line, "yes") {
+			t.Errorf("the github-app-key row does not say missing: %q", line)
+		}
+		if strings.HasPrefix(line, "npm-token") && strings.Contains(line, "yes") {
+			t.Errorf("the stored npm-token row says missing: %q", line)
+		}
+	}
+	if strings.Contains(out, gcp.SecretID(appSlug, "github-app-key")) {
+		t.Errorf("a missing secret claims a container:\n%s", out)
+	}
+	// --json agrees with the table's "-": a row with no container has no
+	// creation time, so the field is absent rather than a year-1 timestamp.
+	raw, _, err := execute(t, "secrets", "ls", "--repo", "acme/app", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		_, has := r["created"]
+		if r["name"] == "github-app-key" && has {
+			t.Errorf("the missing github-app-key row carries created %v", r["created"])
+		}
+		if r["name"] == "npm-token" && !has {
+			t.Errorf("the stored npm-token row lost its created time: %v", r)
+		}
+	}
+}
+
+// TestSecretsLsMissingIsAbsentVersionNotAbsentContainer: an "absent" secret is
+// one no enabled version resolves for, not one with no container: the
+// container init leaves behind before a value is stored (0 versions) is
+// missing, and an allow-listed project-wide copy the repository would mount
+// is what makes the same name present.
+func TestSecretsLsMissingIsAbsentVersionNotAbsentContainer(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  github-app-key: { allow_data_to: [acme/app] }\n")
+	appCheckoutAuth(t, "oauth")
+	// The repository's own container, empty: what init --repo leaves before
+	// the value is stored.
+	sm.Seed(gcp.SecretID(appSlug, "claude-oauth-token"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "claude-oauth-token"}, nil)
+	got := secretsMissingByName(secretsLsJSON(t))
+	if !got["claude-oauth-token"] {
+		t.Error("a container with no enabled version is listed as present")
+	}
+	if !got["github-app-key"] {
+		t.Error("github-app-key is stored nowhere yet")
+	}
+	// The same name project-wide, stored: the repository may mount it, so it
+	// is not missing any more.
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "github-app-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	got = secretsMissingByName(secretsLsJSON(t))
+	if got["github-app-key"] {
+		t.Error("an allow-listed project copy resolves the name, so it is not missing")
+	}
+	// A container with no enabled version that nothing requires is listed as
+	// it is — empty — and never marked: MISSING is about the requirement, not
+	// about the emptiness.
+	sm.Seed(gcp.SecretID(appSlug, "openrouter-api-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "openrouter-api-key"}, nil)
+	got = secretsMissingByName(secretsLsJSON(t))
+	if _, listed := got["openrouter-api-key"]; !listed || got["openrouter-api-key"] {
+		t.Errorf("an empty container of a name nothing requires = %+v", got)
+	}
+	// Nothing here reads a value, at any point (Task 5.1's promise).
+	for _, r := range sm.Requests() {
+		if strings.Contains(r.Path, ":access") {
+			t.Fatalf("ls read a value: %s", r.Path)
+		}
+	}
+}
+
+// TestSecretsLsMissingColumnIsRepoScopeOnly: --project-wide lists the
+// installation's own containers, and a name absent there may be stored per
+// repository and perfectly present, so that listing claims nothing about
+// what is required and keeps its columns as they were. A project-wide secret
+// is stored, so both forms print rows (not the empty-listing message) and the
+// assertions read a real header and real encoded fields.
+func TestSecretsLsMissingColumnIsRepoScopeOnly(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  github-app-key: { allow_data_to: [acme/app] }\n")
+	appCheckoutAuth(t, "oauth")
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "github-app-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	// Empty, and required of acme/app: the repo-scope listing would mark it.
+	sm.Seed(gcp.ProjectSecretID("aurora", "claude-oauth-token"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora", gcp.LabelSecret: "claude-oauth-token"}, nil)
+	out, _, err := execute(t, "secrets", "ls", "--project-wide", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 2 {
+		t.Fatalf("project-wide ls --json = %s, %v, want the two stored containers", out, err)
+	}
+	for _, r := range rows {
+		if _, has := r["missing"]; has {
+			t.Errorf("the project-wide listing gained the field: %v", r)
+		}
+	}
+	text, _, err := execute(t, "secrets", "ls", "--project-wide")
+	if err != nil || !strings.Contains(text, "NAME") || !strings.Contains(text, "ALLOWED") || strings.Contains(text, "MISSING") {
+		t.Errorf("project-wide table = %q, %v, want its header without MISSING", text, err)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "claude-oauth-token") && strings.Contains(line, "yes") {
+			t.Errorf("a project-wide row is marked: %q", line)
+		}
+	}
+}
+
+// TestSecretsLsSaysWhenTheRepositorysOwnListCouldNotBeRead: the checkout's
+// fugaro.yaml is what says which names the repository's jobs mount, and a
+// listing that quietly dropped it would read as an all-clear. From this
+// repository's checkout with an unreadable fugaro.yaml, or from no checkout
+// of it at all, the command still lists (it is a listing, not a gate), and
+// says on stderr what it could not check.
+func TestSecretsLsSaysWhenTheRepositorysOwnListCouldNotBeRead(t *testing.T) {
+	secretsFixture(t)
+	appCheckout(t)
+	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nproject: aurora\nnot_a_key: [\n  x\n]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, errOut, err := execute(t, "secrets", "ls", "--repo", "acme/app")
+	if err != nil {
+		t.Fatalf("secrets ls: %v", err)
+	}
+	if !strings.Contains(errOut, "problem(s)") || !strings.Contains(errOut, "fugaro.yaml") {
+		t.Errorf("stderr = %q, want the note about the unread fugaro.yaml", errOut)
+	}
+	if err := os.Remove("fugaro.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, err := execute(t, "secrets", "ls", "--repo", "acme/app"); err != nil || !strings.Contains(errOut, "not run from a checkout") {
+		t.Errorf("stderr = %q, %v, want the note that nothing was checked", errOut, err)
+	}
+	// A readable checkout checks the mount set and needs no note.
+	appCheckout(t)
+	if _, errOut, err := execute(t, "secrets", "ls", "--repo", "acme/app"); err != nil || strings.Contains(errOut, "note:") {
+		t.Errorf("stderr = %q, %v, want no note", errOut, err)
 	}
 }
 

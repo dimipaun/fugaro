@@ -78,8 +78,8 @@ run "root_passes_inputs" {
     error_message = "the root must pass log_isolation (default on) to the module and output the view"
   }
   assert {
-    condition     = keys(output.role_ids) == ["build_submitter", "job_runner", "launcher", "tag_mover"]
-    error_message = "the root must output every custom role's full name, the tag mover's included"
+    condition     = keys(output.role_ids) == ["build_submitter", "cloud_asset_reader", "job_runner", "launcher", "tag_mover"]
+    error_message = "the root must output every custom role's full name, the tag mover's and the Cloud Asset reader's included"
   }
 }
 
@@ -453,7 +453,7 @@ run "apis" {
     condition = toset(keys(google_project_service.this)) == toset([
       "run.googleapis.com", "storage.googleapis.com", "secretmanager.googleapis.com", "artifactregistry.googleapis.com",
       "cloudbuild.googleapis.com", "cloudscheduler.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com",
-      "iam.googleapis.com", "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com", "cloudresourcemanager.googleapis.com", "cloudasset.googleapis.com",
     ])
     error_message = "the enabled APIs are wrong"
   }
@@ -1382,7 +1382,9 @@ run "TestHistoryEnvHasBucket" {
 # The same-project layout puts these accounts in the project that also holds
 # the budget backend, so the resolved project-level grants and custom roles of
 # the installation module are pinned exactly: people get only the launcher and
-# build-submitter custom roles, the one service account with a project role is
+# build-submitter custom roles and the whole-project inventory's own Cloud Asset
+# read role (fugaroCloudAssetReader, holding cloudasset.assets.searchAllResources
+# alone, Task 4.1a), the one service account with a project role is
 # the history account (its narrow Cloud Run role), and the scheduler account
 # has none. (Mock providers expose a child module's resources only when the
 # module itself is the run's target, hence a module-level run here; the repo
@@ -1464,7 +1466,23 @@ run "same_project_resolved_iam" {
   assert {
     condition = (alltrue([for m in google_project_iam_member.launcher : m.role == google_project_iam_custom_role.launcher.name && !startswith(m.member, "serviceAccount:")]) &&
     alltrue([for m in google_project_iam_member.operator_build_submitter : m.role == google_project_iam_custom_role.build_submitter.name && !startswith(m.member, "serviceAccount:")]))
-    error_message = "the installation grants people only fugaroLauncher and fugaroBuildSubmitter on the project"
+    error_message = "the installation grants people only the fugaroLauncher and fugaroBuildSubmitter custom roles on the project"
+  }
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.operator_cloud_asset_reader : m.role == "projects/proj-1234/roles/fugaroCloudAssetReader" && !startswith(m.member, "serviceAccount:")])
+    error_message = "the operators hold the whole-project inventory's read role, this installation's own fugaroCloudAssetReader, and no service account holds it through this resource"
+  }
+  assert {
+    condition     = keys(google_project_iam_member.operator_cloud_asset_reader) == ["user:operator@example.com"]
+    error_message = "the whole-project inventory's read role is granted to the operators, and to nobody else"
+  }
+  assert {
+    condition     = google_project_iam_custom_role.cloud_asset_reader.role_id == "fugaroCloudAssetReader" && google_project_iam_custom_role.cloud_asset_reader.title == "Fugaro Cloud Asset reader"
+    error_message = "the whole-project inventory's read role is this installation's own custom role, not a predefined one"
+  }
+  assert {
+    condition     = google_project_iam_custom_role.cloud_asset_reader.permissions == toset(["cloudasset.assets.searchAllResources"])
+    error_message = "fugaroCloudAssetReader holds exactly cloudasset.assets.searchAllResources, the one permission the read's SearchAllResources call needs, and nothing else"
   }
   assert {
     condition = (google_project_iam_member.history_launcher[0].role == google_project_iam_custom_role.history[0].name &&
@@ -1479,7 +1497,7 @@ run "same_project_resolved_iam" {
   }
   assert {
     condition = alltrue(flatten([
-      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.history[0]] :
+      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.cloud_asset_reader, google_project_iam_custom_role.history[0]] :
       [for p in r.permissions : !can(regex("^(firebase|datastore|identitytoolkit|iam\\.|resourcemanager|serviceusage|apikeys)", p))]],
     ]))
     error_message = "no installation custom role holds a permission on the budget backend, identities or IAM"
@@ -1538,5 +1556,61 @@ run "project_secrets" {
   assert {
     condition     = alltrue([for m in google_secret_manager_secret_iam_member.operator : m.role != "roles/secretmanager.secretAccessor"])
     error_message = "no operator may read a project-wide secret's value"
+  }
+}
+
+# The managed deployer's scoped role and its conditioned binding are gated off
+# by default (0.8.6: the fmgd- fence cannot be expressed as an IAM condition
+# yet; deployer.tf's header). By default neither exists, while the account, the
+# unconditioned role and its binding stay.
+run "deployer_scoped_off_by_default" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition     = length(google_project_iam_custom_role.fugaro_deployer_scoped) == 0 && length(google_project_iam_member.fugaro_deployer_scoped) == 0
+    error_message = "the scoped deployer role and its binding must not exist unless managed_deployer_scoped is set"
+  }
+  assert {
+    condition     = google_service_account.fugaro_deployer.account_id == "fugaro-deployer" && google_project_iam_custom_role.fugaro_deployer.role_id == "fugaroDeployer"
+    error_message = "the deployer account and its unconditioned role are created whatever the gate says"
+  }
+  assert {
+    condition     = google_project_iam_member.fugaro_deployer.role == "projects/proj-1234/roles/fugaroDeployer" && length(google_project_iam_member.fugaro_deployer.condition) == 0
+    error_message = "binding (1) is the unconditioned role, with no condition"
+  }
+}
+
+# The opt-in still plans the gated pair exactly as D75 wrote it: one role with
+# the scoped permissions (cloudscheduler.jobs.enable, never .resume), bound once
+# under the managed-prefix condition.
+run "deployer_scoped_opt_in" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    managed_deployer_scoped = true
+  }
+
+  assert {
+    condition     = length(google_project_iam_custom_role.fugaro_deployer_scoped) == 1 && google_project_iam_custom_role.fugaro_deployer_scoped[0].role_id == "fugaroDeployerScoped"
+    error_message = "with managed_deployer_scoped the scoped role must exist, as fugaroDeployerScoped"
+  }
+  assert {
+    condition     = contains(google_project_iam_custom_role.fugaro_deployer_scoped[0].permissions, "cloudscheduler.jobs.enable") && !contains(google_project_iam_custom_role.fugaro_deployer_scoped[0].permissions, "cloudscheduler.jobs.resume")
+    error_message = "the scoped role resumes a Scheduler job with cloudscheduler.jobs.enable; cloudscheduler.jobs.resume does not exist"
+  }
+  assert {
+    condition = (length(google_project_iam_member.fugaro_deployer_scoped) == 1 &&
+      google_project_iam_member.fugaro_deployer_scoped[0].role == "projects/proj-1234/roles/fugaroDeployerScoped" &&
+      google_project_iam_member.fugaro_deployer_scoped[0].condition[0].title == "fugaro-managed-prefix" &&
+    strcontains(google_project_iam_member.fugaro_deployer_scoped[0].condition[0].expression, "projects/_/buckets/fmgd-"))
+    error_message = "with managed_deployer_scoped the scoped role is bound once, under the fugaro-managed-prefix condition"
   }
 }

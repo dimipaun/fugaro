@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -89,16 +90,35 @@ const cloneShipped = false
 
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
-// in, R4), and the release named by the launch gate launchPolicyGates
-// (run_allowlist.go), which refuses a policy newer than this binary: a
-// policy whose version is above what this binary understands is a policy
-// written by a newer Fugaro, and this release is what the message quotes
-// beside it. Like cloneSince and unlike the policy's own integer `version`
-// or the rules marker's RulesVersion, it is a *release*, and it is bumped by
-// the release that ships the model and by nothing else: docs/release.md's
-// ("Before you tag") checklist verifies it equals that release, the same way
-// it does for recipesSince, layeredSince and namedTokensSince.
+// in, R4). Like cloneSince and unlike the policy's own integer `version` or
+// the rules marker's RulesVersion, it is a *release*, and it is bumped by the
+// release that ships the model and by nothing else: docs/release.md's ("Before
+// you tag") checklist verifies it equals that release, the same way it does for
+// recipesSince, layeredSince and namedTokensSince.
+//
+// The launch gate (launchPolicyGates, run_allowlist.go) and doctor's checks
+// quote it where the subject is the model: the rules a policy is read under,
+// the marker that records them, and the release a node *behind* this binary was
+// written by. They never quote it where the subject is a policy version above
+// what this binary understands — that answer is the row of
+// projectpolicy.VersionSince for that version, which stopped being this
+// constant the moment the version was bumped past 1.
 const policySince = "0.8.0"
+
+// policyTooNewFix is doctor's fix line for a policy node ahead of this binary:
+// the upgrade, naming the release that introduced the version on the node when
+// projectpolicy.VersionSince knows it, and the plain upgrade when it does not —
+// the same table, and the same rule, as every too-new refusal
+// (projectpolicy.SkewSentence). A version no row names came from a
+// release newer than any this binary has heard of, and borrowing a row's
+// release for it would name one that is already installed, which is the fault
+// the table exists to fix.
+func policyTooNewFix(version int) string {
+	if rel, ok := projectpolicy.VersionRelease(version); ok {
+		return fmt.Sprintf("upgrade Fugaro to fugaro %s or later, the release that introduced policy version %d", rel, version)
+	}
+	return fmt.Sprintf("upgrade Fugaro to a release that understands version %d", version)
+}
 
 // catalogSince names the release whose runner reads a route's require_zdr
 // and price_policy (price-catalog plan Task 4, design D11): a runner before
@@ -127,6 +147,73 @@ const catalogSince = "0.7.5"
 // catalogSince), the same shape as checkCloneImageSince's; update
 // docs/release.md's checklist line for catalogSince in that commit too.
 const catalogShipped = false
+
+// managedDeployerShipped is false until the release that ships a managed
+// deployer IAM can actually create: 0.9.0, by the owner's ruling of
+// 2026-10-18 ("Gate it off by default; redesign for 0.9.0"). The deployer's
+// scoped role is bound under an fmgd- prefix condition that GCP rejects as
+// written (17 logical operators where IAM allows 12, resource.name.contains()
+// is not a supported function, and resource.name is not supported for most of
+// the resource types it names), so the installation module creates that role
+// and its binding only with managed_deployer_scoped, which nothing sets
+// (deploy/terraform/gcp/modules/installation/deployer.tf). While it is false,
+// every command that would create a managed project or act as its deployer
+// (fugaro init --create-project --managed, fugaro managed apply and fugaro
+// restore) refuses with managedDisabled before any cloud call, rather than
+// failing later at the apply or the impersonation.
+//
+// Flip it to true only in the release whose deployer fence has been
+// redesigned and measured live, and in that same change set
+// infra.InstallOptions.ManagedDeployerScoped for the installations that opt
+// in; docs/release.md's "Before you tag" checklist verifies it.
+const managedDeployerShipped = false
+
+// managedDeployerOpen is managedDeployerShipped. It is a variable only so the
+// tests of the managed paths themselves can run them with the gate open
+// (TestMain opens it); the refusal tests reset it to the constant, and no
+// production code assigns it.
+var managedDeployerOpen = managedDeployerShipped
+
+// managedDisabled is the one refusal every managed entry point gives while
+// managedDeployerShipped is false.
+const managedDisabled = "managed projects are disabled in this release: the managed deployer's scoped role and its binding are not created yet (docs/design/managed-projects.md); a project created without --managed is unaffected"
+
+// refuseManagedNotShipped is managedDisabled as an error, nil once the
+// managed deployer ships.
+func refuseManagedNotShipped() error {
+	if managedDeployerOpen {
+		return nil
+	}
+	return userErr("%s", managedDisabled)
+}
+
+// batchProvisionShipped is false until 0.9.0, the release that redesigns the
+// Batch backend's reaper. The compute module fugaro init --provision-batch
+// applies gives the reaper a custom role naming batch.jobs.cancel, which is
+// not a permission GCP has (it lists batch.jobs.create, delete, get and list
+// only), so creating that role fails and the apply cannot complete. While it
+// is false, init refuses --provision-batch with batchProvisionDisabled before
+// any cloud call. deploy/terraform's TestCustomRolePermissionsAreAllowedByGoogle
+// names batch.jobs.cancel as its one known-invalid permission for this reason;
+// docs/release.md's "Before you tag" checklist verifies the constant.
+const batchProvisionShipped = false
+
+// batchProvisionOpen is batchProvisionShipped, a variable for the same reason
+// as managedDeployerOpen.
+var batchProvisionOpen = batchProvisionShipped
+
+// batchProvisionDisabled is init's refusal of --provision-batch while
+// batchProvisionShipped is false.
+const batchProvisionDisabled = "--provision-batch is disabled in this release: the Batch backend's reaper role names batch.jobs.cancel, a permission Google does not have, so its provisioning cannot complete (docs/design/compute-backend.md); it returns in 0.9.0, and the installation's ordinary steps are unaffected"
+
+// refuseBatchProvisionNotShipped is batchProvisionDisabled as an error, nil
+// once the Batch provisioning ships.
+func refuseBatchProvisionNotShipped() error {
+	if batchProvisionOpen {
+		return nil
+	}
+	return userErr("%s", batchProvisionDisabled)
+}
 
 // artifactsSince is the first fugaro release whose runner implements a
 // mode: artifact recipe: it reads the task's mode field
@@ -180,6 +267,18 @@ const gitSecretIDSince = "0.7.5"
 // older build record, the same way checkImageSince already gates
 // recipesSince and layeredSince.
 const namedTokensSince = "0.6.5"
+
+// titlesSince is the first fugaro release whose runner reads a task's title
+// (task.Spec.Title, fugaro run --title): an older runner refuses the field
+// outright, since task.Parse decodes with DisallowUnknownFields, and the
+// run would fail at bootstrap on a task nobody can read. It must equal the
+// release that ships task.Spec.Title: docs/release.md ("Before you tag")
+// has the release checklist verify it. internal/cli/run.go gates a launch
+// that would set a title against an older build record, exactly as it does
+// for a named Claude account (namedTokensSince) and for mode: artifact
+// (artifactsSince); a launch with no --title writes no such field and is
+// never gated.
+const titlesSince = "0.8.5"
 
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets

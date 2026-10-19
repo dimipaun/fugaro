@@ -1,0 +1,129 @@
+# STAGED, NOT APPLIED. This file is the console's CI, written by Task 1.4 of
+# docs/plans/2026-10-15-desktop-console.md and copied into place by the OWNER as
+# Task 1.5. **No agent copies, edits, renames or deletes it** -- GitHub rejects a
+# Fugaro push that touches .github/workflows/**, so an agent run cannot deliver a
+# workflow change at all, and every workflow change in this repository is staged
+# here for a human (docs/pending-workflows/README.md).
+#
+# To apply it, from the repository root:
+#
+#     cp docs/pending-workflows/console-tests.yml .github/workflows/console-tests.yml
+#     git add .github/workflows/console-tests.yml
+#     git commit -m "console: run the console's tests in CI (plan Task 1.5)"
+#
+# **The staged copy is NOT deleted after the copy-in**, unlike images.yml: while
+# both files exist, `TestConsoleTestsWorkflowIsStagedAndPinned` asserts they are
+# byte-identical, so an edit to one without the other fails a named test rather
+# than drifting silently. Recording when it was applied is Task 1.5's job, in
+# console/README.md.
+#
+# What this workflow is, and what it deliberately is not:
+#
+#   - It runs the console's own tests on every pull request and every push to
+#     main: the unit suite and the Playwright + Electron end-to-end pass, on
+#     macOS (the platform the console ships first) and on Linux under
+#     `xvfb-run` (the fast pass, and the one that keeps the Linux path from
+#     rotting).
+#   - It holds **no secret of any kind**, and it never will: the signing,
+#     notarising and stapling job is Task 4.2's `console-release.yml`, a
+#     separate file, because a job that runs on every pull request must not sit
+#     next to the Apple signing material (design section 9.4).
+#   - It has **no path filter and no job-level `if:`**, and that is a
+#     correctness requirement rather than a taste. **Task 4.6 is what puts
+#     `console` into scripts/release-gate.sh's `names` list** -- that line reads
+#     `names="test terraform rules"` today, so the gate does not require this
+#     check yet -- and from that edit on, the gate requires a check named
+#     `console` on the tag's commit and, in its identical_tree_checks fallback,
+#     the same names on the pull request head whose tree matches. A check that
+#     does not exist is not a success, so a `console` job filtered to
+#     console/** would then refuse **every** release tag in this repository,
+#     including the ones that never touch the console (design section 9.4;
+#     plan Task 4.6). The docs-only skip ci.yml gives `test`, `rules` and
+#     `terraform` is deliberately NOT copied here, for the same reason: a
+#     skipped check is not a success either. Ordering the gate edit after the
+#     copy-in does not help -- the filter is the bug.
+#   - The job's `name:` is the static string `console`, never an interpolated
+#     one: the gate matches the check-run *name*, and a matrix value appended to
+#     it (`console (ubuntu-latest)`) would be a check the gate cannot find. Both
+#     matrix legs therefore report the same name, and the gate's own rule --
+#     every completed run of the name must be successful -- is what makes both
+#     platforms required.
+
+name: console-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The workflow inherits nothing: `contents: read` is all it needs to check the
+# repository out, and it is declared here and on the job so that neither can gain
+# a permission without an edit that a reviewer sees.
+permissions:
+  contents: read
+
+jobs:
+  console:
+    name: console
+    strategy:
+      # One platform failing must not hide the other's result: the gate wants
+      # both green, and a cancelled sibling reports as neither.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # The screenshot goldens (plan Task 2.1-2.3) are not committed yet, and
+    # playwright.config.ts's `updateSnapshots: 'none'` FAILS a missing baseline
+    # by design -- so without this line the check would go red the moment the
+    # file is copied in, on every pull request and every push to main. `skip`
+    # is the specs' one documented opt-out: it skips exactly the golden tests
+    # and says so in the report; every other e2e test still runs. **Owner step,
+    # once the goldens exist**: record them on EACH platform (the file names
+    # carry the platform, `live-light-darwin.png` / `live-light-linux.png`, since
+    # the two legs draw different pixels) with
+    #     cd console && npm run build && npm exec -- playwright test --update-snapshots
+    # on macOS, and the same under `xvfb-run --auto-servernum` on Linux; commit
+    # console/test/e2e/__screenshots__/ (both platforms' files); then delete
+    # this `env:` block here and in .github/workflows/console-tests.yml together.
+    env:
+      FUGARO_CONSOLE_GOLDENS: skip
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field test/unit/pinning.test.ts keeps an exact pin (design section 5.2):
+      # a version written here a second time would be a pin that can disagree
+      # with the one the console's own tests enforce.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: console/package.json
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      # `npm ci` from the committed lockfile, with lifecycle scripts off: the
+      # console's dependencies are exactly the ones the lockfile pins
+      # (test/unit/pinning.test.ts asserts the set), and a postinstall script is
+      # something this repository does not run from CI.
+      - name: install the pinned toolchain
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: the console's unit tests
+        run: npm run test:unit
+      # Electron needs a display on Linux; `xvfb-run` is the platform's own
+      # answer and macOS needs nothing. `npm run test:e2e` builds the app first
+      # (it runs what package.json's `main` points at, which only `npm run
+      # build` writes) and passes with no spec present
+      # (`--pass-with-no-tests`). With the specs in the tree and no goldens
+      # recorded, it is green only because of the job's
+      # `FUGARO_CONSOLE_GOLDENS: skip` above.
+      - name: the console's end-to-end pass (Linux, under xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:e2e
+      - name: the console's end-to-end pass (macOS)
+        if: runner.os != 'Linux'
+        run: npm run test:e2e

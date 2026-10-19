@@ -425,7 +425,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	//    confirmation that --yes, --json, a pipe and an agent cannot give.
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
-	if err := guard(plan, retireAllowDelete(plan, rets, r.o.allowDelete)); err != nil {
+	if err := r.guard(ctx, c, plan, retireAllowDelete(plan, rets, r.o.allowDelete)); err != nil {
 		return leftover(err)
 	}
 	fmt.Fprintf(r.w, "the plan above is the retirement's: %s. Deleting:\n", counts.String())
