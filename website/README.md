@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eight checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Nine checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -398,6 +398,25 @@ added or removed without this sentence moving fails there:
   the item's ruling rather than a miss: the tagline change reaches the CLI's help, the
   generated reference and the three plugin skills that carry it (`routing`, `working` and
   `parallelism`) in 0.9.0, not here.
+- `test/spacing.mjs` — the site's words are separated by spaces (round 3 of the security page
+  review). Astro's HTML compression drops a text node that is nothing but whitespace, so an
+  inline element written at the start of a source line sits flush against the word before it and
+  a reader gets `back andfugaro secrets` where the page meant `back and` + `fugaro secrets` —
+  a defect the source does not show and a reader cannot report without the word being quoted
+  back. The gate reads every built page the way a browser does, through the shared
+  `runTogether()`/`verbatimText()` in `test/lib/html.mjs`: each direct text child is its own run,
+  nothing is invented between two neighbours, and a run ending in a lowercase letter directly
+  against one starting with a lowercase letter is one word. What counts as a boundary a reader
+  sees is read from the artifact rather than listed by name — a block element, plus any class the
+  page's own inlined stylesheet lays out with a block-level `display` (the docs hub's `.path`
+  under a guide's title is the one today) — because without it the gate would refuse fourteen
+  seams the design makes on purpose, and a gate that cries wolf is a gate somebody turns off. It
+  found one real defect when it landed: the console's download row put each artifact's published
+  name and its SHA-256 in two inline siblings on two source lines, so the row read
+  "macOS .dmga434f3…"; the space is in `src/components/Downloads.astro` now. The refusal is
+  mutation-proved both ways, and the last case proves the boundary rule is read from the page: a
+  seam the stylesheet lays apart is not refused, and the same seam is refused the moment the
+  stylesheet lays it out inline.
 - `test/nav-hover.mjs` — the menu's hover behaviour (the owner's brief of 2026-10-18, item 1).
   A `<details>` hides its own closed content in a way author CSS cannot portably override, so
   opening a group on hover is the script's work and not the stylesheet's: the gate runs the

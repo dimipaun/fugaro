@@ -34,10 +34,18 @@
  *      short" bullets each end by naming the section they come from
  *      (`([Known limits](#known-limits))`); the page does not render those sections, so the
  *      pointer is rewritten to the document in the repository at the section it names. A
- *      fragment that is not a heading of the document is dropped and listed for the owner
- *      rather than rendered as a link that goes nowhere — `SECURITY.md` ships one
- *      (`[Money](#money)`, whose section is a bullet and not a heading), and
- *      `website/test/linkcheck.mjs` refuses a GitHub link whose fragment is not a heading.
+ *      fragment that is not a heading of the document is **dropped**, and that one link
+ *      points at the document itself: rendered as a fragment it would be a link that goes
+ *      nowhere — `website/test/linkcheck.mjs` refuses a GitHub link whose fragment is not a
+ *      heading, and a reader who followed it would land at the top of the file with no sign
+ *      the section was missing. `SECURITY.md` ships one (`[Money](#money)`, whose section is
+ *      a bullet in "In short" and not a heading); the owner has it in the pull request,
+ *      because the fix is a `SECURITY.md` edit. `website/test/security.mjs` pins both halves
+ *      of this rule over the built page — every cross-reference's text and order against the
+ *      document's own links, and its href against the heading its fragment names — so a
+ *      fragment dropped or aimed at another heading fails there.
+ *      Nothing here lists the dropped fragments anywhere: the only reader who learns of one
+ *      is the owner, in the pull request that carries it.
  *   3. **The link is the repository's, and its path is read rather than typed.** The URL is
  *      built from `site.yaml`'s repository and the generated file's own `source:` header, so
  *      the page cannot point at a document this repository does not carry.

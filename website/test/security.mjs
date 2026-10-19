@@ -42,6 +42,13 @@
 //      generated file's own `source:` header and the repository from `site.yaml`, both of
 //      which `website/src/pages/security.astro` builds the URL from, so the page cannot point
 //      at a document this repository does not carry.
+//   Both sections carry one thing the word-for-word comparison cannot see: the document's own
+//   `[text](#fragment)` cross-references, which the page rewrites to point into `SECURITY.md`
+//   in the repository (astro "decision 2", the reason the page keeps its own renderer). Each
+//   rendered anchor's text, order and href are pinned to the document's own link and to the
+//   heading its fragment names — a fragment dropped or aimed at another heading sends readers
+//   to the top of the file, or the wrong passage, and nothing else here would notice (round 4,
+//   finding 1).
 //   5. **The page's head points at no file the build does not produce** (Global Constraint 9).
 //      The one hint the layout composes is the sitemap, and whether the build ships one is
 //      read from the resolved `astro.config.mjs` — imported, not pattern-matched, which is the
@@ -72,6 +79,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, REPO, SITE, findAll, parse, verbatimText } from './lib/html.mjs'
+// The page's own slug rule, imported rather than re-implemented: `security.astro` resolves its
+// cross-references with this module and this file resolves them again, so the two have to be
+// the same rule rather than two approximations of it (the note in `docs.astro`).
+import { headingAnchor, headingText } from '../src/lib/github-slug.mjs'
 
 /** The document the page renders, the file it is generated into, and the built page. */
 const SOURCE = 'SECURITY.md'
@@ -200,15 +211,35 @@ function sectionLines(document, heading) {
   return end === -1 ? rest : rest.slice(0, end)
 }
 
-/** The bullets of a section, each one line joined back together when the file wrapped it. */
-function bulletsOf(document, heading) {
+/**
+ * The document's own bullets, each one line joined back together when the file wrapped it and
+ * the markdown left as it is. The two readers below this one take it apart: the text without
+ * its inline markup, and the links it carries.
+ */
+function bulletLinesOf(document, heading) {
   const bullets = []
   for (const line of sectionLines(document, heading)) {
     const bullet = /^\s*[-*][ \t]+(.*)$/.exec(line)
-    if (bullet !== null) bullets.push(inlineText(bullet[1]))
-    else if (line.trim() !== '' && bullets.length > 0) bullets[bullets.length - 1] += ` ${inlineText(line)}`
+    if (bullet !== null) bullets.push(bullet[1].trim())
+    else if (line.trim() !== '' && bullets.length > 0) bullets[bullets.length - 1] += ` ${line.trim()}`
   }
   return bullets
+}
+
+/** The bullets of a section, as a reader reads them. */
+function bulletsOf(document, heading) {
+  return bulletLinesOf(document, heading).map(inlineText)
+}
+
+/** A section's own blocks of text, with the markdown left as it is: its bullets, or its
+ *  paragraphs when the section is not a list. */
+function blocksOf(document, heading, kind) {
+  if (kind === 'bullet') return bulletLinesOf(document, heading)
+  return sectionLines(document, heading)
+    .join('\n')
+    .split(/\n[ \t]*\n/)
+    .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
+    .filter((paragraph) => paragraph !== '')
 }
 
 /** The paragraphs of a run of Markdown lines, as a reader reads them. */
@@ -218,6 +249,83 @@ function paragraphsOf(lines) {
     .split(/\n[ \t]*\n/)
     .map((paragraph) => inlineText(paragraph.replace(/\s+/g, ' ').trim()))
     .filter((paragraph) => paragraph !== '')
+}
+
+/** The links one line of the document carries, in the order it writes them. */
+function linksOf(line) {
+  return [...line.matchAll(/\[([^\]]*)\]\(([^)\s]+)\)/g)].map((match) => ({ text: inlineText(match[1]), target: match[2] }))
+}
+
+/**
+ * The anchors the document's own headings carry, as GitHub slugs them. Read through the slug
+ * module the page builds its links with, so the page's rule and this file's rule are one rule
+ * rather than two approximations of it.
+ */
+function documentAnchors(document) {
+  return new Set(
+    document
+      .split('\n')
+      .map((line) => /^#{1,6}[ \t]+(.*)$/.exec(line.trim()))
+      .filter((match) => match !== null)
+      .map((match) => headingAnchor(headingText(match[1]))),
+  )
+}
+
+/**
+ * Where the page sends a reader for one of the document's own links: the target as the document
+ * writes it, with a fragment resolved against the document in the repository. A fragment the
+ * document does not carry a heading for resolves to the document itself, which is the one
+ * `SECURITY.md` ships — `[Money](#money)` names a bullet in the "In short" list and not a
+ * heading, so GitHub scrolls nowhere and the page points at the document instead.
+ */
+function resolvedTarget(raw, anchors, base) {
+  if (!raw.startsWith('#')) return raw
+  const fragment = raw.slice(1)
+  return anchors.has(fragment) ? `${base}#${fragment}` : base
+}
+
+/**
+ * The page's cross-reference links, pinned to the sections they name (round 4 of the review).
+ *
+ * The page does not render the document's `[text](#fragment)` links as the document writes
+ * them: `security.astro` rewrites each one to point into `SECURITY.md` in the repository, so a
+ * reader who follows "Known limits" arrives at the document's own "Known limits" section rather
+ * than at the top of the file. That rewriting is the one part of the page no other check reads:
+ * `checkSection` compares the words with the inline markup taken off, and
+ * `website/test/linkcheck.mjs` asks only that a fragment which is *present* is a heading. So a
+ * rewrite that dropped every fragment — or pointed one at a different real heading — would send
+ * readers to the top of the document, or to the wrong section, with every gate still green.
+ *
+ * Both halves are held here: the anchor is the document's own link, text and order, and its
+ * href is that link's target resolved against the document's URL in the repository — the same
+ * resolution the page makes, because both sides go through the same slug module.
+ */
+function checkLinks(region, { document, heading, kind, fail, what }) {
+  const base = `${repository()}/blob/main/${SOURCE}`
+  const anchors = documentAnchors(document)
+  const expected = blocksOf(document, heading, kind)
+    .flatMap(linksOf)
+    .map((link) => ({ text: link.text, href: resolvedTarget(link.target, anchors, base) }))
+  const rendered = findAll(region, 'a')
+
+  if (rendered.length !== expected.length) {
+    fail(
+      `the ${what} carries ${rendered.length} links and ${SOURCE}'s "${heading}" section writes ${expected.length}: the links on the page are the document's own cross-references, and a link added or lost here is one the document does not carry (the owner's brief of 2026-10-19)`,
+    )
+    return
+  }
+  for (const [i, node] of rendered.entries()) {
+    const href = node.attrs.get('href') ?? ''
+    const seen = prose(text(node))
+    if (seen !== prose(expected[i].text)) {
+      fail(`the ${what}'s link ${i + 1} says ${JSON.stringify(seen)} where ${SOURCE} writes ${JSON.stringify(expected[i].text)}: the page renders the document's own cross-references (the owner's brief of 2026-10-19)`)
+    }
+    if (href !== expected[i].href) {
+      fail(
+        `the ${what}'s link ${JSON.stringify(seen)} points at ${JSON.stringify(href)} and not ${JSON.stringify(expected[i].href)}: the page rewrites ${SOURCE}'s own cross-references to point into the document in the repository, and each one has to arrive at the section it names — a fragment dropped, or aimed at another heading, sends a reader to the top of the file or to the wrong passage with every other check still green`,
+      )
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -310,6 +418,7 @@ export function securityFailures(dist = DIST) {
     kind: 'bullet',
     label: 'the page describes the security model in the document\'s own words, and the summary is the file those words live in (D189)',
   })
+  checkLinks(summary, { document: sourceDocument(), heading: SUMMARY, kind: 'bullet', fail, what: 'summary' })
 
   // 3. The reporting section is the document's own, word for word.
   checkSection(reporting, {
@@ -321,6 +430,7 @@ export function securityFailures(dist = DIST) {
     kind: 'paragraph',
     label: `the page renders the document's section and does not reword it, because a reporter follows those words and a paraphrase is a claim the document does not make (D99)`,
   })
+  checkLinks(reporting, { document: sourceDocument(), heading: REPORTING, kind: 'paragraph', fail, what: `document's reporting section` })
 
   // 3b. The summary is short, and it is a list: the ceiling is the brief's "at most about 8
   //     short bullets", and a nested list is a boundary the reader has to assemble.
@@ -462,6 +572,25 @@ test('the gate refuses each planted defect', (t) => {
     verdict(t, glued).join('\n'),
     /does not render SECURITY\.md's own summary/,
     'a summary bullet with the space before its inline element removed is not refused, so the reader or the comparison is repairing the artifact',
+  )
+
+  // Every cross-reference fragment dropped: the page still reads correctly, the bullets still
+  // match the document word for word, and every link lands at the top of `SECURITY.md` instead
+  // of the section it names (round 4, finding 1).
+  const unfragmented = planted(html, /blob\/main\/SECURITY\.md#[a-z0-9-]+"/g, '/blob/main/SECURITY.md"')
+  assert.match(
+    verdict(t, unfragmented).join('\n'),
+    /points at "[^"]*SECURITY\.md" and not "[^"]*SECURITY\.md#[a-z0-9-]+"/,
+    'a cross-reference with its fragment dropped is not refused, so nothing holds the rewritten links to the sections they name',
+  )
+
+  // And one cross-reference aimed at another real heading: the fragment is a heading, so
+  // `linkcheck.mjs` is satisfied, and the reader arrives at the wrong passage.
+  const retargeted = planted(html, /SECURITY\.md#known-limits"/, 'SECURITY.md#scope"')
+  assert.match(
+    verdict(t, retargeted).join('\n'),
+    /points at "https:\/\/github\.com\/[^"]*SECURITY\.md#scope" and not "[^"]*SECURITY\.md#known-limits"/,
+    'a cross-reference aimed at another heading is not refused',
   )
 
   // A reworded summary bullet: the one edit a page that renders a file is always tempted by.
