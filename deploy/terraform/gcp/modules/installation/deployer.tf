@@ -91,8 +91,15 @@ resource "google_service_account" "fugaro_deployer" {
 #     installation (this installation's scheduler runs in another region from
 #     its jobs). A name that does not match the template must make the condition
 #     false; that is Google's behaviour and not something this repository can
-#     check, so it is labelled UNVERIFIED in the design and is the first thing
-#     Check 68 measures, per service, both directions.
+#     check, so it is labelled UNVERIFIED in the design (C7). Check 68 measures
+#     the two directions that can be constructed — a prefixed name and one that
+#     does not carry the prefix, including a name that contains it without
+#     starting with it and one the template names — but it cannot construct the
+#     mismatch itself: every conditioned type's real resource name matches its
+#     own template, so no name of that type can be made to miss it. C7 therefore
+#     stays UNVERIFIED after Check 68, and the design's §8 point 2 (accept the
+#     extract dependency, or take option 1b, or drop the five services) is the
+#     owner's to answer on that basis.
 #
 # tf.deployerServices(project) is these strings, byte for byte, and
 # internal/infra/tf refuses a binding whose expression is not exactly its own
@@ -104,7 +111,8 @@ resource "google_service_account" "fugaro_deployer" {
 # name-prefix condition is Check 52's U3 and is still NOT RUN, and whether
 # resource.name is honoured at all — let alone with extract — for an IAM service
 # account, a Cloud Run job, a Cloud Scheduler job, an Artifact Registry
-# repository or an API key is what Check 68 has to measure. If a service does
+# repository or an API key is what Check 68 has to measure (its steps 4 and 5,
+# per service and in both directions). If a service does
 # not honour its form, the permission that needs it cannot be fenced, so the
 # matching type is dropped; none of these permissions is ever moved into
 # fugaroDeployer (the unconditioned role) or into a binding with no condition.

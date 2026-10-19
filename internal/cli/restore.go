@@ -1103,7 +1103,7 @@ func restoreNotRestored(old *localcfg.Config, newID string) []string {
 		fmt.Sprintf("%s: the owner's delete list is NOT carried across, and nothing this restore runs re-creates it. Write it again with fugaro allow-delete, and until you do, every delete and every replacement in %s is refused (D74)", managed.AllowDeleteObject, newID),
 		fmt.Sprintf("the project layer, gs://%s/%s: the repository does not hold it and this restore does not re-publish it — there is no path for that yet (the Gap's finding 32). Publish it again yourself, from a copy, with fugaro config publish", bucket, config.LayerKey),
 		fmt.Sprintf("the project's recipes, gs://%s/%s<name>.yaml: the repository does not hold them and this restore does not re-publish them either. Publish each one again with fugaro recipes publish", bucket, recipe.ObjectPrefix),
-		fmt.Sprintf("and the one thing that is RE-CREATED rather than lost: %s, with its two custom roles and its binding on gs://%s. The creating path builds it with the rest of the installation (D75), so a managed apply works in %s without a step of its own", managedmode.DeployerAccount(newID), managedmode.ManagedStateBucketName(newID), newID),
+		fmt.Sprintf("and the one thing that is RE-CREATED rather than lost: %s, with the deployer's custom roles and their bindings on gs://%s (the fmgd- fenced ones only where the installation opts in, which nothing does in this release). The creating path builds it with the rest of the installation (D75), so a managed apply works in %s without a step of its own", managedmode.DeployerAccount(newID), managedmode.ManagedStateBucketName(newID), newID),
 	}
 }
 

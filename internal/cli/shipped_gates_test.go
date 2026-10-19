@@ -79,7 +79,7 @@ func TestProvisionBatchRefusedWhileNotShipped(t *testing.T) {
 // The refusals name what the operator needs: which feature, why, where the
 // design is, and that the ordinary paths are unaffected.
 func TestShippedGateMessages(t *testing.T) {
-	for _, want := range []string{"managed projects are disabled in this release", "scoped role and its binding are not created yet", "docs/design/managed-projects.md", "without --managed is unaffected"} {
+	for _, want := range []string{"managed projects are disabled in this release", "scoped roles and their bindings are not created yet", "docs/design/managed-projects.md", "without --managed is unaffected"} {
 		if !strings.Contains(managedDisabled, want) {
 			t.Errorf("managedDisabled does not say %q", want)
 		}

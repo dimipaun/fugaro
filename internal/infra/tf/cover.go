@@ -98,8 +98,11 @@ var grantRules = map[string]map[string]who{
 		// what checks their member, project and conditions, which grantRules
 		// cannot see). A role of the deployer's that is missing from these
 		// rows is refused outright rather than falling through, which is what
-		// makes adding one a deliberate act:
-		// TestEveryDeployerRoleIsBoundAndGranted pins the two lists together.
+		// makes adding one a deliberate act: TestGrantRulesAreTheModules pins
+		// these rows to the module's own grants, and
+		// TestDeployerBindingsAreTheModules pins the eight bindings (one per
+		// role, the seven conditioned ones under their own condition and the
+		// unconditioned one under none) to the roles named here.
 		customKey + DeployerRole:           toDeployer,
 		customKey + DeployerStorageRole:    toDeployer,
 		customKey + DeployerSecretRole:     toDeployer,
@@ -337,14 +340,19 @@ const (
 // The extract form depends on Google behaviour this repository cannot check:
 // that a name not matching the template makes the condition false rather than
 // true (docs/design/managed-deployer-fence.md, C7). It is used only where
-// startsWith cannot be written, and the live check that measures it per
-// service, both directions, is Check 68.
+// startsWith cannot be written, and Check 68 measures the two directions that
+// CAN be constructed — a prefixed name and a non-prefixed one, including a
+// name that contains the prefix without starting with it. The template
+// mismatch itself is out of reach: every conditioned type's real resource name
+// matches its own template, so a mismatching name of the same type cannot be
+// created, and C7 stays UNVERIFIED (the design's §8 point 2 is the owner's to
+// answer before the five extract services are relied on).
 type DeployerClause struct {
 	Type, Op, Value, Starts string
 }
 
 // String is the clause as the condition writes it, and as the module writes it
-// byte for byte (TestDeployerConditionIsTheModules pins the two together).
+// byte for byte (TestDeployerBindingsAreTheModules pins the two together).
 func (c DeployerClause) String() string {
 	typ := "resource.type == " + strconv.Quote(c.Type)
 	if c.Op == "extract" {
@@ -386,7 +394,7 @@ func (s DeployerService) Expression() string {
 // deployerServices is the scoped half of D75, one entry per service, and the
 // source of every role, clause and expression the cover compares a plan
 // against. The module writes the same strings in deployer.tf
-// (local.deployer_condition_<service>) and TestDeployerConditionIsTheModules
+// (local.deployer_condition_<service>) and TestDeployerBindingsAreTheModules
 // pins the two together, byte for byte.
 //
 // What is NOT in any of them, and why: the runs bucket, the installation's
@@ -1135,9 +1143,9 @@ func (c Cover) deployerGrant(typ string, ch Change, createsDeployer bool) string
 		return ""
 	}
 	// The member: this run's deployer account, named, and nothing else. The
-	// table already holds both roles to toDeployer; this says so again where
-	// the condition is checked, so the one place that reads a deployer binding
-	// reads all of it.
+	// table already holds every deployer role to toDeployer; this says so
+	// again where the condition is checked, so the one place that reads a
+	// deployer binding reads all of it.
 	member := str(ch.After["member"])
 	if unknown(ch, "member") || !c.isDeployerMember(member) {
 		want := "this run's deployer account"

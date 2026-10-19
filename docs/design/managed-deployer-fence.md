@@ -15,8 +15,11 @@ difference and §8 asks the owner to rule.
 **What this document does not claim.** It does not claim the redesigned fence
 is accepted by IAM, or that it fences anything on Google's side. Every
 statement about Google's behaviour that the repository cannot demonstrate is
-labelled UNVERIFIED and is what §9 measures. The claim "it applies cleanly"
-belongs to the owner's live check and to nothing here.
+labelled UNVERIFIED and is what §9's check measures — except **C7, which §9
+cannot measure and says so**: a name of a conditioned type that misses its own
+`extract` template cannot be constructed, so C7 stays UNVERIFIED after the
+check. The claim "it applies cleanly" belongs to the owner's live check and to
+nothing here.
 
 ## 1. The problem, as the tree records it
 
@@ -100,11 +103,11 @@ cannot test it and this run makes no live call.
 | --- | --- | --- | --- |
 | C1 | a condition expression allows at most 12 logical operators | recorded in `deployer.tf:32-33` (the 0.8.6 defect) and `docs/plans/2026-10-16-managed-projects.md` Task 1.5 | recorded, not measured here |
 | C2 | the supported `resource.name` functions are `startsWith`, `endsWith`, `extract`, `==`, `!=`; `contains` is not one | `deployer.tf:34-35` | recorded |
-| C3 | `resource.name` is unsupported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts and API keys | `deployer.tf:35-37` | recorded; **UNVERIFIED** — it is one of the things Check 68 measures |
+| C3 | `resource.name` is unsupported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, IAM service accounts and API keys | `deployer.tf:35-37` | recorded; **UNVERIFIED** — it is one of the things Check 68 measures (the other is the Secret Manager name form, so six of the seven services are measured) |
 | C4 | an unconditioned binding of a role defeats a conditioned binding of the same role; effective grant = union over bindings of (role's permissions ∩ resources the condition matches) | `deployer.tf:19-21`; enforced by `internal/infra/tf`'s `deployerGrant`/`unconditionedDeployerViolations` | **established in-tree** (the cover refuses the plan) |
 | C5 | `resource.type` for the nine types D75 names, and the name shapes (`projects/_/buckets/<b>`, `projects/<n>/secrets/<s>`, …) | `deployer.tf:51-64`; `internal/infra/tf/cover.go`'s clause model | recorded, and the storage form is proved (Check 32) |
 | C6 | `resource.name.extract("<template>")` returns the resource's own last segment when the name matches the template, and the template's placeholders are written `{project}`, `{location}`, `{job}` and so on | Google's IAM Conditions resource-attribute documentation, as cited by Task 1.5 | **UNVERIFIED** |
-| C7 | a resource whose name does not match the template makes `extract` fail, and a failing condition is false (deny) | Google's conditions semantics, as read into Task 1.5 | **UNVERIFIED**, and load-bearing: §5's design is fail-closed only if a non-match denies |
+| C7 | a resource whose name does not match the template makes `extract` fail, and a failing condition is false (deny) | Google's conditions semantics, as read into Task 1.5 | **UNVERIFIED**, load-bearing, and **not measurable by Check 68** — see §9 — so it stays UNVERIFIED after the check: §5's design is fail-closed only if a non-match denies |
 | C8 | a project-level binding of a custom role reaches only that project's resources | IAM's resource hierarchy; also how every other Fugaro grant is written | recorded |
 | C9 | `resource.matchTag` exists and can test a tag on a resource, but tag *values* are per-project and a tag key has to be created in the organisation/project first | Task 1.5's option list; no Fugaro code uses tags today | **UNVERIFIED** |
 | C10 | `cloudscheduler.jobs.resume` does not exist; resume is `cloudscheduler.jobs.enable` | `deployer.tf:164` (the second 0.8.6 defect, already fixed) | recorded |
@@ -145,8 +148,11 @@ one D75 already needed.
   condition *true* instead of false, the fence inverts and the deployer reaches
   everything the role's permissions reach. This is the one failure that is not
   fail-closed, and it is why the design uses `extract` only where a `startsWith`
-  on a literal front cannot be written, and why §9 tests a non-matching name
-  explicitly, per service, both directions.
+  on a literal front cannot be written. **It is also the failure §9 cannot
+  reach** — a name of a conditioned type that misses its own template cannot be
+  created — so it stands as accepted-unmeasured (§8 point 2) rather than as
+  tested, and the near miss §9 does use (a name that contains `fmgd-` without
+  starting with it) tests the prefix, not the template.
 - `resource.name` is unsupported for a service (C3): that service's condition
   cannot be written at all. R5 applies — drop the type (§8, open point 5).
 - Seven roles is seven objects to keep in step with the code. `internal/infra/tf`
@@ -305,9 +311,11 @@ Reasoning, in the order the requirements are numbered:
   — and to keep the same refusal strength per binding.
 - **R6** holds for six of the seven services without qualification, and for the
   `extract` form it holds *if* C7 is right. That is the honest weak point of this
-  option, and it is why §9 tests a non-matching name per service and both
-  directions, and why §8 asks the owner to accept the `extract` dependency
-  before the gate is flipped.
+  option. **§9's check cannot measure C7** (no name of a conditioned type can be
+  made to miss its own template, and the one name that does is of a type no
+  clause names), so this is a decision to take *unmeasured*: §8 point 2 asks the
+  owner to accept the `extract` dependency on that basis, take option 1b, or drop
+  the five services.
 - It **keeps the prefix meaningful**, which options 2 and 4 give up, and it does
   not need the tag infrastructure option 3 needs.
 - It **reduces blast radius**: today one wrong condition widens all nine types;
@@ -399,10 +407,13 @@ unchanged.
    looks like. If the prefix must keep meaning something, option 1 is the only
    one of the four that keeps it.
 2. **Accept the `extract` dependency?** Five of the seven services need
-   `resource.name.extract` (C6) and depend on C7's fail-closed behaviour. If the
-   owner will not accept that before it is measured, the alternatives are 1b
-   (with the project number and location inputs it needs, and the location hole
-   that comes with a location allow-list) or dropping those five services.
+   `resource.name.extract` (C6) and depend on C7's fail-closed behaviour.
+   **Check 68 cannot measure C7** (§9: no conditioned type can be given a name
+   that misses its own template, and the one name that does is of a type no
+   clause names), so this decision has to be taken *unmeasured*: accept it as
+   read, or fall back to 1b (with the project number and location inputs it
+   needs, and the location hole that comes with a location allow-list), or drop
+   those five services.
 3. **What if `resource.name` is unsupported for a service (C3)?** R5 says drop
    the type. Dropping IAM service accounts or Cloud Run jobs guts the feature
    (a managed plan creates accounts and jobs); dropping API keys, scheduler jobs,
@@ -446,6 +457,23 @@ only**, never `belong`:
    refusal that reads like a failed condition.
 4. Restore: delete the sandbox resources the check created, and the condition
    itself if the apply is rolled back.
+
+**What it measures, and what it does not.** The check settles F1 (the shape
+applies), C1 (the operator counts) and C3 (whether `resource.name` is honoured,
+per type — six of the seven services; storage's form is already proved by
+Check 32). It does **not** settle the fail-closed question C7 **at all**, and the
+checklist's step 6 says why in full: every conditioned type's real names match
+that condition's own template — a bucket and an object under `projects/_/buckets/`,
+a service account under `projects/<project>/serviceAccounts/`, and for the five
+`extract` services the resource *is* the last segment of its own template — so a
+name of a conditioned type that misses the template cannot be created; and the
+one name that does miss a template (a Secret Manager version) is of a type no
+clause names, so its request is denied for want of the permission before any
+condition is read. **C7 therefore stays UNVERIFIED after Check 68**, and open
+point 2 above is the owner's to answer on that basis: accept the `extract`
+dependency unmeasured, take option 1b, or drop the five services. The near miss
+in the check (a name that contains `fmgd-` without starting with it) tests the
+prefix test, and is not a substitute.
 
 Check 67 (the plan's Task 5.3) owns the transitive-reach half — what the
 identity can reach through impersonation and through the roles it may grant —

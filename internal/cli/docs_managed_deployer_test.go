@@ -9,12 +9,15 @@ import (
 // TestChecklistHasCheck68 pins Check 68 of docs/gcp-live-checklist.md: the live
 // check of the managed deployer's redesigned fence (docs/design/
 // managed-deployer-fence.md; deploy/terraform/gcp/modules/installation/
-// deployer.tf). The section is the only place the shape's four open questions
-// are measured, so what this test holds is what makes it runnable by the owner
-// and safe to run: whose check it is, the four hard stops in the guard block,
-// the two directions every service is measured in, the fail-closed step, the
-// restore that closes the gate again, and the fact that Check 67 — the
-// transitive-reach half — is not this section.
+// deployer.tf). The section is the only place the shape's open questions are
+// measured, so what this test holds is what makes it runnable by the owner and
+// safe to run: whose check it is, the four hard stops in the guard block, the
+// two directions every service is measured in, the Secret Manager version read
+// and the section's own statement that it does not settle the design's C7 (a
+// name of a conditioned type that misses its `extract` template cannot be
+// constructed, so the register must not read as measuring one), the restore
+// that closes the gate again, and the fact that Check 67 — the transitive-reach
+// half — is not this section.
 //
 // The row and the heading carry the same facts as prose: a live check that does
 // not say it is the owner's, on a sandbox project, and never against `belong`
@@ -56,14 +59,20 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"No agent runs any step of it",
 		"agentMarker",
 		"Check 67",
-		// The four questions the section settles, by their design labels: a
+		// The three questions the section settles, by their design labels: a
 		// check that stops naming them stops being the measurement of the
 		// design's UNVERIFIED rows.
 		"F1",
 		"C1",
 		"C3",
-		"C7",
 		"UNVERIFIED",
+		// And the one it names so the reader is not misled: C7 is named, and
+		// the section says outright that it is NOT settled by this check.
+		// Without this the register would read as measuring a question the
+		// check cannot construct a probe for (see the section's step 6).
+		"C7",
+		"What this check does not settle",
+		"stays UNVERIFIED",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not say %q", want)
@@ -136,8 +145,45 @@ func TestChecklistHasCheck68(t *testing.T) {
 		t.Errorf("Check 68 impersonates the deployer %d times, want the seven positive actions, the seven negative ones and the near misses", n)
 	}
 
-	// 4. The fail-closed step and the restore. The version read is the name
-	// that cannot match the secret template, and the restore has to close the
+	// 3b. How the two probes that could never pass are built. The API key's ID
+	// is chosen by the check, because a server-generated uid never starts with
+	// fmgd- and the key's positive action would be denied for a reason the
+	// fence is not responsible for; and the module's side of the policy
+	// comparison is unescaped (the HCL file spells its quotes `\"`) and has its
+	// plan-time project template filled in, or the diff reports differences
+	// that are artefacts of the file's own syntax.
+	for _, want := range []string{
+		"--key-id=fmgd-chk68-key",
+		`gsub(" \\|\\| "; "\n")`,
+		`s/\\"/"/g`,
+		`\${var.project}`,
+		"policy-clauses.txt",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68 does not carry %q: a probe built any other way cannot produce a pass", want)
+		}
+	}
+	if strings.Contains(section, "--display-name=\"fmgd-chk68-key\"") &&
+		!strings.Contains(section, "--key-id=fmgd-chk68-key") {
+		t.Error("Check 68 creates the API key without --key-id, so its ID is server-generated and its positive action can never succeed")
+	}
+
+	// 4. The fail-closed question: named, and disowned. The section has to say
+	// in as many words that this check does not settle C7, and why — a
+	// SecretVersion is not the secret clause's type, so the read is denied for
+	// want of the permission and the condition is never evaluated.
+	for _, want := range []string{
+		"secretmanager.versions.*",
+		"What this check does not settle",
+		"stays UNVERIFIED",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68 does not carry %q", want)
+		}
+	}
+
+	// 5. The version read and the restore. The step records a denial that is a
+	// property of the roles' permission lists, the restore has to close the
 	// gate — a check that leaves it open leaves a fence in place that nothing
 	// reads.
 	for _, want := range []string{

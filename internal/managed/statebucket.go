@@ -17,7 +17,7 @@ import (
 //
 // Why dedicated, rather than a prefix of the installation's state bucket
 // (docs/design/managed-projects.md, D77, answered 2026-10-16): the deployer's
-// two custom roles deliberately hold no project-level object authority and no
+// custom roles deliberately hold no project-level object authority and no
 // project-level IAM permission, so the deployer's access to the state has to
 // be a bucket-level binding. A binding on the installation's state bucket
 // would carry the agent's apply into fugaro/installation and fugaro/firebase

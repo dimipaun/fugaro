@@ -151,11 +151,15 @@ const catalogShipped = false
 // managedDeployerShipped is false until the release that ships a managed
 // deployer IAM can actually create: 0.9.0, by the owner's ruling of
 // 2026-10-18 ("Gate it off by default; redesign for 0.9.0"). The deployer's
-// scoped role is bound under an fmgd- prefix condition that GCP rejects as
-// written (17 logical operators where IAM allows 12, resource.name.contains()
-// is not a supported function, and resource.name is not supported for most of
-// the resource types it names), so the installation module creates that role
-// and its binding only with managed_deployer_scoped, which nothing sets
+// scoped half is now seven per-service custom roles, each bound exactly once
+// under its own condition, whose 0.8.6 shape GCP rejected as written (one
+// role, 17 logical operators where IAM allows 12, resource.name.contains() is
+// not a supported function, and resource.name is not supported for most of the
+// resource types it named). The redesign is applied but unmeasured -- no test
+// can ask Google whether the seven conditions are accepted or honoured, which
+// is what Check 68 (docs/gcp-live-checklist.md) is for and it has not been run
+// -- so the installation module creates those roles and their bindings only
+// with managed_deployer_scoped, which nothing sets
 // (deploy/terraform/gcp/modules/installation/deployer.tf). While it is false,
 // every command that would create a managed project or act as its deployer
 // (fugaro init --create-project --managed, fugaro managed apply and fugaro
@@ -163,9 +167,9 @@ const catalogShipped = false
 // failing later at the apply or the impersonation.
 //
 // Flip it to true only in the release whose deployer fence has been
-// redesigned and measured live, and in that same change set
-// infra.InstallOptions.ManagedDeployerScoped for the installations that opt
-// in; docs/release.md's "Before you tag" checklist verifies it.
+// redesigned and measured live (Check 68 run and passed), and in that same
+// change set infra.InstallOptions.ManagedDeployerScoped for the installations
+// that opt in; docs/release.md's "Before you tag" checklist verifies it.
 const managedDeployerShipped = false
 
 // managedDeployerOpen is managedDeployerShipped. It is a variable only so the
@@ -176,7 +180,7 @@ var managedDeployerOpen = managedDeployerShipped
 
 // managedDisabled is the one refusal every managed entry point gives while
 // managedDeployerShipped is false.
-const managedDisabled = "managed projects are disabled in this release: the managed deployer's scoped role and its binding are not created yet (docs/design/managed-projects.md); a project created without --managed is unaffected"
+const managedDisabled = "managed projects are disabled in this release: the managed deployer's scoped roles and their bindings are not created yet (docs/design/managed-projects.md); a project created without --managed is unaffected"
 
 // refuseManagedNotShipped is managedDisabled as an error, nil once the
 // managed deployer ships.

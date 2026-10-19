@@ -404,10 +404,12 @@ func TestWriteMarkerNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 // (managedPrefixFence, deployerFenceClauses) — and a block the scan cannot
 // read is a finding. The live
 // bindings are Check 68, owner-run, because Global Constraint 12 forbids a
-// live IAM read from a test. A known residual Check 68 must look at: the
-// build account may submit builds across the project, and a build that
-// names no service account may run as the default build or compute
-// account, which this scan cannot see.
+// live IAM read from a test. A known residual no check in the tree settles
+// either: the build account may submit builds across the project, and a build
+// that names no service account may run as the default build or compute
+// account, which this scan cannot see. (Check 68 is the fence's own live
+// check and does not look at it; the transitive-reach half is Check 67, still
+// unwritten.)
 func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	// The objects at the bucket's root that a run must never write: the
 	// creation fact this task writes, and the delete list Task 1.4 will.

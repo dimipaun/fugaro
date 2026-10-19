@@ -765,11 +765,11 @@ func TestCoverRefusesACheckSpecOutsideThePin(t *testing.T) {
 
 // --- The deployer account of D75 (Task 1.5) -------------------------------
 
-// deployerRoleGolden is both roles' permission lists, permission for
+// deployerRoleGolden is every deployer role's permission list, permission for
 // permission, as deploy/terraform/gcp/modules/installation/deployer.tf writes
-// them. A widening — one permission added to either role — is a diff here and
-// in the module pin (TestRolePinsAreTheModules), so it cannot ride along on a
-// covered create.
+// them. A widening — one permission added to any of the eight roles — is a diff
+// here and in the module pin (TestRolePinsAreTheModules), so it cannot ride
+// along on a covered create.
 var deployerRoleGolden = map[string][]string{
 	DeployerRole: {
 		"apikeys.keys.create", "apikeys.keys.get", "apikeys.keys.list",
@@ -1047,7 +1047,8 @@ var deployerNameFunctions = []string{"startsWith", "endsWith", "extract"}
 // Every one of the seven conditions is inside what IAM accepts, structurally:
 // at most 12 logical operators, only supported resource.name functions, no
 // contains() anywhere, a resource.type term in every clause, and exactly the
-// nine types D75's permissions reach — each fenced by one service and no other.
+// eight types D75's scoped permissions reach — each fenced by one service and
+// no other.
 // The module's own text is pinned to these clauses by
 // TestDeployerBindingsAreTheModules, so a loosening here is a loosening there.
 func TestDeployerConditionsAreWithinWhatIAMAccepts(t *testing.T) {
@@ -1121,9 +1122,11 @@ func TestDeployerConditionsAreWithinWhatIAMAccepts(t *testing.T) {
 // extractSegment is what resource.name.extract(template) returns for name: the
 // resource's own last segment when the name has the template's shape, and ""
 // when it does not — which the condition reads as false. That reading is
-// Google's behaviour and not something this repository can check, which is why
-// it is UNVERIFIED in the design and why Check 68 measures a non-matching name
-// per service.
+// Google's behaviour and not something this repository can check: it is
+// UNVERIFIED in the design (C7), and Check 68 cannot settle it either, because
+// every conditioned type's real resource name matches its own template, so a
+// mismatching name of the same type cannot be constructed. This function is how
+// the rest of the tests model that reading, not evidence for it.
 func extractSegment(template, name string) string {
 	ts, ns := strings.Split(template, "/"), strings.Split(name, "/")
 	if len(ts) != len(ns) || len(ts) < 2 {

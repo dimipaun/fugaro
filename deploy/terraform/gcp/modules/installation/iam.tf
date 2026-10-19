@@ -100,7 +100,7 @@ resource "google_project_iam_member" "operator_build_submitter" {
 #
 # The managed apply's own credential is the impersonated deployer account
 # (D75, Task 1.5), and that account does NOT hold this role: it is created
-# with its two custom roles and nothing else (deployer.tf), and the managed
+# with its own deployer roles and nothing else (deployer.tf), and the managed
 # gate grants this role to people only (tf grantRules), so a plan cannot grant
 # it to the deployer either. The read is therefore made on the operator's own
 # credentials -- the identity this grant is for -- and a read made under the
