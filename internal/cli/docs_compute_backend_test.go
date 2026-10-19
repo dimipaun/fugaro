@@ -16,7 +16,11 @@ import (
 // docs/design/compute-backend.md), written against the tree branch
 // fugaro/20261019-140014-b55a stands on (= the branch `integration-0.9.5`, cut
 // from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
-// and this test, and no code).
+// and this test, the documents and tests a review of them corrected, and no
+// Terraform and no workflow). The one behavioural line among those corrections
+// is internal/managed/stateaccounts.go's table, which learns the compute
+// module's three types; everything else the branch adds is a comment, a test or
+// a document, and no task of this plan is built.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
@@ -804,9 +808,15 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	if !strings.Contains(doc, "**Two facts this plan is written against") {
 		t.Fatalf("%s no longer states the two facts it was written against", computeBackendPlan)
 	}
-	// The Spot claim is the brief's, and the tree does not carry it.
+	// The Spot claim is the brief's, and the tree does not carry it. It is
+	// asserted as the whole sentence rather than its prefix:
+	// "no `50001` appears anywhere under `docs/`" is the first half of a claim
+	// whose second half is what makes it true of a repository that carries the
+	// number in this very plan, so a plan that dropped "outside this plan" and
+	// kept the prefix would otherwise pass an assertion about a sentence it no
+	// longer states.
 	for _, want := range []string{
-		"`50001`", "no `50001` appears anywhere under `docs/`", "was not run",
+		"`50001`", "no `50001` appears anywhere under `docs/` outside this plan", "was not run",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer says %q about the Spot result", computeBackendPlan, want)
@@ -856,5 +866,72 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	}
 	if !strings.Contains(readDoc(t, "internal/cli/recipes_skew.go"), "is false until 0.9.0") {
 		t.Errorf("internal/cli/recipes_skew.go no longer says the Batch provisioning is false until 0.9.0: Task 9's commit is the one that changes it, so a change here means that task has landed and %s's release fact has to change with it", computeBackendPlan)
+	}
+}
+
+// computeBackendZeroNineZero is every place the tree names 0.9.0 for the work
+// this plan is about, each as the file, the line and the words that line
+// carries: the constant whose comment names the release, the refusal text it
+// feeds, the released note the refusal came from, the rerelease checklist's
+// verifying line, the Terraform pin's two lines, and the shipped-gate test's
+// assertion that the refusal says 0.9.0.
+//
+// It is a table and not a walk over the tree, because "which line names a
+// release for this work" is a reading rather than a pattern: 0.9.0 is all over
+// this tree for other features (recipes_skew.go's own sealSince, the managed
+// deployer's separate gate at tests 148-149 of shipped_gates_test.go), and a
+// search that cannot tell them apart would either miss one of these or fail on
+// one of those. What the table holds is the half a search could check anyway:
+// every line it names is read and required to carry the words, so a citation
+// that moved, a line rewritten elsewhere, and a count that drifted are all
+// failures here — which is what this fact needed after it said "two places" for
+// a tree that says it eight times.
+var computeBackendZeroNineZero = []struct {
+	file string
+	line int
+	text string
+}{
+	{"internal/cli/recipes_skew.go", 170, "batchProvisionShipped is false until 0.9.0"},
+	{"internal/cli/recipes_skew.go", 187, "it returns in 0.9.0, and the installation's ordinary steps are unaffected"},
+	{"docs/releases/v0.8.6.md", 2, "both are planned to return in 0.9.0 after a redesign"},
+	{"docs/releases/v0.8.6.md", 15, "The reaper will be redesigned for 0.9.0."},
+	{"docs/release.md", 78, "each names 0.9.0 as the release meant to ship it"},
+	{"deploy/terraform/terraform_test.go", 3103, "the reaper is redesigned for 0.9.0"},
+	{"deploy/terraform/terraform_test.go", 3108, "--provision-batch refuses until 0.9.0 (batchProvisionShipped)"},
+	{"internal/cli/shipped_gates_test.go", 87, `"batch.jobs.cancel", "0.9.0"`},
+}
+
+// The count the plan states is the table's length, in words, so the sentence
+// and the list cannot drift apart.
+var computeBackendCountWords = []string{"no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+
+// TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero: the plan's release
+// fact says the tree names 0.9.0 for this work in a stated number of places and
+// lists each by file and line, and this holds all three parts of that — the
+// count, the citations, and the lines themselves.
+func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	n := len(computeBackendZeroNineZero)
+	if n >= len(computeBackendCountWords) {
+		t.Fatalf("the table holds %d places and this test spells counts up to %d", n, len(computeBackendCountWords)-1)
+	}
+	sentence := fmt.Sprintf("**The tree names 0.9.0 for this work in %s places**", computeBackendCountWords[n])
+	if !strings.Contains(doc, sentence) {
+		t.Errorf("%s no longer states %q: the count and this table's %d entries are one fact and a reader checks them against each other", computeBackendPlan, sentence, n)
+	}
+	for _, want := range computeBackendZeroNineZero {
+		if cite := fmt.Sprintf("`%s:%d`", want.file, want.line); !strings.Contains(doc, cite) {
+			t.Errorf("%s no longer cites %s among the places the tree names 0.9.0 for this work", computeBackendPlan, cite)
+		}
+		if !strings.Contains(doc, want.text) {
+			t.Errorf("%s no longer quotes %q, the words %s:%d carries", computeBackendPlan, want.text, want.file, want.line)
+		}
+		lines := strings.Split(readDoc(t, want.file), "\n")
+		if want.line < 1 || want.line > len(lines) {
+			t.Fatalf("%s has %d lines and the plan cites line %d", want.file, len(lines), want.line)
+		}
+		if got := lines[want.line-1]; !strings.Contains(got, want.text) {
+			t.Errorf("%s:%d no longer says %q (it reads %q): the release fact lists that line, so a moved or rewritten line means the plan and this table move together — and Task 9 is the commit that retires the six of these that are not the released note's", want.file, want.line, want.text, strings.TrimSpace(got))
+		}
 	}
 }

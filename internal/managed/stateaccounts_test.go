@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -131,6 +135,53 @@ func TestStateAssetTypesAreEitherAnAssetTypeOrDeliberatelyNot(t *testing.T) {
 		if !ok || service == "" || kind == "" || strings.Contains(kind, "/") || strings.Contains(asset, " ") {
 			t.Errorf("the table maps %s to %q, which is not a Cloud Asset type", typ, asset)
 		}
+	}
+}
+
+// The table's completeness, held against the modules rather than trusted: every
+// resource type the tree's Terraform declares is a key of stateAssetTypes.
+//
+// Why this is the direction that matters: the other one (a type in the table
+// that no module declares) costs nothing, because no state holds it. A type
+// the modules declare and the table omits is the failure this test is for —
+// AccountsOfState skips it silently (its `if !ok … continue`), so every
+// resource of that type stays Foreign and Inventory.Check's answer for such a
+// project can never clear: `foreign` never empties, and Fallback is true for
+// as long as the project exists. The compute module's three types
+// (google_compute_firewall, google_compute_router, google_compute_router_nat,
+// deploy/terraform/gcp/modules/compute/network.tf) were exactly that, and the
+// compute root the Batch backend's stage applies writes its state into the
+// installation's own bucket, which managedAccounted reads with no prefix.
+//
+// The walk is the modules' own text, as tf/cover_test.go's
+// TestAllowedTypesCoverTheModules walks it for init's allowlist: a resource
+// block added to any module and left undecided here fails by name.
+func TestStateAssetTypesCoverTheModules(t *testing.T) {
+	root := filepath.Join("..", "..", "deploy", "terraform")
+	resRE := regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)"`)
+	n := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".tf") {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		n++
+		for _, m := range resRE.FindAllStringSubmatch(string(b), -1) {
+			typ := m[1]
+			if !strings.HasPrefix(typ, "google_") {
+				continue // the table translates google provider types only
+			}
+			if _, ok := stateAssetTypes[typ]; !ok {
+				t.Errorf("%s declares %s, which stateAssetTypes does not decide: its resources would stay foreign and this project's fallback would never clear", path, typ)
+			}
+		}
+		return nil
+	})
+	if err != nil || n < 10 {
+		t.Fatalf("read %d module files: %v", n, err)
 	}
 }
 
