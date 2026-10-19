@@ -378,14 +378,44 @@ function isSymlink(path: string): boolean {
  * `console.js`, `installations.js`, the served documents -- and a link at one of
  * those names would put those bytes wherever the link points, which is outside
  * `dist/bundle/` and outside everything `SERVED_FILES`, the foreign-file
- * refusal and the packaged-file list are about. Nothing else in this tool
- * touches a path it did not compute, and there is no `rm` or `unlink` anywhere
- * in it, so the write is the one place a link could matter.
+ * refusal and the packaged-file list are about.
+ *
+ * **It is half of the rule, and the directory is the other half**: a link at the
+ * *directory* the output is written into does the same thing, and reaches the
+ * write by a path this function never sees -- see `refuseSymlinkedDirectory`
+ * below.
  */
 function refuseSymlinkedOutput(path: string): void {
   if (isSymlink(path)) {
     throw new BundleRefusal(
       `${relative(process.cwd(), path)} is a symbolic link: this build writes that file itself, so following the link would put its bytes outside the served root`,
+    )
+  }
+}
+
+/**
+ * refuseSymlinkedDirectory refuses an output *directory* that is a symbolic link
+ * (review M4, second pass). `mkdirSync(directory, { recursive: true })` accepts
+ * a symlinked directory without a word, so `dist/bundle -> ../somewhere` used to
+ * build cleanly and leave the served stylesheet written outside the served root,
+ * with `bundlerOutputs` and the served-root listing agreeing about a directory
+ * neither of them had read.
+ *
+ * **What this does not check, and why.** The file and its directory are the last
+ * two components of the path this build computes, and they are the two it reads;
+ * a symlink *above* them (a `dist/` that is a link with a real `dist/bundle/`
+ * under it) is still followed. A whole-chain check would resolve the path and
+ * compare it with the literal one, and that refuses the platform's own trees: on
+ * macOS `os.tmpdir()` is under `/var`, a symlink to `/private/var`, so it would
+ * fail every planted test tree and every build made on a Mac. `dist/` is also in
+ * `.gitignore` (this repository's and the console's), so unlike the M2 symlink
+ * among the *sources*, nothing here arrives through a reviewed commit: this is
+ * the write path refusing the one-step shape a tampered working tree would take.
+ */
+function refuseSymlinkedDirectory(directory: string): void {
+  if (isSymlink(directory)) {
+    throw new BundleRefusal(
+      `${relative(process.cwd(), directory)} is a symbolic link: this build writes into that directory itself, so following the link would put the bundle outside the served root`,
     )
   }
 }
@@ -407,6 +437,7 @@ export function bundleRenderer(options: BundleOptions): void {
   const documents = documentsOf(options.entry)
   const owned = ownedInRoot(options, documents)
 
+  refuseSymlinkedDirectory(directory)
   refuseForeignFilesIn(directory, owned)
 
   const modules = moduleClosure(options.entry)
@@ -520,10 +551,14 @@ export function remoteUrlIn(css: string): string | null {
  * `content`, say -- writes the character. */
 const BACKSLASH_RE = /\\/
 
-/** QUOTED_STRING_RE matches every quoted string of a stylesheet, either mark.
- * The content excludes both marks and the newline, so a match cannot run from
- * one string into the next. */
-const QUOTED_STRING_RE = /(["'])([^"'\n]*)\1/g
+/** QUOTED_STRING_RE matches every quoted string of a stylesheet, in either
+ * mark. The body excludes its **own** mark (and the newline, so a match cannot
+ * run off the end of a line) and allows the other one, because CSS does: a
+ * single quote is an ordinary character inside a double-quoted `<string>`, and
+ * `image-set("https://cdn.example/a'b.png" 1x)` is a valid URL that a body
+ * excluding both marks could not see -- the exact silent remote load this scan
+ * was added for (review M1, second pass). */
+const QUOTED_STRING_RE = /(["'])((?:(?!\1)[^\n])*)\1/g
 
 /**
  * quotedRemoteIn is the first quoted string of a stylesheet that names a URL
@@ -536,17 +571,19 @@ const QUOTED_STRING_RE = /(["'])([^"'\n]*)\1/g
  * a scheme that leaves this machine, or the protocol-relative `//` -- so
  * `data:` and `blob:` are read the same way in both places.
  *
- * The cost is that a *string* that merely spells a URL is refused as well, the
- * same way a comment that merely spells `@import` is: the scan cannot tell a
- * load from a label, and a label that spells a URL is a label to reword. Prose
- * is the shape that reaches this: a comment line holding two apostrophes with a
- * `://` between them ("the design's order, see https://…, and the site's") reads
- * as one string to this scan, and is refused with the text quoted. That is the
- * direction it errs in, and it cannot be relaxed by skipping comments: a scan
- * that struck out comment syntax would hide an escape behind an opening comment
- * marker written *inside* a string, which is the bypass this rule exists to
- * close. So the file is reworded instead. Neither stylesheet in the tree holds
- * `://` at all.
+ * The target test is **anchored at the start of the string** (`startsWith('//')`
+ * or `REMOTE_SCHEME_RE`, which is `^`-anchored), and that is what keeps the cost
+ * narrow: a string that merely *mentions* a URL is not a URL, so
+ * `content: "see the design's notes, https://…"` passes. What is refused is a
+ * string that *begins* as a URL and is not one -- `content: "Note: hello"` reads
+ * as the scheme `Note:` -- and rewording the string is the fix. That is the whole
+ * of the false-positive surface (review M1, second pass: the prose here named a
+ * shape that does not reproduce).
+ *
+ * It cannot be relaxed by skipping comments, either: a scan that struck out
+ * comment syntax would hide an escape behind an opening comment marker written
+ * *inside* a string, which is the bypass the backslash rule exists to close.
+ * Neither stylesheet in the tree holds `://` at all.
  */
 export function quotedRemoteIn(css: string): string | null {
   for (const match of css.matchAll(QUOTED_STRING_RE)) {
@@ -684,6 +721,7 @@ export function bundleStylesheet(options: StylesheetOptions): void {
   const out = resolve(options.out)
   const directory = dirname(out)
   const sources = themeStylesheetSources(options.directory)
+  refuseSymlinkedDirectory(directory)
   mkdirSync(directory, { recursive: true })
   refuseSymlinkedOutput(out)
   writeFileSync(out, stylesheetText(sources))
@@ -743,14 +781,14 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
  * is a function rather than three lines in the entry point below because the
  * **order** is a claim a test has to be able to make (review M3).
  *
- * The order is: the served root's foreign-file refusal, then the stylesheet, then
- * the two renderer bundles. The refusal comes first because it is the one that
- * can stop the build, and a build that stops must not have written anything: with
- * the stylesheet first, a foreign file in `dist/bundle/` was a build failure that
- * nonetheless left a fresh `console.css` behind. That was harmless -- a failed
- * build is not packaged -- but the header's claim that "a refusal there should
- * not leave half a bundle behind" only held one way round, and the difference
- * between the two orders is a line.
+ * The order is: the served root's symlink and foreign-file refusals, then the
+ * stylesheet, then the two renderer bundles. They come first because they are the
+ * ones that can stop the build, and a build that stops must not have written
+ * anything: with the stylesheet first, a foreign file in `dist/bundle/` was a
+ * build failure that nonetheless left a fresh `console.css` behind. That was
+ * harmless -- a failed build is not packaged -- but "a refusal must not leave
+ * half a bundle behind" held one way round only, and the difference between the
+ * two orders is a line.
  *
  * Everything else in the step is unchanged: the stylesheet's own refusals are
  * about the theme *sources* and are already asked before it writes.
@@ -765,7 +803,9 @@ export function buildConsole(consoleRoot: string): void {
   for (const bundle of bundles) {
     for (const name of ownedInRoot(bundle, documentsOf(bundle.entry))) owned.add(name)
   }
-  refuseForeignFilesIn(dirname(resolve(first.out)), owned)
+  const directory = dirname(resolve(first.out))
+  refuseSymlinkedDirectory(directory)
+  refuseForeignFilesIn(directory, owned)
 
   bundleStylesheet(consoleStylesheet(consoleRoot))
   for (const bundle of bundles) bundleRenderer(bundle)

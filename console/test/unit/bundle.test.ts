@@ -667,6 +667,23 @@ describe('the bundler', () => {
     })
   })
 
+  it('refuses to write its bundle into a symlinked directory (review M4)', () => {
+    // The same half as the stylesheet's case, on the renderer's step: the
+    // served root itself is the link, so `readdirSync` would list the target's
+    // contents and the foreign-file refusal would be answering about the wrong
+    // directory before the write landed there.
+    withPlanted({ 'entry.js': `'use strict';\n` }, (root) => {
+      const outside = join(root, 'outside')
+      mkdirSync(outside, { recursive: true })
+      mkdirSync(join(root, 'dist'), { recursive: true })
+      symlinkSync(outside, join(root, 'dist', 'bundle'))
+      expect(() => {
+        bundleRenderer(pathsOf(root))
+      }).toThrow(/is a symbolic link/)
+      expect(readdirSync(outside)).toEqual([])
+    })
+  })
+
   it('refuses a package that is not the console', () => {
     withPlanted({ 'entry.js': `'use strict';\n` }, (root) => {
       expect(() => consoleRootHere(root)).toThrow(BundleRefusal)
@@ -888,6 +905,26 @@ describe('the stylesheet step', () => {
     })
   })
 
+  it('refuses to write the stylesheet into a symlinked directory (review M4)', () => {
+    // The other half of the case above, and the one the file check alone leaves
+    // open: `mkdirSync(directory, { recursive: true })` accepts a symlinked
+    // directory without a word and the write then lands on the link's target, so
+    // `dist/bundle -> ../outside` used to build cleanly and leave the served
+    // stylesheet outside the served root. The link here is at the directory the
+    // output goes into, exactly as in the reproduction.
+    withPlantedStylesheet(themeFiles(), (options) => {
+      const root = join(options.directory, '..', '..', '..')
+      const outside = join(root, 'outside')
+      mkdirSync(outside, { recursive: true })
+      mkdirSync(dirname(dirname(options.out)), { recursive: true })
+      symlinkSync(outside, dirname(options.out))
+      expect(() => {
+        bundleStylesheet(options)
+      }).toThrow(/is a symbolic link/)
+      expect(existsSync(join(outside, 'console.css'))).toBe(false)
+    })
+  })
+
   it('refuses a listed file the theme directory does not hold', () => {
     // The mutation: a rename, or a list that ran ahead of the files. Either
     // way a layer of the cascade would silently vanish from the artefact.
@@ -1004,6 +1041,13 @@ describe('the stylesheet step', () => {
       'image-set("https://cdn.example/x.png" 1x)',
       '-webkit-image-set("//cdn.example/x.png" 2x)',
       "'http://cdn.example/x.png'",
+      // The mark that is *not* the string's own is an ordinary character inside
+      // it, so a body that excluded both marks could not see this one -- and
+      // neither `url()` scan nor the at-rule scan sees it either, so the load
+      // would reach `console.css` and be blocked at paint (review M1, second
+      // pass).
+      'image-set("https://cdn.example/a\'b.png" 1x)',
+      "-webkit-image-set('//cdn.example/a\"b.png' 2x)",
     ]) {
       withPlantedStylesheet({ ...themeFiles(), [name]: `${real}\n.a { background-image: ${remote}; }\n` }, (options) => {
         expect(() => {
@@ -1013,11 +1057,16 @@ describe('the stylesheet step', () => {
     }
     // The control: a quoted string with no scheme is a string, and the `data:`
     // URL the `url()` scan admits is admitted here too -- the two scans read a
-    // target the same way, which is `REMOTE_SCHEME_RE`.
+    // target the same way, which is `REMOTE_SCHEME_RE`. The second string is the
+    // false positive's edge, stated rather than implied: the target test is
+    // anchored at the string's start, so a string that merely *mentions* a URL
+    // is not refused. (A string that *begins* as a URL and is not one --
+    // `content: "Note: hello"`, which reads as the scheme `Note:` -- is refused,
+    // and that is the whole of the false-positive surface.)
     withPlantedStylesheet(
       {
         ...themeFiles(),
-        [name]: `${real}\n.a { content: "attention"; background: url("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"); }\n`,
+        [name]: `${real}\n.a { content: "attention"; background: url("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"); quotes: "it's" "see the design's notes, https://example.com/x"; }\n`,
       },
       (options) => {
         expect(() => {
@@ -1067,6 +1116,15 @@ describe('the stylesheet step', () => {
     // content, both marks, and the same two remote tests as the `url()` scan.
     expect(quotedRemoteIn('.a { background: image-set("https://x/y.png" 1x); }')).toBe('"https://x/y.png"')
     expect(quotedRemoteIn(".a { background: image-set('//x/y.png' 1x); }")).toBe("'//x/y.png'")
+    // The other mark is legal inside the string, so the body allows it: this is
+    // the spelling a body excluding both marks read as no string at all.
+    expect(quotedRemoteIn('.a { background: image-set("https://x/a\'b.png" 1x); }')).toBe('"https://x/a\'b.png"')
+    expect(quotedRemoteIn(".a { background: image-set('//x/a\"b.png' 1x); }")).toBe("'//x/a\"b.png'")
+    // The two ends of the false-positive surface: a string that merely mentions
+    // a URL passes (the target test is anchored at its start), and one that
+    // begins as a URL and is not one is refused.
+    expect(quotedRemoteIn('.a { content: "see the design\'s notes, https://x/y"; }')).toBeNull()
+    expect(quotedRemoteIn('.a { content: "Note: hello"; }')).toBe('"Note: hello"')
     expect(quotedRemoteIn('.a { content: "attention"; }')).toBeNull()
     expect(quotedRemoteIn('.a { background: url("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"); }')).toBeNull()
     expect(quotedRemoteIn('a { background: url(./y.png); }')).toBeNull()
@@ -1147,6 +1205,19 @@ describe('the order the build’s steps run in', () => {
         'the build refused a foreign file after writing console.css: the foreign-file check must run before the first write',
       ).toBe(false)
       expect(existsSync(join(root, 'dist', 'bundle', 'console.js'))).toBe(false)
+    })
+
+    // And the second thing the pre-write half refuses: the served root itself as
+    // a symlink, before `refuseForeignFilesIn` reads it and before any write.
+    // (`refuseForeignFilesIn` would happily answer about the link's target.)
+    withPlantedConsole({}, (root) => {
+      const outside = join(root, 'dist', 'outside')
+      mkdirSync(outside, { recursive: true })
+      symlinkSync(outside, join(root, 'dist', 'bundle'))
+      expect(() => {
+        buildConsole(root)
+      }).toThrow(/is a symbolic link/)
+      expect(readdirSync(outside)).toEqual([])
     })
   })
 })

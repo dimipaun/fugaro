@@ -2821,9 +2821,16 @@ The quoted-string scan is separate from the `url()` one because `image-set()` an
 writes `url(`: `image-set("https://cdn.example/x.png" 1x)` is a request the `url()` scan and
 the at-rule scan both miss. Both scans read a target the same way — a scheme that leaves
 this machine, or the protocol-relative `//` — and the `url()` scan runs first, so a quoted
-`url('http://…')` is refused as the call that made the request. The cost is the scan's
-usual one: a string that merely *spells* a URL is refused too, and a label that spells one
-is a label to reword.
+`url('http://…')` is refused as the call that made the request. A quoted `<string>` may hold
+the *other* mark inside it, because CSS allows it — `image-set("https://cdn.example/a'b.png"
+1x)` is a valid URL — and the scan reads it as one.
+
+The target test is **anchored at the start of the string**, which is what keeps the cost
+narrow: a string that merely *mentions* a URL is not a URL, so `content: "see the design's
+notes, https://…"` passes. What is refused is a string that *begins* as a URL and is not one
+— `content: "Note: hello"` reads as the scheme `Note:` — and the fix is to reword the string.
+That is the whole of the false-positive surface, and it is the direction the tool errs in
+everywhere else.
 
 `url(./mark.png)` and `url(data:...)` are admitted — a path on this origin, and a byte
 string rather than a request (`img-src 'self' data:` allows the second). Two asymmetries
