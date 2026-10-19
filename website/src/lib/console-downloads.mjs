@@ -28,6 +28,28 @@
 // branch, so an unreleased console has no link to follow even though its asset names are
 // already in the data file.
 //
+// **The checksums are held to the release's own sums file.** A checksum is a fact about bytes,
+// and no build can compute it: the one thing a reader of `downloads.json` cannot check is
+// whether a well-formed value is the value the release published. So the release's own
+// `console-sha256sums.txt` — the file the console's workflow uploads beside the two artifacts,
+// whose bytes are copied verbatim into `data/console-sha256sums.txt` when the console's release
+// is turned on — is read here, and every entry's `sha256` has to be the value that file records
+// for the entry's published name. That is what makes a wrong checksum a build error rather than
+// a page that prints a number nothing can match: the cross-check is the release's, and a
+// value that disagrees with it is refused by name.
+//
+// **And the name a reader's link carries is not the name the release's own files print.** GitHub
+// rewrites a space in an uploaded asset's name to a dot: the build writes
+// `Fugaro Console-0.8.7-universal.dmg` on the runner, the release's sums file and its
+// verification record both print that name, and the release page serves the file as
+// `Fugaro.Console-0.8.7-universal.dmg`. So the data file carries the *release's* name — the one
+// its own sums file lists, which is what the checksum above is keyed by — and the URL's last
+// segment is derived from it by `publishedName` below. This is the one fact about the console's
+// release that nothing in this tree can record, because the rename happens after the artifacts
+// leave the runner; it is stated once, there, and confirmed against the published release by the
+// owner's live check (`docs/gcp-live-checklist.md`, check 69a). Getting it wrong is not a
+// cosmetic bug: a link spelled with the build's own name is a 404 for every reader.
+//
 // Standard library only, and no network: this module is imported by the build, and it
 // fetches nothing (Global Constraints 4 and 8).
 
@@ -37,15 +59,87 @@ import path from 'node:path'
 /** The file these facts live in, as every message below names it. */
 export const DOWNLOADS_FILE = 'website/content/downloads.json'
 
+/**
+ * The release's own sums file, as every message about a checksum names it: the console
+ * workflow uploads it beside the two artifacts (`gh release create … console-sha256sums.txt`),
+ * and the copy under `website/data/` is byte-for-byte the published one.
+ */
+export const SUMS_FILE = 'website/data/console-sha256sums.txt'
+
 /** The placeholder an asset's `file` carries where the release's version goes. */
 const VERSION_PLACEHOLDER = '{version}'
 
 /**
- * A build error naming the data file, the way `content.ts` names the file it refused: the
- * reader of the message is whoever just edited `downloads.json`.
+ * The name the release serves an asset under, which is the name the URL's last segment has to
+ * carry: GitHub rewrites a space in an uploaded asset's name to a dot, so the file the build
+ * writes as `Fugaro Console-0.8.7-universal.dmg` — the name the release's own
+ * `console-sha256sums.txt` and `console-verification.txt` print — is served, and linked to, as
+ * `Fugaro.Console-0.8.7-universal.dmg`.
+ *
+ * This is the whole of the rule, and it is stated here rather than read from anywhere because
+ * nothing in this tree can carry it: the rename happens on GitHub, after the artifacts leave the
+ * runner, so no document, workflow or checksum list in the repository records it. It was
+ * confirmed against the published `console-v0.8.7` release (2026-10-19: the release's own asset
+ * list carries the dotted names, the dotted URL answers 200 and the `%20` one 404), and the
+ * owner's live check re-confirms it — `docs/gcp-live-checklist.md` check 69a follows every URL
+ * the pages carry. A link that skipped this step is a 404 for every reader, which is what
+ * `website/test/console.mjs` refuses.
  */
-function refuse(message) {
-  throw new Error(`${DOWNLOADS_FILE}: ${message} (W1.6 steps 1 and 2).`)
+function publishedName(file) {
+  return file.split(' ').join('.')
+}
+
+/**
+ * A build error naming the data file, the way `content.ts` names the file it refused: the
+ * reader of the message is whoever just edited `downloads.json`. The task the rule comes from
+ * is W1.6, which wrote the file and its first refusals, unless the caller names another — the
+ * checksum cross-check below is W3.1's, and a message carrying both tags would name the wrong
+ * one twice.
+ */
+function refuse(message, task = 'W1.6 steps 1 and 2') {
+  throw new Error(`${DOWNLOADS_FILE}: ${message} (${task}).`)
+}
+
+/** A build error about the release's sums file, named the way the file is. */
+function refuseSums(message) {
+  throw new Error(`${SUMS_FILE}: ${message} (W3.1).`)
+}
+
+/**
+ * The release's published checksums, read from the sums file the release carries: one
+ * `<64 hex>  <published name>` line per asset, which is the shape `sha256sum` writes and
+ * `shasum -a 256 -c` reads. A line of any other shape is refused rather than skipped — a
+ * skipped line is an asset the cross-check below would silently stop covering — and the file
+ * is required to be non-empty, because a sums file with nothing in it would make every
+ * check below vacuous.
+ */
+function releaseSums(siteRoot) {
+  const file = path.join(siteRoot, 'data', 'console-sha256sums.txt')
+  if (!existsSync(file)) {
+    refuseSums(
+      'is missing: it is the release\'s own checksum list, uploaded beside the two artifacts, and the copy here is what the checksums in the data file are held to. A console release is turned on with it (W3.1)',
+    )
+  }
+  const raw = readFileSync(file, 'utf8')
+  const sums = new Map()
+  for (const [index, line] of raw.split('\n').entries()) {
+    if (line === '') continue
+    const match = /^([0-9a-f]{64}) {2}(.+)$/.exec(line)
+    if (!match) {
+      refuseSums(
+        `line ${index + 1} is ${JSON.stringify(line)}, and the file the release publishes is one "<64 hex>  <name>" line per asset — the shape sha256sum writes and shasum -a 256 -c reads. A line this file cannot read is an asset nothing below covers`,
+      )
+    }
+    const [, sha256, name] = match
+    if (sums.has(name)) {
+      refuseSums(`names ${JSON.stringify(name)} twice (line ${index + 1}), and one published name has one checksum`)
+    }
+    sums.set(name, sha256)
+  }
+  if (sums.size === 0) {
+    refuseSums('carries no checksum line, so every asset below would be checked against nothing')
+  }
+  return sums
 }
 
 function asMap(value, what) {
@@ -79,9 +173,9 @@ function asClaim(value, what) {
 }
 
 /**
- * The published name of one asset, with the release's version substituted, and the URL a
- * reader downloads it from — composed from the site's own repository, the release's tag and
- * the published name, and never written down (see the header).
+ * The URL a reader downloads one asset from — composed from the site's own repository, the
+ * release's tag and the name the release SERVES the asset under, and never written down (see
+ * the header and `publishedName`).
  */
 function downloadURL(repository, tag, file) {
   const base = repository.replace(/\/+$/, '')
@@ -131,7 +225,7 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
   }
 
   const doc = asMap(parsed, 'the document')
-  const allowed = ['version', 'available', 'name', 'what', 'not_released', 'properties', 'release', 'downloads']
+  const allowed = ['version', 'available', 'name', 'what', 'released', 'not_released', 'properties', 'release', 'downloads']
   for (const key of Object.keys(doc)) {
     if (!allowed.includes(key)) {
       refuse(
@@ -152,7 +246,8 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
   // reverse.
   if (available !== flagFromSiteYAML) {
     refuse(
-      `available is ${available} and website/data/site.yaml's features.console_downloads is ${flagFromSiteYAML}. The console's release flips both in one commit, and the site cannot render a console that has shipped while the repository's own rule still refuses its download URL (W3.1, Global Constraint 9)`,
+      `available is ${available} and website/data/site.yaml's features.console_downloads is ${flagFromSiteYAML}. The console's release flips both in one commit, and the site cannot render a console that has shipped while the repository's own rule still refuses its download URL`,
+      'W3.1, Global Constraint 9',
     )
   }
 
@@ -204,6 +299,21 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     return { tagPrefix, version, tag: `${tagPrefix}${version}`, source: asText(map.source, 'release.source') }
   })()
 
+  // What the section says once the console has shipped: the platform, the signing
+  // and notarisation, the CLI-first rule, and the command a reader checks a
+  // download with. The checksums themselves are per asset (below), because a
+  // checksum is a fact about one file rather than about the release.
+  const released = (() => {
+    const map = asMap(doc.released, 'released')
+    for (const key of Object.keys(map)) {
+      if (!['text', 'verify', 'source'].includes(key)) {
+        refuse(`released carries the key "${key}", and the console's released state is the sentence a page renders, the command that verifies a download and the source of both`)
+      }
+    }
+    const claim = asClaim({ text: map.text, source: map.source }, 'released')
+    return { ...claim, verify: asText(map.verify, 'released.verify') }
+  })()
+
   const notReleased = (() => {
     const map = asMap(doc.not_released, 'not_released')
     for (const key of Object.keys(map)) {
@@ -217,6 +327,11 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     }
   })()
 
+  // The release's own published checksums, read before the entries below are: each entry's
+  // `sha256` is held to the value this file records for its published name, which is the one
+  // check that can tell a wrong checksum from a right one without the network.
+  const sums = releaseSums(siteRoot)
+
   const downloads = (() => {
     if (!Array.isArray(doc.downloads)) {
       refuse('downloads is not a list, and each page renders one link per entry when the console has shipped')
@@ -227,9 +342,9 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
         // `url` is refused by name rather than ignored: a URL in this file is the defect the
         // Go boundary test scans the whole site for, and it would be a URL nothing keeps in
         // step with the release the names below are cut from.
-        if (!['id', 'platform', 'file'].includes(key)) {
+        if (!['id', 'platform', 'file', 'sha256'].includes(key)) {
           refuse(
-            `downloads[${index}] carries the key "${key}", and a download is an id, the platform it is for and the published name of the asset it is: the URL is derived from those and never written down (Global Constraint 9)`,
+            `downloads[${index}] carries the key "${key}", and a download is an id, the platform it is for, the published name of the asset it is and the SHA-256 of the bytes the release published: the URL is derived from those and never written down (Global Constraint 9)`,
           )
         }
       }
@@ -245,16 +360,55 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
           `downloads[${index}].file is ${JSON.stringify(asset)} and carries no ${VERSION_PLACEHOLDER}: the published name carries the tag's version, and a name with no version in it is one the next release does not publish`,
         )
       }
+      // The checksum of the bytes the release published, as `console-sha256sums.txt`
+      // records them. It is written as 64 lowercase hex digits and nothing else,
+      // because it is printed beside the link for a reader to check a download with:
+      // a truncated, uppercased or non-hex value is a checksum `shasum -a 256 -c`
+      // can never match, and a page that prints one is worse than a page that prints
+      // none. The shape is not the whole check — a well-formed value can still be the
+      // wrong one — and the release's own sums file is what settles that, below.
+      const sha256 = asText(map.sha256, `downloads[${index}].sha256`)
+      if (!/^[0-9a-f]{64}$/.test(sha256)) {
+        refuse(
+          `downloads[${index}].sha256 is ${JSON.stringify(sha256)}, which is not 64 lowercase hex digits: the checksum is what a reader compares a download against with shasum -a 256, so a value of any other shape is one nothing can ever match`,
+        )
+      }
       const published = asset.split(VERSION_PLACEHOLDER).join(release.version)
+      // The release's own checksum for the published name, which is what makes the value
+      // above checkable: a well-formed checksum is one a reader can compare a download
+      // against, and the release's sums file is the only thing that says WHICH value is the
+      // right one. A name the release does not publish is refused here too — it is the same
+      // mistake, an entry naming an asset the release does not carry.
+      const recorded = sums.get(published)
+      if (recorded === undefined) {
+        refuse(
+          `downloads[${index}].file is ${JSON.stringify(asset)}, which the release's own checksum list (${SUMS_FILE}) does not name: the file is the published name of an asset of ${release.tag}, and a name the release does not publish is a download that 404s (D11)`,
+          'W3.1',
+        )
+      }
+      if (recorded !== sha256) {
+        refuse(
+          `downloads[${index}].sha256 is ${JSON.stringify(sha256)} and ${SUMS_FILE} records ${JSON.stringify(recorded)} for ${JSON.stringify(published)}: the release's own file is what the checksum is checked against, and a value that disagrees with it is a checksum that fails for every reader who checks their download`,
+          'W3.1',
+        )
+      }
+      // The release's own name is the sums file's key; the name a reader's link carries is the
+      // one GitHub serves, and the one step between them is `publishedName` (its comment has
+      // the rule and the evidence for it).
+      const served = publishedName(published)
       return {
         id: asText(map.id, `downloads[${index}].id`),
         platform,
+        sha256,
         // What a reader sees on the button: the platform, and the asset's own extension, so
         // two assets of one platform — the disk image and the archive — are told apart
         // without a second fact to keep in step with the file name.
         label: `${platform} ${path.extname(published)}`,
-        file: published,
-        url: downloadURL(repository, release.tag, published),
+        // The name the release SERVES, which is the URL's last segment and the name a reader's
+        // browser saves the file as: the data file carries the release's own name, and
+        // `publishedName` is the one step between the two.
+        file: served,
+        url: downloadURL(repository, release.tag, served),
       }
     })
   })()
@@ -267,6 +421,7 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     available,
     name: asText(doc.name, 'name'),
     what: asClaim(doc.what, 'what'),
+    released,
     notReleased,
     properties,
     release,

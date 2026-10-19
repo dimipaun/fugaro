@@ -20,9 +20,10 @@
 // them (the homepage's order and run animation, P4, P7 and P8) together with its two changes
 // from the owner's brief of **2026-10-19**: the menu's drawer replaced by the three group
 // labels in the header's row (item 1), and the console's link in the homepage's call to
-// action (item 6), which renders nothing while its flag is off and so is no bytes of this
-// build at all — plus 25 %, which is D192's rule and the rule the README's loose figures are
-// three times.
+// action (item 6), which renders from the console's flag — and the console's release (W3.1),
+// which turned that flag on and so put the link, the console's downloads and Getting Started's
+// console option into this build — plus 25 %, which is D192's rule and the rule the README's
+// loose figures are three times.
 //
 // The count below is read off **the gates' own build of the site**, which is the artifact the
 // derivation case at the end of this file measures (see "the build the README's figures are a
@@ -31,8 +32,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 976,349 bytes where this repository's own clone, which carries the
-// tags, builds 974,834.
+// deployed site's — builds 977,921 bytes where this repository's own clone, which carries the
+// tags, builds 976,406.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -67,7 +68,7 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,220,437 bytes. Every file in `dist/` on that build summed to 976,349
+//   - Whole site: 1,222,402 bytes. Every file in `dist/` on that build summed to 977,921
 //     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
 //     `fugaro watch` assets); × 1.25, rounded up. **It is the build with no tags** — the one
 //     the gates make, and the one the deployed site is — and the changelog page's own "not yet
@@ -92,18 +93,26 @@
 //     the chat nor the screenshot — the homepage goes from 94,007 to 224,839 bytes, and is
 //     still not the one the ceiling is derived from. The script's 39,779 bytes and its
 //     49,724-byte figure were untouched by that round.
-//   - **This branch's menu (item 1), and the review round after it**, measured against that
-//     build file by file. Taking the drawer out — the "Menu" toggle, the panel it opened and
-//     the sibling combinator that showed it — leaves each of the eleven pages **278 bytes
-//     lighter**, the base stylesheet every one of them inlines being that much shorter, and
-//     takes **181 bytes off the script**. The review round then put the script's own comments
-//     back in step with the menu, three of them still describing the retired drawer, which is
-//     **290 bytes onto the script** — comments are part of the file the browser fetches. So
-//     the script is 39,779 → **39,888** (the two rounds together: −181 and +290) and the site
-//     figure 979,298 → **976,349**, the eleven pages' 3,058 and the script's 109. The page
-//     weight moves with the script and the stylesheet both, 267,095 → **266,926**: the docs hub
-//     inlines the stylesheet (−278) and fetches the script (+109). Nothing else in the artifact
-//     moved — the console's link is behind a flag this build has off.
+//   - **The menu (item 1), and the review round after it**, measured against that build file
+//     by file. Taking the drawer out — the "Menu" toggle, the panel it opened and the sibling
+//     combinator that showed it — leaves each of the eleven pages **278 bytes lighter**, the
+//     base stylesheet every one of them inlines being that much shorter, and takes **181 bytes
+//     off the script**. The review round then put the script's own comments back in step with
+//     the menu, three of them still describing the retired drawer, which is **290 bytes onto
+//     the script** — comments are part of the file the browser fetches. So the script is
+//     39,779 → **39,888** (the two rounds together: −181 and +290) and the site figure
+//     979,298 → 976,349, the eleven pages' 3,058 and the script's 109. The page weight moves
+//     with the script and the stylesheet both, 267,095 → **266,926**: the docs hub inlines the
+//     stylesheet (−278) and fetches the script (+109). Nothing else in the artifact moved in
+//     that round — the console's link was behind a flag that build had off.
+//   - **The console's release turned `features.console_downloads` on** (W3.1), and moved the
+//     site figure alone, 976,349 → **977,921**, by **1,572 bytes**: the console page's downloads
+//     section — each artifact's published name as a link, the SHA-256 the release recorded for
+//     its bytes beside it, and the command that checks a download against the release's own
+//     sums file — at 1,100, the console option's own markup on Getting Started at 386, and the
+//     homepage call to action's link to the console at 86. The page weight and the
+//     script did not move with it: the heaviest page is the docs hub, which renders no install
+//     option, no download and no hero.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -553,17 +562,19 @@ test('the README budget lines are read strictly', () => {
 //
 // **Which build the number names is a build whose bytes are the same in every checkout**, and
 // that is the correction of 2026-10-19 (`website/README.md` states the same figures and the same
-// reason). The merge of `main` into the redesign brought a second artifact with it —
-// `console-option.mjs` builds the site with the console's flag flipped and runs the artifact
-// gates over that copy to prove the flip is safe — and a derivation held to that one would be
-// the flag's own bytes rather than the site's: measured on this build, **622 bytes** at the site
-// figure — the console option's markup on the three pages that render it: the homepage's call to
-// action 86, the console page's downloads 146 and Getting Started's option 390 — and nothing at
-// all at the page weight. The checkout's own `dist/` is the other artifact
-// the numbers may not name, because its git state moves it by 1,515 bytes (the changelog's "not
-// yet released" labels, above). What is left is the gates' own build: a copy of the repository
-// with no `.git`, made by `test/lib/build.mjs`'s `buildCopy`, which is what the case below
-// measures (`documentedBuild`).
+// reason). `console-option.mjs` builds the site with the console's flag flipped — the state the
+// site was in before the console's release, which the checkout no longer builds — and runs the
+// artifact gates over that copy, so the flag's two states are both held to the ceilings. A
+// derivation held to that copy would be the flag's own bytes rather than the site's: measured on
+// this build, **1,572 bytes smaller** at the site figure — 976,349 against the 977,921 below — the
+// console option's markup on the three pages that render it (the console page's downloads
+// 1,100, Getting Started's option 386 and the homepage's call to action 86), and
+// nothing at all at the page weight. The direction is the flag's own: turning
+// `features.console_downloads` on added those bytes, so the copy that flips it back off is the
+// smaller build. The checkout's own `dist/` is the other artifact the numbers may not name,
+// because its git state moves it by 1,515 bytes (the changelog's "not yet released" labels,
+// above). What is left is the gates' own build: a copy of the repository with no `.git`, made by
+// `test/lib/build.mjs`'s `buildCopy`, which is what the case below measures (`documentedBuild`).
 const DERIVATIONS = {
   js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
   page: /\*\*Page weight per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the heaviest page[\s\S]*? at ([\d,]+) bytes/,
@@ -601,18 +612,21 @@ export function derivationFailures(readme, measured) {
  * It is deliberately not `DIST`, and the difference is the whole of why this is a build of its
  * own rather than the artifact the run was pointed at. `FUGARO_GATES_DIST` is the mechanism the
  * gates document for reading another artifact, and the case that uses it — `console-option.mjs`'s
- * released build — is a DIFFERENT build rather than another copy of this one: flipping
- * `features.console_downloads` adds the console option's markup to the three pages that render it,
- * measured at 622 bytes on that copy's site figure (the homepage's call to action 86, the console
- * page's downloads 146 and Getting Started's option 390). The derivation is not held to it.
+ * build with the console's flag flipped off, the state the checkout no longer builds — is a
+ * DIFFERENT build rather than another copy of this one: flipping `features.console_downloads`
+ * adds the console option's markup to the three pages that render it (the console page's
+ * downloads 1,100, Getting Started's option 386 and the homepage's call to action 86),
+ * measured at 1,572 bytes on that copy's site figure — and it is the SMALLER of the two, since the
+ * copy is the flag-off state and this build is the flag-on one. The derivation is not held to
+ * it.
  *
  * Nor is it held to `website/dist`, which `npm run check` builds first — and that is the
  * correction this reading carries (2026-10-19). `dist/` is the site built from the checkout the
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 976,349 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 974,834 with the tags this
+ * builds to two different site figures — 977,921 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 976,406 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation

@@ -1,25 +1,23 @@
-// website/test/console-option.mjs — the console, offered from the site's own pages (the
-// owner's changes spec of 2026-10-18, item 6, and — for the homepage's call to action — the
-// owner's brief of 2026-10-19, item 6).
+// website/test/console-option.mjs — the console, offered on Getting Started (the owner's
+// changes spec of 2026-10-18, item 6).
 //
 // Getting Started presents installation as two options side by side: the CLI — the install
 // paths `install.yaml` carries, the Homebrew cask first, each command with its copy control —
 // and the desktop console, whose downloads a reader can reach without leaving the page. The
 // acceptance is exactly that: "from Getting Started a user can install either the CLI or the
 // console without leaving the page" — and, while `features.console_downloads` is false, that
-// the console option offers nothing to download at all.
+// the console option offers nothing to download at all. This checkout ships the flag TRUE (the
+// console's `console-v0.8.7` release turned it on), so the unreleased state is one the cases
+// below build a copy of the repository into rather than the state `npm run check` builds.
 //
 // **The homepage's call to action is the other place the flag decides** (the owner's brief of
-// 2026-10-19, item 6: the console is findable from the home page's call to action; the 2026-10-18
-// spec's own item 6 is the Getting Started option above, which is not this). The hero's row of links gains the way to
-// `/console/` when the flag is true and carries nothing about the console when it is false —
-// the flag-off half is `home.mjs`'s, read off the build `npm run check` makes, and the
-// flag-on half is the case below, read off the copy with the flag flipped.
+// 2026-10-19, item 6: the console is findable from the home page's call to action; the
+// 2026-10-18 spec's own item 6 is the Getting Started option above, which is not this). The
+// hero's row of links gains the way to `/console/` when the flag is true and carries nothing
+// about the console when it is false. Both halves are the case below: the flag-on half read
+// off the build `npm run check` makes, the flag-off half off the unreleased copy.
 //
-// Six things are checked here, and the last four build a copy of the site with the flag
-// FLIPPED, because the state the owner's flip produces is not the state `npm run check`
-// builds: a gate that only ever saw the flag-off page would say nothing about the day the
-// console ships.
+// Six things are checked here:
 //
 //   1. **Two options, CLI first.** `#install` holds a `cli` option and a `console` option, in
 //      that order — the order the stacked layout renders at 390 px — and the CLI option is
@@ -29,32 +27,38 @@
 //   2. **The unreleased console offers nothing.** No `releases/download/` URL anywhere on the
 //      page, and inside the console option exactly one link — the way to `/console/` — and no
 //      button. This is the rule the Go boundary test enforces over the whole tree while the
-//      flag is false (Global Constraint 9), read off the page a reader gets.
+//      flag is false (Global Constraint 9), read off the page a reader gets — and the page is
+//      the flag-off one this case builds, because that is the state the rule is about.
 //   3. **The released console offers the release's own assets.** With `site.yaml`'s flag and
-//      the data file's `available` both true, the option renders one link per published asset
-//      of `console-vX.Y.Z`, at the URL derived from the repository, the tag and the published
-//      name — the same URLs the console page's section renders, from the same reader — and
-//      the CLI option is untouched. That last part is the point of deriving the URLs: the
-//      flip is the whole change, so it must not move anything else.
-//   4. **The released homepage offers the console from its call to action** (the owner's brief
-//      of 2026-10-19, item 6). With the flag
-//      true the hero's row of links carries one more link — the way to `/console/`, labelled
-//      the way Getting Started's option labels the console — and the two links a reader met
-//      before the release are the two they meet after it, in the same order.
-//   5. **The flag-on build passes the gates that read the artifact.** The two-option page is
-//      eight words longer than the one-option page, and Getting Started sits close to D188's
-//      250-word ceiling, so the budget gate is run over the flag-on build rather than assumed:
-//      the owner's flip is a one-line change, and it may not be the change that breaks the
-//      ceiling. The homepage gains two words with it, and the same run holds its lead and its
-//      whole page to their ceilings.
-//   6. **A flag and an `available` that disagree stop the build.** While the repository's own
-//      rule says the console is unreleased, a data file that says it has shipped is refused,
-//      naming both files: rendering downloads requires the flag, not only the data file.
+//      the data file's `available` both true — the state this checkout ships, so the build is
+//      the copy with nothing mutated — the option renders one link per published asset of
+//      `console-vX.Y.Z`, at the URL derived from the repository, the tag and the name the
+//      release serves — the same URLs the console page's section renders, from the same
+//      reader — and the CLI option is untouched. That last part is the point of deriving the
+//      URLs: the flip is the whole change, so it must not move anything else.
+//   4. **The homepage offers the console from its call to action only while the flag is on**
+//      (the owner's brief of 2026-10-19, item 6). With the flag true — the build `npm run
+//      check` makes — the hero's row of links carries one more link, the way to `/console/`,
+//      labelled the way Getting Started's option labels the console; with the flag false —
+//      the unreleased copy — the row is the two links a reader met before the release and
+//      says nothing about the console at all. The two links are the same, in the same order,
+//      in both states.
+//   5. **The unreleased build passes the gates that read the artifact.** The flag adds the
+//      option's own markup and words to a page that sits close to D188's 250-word ceiling, so
+//      the artifact gates are run over the flag-off build rather than assumed: the state the
+//      site was in before the console's release is held to the same ceilings, and a change
+//      that fits only one of the two states is a change that breaks the other.
+//   6. **A flag and an `available` that disagree stop the build.** Whichever way round they
+//      disagree — the data file claiming the console shipped under a flag that says it has
+//      not, or a flag that has promised a release under a data file that still says there is
+//      none — the build refuses the pair, naming both files: the two are one fact, and the
+//      site may not render one state while the other says the opposite.
 //
 // The page is read through the same HTML reader the other gates use (`lib/html.mjs`), and the
 // console's facts through `lib/console-downloads.mjs`, so this file carries no second spelling
-// of a URL. The flag-on builds happen in a copy of the repository in a temp directory
-// (`lib/build.mjs`, the shape `console.mjs` and `origins.mjs` use) and are network-free.
+// of a URL. The builds of the unreleased state — and of the flag/`available` disagreement —
+// happen in a copy of the repository in a temp directory (`lib/build.mjs`, the shape
+// `console.mjs` and `origins.mjs` use) and are network-free.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -120,17 +124,22 @@ function inCopyBlock(el) {
 }
 
 /**
- * A copy of the repository with the console released — `site.yaml`'s flag and the data file's
- * `available` both true, which is the whole of the owner's change — built, with everything
- * else left as the checkout has it.
+ * A copy of the repository with the console UNRELEASED — `site.yaml`'s flag and the data
+ * file's `available` both false, which is the state the site was in until W3.1 flipped both
+ * in one commit — built, with everything else left as the checkout has it.
+ *
+ * It is the fixture rather than the shipped state now: the checkout says the console has
+ * shipped, so the state whose refusals this file keeps has to be built rather than read
+ * (`test/lib/build.mjs`, the mechanism `console.mjs` and `origins.mjs` use for the same
+ * reason).
  */
-function releasedBuild(t) {
+function unreleasedBuild(t) {
   return buildCopy(t, ({ site }) => {
     const yaml = path.join(site, 'data', 'site.yaml')
-    writeFileSync(yaml, readFileSync(yaml, 'utf8').replace(/^(\s*console_downloads:\s*)false\s*$/m, '$1true'))
+    writeFileSync(yaml, readFileSync(yaml, 'utf8').replace(/^(\s*console_downloads:\s*)true\s*$/m, '$1false'))
     const file = path.join(site, 'content', 'downloads.json')
     const data = JSON.parse(readFileSync(file, 'utf8'))
-    data.available = true
+    data.available = false
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
 }
@@ -158,16 +167,23 @@ test('Getting Started offers the CLI and the console side by side, the CLI first
   }
 })
 
-test('the console option offers nothing to download while the console is unreleased', () => {
-  // The state the site ships in: `site.yaml` says the console is unreleased, and the Go
-  // boundary test scans the whole of `website/` for a download URL while it does.
+test('the console option offers nothing to download while the console is unreleased', (t) => {
+  // The state the site was in until W3.1, and the state the option has to keep rendering
+  // honestly if the flag is ever turned back off. The checkout ships the RELEASED pair, so
+  // this case builds the unreleased one in a copy of the repository: `site.yaml`'s flag and
+  // the data file's `available` are both flipped back, which is the pair W3.1 flipped
+  // together. The Go boundary test scans the whole of `website/` for a download URL while
+  // the flag is false, and the page a reader gets in that state is what this case reads.
   assert.match(
     repoFile(SITE_YAML),
-    /^\s*console_downloads:\s*false\s*$/m,
-    `${SITE_YAML} does not have features.console_downloads false, and this case is about the unreleased console`,
+    /^\s*console_downloads:\s*true\s*$/m,
+    `${SITE_YAML} does not have features.console_downloads true, and this case's fixture is the unreleased state it flips back to`,
   )
 
-  const page = gettingStarted()
+  const built = unreleasedBuild(t)
+  assert.equal(built.status, 0, `the build of the unreleased site failed:\n${built.output}`)
+
+  const page = gettingStarted(built.dist)
   const needle = downloadNeedle()
   assert.ok(
     !page.includes(needle),
@@ -198,10 +214,9 @@ test('the console option offers nothing to download while the console is unrelea
 })
 
 test('with the console released, the option renders the release\'s own assets and moves nothing else', (t) => {
-  const built = releasedBuild(t)
-  assert.equal(built.status, 0, `the build of the released site failed:\n${built.output}`)
-
-  const page = gettingStarted(built.dist)
+  // The state this checkout ships, read from the build `npm run check` makes: the flag and
+  // the data file's `available` are both true, which is the whole of the owner's change.
+  const page = gettingStarted()
   const consoleOption = optionNamed(page, 'console')
   const expected = publishedDownloads()
   assert.ok(expected.length >= 2, `the data file names ${expected.length} asset(s), which is too few to prove the option renders the release`)
@@ -234,7 +249,7 @@ test('with the console released, the option renders the release\'s own assets an
 
   // One reader, two pages: the console page's own section renders each asset at the URL of the
   // release, held to the same facts as the option's links above.
-  const consolePage = readFileSync(path.join(built.dist, 'console', 'index.html'), 'utf8')
+  const consolePage = readFileSync(path.join(DIST, 'console', 'index.html'), 'utf8')
   const section = /<section[^>]*id="downloads"[\s\S]*?<\/section>/.exec(consolePage)
   assert.ok(section, 'the console page carries no downloads section')
   const consoleHrefs = [...section[0].matchAll(/<a[^>]*href="([^"]+)"[^>]*>/g)].map((match) => match[1])
@@ -247,24 +262,33 @@ test('with the console released, the option renders the release\'s own assets an
     'the console page and Getting Started\'s console option render different URLs for the same assets, and they are one reader of one data file',
   )
 
-  // And the flip is the whole change: the CLI's commands are what they were before it.
+  // And the flip is the whole change: the CLI's commands are what they are in the unreleased
+  // state, which this file builds for the comparison because the checkout ships the released
+  // one. The CLI option is the install path a reader came for, and releasing the console may
+  // not move it.
+  const unreleased = unreleasedBuild(t)
+  assert.equal(unreleased.status, 0, `the build of the unreleased site failed:\n${unreleased.output}`)
   assert.deepEqual(
     commandsWithin(optionNamed(page, 'cli')),
-    commandsWithin(optionNamed(gettingStarted(), 'cli')),
+    commandsWithin(optionNamed(gettingStarted(unreleased.dist), 'cli')),
     'the CLI option changed when the console was released: the owner\'s change is the flag and a version bump, and it may not move the CLI',
   )
 })
 
-test("with the console released, the homepage's call to action offers it and moves nothing else", (t) => {
-  // Item 6 of the 2026-10-19 brief's other half: the console is findable from the home page's
-  // call to action, and the
-  // link is rendered from the same flag the rest of the console's offering is. The homepage is
-  // read from the flag-on copy, because the state `npm run check` builds is the unreleased one
-  // (`home.mjs` holds that half): this is the build the owner's flip produces, and what it has
-  // to show is that the hero gained the way to the console and that nothing else on it moved.
-  const built = releasedBuild(t)
-  assert.equal(built.status, 0, `the build of the released site failed:\n${built.output}`)
+test("the homepage's call to action offers the console only while the flag is on, and moves nothing else", (t) => {
+  // Item 6 of the 2026-10-19 brief: the console is findable from the home page's call to
+  // action, and the link is rendered from the same flag the rest of the console's offering is.
+  // The flag-on half is read off the build `npm run check` makes, which is the state this
+  // checkout ships; the flag-off half off the unreleased copy, because a reader of an
+  // unreleased console has nothing to click and the hero may not offer a page with nothing to
+  // download on it — "findable" is item 6's word for the released state.
+  assert.match(
+    repoFile(SITE_YAML),
+    /^\s*console_downloads:\s*true\s*$/m,
+    `${SITE_YAML} does not have features.console_downloads true, and this case reads the flag-on half off the build \`npm run check\` makes`,
+  )
 
+  /** The hero's row of links, as [label, href] pairs, plus the row's own text. */
   const actions = (dist) => {
     const page = readFileSync(path.join(dist, 'index.html'), 'utf8')
     const hero = [...walk(parse(page))].find(
@@ -273,12 +297,12 @@ test("with the console released, the homepage's call to action offers it and mov
     assert.ok(hero, 'the homepage carries no hero section, and the call to action is in the hero (W1.4)')
     const row = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-actions'))
     assert.ok(row, 'the hero carries no action row, and the call to action is what a reader does next (W1.4)')
-    return linksWithin(row).map((el) => [textOf(el).trim(), el.attrs.get('href')])
+    return { links: linksWithin(row).map((el) => [textOf(el).trim(), el.attrs.get('href')]), text: textOf(row) }
   }
 
-  const released = actions(built.dist)
+  const released = actions(DIST)
   assert.deepEqual(
-    released,
+    released.links,
     [
       ['Get started', '/getting-started/'],
       ['How it works', '/how-it-works/'],
@@ -291,29 +315,51 @@ test("with the console released, the homepage's call to action offers it and mov
     "the homepage's call to action does not offer the console with features.console_downloads true: item 6 of the owner's brief of 2026-10-19 asks that the console be findable from it, and the flag is what renders the link",
   )
 
+  const built = unreleasedBuild(t)
+  assert.equal(built.status, 0, `the build of the unreleased site failed:\n${built.output}`)
+  const unreleased = actions(built.dist)
+
+  // The flag-off row is the two links and nothing else: no console link, no console sentence,
+  // no placeholder where the link would go. The unreleased state is structural.
+  assert.deepEqual(
+    unreleased.links,
+    [
+      ['Get started', '/getting-started/'],
+      ['How it works', '/how-it-works/'],
+    ],
+    "the hero's call to action is not exactly the two links it carries while features.console_downloads is false: the console's link arrives with the flag, and until then the row says nothing about the console (the owner's brief of 2026-10-19, item 6)",
+  )
+  assert.ok(
+    !/console/i.test(unreleased.text),
+    "the hero's call to action mentions the console while features.console_downloads is false, and the unreleased state is structural: nothing about the console renders before its release (item 6)",
+  )
+
   // And the flip moves nothing else about the row: the two links a reader met before the
   // console shipped are the two links they meet after it, in the same order.
   assert.deepEqual(
-    released.slice(0, 2),
-    actions(DIST).slice(0, 2),
-    'the homepage\'s existing call to action changed when the console was released: the owner\'s change is the flag and a version bump, and it may not move what was already there',
+    released.links.slice(0, 2),
+    unreleased.links,
+    "the homepage's existing call to action changed when the console was released: the owner's change is the flag and a version bump, and it may not move what was already there",
   )
 })
 
-test('the released site still passes the gates that read the artifact', (t) => {
-  // The flag-on build is the build the owner's flip produces, and every gate that reads the
-  // built artifact is run over it rather than assumed to hold: the two-option page costs
-  // words and Getting Started sits AT D188's 250-word ceiling, and a released console puts
-  // two external links and a list on the page that the a11y, link and copy gates read.
+test('the unreleased site still passes the gates that read the artifact', (t) => {
+  // Every gate that reads the built artifact is run over the UNRELEASED build rather than
+  // assumed to hold. It was the other way round until W3.1 flipped the flag: the case ran the
+  // gates over the flag-on build, because the flag-on build was not the one `npm run check`
+  // made. It is now — the checkout ships the released pair, and `npm run check` runs these
+  // very gates over it — so the state whose gates nothing else checks is the one the fixture
+  // builds: the flag-off console option, which is a shorter page with the data file's
+  // unreleased sentence on it and no download at all.
   //
   // The gates are run in one nested `node --test` with `FUGARO_GATES_DIST` pointed at the
   // copy, which is the mechanism they document for reading a different build. `console.mjs`
-  // is NOT among them: it holds the checkout's own `site.yaml` to `false`, and this build is
-  // the one where the flag is on. `NODE_TEST_CONTEXT` is stripped, because a nested
+  // is NOT among them: it holds the checkout's own `site.yaml` to `true`, and this build is
+  // the one where the flag is off. `NODE_TEST_CONTEXT` is stripped, because a nested
   // `node --test` that inherits this process's test context refuses to run the files it is
   // given and exits zero — the trap the pass-count check below closes.
-  const built = releasedBuild(t)
-  assert.equal(built.status, 0, `the build of the released site failed:\n${built.output}`)
+  const built = unreleasedBuild(t)
+  assert.equal(built.status, 0, `the build of the unreleased site failed:\n${built.output}`)
 
   const gates = ['a11y', 'budget', 'copy', 'fold', 'linkcheck', 'meta', 'origins']
   const env = { ...process.env, FUGARO_GATES_DIST: built.dist }
@@ -327,14 +373,14 @@ test('the released site still passes the gates that read the artifact', (t) => {
   assert.equal(
     run.status,
     0,
-    `a gate that reads the artifact refuses the site the owner's flag flip produces, so the flip is not the whole change:\n${output}`,
+    `a gate that reads the artifact refuses the site the console's unreleased state produces, so the flag is not the whole of the two states:\n${output}`,
   )
 
   // And the run really ran: the cases above are the artifact gates' own, and a child that
   // skipped its files would report nothing while exiting zero. (`#` is escaped in captured
   // TAP output, hence the unescaping before both reads below.)
   const counts = /# pass (\d+)/.exec(output.replace(/\\#/g, '#'))
-  assert.ok(counts, `the nested run reported no pass count, so nothing above says the gates read the released build:\n${output}`)
+  assert.ok(counts, `the nested run reported no pass count, so nothing above says the gates read the unreleased build:\n${output}`)
   assert.ok(
     Number(counts[1]) >= 70,
     `the nested run reported ${counts[1]} passing cases, and the gates that read the artifact declare far more than that: a run that skipped the files it was given exits zero`,
@@ -342,22 +388,32 @@ test('the released site still passes the gates that read the artifact', (t) => {
   assert.match(
     output.replace(/\\#/g, '#'),
     /ok \d+ - every page is within the word ceilings the README states/,
-    'the budget gate did not run its word-ceiling case over the released build, so nothing above says the two-option page fits the ceiling',
+    'the budget gate did not run its word-ceiling case over the unreleased build, so nothing above says the flag-off page fits the ceiling',
   )
 })
 
-test('a data file that says the console has shipped while the flag says it has not stops the build', (t) => {
-  // The dangerous direction: `available` true while `site.yaml` is false would render a
-  // download URL on a site the repository's own rule still refuses one. The build refuses the
-  // pair, naming both files (W3.1's flag and W1.6's data file are one fact).
+test('a data file and a flag that disagree about the console stop the build', (t) => {
+  // The pair is one fact (W3.1's flag and W1.6's data file), and the build refuses the two
+  // disagreeing whichever way round they disagree. The dangerous direction is the one this
+  // case used to plant: `available` true while `site.yaml` is false renders a download URL on
+  // a site the repository's own rule still refuses one. The other direction is the state this
+  // checkout ships mutated the other way — the flag says the console has shipped and the data
+  // file says it has not — which would render the unreleased sentence under a flag that has
+  // already promised a release. The mutation is read off the checkout's own flag rather than
+  // typed, so the case keeps testing a disagreement after any future flip.
+  const released = /^\s*console_downloads:\s*true\s*$/m.test(repoFile(SITE_YAML))
   const built = buildCopy(t, ({ site }) => {
     const file = path.join(site, 'content', 'downloads.json')
     const data = JSON.parse(readFileSync(file, 'utf8'))
-    data.available = true
+    data.available = !released
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
 
-  assert.notEqual(built.status, 0, `the build rendered a released console while site.yaml says it is unreleased:\n${built.output}`)
+  assert.notEqual(
+    built.status,
+    0,
+    `the build rendered a console state ${SITE_YAML}'s features.console_downloads disagrees with:\n${built.output}`,
+  )
   assert.match(built.output, /downloads\.json/, 'the failure does not name the data file')
   assert.match(built.output, /site\.yaml/, 'the failure does not name the site facts the flag lives in')
   assert.ok(
