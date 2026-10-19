@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **972,415 bytes in a checkout with no tags** and to **972,415 bytes with the
+  commit builds to **972,546 bytes in a checkout with no tags** and to **972,546 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -418,6 +418,17 @@ added or removed without this sentence moving fails there:
     sentence starting the next. The space is written into the line now, **1 byte**, and the
     site figure is 972,414 → **972,415**. The page weight and the script did not move. The
     clone figure moved by the same bytes as each of the security page's rounds.
+  - **The app's reporting is always on, and the app has no switch** (the owner's ruling of
+    2026-10-19), and it is the round this build's site figure ends at. The phone app's paragraph
+    said collection was off until the reader turned it on in the app's settings, and the deletion
+    section said turning that switch off stopped the sending. The ruling leaves no switch: the
+    versions that carry the reports send them, and the page says so — no switch inside the app to
+    turn them off, uninstall the app or do not install it, the website and the command line tool
+    and the console unaffected — and the deletion section now says uninstalling the app stops the
+    sending. That is **131 bytes onto the page's own markup**, 972,415 → **972,546**, and the
+    words ceiling re-derived with it, 919 → **947** (the page's own 757 words plus 25 %, below).
+    The page weight, the script and the number of files did not move: the heaviest page is still
+    the docs hub, which renders none of this, and the clone figure moved by the same bytes.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -444,7 +455,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,646,557 bytes. Three times 1,215,519 (every file in `dist/`, 972,415
+  - **Whole site:** 3,647,049 bytes. Three times 1,215,683 (every file in `dist/`, 972,546
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -478,7 +489,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 919 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 947 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -499,8 +510,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **735
-    words** — plus 25 %, rounded up, which is **919**. `budget.mjs`'s
+    site's pitch; the number is that page's own count on the gates' own build — **757
+    words** — plus 25 %, rounded up, which is **947**. `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
@@ -643,7 +654,8 @@ added or removed without this sentence moving fails there:
   Each of those rules was then mutation-proved the other way: removed from the function, with the
   refusal it names watched failing.
 - `test/privacy.mjs` — the privacy statement's software part, and the seven rules that keep it
-  honest (the owner's request of 2026-10-19). The page is the one the App Store and Play
+  honest (the owner's request of 2026-10-19; the app's reporting is always on by the owner's
+  ruling of the same day, with no switch inside the app). The page is the one the App Store and Play
   listings link as a privacy policy, so it now says what the CLI, the console and the phone app
   do as well as what the site does, and this file holds each of those sentences to the thing
   that makes it true rather than to a copy of the sentence:
@@ -660,12 +672,14 @@ added or removed without this sentence moving fails there:
     refused while the reports are still only planned, which is why the paragraph ends on
     "Earlier builds of the app send nothing at all." — the sentence a later task replaces with
     the plan's existence. The paragraphs' claims are each a sentence the file looks for: what is
-    collected, the ban list, the opt-in default, the switch that turns it off, Google as the
+    collected, the ban list, the app's versions carrying the reports and their having no switch
+    to turn them off, what a reader can do instead — uninstall the app or not install it — the
+    website and the command line tool and the console being unaffected, Google as the
     holder, and the link to Google's own Firebase policy rather than a restatement of it — and
     so is the section a reader deletes an app to find. **"Deleting your data" is read on its own**
     (from its heading to the next one) and has to say that the reports are the exception: the
-    Fugaro project, not the reader, holds them, deleting the app does not take them out, the
-    switch stops the sending, and the issue tracker is where to ask about a report already sent.
+    Fugaro project, not the reader, holds them, deleting the app does not take them out,
+    uninstalling stops the sending, and the issue tracker is where to ask about a report already sent.
     Without that, the page said both "everything the software holds lives in your own accounts"
     and that the app reports to a project the Fugaro project operates, and nothing held the two
     apart;

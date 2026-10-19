@@ -100,7 +100,8 @@
 // becoming one vertical timeline; the caps-and-costs rework; the changelog's product
 // summaries; the homepage's prompt line, benefits, pull request caption and the benefits'
 // block rule; the privacy statement's software part, the phone app's reporting written into
-// it and the deletion section carved out from under it; and the security page cut to three
+// it and the deletion section carved out from under it; the app's reporting made always-on, with
+// no switch in the app (the owner's ruling of 2026-10-19); and the security page cut to three
 // things, with its review rounds — each re-derived in the commit that
 // moved it (D192). None of those figures is
 // repeated here, because a figure in a comment is a figure that moves with

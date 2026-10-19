@@ -45,7 +45,8 @@
  * off the tree, not asserted: the scan refuses the platform's advertising-identifier APIs
  * anywhere under `mobile/`. The project the app signs in to is the reader's own — the CLI and
  * the console reach nothing the Fugaro project operates, and the app's reports are the one
- * flow that does, which is why the page states them and their switch.
+ * flow that does, which is why the page states them and says that the app versions carrying
+ * them have no switch to turn them off (the owner's ruling of 2026-10-19).
  *
  * **The app's paragraph describes the app as it will be, and says so.** Crashlytics and
  * Analytics are the owner's ruling of 2026-10-19 and are not in the app yet, so the
@@ -213,8 +214,10 @@ const repo = site.facts.repository
       which screens are used, and for nothing else. The app carries no advertising identifier.
     </p>
     <p>
-      Collection is off until you turn it on, in the app's settings, where the same switch turns
-      it off again. Earlier builds of the app send nothing at all.
+      The app versions that carry these reports send them. There is no switch inside the app to
+      turn them off: uninstalling the app stops them, and not installing it avoids them. The
+      website, the command line tool and the console are unaffected and send nothing. Earlier
+      builds of the app send nothing at all.
     </p>
 
     <h3>Deleting your data</h3>
@@ -222,9 +225,9 @@ const repo = site.facts.repository
       Everything else the software holds lives in your own accounts, your own cloud project and
       your own devices, and removing the installation removes it. The crash reports and
       anonymous usage above are the exception, and deleting the app does not remove them:
-      Google holds them for the Fugaro project, under the policy linked above, and uninstalling
-      sends nothing that takes them out. Turning the switch off stops the sending at once, and
-      the issue tracker is where to ask about a report already sent.
+      Google holds them for the Fugaro project, under the policy linked above. Uninstalling the
+      app stops the sending, and does not take a report already sent out of Google's hands. The
+      issue tracker is where to ask about one.
     </p>
 
     <h3>Contact</h3>
