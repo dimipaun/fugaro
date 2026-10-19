@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -314,15 +315,53 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 	}
 }
 
+// telemetryWillCreate is the paths the plan names that are deliberately not in
+// the tree, with the task that will create each. Naming them here rather than
+// leaving them out of the derivation is the point — each is asserted to be
+// *still absent*, so this list cannot rot into a place where a real path hides,
+// and each is asserted to be still named by the plan.
+//
+// The two native config files are the exception that is not a path at all: the
+// plan says they are **never** in the tree (§4.3), so their absence is the rule
+// rather than a stage — and they are listed here anyway, so that the day one of
+// them is committed this test fails.
+var telemetryWillCreate = map[string]string{
+	"mobile/app.config.js":                         "P7.1 (PR #675's file, not on main; the plugin entry, the guard and the gitignore)",
+	"mobile/eas.json":                              "P7.1 (PR #675's file, not on main; the two env entries per profile)",
+	"mobile/firebase.json":                         "P7.1 (the two react-native auto-collection switches, §4.2)",
+	"mobile/google-services.json":                  "never — §4.3: delivered by an EAS file secret and kept out of git, so its absence here is the rule",
+	"mobile/src/telemetry/consent.js":              "P7.2 (the app's sheet logic, as a function of its ports)",
+	"mobile/src/telemetry/analytics-calls.test.js": "P7.3 (the scan of §4.2's rules with its planted positive controls)",
+	"mobile/src/telemetry/events.test.js":          "P7.3 (the never-send test, over a fixture account, mailbox and token)",
+	"shared/telemetry-consent":                     "P7.2 (the pure choice machine and the platform flag table)",
+	"mobile/src/telemetry":                         "P7.2 (consent.js) and P7.3 (the event module, the enum sets and the breadcrumbs)",
+}
+
 func TestTelemetryPlanCitesOnlyPathsThatExist(t *testing.T) {
 	doc := readDoc(t, telemetryPlan)
 	paths := planPaths(doc)
-	if len(paths) < 10 {
-		t.Fatalf("%s names %d repository paths, which is too few for this walk to mean anything: update this test's markers rather than letting a vacuous walk pass", telemetryPlan, len(paths))
+	if len(paths) < 15 {
+		t.Fatalf("planPaths found %d paths in %s: the derivation, not the plan, is what broke", len(paths), telemetryPlan)
+	}
+	named := map[string]bool{}
+	for _, p := range paths {
+		named[p] = true
 	}
 	for _, p := range paths {
-		if !isPlanPath(p) {
-			t.Errorf("%s cites %q, which is not in this repository: a plan that names a file the tree does not have is a plan a reader cannot follow", telemetryPlan, p)
+		if why, ok := telemetryWillCreate[p]; ok {
+			if _, err := os.Stat("../../" + p); err == nil {
+				t.Errorf("%s: %s exists now (%s), so it is no longer a path this plan creates — or, for the two native config files, it is a file the plan says must never be committed: it must leave telemetryWillCreate and be checked like any other", telemetryPlan, p, why)
+			}
+			continue
+		}
+		if pathExists(p) {
+			continue
+		}
+		t.Errorf("%s cites %s, which is not in the tree: a path the plan names and cannot be found is a later implementer's dead end", telemetryPlan, p)
+	}
+	for p, why := range telemetryWillCreate {
+		if !named[p] {
+			t.Errorf("telemetryWillCreate names %s (%s), which the plan no longer cites: the list must only excuse paths the document actually names", p, why)
 		}
 	}
 }
