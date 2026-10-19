@@ -24,6 +24,7 @@ const (
 	checklistPath = "docs/gcp-live-checklist.md"
 	chk90Heading  = "## Check 90: the OAuth header swap"
 	chk91Heading  = "## Check 91: Cloud Run streaming"
+	chk47Heading  = "## Check 47: the subscription OAuth token"
 )
 
 // docTail returns doc from marker to the end, failing the test if marker is
@@ -340,7 +341,12 @@ func TestCredentialsPlanRecordsTheOpenDesignFindings(t *testing.T) {
 // TestCredentialsStatusLinesRecordTheC0Approval: the owner approved C0 on
 // 2026-10-18 and its docs tasks are done, so the plan's and the README's status
 // lines may not still read "plan only; nothing is implemented" and "no task
-// approved".
+// approved" — and neither may any of the other four places that carried the
+// same claim before the approval (the plan's rules of engagement, its gate, the
+// README's plan row and the reconciliation's status line). Each stale claim is
+// named below with the qualification that replaced it, so qualifying one file
+// and leaving the other four standing fails here rather than shipping a plan
+// that contradicts itself.
 func TestCredentialsStatusLinesRecordTheC0Approval(t *testing.T) {
 	for _, path := range []string{
 		"docs/credentials-service/README.md",
@@ -351,10 +357,105 @@ func TestCredentialsStatusLinesRecordTheC0Approval(t *testing.T) {
 			t.Errorf("%s does not record the owner's approval of C0 on 2026-10-18", path)
 		}
 	}
-	plan := readDoc(t, "docs/credentials-service/implementation-plan.md")
-	if !strings.Contains(plan, "C0.2, C0.3 and C0.6 are built") {
-		t.Error("the plan's status does not record that Slice 0's docs and rules tasks are built")
+	// Each claim is anchored to the line that carries it, never to the document
+	// around it: a document-wide check would stay green while one line was
+	// reverted, so long as another line still said the right thing.
+	for _, tc := range []struct {
+		path, what string
+		want       []string
+		notWant    []string
+	}{
+		{"docs/credentials-service/implementation-plan.md", "the plan's status line",
+			[]string{"2026-10-18", "C0.2, C0.3 and C0.6 are built", "no task of Slice 1, 2 or 3 is approved"},
+			[]string{"plan only; nothing is implemented", "no task in this plan is approved"}},
+		{"docs/credentials-service/README.md", "the README's status line",
+			[]string{"2026-10-18", "Slice 0"},
+			[]string{"plan only; nothing is implemented"}},
+		{"docs/credentials-service/reconciliation.md", "the reconciliation's status line",
+			[]string{"superseded in part on 2026-10-18", "Slice 0", "no task of them is approved"},
+			[]string{"plan only; nothing is implemented"}},
+	} {
+		line := statusLine(t, tc.path)
+		for _, want := range tc.want {
+			if !strings.Contains(line, want) {
+				t.Errorf("%s does not record the approval: it lacks %q", tc.what, want)
+			}
+		}
+		for _, bad := range tc.notWant {
+			if strings.Contains(line, bad) {
+				t.Errorf("%s still reads %q, which the owner's approval of Slice 0 on 2026-10-18 contradicts", tc.what, bad)
+			}
+		}
 	}
+
+	// And nowhere else in the three documents either: the pre-approval wording
+	// may not reappear on a line of its own, which is how it would come back —
+	// one sentence at a time, in a place no anchored check above reads.
+	for _, path := range []string{
+		"docs/credentials-service/implementation-plan.md",
+		"docs/credentials-service/README.md",
+		"docs/credentials-service/reconciliation.md",
+	} {
+		for _, line := range strings.Split(readDoc(t, path), "\n") {
+			for _, bad := range []string{"plan only; nothing is implemented", "no task in this plan is approved"} {
+				if strings.Contains(line, bad) {
+					t.Errorf("%s carries the pre-approval claim %q on a line of its own: %.120s", path, bad, line)
+				}
+			}
+		}
+	}
+
+	// The other three lines that carried the same claim: the plan's rules of
+	// engagement, the plan's gate, and the README's row for the plan. Each is
+	// anchored to its own line, and each has to qualify the claim with Slice 0's
+	// approval rather than drop it — the plan is still unapproved for everything
+	// else.
+	plan := readDoc(t, "docs/credentials-service/implementation-plan.md")
+	if strings.Contains(plan, "**No task is approved.**") {
+		t.Error("the plan's rules of engagement still say no task is approved, though the owner approved Slice 0 on 2026-10-18")
+	}
+	if !strings.Contains(plan, "**No task is approved but Slice 0's (2026-10-18); each of the others**") {
+		t.Error("the plan's rules of engagement do not qualify the approval: they must say no task but Slice 0's is approved")
+	}
+	if strings.Contains(plan, "**Not passed. No task is approved.**") {
+		t.Error("the plan's gate still reads \"Not passed. No task is approved.\", which the Slice 0 approval contradicts")
+	}
+	if !strings.Contains(plan, "**Passed for Slice 0, which is built; not passed for anything else") {
+		t.Error("the plan's gate does not record that Slice 0 itself passed")
+	}
+	row := ""
+	for _, l := range strings.Split(readDoc(t, "docs/credentials-service/README.md"), "\n") {
+		if strings.Contains(l, "[implementation-plan.md]") {
+			row = l
+		}
+	}
+	if row == "" {
+		t.Fatal("the README has no row for the implementation plan")
+	}
+	if strings.Contains(row, "**No task is approved.**") {
+		t.Error("the README's row for the plan still says no task is approved, beside a status line that records the Slice 0 approval")
+	}
+	if !strings.Contains(row, "No Slice 1, 2 or 3 task is approved") {
+		t.Error("the README's row for the plan does not qualify the approval: it must say no Slice 1, 2 or 3 task is approved")
+	}
+}
+
+// statusLine returns the single "**Status:" line of a document. The plan and
+// the README carry their status at the top, and the reconciliation — the record
+// of a dated answer — keeps its own wording with the correction beside it, so
+// each has to be read on its own line.
+func statusLine(t *testing.T, path string) string {
+	t.Helper()
+	lines := []string{}
+	for _, l := range strings.Split(readDoc(t, path), "\n") {
+		if strings.HasPrefix(l, "**Status:") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("%s has %d \"**Status:\" lines; this guard reads exactly one", path, len(lines))
+	}
+	return lines[0]
 }
 
 // TestCredentialsDocsNeverStateTheSharedJobRefusalStays: the owner's ruling of
@@ -670,5 +771,79 @@ func TestCredentialsPlanListsTheGuardFileAmongItsFiles(t *testing.T) {
 	l0 = l0[:strings.Index(l0, "\n")]
 	if !strings.Contains(l0, guard) {
 		t.Error("the plan's L0 row (what C0.2, C0.3 and C0.6 write) does not list the guard file")
+	}
+}
+
+// TestChecklistCheck47IsSupersededNotHeld: the OAuth-reviewer-stage plan was
+// superseded on 2026-10-17 (D130), so Check 47 does not wait for phase 5 of
+// docs/design/project-centric.md any more — the hold is moot and the number is
+// reserved and unused. Three places in the register still carried the hold as a
+// live instruction (the general paragraph, row 47 and the section banner), each
+// telling a reader the check would run when the hold lifted. Each is anchored
+// here, and no line may carry the held wording without its supersession beside
+// it on that same line.
+func TestChecklistCheck47IsSupersededNotHeld(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+
+	anchors := []struct {
+		what, marker string
+		want         []string
+	}{
+		{"the register's paragraph about the number", "**Check 47 belongs to the OAuth-reviewer-stage plan**",
+			[]string{"superseded by the credentials service on 2026-10-17 (D130)", "hold is moot", "reserved"}},
+		{"the register's row 47", "| 47 |",
+			[]string{"SUPERSEDED by the credentials service on 2026-10-17 (D130)", "never to be run", "reserved and unused"}},
+	}
+	for _, a := range anchors {
+		line := ""
+		for _, l := range strings.Split(doc, "\n") {
+			if strings.Contains(l, a.marker) {
+				line = l
+			}
+		}
+		if line == "" {
+			t.Fatalf("%s is gone from the register; this guard anchors to it", a.what)
+		}
+		for _, want := range a.want {
+			if !strings.Contains(line, want) {
+				t.Errorf("%s does not record that Check 47 is superseded rather than held: it lacks %q", a.what, want)
+			}
+		}
+	}
+
+	// The section's banner, inside the section so that a "> **STATUS:" line
+	// elsewhere in the register cannot satisfy it.
+	check := docSection(t, checklistPath, doc, chk47Heading)
+	banner := ""
+	for _, l := range strings.Split(check, "\n") {
+		if strings.HasPrefix(l, "> **STATUS:") {
+			banner = l
+		}
+	}
+	if banner == "" {
+		t.Fatal("Check 47 has no STATUS banner; this guard anchors to it")
+	}
+	for _, want := range []string{
+		"SUPERSEDED by the credentials service on 2026-10-17 (D130)",
+		"never to be run",
+		"reserved and unused",
+		"hold is moot",
+	} {
+		if !strings.Contains(banner, want) {
+			t.Errorf("Check 47's banner does not record the supersession of the plan it belongs to: it lacks %q", want)
+		}
+	}
+	if strings.Contains(check, "When the hold lifts") {
+		t.Error("Check 47 still tells the reader what happens when the hold lifts, though the plan was superseded before the phase it was held for")
+	}
+
+	// And nowhere in the register may the hold stand as a live instruction.
+	for _, line := range strings.Split(doc, "\n") {
+		if !strings.Contains(line, "HELD until phase 5") {
+			continue
+		}
+		if !strings.Contains(line, "D130") && !strings.Contains(line, "superseded") {
+			t.Errorf("the register still holds a check against phase 5 without recording the supersession that moots it: %.120s", line)
+		}
 	}
 }
