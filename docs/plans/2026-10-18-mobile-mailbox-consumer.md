@@ -55,7 +55,7 @@ a window is; where the Go side needs one of those answers it **binds** the modul
 | The mailbox state machine: new / duplicate / late / replay, the act step, the ledger cap | `shared/mailbox/index.js` — `initialState`, `step`, `STATE`, `EVENT`, `KIND`, `STATUS`, `OUTCOME`, `REFUSAL`, `INPUT_REFUSALS`, `TRANSITIONS`, `DEFAULT_WINDOW_MS` (6 h), `MIN_WINDOW_MS`, `MAX_WINDOW_MS` (7 d), `MAX_PROMPT_TTL_MS` (30 d), `DEFAULT_MAX_SEEN` (1024), `SENDER_SHARE`, `defaultMaxPerSender`, `DEFAULT_FUTURE_TOLERANCE_MS` | Ruling M9: the corpus is generated from this module and replayed by the Go tests |
 | The consumer lease | `shared/lease/index.js` — `CLAIM_TTL` (10 min), `MAX_CLOCK_SKEW` (5 min), `MAX_TTL` (24 h), `MAX_HOLDER_LENGTH` (256), `LEASE_CODES`, `validateLease`, `emptyLeaseState`, `takeLease`, `readLease`, `releaseLease` | Ruling M1: the lease's **rule** is bound; the **store** is the heartbeat node |
 | The compare-and-swap duty | `shared/lease/README.md` ("two consumers that both read the same state and both get `ok: true` from `takeLease` must not both be able to write"; CAS is the store's fence) | Ruling M1: an RTDB ETag conditional write is that fence |
-| The conditional write itself | `internal/rtdb/client.go` — `GetETag` (line 178, `X-Firebase-ETag`), `PutIfMatch` (line 209), `ErrPrecondition` (line 54, a 412 answer) | The fence M1 rests on already exists in this repository's client |
+| The conditional write itself | `internal/rtdb/client.go` — `GetETag` (it sends `X-Firebase-ETag` and returns the tag), `PutIfMatch`, `ErrPrecondition` (a 412 answer) | The fence M1 rests on already exists in this repository's client |
 | Presence and the heartbeat's `boot` | `shared/presence/index.js` — `evaluatePresence`, `STATE`, `REASON`, `REFUSAL`, `DEFAULT_INTERVAL_MS` (60 s), `DEFAULT_MISSED_INTERVALS`, `DEFAULT_OFFLINE_INTERVALS`, `MAX_BOOT_ID_LENGTH` (64) | The heartbeat this command writes is the value `evaluatePresence` reads |
 | The redactor (D118 requires it before anything is written) | `shared/digest/index.js` — `redact`, `REDACTED`, `redactFunc`, `redactForms`, `digest`, `SEVERITY`, `moreSevere`, `mostSevere` | Every field this command writes to its own state or prints passes it first |
 | The simulator, the fault model and the canonical schedule line | `shared/mailbox-sim/index.js` — `createSimulator`, `scheduleFromSeed`, `faultFor`, `scheduleText`, `parseScheduleText`, `replyId`; its README §"The fault model, which is data", §"What the actors do" | The corpus's scenarios are its schedules; a failing Go case prints `scheduleText()` |
@@ -65,13 +65,13 @@ a window is; where the Go side needs one of those answers it **binds** the modul
 | A lease-shaped claim, and its TTL | `internal/runstore/launch.go` — `Store.Claim`, `ClaimTTL` (10 min) | Not used directly: the launch claim is the runs bucket's. Cited as the shape this command's lease follows |
 | A sweeper, its report and its user-key convention | `internal/budget/sweep.go` — `Sweeper`, `Sweep`, `SweepReport`, `RunUID` (`r~…`) | Ruling M8: the hidden `mailbox sweep` is written in this shape (`m~…`) |
 | An owner-run hidden command | `internal/cli/history.go` — `newBudgetHistoryCmd` (`Hidden: true`) | The precedent for hiding the sweeper |
-| Executing a cancel | `internal/cli/cancel.go` — `cancelRun` (line 113) | The one existing destructive path the refusal fence (Ruling M6) must gate |
-| A kill switch write, and a **conditional write on an ETag with a bounded retry** | `internal/budget/kill.go` — `SetKill` (line 141): "The write is conditional on the ETag read; a lost race is re-read up to `SetAttempts` times" | The other destructive path — and the in-repo precedent for Ruling M1's compare-and-swap |
-| Spawning `gh` for a merge | `internal/watch/prstate.go` — `ask` (lines 436–465): `procgroup.Run`, argv only, bounded buffers, nothing logged | The third, and the only precedent for "never through a shell" |
+| Executing a cancel | `internal/cli/cancel.go` — `cancelRun` | The one existing destructive path the refusal fence (Ruling M6) must gate |
+| A kill switch write, and a **conditional write on an ETag with a bounded retry** | `internal/budget/kill.go` — `SetKill` and its `SetAttempts` bound: "The write is conditional on the ETag read; a lost race is re-read up to `SetAttempts` times" | The other destructive path — and the in-repo precedent for Ruling M1's compare-and-swap |
+| Spawning `gh` for a merge | `internal/watch/prstate.go` — `(*PRState).ask`: `procgroup.Run`, argv only, bounded buffers, nothing logged | The third, and the only precedent for "never through a shell" |
 | The operator's credential (the **inbox read**), and the CLI's rule that it holds no credential of its own | `internal/cli/cloud.go` — `google.DefaultTokenSource`, `userErr`; `internal/rtdb`; `internal/gcpfake` | The database client; the read credential (§2's C0); and the fake (identitytoolkit) the tests mint the `CONSUMER` token against |
 | The project and its config block | `internal/localcfg` — the `watch:` block precedent; `internal/cli/project.go`'s `selectProject`, `internal/cli/cloud.go`'s `budgetDBFor`, `internal/cli/budget.go`'s `checkDBProject` and `dbErr` | Where the keychain **item name** lives (Ruling M5) |
 | The generated CLI reference | `internal/clidoc/cliref.go` — `writeCLIReference`, `defaultPath` (`website/content/cli-reference.md`); the drift tests `internal/clidoc/cliref_test.go` `TestCliReferenceIsCurrent` and `internal/cli/docs_website_cliref_test.go` | §4: the one `root.AddCommand` line requires regenerating it |
-| The exit-code contract and the command table | `internal/cli/root.go` lines 16–20 (`ExitOK`, `ExitUserError`, `ExitRemoteError`) and 26–48 (`ExitCode`); `docs/design/v1.md` §9.1 | §3 |
+| The exit-code contract and the command table | `internal/cli/root.go` — the `ExitOK` / `ExitUserError` / `ExitRemoteError` constants, `ExitError` and `ExitCode` (which maps any other error to `ExitUserError`), and `NewRootCmd`; `docs/design/v1.md` §9.1 | §3, and the classification §4.4 rests on: `dbErr` and `checkDBProject` in `internal/cli/budget.go` |
 
 **No existing behaviour changes.** The only Go file that changes is `internal/cli/root.go`, by
 **one line**. Everything else is new files.
@@ -170,8 +170,8 @@ are on `main`; they cannot both be the store's truth. Owner decision 2 below.
 ### M1 — The lease **is** the heartbeat, taken by an ETag compare-and-swap. No fourth node.
 
 The consumer takes the lease by reading `mailbox/$mb/heartbeat` with `internal/rtdb`'s `GetETag`
-(line 178) and writing `{at, boot}` back with `PutIfMatch` (line 209); a `ErrPrecondition` (line
-54, the 412 answer) is a lost race, and it is retried a **bounded** number of times, never forced —
+and writing `{at, boot}` back with `PutIfMatch`; a returned `ErrPrecondition` (the 412 answer) is a
+lost race, and it is retried a **bounded** number of times, never forced —
 the pattern `internal/budget/kill.go`'s `SetKill` already uses ("the write is conditional on the
 ETag read; a lost race is re-read up to `SetAttempts` times"). `boot` is the holder identity; the lease's TTL is
 `shared/lease`'s `CLAIM_TTL` (10 min) and its skew tolerance is `MAX_CLOCK_SKEW` (5 min), applied
@@ -314,7 +314,7 @@ SECURITY-SENSITIVE). The command persists it at
 partial write is never read and another user cannot read it. What it takes from
 `internal/watch/acks.go` is exactly two things — the `$XDG_STATE_HOME/fugaro` **prefix** and the
 **write discipline** (create a temp file in the destination directory, `0o600`, rename over) — and
-no more: `AckPath` (internal/watch/acks.go:115–125) is a **single file**,
+no more: `internal/watch/acks.go`'s `AckPath` is a **single file**,
 `filepath.Join(base, "fugaro", "watch-acks.json")`, with **no per-project directory component**.
 The `<project>` level, the JSON document's shape and its contents are **new here**, and the plan says
 so rather than borrowing the precedent for something it does not do. The cap is `DEFAULT_MAX_SEEN`
@@ -396,19 +396,36 @@ same and they do not share an exit code:
 
 | Exit | When | Not |
 | --- | --- | --- |
-| **0** | a pass completed — **including a pass whose every message was refused** (duplicates, replays, expired, `stale-pending`, bad MACs) and a pass that acted on nothing because it held no lease. Refusals are outcomes and are reported in `refused[]` and in the `pass` counters | a per-message refusal is **never** an exit 1 |
-| **1** | a run-level refusal, all of it before or outside the pass loop: a bad flag (`--interval` below 1 s, a negative duration, an unknown project selector); no project selectable; no mailbox configured; a keychain item name absent or not of M5's shape; **and the M4/§8.3 state — MAC verification or signing unavailable — which fails at startup** rather than looping over a mailbox it can do nothing with. Also D128's action refusal **when it is the pass's whole purpose**, see below | a database or keychain *failure* is 2, not 1 |
-| **2** | the database could not be read or written; the keychain could not be opened; the project's database is foreign (as `dbErr` already decides) | — |
+| **0** | a pass completed, whatever it managed to read and whatever it refused: an **empty inbox**, a pass that **held no lease** (and so read nothing, §7), and a pass whose every message was refused as a duplicate, a replay, expired, `stale-pending` or badly signed. Refusals are outcomes and are reported in `refused[]` and in the `pass` counters | a per-message refusal is **never** an exit 1, and **neither is reading no message at all** — see the predicate below, which requires at least one |
+| **1** | **a run-level refusal**, all of it before or outside the pass loop: a bad flag (`--interval` below 1 s, a negative duration, an unknown project selector); no project selectable; no mailbox configured; a keychain item name absent or not of M5's shape; **the M4/§8.3 state — MAC verification or signing unavailable — which fails at startup** rather than looping over a mailbox it can do nothing with; the database or keychain **refusing** — `dbErr`'s `rtdb.ErrPermission` branch (→ `adminDenied` for a write, a `userErr` for a read) and `checkDBProject`'s not-this-project's-database, which is a `userErr` too. **And** the one pass-level case: the predicate below | a remote failure — an outage, a transport error, anything `dbErr` sends to `remote(err)` — is 2, not 1 |
+| **2** | what `dbErr` sends to `remote(err)`: the database could not be **reached or written** (an outage, a transport error, a 5xx), and nothing else; plus the new keychain package's own unopenable-backend case, classified the same way (that package is T2's, and this row is the mapping it must implement) | a permission refusal and a foreign database are **1**, not 2 — `dbErr` maps the first to `userErr` and `checkDBProject` raises the second as a `userErr` |
 
 **The one place a D128 action refusal meets the exit code.** A refused action is first a **recorded
 outcome**: the pass completes, `refused[]` carries its code, and the exit is **0** — a phone asking
 for a cancel is not the operator's failure. It becomes **1** only when the operator asked for that
 one thing and nothing else could happen: `fugaro mailbox --once` on a mailbox whose only pending
-message is a destructive one that is refused, where the pass therefore did nothing at all. That rule
-is written as **one predicate in the code** — "the pass performed no action and refused every message
-it read" → 1, else 0 — so there is exactly one branch and no third reading. T5 tests both sides of
-it, and T6 asserts the code for a refused action in a pass that also delivered something (0) and in a
-pass that delivered nothing (1).
+message is a destructive one that is refused, where the pass therefore did nothing at all.
+
+**That rule is one predicate in the code**, so there is exactly one branch and no third reading.
+Exit **1** iff **all four** hold:
+
+1. the pass **read at least one message**;
+2. it **performed no action** — nothing delivered, nothing replied, nothing swept;
+3. **every message it read was refused**; and
+4. **at least one of those refusals is an action refusal** — D128's fence — and not only per-message
+   refusals.
+
+Clause 1 exists because the other three are **vacuously true of a pass that read nothing**: a pass
+that held no lease never reaches the inbox (§7), and an empty mailbox has nothing to read, so "every
+message it read was refused" holds of both with **zero** messages read and zero refused. Neither is a
+refusal the operator suffered, and both are **0** — which is what the 0 row above says, and what a
+predicate without clause 1 would have contradicted. Clause 4 exists because the same is true of an
+**ordinary** refusal: a `--once` pass that read three duplicates and refused all three read one or
+more, refused everything it read and acted on nothing, and is still **0** — none of those refusals was
+a refused action. Clauses 3 and 4 together are what "the refusals were the pass's whole purpose"
+means, stated as code. T5 tests both sides of **every** row above and each clause's Red step; T6
+asserts the code for a refused action in a pass that also delivered something (0), in a pass that
+delivered nothing (1), and in a pass whose only readings were per-message refusals (0).
 
 ---
 
@@ -483,22 +500,31 @@ like `ls`'s, so a reader can rely on it.
 
 ### 4.4 Exit codes
 
-| Code | When |
-| --- | --- |
-| 0 | **a pass completed**, including one whose every message was refused as a duplicate, a replay, expired, `stale-pending` or badly signed, and one that acted on nothing because it held no lease. Per-message refusals are outcomes, reported in `refused[]` and the pass counters |
-| 1 | **a run-level refusal**, before or outside the pass loop: a bad flag or combination (`--interval` below 1 s); no project selectable; no mailbox configured; a keychain item name absent or not of M5's shape; **MAC verification or signing unavailable (M4/§8.3), refused at startup**; and the one action case M12 names — a `--once` pass that **performed no action and refused every message it read**, whose only reason was a refused action |
-| 2 | the database could not be read or written; the keychain could not be opened; the project's database is foreign (as `dbErr` decides) |
+| Code | When | Decided by |
+| --- | --- | --- |
+| 0 | **a pass completed**, including one that read nothing at all — no lease held, or an empty inbox — and one whose every message was refused as a duplicate, a replay, expired, `stale-pending` or badly signed. Per-message refusals are outcomes, reported in `refused[]` and the pass counters | the pass's own counters: `read == 0` is a completed pass, and a per-message refusal is recorded, not returned |
+| 1 | **a run-level refusal**, before or outside the pass loop: a bad flag or combination (`--interval` below 1 s); no project selectable; no mailbox configured; a keychain item name absent or not of M5's shape; **MAC verification or signing unavailable (M4/§8.3), refused at startup**; **and the database or keychain refusing** — `dbErr`'s `rtdb.ErrPermission` branch, `adminDenied` for a refused write, `checkDBProject`'s not-this-project's-database (**all three are `userErr`**) | `userErr` / `ExitUserError`, and the flag and config refusals the command raises itself |
+| 2 | the database could not be **reached or written** — an outage or a transport error, which is all `dbErr` sends to `remote(err)`; and the new keychain package's unopenable-backend case, which T2 must classify the same way | `remote(err)` / `ExitRemoteError` |
 
-**The rule in code is one predicate** (M12): "the pass performed no action and refused every message
-it read" → 1, else 0. It exists so that `--once` has a scriptable "nothing happened" answer without
-making an ordinary refusal a failure. Both sides are tested in T5, and T6 asserts the action case in
-a pass that also delivered (0) and in one that delivered nothing (1).
+**The second exit 1, and the only one that is a pass-level outcome**: a `--once` pass that read at
+least one message, performed no action, refused every message it read, and refused at least one
+**action** — M12's four clauses — is also **1**, decided by that predicate, which is the command's
+single exit branch. This is the row M12 spends its detail on, and it is the same code as the
+run-level refusal because it is the same answer to the operator: nothing happened.
+
+**The rule in code is M12's one predicate**, four clauses: **at least one message read**, **no action
+performed**, **every message read refused**, **at least one of those refusals an action refusal** →
+1, else 0. It exists so that `--once` has a scriptable "nothing happened" answer without making an
+ordinary refusal a failure. The first clause is what keeps the vacuous passes at 0 (nothing read,
+nothing refused); the fourth is what keeps a duplicates-only pass at 0. Both sides of every row are
+tested in T5, and T6 asserts the action case in a pass that also delivered (0), in one that delivered
+nothing (1), and in one whose only readings were per-message refusals (0).
 
 ---
 
 ## 5. The one `root.AddCommand` line, and everything it drags with it
 
-`internal/cli/root.go` line 75 is one call:
+`NewRootCmd` (`internal/cli/root.go`) ends in one call to `root.AddCommand`:
 
 ```go
 root.AddCommand(
@@ -515,9 +541,12 @@ subcommand of it, so it needs no line of its own. What that line drags with it, 
    command in the tree and not in the file is a failing test — with the regenerating command in the
    failure message. `internal/cli/docs_website_cliref_test.go` holds the other direction.
 2. **`docs/design/v1.md` §9.1 gains a `fugaro mailbox` row**, and its prose list of `--json`
-   commands (the paragraph is "Every command that reports something supports `--json`") then covers
+   commands (the paragraph is "Every command that reports something supports `--json`", which today
+   ends "Exit codes are stable: 0 for ok, 1 for a user error, 2 for a remote failure") then covers
    it. §9.1 is the command table, and a command that exists and is not in it is a design document
-   that describes a CLI the reader does not have.
+   that describes a CLI the reader does not have. **No test enforces this one** — the section says
+   so rather than implying a guard — so it is a duty of the commit and a line in T5's review
+   checklist.
 3. **The hidden sweeper does not appear** in either, because `internal/clidoc`'s skip rule reads
    cobra's own `Hidden` field (`documentedCommands`), and `newBudgetHistoryCmd` is the precedent.
 4. **No `docs_bucket_iam_test.go` pressure**: its guards scan for IAM claims in docs, and the globs
@@ -663,8 +692,9 @@ The allow-list is a **value in code** (a slice of action kinds, each with the ar
 spawn), and the refusal is evaluated **before** any spawn (M11). The refusal is **recorded in the
 ledger and logged by code** — the message's own text is never put in an argv element and never
 printed; the ledger holds ids and codes — and its **exit code follows M12 and §4.4**: **0** when the
-pass did other work, **1** only when the pass performed no action and refused everything it read.
-Owner decision 3.
+pass did other work **or read nothing at all**, **1** only under M12's predicate — at least one
+message read, no action performed, every message read refused, and at least one of those refusals an
+action refusal. Owner decision 3.
 
 **The amendment is honoured as a seam and not as a behaviour**, because P6.2 is NOT APPROVED: the
 code path exists, is covered by a test that builds a synthetic confirmation record, and **cannot be
@@ -683,9 +713,12 @@ reached from a real message today**. Owner decision 3.
 | A stale `at` beyond the window | refused `replay` for a command, nothing acted on | §3.6 |
 | A timestamp in the future by more than the tolerance | refused `future-timestamp` | §3.5 (5 minutes) |
 
-**D173's 259 200 000 ms is D118's 72 hours** written in milliseconds; the command declares the Go
-duration (`72 * time.Hour`, M3) and a test pins that the two are the same number, so a future edit
-to one is a failing test rather than a silent divergence.
+**Two windows, named apart.** **D118's TTL is the `259 200 000` ms** the consumer passes as
+`promptTtlMs` (functional-spec-reconciliation §3.6, O5: 72 × 3 600 000) — that is the **prompt**
+window. **D173's 6-hour window is `shared/mailbox`'s `DEFAULT_WINDOW_MS`**, already in the module —
+that is the **command** window. The command declares the TTL as the Go duration (`72 * time.Hour`,
+M3) and a test pins that the duration and the number handed to the module are the same, so a future
+edit to one is a failing test rather than a silent divergence.
 
 ---
 
@@ -701,12 +734,12 @@ do.
 | The corpus (M9) | the Go binding gives the module's outcomes and codes for the module's inputs | `internal/mailbox/testdata/parity.json` + a Go replay test; a JS generator in `shared/mailbox/` |
 | The simulator scenarios | the seeded fault schedules (duplicate, reorder, drop, delay, clock skew) produce at-most-once acting, at-least-once delivery and one lease holder | the corpus's `scheduleText()` lines replayed in Go |
 | The store | the ETag CAS refuses the loser with **nothing written**; the ledger survives a restart; the write set is exactly the outbox and the heartbeat | `internal/gcpfake` |
-| The fence | every destructive action is refused, before any spawn; the mutation that removes the allow-list turns a test red; the exit code is 0 for a pass that also delivered and 1 for one that did nothing else | a fake action runner that records what was spawned |
+| The fence | every destructive action is refused, before any spawn; the mutation that removes the allow-list turns a test red; the exit code is 0 for a pass that also delivered, 0 for a pass that read only per-message refusals, and 1 for one whose only reading was a refused action | a fake action runner that records what was spawned |
 | The MAC, **inbound** | an unverifiable message is refused and never acted on; a verified one is delivered; the mutation that skips verification turns a test red | a fake keychain |
 | The MAC, **outbound** | every outbox reply and heartbeat carries a signature over the same covered fields; the command's own `verify` accepts what its `sign` produced; a write it cannot sign **does not happen** (no unsigned reply, no unsigned heartbeat, no lease taken); the mutation that writes unsigned turns a test red | a fake keychain, and a recording store |
 | The **write credential** | the writes are made with a `CONSUMER`-claimed token (C0), and the merged create-only grant refuses a second write to one outbox id | `internal/gcpfake`'s identitytoolkit fake, and the emulator rules for the store's other half |
 | The expiry | the 72-hour boundary, exactly; the 6-hour command window; the 5-minute future tolerance | injected `now` |
-| The exit contract | 0 for a completed pass, refusals included; 1 for a bad flag, a missing mailbox, and the M4/§8.3 startup refusal; the one-predicate action case | `--once` runs through the command's own `RunE` |
+| The exit contract | 0 for a completed pass, refusals included **and nothing read included**; 1 for a bad flag, a missing mailbox, the M4/§8.3 startup refusal and a refused database (`dbErr`/`checkDBProject`); 2 only for `dbErr`'s `remote` errors; M12's four-clause predicate for the one pass-level case | `--once` runs through the command's own `RunE` |
 
 **Every test is mutation-proven**, in `shared/*/mutation-proof.sh`'s convention: plant the bug, run
 the test, watch it fail, remove it. Each task below names its **Red step** — the one-line mutation
@@ -803,8 +836,16 @@ asked for once.
 
 **Files.** `internal/cli/mailbox.go` (new) + `internal/cli/mailbox_test.go` (new);
 `internal/cli/root.go` (**one line**); `website/content/cli-reference.md` (regenerated);
-`docs/design/v1.md` §9.1 (one row and the `--json` list). **These four move together in one commit**
-— the tests in `internal/clidoc` and `internal/cli` fail if they do not.
+`docs/design/v1.md` §9.1 (one row and the `--json` list). **These four move together in one commit** —
+and the guard covers **three of the four**: `internal/clidoc/cliref_test.go`'s
+`TestCliReferenceIsCurrent` and `internal/cli/docs_website_cliref_test.go` fail on a command that is in
+the tree and not in `website/content/cli-reference.md` (the file is generated, so the flags follow
+from it). **`docs/design/v1.md` §9.1 is not test-enforced** — nothing in this repository reads that
+table and compares it with `NewRootCmd` (the pins that exist are for
+`website/content/cli-reference.md` and for `docs/project-layer.md` §7's flag table, which this change
+does not touch), so keeping the row there is a duty this plan states and a reviewer checks, not a red
+test. Claiming it was enforced would be the same kind of false guarantee as any other test that does
+not exist.
 **Depends on.** T1–T4, T2a; D113c; M8, M12, **C0** (the write credential the pass uses).
 **Verification.** `go run ./internal/clidoc` then
 `GOFLAGS=-p=2 go test ./internal/clidoc ./internal/cli -run 'CliRef|Docs|Lint' -count=1`, plus
@@ -813,8 +854,10 @@ shape, the `project` field, and that no message text and no key appears in it. *
 tested here, on the command's own `RunE`, on both sides of every row of §4.4**: `--interval 500ms`
 → 1; no mailbox configured → 1; a malformed item name → 1; **M4/§8.3 (verification or signing
 unavailable) → 1 at startup, with no pass run**; a completed pass whose every message was refused as
-a duplicate → **0**; a pass that held no lease → **0**; a `--once` pass that performed no action and
-refused everything it read → **1**.
+a duplicate → **0**; a pass that held no lease → **0**; a pass over an empty inbox → **0** (both read
+nothing, so M12's first clause fails and the exit is 0); a `--once` pass that read only per-message
+refusals and performed no action → **0** (clause 4); a `--once` pass that read only a refused action
+and performed no action → **1**.
 **Red step.** Add the command to the tree without regenerating the reference and watch
 `TestCliReferenceIsCurrent` fail with the regenerating command in the message; **and**, separately,
 make the pass return `ExitUserError` on any refused message and watch
@@ -830,8 +873,10 @@ make the pass return `ExitUserError` on any refused message and watch
 destructive kind is refused; the refusal precedes any spawn (the fake runner records that it was
 never called); an unrecognised kind is refused; a launch is allowed; a synthetic P6.2 confirmation
 record admits the destructive path; the write set is exactly the outbox and the heartbeat, **and each
-of those writes carries a MAC** (M4b, T2a's test); **the action-refusal exit code is asserted both
-ways** — 0 in a pass that also delivered something, 1 in a pass that delivered nothing (§4.4).
+of those writes carries a MAC** (M4b, T2a's test); **the action-refusal exit code is asserted all
+three ways** — 0 in a pass that also delivered something, 1 in a pass whose only reading was a
+refused action, and 0 in a pass whose only readings were per-message refusals (§4.4, M12's clauses
+3 and 4).
 **Red step.** Remove `cancel` from the refusal list and watch `TestDestructiveIsRefused` fail; and
 let the runner write an unsigned reply and watch T2a's `TestOutboundIsSigned` fail (the two tasks
 share that fence, so both must be green).
@@ -891,6 +936,7 @@ without regenerating and watch `TestParityCorpusIsCurrent` fail.
 | `docs/design/v1.md` | T5 | one §9.1 row |
 | `shared/` | T1, T3, T8 (test files only) | **no merged module changes.** If a task needs one, it is a finding, not an edit |
 | `internal/localcfg` | T2 | one field, validated |
+| `internal/cli/docs_mobile_mailbox_plan_test.go` | **this plan, not a task** | the pin this document ships with: it checks that every path and symbol cited above is still in the tree, and that M12, §4.4 and §9 state the same four-clause exit rule. It is the answer to the review that found the rule stated as one clause; it is not T1–T8's and it adds no product code |
 | `.github/workflows/ci.yml` | **nobody** | P4.3 is owner-made (Global Constraint 8); see §16 |
 
 **Levels** (the mobile plan's): T1 and T2 are level 3 (with P4.1); T2a, T3–T8 follow in one lane,
