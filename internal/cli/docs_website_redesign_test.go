@@ -44,8 +44,12 @@ package cli
 //     about a project.
 
 import (
+	"io/fs"
+	"maps"
 	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -506,6 +510,105 @@ func TestWebsiteChecklistCheck70bNamesWhatTheTreeHas(t *testing.T) {
 	}
 }
 
+// reChecklistClassName is a class name as the three checks write it: a dotted name with a
+// hyphen in it. The hyphen is what tells a class from a file extension -- the sections also
+// write `website/test/fold.mjs`, `Hero.astro`, `base.css` and `site.yaml`, whose ends are
+// `.mjs`, `.astro`, `.css` and `.yaml` -- so the derivation below can run over a whole
+// section, and `.site-header`, `.command-block` and `.chat-shot` are read out of the prose
+// the owner follows rather than listed in this file.
+var reChecklistClassName = regexp.MustCompile(`\.([a-z][a-z0-9]*(?:-[a-z0-9]+)+)`)
+
+// reChecklistDataAttr is a data attribute as the checks write it: `[data-copy]` in Check
+// 70c's Fails-when, `data-copy-button` and `data-copy-status` in its Method. Check 70c names
+// no class at all -- what it is about is the wrapper the script finds and the button it
+// reveals -- so this is the form that keeps its case below from having nothing to hold.
+var reChecklistDataAttr = regexp.MustCompile(`\b(data-[a-z][a-z0-9]*(?:-[a-z0-9]+)*)`)
+
+// websiteSourceText is the site's own source, concatenated: every `.astro`, `.css`, `.js`,
+// `.mjs`, `.ts`, `.json` and `.yaml` file under `website/src`, `website/public` and
+// `website/test`. It is deliberately not the built artifact -- `website/dist/` exists only
+// after `npm run check`, and the Go tests run in CI with no Node and no build -- and not
+// `node_modules`, which is a toolchain's cache rather than the site.
+func websiteSourceText(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join("..", "..", "website")
+	var b strings.Builder
+	for _, dir := range []string{"src", "public", "test"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			switch filepath.Ext(p) {
+			case ".astro", ".css", ".js", ".mjs", ".ts", ".json", ".yaml":
+			default:
+				return nil
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			b.Write(data)
+			b.WriteByte('\n')
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("reading the site's sources under %s: %v", filepath.Join(root, dir), err)
+		}
+	}
+	if b.Len() == 0 {
+		t.Fatalf("no source file under %s: the names the three checks cite are held to the site, and a walk that read nothing would pass the test below by looking at nothing", root)
+	}
+	return b.String()
+}
+
+// TestWebsiteChecklist70SectionsNameClassesTheSiteCarries holds every class name and every
+// data attribute the website redesign's three live checks cite to the site's own sources.
+//
+// The defect this closes is the one the review of 2026-10-19 found in Check 70a -- the section
+// still told the reader to open a `Menu` drawer the brief had taken out -- and the same hole
+// one class over: a live check is prose, so it can name a selector the site has renamed and go
+// on reading perfectly well, and the owner is left deciding whether the check or the site is
+// wrong. `website/test/checklist.mjs` holds Check 70a's `.site-…` names to the **built** pages
+// and 70b's are named in the pair test above, but the names are the check's own text in all
+// three cases, and the sections cite classes and attributes (`chat-shot`, `data-copy`) that
+// nothing derived before this case did.
+//
+// The names are derived from the document and never listed here: a list of selectors written
+// into this file would be a second place to forget, and the subject is the checks' own text.
+// Each name has to be a whole word of some source file -- the boundary excludes `-`, so a
+// source that has `.chat-watch-block` does not answer for `.chat-watch` -- and each section
+// has to contribute at least one, so a rewrite that dropped every name is refused rather than
+// passing an empty loop.
+func TestWebsiteChecklist70SectionsNameClassesTheSiteCarries(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	source := websiteSourceText(t)
+
+	for _, h := range []string{checklist70aHeading, checklist70bHeading, checklist70cHeading} {
+		section := docSection(t, path, doc, h)
+		names := map[string]bool{}
+		for _, m := range reChecklistClassName.FindAllStringSubmatch(section, -1) {
+			names[m[1]] = true
+		}
+		for _, m := range reChecklistDataAttr.FindAllStringSubmatch(section, -1) {
+			names[m[1]] = true
+		}
+		if len(names) == 0 {
+			t.Errorf("%s names no class and no data attribute at all: this case holds the names a section cites to the site's sources, and a section rewritten without any of them would pass it while telling the owner nothing they can read out of the page", h)
+			continue
+		}
+		for _, name := range slices.Sorted(maps.Keys(names)) {
+			carried := regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(name) + `(?:$|[^A-Za-z0-9_-])`).MatchString(source)
+			if !carried {
+				t.Errorf("%s cites `%s`, and no source file under website/src, website/public or website/test carries that name: the section reads the page out of the tree, so a name the tree does not have is a step the owner cannot run -- rename it in docs/gcp-live-checklist.md in the commit that renames it in the site", h, name)
+			}
+		}
+	}
+}
+
 // methodLines returns the shell lines of the Method's own code block in a check's section.
 func methodLines(t *testing.T, heading, section string) []string {
 	t.Helper()
@@ -554,17 +657,25 @@ var (
 	reMethodLiteral = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_.-]{2,}`)
 )
 
-// TestWebsiteChecklistCheck70bMethodReadsExist reads the section's Method the way a shell
-// would and holds every read in it to the file it names: the file is in the tree, and the
-// text the line looks for is in that file. This is the check the review asked for after
-// `PAGE_EXEMPT` -- an identifier `budget.mjs` has never had, the exemption set being
-// `DOCUMENT_PAGES` in `website/test/lib/exempt.mjs` -- was written into a Method that no test
-// read, so an owner running the block got an empty grep and a check that silently lost the
-// exemption list it was supposed to read.
-func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
+// checkMethodReads reads one check's Method the way a shell would and holds every read in it
+// to the file it names: the file is in the tree, and the text the line looks for is in that
+// file. This is the check the review asked for after `PAGE_EXEMPT` -- an identifier
+// `budget.mjs` has never had, the exemption set being `DOCUMENT_PAGES` in
+// `website/test/lib/exempt.mjs` -- was written into a Method that no test read, so an owner
+// running the block got an empty grep and a check that silently lost the exemption list it
+// was supposed to read.
+//
+// wantFiles are the files the section's own claims rest on, each of which one of its Method
+// lines has to read: a step that rests on a file the Method never opens is a step reading the
+// section's memory of the file instead of the file. The read is skipped for the lines that are
+// not a read of a source file -- the guard, the server, a pipe, or a read of the built
+// artifact under `website/dist/`, which only exists after `npm run check` -- so a section whose
+// Method reads nothing but the artifact fails the wantFiles half rather than passing empty.
+func checkMethodReads(t *testing.T, heading string, wantFiles []string) {
+	t.Helper()
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
-	lines := methodLines(t, checklist70bHeading, docSection(t, path, doc, checklist70bHeading))
+	lines := methodLines(t, heading, docSection(t, path, doc, heading))
 
 	var read []string
 	for _, line := range lines {
@@ -576,16 +687,39 @@ func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
 		body := readDoc(t, file)
 		for _, needle := range reMethodLiteral.FindAllString(pattern, -1) {
 			if !strings.Contains(body, needle) {
-				t.Errorf("%s's Method reads %q out of %s, which does not carry it: the line would print nothing, and the step below it would read a fact the owner was never shown", checklist70bHeading, needle, file)
+				t.Errorf("%s's Method reads %q out of %s, which does not carry it: the line would print nothing, and the step below it would read a fact the owner was never shown", heading, needle, file)
 			}
 		}
 	}
 
-	// The files the Method's own claims rest on, each read by one of its lines: the site's
-	// facts, the measurement script, the README the ceilings live in, the exemption list and
-	// the two gates' own lists, and the page and components the steps look at.
 	got := strings.Join(read, "\n")
-	for _, want := range []string{
+	for _, want := range wantFiles {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s's Method never reads %s: the step that rests on it is reading the section's memory of the file instead of the file", heading, want)
+		}
+	}
+}
+
+// TestWebsiteChecklistCheck70aMethodReadsExist holds Check 70a's Method to the tree the same
+// way 70b's below is held to it. 70a is the check that reads the header's own numbers, and the
+// files its steps rest on are the layout the labels are written in, the two stylesheets the
+// breakpoint, the target's height and the header's own padding come out of, and the site's
+// facts file the canonical origin is read from.
+func TestWebsiteChecklistCheck70aMethodReadsExist(t *testing.T) {
+	checkMethodReads(t, checklist70aHeading, []string{
+		"website/data/site.yaml",
+		"website/src/layouts/Base.astro",
+		"website/src/styles/base.css",
+		"website/src/styles/tokens.css",
+	})
+}
+
+// TestWebsiteChecklistCheck70bMethodReadsExist holds Check 70b's Method to the tree: the
+// site's facts, the measurement script, the README the ceilings live in, the exemption list
+// and the provenance list, and the page and the components the steps look at -- including the
+// chat's screenshot slot and the hero's call to action, which #655 and #656 put there.
+func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
+	checkMethodReads(t, checklist70bHeading, []string{
 		"website/data/site.yaml",
 		"docs/website/redesign/capture-screenshots.mjs",
 		"website/README.md",
@@ -594,32 +728,73 @@ func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
 		"website/src/pages/index.astro",
 		"website/src/components/HomeInstall.astro",
 		"website/src/components/AgentChat.astro",
+		"website/src/components/Hero.astro",
 		"website/src/components/ConsentBanner.astro",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("%s's Method never reads %s: the step that rests on it is reading the section's memory of the file instead of the file", checklist70bHeading, want)
-		}
-	}
+		"website/test/home.mjs",
+	})
 }
 
-// TestWebsiteChecklist70NotesNameTheMergedMainCommit pins the "as of" note the website
-// redesign's three checks carry. The note is what tells an owner which page a section was
-// read against, and all three had it wrong: each named `73a0c109`, a main commit from
-// before #623 — at which `website/src/components/HomeInstall.astro` does not exist and the
-// home page is the hero and the diagram alone — so the page the sections describe (the
-// install blocks `HomeInstall.astro`'s, the chat's `fugaro watch` block as the first `pre`
-// in `main`) is not the page that commit builds. What they must name is the commit this
-// branch merged: the merge `c27064c0`'s second parent, `git rev-parse c27064c0^2`, which
-// is `3a233d57`.
+// TestWebsiteChecklistCheck70cMethodReadsExist holds Check 70c's Method to the tree. Its
+// first three reads are of the built artifact -- the pages that carry a control, the count of
+// controls per page and the shipped script, none of which the Go tests can build -- so the
+// sources its claims rest on are read in the Method as well: the script that writes the
+// status line step 3 listens for, the markup helper that writes the `hidden` button step 4
+// looks for, and the facts file the four-line cosign invocation of step 1 comes from.
+func TestWebsiteChecklistCheck70cMethodReadsExist(t *testing.T) {
+	checkMethodReads(t, checklist70cHeading, []string{
+		"website/public/scripts/site.js",
+		"website/src/lib/copy-control.mjs",
+		"website/data/install.yaml",
+	})
+}
+
+// checklist70Reading is the commit the website redesign's three live checks were last read
+// against: main's tip as this branch merged it. The three notes are one reading of one site,
+// and an editor who merges a newer main re-reads them and moves this constant with them --
+// which is the point of pinning it once here rather than leaving three copies of a sha in the
+// document with nothing holding them together.
 //
-// What is pinned is the shape rather than the history, because the history is not there to
-// read: these tests run against whatever clone they are given (CI checks out with
-// `fetch-depth: 2`), so no assertion here can open the commit a sha names. The three
-// sections must each carry the note, must name one and the same commit, and must say which
-// commit that is ("the commit this branch merged") rather than leaving a sha to stand
-// alone — which is the reading a future edit has to repeat from `git rev-parse`. A wrong
-// commit named consistently in all three is the one thing this pin cannot refuse, and it
-// is why the paragraph above states how the right one is found.
+// It is `7731386f`: #656, the commit that rewrote Check 70a's menu section for the three
+// labels and that Check 70b's own page (the redesigned home, #623, with the chat's `fugaro
+// watch` screenshot, #655, in it) was built at.
+const checklist70Reading = "7731386f"
+
+// checklist70Merge is the merge that brought that commit into this branch, and the shape the
+// three notes say the reading is re-found with: `git rev-parse 0e555767^2`.
+const checklist70Merge = "0e555767"
+
+// TestWebsiteChecklist70NotesNameTheMergedMainCommit pins the "as of" note the website
+// redesign's three checks carry. The note is what tells an owner which site a section was
+// read against, and all three had it wrong twice: first each named `73a0c109`, a main commit
+// from before #623 — at which `website/src/components/HomeInstall.astro` does not exist and
+// the home page is the hero and the diagram alone — and then, after this branch merged a
+// newer main (#656), all three still named `3a233d57` and called it "the commit this branch
+// merged", which the merge `0e555767` had made false: its second parent is `7731386f`.
+//
+// **What this test cannot derive, and why the notes are worded as they are.** The reading the
+// review asked this pin to derive is "the commit all three name is an ancestor-or-equal of
+// `origin/main`, and the website files named did not change since it", and no assertion here
+// can make it: the derivation needs the commit objects, and neither clone this runs in has
+// them — CI's test job checks out one commit (no `fetch-depth`), and the `changes` job's
+// `fetch-depth: 2` reaches one parent and no further — so a test that tried would either fail
+// everywhere or pass vacuously, and this repository refuses the vacuous pass (the rules job's
+// FUGARO_REQUIRE_EMULATOR is the same ruling from the other side). So the pin is the **shape
+// of the reading** instead, and the notes are written so that the sha is not what they rest
+// on:
+//
+//   - the three sections each carry the note, and all three name one and the same commit;
+//   - that commit is the one the notes name as the reading, `checklist70Reading` — a wrong
+//     commit named consistently in all three is the one thing this pin cannot refuse, and
+//     pinning the sha it should be is what closes that hole;
+//   - each note says **whose** commit it is ("the commit this branch merged") and **how to
+//     re-find it** (`checklist70Merge`'s second parent, `git rev-parse 0e555767^2`), which is
+//     the reading a future edit repeats;
+//   - and each note says the commit is a **reading rather than a claim**, and that the names
+//     the steps read are held to the tree at test time. That is the clause that keeps the sha
+//     from rotting: what the owner follows is not the date but the names, and a site that has
+//     moved on fails TestWebsiteChecklist70SectionsNameClassesTheSiteCarries (and, for 70a's
+//     own names, `website/test/checklist.mjs`) rather than leaving a section describing a page
+//     that is gone.
 func TestWebsiteChecklist70NotesNameTheMergedMainCommit(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -632,17 +807,26 @@ func TestWebsiteChecklist70NotesNameTheMergedMainCommit(t *testing.T) {
 		section := flat(docSection(t, path, doc, h))
 		m := note.FindStringSubmatch(section)
 		if m == nil {
-			t.Errorf("%s carries no \"As of main's commit `…`\" note: the section describes a page, and the note is what says which commit's page it is", h)
+			t.Errorf("%s carries no \"As of main's commit `…`\" note: the section describes a site, and the note is what says which commit's site it is", h)
 			continue
 		}
+		if m[1] != checklist70Reading {
+			t.Errorf("%s names commit %s, and the three notes are the reading taken at %s: an editor who merges a newer main re-reads the three sections and moves checklist70Reading with them", h, m[1], checklist70Reading)
+		}
 		if !strings.Contains(section, "the commit this branch merged") {
-			t.Errorf("%s names %s as the commit it was read against and does not say it is the commit this branch merged: a sha on its own does not say whose page the section describes", h, m[1])
+			t.Errorf("%s names %s as the commit it was read against and does not say it is the commit this branch merged: a sha on its own does not say whose site the section describes", h, m[1])
+		}
+		if !strings.Contains(section, checklist70Merge+"'s second parent") {
+			t.Errorf("%s does not say the reading is re-found as %s's second parent (`git rev-parse %s^2`): the note has to say which merge it read main at, or the next editor has a sha and no way to check it", h, checklist70Merge, checklist70Merge)
+		}
+		if !strings.Contains(section, "reading") || !strings.Contains(section, "held to the tree at test time") {
+			t.Errorf("%s carries a sha and does not say it is a reading whose names are held to the tree at test time: the sha is a date, not the thing the section rests on, and a note that leaves it standing alone is the note that rotted twice already", h)
 		}
 		notes = append(notes, asOf{h, m[1]})
 	}
 	for i := 1; i < len(notes); i++ {
 		if notes[i].sha != notes[0].sha {
-			t.Errorf("%s names commit %s and %s names %s: the three notes are one reading of one page, so they name one commit", notes[0].heading, notes[0].sha, notes[i].heading, notes[i].sha)
+			t.Errorf("%s names commit %s and %s names %s: the three notes are one reading of one site, so they name one commit", notes[0].heading, notes[0].sha, notes[i].heading, notes[i].sha)
 		}
 	}
 }

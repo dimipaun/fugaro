@@ -4118,10 +4118,16 @@ the site has renamed is a check nobody can follow. It was written by the review 
 which found exactly that: this section still described the `Menu` drawer the brief had taken
 out (item 1), and a live check's instructions have to be about the site that exists.
 
-**As of main's commit `3a233d57`** — the commit this branch merged (`c27064c0`'s second parent) — the
-section was read against that commit's header; the three-group-label rewrite above is main's later text
-(merged in at `7731386f`), which this section follows, so a header that has moved on since is a later
-reading of this check rather than a failure of it.
+**As of main's commit `7731386f`** — the commit this branch merged (`0e555767`'s second parent,
+main's tip at that merge, and the commit the three-group-label rewrite above is: #656) — the header
+this section describes is the header main builds there. The commit is a **reading**, not a claim, and
+it is the reading to repeat: every name below — the `.site-…` classes, the paths, the `…Failures`
+refusals, and the widths and queries the Method's own greps read out of the stylesheet and the layout
+— is derived from this text and held to the tree at test time (and, where the name is a class on a
+built page, to the build: `website/test/checklist.mjs` for this section's names,
+`website/test/base-styles.mjs` and `website/test/nav-hover.mjs` for the structure behind them), so a header that has moved on since is a
+later reading of this check rather than a failure of it, and a step that no longer matches the header
+is this section's to correct.
 
 **The touch side of step 6 is part of the acceptance, not an aside.** The script is bound
 only where `matchMedia` reports
@@ -4155,6 +4161,13 @@ grep -o '@media (hover:hover) and (pointer:fine)' website/dist/index.html | head
 # The groups and links the menu shows, read out of the layout rather than typed: the names
 # steps 3 and 5 look for, and the nine links step 3 has to reach.
 sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
+# The one-row header's height, out of the stylesheet and the markup rather than typed: the
+# label's own 44 px target, the header's padding-block and its border, and the mark's declared
+# width are the numbers step 1's "about 77 px" is made of, and step 1 measures the row against
+# them rather than against a number this section remembers.
+grep -n "min-height: 44px" website/src/styles/base.css
+grep -n "space-sm\|border-width" website/src/styles/tokens.css
+grep -n 'width="47"' website/src/layouts/Base.astro
 ```
 
 1. **At 390 × 844, the header is one row, and the wordmark is the mark alone.** Set the
@@ -4167,7 +4180,10 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    `display: none`: the link keeps its accessible name), and above it the text is drawn beside
    the mark. **FACT:** the header's height in pixels, the document's scroll width, and whether
    the wordmark's text is in the row or out of it. RF3 measured **177 px** of three wrapped nav
-   rows on the page before P3; one row with the labels at their 44 px target is about **77 px**.
+   rows on the page before P3; one row is the label's own **44 px** target (`min-height` on the
+   summary, read in the block above) plus the header's `padding-block` (`var(--space-sm)`, 16 px,
+   top and bottom) and its `--border-width` bottom border, so a one-row header measures **77 px**
+   and a number well over it is a row that has grown.
    A scroll width greater than 390 is a sideways scrollbar on a phone, which is the same defect
    seen from the other side. **Repeat at 375 and at 320** — the brief's own width and the
    narrowest phone worth supporting — and then at **391**, just above the wordmark's breakpoint,
@@ -4176,8 +4192,12 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    **The three labels are the whole menu at this width, and each fits.** Read them:
    `document.querySelectorAll('.site-nav-group > details > summary')` — three, labelled
    **Product**, **Reference** and **Project**, each at least **44 px** tall, all three on the
-   header's one row beside the mark, and **no `Menu` control anywhere on the page**. At 375 px
-   the three labels measured **65**, **83.5** and **59.3 px** wide beside the 47 px mark.
+   header's one row beside the mark, and **no `Menu` control anywhere on the page**. The mark
+   beside them is the layout's own image, `width="47"` by `height="32"` in `Base.astro` (read in
+   the block above), so what the three labels have to fit in at 375 px is 375 px less the mark
+   and the header's own gaps — which is why the three labels' widths at that width are numbers
+   this step **reads** and pastes back rather than numbers this section remembers, and why a
+   label that has pushed the row into a second line or off the right edge is the failure.
    **FACT:** the three labels' widths and heights, and that no `Menu` control is on the page.
 
 2. **A label opens its own panel when the keyboard reaches it, and only one is open at a time.**
@@ -4403,10 +4423,15 @@ neither of them can see a viewport, which is exactly D187's question. The fold i
 screen, and this repository's gates are deliberately browser-free, so D187 answered it with the
 ceiling **plus this one owner-run check** rather than with the repository's first browser-driven
 test: the first screen is measured here, by you, and by nothing else. **As of main's commit
-`3a233d57`** — the commit this branch merged (`c27064c0`'s second parent, and the commit that
-brought the redesigned home page, #623, into it) — the page it describes is the site main builds
-there, so a page that has changed since is a later reading of this check rather than a failure
-of it, and a step that no longer matches the page is this section's to correct.
+`7731386f`** — the commit this branch merged (`0e555767`'s second parent, main's tip at that
+merge, and itself #656's commit) — the page it describes is the site main builds there, with the
+redesigned home page (#623), the hover menus (#628), the chat's `fugaro watch` screenshot (#655)
+and the three-label header (#656) all in it. The commit is a **reading**, not a claim, and it is
+the reading to repeat: every name below — the files, the identifiers, the keys the measurement
+script reads and the lines of this section's own Method — is derived from this text and held to
+the tree at test time (`internal/cli`'s website pins), so a page that has changed since is a
+later reading of this check rather than a failure of it, and a step that no longer matches the
+page is this section's to correct.
 
 **What RF23 measured, and what P5 changed.** RF23 is the finding this check answers: "above the
 fold" and "very few words" were, before the redesign, unwritten and unmeasured — no gate measured
@@ -4425,7 +4450,10 @@ the one bold diagram, both shipped by #623) took the commands out of the hero an
 its call to action, then the chat, then the diagram, then the install paths. So the homepage's
 first screen is the promise and the two links under it and no command, the page's first command
 is the chat's `fugaro watch` block, and the command-above-the-fold claim this check's step 2
-used to carry for the homepage is now Getting Started's alone (step 3). **The numbers above are the owner's record of the page before the
+used to carry for the homepage is now Getting Started's alone (step 3). **And the chat's block
+has grown a picture since**: #655 put the owner's real `fugaro watch` capture into it, between
+the "Watch it run" heading and the command, so the page's first command now sits under the
+screenshot and step 2 reads that order — heading, screenshot, command — as the block it is. **The numbers above are the owner's record of the page before the
 redesign** (`docs/website/redesign/reconciliation.md` §6, the capture set described by
 `docs/website/redesign/current/README.md`): they are not measurements of the page as it is now, and
 every number this check passes or fails on is one it takes itself.
@@ -4468,6 +4496,20 @@ grep -n "HOME_PATHS\|home-install-command" website/src/components/HomeInstall.as
 # block, which is the first `pre` in `main` now that the install paths are the page's last
 # section.
 grep -n "chat-watch-command\|WATCH = " website/src/components/AgentChat.astro
+# The screenshot the chat's block now carries above that command (#655), out of the component
+# that renders it rather than remembered: the slot the picture goes in, the file the picture is,
+# and the hook the site's own gate reads it by — which is what step 2's "heading, screenshot,
+# command" is read against.
+grep -n "chat-shot\|fugaro-watch\|watch-screenshot" website/src/components/AgentChat.astro
+# The two links under the promise, and the flag that decides whether a third one is rendered:
+# the console's link is what `features.console_downloads` renders, and while it is false the
+# hero's row is the two links step 2 reads.
+grep -n "hero-actions\|hero-cta\|consoleExists" website/src/components/Hero.astro
+grep -n "console_downloads" website/data/site.yaml
+# The gate that already refuses a hero disagreeing with that flag, read out of the test rather
+# than remembered: step 2 says the row is the site's flag's doing, and this is the case that
+# holds it.
+grep -n "hero-actions" website/test/home.mjs
 # The row a command block is laid out in, out of the stylesheet that declares it: the control and
 # the command share one row rather than the control sitting above it, which is what step 2 reads
 # the command's and the control's rectangles for.
@@ -4504,11 +4546,24 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    `AgentChat.astro`, `ArchitectureDiagram.astro`, `HomeInstall.astro` — and since #623 the
    install paths are the page's **last** section, the commands having moved out of the hero. So
    at 390 × 844 the first screen holds the headline (`Lambdas for coding agents`, README's own
-   line) and the lead of step 1, then the two links under them, and **no command**: what this
-   step reads is that no command block has climbed back into the first screen. The page's first
-   command is the chat's `fugaro watch` block — `AgentChat.astro`'s `.chat-watch`, under its
-   "Watch it run" heading, and the first `pre` in `main` now that the install paths come last —
-   and `firstCommandBottom` for `/` is that block's bottom: the script's key,
+   line) and the lead of step 1, then the **two** links under them, and **no command**: what this
+   step reads is that no command block has climbed back into the first screen. **Two links and not
+   three**, because the site's own flag is what renders the console's: `website/data/site.yaml`
+   carries `features.console_downloads: false`, so `Hero.astro` renders nothing about the console
+   — no link, no sentence, no placeholder — and the row is "Get started" and "How it works". This
+   check describes the site **without** a console link for that reason, and the site's own gate
+   holds the row to the flag (`website/test/home.mjs` refuses a hero whose call to action is not
+   exactly the two links while the flag is false); a hero with three links is a site whose flag
+   has been flipped, which is a later reading of this step rather than a failure of it. The
+   page's first command is the chat's `fugaro watch` block — `AgentChat.astro`'s `.chat-watch`,
+   under its "Watch it run" heading, and the first `pre` in `main` now that the install paths come
+   last — and **the block is three things in that order**: the heading, the owner's real
+   `fugaro watch` screenshot above the command (`div.chat-shot`'s `img`,
+   `public/images/fugaro-watch.png`, #655, the slot `website/test/home.mjs` reads), and then the
+   command. So the first command sits **under the picture**, and the picture's own height is
+   between the heading and it: read the screenshot's rectangle too, because a picture that grew
+   is a first command pushed down. `firstCommandBottom` for `/` is that block's bottom: the
+   script's key,
    `document.querySelector('main pre')`'s bottom, measured from the top of the document. Beside
    it read the copy control's own rectangle: the control is `website/src/lib/copy-control.mjs`'s
    markup, `.command-controls` inside the same `.command-block`, and the block lays the two out in
@@ -4518,9 +4573,11 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    arrangement that has left the row: a control rendered **below** its command — the case the
    Fails-when block below names — where the command is visible and the button is not, and which
    no reading of the command's own rectangle can see. **FACT:** the first screen's blocks in
-   order and whether any of them is a command block; the page's first command as rendered, the
-   block it is in, its bottom in pixels and whether it is above or below 844; and the control's
-   top and bottom beside the command's.
+   order and whether any of them is a command block; the hero's links as rendered and how many
+   they are, against `features.console_downloads`; the chat's block's three parts in order, with
+   the screenshot's own height and whether it is above the command; the page's first command as
+   rendered, the block it is in, its bottom in pixels and whether it is above or below 844; and
+   the control's top and bottom beside the command's.
 
 3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
    1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
@@ -4584,8 +4641,11 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
 
 **Passes when:** every page the artifact lists states its point inside a 390 × 844 first screen —
 the `h1`'s bottom and the lead's bottom both under 844 — the homepage's first screen holds the
-promise and its call to action and **no command**, its first command (the chat's `fugaro watch`
-block) carrying its copy control in the command's own row wherever it sits, Getting Started's
+promise and its call to action and **no command**, the call to action is the **two** links the
+site's own flag renders (the console's link is absent while `features.console_downloads` is
+false), the chat's block is its heading, the owner's `fugaro watch` screenshot and then the
+command, and its first command (the chat's `fugaro watch`
+block) carries its copy control in the command's own row wherever it sits, Getting Started's
 first command block is above the
 fold at 390 × 844 **and** at 1280 × 900, the consent banner covers neither the first command nor
 its control on a first visit at either size, every page's lead is within 40 words and every page
@@ -4595,7 +4655,12 @@ list.
 **Fails when:** a page's lead — or its `h1` — ends below 844 at 390 × 844; a command block is in
 the homepage's first screen, where the design puts the promise and its call to action; the
 homepage's copy control has left its command's row, or is outside the first screen the command is
-in; Getting Started's first command block is below the fold at either width; the consent banner
+in; a **third** link under the promise — the console's — on a site whose `website/data/site.yaml`
+still says `features.console_downloads: false` (a hero that disagrees with the site's own flag, so
+either the flag has been flipped and this reading is stale or the link was written into the hero
+rather than rendered from the flag); the chat's block missing its screenshot, or carrying it
+**below** the command, so the first command is not under the picture this step reads; Getting
+Started's first command block is below the fold at either width; the consent banner
 covers the first command or its control on a first visit; a page is over a ceiling the README
 states, or a page that is not one of the three exempt ones is measured as exempt; or a page
 carries a provenance phrase. What failing looks like: a hero that grows a second paragraph under
@@ -4613,7 +4678,9 @@ fact — a position, a height, an overlap — and the fix belongs in `website/sr
 added to the gate that can see it.
 
 **Paste back:** per page at 390 × 844, the `h1`'s bottom and the lead's bottom, and whether each is
-above the fold; the homepage's first screen's blocks in order, and the page's first command as
+above the fold; the homepage's first screen's blocks in order, the hero's links as rendered and how
+many they are, the chat's block's three parts in order with the screenshot's height, and the page's
+first command as
 rendered with the block it is in, its bottom and its control's rectangle;
 Getting Started's first command block's bottom at both widths; the consent banner's height and top
 edge on a first visit at both widths, and what it covers; per page, the lead's and the page's word
@@ -4632,10 +4699,12 @@ ceiling is not a first screen and an ordering is not a position — and the row 
 RF13). It is the half of P6 no hermetic test can take: `website/test/copy.mjs` holds the
 markup — every block carries its control, the button is `hidden` in the markup, the status
 line is a polite live region — and a real clipboard is what a browser has and `node --test`
-does not. **As of main's commit `3a233d57`** — the commit this branch merged (`c27064c0`'s
-second parent): the blocks this check lists are the ones main builds there, and a page that has
-gained or lost a command block since is a later reading of this check rather than a failure of
-it.
+does not. **As of main's commit `7731386f`** — the commit this branch merged (`0e555767`'s
+second parent, main's tip at that merge): the blocks this check lists are the ones main builds
+there. The commit is a **reading**, not a claim, and it is the reading to repeat: the pages and
+the counts below are read out of the artifact by this section's own greps and held to the tree at
+test time (`internal/cli`'s website pins), so a page that has gained or lost a command block since
+is a later reading of this check rather than a failure of it.
 
 **Method.** One browser, one built site, a real clipboard. Serve the artifact locally or read
 the deployed site, both read-only. The controls are the ones the tree's own markup writes, so
@@ -4651,6 +4720,14 @@ grep -rl 'data-copy' website/dist --include='*.html' | sort
 grep -ro 'data-copy-button' website/dist --include='*.html' | cut -d: -f1 | sort | uniq -c
 # The script that reveals and drives them — the only script the site ships (D183).
 ls -l website/dist/scripts/site.js
+# The status line step 3 listens for and the button step 4 looks for, out of the two files that
+# write them rather than remembered: the script's own message and the markup's own `hidden`
+# button (the artifact's copy is minified, so this reads the sources the build is made of).
+grep -n "data-copy-status\|Copied" website/public/scripts/site.js
+grep -n "data-copy-button\|hidden" website/src/lib/copy-control.mjs
+# The command the multi-line case is about, out of the facts file rather than remembered: the
+# cosign path Getting Started's own option renders, whose invocation runs across four lines.
+grep -n "cosign verify-blob" website/data/install.yaml
 ```
 
 1. **Each kind of control, by mouse.** On the built or deployed site, click the copy control
