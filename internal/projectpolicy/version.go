@@ -47,10 +47,14 @@ import (
 // instead of an unknown-field decode error that names a field and no move. It
 // also states in the node which enforcement a reader must have, which is what
 // a version is for. The rules themselves ship in the
-// same release as this constant: an account job's enforcement is plan task 3,
-// and until it lands no OAuth launch reaches such a job at all
-// (checkProjectJobOAuth). The shape is version 2's; only what a runner must
-// enforce changed.
+// same release as this constant, and they have two doors: what admits an OAuth
+// launch onto such a job, or refuses it before the claim and before the token,
+// is internal/cli's projectJobAccountFor — with checkProjectJobAccount and
+// checkProjectJobAccountCovers behind it, the two its answer is computed with —
+// and the runner re-decides the same pair from the policy it read itself, in
+// internal/runner's own checkProjectJobAccount, before any stage, lease or
+// budget spend. The shape is version 2's; only what a runner must enforce
+// changed.
 const Version = 3
 
 // VersionSince names, for each policy version, the fugaro release that

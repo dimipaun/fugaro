@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -334,5 +336,119 @@ func TestDocsProjectLayerStatesTheFailClosedAdmission(t *testing.T) {
 		if strings.Contains(doc, notWant) {
 			t.Errorf("docs/project-layer.md still says %q, which is the fail-open reading the code does not implement", notWant)
 		}
+	}
+}
+
+// TestDocsProjectLayerSaysWhichGateRefusesAnOAuthLaunch: docs/project-layer.md
+// is the operator-facing reference for what a repository may set, and its
+// `agent.oauth_token` row and shared-job section said, until this change, that
+// no profile may mount a Claude OAuth token "in this release", that every
+// project job therefore runs as no account, and that an installation on
+// `auth: oauth` "has no usable shared job until phase 5" — naming
+// `internal/cli`'s `checkProjectJobOAuth` as the gate. Named accounts shipped
+// (plan task 3): that function is gone, a profile listing an account serves
+// that account's token on that account's job, and the `default` account rides
+// the profile's no-account job, so the old sentences document the opposite of
+// what the binary does at the feature's central point (review finding on this
+// change). Nothing pinned them, so this does: the gate the doc must name, the
+// condition it must state, and the sentences that must not come back.
+//
+// Mutation (verified, run and restored): put the reviewed sentence back into
+// the `agent.oauth_token` row — "In this release no profile may mount a Claude
+// OAuth token (`fugaro init` refuses it), so every project job runs as no
+// account" — and this test fails on both the missing wants and the notWant.
+func TestDocsProjectLayerSaysWhichGateRefusesAnOAuthLaunch(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		// The paragraph that replaced the shared-job table's OAuth row.
+		"Claude OAuth tokens are no longer one of the missing pieces",
+		"one shared job per (profile, provider, account)",
+		"the `default` account rides the profile's no-account job",
+		"admitted when the profile lists the account the run's own credential selects",
+		// The gate that exists, on both sides.
+		"`projectJobAccountFor`",
+		"`checkProjectJobAccount`",
+		"`checkProjectJobAccountCovers`",
+		"`internal/runner`'s `checkProjectJobAccount`",
+		// What a repository's own file may choose among, and where the list is.
+		"`claude_accounts`",
+		"`accounts.<n>.allow_repos`",
+		// The one half of the old claim that is still true, kept apart from it:
+		// a Claude token in a profile's `secrets:` is still refused, and the
+		// profile states accounts in `claude_accounts` instead.
+		"A profile that mounts a Claude OAuth token in its `secrets:` is still refused",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q: the reference must name the shipped gate and the condition an OAuth launch is admitted on", want)
+		}
+	}
+	for _, notWant := range []string{
+		"checkProjectJobOAuth",
+		"no profile may mount a Claude OAuth token",
+		"has no usable shared job",
+		"every project job runs as no account",
+		"an `agent.auth: oauth` run has no token on a shared job",
+		// The same claim in its three other spellings in this file.
+		"it is always empty",
+		"which is empty in this release",
+		"no profile may mount one yet",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q: that was true before named accounts shipped, and the gate it names is gone", notWant)
+		}
+	}
+}
+
+// TestNoShippedTextNamesTheRetiredOAuthGate: `checkProjectJobOAuth` is gone
+// (plan task 3 replaced it with the account gate), and a shipped file that
+// still names it in prose sends a reader looking for a function that does not
+// exist — the review found exactly that in internal/projectpolicy/version.go's
+// version-3 note and in docs/project-layer.md's `agent.oauth_token` row. What
+// is scanned is what a reader of the binary is pointed at: every non-test Go
+// file under internal/ and cmd/, and the operator-facing docs directly under
+// docs/ (docs/design and docs/plans are excluded on purpose: they record what
+// the code was when they were written, cite line numbers, and are corrected by
+// the plan that supersedes them, not by this test).
+//
+// Mutation (verified, run and restored): write the retired name back into
+// internal/projectpolicy/version.go's comment — the file the review found it
+// in — and this fails naming that file.
+func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
+	const retired = "checkProjectJobOAuth"
+	roots := []string{"../../internal", "../../cmd", "../../docs"}
+	var scanned int
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				// The two historical doc trees, and nothing else, are skipped.
+				if d.Name() == "design" || d.Name() == "plans" {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			isGo := strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go")
+			isDoc := strings.HasSuffix(path, ".md") && filepath.Dir(path) == "../../docs"
+			if !isGo && !isDoc {
+				return nil
+			}
+			scanned++
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(b), retired) {
+				t.Errorf("%s names %s, which this release removed: name the gate that exists (internal/cli's projectJobAccountFor, checkProjectJobAccount and checkProjectJobAccountCovers, and internal/runner's checkProjectJobAccount)", path, retired)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if scanned < 100 {
+		t.Fatalf("scanned only %d files: the tree has moved, so this check saw nothing", scanned)
 	}
 }

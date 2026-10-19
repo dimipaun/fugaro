@@ -770,7 +770,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	ws.BuildSecrets = slices.Compact(ws.BuildSecrets)
 	// Every variable a secret is mounted as, so the runner can register
 	// them all for redaction before bootstrap.
-	ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
+	ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
 	for env := range ws.SecretEnv {
 		if _, dup := ws.Env[env]; dup {
 			collisions = append(collisions, env)
@@ -781,6 +781,23 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		return WorkflowSpec{}, userErr("workflow %s: secret env %s collides with a variable the platform sets", name, strings.Join(slices.Compact(collisions), ", "))
 	}
 	return ws, nil
+}
+
+// redactionEnvs is the value of runner.SecretEnvsVar for a job that mounts
+// secretEnv: every variable that job mounts a secret as, sorted and
+// comma-joined, which the runner splits and registers with its redactor before
+// bootstrap (internal/runner's addMountedSecrets).
+//
+// It is a function of the mounts and of nothing else, and every job that has
+// mounts computes it from its own map — the workflow specs, the check job, and
+// a project job's, whose jobs of one profile differ from each other (each
+// account's job mounts that account's token, or none). A hand-written list
+// beside the mounts is the one thing this cannot be: a mount added without it
+// is a secret the run publishes the moment it prints its environment, and
+// SECURITY.md's claim that the redactor masks what a run publishes rests on the
+// two being the same list.
+func redactionEnvs(secretEnv map[string]string) string {
+	return strings.Join(slices.Sorted(maps.Keys(secretEnv)), ",")
 }
 
 // budgetEnv adds the project's budget to a workflow job's env: the token

@@ -126,6 +126,44 @@ func ProjectJobAccounts(pr JobProfile) []string {
 	return slices.Compact(out)
 }
 
+// ProjectJobTokenAccount is the account whose token a profile's job holds, for
+// the account a job's name is built from (ProjectJobAccounts: "" is the
+// profile's no-account job, and the account axis spells the default account
+// that way too) — the account as the policy's accounts block spells it, which
+// is where the list of repositories that may use the token lives — and whether
+// the profile serves a token on that job at all.
+//
+// It is the join the launcher's gate and the runner's re-check are both made of
+// (design project-named-oauth-tokens §4.4, plan task 3): which credential a run
+// holds is not a fact of the run but of the job it is in, and a job holds the
+// token of exactly one account (or none). A profile's jobs are its no-account
+// one plus one per account it lists, so:
+//
+//   - an account the profile lists is a job of its own, and the job holds that
+//     account's token;
+//   - the no-account job holds the default account's token when the profile
+//     lists "default" — D5's one case of an account riding a job that is not
+//     its own, the job every profile has — and no token at all when it does
+//     not. The default account is a thing a profile states, never a thing it
+//     gets: a profile that lists only named accounts mounts no unsuffixed
+//     token anywhere, which is why an OAuth run whose own credential is the
+//     default account has no credential on such a profile's job (the runner
+//     refuses it rather than running it with none).
+//
+// The account it returns is never "" (no job that holds a token holds an
+// unnamed one) and is spelled the way accounts entries are keyed, because that
+// is the block its allow_repos is read from.
+func ProjectJobTokenAccount(pr JobProfile, account string) (string, bool) {
+	name := account
+	if name == "" {
+		name = DefaultClaudeAccount
+	}
+	if !slices.Contains(pr.ClaudeAccounts, name) {
+		return "", false
+	}
+	return name, true
+}
+
 // ClaudeAccountBySecret is the account name whose secret is secret, the
 // mirror of ProviderBySecret: used where a secret ID must be traced back
 // to the name a human chose (fugaro secrets set's validation, Task 5).

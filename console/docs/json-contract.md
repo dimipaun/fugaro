@@ -690,6 +690,86 @@ this, and they answer different halves: an older CLI has no `plan graph` at all,
 and a newer *planner* can write a `schema_version` the CLI refuses. The console
 shows the CLI's refusal sentence rather than a graph.
 
+### 6.10 `fugaro runs stats --json` (**CLI 0.9.0**)
+
+**Command:** `internal/cli/runs_stats.go` `newRunsStatsCmd` / `runRunsStats`.
+**Document:** `userStatsDoc` (`runs_stats.go:69`), indented (`writeUserStats`,
+`runs_stats.go:467`). This is the one command in this document the console
+**does not spawn yet**: it is the data behind the Spend screen's by-person
+view (CLI 0.9.0), and the section is here so the screen that follows has a
+shape read off the code rather than assumed from a design. It is read-only —
+the figures come from the run records (`launch.json`'s `launched_by`, and
+`result.json`'s outcome and settled cost), never from the budget database, so
+there is no write path behind it and no counter a screen has to reconcile.
+
+| Field | Type | omitempty | Availability state |
+|---|---|---|---|
+| `project` | string | no | the Fugaro project, the marker's name |
+| `by` | string | no | the breakdown asked for: `"user"`, the only value the command publishes |
+| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an operator of the installation (the identity the local config's `user:`/git names, listed in its `terraform.operators`) sees `"all"`; a plain launcher gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
+| `you` | string | no | the identity the view was resolved for, in the same domain a row's key is. `""` is *unavailable*, not anonymous: the CLI could not tell who the caller is — no identity at all, or one with nothing printable in it — which `--all-users` gets past. It is `"unknown"` only when the caller's own identity literally says so, never as a stand-in for "no key of its own", because that word is a group of runs rather than a person. A screen must not read `you` as a row it can always find in `rows` (see below) |
+| `operator` | bool | no | whether the installation's own lists place `you` as an operator. A screen must not render `"all"` as "you are an operator": `--all-users` produces `"all"` with `operator: false` |
+| `since` | string | no | the window's first UTC day (`YYYY-MM-DD`); `""` (unbounded) for `--since 0` |
+| `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
+| `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
+| `truncated` | bool | no | **the window held more runs than `max_runs`**: every figure is over its newest `max_runs` alone. The bound is on the read and not on a person: it is applied before the view is, so a private view can be over fewer of the caller's own runs than `max_runs` suggests. A console must show this the way it shows a gap, never as the window's own total |
+| `rows` | `[]userstats.Row` | no | `[]` when none. One row per (user, currency) — dollars are never added across currencies |
+| `totals` | `[]userstats.Row` | no | one per currency, in currency order, with `user` `""` |
+| `unlaunched` | int | no | runs in the window with neither a launch nor a record (never launched, cancelled before launch, or a stale claim). They never started: they are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
+| `notes` | `[]string` | no | the lines the human table prints before and after its own: whose numbers these are, what the money counts, and what the read left out. The document and the table say the same things |
+
+**The `"own"` view filters a read that is not its own.** It holds the runs
+whose `launch.json` recorded the caller's own identity — the recorded text
+itself, compared the way `runs ls --mine` compares it — rather than every run
+under the key `you` names. The two differ when a key is shared: identities
+that sanitise to the same text are one row, and the other person's runs are
+not the caller's own, so a row in `"own"` can be smaller than the same key's
+row with `--all-users`. The row a private view does show is keyed by `you`,
+since every run in it recorded the caller's identity and that identity's key
+is `you`.
+
+`truncated` and `unlaunched` are the read's, computed over everyone's runs in
+the window before the caller's row is picked out of it — they are counts of
+runs, and a run that never launched has no launcher to attribute. So in
+`"own"` a screen reads them as facts about the window, not about the person: a
+truncated private view may cover fewer of the caller's runs than `max_runs`,
+and `unlaunched` is not a count of runs they started. `"own"` with `rows: []` is
+likewise a state of its own, not an error: a window the caller started nothing
+in, or a caller whose identity has no key of its own — nothing printable in it,
+or a text that reads as `"unknown"` itself. The unattributed row is every run
+of the window that recorded no launcher, so it is never shown as a person's
+own; the human output says so in a note, and `--all-users` still shows it with
+everyone else's.
+
+An identity that cannot be resolved **at all** — the local config's `user:`
+empty and `git config user.email` answering nothing — is neither of those: the
+command is **refused** instead, with no document at all and an error naming
+`--all-users`, the one way to the full table that never needed to know who the
+caller is. There is no `"own"` document to describe for it, which is why the
+refusal is stated here rather than as a third state of `rows`.
+
+`userstats.Row` (`internal/userstats/userstats.go:140`) is the group shape
+behind **both** `rows` and `totals`; the counts are an embedded `Counts`
+(`userstats.go:121`), so they are flattened into the same object on the wire.
+**The counts add up**, which is how a screen reads the shape:
+`runs == succeeded + failed + halted + infra_error + other + no_record`.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `user` | string | no | the launcher the run's own `launch.json` recorded, sanitised to one printable line and capped at 128 runes; `"unknown"` (report's `budget.UnknownPerson` spelling) when the run recorded none — never guessed from the task, the record or the account it ran under. **Untrusted display text**: a service account or a CI identity is a row like a person's, and nothing is authorised by this string. **Two identities that sanitise to the same text share a row**: the 128-rune cap is one way to the collision and characters the sanitising drops (`alice` and `alice` + U+200B) the other, so a row is a key rather than a person. The `"own"` view does not follow the key — see the note below |
+| `currency` | string | no | the unit the money columns are in; `"USD"` today (`CurrencyUSD`) |
+| `runs` | int | no | every run of the group in the window, averaged or not |
+| `succeeded`, `failed`, `halted`, `infra_error` | int | no | the four settled statuses, spelled as `result.json` spells them |
+| `other` | int | no | a record that settled as none of the four: still running, or cancelled |
+| `no_record` | int | no | **no usable `result.json`**: not finalised yet, or the object cannot be read. Its status and its money are unknown — never a measured `0` |
+| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps (`model_basis` `api-list`/vertex). Compute is attributed to nobody, here or in the budget database's own person view |
+| `notional_usd` | float64 | no | the group's model dollars on a **subscription** (`agent.auth oauth`): **notional**, counted toward no cap and nobody's bill. Kept apart from `counted_usd` by construction and never summed with it |
+| `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
+| `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
+
+**Flags** (`runs_stats.go:181`): `--by`, `--repo`, `--all`, `--since`,
+`--max-runs`, `--all-users`, `--json`, plus the cloud flags.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded

@@ -277,3 +277,47 @@ func TestProjectJobAccounts(t *testing.T) {
 		t.Errorf("ProjectJobAccounts rewrote the profile's own list: %v", list)
 	}
 }
+
+// TestProjectJobTokenAccount pins the join of a job's account axis and the
+// token that job holds: the account as the policy's accounts block spells it
+// (the key whose allow_repos bounds the token) and whether the profile serves
+// one on that job. Every case here is a launch the gate admits or refuses and
+// a run the runner re-checks, so a wrong answer here is a job whose credential
+// both sides disagree about.
+//
+// Mutation (run, restore): answer the account's own name for the no-account
+// job instead of the default account (a profile listing "default" then holds
+// the token of an account named "default", a key the accounts block never
+// carries and whose list nothing holds the run to), or return true for a
+// profile that lists nothing (the gate would hold every run of a profile that
+// serves no account to an account the profile never named).
+func TestProjectJobTokenAccount(t *testing.T) {
+	plain := JobProfile{}
+	named := JobProfile{ClaudeAccounts: []string{"acme-personal"}}
+	both := JobProfile{ClaudeAccounts: []string{"acme-personal", DefaultClaudeAccount}}
+	for _, tc := range []struct {
+		why     string
+		pr      JobProfile
+		account string
+		want    string
+		serves  bool
+	}{
+		{"a profile that lists nothing holds no token on its no-account job", plain, "", "", false},
+		{"a named account's job holds that account's token", named, "acme-personal", "acme-personal", true},
+		{"a profile listing only named accounts holds none on its no-account job", named, "", "", false},
+		{"the default account rides the no-account job when the profile lists it", both, "", DefaultClaudeAccount, true},
+		{"the job axis spells the default account as the empty account", both, DefaultClaudeAccount, DefaultClaudeAccount, true},
+		{"and a named account beside it is a job of its own", both, "acme-personal", "acme-personal", true},
+		{"an account the profile does not list holds no token", named, "acme-work", "", false},
+	} {
+		got, serves := ProjectJobTokenAccount(tc.pr, tc.account)
+		if got != tc.want || serves != tc.serves {
+			t.Errorf("%s: ProjectJobTokenAccount(%v, %q) = (%q, %v), want (%q, %v)",
+				tc.why, tc.pr.ClaudeAccounts, tc.account, got, serves, tc.want, tc.serves)
+		}
+		if serves && !slices.Contains(tc.pr.ClaudeAccounts, got) {
+			t.Errorf("%s: the token account %q is not one the profile lists (%v): the policy's accounts block is keyed by what a profile lists",
+				tc.why, got, tc.pr.ClaudeAccounts)
+		}
+	}
+}

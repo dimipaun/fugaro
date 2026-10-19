@@ -45,6 +45,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/userstats"
 	"github.com/dimipaun/fugaro/internal/watch"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -353,6 +354,11 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// §6.10: the by-person aggregate behind runs stats --json, and the
+		// counts it embeds (CLI 0.9.0).
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -394,6 +400,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// §6.10, the same three shapes as the test above (CLI 0.9.0).
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -471,6 +481,50 @@ func TestDocsDesktopConsoleContractStatesTheThreeFeedFacts(t *testing.T) {
 				t.Errorf("%s does not state the feed fact %q: it never says %q", path, tc.fact, want)
 			}
 		}
+	}
+}
+
+// TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal pins §6.10's
+// own-view paragraph to the three states the command actually has. Two of them
+// are the empty table -- a window the caller started nothing in, and an
+// identity with no key of its own (nothing printable in it, or a text that
+// reads as the unattributed key) -- and the third is not a state of `rows` at
+// all: an identity the CLI cannot resolve (local config's user: empty, git
+// config user.email answering nothing) is REFUSED before any document exists,
+// with an error naming --all-users. A document that files the refusal with the
+// empty table sends a console looking for a `rows: []` it will never receive.
+// The help's own half of this is TestRunsStatsHelpStatesThePrivateViewsThreeWays
+// (runs_stats_test.go), and the refusal itself is behaviour-pinned by
+// TestRunsStatsVisibilityIsTheRuling's last case.
+func TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	start := strings.Index(doc, "**The `\"own\"` view filters a read that is not its own.**")
+	end := strings.Index(doc, "`userstats.Row`")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatalf("%s's own-view paragraph was renamed or reordered; update this test's markers", path)
+	}
+	para := doc[start:end]
+	for _, want := range []string{
+		"`rows: []`",              // the empty table, still stated
+		"nothing printable in it", // the identity with no key of its own
+		"**refused**",             // and the case that is not a table at all
+		"`--all-users`",           // the way past it, as the error names it
+	} {
+		if !strings.Contains(para, want) {
+			t.Errorf("%s's own-view paragraph does not say %q:\n%s", path, want, para)
+		}
+	}
+	// The refusal's own wording, read out of the command rather than written
+	// here, so the two cannot drift: the error a caller gets names --all-users
+	// too, and that is what the paragraph claims it does.
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "", nil, nil)
+	testutil.IsolateGit(t)
+	t.Setenv("GIT_DIR", t.TempDir())
+	out, _, err := execute(t, "runs", "stats", "--json")
+	if err == nil || !strings.Contains(err.Error(), "--all-users") {
+		t.Fatalf("no identity: err = %v, want the refusal %s's paragraph describes (out: %s)", err, path, out)
 	}
 }
 
@@ -573,6 +627,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"budget show": newBudgetShowCmd,
 	"report":      newReportCmd,
 	"runs ls":     newLsCmd,
+	// §6.10 documents the by-person aggregate (CLI 0.9.0). It is not on the
+	// design's spawn allow-list yet -- the Spend screen's by-person view is
+	// the task that follows -- but the document describes its flags, so the
+	// flags written there are checked against this constructor like any
+	// other's.
+	"runs stats":  newRunsStatsCmd,
 	"diagnose":    newDiagnoseCmd,
 	"logs":        newLogsCmd,
 	"cancel":      newCancelCmd,

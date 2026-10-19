@@ -41,8 +41,14 @@ var launchedByReaders = map[string]string{
 	"internal/watch/facts.go":      "stamps the launcher a scan read onto the rows a frame draws",
 	"internal/cli/watch_queued.go": "reads launch.json for the rows the watch scan produces",
 	"internal/cli/runs.go":         "the runs ls text column",
-	"internal/watch/plain.go":      "the watch text column",
-	"internal/watch/render.go":     "the interactive screen's expanded run detail",
+	// runs stats groups by the launcher and prints it: the group key IS the
+	// identity, sanitised and capped by internal/userstats before it reaches a
+	// row, and read for nothing but the row it names. The view the caller is
+	// shown is decided by the local config's own lists (internal/cli/roles.go),
+	// never by this text.
+	"internal/cli/runs_stats.go": "the runs stats by-person group key, sanitised display text",
+	"internal/watch/plain.go":    "the watch text column",
+	"internal/watch/render.go":   "the interactive screen's expanded run detail",
 }
 
 // TestLaunchedByIsDisplayTextOnly walks every non-test Go file of the module

@@ -1114,6 +1114,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.checkJobProfile(ctx, name, wf); err != nil {
 		return err
 	}
+	// And the credential the job holds, against the one this run's own
+	// configuration resolved to (plan task 3, design §4.4 rows 6 to 9): the
+	// runner's own half of the launch gate, here because agent.auth is a fact
+	// of the resolved config and the job identity is a fact of admissionCheck,
+	// which ran before any git credential existed.
+	if err := r.checkProjectJobAccount(ctx, cfg.Agent.Auth); err != nil {
+		return err
+	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
 	if err != nil {
 		return err

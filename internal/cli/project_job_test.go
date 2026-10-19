@@ -429,21 +429,41 @@ func projectJobCheckoutYAML(t *testing.T, yaml string) string {
 	return dir
 }
 
-// projectJobAccountConfig is the fixture's local config addition: the two
-// named Claude accounts this repository may select (config.AllowedClaudeAccounts),
-// so that a launch naming one passes the allow-list gate and reaches the
-// account check. Neither is mounted: no profile may mount a Claude OAuth token
-// in this release (projectpolicy.validProfiles; internal/infra's
-// projectJobSecrets has always refused to deploy one), so the fixture's profile
-// mounts none and the job it names runs as no account.
+// projectJobAccountConfig is the fixture's local config addition: the two named
+// Claude accounts this repository may select (config.AllowedClaudeAccounts, so
+// that a launch naming one passes the allow-list gate and reaches the launch
+// gate's own account rules), and the project-wide copy of the default account's
+// token, which is what lets the standard profile list `default` at all
+// (config.ValidateProfileClaudeAccounts resolves "default" against
+// project_secrets, never against claude_accounts, where the name is reserved).
 const projectJobAccountConfig = "claude_accounts:\n" +
 	"  acme-personal:\n    allow_data_to: [\"acme/app\"]\n" +
-	"  acme-work:\n    allow_data_to: [\"acme/app\"]\n"
+	"  acme-work:\n    allow_data_to: [\"acme/app\"]\n" +
+	"project_secrets:\n  claude-oauth-token:\n    allow_data_to: [\"acme/app\"]\n"
 
-// newProjectJobAccountFixture is newProjectJobFixture with those accounts: the
-// profile is the fixture's own (mounting no Claude token), so the job the
-// installation deploys for it is gcp.ProjectJobName("standard", "github", "")
-// — the empty account segment — and every run on it reads no account's token.
+// projectJobAccountsPolicy is the published policy of a project whose standard
+// profile serves both accounts: the profile lists them and writes the exact
+// allow_repos the subset rule requires (projectpolicy.validProfileAccounts),
+// and the accounts block carries one exact list per account — the document that
+// says which repositories each token may be used by, derived at publish from
+// the local config above (projectpolicy.DeriveAccounts).
+const projectJobAccountsPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
+	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
+	`"claude_accounts":["acme-personal","default"],"allow_repos":["github/acme/app"]}},` +
+	`"accounts":{"acme-personal":{"allow_repos":["github/acme/app"]},` +
+	`"default":{"allow_repos":["github/acme/app"]}}}`
+
+// projectJobServingProfile is the profiles block of a project whose standard
+// profile serves the two accounts, spelled as the fixture's own line is: the
+// accounts it lists, and its own exact allow_repos, which is what a profile
+// that lists accounts must write.
+const projectJobServingProfile = "profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [github/acme/app], claude_accounts: [acme-personal, default] } }\n"
+
+// newProjectJobAccountFixture is newProjectJobFixture with the accounts
+// configured and no profile serving them: the state of an installation that has
+// defined Claude accounts without adopting them on a profile, whose jobs are
+// unchanged (config.ProjectJobAccounts of a profile listing nothing is the
+// no-account job alone) and whose runs hold no token at all.
 func newProjectJobAccountFixture(t *testing.T) *projectJobFixture {
 	t.Helper()
 	f := newProjectJobFixture(t)
@@ -451,75 +471,122 @@ func newProjectJobAccountFixture(t *testing.T) *projectJobFixture {
 	return f
 }
 
-// TestLaunchRefusesAnAccountTheProfileDoesNotMount is the account half of task
-// 3.4 step 1: the account is an axis of the project job's own name, fixed by
-// the profile's secrets where the job is deployed, so a run that selects an
-// account the profile does not mount would run as one its own fugaro.yaml did
-// not choose — and the credential the job holds is not the one the launch's
-// allow_data_to check was made for. The launch stops instead.
-//
-// Mutation (run, restore): drop checkProjectJobAccount — the two --token
-// launches below are accepted, take their claim, mint their budget token and
-// reach Cloud Run on the profile's job, whose task.json then names an account
-// the run did not choose.
-//
-// Since task 3.4a (the owner's ruling of 2026-10-17) an OAuth account on a
-// shared project job is refused up front, and no profile may mount a Claude
-// OAuth token at all (projectpolicy.validProfiles), so the account the fixture's
-// profile runs as is none and the launch whose own credential is the default
-// Claude OAuth account is the first refusal below — task 3.4a's check, not this
-// one. The profile this fixture used to deploy (mounting acme-personal's token)
-// is now a node the decoder refuses: TestLaunchRefusesAPolicyMountingAClaudeOAuthToken
-// is that case.
-func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
+// newProjectJobServingFixture is the project that has adopted them: the
+// standard profile serves acme-personal and the default account, the published
+// policy carries the accounts block that bounds each token, and the
+// installation has deployed the account's own job beside the profile's
+// no-account one — one job per (profile, provider, account)
+// (config.ProjectJobAccounts, internal/infra's ProjectJobs).
+func newProjectJobServingFixture(t *testing.T) *projectJobFixture {
+	t.Helper()
 	f := newProjectJobAccountFixture(t)
-	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	rewriteProfileLine(t, f.cloudFixture, projectJobServingProfile)
+	publishPolicy(t, f.launchBudgetFixture, projectJobAccountsPolicy)
+	job := gcp.ProjectJobName("standard", "github", "acme-personal")
+	f.run.AddProjectJob(job, "standard", "github", "acme-personal", "2", "4Gi")
+	f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+	return f
+}
 
-	// The run's own credential is the default Claude OAuth account, and no
-	// shared job holds one until phase 5: the launch stops here, before the
-	// claim, the budget token and the Cloud Run call (task 3.4a).
-	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261016-140000-aaaa", "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") || !strings.Contains(err.Error(), "standard") {
-		t.Fatalf("a launch whose own credential is the default OAuth account: %v", err)
+// rewriteProfileLine writes profile in place of the profiles block
+// newProjectJobFixture appended: a second profiles: key would be a duplicate
+// YAML key, and the profile a test serves accounts on is the fixture's own.
+func rewriteProfileLine(t *testing.T, f *cloudFixture, profile string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n := len(f.run.Executions()); n != 0 {
-		t.Errorf("%d executions, want none", n)
+	const old = "profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h } }\n"
+	if !strings.Contains(string(data), old) {
+		t.Fatalf("the fixture's local config no longer holds %q:\n%s", old, data)
 	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), old, profile, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
-	// --token naming an account the repository may use is this check's own
-	// refusal: the allow-list gate above it passed, and the profile's job runs
-	// as no account at all.
-	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", "20261016-140000-bbbb", "--token", "acme-work", "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-work") || !strings.Contains(err.Error(), "standard") {
-		t.Fatalf("a launch selecting acme-work: %v", err)
+// launchedProjectJob is the (profile, provider, account) of the project job the
+// launch made, read back out of the fake: the triple is what the launcher had
+// to resolve, so a test never compares against a name it computed itself.
+func launchedProjectJob(t *testing.T, f *cloudFixture) (profile, provider, account string) {
+	t.Helper()
+	calls := f.run.RunRequests()
+	if len(calls) == 0 {
+		t.Fatal("the launch asked Cloud Run for no job at all")
 	}
-	if n := len(f.run.Executions()); n != 0 {
-		t.Errorf("%d executions, want none", n)
+	last := calls[len(calls)-1]
+	profile, provider, account, ok := f.run.ProjectJobOf(last.Job)
+	if !ok {
+		t.Fatalf("the launch ran the job %q, which is not one of the fixture's shared project jobs", last.Job)
 	}
+	return profile, provider, account
+}
 
-	// And the account an earlier revision's profile mounted is no different:
-	// no account is this profile's, so the selection is refused before the
-	// claim, the budget token and the Cloud Run call.
-	const run = "20261016-140000-cccc"
-	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-personal", "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-personal") || !strings.Contains(err.Error(), "standard") {
-		t.Fatalf("a launch selecting acme-personal: %v", err)
+// TestProjectJobOAuthAllowedWhenAccountCovered is the gate's admit case (plan
+// task 3, design §4.4 row 4): an OAuth run whose own credential is an account
+// the profile serves, and whose repository is on that account's policy list,
+// targets the account's own job — and the account it resolves is one the
+// deployer built a job for and whose token the gate judged
+// (config.ProjectJobAccounts, config.ProjectJobTokenAccount: the one rule all
+// three sides compute the axis with).
+//
+// Mutation (run, restore): refuse auth == "oauth" outright, as task 3.4a's
+// checkProjectJobOAuth did (the owner's ruling of 2026-10-17, which Task 3
+// replaces) — every account launch is then refused for every profile, and the
+// account jobs task 2 deploys can never be used by anyone.
+func TestProjectJobOAuthAllowedWhenAccountCovered(t *testing.T) {
+	serving := projectpolicy.Profile{JobProfile: config.JobProfile{
+		Provider:       "github",
+		ClaudeAccounts: []string{"acme-personal", config.DefaultClaudeAccount},
+	}}
+	p := &projectpolicy.Policy{Version: projectpolicy.Version, Accounts: map[string]projectpolicy.Account{
+		"acme-personal":             {AllowRepos: []string{"github/acme/app"}},
+		config.DefaultClaudeAccount: {AllowRepos: []string{"github/acme/app"}},
+	}}
+	for _, tc := range []struct {
+		why      string
+		selected string
+		want     string
+	}{
+		{"the default account rides the profile's no-account job", config.DefaultClaudeAccount, ""},
+		{"no selection at all is the default account", "", ""},
+		{"a named account the profile serves is a job of its own", "acme-personal", "acme-personal"},
+	} {
+		got, err := projectJobAccountFor(p, "standard", serving, "oauth", tc.selected, "github", "acme/app")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.why, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: projectJobAccountFor(%q) = %q, want %q", tc.why, tc.selected, got, tc.want)
+		}
+		if !slices.Contains(config.ProjectJobAccounts(serving.JobProfile), got) {
+			t.Errorf("%s: the launcher targets the account %q, which the profile's job set %v does not hold — the job it names is one nothing deployed",
+				tc.why, got, config.ProjectJobAccounts(serving.JobProfile))
+		}
+		if tokenAccount, serves := config.ProjectJobTokenAccount(serving.JobProfile, got); !serves || tokenAccount == "" {
+			t.Errorf("%s: the job of the account %q holds no token the gate could have judged (config.ProjectJobTokenAccount = %q, %v): an OAuth run on it starts with no credential",
+				tc.why, got, tokenAccount, serves)
+		}
 	}
-	if calls := f.run.RunRequests(); len(calls) != 0 {
-		t.Fatalf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
-	}
-	if tok := readToken(t, f.cloudFixture, run); tok != "" {
-		t.Errorf("the refused launch minted a budget token: %s", tok)
+	// The same run on a profile that serves neither is refused: an OAuth run
+	// whose own credential is the default account has no credential on a job
+	// that mounts no token (design §4.4 row 9). The end-to-end refusal is
+	// TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch
+	// (run_oauth_shared_test.go).
+	plain := projectpolicy.Profile{JobProfile: config.JobProfile{Provider: "github"}}
+	if _, err := projectJobAccountFor(p, "standard", plain, "oauth", "", "github", "acme/app"); err == nil || !strings.Contains(err.Error(), "claude-oauth-token") {
+		t.Errorf("an OAuth run on a profile that serves no account: %v", err)
 	}
 }
 
 // TestLauncherAccountDerivationSharedFunction: the launcher's account axis is
 // the profile's own job set, config.ProjectJobAccounts — the function
 // internal/infra built the deployed jobs with and internal/runner recomputes
-// the names it matches CLOUD_RUN_JOB against — spelled the way a launch
-// selects from it. A launch can therefore only ever target a job those two
-// know: not a name nothing deployed, and not one the runner would refuse to
-// place.
+// the names it matches CLOUD_RUN_JOB against — spelled the way a launch selects
+// from it. A launch can therefore only ever target a job those two know: not a
+// name nothing deployed, and not one the runner would refuse to place.
 //
 // Mutation (run, restore): derive the account from the profile's secrets
 // (config.ClaudeAccountOfSecrets, the pre-task reading) — a profile serving
@@ -531,38 +598,278 @@ func TestLauncherAccountDerivationSharedFunction(t *testing.T) {
 		ClaudeAccounts: []string{"acme-personal", config.DefaultClaudeAccount},
 	}}
 	plain := projectpolicy.Profile{JobProfile: config.JobProfile{Provider: "github"}}
+	p := &projectpolicy.Policy{Version: projectpolicy.Version, Accounts: map[string]projectpolicy.Account{
+		"acme-personal":             {AllowRepos: []string{"github/acme/app"}},
+		config.DefaultClaudeAccount: {AllowRepos: []string{"github/acme/app"}},
+	}}
 	for _, tc := range []struct {
 		why      string
-		profile  projectpolicy.Profile
 		selected string
 		want     string
 	}{
-		{"no selection is the profile's no-account job", serving, "", ""},
-		{"the default account is the profile's no-account job", serving, config.DefaultClaudeAccount, ""},
-		{"a named account the profile serves is a job of its own", serving, "acme-personal", "acme-personal"},
-		{"a profile serving nothing still has its no-account job", plain, "", ""},
-		{"and the default account is that same job", plain, config.DefaultClaudeAccount, ""},
+		{"no selection is the profile's no-account job", "", ""},
+		{"the default account is the profile's no-account job", config.DefaultClaudeAccount, ""},
+		{"a named account the profile serves is a job of its own", "acme-personal", "acme-personal"},
 	} {
-		got, err := projectJobAccountFor("standard", tc.profile, tc.selected)
+		got, err := projectJobAccountFor(p, "standard", serving, "oauth", tc.selected, "github", "acme/app")
 		if err != nil {
 			t.Fatalf("%s: %v", tc.why, err)
 		}
 		if got != tc.want {
 			t.Errorf("%s: projectJobAccountFor(%q) = %q, want %q", tc.why, tc.selected, got, tc.want)
 		}
-		if !slices.Contains(config.ProjectJobAccounts(tc.profile.JobProfile), got) {
+		if !slices.Contains(config.ProjectJobAccounts(serving.JobProfile), got) {
 			t.Errorf("%s: the launcher targets the account %q, which the profile's job set %v does not hold — the job it names is one nothing deployed",
-				tc.why, got, config.ProjectJobAccounts(tc.profile.JobProfile))
+				tc.why, got, config.ProjectJobAccounts(serving.JobProfile))
 		}
 	}
-	// An account the profile serves no job for is refused, naming the account
-	// and the profile. The launch's own gate, end to end, is
-	// TestLaunchRefusesAnAccountTheProfileDoesNotMount.
-	if _, err := projectJobAccountFor("standard", serving, "acme-work"); err == nil || !strings.Contains(err.Error(), "acme-work") || !strings.Contains(err.Error(), "standard") {
+	// A profile that serves nothing has no job holding a Claude token, so an
+	// OAuth run selects nothing it may run as — not even the no-account job it
+	// does have (checkProjectJobAccount).
+	if _, err := projectJobAccountFor(p, "standard", plain, "oauth", "", "github", "acme/app"); err == nil || !strings.Contains(err.Error(), "standard") {
+		t.Errorf("an OAuth run on a profile that serves no Claude account: %v", err)
+	}
+	// And an account the profile serves no job for is refused, naming the
+	// account and the profile. The launch's own gate, end to end, is
+	// TestProjectJobOAuthRefusedAccountNotListed.
+	if _, err := projectJobAccountFor(p, "standard", serving, "oauth", "acme-work", "github", "acme/app"); err == nil || !strings.Contains(err.Error(), "acme-work") || !strings.Contains(err.Error(), "standard") {
 		t.Errorf("a launch selecting acme-work on a profile serving acme-personal: %v", err)
 	}
-	if _, err := projectJobAccountFor("standard", plain, "acme-personal"); err == nil || !strings.Contains(err.Error(), "acme-personal") {
+	if _, err := projectJobAccountFor(p, "standard", plain, "oauth", "acme-personal", "github", "acme/app"); err == nil || !strings.Contains(err.Error(), "acme-personal") {
 		t.Errorf("a launch selecting an account on a profile serving none: %v", err)
+	}
+}
+
+// TestProjectJobOAuthRefusedRepoNotAllowed is the gate's coverage refusal
+// (design §4.4 rows 3 and 4): the job's container holds one account's token for
+// every run of it, and the account's own policy list is what bounds which
+// repositories may use that token. A repository it does not cover is refused
+// where the job is chosen, before the claim and before the token.
+//
+// It is a values-level test by necessity: a *decoded* policy cannot reach this
+// refusal, because projectpolicy's subset rule holds a profile listing accounts
+// to a list every one of its accounts covers exactly (validProfileAccounts) —
+// so a repository the profile admits is one the account covers. The refusal is
+// the second door on the one rule that bounds the token, and this is the test
+// that it is still a door: what it is handed is a policy value the decoder
+// would have refused.
+//
+// Mutation (run, restore): return nil instead of refusing when the account's
+// list does not admit the repository — the launch is admitted onto a job whose
+// token this repository is not on the list of, which is exactly the state the
+// accounts block exists to prevent.
+func TestProjectJobOAuthRefusedRepoNotAllowed(t *testing.T) {
+	serving := projectpolicy.Profile{JobProfile: config.JobProfile{
+		Provider:       "github",
+		ClaudeAccounts: []string{"acme-personal"},
+	}}
+	p := &projectpolicy.Policy{Version: projectpolicy.Version, Accounts: map[string]projectpolicy.Account{
+		"acme-personal": {AllowRepos: []string{"github/acme/other"}},
+	}}
+	_, err := projectJobAccountFor(p, "standard", serving, "oauth", "acme-personal", "github", "acme/app")
+	if err == nil {
+		t.Fatal("a launch onto the job of an account whose list does not cover this repository was admitted")
+	}
+	for _, want := range []string{
+		"acme-personal",                      // the account whose token the job holds
+		"claude-oauth-token-acme-personal",   // the token itself
+		"accounts.acme-personal.allow_repos", // the rule that refused it
+		"github/acme/other",                  // the list as published
+		"github/acme/app",                    // the repository that is not on it
+		"standard",                           // the profile, and so the job
+		"no claim was taken",                 // and that nothing was launched
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The account's job with the token's own list on it is admitted: the same
+	// run, on a list that covers the repository.
+	p.Accounts["acme-personal"] = projectpolicy.Account{AllowRepos: []string{"github/acme/app"}}
+	if _, err := projectJobAccountFor(p, "standard", serving, "oauth", "acme-personal", "github", "acme/app"); err != nil {
+		t.Errorf("the same launch on an account that covers the repository: %v", err)
+	}
+}
+
+// TestProjectJobNonOAuthRefusedWhereTheJobTokenIsNotAllowed is the coverage
+// refusal's other half (design §4.4 rows 3 and 4, D5): a profile that lists
+// `default` mounts that token into its no-account job, and every run of that
+// job holds it — including a run whose own credential selects no account at
+// all, which the axis rule above admits onto that job precisely because it is
+// not an OAuth one. The job's token is what has a list, so the rule is asked of
+// the *job's* token account and not of the run's selection: a non-OAuth launch
+// is refused where the default account's list does not cover the repository it
+// runs for, exactly as an OAuth one is. Without this, a check that asked the
+// coverage question only of OAuth runs would leave an api-key or Vertex run
+// holding a token its account's list does not admit this repository to.
+//
+// Values-level, for the reason its sibling above is: the subset rule
+// (projectpolicy.validProfileAccounts) means no *decoded* policy can state a
+// profile admitting a repository its default account does not cover, so this is
+// the backstop's own door.
+//
+// Mutation (run, restore): ask the coverage rule only of an OAuth run
+// (`if servesToken && auth == "oauth"` in projectJobAccountFor, or an early
+// return for every other auth) — the launches below are admitted onto a job
+// whose container hands them the default account's token, for a repository that
+// token's list does not cover.
+func TestProjectJobNonOAuthRefusedWhereTheJobTokenIsNotAllowed(t *testing.T) {
+	serving := projectpolicy.Profile{JobProfile: config.JobProfile{
+		Provider:       "github",
+		ClaudeAccounts: []string{"acme-personal", config.DefaultClaudeAccount},
+	}}
+	p := &projectpolicy.Policy{Version: projectpolicy.Version, Accounts: map[string]projectpolicy.Account{
+		"acme-personal":             {AllowRepos: []string{"github/acme/app"}},
+		config.DefaultClaudeAccount: {AllowRepos: []string{"github/acme/other"}},
+	}}
+	for _, auth := range []string{"api-key", "vertex", "fake", ""} {
+		got, err := projectJobAccountFor(p, "standard", serving, auth, "", "github", "acme/app")
+		if err == nil {
+			t.Fatalf("a launch whose agent.auth is %q was admitted as the account %q onto the no-account job, which holds the default account's token for a repository its list does not cover", auth, got)
+		}
+		for _, want := range []string{
+			config.DefaultClaudeAccount,                                // the account whose token the job holds
+			config.ClaudeAccountSecret(config.DefaultClaudeAccount),    // the token itself
+			"accounts." + config.DefaultClaudeAccount + ".allow_repos", // the rule that refused it
+			"github/acme/other",                                        // the list as published
+			"github/acme/app",                                          // the repository that is not on it
+			"project_secrets." + config.ClaudeAccountSecret(config.DefaultClaudeAccount) + ".allow_data_to", // where the default account's list is derived from
+			"no claim was taken", // and that nothing was launched
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal of an agent.auth %q launch does not name %q: %v", auth, want, err)
+			}
+		}
+	}
+	// The same launches on a default account that covers the repository are
+	// admitted, onto the profile's no-account job: the refusal is the uncovered
+	// repository's, not the run's.
+	p.Accounts[config.DefaultClaudeAccount] = projectpolicy.Account{AllowRepos: []string{"github/acme/app"}}
+	for _, auth := range []string{"api-key", "vertex", "fake", ""} {
+		got, err := projectJobAccountFor(p, "standard", serving, auth, "", "github", "acme/app")
+		if err != nil {
+			t.Fatalf("a launch whose agent.auth is %q, on a default account that covers the repository: %v", auth, err)
+		}
+		if got != "" {
+			t.Errorf("a launch whose agent.auth is %q targets the account %q, want the no-account job", auth, got)
+		}
+	}
+}
+
+// TestProjectJobOAuthSelectsAccountJob is the gate end to end: an OAuth run's
+// own credential picks the job it runs on — the account's own job for a named
+// account, the profile's no-account job for the default one — and that job is
+// the one the installation deployed for the account
+// (gcp.ProjectJobName(profile, provider, account)). Both launches pass every
+// gate above, take their claim, mint their token and reach Cloud Run.
+//
+// Mutation (run, restore): target the profile's no-account job for every OAuth
+// run (the account axis dropped) — the named account's launch runs on a job
+// whose container holds the default account's token, so the account the
+// repository's fugaro.yaml chose is not the credential the run holds, and the
+// first assertion fails.
+func TestProjectJobOAuthSelectsAccountJob(t *testing.T) {
+	f := newProjectJobServingFixture(t)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261018-160000-aaaa", "--token", "acme-personal", "Add a feature"); err != nil {
+		t.Fatalf("an OAuth launch selecting acme-personal, which the profile serves: %v", err)
+	}
+	profile, provider, account := launchedProjectJob(t, f.cloudFixture)
+	if profile != "standard" || provider != "github" || account != "acme-personal" {
+		t.Errorf("the launch ran the project job of (%s, %s, %q), want (standard, github, acme-personal)", profile, provider, account)
+	}
+
+	// The default account — the run's own credential when nothing is selected —
+	// rides the profile's no-account job, which is the job every profile has
+	// (D5, D9).
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261018-160000-bbbb", "Add a feature"); err != nil {
+		t.Fatalf("an OAuth launch whose own credential is the default account: %v", err)
+	}
+	profile, provider, account = launchedProjectJob(t, f.cloudFixture)
+	if profile != "standard" || provider != "github" || account != "" {
+		t.Errorf("the default account's launch ran the project job of (%s, %s, %q), want (standard, github, \"\")", profile, provider, account)
+	}
+}
+
+// TestNonOAuthNeverTargetsAccountJob is the other half of the axis (design §4.4
+// row 6): a run whose own credential is not a Claude OAuth account never
+// targets an account job — the job it has always run on is the profile's
+// no-account one, whatever the profile serves — so adopting Claude accounts
+// changes nothing about an api-key or Vertex installation's launches.
+//
+// Mutation (run, restore): derive the account from the profile's accounts
+// rather than from the run's own credential (the first account the profile
+// lists, say) — every api-key launch then runs on an account's job, holding
+// that account's token in a container whose run never uses it.
+func TestNonOAuthNeverTargetsAccountJob(t *testing.T) {
+	f := newProjectJobServingFixture(t)
+	projectJobCheckout(t) // the repository's own fugaro.yaml: agent.auth: api-key
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261018-160000-cccc", "Add a feature"); err != nil {
+		t.Fatalf("an api-key launch on a profile that serves Claude accounts: %v", err)
+	}
+	profile, provider, account := launchedProjectJob(t, f.cloudFixture)
+	if profile != "standard" || provider != "github" || account != "" {
+		t.Errorf("the api-key launch ran the project job of (%s, %s, %q), want (standard, github, \"\") — the profile's no-account job", profile, provider, account)
+	}
+
+	// And no selection can put a non-OAuth run on an account job: the gate
+	// reads the run's own credential, not the name a task.json or a flag
+	// carries. `--token` is refused before the gate for an api-key workflow
+	// (claudeAccountAllowed), so that half is tested at the value level.
+	serving := projectpolicy.Profile{JobProfile: config.JobProfile{
+		Provider:       "github",
+		ClaudeAccounts: []string{"acme-personal", config.DefaultClaudeAccount},
+	}}
+	p := &projectpolicy.Policy{Version: projectpolicy.Version, Accounts: map[string]projectpolicy.Account{
+		"acme-personal":             {AllowRepos: []string{"github/acme/app"}},
+		config.DefaultClaudeAccount: {AllowRepos: []string{"github/acme/app"}},
+	}}
+	for _, auth := range []string{"api-key", "vertex", "fake", ""} {
+		got, err := projectJobAccountFor(p, "standard", serving, auth, "acme-personal", "github", "acme/app")
+		if err != nil {
+			t.Fatalf("a run whose credential is %q: %v", auth, err)
+		}
+		if got != "" {
+			t.Errorf("a run whose agent.auth is %q targets the account %q, want the no-account job", auth, got)
+		}
+	}
+}
+
+// TestProjectJobOAuthRefusedAccountNotListed is the gate end to end, on the
+// refusal side (design §4.4 row 5): the account a run selects is one the
+// repository may use (the allow-list gate passed) and one the local config
+// defines, but the profile the workflow selected serves no job for it — so the
+// launch stops, naming the account, the token and the profile, before the
+// claim, before the budget token and before any Cloud Run call.
+//
+// Mutation (run, restore): drop the config.ProjectJobTokenAccount /
+// ProjectJobAccounts half of projectJobAccountFor — the launch is admitted onto
+// the profile's no-account job, whose container holds the default account's
+// token, while the run's own task.json and the run record name acme-work.
+func TestProjectJobOAuthRefusedAccountNotListed(t *testing.T) {
+	f := newProjectJobServingFixture(t)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+
+	const run = "20261018-160000-dddd"
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-work", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a launch selecting an account the profile serves no job for: %v", err)
+	}
+	for _, want := range []string{"acme-work", "claude-oauth-token-acme-work", "standard", "claude_accounts", "no claim was taken"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Errorf("the refused launch minted a budget token: %s", tok)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // ProjectJob is one shared project job: one entry of the installation root's
@@ -146,14 +147,29 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		// accounts existed (D9), plus one per account the profile lists.
 		//
 		// Each account's job gets its own copy of the profile's mounts — the
-		// token of one account must never ride on another's job — and its own
-		// service account, which is the only thing that may read that account's
-		// token (D2).
+		// token of one account must never ride on another's job — its own copy
+		// of the profile's environment (the redaction list below is per job),
+		// and its own service account, which is the only thing that may read
+		// that account's token (D2).
 		for _, account := range config.ProjectJobAccounts(pr) {
 			jobSecrets := maps.Clone(secretEnv)
 			if err := projectAccountMount(lc, name, pr, account, jobSecrets, env); err != nil {
 				return nil, err
 			}
+			// The variables this job mounts secrets as, for the runner's
+			// redactor (runner.SecretEnvsVar, the variable the per-repository
+			// path sets at spec.go's own secret block). It is computed per job
+			// and from the job's own mounts, after the account's token is on
+			// them: the jobs of one profile differ — each account's job mounts
+			// that account's token, and the no-account job mounts the default
+			// account's exactly when the profile lists it (D5) — so a list
+			// computed once for the profile would leave whichever job it was
+			// not computed from with a token the run publishes unredacted. The
+			// env map itself is per job for the same reason: it is the same map
+			// the runner is handed, and the jobs beside this one must not carry
+			// this job's list.
+			jobEnv := maps.Clone(env)
+			jobEnv[runner.SecretEnvsVar] = redactionEnvs(jobSecrets)
 			saID := gcp.ProjectServiceAccountID(name, pr.Provider, account)
 			if err := addProjectJob(out, ProjectJob{
 				Profile:        name,
@@ -165,7 +181,7 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 				CPU:            strconv.Itoa(pr.CPU),
 				Memory:         pr.Memory,
 				TaskTimeoutS:   int((timeout + backend.TaskTimeoutSlack) / time.Second),
-				Env:            env,
+				Env:            jobEnv,
 				SecretEnv:      jobSecrets,
 				BucketCondition: Condition{
 					Title:      gcp.BucketConditionTitle(saID),
