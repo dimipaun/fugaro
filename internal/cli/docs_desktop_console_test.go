@@ -4946,6 +4946,27 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	sameSet(t, "verify clean-tree note", sourceValues(t, "internal/verify/verify.go", verifyGo,
 		"s \\+= \"; ([^\"]*)\"\n\t}\n\treturn s"), []string{tsConst(t, scrub, "VERIFY_CLEAN_TREE")})
 
+	// The clip internal/runner puts on the summary before the document carries
+	// it: `verifySummaryRunes`, which is also what scrub.ts calls
+	// VERIFY_CLIP_RUNES. The scrub needs the number because a clipped line is a
+	// PREFIX of the writer's and its matchers have to accept one, so a clip that
+	// moved in the registry without moving here would leave the scrub refusing an
+	// ordinary recording -- or accepting a cut beyond the one the writer makes.
+	sameNumber(t, "verify summary clip (runes)", sourceNumber(t, "internal/runner/budget_session.go",
+		readDoc(t, "internal/runner/budget_session.go"), `const verifySummaryRunes = (\d+)`),
+		tsNumber(t, scrub, "VERIFY_CLIP_RUNES"))
+
+	// The report globs the warning sentence carries and nowhere else in the
+	// document: the two `commands.reports` patterns internal/config/defaults.go
+	// installs, which are what internal/verify/verify.go joins into
+	// `no JUnit reports found under ...`. They are the vocabulary the fixture
+	// scan pins the glob slot to (VERIFY_REPORT_GLOBS), so a change to the
+	// defaults that the scrub did not follow would make the scan refuse a
+	// recording the CLI itself wrote.
+	sameSet(t, "verify report glob", quoted(sourceValues(t, "internal/config/defaults.go",
+		readDoc(t, "internal/config/defaults.go"), `w\.Commands\.Reports = \[\]string\{([^}]*)\}`)[0]),
+		tsList(t, scrub, `VERIFY_REPORT_GLOBS = \[([^\]]*)\]`, "VERIFY_REPORT_GLOBS"))
+
 	// The connection states, the healths and the deadlines: three inline tables
 	// in internal/watch/json.go, keyed by the constants they render.
 	jsonGo := readDoc(t, "internal/watch/json.go")
@@ -5015,6 +5036,41 @@ func tsConst(t *testing.T, scrub, name string) string {
 		t.Fatalf("%s: %s is not a const holding one single-quoted string", scrubTS, name)
 	}
 	return m[1]
+}
+
+// sourceNumber returns the one integer a pattern captures, from a scan that
+// must find it: a number the scrub copies from the Go source is worth comparing
+// for the same reason a list is.
+func sourceNumber(t *testing.T, where, src, re string) int {
+	t.Helper()
+	values := sourceValues(t, where, src, re)
+	n, err := strconv.Atoi(values[0])
+	if err != nil {
+		t.Fatalf("%s: %q is not an integer: %v", where, values[0], err)
+	}
+	return n
+}
+
+// tsNumber returns the integer of one `const NAME = 123` in scrub.ts.
+func tsNumber(t *testing.T, scrub, name string) int {
+	t.Helper()
+	m := regexp.MustCompile(`const ` + name + ` = (\d+)`).FindStringSubmatch(scrub)
+	if m == nil {
+		t.Fatalf("%s: %s is not a const holding one integer", scrubTS, name)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("%s: %s is not an integer: %v", scrubTS, name, err)
+	}
+	return n
+}
+
+// sameNumber fails with both numbers when they differ.
+func sameNumber(t *testing.T, what string, want, got int) {
+	t.Helper()
+	if want != got {
+		t.Errorf("%s: the Go source writes %d, the scrub knows %d", what, want, got)
+	}
 }
 
 // verifyHeadPattern returns scrub.ts's VERIFY_HEAD as a pattern this test can

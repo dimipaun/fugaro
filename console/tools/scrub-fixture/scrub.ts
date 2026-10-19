@@ -67,9 +67,10 @@ export const INVENTED_CAP_USD = 50
 /**
  * TIME_SHIFT_RANGE_MS bounds the clock shift drawn for one run: plus or minus
  * 400 days. Wide enough that the offset cannot be guessed, and narrow enough
- * that the invented clock stays a plausible one.
+ * that the invented clock stays a plausible one. Exported so a test can pin the
+ * ends of the range rather than restate the number.
  */
-const TIME_SHIFT_RANGE_MS = 400 * 24 * 60 * 60 * 1000
+export const TIME_SHIFT_RANGE_MS = 400 * 24 * 60 * 60 * 1000
 
 /**
  * randomTimeShiftMs draws this run's clock offset, in milliseconds.
@@ -78,13 +79,32 @@ const TIME_SHIFT_RANGE_MS = 400 * 24 * 60 * 60 * 1000
  * writes. It is deliberately NOT exported as a value and never printed: the
  * point (owner review of PR #643, item 2) is that the committed fixture cannot
  * be unshifted, because the offset that made it exists only for the length of
- * the run. The 32 random bits give 2^32 distinct offsets over the range, so two
+ * the run. The 53 random bits give 2^53 distinct offsets over the range, so two
  * runs landing on the same one is not a thing a test can flake on.
  */
 export function randomTimeShiftMs(): number {
-  const draw = new Uint32Array(1)
+  const draw = new Uint32Array(2)
   globalThis.crypto.getRandomValues(draw)
-  return Math.round((draw[0] ?? 0) / 2 ** 32 * (2 * TIME_SHIFT_RANGE_MS + 1)) - TIME_SHIFT_RANGE_MS
+  // 53 bits, which is what a double holds exactly: the top 32 and the top 21 of
+  // the next draw, so the fraction is uniform over [0, 1) rather than the range
+  // a single 32-bit word can reach.
+  return timeShiftFromDraw((((draw[0] ?? 0) * 2 ** 21) + ((draw[1] ?? 0) >>> 11)) / 2 ** 53)
+}
+
+/**
+ * timeShiftFromDraw maps a fraction of the unit interval onto the offset, and is
+ * the only place that mapping lives: the draw above is the only caller in
+ * production, and a test can pin the ends without one.
+ *
+ * The range is the CLOSED interval [-TIME_SHIFT_RANGE_MS, +TIME_SHIFT_RANGE_MS],
+ * of 2R + 1 integer offsets, so the mapping is `floor(unit * (2R + 1)) - R`:
+ * `unit = 0` is -R, and the largest fraction below 1 is +R. Rounding instead of
+ * flooring -- which is what this used to do -- overshot by one at the top,
+ * because `round(x)` for x just below 2R + 1 is 2R + 1, giving R + 1.
+ */
+export function timeShiftFromDraw(unit: number): number {
+  const span = 2 * TIME_SHIFT_RANGE_MS + 1
+  return Math.floor(unit * span) - TIME_SHIFT_RANGE_MS
 }
 
 /**
@@ -164,24 +184,58 @@ const VERIFY_TAIL: readonly (readonly VerifyPart[])[] = [
 ]
 
 /**
+ * VERIFY_REPORT_GLOBS is the vocabulary the `globs` slot can carry: the report
+ * patterns `internal/config/defaults.go` sets for `commands.reports` (a JUnit
+ * glob and one under the build test-results directory) -- which are what
+ * `internal/verify/verify.go` joins, in configuration order, into the warning
+ * sentence.
+ *
+ * A repository may configure others, and `doublestar` accepts any glob, so no
+ * finite list can enumerate what the CLI might write there. These two are what
+ * it writes with no configuration, which is what a recording from a stock
+ * repository carries. Exported so the Go drift test can hold them against
+ * defaults.go.
+ */
+export const VERIFY_REPORT_GLOBS = ['**/junit*.xml', '**/build/test-results/**/*.xml'] as const
+
+/** isGlobList reports whether `value` is a comma-separated list of
+ * VERIFY_REPORT_GLOBS, or -- when `cut` -- a prefix of one: the clip may stop
+ * inside a glob, between a whole glob and `, `, or at the slot's very start. */
+function isGlobList(value: string, cut: boolean): boolean {
+  for (const glob of VERIFY_REPORT_GLOBS) {
+    if (value === glob) return true
+    if (value.startsWith(glob)) {
+      const rest = value.slice(glob.length)
+      if (rest === ',') return cut
+      if (rest.startsWith(', ') && isGlobList(rest.slice(2), cut)) return true
+    }
+    if (cut && glob.startsWith(value)) return true
+  }
+  return false
+}
+
+/**
  * VERIFY_SLOTS is what the CLI can put in each free slot, twice over: `full`
  * matches a whole piece, `cut` one the clip stopped inside. `names` is a list of
- * test names as the reporters write them; `globs` is the comma-separated list of
- * report globs `internal/verify/verify.go` joins into its warning.
+ * test names as the reporters write them -- `go-junit-report` names a duplicated
+ * subtest `TestFoo#01`, so `#` is in the vocabulary with the reporters' own
+ * separators; `globs` is the comma-separated list of report globs
+ * `internal/verify/verify.go` joins into its warning (VERIFY_REPORT_GLOBS).
  *
  * Only `isKnownVerifySummary` uses them. `isVerifySummary` -- the rule the scrub
  * itself applies -- takes any text in a slot on purpose: a real recording's test
- * names are the writer's own output, and a vocabulary that refused one would
- * refuse an ordinary run, which is the failure this file's lists exist to avoid.
+ * names are the writer's own output, and its report globs come from its own
+ * configuration, so a vocabulary that refused either would refuse an ordinary
+ * run, which is the failure this file's lists exist to avoid.
  */
-const VERIFY_SLOTS: Record<VerifySlot, { full: RegExp; cut: RegExp }> = {
+const VERIFY_SLOTS: Record<VerifySlot, { full: (v: string) => boolean; cut: (v: string) => boolean }> = {
   names: {
-    full: /^[A-Za-z0-9_][A-Za-z0-9_.:/\-]*(?:, [A-Za-z0-9_][A-Za-z0-9_.:/\-]*)*$/,
-    cut: /^[A-Za-z0-9_][A-Za-z0-9_.:/\-]*(?:, [A-Za-z0-9_][A-Za-z0-9_.:/\-]*)*(?:, ?)?$/,
+    full: (v) => /^[A-Za-z0-9_][A-Za-z0-9_.:/\-#]*(?:, [A-Za-z0-9_][A-Za-z0-9_.:/\-#]*)*$/.test(v),
+    cut: (v) => /^[A-Za-z0-9_][A-Za-z0-9_.:/\-#]*(?:, [A-Za-z0-9_][A-Za-z0-9_.:/\-#]*)*(?:, ?)?$/.test(v),
   },
   globs: {
-    full: /^\S+(?:, \S+)*$/,
-    cut: /^\S*(?:, \S*)*$/,
+    full: (v) => isGlobList(v, false),
+    cut: (v) => isGlobList(v, true),
   },
 }
 /** VERIFY_TEST_TAIL_FROM is the index of the first tail part a non-test kind
@@ -295,11 +349,11 @@ function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string
     const slot = VERIFY_SLOTS[piece.free]
     // A whole piece of the slot's vocabulary, then the rest of the line.
     for (let n = tail.length; n > 0; n--) {
-      if (slot.full.test(tail.slice(0, n)) && walkPart(group, part + 1, at + n)) return true
+      if (slot.full(tail.slice(0, n)) && walkPart(group, part + 1, at + n)) return true
     }
     // Or the cut stopped inside the slot, or exactly at its start (an empty
     // tail here is a prefix of a line whose slot the writer filled).
-    return tail === '' || slot.cut.test(tail)
+    return tail === '' || slot.cut(tail)
   }
   return walkGroup(0, 0)
 }

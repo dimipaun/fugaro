@@ -21,7 +21,10 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument } from '../../tools/scrub-fixture/scrub'
+import {
+  TIME_SHIFT_RANGE_MS, VERIFY_CLIP_RUNES, isKnownVerifySummary, isVerifySummary, randomTimeShiftMs,
+  scrubDocument, timeShiftFromDraw,
+} from '../../tools/scrub-fixture/scrub'
 
 /** raw is the smallest document the scrub accepts: one run, one repo, a total
  * that recomputes. Its values are invented here and identify nothing. */
@@ -154,12 +157,13 @@ describe('the scrub: the verify line verify.go writes', () => {
   })
 
   it('accepts the clipped line the registry actually stores', () => {
-    // internal/runner's verifySummaryRunes clips the summary to 120 runes, so a
-    // long warning reaches the document cut in the middle of a word:
+    // internal/runner's verifySummaryRunes clips the summary to
+    // VERIFY_CLIP_RUNES runes (the drift test holds the number to the source),
+    // so a long warning reaches the document cut in the middle of a word:
     // `... under **/junit*.xml, **/buil`.
-    const full = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml, **/build*.xml)'
-    const clipped = [...full].slice(0, 120).join('')
-    expect(clipped.length).toBe(120)
+    const full = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml, **/build/test-results/**/*.xml)'
+    const clipped = [...full].slice(0, VERIFY_CLIP_RUNES).join('')
+    expect(clipped.length).toBe(VERIFY_CLIP_RUNES)
     expect(clipped.endsWith('**/buil')).toBe(true)
     expect(isVerifySummary(clipped)).toBe(true)
     const doc = raw()
@@ -236,6 +240,37 @@ describe('the scrub: the verify line verify.go writes', () => {
     expect(isVerifySummary(globs)).toBe(true)
     expect(isKnownVerifySummary(globs)).toBe(true)
   })
+
+  it('takes the # go-junit-report puts on a duplicated subtest name', () => {
+    // A recording from a repository whose runner reports a duplicated subtest
+    // carries `TestFoo#01` in the name list. The scrub takes it either way; the
+    // fixture's scan must too, or a legitimate recording could not be committed.
+    const line = 'fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: TestFoo#01, TestFoo#02)'
+    expect(isVerifySummary(line)).toBe(true)
+    expect(isKnownVerifySummary(line)).toBe(true)
+    const cut = 'fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: TestFoo#'
+    expect(isKnownVerifySummary(cut)).toBe(true)
+    // ...and it is still a name list, not a place for prose.
+    expect(isKnownVerifySummary('fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: the Acme Payroll suite)')).toBe(false)
+  })
+
+  it('pins the warning globs to the vocabulary the CLI writes there', () => {
+    const line = (globs: string): string =>
+      `fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under ${globs})`
+    // The two `commands.reports` globs internal/config/defaults.go installs, in
+    // the order internal/verify/reports.go joins them, and each on its own.
+    for (const globs of ['**/junit*.xml', '**/build/test-results/**/*.xml', '**/junit*.xml, **/build/test-results/**/*.xml']) {
+      expect(isVerifySummary(line(globs)), globs).toBe(true)
+      expect(isKnownVerifySummary(line(globs)), globs).toBe(true)
+    }
+    for (const globs of ['**/acme-payroll/*.xml', 'reports/*.json', 'AcmePayroll', '**/junit*.xml, **/acme-payroll/*.xml']) {
+      // The scrub keeps its open rule -- a repository may configure any globs
+      // and a recording of it must still scrub -- and the scan is what refuses
+      // a glob the CLI's own vocabulary does not carry.
+      expect(isVerifySummary(line(globs)), globs).toBe(true)
+      expect(isKnownVerifySummary(line(globs)), globs).toBe(false)
+    }
+  })
 })
 
 describe('the scrub: the nullable Go fields', () => {
@@ -277,7 +312,7 @@ describe('the scrub: the clock shift is drawn per run', () => {
     const second = scrubDocument(raw())
     expect(first['now']).not.toBe(START)
     expect(second['now']).not.toBe(START)
-    // 2^32 offsets over a 800-day range: two runs landing on the same one is not
+    // 2^53 offsets over a 800-day range: two runs landing on the same one is not
     // a thing a test can flake on.
     expect(first['now']).not.toBe(second['now'])
   })
@@ -307,11 +342,31 @@ describe('the scrub: the clock shift is drawn per run', () => {
     const kill = at(scrubDocument(doc, shiftMs), 'total', 'kill')
     expect(kill['at']).toBe(`${new Date(Date.parse('2026-03-01T09:00:00Z') + shiftMs).toISOString().slice(0, 19)}Z`)
     // the drawn offset is inside the range scrub.ts documents
-    const range = 400 * 24 * 3600 * 1000
     for (let i = 0; i < 64; i++) {
       const drawn = randomTimeShiftMs()
       expect(Number.isInteger(drawn)).toBe(true)
-      expect(Math.abs(drawn)).toBeLessThanOrEqual(range)
+      expect(Math.abs(drawn)).toBeLessThanOrEqual(TIME_SHIFT_RANGE_MS)
     }
+  })
+
+  it('maps the draw onto the range end to end, without overshooting it', () => {
+    // The ends, deterministically: no fraction is smaller than 0 or larger than
+    // the largest one below 1, so these are the extremes the draw can reach.
+    const LAST = 1 - 2 ** -53
+    expect(timeShiftFromDraw(0)).toBe(-TIME_SHIFT_RANGE_MS)
+    expect(timeShiftFromDraw(LAST)).toBe(TIME_SHIFT_RANGE_MS)
+    expect(timeShiftFromDraw(0)).toBeLessThan(0)
+    expect(timeShiftFromDraw(LAST)).toBeGreaterThan(0)
+    // ...and nothing between them overshoots, which is what a rounding `Math.round`
+    // over `2R + 1` did at the top: it returned the range plus one.
+    for (const unit of [LAST, 1 - 2 ** -52, 0.9999999999999999, 0.75, 0.5, 0.25, 2 ** -53, 0]) {
+      const shift = timeShiftFromDraw(unit)
+      expect(Number.isInteger(shift), `${unit}`).toBe(true)
+      expect(Math.abs(shift), `${unit}`).toBeLessThanOrEqual(TIME_SHIFT_RANGE_MS)
+    }
+    // the mapping spans the range rather than piling up at one end: the middle
+    // of the unit interval is the middle of the range, which for an odd span is
+    // the offset 0
+    expect(timeShiftFromDraw(0.5)).toBe(0)
   })
 })

@@ -732,9 +732,9 @@ present); **every value in the file is invented**, so the header says
 installation produced these values). The raw recording is never committed and is
 deleted after the scrub. **It is not reproducible from this repository, by
 design:** the committed fixture is the only artefact, and nothing is kept that
-could lead back to a removed value (no list, no hash, no salt). *A digest file
-was in this branch's history before review removed it; the paragraph three
-below says what that leaves exposed, and it is not nothing.*
+could lead back to a removed value (no list, no hash, no salt). *A file of
+digests of the removed values was in PR #643's branch until review removed it;
+the paragraph three below says what that leaves exposed, and it is not nothing.*
 
 ```
 node node_modules/typescript/bin/tsc -p tsconfig.record-fixture.json
@@ -743,20 +743,25 @@ node .record-fixture/tools/scrub-fixture/index.js --in <raw.json, outside the re
 ```
 
 The command prints the COUNT of values it replaced and nothing else. A file of
-hashes of the removed values was in the first push of this branch and was removed:
-a bare hash of a low-entropy value (a small integer, a dollar amount, a repo-style
-name) is recovered by a dictionary, so such a list leaks what it hides. The test
-instead gets the removed values in memory, through a callback the scrub run is
-given, on a scrub of a synthetic input; nothing derived from a removed value is
-written anywhere.
+hashes of the removed values was in the first push of PR #643's branch and was
+removed: a bare hash of a low-entropy value (a small integer, a dollar amount, a
+repo-style name) is recovered by a dictionary, so such a list leaks what it
+hides. The test instead gets the removed values in memory, through a callback the
+scrub run is given, on a scrub of a synthetic input; nothing derived from a
+removed value is written anywhere.
 
-**That file is still in this repository's history, and this is the honest
-account of it.** PR #643's branch kept `removed-values.sha256` in its first
-commit (`d41f726b`, the digests of the values the scrub had replaced) until a
-review removed it. The PR was **squash-merged**, so that commit is not on `main`
-and no commit on `main` ever held it — but the pull request's own history on
-GitHub still does, and a squash does not delete anything from the remote. The
-file held unsalted SHA-256 digests, which are a dictionary: a small integer, a
+**That file is still in the pull request's history, and this is the honest
+account of it.** PR #643's first commit (`d41f726b`) added
+`console/tools/scrub-fixture/normal.scrubbed.json`, a JSON array of the unsalted
+SHA-256 digests of the values the scrub had replaced, and a later commit on the
+same branch (`2fc37c7fd8`) removed it again. The PR was **squash-merged**, so
+neither commit is on `main` and no commit on `main` ever held the file — but the
+pull request's own history on GitHub still does, and a squash does not delete
+anything from the remote. (Those two commits are not in a clone of `main` either:
+`git cat-file` does not know them, and nothing in this branch ever held the file,
+which was created after the squash. So this paragraph is the account of what the
+PR's history holds, and a reader here cannot read the file itself to check it.)
+The file held unsalted SHA-256 digests, which are a dictionary: a small integer, a
 dollar amount or a repository name is recovered from a bare digest by trying
 candidates, so the values it covered must be treated as **exposed**, not merely
 removed. Those values were a public repository's name, the project's name and
@@ -803,8 +808,13 @@ importing nothing from it, so the allow-list keeps its single entry — reads th
 lists back out of the file and compares them with the constants the source writes
 them from: the runner's stage names, the config's allowed `agent.auth`, the
 budget's modes, the three verify kinds, the two status words and the rerun flag,
-the one warning sentence and the clean-tree note, and the connection, health,
-deadline, status and outcome tables. The verify line's *head* is not a list but a
+the one warning sentence and the clean-tree note, the connection, health,
+deadline, status and outcome tables, the two `commands.reports` globs the warning
+sentence carries (`VERIFY_REPORT_GLOBS`, against `internal/config/defaults.go`),
+and the 120-rune clip the registry puts on the summary (`VERIFY_CLIP_RUNES`,
+against internal/runner's `verifySummaryRunes`) — the scrub needs the number
+because a clipped line is a PREFIX of the writer's, which is what its matchers
+are built to accept. The verify line's *head* is not a list but a
 grammar, so it is held differently: the test reads `VERIFY_HEAD`'s regex source
 out of the file, fills its `${...}` interpolations with the values it derived,
 compiles it and tries it against lines built from `verify.go`'s own format
@@ -849,7 +859,12 @@ scan uses `isKnownVerifySummary`, the same grammar with the slots pinned to a
 name list and a glob list, because there the slots are the one place a string
 this file never vouched for could ride: with the open matcher in the allow-list,
 `fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll
-suite)` passed the scan. The warning sentence is not a slot in either matcher —
+suite)` passed the scan. The glob slot is pinned to the two `commands.reports`
+defaults the CLI writes there with no configuration — any other glob is text the
+CLI was never given, and with an open slot `**/acme-payroll/*.xml` passed the
+scan too — and the name list carries the `#` that `go-junit-report` appends to a
+duplicated subtest (`TestFoo#01`), so a legitimate recording is not refused for
+being legitimate. The warning sentence is not a slot in either matcher —
 `Record.Summary` writes one sentence there, and the drift test fails first if
 `verify.go` ever gains a second one.
 
