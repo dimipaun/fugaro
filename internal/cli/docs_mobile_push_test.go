@@ -321,3 +321,77 @@ func markdownLinkTargets(s string) []string {
 		i = open + close + 1
 	}
 }
+
+// TestDocsMobilePushStatesOneRecommendationEverywhere: a fix round that reverses
+// the channel recommendation (§3.3/Q7: FCM direct only where the owner owns every
+// installation's project, otherwise a relay) leaves the OLD recommendation in the
+// places that describe the design from outside — the README's index row and §9's
+// privacy paragraph — unless something checks them. Both said "one settled
+// channel" in a form a substring needle for the new text cannot catch, because
+// the new text is in §3.3 and they are elsewhere. So the stale shapes are named
+// here as what must NOT appear, and the replacement is required.
+//
+// The same class of staleness is the category set: §3.1 pointed at "one of the
+// four in §1" after §1's B2 fix had excluded two of them, so the cross-reference
+// named the superseded list.
+func TestDocsMobilePushStatesOneRecommendationEverywhere(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+
+	for _, stale := range []string{
+		// The withdrawn unconditional recommendation, in the two places that
+		// describe the design rather than argue it.
+		"with Expo's relay priced and not recommended",
+		"on the recommended channel",
+		// The withdrawn cross-reference to the pre-B2 category list.
+		"one of the four in §1",
+	} {
+		if strings.Contains(doc, stale) {
+			t.Errorf("%s still says %q, which a later fix round withdrew", docPath, stale)
+		}
+	}
+	index := readDoc(t, "docs/mobile/README.md")
+	if strings.Contains(index, "with Expo's relay priced and not recommended") {
+		t.Errorf("docs/mobile/README.md's row still prices the relay as \"not recommended\", but §3.3 and Q7 make it the answer where the owner does not own every installation's project")
+	}
+	if !strings.Contains(index, "otherwise a relay") {
+		t.Errorf("docs/mobile/README.md's row does not carry the conditional recommendation (\"otherwise a relay\") that §3.3 and Q7 settled on")
+	}
+	// §9's disclosure must be written per channel rather than for one channel:
+	// the relay is a third party in the path, and the sentence has to say so.
+	if !strings.Contains(doc, "written **per channel**") {
+		t.Errorf("%s's §9 does not say the privacy disclosure is written per channel, so it cannot be true of a relay installation", docPath)
+	}
+}
+
+// TestDocsMobilePushSaysWhoDeletesThePushNode: §7 and Q10(i) both claim the push
+// data's lifetime is bounded by the pairing because revoke deletes the push node
+// — and both cite §3.4 for it, which before this guard never said so: §3.4 said
+// an orphaned push node is inert and §3.4/§3.5/§6 gave the DELETION to the
+// sender's reaping. An implementer could not tell which of the two owns it. So
+// §3.4 must state both paths and name revoke as the one that deletes, and the
+// two citing sentences must keep citing it.
+func TestDocsMobilePushSaysWhoDeletesThePushNode(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+
+	// The statement §7 and Q10 lean on.
+	if !strings.Contains(doc, "deletes BOTH nodes") {
+		t.Errorf("%s's §3.4 does not state that `fugaro pair revoke` deletes both `config/admin/devices/$uid` and `config/admin/push/$uid`, which §7 and Q10(i) both assert", docPath)
+	}
+	// And the two sentences that assert it must keep pointing at it.
+	for _, want := range []string{
+		"**revoke** (§3.4 deletes the push node",
+		"deleted with the push node on\n  revoke",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer carries %q: the retention answer must keep citing §3.4's deletion rather than asserting it from nowhere", docPath, want)
+		}
+	}
+	// The reaping must be described as the net, not as the mechanism: a §3.4
+	// that calls the sender's reaping "what makes revocation final" is the
+	// ambiguity this round closed.
+	if strings.Contains(doc, "which is what makes revocation final") {
+		t.Errorf("%s still says the sender's reaping is %q, attributing finality to a later sweep rather than to the revoke act", docPath, "which is what makes revocation final")
+	}
+}

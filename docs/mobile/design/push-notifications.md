@@ -188,7 +188,9 @@ answered.
 
 A push carries **exactly two things**:
 
-- a **coarse category**, one of the four in §1, drawn from a small fixed enumeration — the
+- a **coarse category**, drawn from §1's **reconciled set** — D160's three (kill switch, cap
+  reached, consumer offline) plus the prompt category D127's switch widens to, and **not** the
+  finished/failed pair §1's numbered list opens with and then excludes — the
   closest thing to "status" that is safe on a lock screen; and
 - an **opaque identifier**, a value that means nothing outside the phone's own authenticated
   mailbox.
@@ -372,6 +374,28 @@ config/admin/push/$uid/               # THIS design's node — a SIBLING, never 
    rules also read. A leftover `push/$uid` after a revoke **is inert**: nothing consults it,
    the rules never read it, and it cannot re-admit anybody.
 
+**Who deletes the push node, stated once so §7 and Q10 can cite it rather than assert it.**
+There are two deletion paths, and they are not alternatives:
+
+- **`fugaro pair revoke` deletes BOTH nodes, in the same act** — `config/admin/devices/$uid`
+  (D166's deletion, which is what stops the reads) **and** the sibling
+  `config/admin/push/$uid`. That is what makes the *data's* lifetime bounded by the pairing
+  rather than by a timer (§7, Q10(i)): revoke is the one act, and it takes the token, the
+  platform, the prefs and the quiet-hours zone with it. The pairing command is the only thing
+  that ever wrote the push node (§3.5 (a)) and it is the same admin act that removes it.
+- **The sender reaps an orphaned `push/$uid` on its next sweep** — a push node whose
+  `devices/$uid` is gone. This is the **net, not the mechanism**: it covers a revoke written by
+  a principal that removed only the device node, a re-registration the consumer had in flight
+  when the revoke landed (§3.5 (b)), and any other path that leaves the two nodes out of step.
+  It is idempotent with the first path — the node is already gone.
+
+  **So the answer to "does revoke delete the push node?" is yes, and the reaping is why a
+  leftover node is harmless rather than why it exists.** Rule 2's "inert" describes the window
+  between the two deletions, in which the device node is gone and the push node is not yet:
+  **nothing is sent to it and the rules do not read it** — it is a deletion pending, not a live
+  registration. The first draft left this split across §3.4, §3.5 and §6 and never said which
+  one owned the deletion, which is the ambiguity this paragraph closes.
+
 **Reaping deletes; it never marks.** A stale token (`UNREGISTERED`) or an orphaned `push/$uid`
 whose `devices/$uid` is gone is **deleted** — the token child, or the whole push node. The
 first draft's "marks the device not registered" is withdrawn for the same reason as the child
@@ -409,7 +433,11 @@ predicate it carries, not about whether it has merged.)*
 revocation act.** Because the sender checks `config/admin/devices/$uid` at send time (and
 §3.4's rule 2 makes that check one of *two* it must pass), **no device node means no send**;
 and because D166's `USER` requires the node, the same deletion also stops the app's reads at
-once (G14's property). One act, one revocation. **§3.4 is what keeps that true rather than
+once (G14's property). One act, one revocation — **and the act deletes the sibling push node
+too** (§3.4: `fugaro pair revoke` removes `config/admin/devices/$uid` *and*
+`config/admin/push/$uid`, so the stored token, prefs and zone do not outlive the pairing; the
+sender's reaping of an orphaned node is the net for a revoke that removed only the device
+node, not a second mechanism). **§3.4 is what keeps that true rather than
 merely asserting it**: the token lives in a *sibling*, so no re-registration, prefs write or
 reap can recreate the node the rules consult — an orphaned `push/$uid` is inert and gets
 deleted, never resurrected into an admission. This is the design's strongest property, and it
@@ -899,7 +927,7 @@ against.
 | failure | behaviour | what the user sees |
 | --- | --- | --- |
 | the device node is missing, or the push node is missing, or the push node holds no token | **no send**; the sender records nothing (§3.4) | nothing — the app still shows everything on open |
-| the token is stale (FCM `UNREGISTERED`) | the sender drops the token and **deletes the entry in `config/admin/push/$uid`** — it never writes a marker, and it never touches `config/admin/devices/$uid` (§3.4, §3.5). If that leaves the push node empty the sender **deletes the push node**, which is what makes revocation final; it does not retry | nothing until the app re-registers (§3.5 (b)) |
+| the token is stale (FCM `UNREGISTERED`) | the sender drops the token and **deletes the entry in `config/admin/push/$uid`** — it never writes a marker, and it never touches `config/admin/devices/$uid` (§3.4, §3.5). If that leaves the push node empty the sender **deletes the push node**; it does not retry. *(This is the same deletion `fugaro pair revoke` performs in its one act — §3.4 states the two paths; the sender's is the net for an orphaned node, not the mechanism)* | nothing until the app re-registers (§3.5 (b)) |
 | FCM or APNs is down, or the send fails | the intent **stays queued** and the sweep retries; after the retry window it is dropped, never escalated | a delayed or missing buzz; the mailbox is unaffected |
 | a duplicate event is derived | deduped on `(device, category, key)` (§3.7) | one buzz |
 | a storm (many runs fail at once) | the sender's cap suppresses beyond N/hour (§3.7) | one buzz, and the mailbox has the rest |
@@ -1024,9 +1052,16 @@ stored in the installation's own Firebase project and deletable by revoking the 
 quiet-hours zone name is stored** where a user sets quiet hours (§3.8, Q5); **retention is
 stated as Q10 answers it** — the push data lives only as long as the pairing, the dedupe ledger
 is windowed, and **what Google and Apple keep on their side is not this project's to delete**,
-so the statement must not imply the provider forgets; and no
-third party beyond Google (and Apple) is in the path **on the recommended channel** — which is
-itself an argument for not choosing Expo's relay (§3.3).
+so the statement must not imply the provider forgets. **On the channel, the statement must not
+claim a settled path, because there no longer is exactly one**: §3.3 and Q7 make the choice
+conditional — **FCM direct where every installation's project is the owner's**, and **a relay
+(Expo's, or one the publisher runs) wherever an installation belongs to someone else**, since
+an APNs `.p8` is team-wide and FCM addresses one project per token. So the disclosure has to be
+written **per channel**: with direct FCM, no third party beyond Google and Apple is in the path;
+**with a relay, the relay is a third party that sees the payload and the token** and the
+statement must name it. *(The first draft's sentence — "no third party … on the recommended
+channel — which is itself an argument for not choosing Expo's relay" — asserted the settled
+recommendation §3.3's B5 correction withdrew, and is replaced here.)*
 
 ## 10. The alternatives, with a recommendation
 
