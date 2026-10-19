@@ -1439,6 +1439,19 @@ func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
 	if !bytes.Equal(mustRead(t, r.cfg), before) || !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
 		t.Error("an unmarked creation left the project config or the checkout moved")
 	}
+	// The creating run's own account of the state, which is the only place a
+	// person sees it at the time: neither half was written, and the owner's
+	// own flag is what writes both — not "an owner-run command", and not the
+	// creating run alone, which is what the warning said before this round
+	// and is false for a project whose run is over.
+	if !strings.Contains(out, "No later run of ours writes either half") {
+		t.Errorf("the unmarked creation does not say that no later run of ours writes the fact, leaving the owner with no way out:\n%s", out)
+	}
+	// And the state bucket step still ran: this function is its one writer in
+	// the tree, so a run that stopped at the marks takes it with it.
+	if r.gcs.Inserted(managedmode.ManagedStateBucketName(newProj)) == nil {
+		t.Errorf("the unmarked creation set up no gs://%s, which no later run can do:\n%s", managedmode.ManagedStateBucketName(newProj), out)
+	}
 }
 
 // TestRestoreAHalfMarkedCreationKeepsTheConfigAndItsWayToFinish: the mark is

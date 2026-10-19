@@ -233,7 +233,7 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// told apart, and neither is a failure: a caller prints both.
 	labelWhy := ""
 	if v, ok := labels[ProjectLabelKey]; !ok {
-		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: the label is written by the run that creates the project, and a project that has the creation fact without it is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project)
+		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: the label goes on with the creation fact, by the run that creates the project or by the owner's own `fugaro managed flag` on a project that already exists, and a project that has the fact without it is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project)
 	} else if v != ProjectLabelValue {
 		labelWhy = fmt.Sprintf("GCP project %s carries %s=%s, not %s, so %s is not managed", gcpProject, ProjectLabelKey, v, ProjectLabelValue, project)
 	}

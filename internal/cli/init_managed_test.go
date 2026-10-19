@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
 // The gate at the call site, which internal/infra/managed's own test cannot
@@ -154,6 +156,39 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		}
 		if strings.Contains(out, "recorded that this run created project "+newProj) {
 			t.Errorf("the run reported a project marked when only half the fact was written:\n%s", out)
+		}
+		// And the state bucket is set up anyway: it is D77's, what an apply
+		// under the deployer needs, and markCreated is its only writer in the
+		// tree — a later run creates no project and returns before it. So a
+		// run that stopped at the refused label takes with it the one step
+		// that no command of ours can take later, and the paths a person is
+		// sent to for the half-written mark end in a managed apply.
+		state := managedmode.ManagedStateBucketName(newProj)
+		if r.gcs.Inserted(state) == nil {
+			t.Fatalf("the run that could not write the label created no gs://%s: a project no later run can make applyable\n%s", state, out)
+		}
+		member := "serviceAccount:" + managedmode.DeployerAccount(newProj)
+		var bound bool
+		for _, b := range r.gcs.BucketPolicy(state) {
+			if b.Role == managedmode.DeployerStateRole && slices.Contains(b.Members, member) {
+				bound = true
+			}
+		}
+		if !bound {
+			t.Errorf("%s is not bound to gs://%s: the state bucket step is the deployer's binding and nothing else does it (D75, Task 1.5): %v", member, state, r.gcs.BucketPolicy(state))
+		}
+		// The half-written mark's own account of itself: which owner-run
+		// commands complete it, and the one route that works for the fact a
+		// --managed creation writes. The warning this replaced gave both
+		// marks to the creating run alone ("written once, by the run that
+		// creates the project") and offered a command that refuses for a
+		// fact that already records an amount.
+		s := out
+		if !strings.Contains(s, "records no amount") || !strings.Contains(s, "already records one") {
+			t.Errorf("the unmarked warning does not split the two states the owner's commands answer to (a fact that records no amount, and one that does):\n%s", s)
+		}
+		if strings.Contains(s, "written once, by the run that creates the project") {
+			t.Errorf("the unmarked warning still gives both marks to the creating run alone, and the owner's own flag writes both:\n%s", s)
 		}
 	})
 

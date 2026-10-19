@@ -384,7 +384,13 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
 				return s, c
 			},
-			reason: "carries no fugaro_managed label",
+			// Both writers of the label, because the reason is where a person
+			// who has the fact and no label is sent to the thing that
+			// completes it: the creating run, and the owner's own flag on a
+			// project that already exists. Naming only the first is what the
+			// round-2 review found here, and the flag is the one that applies
+			// to a project whose run is long over.
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: the label goes on with the creation fact, by the run that creates the project or by the owner's own `fugaro managed flag`",
 		},
 		"a project whose fugaro_managed label says something else": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {

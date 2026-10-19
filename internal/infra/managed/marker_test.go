@@ -1737,7 +1737,7 @@ func (s *iamScan) checkLabelGrant(r tfResource, roles map[string][]string, local
 				continue
 			}
 			s.labelGrants++
-			s.failf("%s: %s grants %s on %s to %s, and %s: no credential a run holds may set or remove the project's %s label, which is what puts a project into managed mode (Task 3.0; the label is written by the run that creates the project and by nothing else)",
+			s.failf("%s: %s grants %s on %s to %s, and %s: no credential a run holds may set or remove the project's %s label, which is what puts a project into managed mode (Task 3.0; the label is written by the run that creates the project or by the owner's own flag command, and by no credential a run holds)",
 				r.path, r.name, role, grantTarget(r.body), m, why, ProjectLabelKey)
 		}
 	}
