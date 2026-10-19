@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,8 +18,11 @@ const (
 	inJobReviewREADME  = "docs/in-job-review/README.md"
 	inJobReviewSpec    = "docs/in-job-review/spec.md"
 	inJobReviewRecon   = "docs/in-job-review/reconciliation.md"
-	inJobReviewStatus  = "**Status: reconciliation only; no code is implemented; the plan waits for the owner's answers.**"
+	inJobReviewStatus  = "**Status: reconciliation only; no code is implemented; Q1, Q4 and Q9 answered 2026-10-19; the plan waits for the rest.**"
 	inJobReviewSubject = "Fugaro: In-Job Review Spec"
+	// gcpLiveChecklist is where an owner-run live check claims its number. This
+	// work claims none, so the file must name neither this folder nor the spec.
+	gcpLiveChecklist = "docs/gcp-live-checklist.md"
 )
 
 // TestDocsInJobReviewIsWritten: the folder exists with its index and both
@@ -58,7 +62,8 @@ func TestDocsInJobReviewIsWritten(t *testing.T) {
 		// Every section the brief asked for.
 		"## 2. Findings",
 		"## 4. Open for the owner",
-		"## 6. UNVERIFIED",
+		"## 5. Owner's answers (2026-10-19)",
+		"## 7. UNVERIFIED",
 		// The revision this was read at, so a later run can tell when it ages.
 		"Checked against:** `origin/main` at `82ba600",
 		"2026-10-19",
@@ -227,7 +232,8 @@ func TestDocsInJobReviewStatesTheBriefCorrections(t *testing.T) {
 // claimed, because every finding that needs the owner is a Q. This asserts the
 // claim rather than trusting it: no decision-row label (**D123**) appears in
 // either document, the table says so in words, and docs/gcp-live-checklist.md
-// was not touched to claim a number.
+// — where an owner-run check claims its number — carries no section for this
+// work.
 func TestDocsInJobReviewAllocatesNoDecisionsOrChecks(t *testing.T) {
 	decisionRow := regexp.MustCompile(`(?m)\*\*D[0-9]+\*\*`)
 	for _, path := range []string{inJobReviewRecon, inJobReviewREADME} {
@@ -245,6 +251,98 @@ func TestDocsInJobReviewAllocatesNoDecisionsOrChecks(t *testing.T) {
 			t.Errorf("%s lacks %q: the numbers this work holds must say it holds none", inJobReviewREADME, want)
 		}
 	}
+	// The "none claimed" line is a claim about a file this package can read, so
+	// it is checked and not just stated: a check number is claimed by writing a
+	// section in the live checklist, so neither this folder nor the spec's title
+	// may appear there. A work that claimed one fails here.
+	checklist := readDoc(t, gcpLiveChecklist)
+	for _, absent := range []string{"in-job-review", inJobReviewSubject} {
+		if strings.Contains(checklist, absent) {
+			t.Errorf("%s mentions %q: this work claims no check number, so it must have written no section there — a check number is claimed by a section in that file",
+				gcpLiveChecklist, absent)
+		}
+	}
+}
+
+// TestDocsInJobReviewRecordsTheOwnersAnswers: the owner answered Q1, Q4 and Q9
+// on 2026-10-19, and the documents have to say so where a reader looks — in the
+// index's status line, in a section of its own, and on the question itself.
+// The answered set is pinned exactly, and so is the set of questions an answer
+// constrains: a marker removed, a marker moved to another question, a fourth
+// question quietly marked answered, or a question losing the line that says how
+// an answer constrains it all fail. Q9 is the answer with the largest
+// consequence — it gates in-job Opus review on the credentials service — so its
+// substance is asserted, not just its presence.
+func TestDocsInJobReviewRecordsTheOwnersAnswers(t *testing.T) {
+	recon := readDoc(t, inJobReviewRecon)
+
+	// Each question's own block: from its heading to the next question's heading.
+	blocks := map[int]string{}
+	head := regexp.MustCompile(`(?m)^\*\*Q([0-9]+)\.`)
+	locs := head.FindAllStringSubmatchIndex(recon, -1)
+	for i, m := range locs {
+		n, err := strconv.Atoi(recon[m[2]:m[3]])
+		if err != nil {
+			t.Fatalf("question label %q does not carry a number", recon[m[0]:m[1]])
+		}
+		end := len(recon)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		blocks[n] = recon[m[0]:end]
+	}
+	if len(blocks) == 0 {
+		t.Fatalf("%s states no question of the form **QN.", inJobReviewRecon)
+	}
+
+	// The answered set, exactly: the three the owner answered on 2026-10-19 and
+	// no others, each marked in place with the date.
+	answered := []int{}
+	constrained := []int{}
+	for n, b := range blocks {
+		if strings.Contains(b, "**Answered 2026-10-19") {
+			answered = append(answered, n)
+		}
+		if strings.Contains(b, "**Constrained by") {
+			constrained = append(constrained, n)
+		}
+	}
+	sort.Ints(answered)
+	sort.Ints(constrained)
+	if got, want := numbers(answered), "[1 4 9]"; got != want {
+		t.Errorf("the questions marked answered 2026-10-19 are %s, want %s: the owner answered Q1, Q4 and Q9, each marked in place in %s",
+			got, want, inJobReviewRecon)
+	}
+	// Every question an answer constrains says how, so a reader cannot act on the
+	// superseded reading by accident.
+	if got, want := numbers(constrained), "[2 3 5 6 7 8 10 13 14 15 16]"; got != want {
+		t.Errorf("the questions carrying a \"Constrained by\" line are %s, want %s: each question an answered one constrains must say how in %s",
+			got, want, inJobReviewRecon)
+	}
+
+	// Q9's answer, as substance: the gate, what it withholds, and what the first
+	// slice can still deliver.
+	for _, want := range []string{
+		"## 5. Owner's answers (2026-10-19)",
+		"In-job Opus review is gated on the credentials service",
+		"cannot put an Opus reviewer in a cloud job",
+		"serial multi-review runner loop",
+		"`watch` rendering fix",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: the owner's Q9 answer, its gate and what the first slice still delivers are what the next run plans from",
+				inJobReviewRecon, want)
+		}
+	}
+}
+
+// numbers renders a sorted question-number list for a comparison message.
+func numbers(ns []int) string {
+	parts := make([]string, 0, len(ns))
+	for _, n := range ns {
+		parts = append(parts, strconv.Itoa(n))
+	}
+	return "[" + strings.Join(parts, " ") + "]"
 }
 
 // TestDocsInJobReviewStatesTheAuthenticityEvidence: finding #40's evidence is
@@ -276,6 +374,50 @@ func TestDocsInJobReviewStatesTheAuthenticityEvidence(t *testing.T) {
 		if strings.Contains(readDoc(t, path), "returns nothing") {
 			t.Errorf("%s carries the retracted claim that a grep for hmac in internal/ returns nothing: it is false at the revision the reconciliation was read at (internal/gcpfake MACs its own JWTs), and this document's contract is that every claim was located with git grep against that revision",
 				path)
+		}
+	}
+}
+
+// TestDocsInJobReviewCitationsWereCorrected: the first revision carried five
+// citations a reader could not check — a Go symbol that does not exist
+// (runStageError; the real ones are the free function StageError and
+// run.stageReason), a design-decision number that says something else
+// (design/recipes.md's decision 5 is the agent.* knobs, not the reserved keys or
+// the outcome rule, which are in §4), a claim that three CLI flags appear
+// nowhere in the tree (they do, in voice.md's D54, as an option that document
+// refuses), and a quote of git-providers.md whose fragments were in a different
+// order from the source. Each corrected form is pinned here and each retracted
+// form is pinned out, so the same five mistakes cannot come back.
+func TestDocsInJobReviewCitationsWereCorrected(t *testing.T) {
+	recon := readDoc(t, inJobReviewRecon)
+	for _, absent := range []string{
+		"runStageError",
+		"decision 5",
+		"anywhere in the tree",
+	} {
+		if strings.Contains(recon, absent) {
+			t.Errorf("%s carries %q, a form this work retracted: it is wrong against the tree at the revision the document was read at, so it must not come back",
+				inJobReviewRecon, absent)
+		}
+	}
+	for _, want := range []string{
+		// The symbols that do exist, cited by name.
+		"`StageError` (`internal/runner/budget.go`)",
+		"`run.stageReason` (`internal/runner/runner.go`)",
+		"stage <stage> timed out after",
+		// The right place in the design for the reserved keys and the rule.
+		"§4's reserved-and-refused list",
+		"Outcome rules are not configurable",
+		// The three flags, where they really are.
+		"only** in [voice.md](../design/voice.md) D54",
+		// The quote, in the source's own order.
+		"It overwrites the remote branch only when the branch is absent or its tip is one of the run's own commits",
+		"The base branch is never pushed.",
+		// And the catalog's own words, capitalised as it writes them.
+		"High-stakes or subtle work (concurrency, security, data migrations)",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: this is the corrected form of one of the five citations the first revision got wrong", inJobReviewRecon, want)
 		}
 	}
 }
@@ -385,6 +527,10 @@ func TestDocsInJobReviewCitationsExist(t *testing.T) {
 		"docs/multi-model.md",
 		"docs/gcp-live-checklist.md",
 		"docs/design/recipes.md",
+		// Where the three tool-permission flags really are (finding #36), and the
+		// frontmatter-key lint that refuses the dash-less spelling.
+		"docs/design/voice.md",
+		"plugin/skills_lint_test.go",
 		"docs/design/generic-tool.md",
 		"docs/design/mixed-credentials.md",
 		"docs/design/project-centric.md",

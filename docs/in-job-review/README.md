@@ -1,13 +1,13 @@
 # In-job review — the documents
 
-**Status: reconciliation only; no code is implemented; the plan waits for the owner's answers.** This folder holds the owner's spec of 2026-10-18 for moving review inside the cloud job, and the reconciliation of every concrete claim it makes against the code. The reconciliation raises **Q1–Q17**, each with options, a recommendation and its cost; answering them is the gate. Nothing is approved: answering a question is not approving a task, and no code, Terraform, schema, recipe or live action follows from these documents. A later run writes `implementation-plan.md` here from the owner's answers, and only then does any work follow — each task needing its own explicit go.
+**Status: reconciliation only; no code is implemented; Q1, Q4 and Q9 answered 2026-10-19; the plan waits for the rest.** This folder holds the owner's spec of 2026-10-18 for moving review inside the cloud job, and the reconciliation of every concrete claim it makes against the code. The reconciliation raises **Q1–Q17**, each with options, a recommendation and its cost; answering them is the gate. The owner answered **Q1** (the plan is a version-gated task field plus a `--review-plan` flag), **Q4** (serial reviews first, structured as a plan) and **Q9** (**wait for the credentials service**, so the first slice carries no Opus reviewer) on 2026-10-19 — recorded in the reconciliation's §5 "Owner's answers" and marked in place in §4, where the eight questions Q9 constrains say how. Fourteen stay open. Nothing is approved: answering a question is not approving a task, and no code, Terraform, schema, recipe or live action follows from these documents. A later run writes `implementation-plan.md` here from the owner's answers, and only then does any work follow — each task needing its own explicit go.
 
 **Owner:** Dimi Paun. **Date:** 2026-10-18/19 (spec 2026-10-18; reconciliation 2026-10-19).
 
 | File | What it is |
 |---|---|
 | [spec.md](spec.md) | The owner's spec, "Fugaro: In-Job Review Spec" (Draft · Oct 18, 2026 · Owner: Dimi Paun), **verbatim**, committed alone in its own first commit. No typo needed fixing, so nothing in it was changed. |
-| [reconciliation.md](reconciliation.md) | Corrections to the brief it was written from; the headline table (spec concept → what the repository has); findings **#1–#43** against `origin/main` at `82ba600`, each classified **Wrong / Exists / Gap / Rule / Open** with a path and a symbol and its consequence; what the parked mixed-credentials design still contributes and what the credentials-service plan supersedes; **Q1–Q17** in "Open for the owner", each with two to four options, a recommendation first with the reason, the consequence of each, and the part of the spec it changes; eight **resolutions** (R1–R8) for findings with one defensible answer; and the **UNVERIFIED** table (U1–U6). Where it disagrees with `spec.md`, it wins. |
+| [reconciliation.md](reconciliation.md) | Corrections to the brief it was written from; the headline table (spec concept → what the repository has); findings **#1–#43** against `origin/main` at `82ba600`, each classified **Wrong / Exists / Gap / Rule / Open** with a path and a symbol and its consequence; what the parked mixed-credentials design still contributes and what the credentials-service plan supersedes; **Q1–Q17** in "Open for the owner", each with two to four options, a recommendation first with the reason, the consequence of each, and the part of the spec it changes; the **owner's answers** of 2026-10-19 to Q1, Q4 and Q9 (§5), with what Q9's answer leaves deliverable and which questions it constrains; eight **resolutions** (R1–R8) for findings with one defensible answer; and the **UNVERIFIED** table (U1–U6). Where it disagrees with `spec.md`, it wins. |
 
 ## What this work checked, and how
 
@@ -24,7 +24,7 @@ Two corrections to the brief, recorded in the reconciliation itself and repeated
 
 | Block | State |
 |---|---|
-| **Q1–Q17** | this work's questions, written in `reconciliation.md`'s "Open for the owner". None is answered. |
+| **Q1–Q17** | this work's questions, written in `reconciliation.md`'s "Open for the owner". **Q1, Q4 and Q9 answered by the owner 2026-10-19** (`reconciliation.md` §5); Q2, Q3, Q5–Q8 and Q10–Q17 are open. |
 | **D-numbers** | **none allocated.** This work states every finding that needs the owner as a **Q**, so the D-blocks other works hold (credentials-service holds D130–D159) are untouched. |
 | **Check numbers** | **none claimed.** This work makes no live claim and writes no check section. If a later plan needs owner-run checks it takes the number free at its own merge, per the rule in [docs/gcp-live-checklist.md](../gcp-live-checklist.md). |
 
