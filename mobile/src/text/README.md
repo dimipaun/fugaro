@@ -59,6 +59,23 @@ else — is the only spelling that reaches the machine. `TYPE_CUE` is the line
 the screen puts under a read-back: P6.2's own cue says "Say", and a text screen
 that asked the user to speak would be giving an instruction it cannot take.
 
+**The phrase needs no action id from the caller.** `submit('Fugaro, confirm')`
+with no context confirms the one live read-back — the one the screen is drawing
+— taking its id and re-stating its target; `submit('Fugaro, confirm', {
+actionId, target })` is for the case where the app is holding a read-back past
+its deadline or re-reading a merge's head, and the machine then judges the
+deadline and the target. Two read-backs outstanding is the machine's
+`ambiguous-pending`, never a guess between them.
+
+**A wake word P6.2 cannot confirm with is refused as a wiring failure.** The
+machine decides whether an utterance is the fixed phrase by routing it with the
+router's *default* aliases (`isConfirmPhrase`), while this screen routes with
+the caller's, so `aliases: ['Hey']` would route `Hey, confirm` as the command
+and then have the machine refuse it `not-a-confirmation` — every command but
+the one that authorises an action. That is fail-closed, and it is refused at
+construction (`no configured wake word can confirm`) rather than discovered by
+a person mid-action.
+
 ## The destructive target is the app's resolution, not a parse
 
 `propose({ text, verb, target, actionId })` takes an action the **app** has
@@ -117,13 +134,26 @@ device (Global Constraint 10). `screen.test.js` walks the tree against a fake
 React, which is also how "the screen draws no secret" stays a fact in CI.
 
 It takes `{ installations, confirmation, unsent, notice, draft, onChangeText }`
-and draws, per installation, its id (D114's label), its waiting questions with
-P6.5's listing order and the destructive ones marked, and its recent summaries
+and draws, per installation, its id (D114's label), its waiting questions in
+P6.5's listing order with the destructive ones marked, and its recent summaries
 newest first and capped at `RECENT_SUMMARY_LIMIT`. **Per installation and never
 summed** (D170): nothing counts across sections, and `screen.test.js` asserts
-that no total appears on screen. The unsent text from `client.pending()` is
-drawn too — D167's first half is that it is *shown* rather than queued by the
-SDK, so a user who typed into a dead connection can see it is still theirs.
+that no total appears on screen. P6.5's `stage` (the reminder escalation) is
+**not** drawn — nothing here reads it, and the header says so rather than
+implying it.
+
+The unsent text from `client.pending()` is drawn too — D167's first half is
+that it is *shown* rather than queued by the SDK, so a user who typed into a
+dead connection can see it is still theirs — but **only `landed: false`**:
+D167(a) and P3.6's `pending()` reserve that word for text the database has not
+received, and drawing a landed message the same way would invite the owner to
+retype a sentence the consumer is already acting on.
+
+The row guards are the same shape as `recentSummaries`': an entry that is not a
+P6.5 listing entry with a usable prompt is **dropped**, never drawn — a
+malformed value would otherwise be a render crash (`null.prompt`) on the very
+screen that exists for when the voice path is not working. A malformed
+installation is skipped for the same reason.
 
 The component is pure and holds no state: the draft and its handler are the
 caller's, and there is no element in the tree that could write anything.

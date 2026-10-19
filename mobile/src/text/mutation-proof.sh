@@ -281,6 +281,11 @@ run "the machine's refusal of a confirmation is carried unchanged" \
 run "the target re-stated by the caller is the one the machine compares" \
   "      target: context.target === undefined ? readBackTarget : context.target," \
   "      target: readBackTarget,"
+run "the phrase with no action id named takes the LIVE read-back's own" \
+  "        actionId = outstanding.actionId;" "        actionId = newId();"
+run "and re-states the target that read-back was drawn from" \
+  "      readBackTarget = outstanding === undefined ? undefined : outstanding.target;" \
+  "      readBackTarget = undefined;"
 run "the phrase with nothing outstanding is P6.2's own refusal" \
   "          return refuse(CONFIRM_REFUSAL.NO_PENDING_ACTION, 'actionId');" \
   "          return Object.freeze({ ok: true, outcome: INPUT_OUTCOME.CONFIRMED });"
