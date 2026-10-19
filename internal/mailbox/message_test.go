@@ -717,9 +717,14 @@ func TestValidatedFields(t *testing.T) {
 // module's `.length` comparisons are inclusive in the same way — so the largest
 // accepted value is what the positive half has to walk, field by field.
 //
-// `mac` and `head_sha` are not here: their lengths are exact rather than
-// bounded, and both of their lengths are pinned as accepted by the vector file
-// the package replays.
+// `mac` needs no row of its own: every record here carries one of exactly
+// MACMax, so the rows below pin that length between them. `head_sha` is
+// different — its length is neither bounded nor one exact value but a choice of
+// two — and the vector file the package replays carries only the 40-character
+// one, so the 64-character length is pinned by the two rows at the end of the
+// table and by nothing else. Without them `shaField` narrowed to
+// `utf16Len(s) != SHAMin` refuses a length the module accepts and the whole
+// suite stays green.
 func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
 	message := func(over Record) Record {
 		record := Record{
@@ -763,7 +768,7 @@ func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
 		{"an id of exactly IDMax", message(Record{"id": strings.Repeat("a", IDMax)}), false,
 			"an id is at most IDMax code units, and the bound itself is one of them"},
 		{"an id of exactly IDMax code units of U+FFFF", message(Record{"id": strings.Repeat("￿", IDMax)}), false,
-			"U+FFFF is one UTF-16 code unit and not two: it is above the BMP's last character but below every astral one, and the count is a count of code units"},
+			"U+FFFF is the BMP's last character and one UTF-16 code unit; every astral character above it is a PAIR of code units, which is where a count of code units and a count of characters part company"},
 		{"a pull request numbered one", merged(map[string]any{
 			"target": map[string]any{"repo": "dimipaun/fugaro", "pr": number("1")}}), false,
 			"pull requests are numbered from one, so one is the smallest number a merge may name (the refusal table holds nought)"},
@@ -797,6 +802,12 @@ func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
 			"a heartbeat advertises at most AgentsMax agents, and AgentsMax is allowed"},
 		{"exactly OptionsMax options", message(Record{"kind": "prompt", "options": manyOptions(OptionsMax)}), false,
 			"a prompt offers at most OptionsMax options, and OptionsMax is allowed"},
+		{"a head SHA of exactly SHAMin", merged(map[string]any{
+			"head_sha": strings.Repeat("a", SHAMin)}), false,
+			"a head SHA is 40 or 64 hex characters, and 40 is one of the two"},
+		{"a head SHA of exactly SHAMax", merged(map[string]any{
+			"head_sha": strings.Repeat("a", SHAMax)}), false,
+			"64 is the other length a head SHA may be, and no vector in the file the package replays carries one"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var refusal *Refusal
@@ -1714,17 +1725,26 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 }
 
 // TestTheSurrogateRangeEdgesSurviveTheWire is the decode-level half of the
-// same edges, and it exists because the two classification functions are
-// written twice — hasLoneSurrogateEscape's switch and the unquoter's
-// isHighSurrogate/isLowSurrogate pair — and only the second of them was ever
-// asked about the first and last code unit of each range. Narrow any of those
-// four bounds by one and the pair at that edge stops being a pair: the decoder
-// writes the two halves as WTF-8, and a record the module accepts
-// (`"\uD800\uDC00"` is U+10000) is refused bad-character here.
+// same edges. The two classification functions are written twice —
+// hasLoneSurrogateEscape's switch and the unquoter's isHighSurrogate /
+// isLowSurrogate pair — and the edges are what an off-by-one moves.
 //
-// U+10000 and U+10FFFF are the edges: the lowest and the highest code unit
-// pairs a document can spell, which is exactly the DC00 and DFFF that the
-// bounded comparisons guard, and DBFF for the high half of the last one.
+// The first two cases are a well-formed pair at each end of the range, and what
+// they pin is the ordinary path: the JSON decoder combines the pair into one
+// character, the validator accepts the record, and the encoder writes that
+// character raw rather than as an escape. They do NOT reach the unquoter — a
+// document whose only escapes are well-formed pairs leaves
+// hasLoneSurrogateEscape answering false — so narrowing any of the unquoter's
+// four bounds by one leaves them green. The unquoter's own edge rows are in
+// TestTheUnquoterDecodesWhatItKeeps; the third group below brings the pair to
+// this level too.
+//
+// The third group is the one that reaches the unquoter: the same pair at each
+// edge with a lone half BESIDE it, in the same string, so hasLoneSurrogateEscape
+// answers true and unquoteKeepingLoneSurrogates reads the whole value. Narrow
+// any of the four isHighSurrogate / isLowSurrogate bounds by one and the pair
+// at that edge stops being a pair: the text decodes to the two halves' WTF-8
+// instead of the one character, and the decoded value below is what fails.
 func TestTheSurrogateRangeEdgesSurviveTheWire(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -1752,6 +1772,38 @@ func TestTheSurrogateRangeEdgesSurviveTheWire(t *testing.T) {
 			}
 			if !strings.Contains(string(bytes), tc.want) {
 				t.Errorf("the canonical bytes are %s, wanted them to carry %q raw", bytes, tc.want)
+			}
+		})
+	}
+
+	// The lone half is what makes the unquoter run. It is at the OTHER end of
+	// the range from the pair under test, so the edge bounds are the only thing
+	// that can spoil the pair: U+DFFF's WTF-8 is ED BF BF, U+D800's is ED A0 80.
+	for _, tc := range []struct {
+		name    string
+		escaped string
+		want    string
+	}{
+		{"the first character above the BMP beside a lone low half", `\uD800\uDC00\uDFFF`, "\U00010000\xed\xbf\xbf"},
+		{"the last character beside a lone high half", `\uDBFF\uDFFF\uD800`, "\U0010FFFF\xed\xa0\x80"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := surrogateDocument(t, "plain message", `"text":"run 42 finished"`, `"text":"`+tc.escaped+`"`)
+			record, err := Decode(document)
+			if err != nil {
+				t.Fatalf("the decoder refused the document itself: %v", err)
+			}
+			if got, _ := record["text"].(string); got != tc.want {
+				t.Fatalf("the text decoded to %q, wanted %q: the pair is one character and only the lone half is two halves", got, tc.want)
+			}
+			// The record is refused for the lone half and for nothing else, and
+			// the field is the one the lone half is in. A decoder that read the
+			// pair as two halves refuses this same record with this same code,
+			// so the decoded value above is the assertion that tells them apart.
+			_, refusal := ValidateMessage(record)
+			if refusal == nil || refusal.Code != CodeBadCharacter || refusal.Field != "text" {
+				t.Errorf("the record is answered %v, wanted the lone half refused as %s on text",
+					refusal, CodeBadCharacter)
 			}
 		})
 	}
