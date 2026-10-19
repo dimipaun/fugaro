@@ -1248,6 +1248,14 @@ var coordinatorDecisionBlocks = []coordinatorNumberBlock{
 	{"D160–D179", coordinatorMobileReadme, "| **D160–D179** | **the functional spec v0.1**", "**D160–D179** the mobile functional spec"},
 	{"D180–D192", "docs/website/redesign/README.md", "**`D180`–`D192`**, the first", "**D180–D192** the website redesign, proposed"},
 	{"D79–D89", "docs/website/redesign/implementation-plan.md", "`D79`–`D89` is a deliberately unused gap", "**D79–D89** is **deliberately unused**"},
+	// Added 2026-10-19, with the block itself: the website redesign's row above is the
+	// precedent — the most recent work to take a block registered it here, in the one table
+	// in this repository that lists every work's block, and the telemetry plan does the same.
+	// The row that read "**D193 onward** — free" now reads "**D201 onward**": the block it
+	// gave away is taken, and a range the table calls free must not cover one the allocation
+	// records as held (the rule below checks exactly that, and it is what would have failed
+	// had this row stayed where it was).
+	{"D193–D200", coordinatorMobileReadme, "| **D193–D200** | **the telemetry plan**", "**D193–D200** the telemetry plan's, taken **2026-10-19**"},
 }
 
 // coordinatorCheckBlocks is the checks row: the register's own blocks, and the two documents
