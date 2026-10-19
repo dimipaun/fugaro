@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **845,103 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **977,921 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **843,588 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **976,406 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -160,10 +160,16 @@ added or removed without this sentence moving fails there:
 
   - the **1,515 bytes** between the two shapes of the site build are the changelog page's own
     "not yet released" labels, which a checkout with no tags prints for every release file;
-  - flipping **`features.console_downloads`** — the flag `test/console-option.mjs` flips to
-    prove the released console is safe — moves the **site figure by 536 bytes**, the console
-    option's own markup on the two pages that render it, and moves the **page weight not at
-    all**: the heaviest page is the docs hub, which renders no install option;
+  - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
+    flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
+    moves the **site figure up by 1,572 bytes**, from 976,349 with the flag off to 977,921 with it on:
+    the console option's own markup on the three pages that render it — the console page's
+    downloads section (each artifact's checksum beside its link, and the verification command)
+    1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
+    the **page weight not at all**: the heaviest page is the docs hub, which renders no install
+    option, no download and no hero. The copy the gates build of the unreleased state is
+    therefore the smaller of the two, and that is the direction a reader of this list needs:
+    the flag's round is the one that added the bytes;
   - the script and the pages that follow are the figures' own subject, and each moved them in
     the commit that shipped it (D192).
 
@@ -189,31 +195,63 @@ added or removed without this sentence moving fails there:
     the diagram, the install paths — changes spec item 4), the run animation (P7), the How It
     Works flow (P8) and the long-page cuts (P4), with the changes spec's items 2 and 3 over
     all of it.
+  - `main`'s picture: the owner's `fugaro watch` capture and its transcription, placed on the
+    homepage by #655.
+  - this branch's two changes from the owner's brief of 2026-10-19: the menu's drawer replaced
+    by the three group labels in the header's row (item 1), and the console's link in the
+    homepage's call to action (item 6), which renders from the console's flag.
+  - the console's release (W3.1): `features.console_downloads` and the data file's
+    `available` turned on together, which puts the console page's downloads, Getting Started's
+    console option and the hero's link to the console into this build.
 
   Each half moved these figures in its own commits and re-derived them there — the script's
-  six corrections in `main`'s, the redesign's five fix rounds in this branch's — and they are
-  re-derived once more here, because the merge is where the two halves first weigh together.
-  **The figures below are the build this branch ships** (2026-10-19), derived over the merged
-  tree: the fix round after the merge moved the chat above the diagram, drew its turns as
-  alternating bubbles, took three of the four cyan edges off the flow's cards and shortened
-  the footer's link label, and every one of those was measured over the build in the same
-  commit that moved it. The review of that round's changes then took the install section's own
-  top padding off — the flow above it already carries the gap between the two blocks — which
-  is the whole-site figure 54 bytes lower and the page weight where it was, the heaviest page
-  being the docs hub, which renders neither block. The round after that moved both figures
-  **up**: the two declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap:
-  anywhere`) moved from the homepage's own `.home-install-command` onto `base.css`'s
-  `.command-block > pre`, because the copy control now shares the command's row and every
-  command on the site gives up the control's width, and the base stylesheet is inlined into
-  every page — ten of the eleven grew by those 44 bytes and the homepage did not, the
-  declarations having left one of its own rules for the base one. That is the whole-site figure
-  440 bytes higher, and the page weight 44, because the page it is derived from — the heaviest
-  one, the docs hub — carries the same inlined rule. That is the same rule every time (D192),
-  and it is also why **the page and the site move with the script**: a script every page
-  loads is a page's weight as well as its JavaScript.
+  six corrections in `main`'s, the redesign's fix rounds in this branch's. The last three rounds
+  are where this build's three numbers come from, and both are measured over **two builds**
+  rather than argued:
 
-  - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
-    `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
+  - **This branch's own fix rounds**, each re-derived in the commit that moved it: the round
+    after the merge moved the chat above the diagram, drew its turns as alternating bubbles,
+    took three of the four cyan edges off the flow's cards and shortened the footer's link
+    label; the round after that took the install section's own top padding off, because the
+    flow above it already carries the gap between the two blocks — 54 bytes off the site
+    figure, with the page weight where it was, the heaviest page being the docs hub, which
+    renders neither block — and the round after *that* moved both figures up by the two
+    declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap: anywhere`)
+    moving onto `base.css`'s `.command-block > pre`, which every page inlines: 440 bytes onto
+    the site figure and 44 onto the page weight. That last round is also why **the page and
+    the site move with the script**: a script every page loads is a page's weight as well as
+    its JavaScript.
+  - **The `fugaro watch` screenshot landed on the homepage** (`main`'s #655) and moved the
+    site figure alone. The owner's capture and its transcription
+    (`public/images/fugaro-watch.png`, 130,533 bytes, and `fugaro-watch.txt`, 3,363) are served
+    by `public/` and are in every build's `dist/`, and the derivation the figure named before
+    them predated the assets: those 134,195 bytes of build, plus the 299 bytes of homepage
+    markup that put the picture in its slot, are the whole of the move — tight 1,056,379 to
+    1,224,123 and stated 3,169,137 to 3,672,369. The page weight does not move with it, and
+    that is the check worth keeping: the picture lands on the homepage, and the homepage is not
+    the heaviest page — the docs hub is, at 267,095 bytes either side of that change — while
+    the homepage's own weight went from 94,007 to 224,839 bytes, the screenshot being 130,533
+    of it. The JavaScript is untouched.
+  - **This branch's menu (item 1), and the review round after it**, measured against that
+    build file by file. Taking the drawer out — the `Menu` toggle, the panel it opened and the
+    sibling combinator that showed it — leaves each of the eleven pages **278 bytes lighter**,
+    the base stylesheet every one of them inlines being that much shorter, and takes **181
+    bytes off the script**. The review round then put the script's own comments back in step
+    with the menu, three of them still describing the retired drawer, which is **290 bytes onto
+    the script** — comments are part of the file the browser fetches. So the script is 39,779 →
+    **39,888** (the two rounds together: −181 and +290) and the site figure 979,298 →
+    976,349, the eleven pages' 3,058 and the script's 109. The page weight moves with the
+    script and the stylesheet both, 267,095 → **266,926**: the docs hub inlines the stylesheet
+    (−278) and fetches the script (+109). Nothing else in the artifact moved in that round —
+    the console's link was behind a flag that build had off.
+  - **The console's release turned the flag on** (W3.1), and moved the site figure alone,
+    976,349 → **977,921**, by the **1,572 bytes** the list above names: the console page's
+    downloads section, Getting Started's console option and the hero's link to the console.
+    The page weight and the script did not move: the heaviest page is the docs hub, which
+    renders none of the three.
+
+  - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
+    `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
     to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
@@ -235,11 +273,11 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,001,607 bytes. Three times 333,869: the heaviest page, the
-    docs hub, at 267,095 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
+    docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,169,137 bytes. Three times 1,056,379 (every file in `dist/`, 845,103
-    bytes across 21 files, plus 25 %) — the gates' own build of the site, which is the build
+  - **Whole site:** 3,667,206 bytes. Three times 1,222,402 (every file in `dist/`, 977,921
+    bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -426,7 +464,7 @@ check until this document says the same thing.
 | `content/cli-reference.md` | the command tree, `internal/cli.NewRootCmd` | `go run ./internal/clidoc` |
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
-| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available: false` until the console ships | none: hand-kept |
+| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available` follows `site.yaml`'s `features.console_downloads` | none: hand-kept |
 
 Three things about those commands are worth stating rather than leaving to the table:
 
@@ -446,6 +484,13 @@ Three things about those commands are worth stating rather than leaving to the t
   fact in the repository, then the value here, in one commit. `site.yaml`'s
   `features.console_downloads` is held to the hand-kept `content/downloads.json`'s
   `available` by the build itself, which refuses the two disagreeing (below).
+- **`website/data/console-sha256sums.txt` is the release's, copied rather than written.** It is
+  the `console-sha256sums.txt` asset of the console's `console-vX.Y.Z` release, byte for byte —
+  one `<64 hex>  <published name>` line per artifact, the shape `sha256sum` writes and
+  `shasum -a 256 -c` reads. It is what the `sha256` values in `content/downloads.json` are held
+  to: a checksum is a fact about bytes, so no build can compute it and a well-formed value is no
+  evidence of anything. The file arrives with the console's release and the version bump beside
+  it (below).
 
 ## The changelog is built, never committed
 
@@ -468,48 +513,62 @@ file therefore carries the release's *published names* rather than a URL: `relea
 (`console-vX.Y.Z`, cut from the CLI's own `vX.Y.Z` tag) and from `site.yaml`'s `repository` —
 that module is the one reader of the file, and each page renders what it returns.
 
-Two pages offer the console from those facts: the console page's own Downloads section (W1.6)
-and Getting Started's console option, beside the CLI (the owner's changes spec of 2026-10-18,
-item 6). In both, the unreleased state is **structural rather than editorial**: the download
-list is rendered from `available`'s branch and nothing else, so an unreleased console has no
-link to follow even though its assets' names are already in the data file — and the option's
-only link is the way to `/console/`. `website/test/console.mjs` holds the console page to that,
-and `website/test/console-option.mjs` holds Getting Started to it in **both** states: the
-shipped one, read off the built page, and the released one, read off a build of a copy with the
-flag flipped. That second case also runs the budget gate over the flag-on build
+Three places offer the console from those facts: the console page's own Downloads section
+(W1.6), Getting Started's console option beside the CLI (the owner's changes spec of
+2026-10-18, item 6), and the homepage's call to action (the owner's brief of 2026-10-19, item
+6: the hero action row carries a `Desktop console` link to `/console/`, and nothing about the
+console at all, rendered from `features.console_downloads`). In all three, the unreleased state
+is **structural rather than editorial**: the download list is rendered from `available`'s
+branch and nothing else, and the hero's link is rendered from the flag, so an unreleased
+console has no link to follow even though its assets' names are already in the data file — and
+the option's only link is the way to `/console/`, which is where the hero's link goes too.
+`website/test/console.mjs` holds the console page to that, `website/test/home.mjs` holds the
+homepage's call to action to the flag-off half (the row is exactly the two links it carried
+before, and mentions the console nowhere), and `website/test/console-option.mjs` holds Getting
+Started to it in **both** states: the shipped one, read off the built page, and the released
+one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
 (`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started sits at
 D188's 250-word ceiling — the owner's flip has to be the whole change and may not be the change
 that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 
-**The flip, in the site's own data, is three values:** `site.yaml`'s
-`features.console_downloads: true`, `downloads.json`'s `available: true`, and `release.version`
-bumped to the CLI tag the console was built from. The download list does not change — it already
-carries the release's published names — so no URL is typed anywhere and every button, label and
-URL follows from those three.
+**The flip, in the site's own data, is four values:** `site.yaml`'s
+`features.console_downloads: true`, `downloads.json`'s `available: true`, `release.version`
+bumped to the CLI tag the console was built from, and each entry's `sha256` set to the value the
+release's own sums file records for its published name. The download list itself does not change —
+it already carries the release's published names — so no URL is typed anywhere and every button,
+label and URL follows from those.
 
-**It is not a one-line change, and four checks are written to say so.** Each exists to keep the
-unreleased state true, so each refuses the flip until the commit that makes it extends it — and
-following the three values alone leaves both `npm run check` and `go test ./...` red:
+**It was not a one-line change, and four checks were written to say so** — each keeping the
+unreleased state true, and each refusing the flip until the commit that made it extended it. That
+commit is the one that turned the links on (2026-10-19), and it extended all four rather than
+retiring any of them, so each refusal is still alive in the state the site now ships:
 
-- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`
-  fails on a true flag (`t.Fatalf`, *"this test has not been extended"*). The flip's commit
-  extends it to hold every release-asset URL under `website/` against an asset of a **tag that
-  exists** (W1.6 step 2, plan Task W3.1) — that is the check nothing offline can make, and the
-  one the owner runs against the published release.
-- The same file's `TestWebsiteFactsMatchTheRepository` refuses a true flag too, and the same
-  commit relaxes that pin: the file is one writer per level in the plan, and W3.1's row names it.
+- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff` used
+  to fail on a true flag (`t.Fatalf`, *"this test has not been extended"*). It now scans in **both**
+  states: while the flag is off no file under `website/` may carry a download URL, and while it is
+  on the URLs the pages render are held by `TestWebsiteConsoleReleaseFactsAreComplete`, which
+  checks the tag prefix against the workflow's own `CONSOLE_TAG="` line, the version against a
+  release note that exists, each published name against `console/README.md` and against the
+  release's sums file, and each checksum against that file's value. The URL's *reachability* is
+  the one thing nothing offline can check, and it stays the owner's live check (69a).
+- The same file's `TestWebsiteFactsMatchTheRepository` used to refuse a true flag; it now holds
+  `site.yaml`'s `features.console_downloads` and `downloads.json`'s `available` to each other,
+  which is the agreement the build refuses too.
 - `website/test/console.mjs` guards its unreleased-state case with an assertion that `site.yaml`
-  says `false` — the case is *about* the unreleased console, so the flip's commit retires it
-  rather than leaving it failing.
-- `website/test/console-option.mjs` carries the same guard for the same reason, and the same
-  commit retires that one with it.
+  says `false`. The case is *about* the unreleased console, so it keeps its refusals alive on a
+  **fixture**: it builds a copy whose flag and `available` are flipped back off and holds that
+  build to the unreleased page, while the shipped-state cases read the real build.
+- `website/test/console-option.mjs` does the same for Getting Started's console option, and its
+  flag-disagreement case now flips whichever of the two facts the checkout does not state, so the
+  test is about the disagreement rather than about a direction.
 
-One more thing the flip does **not** have to touch, and this is the point of deriving the URLs:
-nothing under `website/src/` or `website/content/` changes beyond the two values and the version,
-and no test needs a new expectation, because the released-state cases hold the built page to the
+One more thing the flip did **not** have to touch, and this is the point of deriving the URLs:
+nothing under `website/src/` or `website/content/` changed beyond those values, and no test needed
+a new expectation, because the released-state cases hold the built page to the
 release's own documentation (`console/README.md`) and to the workflow that cuts its tag rather
-than to a URL the test composed the way the build does.
+than to a URL the test composed the way the build does. What the commit *did* add under `data/`
+is the release's sums file, because a checksum is the one fact the release's names cannot imply.
 
 The console is built for macOS and nothing else (`console/README.md`,
 `.github/workflows/console-release.yml`: one universal `.dmg` and one `.zip`), which is why the
@@ -562,6 +621,7 @@ them there.
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
+  data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ at build time
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
@@ -652,9 +712,11 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds no pending workflow: the website's two manual
+change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3), which is not this site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
-owner, and no deploy workflow is staged. The only workflow files left there are the desktop
+owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
 their staged copies stay by design, because the console's docs tests assert each one is
 byte-identical to its copy under `.github/workflows/`, so neither is pending.

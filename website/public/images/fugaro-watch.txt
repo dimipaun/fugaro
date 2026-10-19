@@ -1,0 +1,24 @@
+fugaro watch · fugaro · enforce · 2026-10-18
+live
+TOTAL  ▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░ counted $55.44 of $100.00 (55%) · burn $19.59/min ⚠ FAST · spent $49.26
+      7 runs · 4.6 run-hours
+  RUN       TITLE                                                                                    STAGE     R  AGE     SPENT        FLAGS                VERIFY    MODELS
+  dimipaun/fugaro          ▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░ $55.44 of $100.00 (55%) · burn $0.02/min · spent $49.22
+  2026101…  # Task: website headline "Lambdas for coding agents", agent-chat hero, and one b          review    r1 1h04m   $0.37                             fugaro v… deepseek/deep…
+  2026101…  # Task: website Getting Started, CLI and desktop console side by side, console b          fix       r1 1h04m   $0.20                             fugaro v… deepseek/deep…
+  2026101…  # Task: PR 596 fix round (bring the phase 3 follow-ups up to date with integrati          fix       r1 48m32s  $0.20                             fugaro v… deepseek/deep…
+  2026101…  # Task: write live Check 70b (the gist above the fold) into docs/gcp-live-checkl          fix       r1 47m49s  $0.10                             fugaro v… deepseek/deep…
+  2026101…  # Task: PR 620 third fix round (four open findings in Checks 67a and 68: an impe          fix       r1 31m18s  $0.23                             fugaro v… deepseek/deep…
+  2026101…  # Task: PR 616 final fix round (runs stats: pin the human table's columns, the a          implement -  19m52s  $0.07                             -         deepseek/deep…
+  2026101…  # Task: PR 628 fix round (hover menus: the pointer gate must follow the device,           implement -  1m22s   $0.0025                           -         deepseek/deep…
+  20261018-223632-c997 # Task: PR 619 comment fixes (two comments in the console live spec name things  ready for review https://github.com/dimipaun/fugaro/pull/619 · 24m07s ago
+▸ 20261018-223556-e34e # Task: PR 601 review fixes (rules generation 3: the confirm target check, a doc  ready for review https://github.com/dimipaun/fugaro/pull/601 · 57m27s ago
+  20261018-204356-eb6b # Task: PR 614 review fixes (OAuth Task 3: redactor registration for project job  ready for review https://github.com/dimipaun/fugaro/pull/614 · 2h20m ago
+  20261018-172810-627f # Task: show who started a run (launched_by) in fugaro watch and fugaro runs ls ready for review https://github.com/dimipaun/fugaro/pull/612 · 5h11m ago
+
+Ready for your review (4)
+  dimipaun/fugaro    #601   https://github.com/dimipaun/fugaro/pull/601  # Task: PR 601 review fixes (rules generation 3: the confirm target check, a doc
+  dimipaun/fugaro    #614   https://github.com/dimipaun/fugaro/pull/614  # Task: PR 614 review fixes (OAuth Task 3: redactor registration for project job
+  dimipaun/fugaro    #604   https://github.com/dimipaun/fugaro/pull/604  # Task: mobile P3.6, the voice screen and the signed mailbox client side
+  dimipaun/fugaro    #589   https://github.com/dimipaun/fugaro/pull/589  # Task: seal follow-ups B2 (small cleanups after the seal merge)
+showing active + recent · a: all · ↑↓ select · space fold/expand · x ack · PgUp/PgDn scroll · k/K kill repo/project · r/R resume · ? help · q quit

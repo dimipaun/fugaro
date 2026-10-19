@@ -1,4 +1,5 @@
-// The speaker's double (P3.6; P3.4 is the real seam and is not merged).
+// The speaker's double (P3.6; P3.4's text-to-speech port is the real seam, and
+// this client is not wired to it yet).
 //
 // Two things are asserted, and both are used by the client's tests: a speak
 // records the text, and a speak can fail without recording anything. The

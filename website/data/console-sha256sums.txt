@@ -1,0 +1,2 @@
+a434f3ef9563f12f0821dde1a42993e5a3fc5fea86b6b7db6cb2747a101d7af9  Fugaro Console-0.8.7-universal.dmg
+65737c86eef5a5d08fa9c8aac242642b9b139d669b05e17387aa757c782aca83  Fugaro Console-0.8.7-universal-mac.zip

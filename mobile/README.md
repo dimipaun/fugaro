@@ -5,20 +5,25 @@ the Go module, with its own release path, and it merges without touching the
 CLI (mobile plan D125, Phase 3).
 
 **Status.** Phase 3: tasks **P3.1** (the app skeleton and the account store), **P3.2**
-(the feed reader and the contract's document rules) and **P3.6** (the mailbox
-client) are here ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
-P3.3 (the job list), P3.4 (the audio interfaces) and P3.5 (the voice screen) are
-not. What exists is the shell, the account model, the two device ports, the
-fences around them, the feed (the four granted families read directly from the
-Realtime Database, the document they add up to, and the screen's rules over it),
-and the phone's mailbox client -- which is the only place in the app that writes
-to the database.
+(the feed reader and the contract's document rules), **P3.4** (the audio
+interfaces) and **P3.6** (the mailbox client) are here
+([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
+P3.3 (the job list) and P3.5 (the voice screen) are not. What exists is the
+shell, the account model, the two device ports, the fences around them, the
+feed (the four granted families read directly from the Realtime Database, the
+document they add up to, and the screen's rules over it), the phone's mailbox
+client -- which is the only place in the app that writes to the database -- and
+the three voice ports with the fakes the voice screen's logic is written and
+tested against.
 
-**P3.4 is not merged, so P3.6 defines the one audio seam it needs** —
+**Two audio seams coexist.** P3.6 defined the one audio seam it needed --
 `src/mailbox/speaker.js`, `speak(text)` answering whether the utterance was
-spoken, which is what the ack's rule is written against. The secure store is
-**not** stubbed: P3.1's `SecretStore` is reused, and it gained one method
-(`use`) for the reason `src/mailbox/README.md` gives.
+spoken, which is what the ack's rule is written against -- before P3.4 was
+merged. P3.4's `src/audio/` (`tts.js`) is the full speech-output port. They are
+not yet unified: `speaker.js` stays until the voice screen (P3.5) wires the
+mailbox client to the audio pipeline. The secure store is **not** stubbed:
+P3.1's `SecretStore` is reused, and it gained one method (`use`) for the reason
+`src/mailbox/README.md` gives.
 
 ## Running the tests
 
@@ -50,6 +55,7 @@ module plugged in by `index.js` at the bottom of the tree.
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
+| `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
 
@@ -476,6 +482,211 @@ a class rather than as an incident:**
   teardown-failed case and the `current() === null` invariant are now asserted,
   and all three are mutations in the table above.
 
+## The audio interfaces (P3.4)
+
+Three ports, three fakes, and the thin pipeline that makes the plan's
+verification a test rather than a claim. The plan's sentence is the whole
+scope: *the interfaces exist (AudioIn, STT, TTS) and their fakes are used by at
+least one test that exercises the voice pipeline's logic with no device and no
+audio: a fake transcript becomes a message; a fake reply becomes an utterance;
+an interrupted utterance is reported as interrupted.* Those three sentences are
+the first three tests of `src/audio/pipeline.test.js`, in that order.
+
+| Port | Methods | What it answers |
+| --- | --- | --- |
+| **AudioIn** (`audio-in.js`) | `start()`, `stop()`, `running()`, `on(kind, handler)` | `{ ok: true, changed }`, or **D122**'s `microphone-denied` / `background-audio-denied`; events `speech-start`, `speech-end`, `barge-in` |
+| **SpeechToText** (`stt.js`) | `begin()`, `end()`, `cancel()`, `listening()`, `on(kind, handler)` | one turn at a time, `partial` events while the user speaks, one `final` per turn — every event carrying the `turnId` `begin()` answered with |
+| **TextToSpeech** (`tts.js`) | `speak(text)`, `cancel()`, `speaking()` | `{ ok: true, spoken: true }`, `interrupted`, or a `bad-text` / `already-speaking` refusal |
+
+**The fakes are the point, not a convenience.** D52 requires them from the
+first task and Global Constraint 10 requires the voice logic to be in CI: every
+test in `src/audio/` runs against `FakeAudioIn`, `FakeStt` and `FakeTts`, with
+**no microphone, no synthesizer and no audio anywhere**. There is no timer in
+any of them — a test decides when an utterance ends and when the engine
+answers — so a barge-in is asserted at the exact moment it is decided, and the
+~300 ms of §5 is the owner-run half (check 86). One fake is deliberately
+*honest about the hard cases*, because a fake that only ever did what the
+contract promises would make the protection untestable: `FakeStt` can deliver a
+`final` or a `partial` for a turn it no longer holds (`lateFinal`,
+`latePartial` — the flush that raced a cancel), and an engine that has lost the
+turn outright (`outOfStep`). Those are the only ways to reach the pipeline's
+guards, so without them the guards would be code no test held to anything.
+
+**The three rules the pipeline holds**, each with its own test:
+
+1. **A partial is not a message.** §5's screen shows what the user is still
+   saying; only a `final` is composed by `message.js` and handed to the shared
+   schema (P0.2), whose verdict is passed through unchanged. A transcript the
+   schema refuses — the cough that produced the empty string — is a `refused`
+   event and no message at all.
+2. **A final from a turn the pipeline is not in is dropped, before an id is
+   drawn.** The engine's flush after a `stop()`, or after a cancel, or — the
+   case a state machine alone gets *wrong* — after a new `speech-start` already
+   abandoned the flushing turn and opened its own, must not become a message.
+   §5's grace period exists so that "cancel that" is possible, and this is the
+   line that makes it true. **Which turn the words belong to is why every event
+   carries a `turnId`** (`begin()`'s answer, echoed back): the state cannot say
+   it, because the abandoned turn's flush arrives while the *new* turn is open,
+   and composing it would send the cancelled text **and** swallow the text the
+   user is actually saying.
+3. **Any speech during playback interrupts it** — both of the capture path's
+   two ways of saying that. `barge-in` is the echo-cancelled signal; a plain
+   `speech-start` is all a simpler path can say, and a pipeline that honoured
+   only the first would be one where the assistant talks over the user on
+   exactly the devices that can least afford it.
+
+**The turn outlives the end of speech, and it has an identity.** The
+pipeline's state is `idle` / `open` / `flushing`, mirroring the port:
+`speech-end` flushes the engine and the engine's `final` is what ends the turn.
+A pipeline that closed its turn on `speech-end` would drop every final — every
+message, always — which is the first mutation in the table below. Beside the
+state it holds the **turn id**, and every event is compared against it: the
+state says whether a turn is in progress, the id says whether the words are
+*this* turn's.
+
+**What the module deliberately does not have.** No capture path, no speech
+engine, no audio decoder: D123 inherits Voice D46 (on-device engines only,
+chosen by a bake-off measured on the oldest supported device — owner-run check
+**85**, phase 5), and a cloud engine needs a second explicit owner decision.
+`src/audio/index.test.js` is what keeps that true — the module's files, **at
+every depth**, are a literal list, the door's exports are a literal list, and
+the code is scanned for the things an engine would need. The walk is recursive
+on purpose and the recursion has its own test: a non-recursive walk is a fence
+one directory deep, and `src/audio/native/engine.js` would never enter the list,
+the rules or the scan. (`boundary.test.js` walks recursively too, but it does
+not close this gap: its import rule judges *path* specifiers, so a package name
+like `react-native-voice` is not a thing it can see.)
+
+| Rule | Exactly what the scan forbids | Why |
+| --- | --- | --- |
+| no clock | `Date`, `performance.now`, `hrtime` | D117: the clock is the server-anchored one the pipeline is handed (`now`), so this module reads none |
+| no random source | `Math.random`, `crypto` | the message id is injected (`newId`), and a random source here would be one no test could pin |
+| no timer | `setTimeout`, `setInterval`, `setImmediate`, `requestAnimationFrame` | §5's grace period and any silence timeout are the engine's business |
+| no network | `fetch(`, `WebSocket`, `XMLHttpRequest`, `EventSource` | D123/D46: on-device only; a cloud engine needs a second, explicit owner decision |
+| no device API | `getUserMedia`, `MediaRecorder`, `AudioContext`, `navigator`, `Permissions` | D122: the microphone is reached through the port, and the OS permission through whoever implements it |
+| no samples, in any encoding | `pcm`, `samples`, `ArrayBuffer`, `Float32Array`, `Uint8Array`, `base64`, `Blob` | D118/F26: text crosses these ports and audio never does — so there is no buffer here to leak one through |
+| no logging | `console.` | a transcript in a log line is a transcript outside the mailbox |
+| nothing is read from the environment | `process.env` | an engine chosen by an environment variable is a configuration this module cannot see or test |
+
+The middle column is not a summary of the rule, it **is** the rule: the scan
+builds its pattern from exactly these tokens, and
+`the README's rule table and the scan are the same list` reads this table and
+compares it to the scan's own list, row for row and token for token (the two had
+drifted: the device-API row did not name `Permissions`, and the samples row did
+not name `Uint8Array`).
+
+**The import rule, which is not a token scan:** no production file here imports
+a package at all — every module specifier it names is one of this module's own
+files or `shared/`. The tests may additionally import `node:` builtins, and that
+is the whole of what they may reach; a test that needed a package would be a CI
+that needed one.
+
+Every rule has a **positive control** (it must match a planted line of real
+code) and a **prose control** (it must not match the same line in a comment),
+which is what lets these files' headers explain the rules they are held to.
+
+### Mutations run against this task
+
+Each was planted, the run went red on the named test, and the bug was removed.
+The tests are run with `node --test "src/**/*.test.js"` — the app's whole
+suite, all passing — and the first three sentences of `pipeline.test.js` are the
+plan's own verification.
+
+**The column names the tests that went red; it does not count them.** The cells
+used to carry counts, and re-measuring every row at this revision (apply, run,
+revert) found rows that no longer reproduced: `FakeStt.end()`'s count was not
+the one the suite reports, the sibling-import row said test files "fail to load"
+when the suite loads and the rules report those same tests as failures, and the
+planted `Permissions.query` row named a single test when the undefined
+identifier takes most of the audio suite down before the scan is even reached.
+A count is a claim about a suite that grows — it is wrong the moment a test is
+added, and a cascade makes it meaningless even sooner, because one broken
+handler reports a failure in every test that opens a turn. So the rows that used
+to explain a cascade with a number explain it in words, and a row that needs a
+number to be interesting has a test too weak to be worth the number.
+
+| Mutation | Went red |
+| --- | --- |
+| `endTurn` closes the turn instead of flushing it | the plan's sentence one first, then the tests that take a `final` |
+| the `barge-in` signal is not wired to the speech handler | the plan's sentence three and `the barge-in is a speech-start too` first, then the pipeline's suite with them |
+| speech no longer cancels the playback it interrupts | the plan's sentence three, `the barge-in is a speech-start too` |
+| a partial is composed into a message | `a partial is shown and is never sent` |
+| **`onFinal` keys on the state alone, not the turn id** | `a superseded turn's late final is not this turn's message` |
+| **`onPartial` keys on the state alone, not the turn id** | `a partial from a turn this pipeline is not in is not shown` |
+| `onPartial` stops checking whether the turn is open | `a partial from a turn this pipeline is not in is not shown` |
+| **`begin()` reuses turn id 1 for every turn** | `every event names the turn it belongs to` and `an abandoned turn's revision is emitted for that turn, not the open one` |
+| **`outOfStep` stops being validated at construction** | `an engine that has lost the turn says so` |
+| **`beginTurn` stops reporting the engine's refusal** | `an engine that says it is already listening is reported` |
+| **`endTurn` stops reporting the engine's refusal** | `an engine that refuses the end of speech is reported` |
+| **the file walk stops recursing** | `the walk is recursive, so a file in a subdirectory is part of the module` |
+| **`src/audio/native/index.js` imports `react-native-voice`** | `the module is exactly these files, at every depth`, the scan's non-empty control, and `the module imports its own files and shared/` |
+| **`PIPELINE_EVENTS.includes(kind)` is removed from `on`** | `an unknown event and a handler that is not a function are programming errors` |
+| **`isVoicePipeline` is weakened to two methods** | `the pipeline is six methods, and the check says so` |
+| an empty transcript is repaired (`\|\| ' '`) instead of refused | `a transcript the schema refuses is refused here too` |
+| the `unavailable` event loses the OS code | `D122: the OS refusing the microphone…` |
+| every message reuses one id | `each message is its own id, sender and clock` |
+| `FakeStt.end()` closes the turn (the engine's final has nowhere to land) | `the end of speech flushes the turn; the final is what ends it` and `one turn at a time: begin, end, and the refusals between them` |
+| `FakeStt.partial` is allowed out of a flushed turn | `the end of speech flushes the turn` |
+| an interrupted utterance settles as finished | the plan's sentence three, `the barge-in is a speech-start too: a simple capture path interrupts by speaking` and `stop() abandons the turn and interrupts an utterance in flight` |
+| a second utterance is queued instead of refused | `one utterance at a time: a second is refused, not queued, and the first is untouched` and `a refused utterance is refused, not reported as an outcome`, and then the tests that follow them in both files — an utterance that never settles takes its file down with it |
+| the two OS denials collapse into one code | `D122: the OS refusing the microphone and refusing background audio are different codes` and `D122: the OS refusing the microphone is a value, and an \`unavailable\` event` |
+| an event carries `samples: []` | `an event carries the event, and never anything heard`, and the no-samples rule |
+| a draft accepts a field the protocol does not have | `a field this draft does not have is refused with the protocol's own code` |
+| `refuse()` stops freezing its verdict | `a refusal is a frozen value with a code` |
+| the door grows one more export | `the door exports exactly this` |
+| a **sibling** production file imports `@react-native-voice/voice` | the tests the nested file takes down — `the module is exactly these files, at every depth`, the scan's non-empty control, and the import rule — reported as failures, not as a file that will not load: the suite runs and the rules name the file |
+| `Date.now()` planted in `pipeline.js` | `no clock` |
+| **a `Permissions.query` call planted in `audio-in.js`** | `no device API` — the token the rule table did not name until this round — and, before the scan is reached, every test that constructs `FakeAudioIn`, which dies on the planted identifier itself (`start and stop are idempotent, and say what changed` is the first) |
+| **a `Uint8Array` buffer planted in `stt.js`** | `no samples, in any encoding` — the other token the row had dropped |
+| **the README's device-API row drops `Permissions`** | `the README's rule table and the scan are the same list` |
+| **the README's samples row drops `Uint8Array`** | the same |
+| **the scan gains a token (`Reflect`) the README does not name** | the same |
+| **the scan drops a token (`performance.now`) the README names** | the same |
+| **a README rule row is renamed** | the same |
+| **the README's table header is renamed** | the same |
+| **the README's tokens are reordered within a row** | the same |
+| **the README loses a whole rule row** | the same |
+
+The rule table and the scan are one list now, and the reason is that they were
+two: `mobile/README.md` said the device-API rule forbade `getUserMedia`,
+`MediaRecorder`, `AudioContext` and `navigator`, while the pattern beside it also
+forbade `Permissions`, and the samples row listed five of the seven tokens the
+pattern carried. The scan builds its pattern from its own token list
+(`forbiddenPattern`) and `the README's rule table and the scan are the same
+list` compares that list to the table, row for row and token for token — so the
+documentation cannot promise less than the scan enforces. The prose control was
+run the same way: the three tokens planted in a *comment* leave the suite green,
+which is what the comment-stripping is for.
+
+**Three tests were passing for the wrong reason, and each is now a mutation
+above rather than a claim.** The `on(kind, handler)` guards threw a `TypeError`
+either way — the guard, or the `handlers.get(undefined)` crash it prevents — so
+they now assert the *message*; `isVoicePipeline` was probed with
+`{ start: () => {} }`, which a check weakened to two methods still rejects, so
+it is now probed with a real pipeline missing one method; and the partial
+suppression and the two engine-refusal branches were unreachable with the
+fakes as they were, so `FakeStt` grew `latePartial` and `outOfStep`.
+
+One mutation found a bug in the **tests**: `messageDraft` was composing
+`{ id: draft.id, … }`, so an absent field reached the schema as an explicit
+`undefined` and its refusal was `wrong-type` rather than `missing-field` — the
+caller would have been told the wrong fault. The draft now preserves presence,
+and `missing-field` is reachable and asserted.
+
+A later review found two more, and the first is worth reading as the class it
+belongs to: **the pipeline was keyed on the turn's state, and a state cannot
+say whose words arrived.** A review-supplied case — speech starting again while
+the engine is still flushing, and the abandoned turn's `final` arriving after —
+composed the cancelled text into a message *and* swallowed the text the user
+was saying. The mirrored state is necessary and not sufficient; the turn id is
+what makes the rule hold, and `begin()` answering with it is now part of the
+port's contract. The second: the "no engine can arrive quietly" fence was one
+directory deep, so `src/audio/native/engine.js` was outside the file list, the
+token rules and the import scan — invisible to a directory that exists to
+refuse exactly that. The walk is recursive now and has a control of its own,
+because with no subdirectory in the tree yet, no other assertion in the file
+could tell a recursive walk from a flat one.
+
 ## What is not verified here
 
 * **The Expo/Metro toolchain.** It is not installed in the environment this was
@@ -494,6 +705,24 @@ a class rather than as an incident:**
   The port refuses to construct if the constant is missing, so an SDK rename is
   a loud failure rather than a silent downgrade to the platform default — but
   the constant has not been seen on a device here.
+* **Every speech engine, and every acoustic behaviour.** Nothing under
+  `src/audio/` is an engine: the ports are contracts and the tests drive them
+  with fakes, which is D52's rule and P3.4's whole scope. Which engine is
+  chosen is **owner-run check 85** (the bake-off, measured on the oldest
+  supported device, local candidates only — D123/D46, phase 5), and the
+  hands-free behaviour with its ~300 ms barge-in is **check 86**. So the
+  microphone permission prompt, echo cancellation, the background audio mode
+  and the actual interruption latency have not been exercised anywhere: D122's
+  two denials are tested as *values the port returns*, which is what P3.5's
+  "tap to speak" fallback is built on, not as an OS behaviour.
+* **The voice screen (P3.5) and the mailbox client's use of this pipeline.** The
+  screen is not here; the mailbox client (P3.6) is, but is not wired to this
+  pipeline (it speaks through its own `src/mailbox/speaker.js` seam).
+  The pipeline takes the message's `sender`, `newId` and `now` as injected
+  values precisely because P3.6 owns them (D117's server-anchored clock, the
+  account's identity), and **redaction, the MAC and the write are P3.6's**:
+  `message.js` composes a message and the shared schema validates it, and
+  nothing under `src/audio/` writes, signs or stores anything.
 * **The release path and the checks that need a device.** Checks **80–89** are
   owner-run; **87** (multi-account switching with no cross-leakage) needs two
   real installations, one of them `belong`, and **89** is the store identity.
