@@ -221,7 +221,7 @@ if (!source('README.md').includes(WATCH)) {
 
   <h3 class="chat-watch-title">Watch it run</h3>
 
-  <div class="chat-watch" data-copy>
+  <div class="chat-watch command-block" data-copy>
     <Fragment set:html={copyControlHTML('Copy the command')} />
     <pre class="chat-watch-command"><code>{WATCH}</code></pre>
   </div>
@@ -351,23 +351,11 @@ if (!source('README.md').includes(WATCH)) {
     color: var(--text);
   }
 
-  /* One bar: the command at the left and its control at the right. **The control comes first
-     in the markup** — it is `src/lib/copy-control.mjs`'s, shared with every other command
-     block on the site, and this component does not get to reorder it — so a row laid out the
-     ordinary way would put the control at the left and push the command to the right edge,
-     against `base.css`'s rule that the control is right-aligned on the block it belongs to and
-     against the shape of every other block here. `row-reverse` is the one declaration that
-     settles it: the main axis starts at the right, so the first child in the markup lands at
-     the right end and the command takes the left. `website/test/base-styles.mjs` reads every
-     `[data-copy]` block on the built pages whose control and command share a row — this one,
-     the site's only such block — and refuses a row that draws the control first, which is
-     what a plain row does here. */
+  /* One bar around the block `base.css` lays out: the command at the left and its control at
+     the right, which is what `.command-block` does for every command block on the site — the
+     install cards and this bar read the same way now (review round 3, item 3c), so this rule
+     is the bar's own look and nothing about where the control sits. */
   .chat-watch {
-    display: flex;
-    flex-direction: row-reverse;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-sm);
     padding: var(--space-2xs) var(--space-sm);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);

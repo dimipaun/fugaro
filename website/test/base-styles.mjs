@@ -1598,17 +1598,17 @@ test('the flow’s arrows point the way the run travels', () => {
 // ---- a copy control sits at the right of the block it belongs to (base.css) --------------
 
 /**
- * The `[data-copy]` blocks on one built page whose control *and* command share a row, as
- * `{ klass, direction, atStart }`: the ones where "where the control is drawn" is a question
- * at all. A block whose control is a row above its command (`display: block`, or a column)
- * is already the shape `base.css` states, so it is not returned.
+ * Every `[data-copy]` block on one built page that holds both a control and a command, as
+ * `{ klass, display, direction, atStart }`: the blocks "where the control is drawn" is a
+ * question at all. A block carrying one of the two — or a command inside its own control —
+ * is `test/copy.mjs`'s subject, not this one, and is skipped.
  *
  * `atStart` is whether the control ends up first along the row's main axis — from `order`
  * where the two differ, and from the markup where they are equal, which is the cascade a
  * browser applies. The classes are read off the built page and the declarations off the built
  * stylesheet, so the check follows the block rather than a list of block names kept here.
  */
-export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
+export function copyBlocks(css, html, width = 80 * 16) {
   const rules = allRules(css)
   const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
 
@@ -1637,7 +1637,6 @@ export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
     const layout = effective(classesOf(block))
     const display = layout['display'] ?? 'block'
     const direction = layout['flex-direction'] ?? 'row'
-    if (display !== 'flex' || !direction.startsWith('row')) continue
 
     const orderOf = (el) => {
       const value = effective(classesOf(el))['order']
@@ -1648,22 +1647,31 @@ export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
       orderOf(control) === orderOf(command)
         ? order.indexOf(control) < order.indexOf(command)
         : orderOf(control) < orderOf(command)
-    blocks.push({ klass: classesOf(block)[0] ?? '(unclassed)', direction, atStart })
+    blocks.push({ klass: classesOf(block)[0] ?? '(unclassed)', display, direction, atStart })
   }
   return blocks
 }
 
+/** The command blocks on one built page that draw their control and their command on one row. */
+export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
+  return copyBlocks(css, html, width).filter((block) => block.display === 'flex' && block.direction.startsWith('row'))
+}
+
 /**
- * Every command block on one built page that puts its control on the same row as its command
- * and draws that control on the wrong side of it — the only blocks where "which side is the
- * control drawn on" is a question at all (`sideBySideCopyBlocks` above). `base.css` states
- * the rule — "the control is a row above the block it belongs to and right-aligned on it" —
- * and every block but one follows it by doing nothing:
- * the control is in the flow above its command, and its own `justify-content: flex-end` puts
- * the button at the right of the column. A block that puts the two on one row owes that
- * `flex-direction: row-reverse`, because the control comes **first in the markup** (it is
- * `src/lib/copy-control.mjs`'s, shared with every other block) and a plain row would therefore
- * draw the control at the left of the command and push the command to the right edge.
+ * Every command block on one built page that draws its control on the wrong side of the
+ * command it belongs to. `base.css` states the rule — a command block is one row, with the
+ * control beside the command at its top right — and every block on the site follows it by
+ * reading one rule: `.command-block` is `display: flex` with `flex-direction: row-reverse`,
+ * because the control comes **first in the markup** (it is `src/lib/copy-control.mjs`'s,
+ * shared with every other block) and a plain row would therefore draw the control at the left
+ * of the command and push the command to the right edge. `order: 1` on the control says the
+ * same thing from the other end and is let through.
+ *
+ * The review of round 3 (item 3c) is why this is one rule and not two: the install cards used
+ * to put the control in a row *above* their command while the chat's watch bar put it beside
+ * one, and two placements for one control read as two different components. So the blocks
+ * this returns are now every command block on the page, and a block that stops sharing the
+ * row is a second placement the case below fails on rather than a shape this rule ignores.
  */
 export function copyControlPlacementFailures(css, html) {
   const out = []
@@ -1671,33 +1679,57 @@ export function copyControlPlacementFailures(css, html) {
     const reversed = direction === 'row-reverse'
     if (reversed ? !atStart : atStart) {
       out.push(
-        `the copy control of a .${klass} block is drawn before the command it belongs to (display: flex, flex-direction: ${direction}, and the control is first in the markup), where base.css puts the control at the right of the block it belongs to and every other command block on the site reads that way`,
+        `the copy control of a .${klass} block is drawn before the command it belongs to (display: flex, flex-direction: ${direction}, and the control is first in the markup), where base.css puts the control beside the command at its top right and every command block on the site reads that way (changes spec 2026-10-18, item 3c)`,
       )
     }
   }
   return out
 }
 
-test('a command block that shares a row with its control draws the control at the right', () => {
+test('every command block that shares a row with its control draws the control at the right', () => {
   const failures = []
   for (const { rel, html } of builtPages()) failures.push(...copyControlPlacementFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
   assert.deepEqual(failures, [], `a command block draws its control on the wrong side:\n  ${failures.join('\n  ')}`)
 })
 
-test('the copy-control placement rule reads the blocks it is about, and refuses the one that shipped wrong', () => {
+test('the copy-control placement rule reads every command block, and refuses the one that shipped wrong', () => {
   const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const css = TODAY()
+  const blocks = copyBlocks(css, home)
   const sideBySide = sideBySideCopyBlocks(css, home)
+  assert.ok(
+    blocks.length >= 3,
+    `the homepage carries ${blocks.length} command block(s) with a control and a command, and it renders the two install cards and the chat's watch bar (changes spec 2026-10-18, items 3 and 4)`,
+  )
+  // One placement for all of them: the review of round 3 found the install cards putting the
+  // control above their command while the watch bar put it beside one, so a block that does
+  // not share the row any more is that defect coming back, not a shape this rule skips.
+  assert.deepEqual(
+    sideBySide.map((block) => block.klass).sort(),
+    blocks.map((block) => block.klass).sort(),
+    `the homepage's command blocks ${JSON.stringify(blocks.map((block) => `${block.klass}:${block.display}/${block.direction}`))} do not all read the same way, and one control has one placement on this site (changes spec 2026-10-18, item 3c)`,
+  )
   assert.ok(
     sideBySide.some((block) => block.klass === 'chat-watch' && block.direction === 'row-reverse' && block.atStart),
     `the check finds no side-by-side command block on the homepage (it found ${JSON.stringify(sideBySide)}), so the cases below would pass without reading the block they are about (changes spec 2026-10-18, item 3)`,
   )
+  assert.ok(
+    sideBySide.some((block) => block.klass === 'command-block'),
+    `the check does not read the install cards' own blocks (it found ${JSON.stringify(sideBySide)}), and item 3c is about the placement inside them`,
+  )
   assert.deepEqual(copyControlPlacementFailures(css, home), [], 'the placement rule fails on the built homepage, so the case below is not proving what it names')
 
-  // The defect as it shipped: the watch bar is a plain row, so the control — first in the
-  // markup — is drawn at the left of the command.
+  // The defect as it shipped in the watch bar: a plain row, so the control — first in the
+  // markup — is drawn at the left of the command. `.command-block`'s `row-reverse` is the
+  // site's only one, so removing it leaves every command block on the homepage a plain row
+  // and the check has to refuse all of them rather than the bar alone.
   const notReversed = plant('flex-direction:row-reverse;', '')
   const failures = copyControlPlacementFailures(notReversed, home)
+  assert.equal(
+    failures.length,
+    sideBySide.length,
+    `removing the one \`row-reverse\` left ${sideBySide.length} command block(s) drawing their control first, and the check refused ${failures.length}:\n  ${failures.join('\n  ') || '(nothing)'}`,
+  )
   assert.ok(
     failures.some((f) => /drawn before the command it belongs to/.test(f)),
     `a row that is not reversed was not refused; the check said:\n  ${failures.join('\n  ') || '(nothing)'}`,

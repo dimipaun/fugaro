@@ -147,10 +147,12 @@ with fixtures that keep its refusals running, and none of them needs the network
     used to prefer an element a block marked with `data-copy-source`, which only the deleted
     terminal emitted, and it now copies the block's first `pre`/`code` — the command every
     block the site prints is written in.
-  - **Page weight per page:** 927,195 bytes. Three times 309,065: the heaviest page, the
-    docs hub, at 247,252 bytes (its HTML — the whole generated CLI reference — plus the
-    files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,040,455 bytes. Three times 1,013,485 (every file in `dist/`, 810,788
+  - **Page weight per page:** 927,834 bytes. Three times 309,278: the heaviest page, the
+    docs hub, at 247,422 bytes (its HTML — the whole generated CLI reference — plus the
+    files it fetches: the script above, the logo and the icons), plus 25 %. The 170 bytes it
+    moved since the last derivation are the placement rule below, which every page's inlined
+    stylesheet carries.
+  - **Whole site:** 3,054,207 bytes. Three times 1,018,069 (every file in `dist/`, 814,455
     bytes across 21 files, plus 25 %). The figure moved 1,242 bytes with the second fix
     round on this branch: the homepage's order (the promise and its call to action, then the
     diagram, then the chat, then the install paths — changes spec item 4), the flow's
@@ -164,6 +166,17 @@ with fixtures that keep its refusals running, and none of them needs the network
     and 29 with the fix round's two layout declarations (the watch bar's `flex-direction:
     row-reverse` and the flow's `rotate(-90deg)`) — and each time it was re-derived in the
     commit that moved it, like any other (D192).
+    The third fix round moved it twice more, and this is where both are re-derived, because
+    only the page figure was re-derived for the first: **1,892 bytes** with the round's first
+    commit, which settled the flow's layout (the cards answering to one height, the step
+    names at `--font-size-lg` so `Ephemeral cloud job` is one line, the two-by-two from
+    35 rem up and the arrow moved out of the flow into the gap), and **1,775 now**. Of
+    those 1,775, **1,870** is the one placement rule `base.css` gained — `.command-block` and
+    its `pre`, which is in every page's inlined stylesheet at 170 bytes each — and the
+    homepage gives 95 back for it, because the watch bar's own rule no longer writes the four
+    declarations that rule now owns and pays 14 for the class name it gained. That is the
+    whole point of the change (review round 3, item 3c): one placement, written once,
+    instead of one per component.
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
