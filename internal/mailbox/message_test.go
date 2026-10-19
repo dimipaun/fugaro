@@ -430,6 +430,26 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"a separator in a database key is bad-key, as every other unencodable character is"},
 		{"an id carrying U+2029", message(Record{"id": "a b"}), false, CodeBadKey, "id",
 			"U+2029 in a key is the same refusal as U+2028"},
+		// The character classes at their own boundaries, which a mutant sweep
+		// found unheld: the control range is refused THROUGH U+001F (an id
+		// carrying only U+001F was accepted by `r < 0x1f`), DEL is refused in a
+		// key and in a value, and a line break is a character of a body and of
+		// nothing else — not of a sender, an option or an agent's spoken name,
+		// where it is log-line and read-aloud injection. Each of these is a
+		// check whose deletion or narrowing left the suite green.
+		{"an id carrying U+001F", message(Record{"id": "m\u001f1"}), false, CodeBadKey, "id",
+			"U+001F is a control character like U+0001: the range ends at the range's end, not a byte short of it"},
+		{"an id carrying DEL", message(Record{"id": "m\u007f1"}), false, CodeBadKey, "id",
+			"DEL is refused in a database key exactly as it is in a value"},
+		{"a sender carrying a line break", message(Record{"sender": "pho\nne"}), false, CodeBadCharacter, "sender",
+			"a sender names a mailbox on one line, and a newline in one is log-line injection"},
+		{"an option carrying a line break", message(Record{"kind": "prompt", "options": []any{"merge\nit"}}), false, CodeBadCharacter, "options[0]",
+			"an option is read aloud and answered by position, so a label is a single line like every other non-body string"},
+		{"an agent name carrying a line break", heartbeat(Record{"agents": []any{agent("orchestrator", "Orches\ntrator")}}), true, CodeBadCharacter, "agents[0].name",
+			"a spoken name is a single line: a newline in one splits the sentence it is read out in"},
+		{"a body carrying DEL", message(Record{"text": "a\u007fb"}), false, CodeBadCharacter, "text",
+			"DEL is not a character the phone can display, in a body as anywhere else"},
+
 		{"a kind that is not a string", message(Record{"kind": true}), false, CodeWrongType, "kind",
 			"\"not a kind\" and \"not a string\" are different questions"},
 		{"an agent that is not a string", message(Record{"agent": number("1")}), false, CodeWrongType, "agent",
@@ -518,6 +538,9 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		{"a repository longer than its bound", merged(map[string]any{"target": map[string]any{
 			"repo": strings.Repeat("a", TargetMax) + "/b", "pr": number("532")}}), false, CodeTooLong, "action.target.repo",
 			"a repository is bounded like every other string"},
+		{"a repository one code unit past its bound", merged(map[string]any{"target": map[string]any{
+			"repo": strings.Repeat("a", TargetMax-1) + "/b", "pr": number("532")}}), false, CodeTooLong, "action.target.repo",
+			"the bound itself is the largest accepted value: one code unit past it is too-long, not the second past it"},
 		{"a repository with a character a command line cannot carry", merged(map[string]any{"target": map[string]any{
 			"repo": repoName + ";rm", "pr": number("532")}}), false, CodeBadCharacter, "action.target.repo",
 			"a semicolon is not a character a repository is drawn from"},
@@ -554,6 +577,8 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			"an epoch millisecond written as a string is not one"},
 		{"a head SHA that is not a string", merged(map[string]any{"head_sha": number("1")}), false, CodeBadSHA, "action.head_sha",
 			"an object name is a string of hex, not a number"},
+		{"a head SHA between the two lengths", merged(map[string]any{"head_sha": strings.Repeat("a", SHAMin+10)}), false, CodeBadSHA, "action.head_sha",
+			"the two lengths are the two lengths: an abbreviation of some other length names no object"},
 
 		// A time, and the flag the phone writes later.
 		{"a time before the epoch", message(Record{"at": number("-1")}), false, CodeBadTimestamp, "at",
@@ -784,6 +809,58 @@ func TestKeysSortByByteOrder(t *testing.T) {
 	// first, and then U+FFFF (EF BF BF) before U+1F600 (F0 9F 98 80).
 	if want := "{\"direction\":\"outbox\",\"id\":\"m-0001\",\"￿\":1,\"😀\":2}"; string(got) != want {
 		t.Errorf("the keys are ordered %s, wanted %s", got, want)
+	}
+}
+
+// TestTwoUnknownFieldsAreNamedInByteOrder pins the half of ValidateMessage's
+// contract that is this side's alone to keep, and the half it cannot.
+//
+// A record carrying one field the schema does not name is refused
+// unknown-field at that field, in both languages. A record carrying several is
+// refused unknown-field at ONE of them on each side, and the two sides need not
+// agree on which: the module visits Object.keys order — insertion order, with
+// the integer-like keys first — and a Go map has no insertion order at all, so
+// this side visits the keys in byte order and answers with the first in that
+// order. Both are deterministic and both are unknown-field; the FIELD is the
+// one thing about a multi-unknown-field refusal that is not a shared answer.
+//
+// That is why ValidateMessage's doc says "the same code, and the same field
+// whenever one field is at fault" rather than "the same field at fault"
+// outright, and this test is what holds this side's half of the softened claim:
+// the same input answers the same field every time, and that field is the
+// first key in byte order.
+func TestTwoUnknownFieldsAreNamedInByteOrder(t *testing.T) {
+	// `text` and `at` are present so the refusal cannot come from a missing
+	// field, and the two unknown keys straddle the fields in byte order:
+	// "0landed_at" < "text" < "zz_extra".
+	record := Record{
+		"id": "m-0001", "sender": "phone", "text": "run 42 finished",
+		"at": number("1700000000000"), "mac": strings.Repeat("a", MACMax),
+		"zz_extra": int64(1), "0landed_at": int64(2),
+	}
+	for range 5 {
+		_, refusal := ValidateMessage(record)
+		if refusal == nil || refusal.Code != CodeUnknownField {
+			t.Fatalf("two unknown fields are refused %v, wanted %s: which of the two is named may differ, the code may not", refusal, CodeUnknownField)
+		}
+		if refusal.Field != "0landed_at" {
+			t.Errorf("the fields at fault are named %q, wanted the first in byte order (%q): the answer is deterministic here, and it is this side's own rule", refusal.Field, "0landed_at")
+		}
+	}
+
+	// And the code, not the field, is what the two ends share: the module's own
+	// ordering is unreachable from Go — a map has no insertion order — so the
+	// one Go-side property that can be asserted is that no unknown field is
+	// ever accepted, whatever order the two arrive in.
+	for _, order := range [][]string{{"aa", "bb"}, {"bb", "aa"}, {"aa", "aa"}} {
+		candidate := Record{"id": "m-0001", "mac": strings.Repeat("a", MACMax)}
+		for _, key := range order {
+			candidate[key] = int64(1)
+		}
+		_, refusal := ValidateMessage(candidate)
+		if refusal == nil || refusal.Code != CodeUnknownField {
+			t.Errorf("a record carrying %v is refused %v, wanted %s", order, refusal, CodeUnknownField)
+		}
 	}
 }
 
@@ -1024,13 +1101,21 @@ func TestFloatsAreRefusedInBothHalves(t *testing.T) {
 	}
 }
 
-// TestAnythingValidatedCanBeCanonicalised is the property the two halves owe
-// each other: a record ValidateMessage accepts is a record CanonicalBytes can
-// serialise. Anything else is a record with two verdicts, and the second one
-// arrives only when the tag is made. Every numeric type this package accepts
-// goes into every position that takes a number, because a type accepted in one
-// field and refused in another is the same disagreement one field smaller.
-func TestAnythingValidatedCanBeCanonicalised(t *testing.T) {
+// TestAnythingValidatedCanBeCanonicalisedExceptNegativeZero is the property the
+// two halves owe each other: a record ValidateMessage accepts is a record
+// CanonicalBytes can serialise. Anything else is a record with two verdicts, and
+// the second one arrives only when the tag is made. Every numeric type this
+// package accepts goes into every position that takes a number, because a type
+// accepted in one field and refused in another is the same disagreement one
+// field smaller.
+//
+// The name carries the one exception, because the property as stated outright
+// is false and its exception is deliberate: `-0` in `at` or in a confirmation's
+// `at` validates on both ends and can be canonicalised on neither, which
+// TestNegativeZeroValidates pins and the merged module's README spells out. It
+// is fail-closed — T2's MAC step can never verify such a record — and it is not
+// one of the spellings this test walks: none of them is negative zero.
+func TestAnythingValidatedCanBeCanonicalisedExceptNegativeZero(t *testing.T) {
 	const max = int64(1)<<53 - 1
 	for _, spelling := range []struct {
 		name  string
