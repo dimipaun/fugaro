@@ -15,8 +15,8 @@ import (
 
 // computeBackendPlan is the plan this file pins: docs/plans/2026-10-19-compute-backend.md,
 // the implementation plan for the Cloud Batch compute backend (design
-// docs/design/compute-backend.md), written against the tree branch
-// fugaro/20261019-140014-b55a stands on (= the branch `integration-0.9.5`, cut
+// docs/design/compute-backend.md), written against the tree the branch
+// fugaro/20261019-204914-8a1b stands on (= the branch `integration-0.9.5`, cut
 // from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
 // and this test, the documents and tests a review of them corrected, the
 // credentials-service documents and their own pin test (a later, separate piece
@@ -27,11 +27,13 @@ import (
 // three types — the NAT as the table's empty answer, corrected on a later
 // review; everything else the branch adds is a comment, a test or a document.
 // **The owner approved the plan on 2026-10-19 ("Approve and start", every
-// recommendation P1–P8 accepted as written), and Task 8's first half is built
-// here under that approval** — the plan's Status line and its OWNER APPROVAL
-// GATE say so, and TestDocsComputeBackendStatusMatchesTheBranch holds both
-// paragraphs to the tree, so a branch that carries more (or less) than they
-// claim fails.
+// recommendation P1–P8 accepted as written), and two of its tasks are built**:
+// Task 14 (the seal's carrier on Batch, its refusal kept and documented — see
+// internal/backend/batch/run.go and docs/design/budget-token-channel.md),
+// merged into the base, and Task 8's first half, on this branch. The plan's
+// Status line and its OWNER APPROVAL GATE say so, and
+// TestDocsComputeBackendStatusMatchesTheBranch holds both paragraphs to the
+// tree, so a branch that carries more (or less) than they claim fails.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
@@ -549,6 +551,10 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 // The wrong pair is the one that matters: the gate is APPROVED and the section
 // says the plan answers none of them, or the reversal — a section that looks
 // answered while the gate still refuses to let a task start. Both fail here.
+//
+// Both paragraphs also name the tasks that have landed — Task 14 and Task 8's
+// first half — so a plan whose tasks are built while its prose still reads as
+// a proposal fails here too.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	for i := 1; i <= 8; i++ {
@@ -557,16 +563,21 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 			t.Errorf("%s no longer carries the %s decision row", computeBackendPlan, row)
 		}
 	}
-	decisions := section(t, doc, "## Decisions this plan defers to the owner", "## Open items")
+	decisions := section(t, doc, "## Decisions this plan deferred to the owner", "## Open items")
 	for _, want := range []string{
 		// Still a recommendation, and still not the plan's own answer.
 		"this plan answers none of them itself",
 		// And the owner's answer, with the date it was given.
 		"the owner accepted all eight, as written, on 2026-10-19",
+		"**The owner approved every row below with its recommendation as written, on 2026-10-19**",
+		"**ANSWERED 2026-10-19, and landed (Task 14).**",
 	} {
 		if !strings.Contains(decisions, want) {
 			t.Errorf("%s: the decisions section no longer says %q", computeBackendPlan, want)
 		}
+	}
+	if strings.Contains(doc, "**None is answered**") {
+		t.Errorf("%s still says its own decisions are unanswered; the owner approved them on 2026-10-19, and Task 14 — P1's answer — is built", computeBackendPlan)
 	}
 	// The three the gate says change what gets built, named there as such.
 	// The gate is the file's last section, so it runs to the end of the file.
@@ -576,17 +587,44 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	}
 	gate := doc[i:]
 	for _, want := range []string{
-		"**APPROVED, 2026-10-19",
+		"**APPROVED 2026-10-19 (\"Approve and start\")",
 		"accepted every recommendation P1–P8 as written",
-		"**P1 — the seal's carrier.**",
+		"**P1 — the seal's carrier. ANSWERED, and landed (Task 14).**",
 		"**P2 — the reaper's impossible permission.**",
 		"**P5 — the release.**",
 		// Task 12 is the owner's alone, and the gate has to say so.
 		"**Task 12 is OWNER-RUN**",
+		// The gate and the Status line agree on what the approval has built:
+		// Task 14 and Task 8's first half, and nothing else.
+		"Two tasks have been built since: Task 14",
+		"**Task 14 is built, and so is Task 8's first half, and nothing else here is**",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
 		}
+	}
+	if strings.Contains(gate, "**UNAPPROVED") {
+		t.Errorf("%s's OWNER APPROVAL GATE still reads UNAPPROVED, while Task 14's commit is on the branch it governs", computeBackendPlan)
+	}
+	// The Status line is where a reader meets the approval first, so it says
+	// the same thing the gate does.
+	status := section(t, doc, "**Status:", "**Spec:**")
+	for _, want := range []string{
+		"**Status: the owner APPROVED this plan on 2026-10-19 (\"Approve and start\")",
+		"Two tasks have been built since: **Task 14**",
+		"**No task's commit exists except Task 14's and Task 8's**",
+	} {
+		if !strings.Contains(status, want) {
+			t.Errorf("%s's Status line no longer says %q", computeBackendPlan, want)
+		}
+	}
+	// The mapping table's last row is the same fact for a reader who checks
+	// the design's outline against this plan rather than reading the prose.
+	if !strings.Contains(doc, "| **Task 14**: the budget seal's carrier on Batch | **built** — this branch, P1's recommended answer |") {
+		t.Errorf("%s's §8.1 mapping table no longer marks Task 14's row built", computeBackendPlan)
+	}
+	if !strings.Contains(doc, "| **dropped** (Task 14's answer needs no fetch, so there is nothing to build) |") {
+		t.Errorf("%s's §8.1 mapping table no longer says Task 13 is dropped rather than deferred", computeBackendPlan)
 	}
 }
 

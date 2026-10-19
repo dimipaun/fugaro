@@ -30,9 +30,11 @@ import (
 // managed project holds and D59's premise is that such a project holds only
 // what Fugaro made (the owner's ruling of 2026-10-18). The compute root is
 // listed here although no flag reaches it in this release: its three resources
-// are in the table (they are the last three before the empty ones), and a root
-// whose types are absent would leave a project that ran it foreign for good
-// (Inventory.foreign never empties, so Check's fallback never clears).
+// are in the table — the two that are Cloud Asset assets of a project are
+// the last two before the empty ones, and the third, google_compute_router_nat,
+// is the first empty answer, because GCP keeps a NAT inside its router — and a
+// root whose types are absent would leave a project that ran it foreign for
+// good (Inventory.foreign never empties, so Check's fallback never clears).
 //
 // The table is CLOSED, and the direction of everything it does not name is the
 // fallback, never a clean project: a Terraform type this build cannot place in
