@@ -1085,17 +1085,11 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // tokens/<slug>/ of a bucket, nothing before it and nothing after it.
 var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/` + gcp.TokenBucketPrefix + `/([a-z0-9][a-z0-9_-]*)/"\)$`)
 
-// projectTokenClause is the one clause of a project job account's read-only
-// grant on the bucket's budget token objects, as
-// gcp.ProjectTokenBucketCondition writes it: the whole of tokens/ of a
-// bucket, no slug segment (plan task 3.2 step 2).
-var projectTokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/` + gcp.TokenBucketPrefix + `/"\)$`)
-
 // bucketCondition says why a bucket grant's condition is not the modules'
 // (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
 // objectViewer carries none, except an account's, which may carry exactly
-// one tokens/<slug>/ clause on one of this run's buckets (the job's read of
-// its own budget token objects, budget-token-channel.md §7.2) or, in the
+// one tokens/<slug>/ clause on one of this run's buckets (a job's read of
+// budget token objects under tokens/, budget-token-channel.md §7.2) or, in the
 // project module and for an account that module creates, exactly one
 // whole-tokens/ clause (gcp.ProjectTokenBucketCondition, the shared job's
 // read of every repository's sealed token, plan task 3.2 step 2); a person's
@@ -1106,6 +1100,19 @@ var projectTokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("proje
 // gcp.BucketCondition's shape on runs/, cache/, locks/ or builds/ — never
 // tokens/ — each on one of this run's buckets. The modules never set a
 // description, and a condition known only after apply is not covered.
+//
+// What a tokens/<slug>/ clause is *not* checked against is the grant's own
+// repository. A job account's ID is derived and does not read back: a project
+// job's is the profile/provider/account triple (gcp.ProjectServiceAccountID),
+// a per-repository one the slug and workflow sanitised and clipped
+// (gcp.ServiceAccountID). So what this can hold is the clause's shape —
+// exactly one clause, tokens/ with one slug segment, no trailing text, on one
+// of this run's buckets — and not the pairing: a grant to one repository's job
+// account whose clause names a *different* repository's tokens/<slug>/ is
+// accepted here, because nothing in the plan says which repository the
+// account serves. That pairing is a fact about internal/infra's own writers
+// (projectjobs.go, build.go), which is where it is checked; nothing a plan
+// alone can read makes it checkable here.
 //
 // createdSAIDs are the (module, account ID) pairs this plan creates and
 // heldSAIDs the pairs each module holds after it: the widened condition is
