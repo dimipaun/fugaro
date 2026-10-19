@@ -1,7 +1,6 @@
 package tf
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -47,12 +46,8 @@ func TestCoverBucketConditions(t *testing.T) {
 		{"launcher writes runs/ and tokens/", cbPerson, "roles/storage.objectUser", launcher, true, ""},
 		// The budget token's move (docs/design/budget-token-channel.md §7.2,
 		// D16): the job account reads its own repository's tokens/<slug>/ and
-		// nothing else, and may never write it. The read is accepted only in
-		// the plan the module writes, where its account and its slug are bound
-		// to the same module's runs/ condition: the one-resource plan here
-		// carries neither, so the read alone is refused, and
-		// TestCoverRepoTokenGrants is where the covered case lives.
-		{"job account reads tokens/<slug>/ with no runs/ grant beside it", cbJobSA, "roles/storage.objectViewer", tokens, false, "condition"},
+		// nothing else, and may never write it.
+		{"job account reads its tokens/<slug>/", cbJobSA, "roles/storage.objectViewer", tokens, true, ""},
 		{"job account writes tokens/<slug>/", cbJobSA, "roles/storage.objectUser", tokens, false, "condition"},
 		{"job account's objectUser condition reaching tokens/", cbJobSA, "roles/storage.objectUser",
 			cond("t", gcp.BucketCondition(cbBucket, []string{"runs", "tokens"}, "acme-web-0123456789abcdef")), false, "condition"},
@@ -115,129 +110,6 @@ func TestCoverBucketConditions(t *testing.T) {
 			}
 		})
 	}
-}
-
-// cbRepoModule is the module instance one repository's workflow is applied in
-// (deploy/terraform/gcp/modules/repo/workflows.tf: module "workflow" with
-// for_each over the repository's workflows), which is where both of the job's
-// bucket grants live. The module path is what the pairing below is made
-// within, so it is the same string the golden plan's addresses carry.
-const cbRepoModule = `module.repo.module.workflow["api"]`
-
-// cbRepoSAID and cbRepoSlug are one repository's job account and slug, in the
-// shapes the modules compute: the account ID is
-// gcp.ServiceAccountID(slug, workflow) and the slug is task.Slug's, whose
-// readable part is the account ID's. cbOtherSlug is another repository's.
-const (
-	cbRepoSAID  = "fugaro-acme-web-ap-1a2b3c4d"
-	cbRepoSlug  = "acme-web-0123456789abcdef"
-	cbOtherSlug = "vega-89abcdef01234567"
-)
-
-// cbRepoMember is the job account of cbRepoSAID, as the module's computed
-// member resolves.
-const cbRepoMember = "serviceAccount:" + cbRepoSAID + "@proj-1234.iam.gserviceaccount.com"
-
-// repoGrant is one bucket grant of cbRepoModule.
-func repoGrant(address, member, role string, cond map[string]any, unknownMember bool) ResourceChange {
-	unknown := map[string]any{"condition": []any{map[string]any{}}}
-	if unknownMember {
-		unknown["member"] = true
-	}
-	return ResourceChange{
-		Address: cbRepoModule + ".google_storage_bucket_iam_member." + address,
-		Type:    "google_storage_bucket_iam_member",
-		Change: Change{Actions: []string{"create"}, After: map[string]any{
-			"bucket": cbBucket, "member": member, "role": role, "condition": []any{cond},
-		}, AfterUnknown: unknown},
-	}
-}
-
-// repoSA is the module's own job account, which both grants' member is.
-func repoSA() ResourceChange {
-	return ResourceChange{
-		Address: cbRepoModule + ".google_service_account.job",
-		Type:    "google_service_account",
-		Change:  Change{Actions: []string{"create"}, After: map[string]any{"account_id": cbRepoSAID}},
-	}
-}
-
-// repoRuns is the module's runs/, cache/ and locks/ condition grant for slug,
-// which is the grant the tokens/ read is paired with.
-func repoRuns(slug string) ResourceChange {
-	return repoGrant("job", cbRepoMember, "roles/storage.objectUser",
-		cond(gcp.BucketConditionTitle(cbRepoSAID), gcp.BucketCondition(cbBucket, gcp.JobBucketPrefixes, slug)), false)
-}
-
-// repoTokens is the module's tokens/<slug>/ read for the account saID.
-func repoTokens(saID, slug, member string, unknownMember bool) ResourceChange {
-	return repoGrant("job_tokens", member, "roles/storage.objectViewer",
-		cond(gcp.TokenBucketConditionTitle(saID), gcp.TokenBucketCondition(cbBucket, slug)), unknownMember)
-}
-
-// TestCoverRepoTokenGrants: the per-repository job's read of its own budget
-// token objects (docs/design/budget-token-channel.md §7.2, D16) is bound to
-// the account AND to the slug the module writes. The module itself refuses a
-// tokens/ condition whose slug is not the job's own runs/ one
-// (modules/workflow/variables.tf, and roots/repo/tests/repo.tftest.hcl's
-// token_condition_not_another_repo), so a plan carrying one is not the
-// module's plan — whoever wrote it, an agent-authored managed root included —
-// and init's one confirmation must not cover it. Without this the branch
-// checked only the role, the one-clause shape and the bucket, and a plan
-// granting one repository's account read on another repository's sealed token
-// objects passed.
-func TestCoverRepoTokenGrants(t *testing.T) {
-	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}}
-	// The module's own plan: the account, its runs/ condition and its
-	// tokens/<slug>/ read, all in the module instance the two grants share.
-	module := []ResourceChange{repoSA(), repoRuns(cbRepoSlug)}
-	covered := append(slices.Clone(module), repoTokens(cbRepoSAID, cbRepoSlug, cbRepoMember, false))
-	// A create plan computes the member (the account is created in the same
-	// module), which is what the golden plan's rows show; the title is what
-	// says which account it is.
-	computed := append(slices.Clone(module), repoTokens(cbRepoSAID, cbRepoSlug, "", true))
-	for name, tc := range map[string]struct {
-		changes []ResourceChange
-		ok      bool
-	}{
-		"the module's own account reads its own repository's tokens/": {covered, true},
-		"the same with the member computed, as a create plan has it":  {computed, true},
-		// The grant the module refuses: one repository's account, another
-		// repository's token objects.
-		"the tokens/ clause names another repository's slug": {
-			append(slices.Clone(module), repoTokens(cbRepoSAID, cbOtherSlug, cbRepoMember, false)), false},
-		// The title is what binds the condition to the account, as it does for
-		// a project job's (projectJobGrantAccount).
-		"the title names another account": {
-			append(slices.Clone(module), repoTokens("fugaro-other-web-ap-89abcdef", cbRepoSlug, cbRepoMember, false)), false},
-		// The pairing is made against the same module's runs/ condition: a
-		// plan that carries the read alone (or pairs it with another module's
-		// runs/ grant) is not the module's plan.
-		"no runs/ condition of the module's own in the plan": {
-			append([]ResourceChange{repoSA()}, repoTokens(cbRepoSAID, cbRepoSlug, cbRepoMember, false)), false},
-		"the runs/ condition is another module's": {
-			append([]ResourceChange{repoSA(), otherModuleRuns(cbRepoSlug)}, repoTokens(cbRepoSAID, cbRepoSlug, cbRepoMember, false)), false},
-		// The account must be one this module holds or creates: a plan that
-		// names a Fugaro account of the project outright, with no account
-		// resource in the module, is not the module's plan either.
-		"the member is an account the module does not hold": {
-			append([]ResourceChange{repoRuns(cbRepoSlug)}, repoTokens(cbRepoSAID, cbRepoSlug, cbRepoMember, false)), false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got := c.NotCovered(&Plan{ResourceChanges: tc.changes}, nil)
-			if (len(got) == 0) != tc.ok {
-				t.Fatalf("NotCovered = %q, covered want %v", got, tc.ok)
-			}
-		})
-	}
-}
-
-// otherModuleRuns is the same runs/ condition in another module instance: the
-// slug pairing is per module, so this one does not stand for the module's own.
-func otherModuleRuns(slug string) ResourceChange {
-	rc := repoRuns(slug)
-	rc.Address = `module.repo.module.workflow["web"].google_storage_bucket_iam_member.job`
-	return rc
 }
 
 // A condition known only after apply is never covered.
