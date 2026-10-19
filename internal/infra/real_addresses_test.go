@@ -30,15 +30,17 @@ import (
 // and applies nothing: it plans a temp copy of the committed root with the
 // provider's credential checks skipped and a local backend, and reads the
 // addresses out of the plan's resource_changes. The credential-skipping
-// provider override was enough for both fixtures (no data source is read
+// provider override was enough for every fixture (no data source is read
 // by this root, so the plan needs no API call at all); if a later module
 // change makes one necessary, plan with read-only credentials for a
 // sandbox project instead and record that here.
 //
-// The two goldens are internal/infra/testdata/repo_root_addresses.golden
-// and repo_root_vertex_addresses.golden, and the untagged
-// TestRepoAddressesMatchTheRealPlanGolden / ...MatchTheVertexGolden are
-// what CI runs against them.
+// The goldens are internal/infra/testdata/repo_root_addresses.golden,
+// repo_root_vertex_addresses.golden and repo_root_credentials_addresses.golden
+// (the credentials service's opt-in, D146/D147: the one branch of the address
+// set an installation that has not opted in can never plan), and the untagged
+// TestRepoAddressesMatchTheRealPlanGolden / ...MatchTheVertexGolden /
+// ...MatchTheCredentialsGolden are what CI runs against them.
 
 // providerOverride skips everything the google provider would otherwise
 // ask Google about before it can plan: the credential's validity, the
@@ -79,7 +81,7 @@ func realRepoRootAddresses(t *testing.T, name string) []string {
 	if err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
 	}
-	spec := repoRootSpec(t, repoRootFixtures[name])
+	spec := repoRootSpecOf(t, repoRootFixtures[name])
 	vars, err := RepoRootVars(spec, RepoRootOptions{})
 	if err != nil {
 		t.Fatal(err)

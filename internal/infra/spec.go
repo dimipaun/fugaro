@@ -1283,6 +1283,16 @@ func (rs RepoSpec) Addresses() []string {
 		for _, logical := range uniqueSecrets(ws) {
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
 		}
+		// The job account's way into the credentials service, gated exactly
+		// as modules/workflow/sa.tf gates it (D135, D146, D147): created only
+		// for an installation that has opted in. Once it is on, this grant is
+		// the only door into the cascade, so an address claimed for it while
+		// the module does not declare it -- or the reverse, which is what a
+		// fixture with the opt-in off cannot see -- is a live grant reported
+		// retired and removed from state on every fugaro init --repo.
+		if rs.Installation.CredentialsService != nil {
+			add(p + "google_cloud_run_v2_service_iam_member.credentials[0]")
+		}
 		if ws.Vertex {
 			add(p + "google_project_iam_member.vertex[0]")
 		}

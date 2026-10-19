@@ -1935,13 +1935,26 @@ const (
 	repoRootVertexAgent = `agent: { auth: vertex }`
 )
 
+// repoRootCredentialsService is the opt-in the credentials fixture's
+// installation has (D146, D147). Its secrets name a model secret the oauth
+// fixture's workflows mount, so that fixture's address set holds both halves
+// of the opt-in at once: the run.invoker grant it adds, and the accessor
+// grant it takes away from each job account.
+var repoRootCredentialsService = &CredentialsService{
+	Name:    "fugaro-credentials",
+	Region:  "us-east5",
+	Secrets: []string{"claude-oauth-token"},
+}
+
 // repoRootInputs is the golden fixtures' spec: one baked workflow with its
 // daily check on, one workflow-only secret and the git provider's
-// credential, one operator and one launcher, and the agent block given.
-// Between the two agent blocks it turns every branch of the address set on
-// but checkout: clone, which TestRepoAddressesIncludesCheckOnlyWhenChecked
-// covers.
-func repoRootInputs(t *testing.T, agent string) Inputs {
+// credential, one operator and one launcher, the agent block given, and the
+// installation's credentials service (nil for an installation that has not
+// opted in). Between the two agent blocks it turns every branch of the
+// address set on but checkout: clone, which
+// TestRepoAddressesIncludesCheckOnlyWhenChecked covers, and the opt-in is a
+// third fixture's axis for the same reason.
+func repoRootInputs(t *testing.T, agent string, credentials *CredentialsService) Inputs {
 	t.Helper()
 	lc := parseLC(t, `version: 1
 name: aurora
@@ -1958,6 +1971,7 @@ claude_accounts:
 	out := installationOutputs()
 	out.Launchers = []string{"user:launcher@example.com"}
 	out.Operators = []string{"user:operator@example.com"}
+	out.CredentialsService = credentials
 	cfg := `version: 1
 project: aurora
 git: { provider: github, base_branch: main }
@@ -1971,10 +1985,17 @@ workflows:
 	return Inputs{LC: lc, Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cfg)), Installation: out}
 }
 
-// repoRootSpec is the golden fixture's spec for the agent block given.
+// repoRootSpec is the golden fixture's spec for the agent block given, with
+// the credentials service off — the ad-hoc callers' spec.
 func repoRootSpec(t *testing.T, agent string) RepoSpec {
 	t.Helper()
-	rs, err := Repo(repoRootInputs(t, agent))
+	return repoRootSpecOf(t, repoRootFixture{agent: agent})
+}
+
+// repoRootSpecOf is one golden fixture's spec.
+func repoRootSpecOf(t *testing.T, f repoRootFixture) RepoSpec {
+	t.Helper()
+	rs, err := Repo(repoRootInputs(t, f.agent, f.credentials))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2050,7 +2071,7 @@ base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:de
 repos:
   acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
 `)
-	in := repoRootInputs(t, `agent: { auth: api-key }`)
+	in := repoRootInputs(t, `agent: { auth: api-key }`, nil)
 	in.LC = cloneLC
 	in.Cfg = parseCfg(t, []byte(`version: 1
 project: aurora
@@ -2097,19 +2118,37 @@ func TestRepoAddressesVertexIsNotUnderOAuth(t *testing.T) {
 // real root is planned from, and the address list that plan produced.
 const repoRootGoldenDir = "testdata"
 
-// repoRootFixtures are the two fixture specs, keyed by the golden's name.
-// A third is how the guard grows: add the key here with the agent spec it
-// plans from, add testdata/<name>.tfvars.json (TestRepoRootFixtureTfvars
-// writes it under -update), then on a machine with terraform run
+// repoRootFixture is one golden's spec: the agent block it is built from and
+// the installation's credentials service (nil for an installation that has
+// not opted in).
+type repoRootFixture struct {
+	agent       string
+	credentials *CredentialsService
+}
+
+// repoRootFixtures are the fixture specs, keyed by the golden's name. A
+// fourth is how the guard grows: add the key here with the spec it plans
+// from, add testdata/<name>.tfvars.json (TestRepoRootFixtureTfvars writes it
+// under -update), then on a machine with terraform run
 // `go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses
 // -update` to write testdata/<name>_addresses.golden. CI (untagged) then
 // compares Addresses() against it on every run. Every address the modules
-// declare is named by Addresses() and by both goldens: #362's
+// declare is named by Addresses() and by every golden: #362's
 // module.repo.google_artifact_registry_repository_iam_member.build_ghcr was
 // the last one the untagged guard caught as missing, and naming it in
 // Addresses() and regenerating the goldens from the real plan is what closed
 // that gap.
-var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_root_vertex": repoRootVertexAgent}
+//
+// repo_root_credentials is the opt-in's fixture (D146, D147): without one,
+// google_cloud_run_v2_service_iam_member.credentials -- the only door into
+// the credentials cascade, gated on credentials_service -- could be missing
+// from Addresses() and neither this guard nor the goldens would say so, since
+// an installation that has not opted in never plans it.
+var repoRootFixtures = map[string]repoRootFixture{
+	"repo_root":             {agent: repoRootOAuthAgent},
+	"repo_root_vertex":      {agent: repoRootVertexAgent},
+	"repo_root_credentials": {agent: repoRootOAuthAgent, credentials: repoRootCredentialsService},
+}
 
 // TestRepoRootFixtureTfvars keeps the committed tfvars fixtures and the Go
 // fixture that plans from them in step: the golden address list belongs to
@@ -2117,8 +2156,8 @@ var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_
 // regeneration fails here rather than silently changing what the golden
 // pins.
 func TestRepoRootFixtureTfvars(t *testing.T) {
-	for name, agent := range repoRootFixtures {
-		spec := repoRootSpec(t, agent)
+	for name, f := range repoRootFixtures {
+		spec := repoRootSpecOf(t, f)
 		got, err := RepoRootVars(spec, RepoRootOptions{})
 		if err != nil {
 			t.Fatal(err)
@@ -2161,7 +2200,7 @@ func addressesGolden(t *testing.T, name string) []string {
 // address the real root's plan produces for the fixture spec must be in
 // Addresses, and the other way round.
 func TestRepoAddressesMatchTheRealPlanGolden(t *testing.T) {
-	spec := repoRootSpec(t, repoRootFixtures["repo_root"])
+	spec := repoRootSpecOf(t, repoRootFixtures["repo_root"])
 	want := addressesGolden(t, "repo_root")
 	if len(want) == 0 {
 		t.Fatal("the golden is empty")
@@ -2177,7 +2216,7 @@ func TestRepoAddressesMatchTheRealPlanGolden(t *testing.T) {
 // contain, google_project_iam_member.vertex[0], and the named-account
 // variants it does not have.
 func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
-	spec := repoRootSpec(t, repoRootFixtures["repo_root_vertex"])
+	spec := repoRootSpecOf(t, repoRootFixtures["repo_root_vertex"])
 	want := addressesGolden(t, "repo_root_vertex")
 	if len(want) == 0 {
 		t.Fatal("the golden is empty")
@@ -2189,10 +2228,30 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 	}
 }
 
+// TestRepoAddressesMatchTheCredentialsGolden: the opt-in's fixture (D146,
+// D147). It pins both halves of the credentials service in the address set a
+// real plan produces -- the run.invoker grant the opt-in adds to every job
+// account, and the model secret it takes out of each one's accessor grants --
+// which no fixture with the opt-in off can hold, and which is why the address
+// for the grant could go missing from Addresses() while both other goldens
+// stayed green.
+func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
+	spec := repoRootSpecOf(t, repoRootFixtures["repo_root_credentials"])
+	want := addressesGolden(t, "repo_root_credentials")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_credentials_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
 // moduleResources are the resource blocks the repository's own modules
 // declare, as "type.name", for the modules a repository root includes.
 //
-// The two tests above compare Addresses() with a golden, and a golden is a
+// The golden tests above compare Addresses() with a golden, and a golden is a
 // snapshot a manual -tags terraform -update rewrites: a resource added to a
 // module -- #362's google_artifact_registry_repository_iam_member.build_ghcr,
 // say -- leaves both sides agreeing with each other and both wrong, and
@@ -2207,28 +2266,26 @@ var moduleResources = []string{"gcp/modules/repo", "gcp/modules/workflow"}
 var moduleResourceRE = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"`)
 
 // conditionalResources are the declared resources Addresses() may legitimately
-// not produce for either fixture, each with the reason it is off. Every entry
-// is a hole in this guard, so it takes a reason: a resource that is merely
+// not produce for any fixture, each with the reason it is off. Every entry is
+// a hole in this guard, so it takes a reason: a resource that is merely
 // missing because nobody regenerated the golden does not belong here.
-var conditionalResources = map[string]string{
-	// The job account's way into the credentials service (D135). It exists
-	// only for an installation that has opted in (credentials_service, D147),
-	// and both fixtures are installations that have not: their plan is the
-	// plan of every repository today, byte for byte, so neither Addresses()
-	// carries it. With the opt-in on the resource is created, and it is the
-	// retirement of an address in the state that is the hazard this guard
-	// watches for -- not its absence from a fixture that cannot produce it.
-	"google_cloud_run_v2_service_iam_member.credentials": "the credentials service is opt-in (D147) and both fixtures have it off",
-}
+//
+// It is empty, and a conditional resource belongs in a FIXTURE instead: the
+// repo_root_credentials fixture is what carries
+// google_cloud_run_v2_service_iam_member.credentials, and an entry here would
+// have hidden the very omission that fixture closed -- a live address
+// classified as retired on every fugaro init --repo of an installation that
+// opted in, which is a state no fixture with the opt-in off can reach.
+var conditionalResources = map[string]string{}
 
 // TestAddressesCoversEveryModuleResource is the drift guard the goldens
 // cannot be: every resource the repo and workflow modules declare must show
-// up in the union of the two fixtures' Addresses(), or a retirement would be
+// up in the union of the fixtures' Addresses(), or a retirement would be
 // predicted for something the plan really produces.
 func TestAddressesCoversEveryModuleResource(t *testing.T) {
 	var addrs []string
-	for _, agent := range repoRootFixtures {
-		addrs = append(addrs, repoRootSpec(t, agent).Addresses()...)
+	for _, f := range repoRootFixtures {
+		addrs = append(addrs, repoRootSpecOf(t, f).Addresses()...)
 	}
 	if len(addrs) == 0 {
 		t.Fatal("the fixtures produce no address")
@@ -2268,7 +2325,8 @@ func TestAddressesCoversEveryModuleResource(t *testing.T) {
 					"retired -- printed as a change that removes it -- on every fugaro init --repo.\n"+
 					"Add it to Addresses() (internal/infra/spec.go), regenerate the goldens\n"+
 					"(go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses -update),\n"+
-					"or list it in conditionalResources with the reason it is off in both fixtures.",
+					"and, if no fixture's installation produces it, add one to repoRootFixtures with its\n"+
+					"tfvars and golden. conditionalResources is the last resort, not the first.",
 					file, typ, name)
 			}
 		}
