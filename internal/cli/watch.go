@@ -36,13 +36,27 @@ const (
 	watchFirstFrame = 5 * time.Second
 	// degradedNotice is what the project without a budget backend is told.
 	degradedNotice = "no budget backend: showing run records only"
-	// prStateOnceWait is how long one --once snapshot waits for the ready
-	// list's pull request states before printing without them. The live
-	// screen never waits: it draws from the cache (internal/watch PRState).
-	prStateOnceWait = 3 * time.Second
 	// degradedSince is how far back the degraded view reads runs.
 	degradedSince = 24 * time.Hour
 )
+
+// prStateOnceWait is how long one --once snapshot waits for the ready list's
+// pull request states before printing without them. The live screen never
+// waits: it draws from the cache (internal/watch PRState). A var, not a const,
+// so a test that asserts the ANSWER can give a loaded machine's fork and exec
+// more room than production does — the same seam queuedOnceWait is. A test
+// that widens prStateTimeout must widen this past it too: a lookup killed at
+// its own budget records "no answer", so a wait that expired first would leave
+// the test reading the clock instead of the answer.
+var prStateOnceWait = 3 * time.Second
+
+// prStateTimeout is the budget one gh lookup gets (watch.PRStateTimeout). A var
+// for the same reason prStateOnceWait is: the production value is the watch
+// package's, and a test that is about which rows survive, or what gh was asked,
+// must not also be a test of how fast a loaded machine can start a shell — a
+// lookup killed at a short budget answers "unknown" and fails open, which the
+// test then reads as a broken filter.
+var prStateTimeout = watch.PRStateTimeout
 
 // WatchDeps is everything the interactive screen needs; the command has
 // already selected the project, opened and checked its database, and started
@@ -237,7 +251,7 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		Acks:   watch.LoadAcks(watch.AckPath(os.Getenv)),
 		// The ready list's PR states come from the operator's own gh, when
 		// there is one; nothing here ever holds a credential of its own.
-		PRState: watch.NewPRState(watch.PRStateOptions{Disabled: o.noPRState})}
+		PRState: watch.NewPRState(watch.PRStateOptions{Disabled: o.noPRState, Timeout: prStateTimeout})}
 
 	if o.once {
 		rows, finished, note := fetchQueuedOnce(ctx, lc, o.repo)
