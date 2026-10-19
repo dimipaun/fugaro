@@ -538,7 +538,7 @@ func TestBatchSectionValidation(t *testing.T) {
 			replace("projects/my-project/global/images/family/fugaro-base", "projects/my-project/global/images/fugaro-base-v3"),
 			"batch.boot_image",
 		},
-		"bare network":     {replace("projects/my-project/global/networks/fugaro", "default"), "batch.network"},
+		"bare network": {replace("projects/my-project/global/networks/fugaro", "default"), "batch.network"},
 		"other project network": {
 			replace("projects/my-project/global/networks/fugaro", "projects/other/global/networks/fugaro"),
 			"batch.network",
