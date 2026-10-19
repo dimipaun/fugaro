@@ -884,6 +884,10 @@ func TestDocsMobilePushStatesTheNodeUnitOnce(t *testing.T) {
 		// §3.4's "who can read" paragraph, the sentence that had it wrong.
 		"leaves each *node* belonging to one **paired account** (§3.5's unit sentence)",
 		"no launcher can read another installation's node at all",
+		// The sender's state lives in that node, so its unit is the node's too:
+		// one ledger per paired account, not one per phone across installations.
+		"dedupe and cap state is **per paired account**",
+		"**N notifications per paired account per hour**",
 	} {
 		if !strings.Contains(flat, normSpace(want)) {
 			t.Errorf("%s lacks %q: the node's unit has to be stated once and agreed with everywhere else", docPath, want)

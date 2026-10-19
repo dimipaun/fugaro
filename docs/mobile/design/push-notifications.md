@@ -501,8 +501,11 @@ so a `push/$uid` created after the device node is gone is **inert**, and it can 
 device, because this principal's write is not itself an admission.
 
 **The ledger's home is the push node and nowhere else.** The sender's dedupe and cap state is
-per device (§3.7 keys it on `(device, category, state-change key)`, and the cap is per device per
-hour), it must be unreadable to every client, and its lifetime should be the pairing's — and
+**per paired account** — the node's unit (§3.5): §3.7 keys it on `(device, category,
+state-change key)` and caps it per hour, and those rows live in a node that is one per paired
+account, so the same phone paired into two installations has one ledger in each and each
+installation's sender keeps its own count. It must be unreadable to every client, and its
+lifetime should be the pairing's — and
 `config/admin/push/$uid/ledger` is the one place that is all three at once: inside the
 client-denied `config/admin` (§3.4 rule 1), in the node `fugaro pair revoke` deletes in the same
 act (§7, Q10(i)), and with **no second store, no second grant and no Firestore
@@ -812,11 +815,13 @@ paragraph above says. Q1 records the latency/grant trade and (D).
   sends one "needs answer", not one per outbox re-delivery (the consumer already re-delivers
   until the ack, `shared/mailbox/index.js`'s dedupe ledger `state.seen`). The sender
   dedupes on `(device, category, state-change key)` over a window, so a re-derived event
-  is not a second notification. The window and the keys are rows in the device's own
-  `config/admin/push/$uid/ledger` (§3.4, §3.6 — the ledger's one home), written by the sender
+  is not a second notification. The window and the keys are rows in
+  that paired account's own `config/admin/push/$uid/ledger` (§3.4, §3.6 — the ledger's one home), written by the sender
   and by nothing else.
-- **A storm cap.** At most **N notifications per device per hour** (N is small — the design
-  suggests **6**, and Q4 asks), and at most **one per category per run per hour**. Ten runs of
+- **A storm cap.** At most **N notifications per paired account per hour** (N is small — the
+  design suggests **6**, and Q4 asks), and at most **one per category per run per hour**. *(Per
+  paired account, not per phone: the count is a row in the node, and the node is one per
+  paired account — §3.5's unit sentence.)* Ten runs of
   one repository crossing their cap in a minute produce one alert and a quiet count, not ten
   buzzes. The
   cap is enforced **at the sender**, because the sender is the single writer and the phone
@@ -839,7 +844,7 @@ paragraph above says. Q1 records the latency/grant trade and (D).
   interrupting and **off** for the ones it keeps off by default — cap-near, the one D160
   answers "available, off by default" — so the default set is D160's own answer and not a
   new one (§1, Q4). **Quiet hours default off** (below).
-- **Quiet hours**, a window per device, server-side, stored in `prefs`. This is the design's
+- **Quiet hours**, a window per paired account, server-side, stored in `prefs`. This is the design's
   one uncomfortable privacy surface and it should be named rather than buried: honouring quiet
   hours server-side requires knowing the device's **zone**, which is a location-adjacent datum
   the app otherwise never sends. The alternatives are worse — a client-side filter still buzzes
@@ -1344,7 +1349,7 @@ insufficient — and then C exactly as §3 designs it.**
 Why: **A and B are already possible and cost nothing** — the app's whole data path exists
 (D112's read grant, the mailbox, the heartbeat) and a foreground notification is a local API
 call. **C is the only one that buys background alerts**, and that is the only thing it buys;
-against it stand a new sender, a new credential, a new stored datum per device, a rules
+against it stand a new sender, a new credential, a new stored datum per paired account, a rules
 generation, a provider relationship, and §5's attacker 2. D121 already chose A and B for v1,
 and this design's honest position is that **nothing about the design changes that** — C is
 worth building only if the owner finds, in use, that "the app must be open" is a real
@@ -1507,7 +1512,7 @@ storm cap.**
   reached** and **consumer offline** (cap-near off by default), plus the **prompt** category
   D127's switch widens to*: **recommended.** Every category has a source in the four families
   the phone may read under tension (b1), so §3.9's "ignore what you cannot resolve" never
-  fires and no alert the app posts is unsupported. Cap **6 per device per hour**, one per
+  fires and no alert the app posts is unsupported. Cap **6 per paired account per hour**, one per
   category per run per hour.
 - *(ii) D160's set plus **finished** and **failed**, which needs the phone's read grant
   widened*: **now labelled as what it is — a change to tension (b1), not a category tweak.**
