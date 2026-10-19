@@ -28,14 +28,18 @@
 // The count below is read off **the gates' own build of the site**, which is the artifact the
 // derivation case at the end of this file measures (see "the build the README's figures are a
 // derivation OF"), rather than carried from the merge. **That artifact is a copy of the
-// repository in a temp directory rather than the checkout's `dist/`**, and the reason is the
-// site's own build moving with the checkout's git state: the changelog renders each release
-// file's "not yet released" state where `git tag --list` finds no tag
-// (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds a larger site than this repository's own clone, which carries the
-// tags, by exactly that page's own bytes. The two figures and that difference are written in
-// `website/README.md`, and the case below reads the pair there and holds them to their own
-// arithmetic: one place states them, and this file states the rule.
+// repository in a temp directory rather than the checkout's `dist/`** — the copy is the build
+// the gates can make in every environment, with no `.git` and no dependence on what the
+// checkout happens to carry. Until the owner's brief of 2026-10-19 the difference was one a
+// figure could not survive: the changelog rendered each release file's "not yet released"
+// state where `git tag --list` found no tag (`src/lib/changelog.mjs`), so a shallow checkout —
+// `website-preview.yml`'s, and so the deployed site's — built a larger site than this
+// repository's own clone, which carries the tags, by exactly that page's own bytes, and a README
+// figure derived from one was refused by the other. Which releases are published is the
+// plugin's own version now, so no page of the site depends on the checkout's git state:
+// `website/README.md` writes the two shapes as one figure, and the case below reads the pair
+// there and holds them to it. The copy stays the derivation's subject because it is the
+// artifact the gate can measure everywhere.
 //
 // **The three figures themselves are not written here, and that is the correction of
 // 2026-10-19.** They live in `website/README.md`'s budget lines, which the case below reads and
@@ -79,10 +83,9 @@
 //     page, so a page that grows with the product (the changelog, the reference) is held to the
 //     same line as the rest instead of to its own history.
 //   - Whole site: every file in `dist/` — eleven pages, the script, the brand icons, the manifest
-//     and the two `fugaro watch` assets — × 1.25, rounded up. **It is the build with no tags** —
-//     the one the gates make, and the one the deployed site is — and the changelog page's own
-//     "not yet released" labels are part of it; a full clone, whose checkout carries the release
-//     tags, builds the same site smaller by exactly those labels.
+//     and the two `fugaro watch` assets — × 1.25, rounded up. It is the build every checkout
+//     makes alike, tags or no tags, since the changelog reads the plugin's version rather than
+//     the checkout's tags.
 //
 // **Where this build's three numbers come from** is written in `website/README.md` too, one
 // bullet up from this file's name in its gates list: the same rounds, the same causes and the
@@ -90,10 +93,10 @@
 // picture landing on the homepage; the menu's drawer coming out and the script's comments going
 // back in step with it; the console's release turning `features.console_downloads` on;
 // Getting Started's three bands; the console's screenshot slider; the run on How It Works
-// becoming one vertical timeline; the caps-and-costs rework; and the homepage's prompt line,
-// benefits, pull request caption and the benefits' block rule — each re-derived in the commit
-// that moved it (D192). None of those figures is repeated here, because a figure in a comment
-// is a figure that moves with
+// becoming one vertical timeline; the caps-and-costs rework; the changelog's product
+// summaries; and the homepage's prompt line, benefits, pull request caption and the benefits'
+// block rule — each re-derived in the commit that moved it (D192). None of those figures is
+// repeated here, because a figure in a comment is a figure that moves with
 // nothing when the build moves, which is what happened to the copy that used to be in this one;
 // the case below reads the README's figures and holds them to the build it makes itself.
 //
@@ -113,9 +116,9 @@
 // measures a page or the site against a number — read `dist/`, which `npm run check` builds
 // first (`FUGARO_GATES_DIST` points them at a copy, which is how the refusals were
 // mutation-proved). **The derivation** — the case that holds each README figure to the build
-// it names — reads the gates' own build of the site instead, because `dist/` is the checkout's
-// and the checkout's git state moves it; the section above that case says why in full. Standard
-// library only; no network.
+// it names — reads the gates' own build of the site instead, which is the build the gate can
+// make in every environment rather than the one the checkout happens to hold; the section
+// above that case says why in full. Standard library only; no network.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -555,9 +558,9 @@ test('the README budget lines are read strictly', () => {
 // call to action — and by nothing at all at the page weight. The direction is the flag's own:
 // turning `features.console_downloads` on added those bytes, so the copy that flips it back off
 // is the smaller build. The checkout's own `dist/` is the other artifact the numbers may not
-// name, because its git state moves it by the changelog page's own bytes (its "not yet
-// released" labels,
-// above). What is left is the gates' own build: a copy of the repository with no `.git`, made by
+// name: it is the build the checkout happens to hold, and while the changelog read
+// `git tag --list` its bytes moved with that checkout's git state (above). What is left is the
+// gates' own build: a copy of the repository with no `.git`, made by
 // `test/lib/build.mjs`'s `buildCopy`, which is what the case below measures (`documentedBuild`).
 const DERIVATIONS = {
   js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
@@ -607,26 +610,21 @@ export function derivationFailures(readme, measured) {
  *
  * Nor is it held to `website/dist`, which `npm run check` builds first — and that is the
  * correction this reading carries (2026-10-19). `dist/` is the site built from the checkout the
- * gates are running in, and one page of the site depends on that checkout's git state: the
- * changelog renders each release file's "not yet released" state where `git tag --list` finds no
- * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — the larger in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and the smaller with the tags
- * this repository's own clone carries, the changelog page's own bytes being the whole of the
- * difference. **Both figures are written in `website/README.md`'s paragraph about the two shapes,
- * and nowhere else**: the case below reads the pair from there and holds it to that arithmetic,
- * because a figure copied into this comment is a figure that moves with nothing — which is what
- * happened here, the copy stating the build before the last re-derivation. A README figure
- * derived from either build is a figure the other environment refuses, which is exactly what
- * happened: `website-preview` could not deploy, because the derivation named a build the run
- * could not measure.
+ * gates are running in, and one page of the site used to depend on that checkout's git state:
+ * the changelog rendered each release file's "not yet released" state where `git tag --list`
+ * found no tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the
+ * same commit built to two different site figures — the larger in a checkout with no tags,
+ * which is what `.github/workflows/website-preview.yml`'s default checkout is, and the smaller
+ * with the tags this repository's own clone carries, the changelog page's own "not yet
+ * released" labels being the whole of the difference. A README figure derived from either one
+ * was a figure the other environment refused, which is exactly what happened: `website-preview`
+ * could not deploy, because the derivation named a build the run could not measure.
  *
- * A copy of the repository has no `.git` at all, so the build the gates make is the same build
- * everywhere: the README's figures are derived from it, and the site's own `dist/` — whichever
- * of the two shapes it takes — is held to the README's ceilings like any other artifact. The
- * "not yet released" state is what the deployed site shows (nothing deploys from a checkout that
- * fetches tags), so the README's figures are the deployed site's rather than the smaller one a
- * full clone builds.
+ * That dependence is gone — which releases are published is the plugin's own version now, not a
+ * tag (the owner's brief of 2026-10-19) — and the derivation stays where it is all the same: a
+ * copy of the repository, with no `.git` at all, is the build the gates can make in every
+ * environment, and the site's own `dist/` is held to the README's ceilings like any other
+ * artifact. The README's figures are derived from the copy.
  */
 let DOCUMENTED_BUILD = null
 
@@ -682,49 +680,44 @@ test('a budget raised without re-deriving it is refused', () => {
   }
 })
 
-// ---- the site's two build shapes, held to each other ------------------------------------
+// ---- the site's two checkout shapes, held to one figure ---------------------------------
 //
 // The derivation above is measured on ONE build, on purpose: a copy of the repository with no
-// `.git`, which is the no-tags shape every environment builds the same way. The site's other
-// shape — a checkout whose tags let the changelog render the released state — is the smaller
-// one, and its figure is not gate-enforced (nothing here can tag a build), so it drifted once:
-// a round re-derived the site figure by the bytes it added and left the clone figure where it
-// was, putting the two further apart than the changelog page they differ by. What can be held
-// without a tagged build is their own arithmetic, in the one place this repository writes the
-// pair as figures: `website/README.md`'s paragraph about the two shapes. The clone build is
-// the no-tags build less the changelog page's "not yet released" labels, and the README names
-// that page's own bytes as the whole of the difference. **The pair is read here from the README
-// and from nowhere else**, which is what the README's own sentence about this case says: the
-// figures a reader sees are stated in one place, and this file's prose repeats none of them —
-// a copy in a comment moved with nothing the last time the build moved, which is why there is
-// no other spelling left to hold.
+// `.git`. The site's other shape — a checkout that carries the release tags — is not one a gate
+// here can build, so its figure is not gate-enforced, and it drifted once: a round re-derived
+// the site figure by the bytes it added and left the clone figure where it was. Until the owner's
+// brief of 2026-10-19 the two shapes were a changelog page apart, the page printing "not yet
+// released" wherever `git tag --list` found no tag; the changelog reads the plugin's own version
+// now (`src/lib/changelog.mjs`), so the two shapes are one build and the pair is one figure.
+// What can be held without a tagged build is that statement, in the one place this repository
+// writes the pair as figures: `website/README.md`'s paragraph about the two shapes — and that
+// the changelog still reads no tag, which is what makes the statement true. **The pair is read
+// here from the README and from nowhere else**: the figures a reader sees are stated in one
+// place, and this file's prose repeats none of them.
 const PAIR =
-  /\*\*([\d,]+) bytes in a checkout with no\s+tags\*\*[\s\S]*?\*\*([\d,]+) bytes with the tags this repository's own clone carries\*\*/
-const CHANGELOG_DELTA = /the changelog page's ([\d,]+) bytes being the whole of the difference/
+  /\*\*([\d,]+) bytes in a checkout with no tags\*\*[\s\S]*?\*\*([\d,]+) bytes with the\s+tags this repository's own clone carries\*\*/
 
-test('the site’s two build shapes are stated with one pair of figures, a changelog page apart', () => {
+test('the site’s two checkout shapes are stated as one figure, and the changelog reads no tag', () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
   const n = (s) => Number(s.replace(/,/g, ''))
 
   const pair = PAIR.exec(readme)
   assert.ok(
     pair,
-    'website/README.md no longer states the site\'s two build shapes in the form this case reads — "**N bytes in a checkout with no tags** … **N bytes with the tags this repository\'s own clone carries**" — so the pair is not held to its own arithmetic anywhere: this paragraph is the one place the two figures are written, and a rewrite that drops one of them leaves the other stated with nothing reading it',
+    'website/README.md no longer states the site\'s two checkout shapes in the form this case reads — "**N bytes in a checkout with no tags** … **N bytes with the tags this repository\'s own clone carries**" — so the pair is not held anywhere: that paragraph is the one place the two figures are written, and a rewrite that drops one of them leaves the other stated with nothing reading it',
   )
   const [noTags, clone] = [n(pair[1]), n(pair[2])]
-
-  const delta = CHANGELOG_DELTA.exec(readme)
-  assert.ok(delta, "website/README.md no longer names the changelog page's own bytes as the whole of the difference between the site's two builds")
-  const changelog = n(delta[1])
-  assert.ok(changelog > 0, 'the difference between the two builds is zero bytes, which no changelog page is')
-  assert.ok(
-    noTags > clone,
-    `website/README.md states the no-tags build as ${noTags} bytes and the clone build as ${clone}: the no-tags build is the larger of the two, the changelog printing its "not yet released" labels in it`,
-  )
   assert.equal(
-    noTags - clone,
+    clone,
+    noTags,
+    `website/README.md states the no-tags build as ${noTags} bytes and the clone build as ${clone}: no page reads the checkout's git state, so the two shapes are one build and a re-derivation that moves one of them moves the other`,
+  )
+
+  const changelog = readFileSync(path.join(SITE, 'src', 'lib', 'changelog.mjs'), 'utf8')
+  assert.doesNotMatch(
     changelog,
-    `website/README.md's two builds are ${noTags - clone} bytes apart and the same paragraph names the changelog page's ${changelog} bytes as the whole of the difference: the smaller figure is the no-tags one less that page, so a re-derivation that moves one of them moves the other`,
+    /node:child_process|['"]tag['"]\s*,\s*['"]--list['"]/,
+    'src/lib/changelog.mjs reads the checkout\'s git state again: the site\'s two checkout shapes would build two figures, and the README\'s one-figure pair would be false',
   )
 })
 

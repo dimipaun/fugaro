@@ -194,8 +194,11 @@ openable and closable by keyboard, and the menu usable with JavaScript disabled.
   `/security/` renders a short "In short" section that the owner adds at the top of
   `SECURITY.md` (the page stays byte-identical to the file, so
   `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` does not change; **this needs the
-  owner's text for `SECURITY.md` first**); `/changelog/` renders the first Highlights line
-  of the newest releases above the full list, selected from the release files.
+  owner's text for `SECURITY.md` first**); `/changelog/` renders the product summary of every
+  release above its own entry, read from `website/data/release-summaries.yaml` — the owner's
+  changelog feedback of 2026-10-19 replaced D189's "first Highlights line of the newest
+  releases" reading for this page, and the release files' own Highlights are one click away in
+  a `<details>` block (`docs/website/redesign/README.md`, "The 2026-10-19 changelog brief").
 - Every other page's copy is rewritten short and scannable to D188's numbers: headings
   keep their meaning, the paragraphs under them shrink. FAQ answers stay traceable to the
   document each one names (each answer's `source`, which the page already enforces).
@@ -440,7 +443,7 @@ they enforce:
 | the accent versus the logo's hue | `website/test/accent.mjs` (new) | new gate; decodes the PNG with `node:zlib` | P2 |
 | `.site-nav ul{display:flex}` and the one-`aria-current` rule | `website/test/base-styles.mjs` | rewritten for the two-level menu, with the page's current marker still exactly one | P3 |
 | provenance phrases | `website/test/meta.mjs` (new) | new gate | P4 |
-| "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; the summary block is release-file text it accepts (D189); an exception only under D189's alternative (a) | P4 |
+| "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; under D189 the summary block was release-file text it accepted, and since the owner's changelog feedback of 2026-10-19 the two sources are the release files and `website/data/release-summaries.yaml`, both of them files the page renders rather than prose it writes | P4 |
 | the security page = `SECURITY.md` byte for byte | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` | **unchanged** under D189's recommendation (the summary is in `SECURITY.md`) | P4 |
 | copy controls | `website/test/copy.mjs` (new) | new gate | P6 |
 | reduced-motion path per animation | `website/test/a11y.mjs` | **unchanged**, and every new animation must satisfy it | P7, P8 |
