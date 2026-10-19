@@ -3,8 +3,9 @@
 #
 # This module is SECURITY-SENSITIVE and its rules are almost all of the "does
 # not do it" kind, which is the kind a test can pass by accident. Each mutation
-# below disables exactly ONE guard in client.js and every one of them must make
-# the client's tests fail. A guard whose mutation survives is a guard no test
+# below disables exactly ONE guard -- in client.js, or in one of the two files
+# the guards outside it live in -- and every one of them must make that guard's
+# own suite fail. A guard whose mutation survives is a guard no test
 # defends -- and the guards here are the app's whole write path: which paths it
 # writes, what it signs, what it verifies, and when it acks.
 #
@@ -38,6 +39,12 @@
 # verification; this script measures the guards, and it says which of the two
 # runners it used rather than assuming one.
 #
+# A guard whose mutation lives outside `client.js` (the tag comparison in
+# `mac.js`, the one-write-path scan in `write-path.test.js`) names its own file
+# and its own suite as two trailing arguments; both default to `client.js` and
+# its tests. The file is restored with `git checkout` either way, so every file
+# a mutation touches must be committed and clean.
+#
 # Expected output: one "killed" line per guard, no "SURVIVED", no
 # "APPLY-FAILED", and exit 0.
 set -u
@@ -45,6 +52,7 @@ set -u
 root=$(cd "$(dirname "$0")/../../.." && pwd) || exit 1
 cd "$root" || exit 1
 F=mobile/src/mailbox/client.js
+SUITE=src/mailbox/client.test.js
 
 # runner_works asks the question that matters: not "is node on PATH" but "does
 # it run". A shim for a tool whose version was never set sits on PATH and fails
@@ -78,14 +86,21 @@ if ! runner_works; then
 fi
 echo "runner        node $(node --version) from $NODE_SOURCE"
 
-if ! git ls-files --error-unmatch "$F" >/dev/null 2>&1; then
-  echo "REFUSING: $F is not committed; git checkout could not restore it" >&2
-  exit 2
-fi
-if ! git diff --quiet -- "$F"; then
-  echo "REFUSING: $F has uncommitted changes; commit them first" >&2
-  exit 2
-fi
+# require_clean refuses to run against a file git cannot restore. `git checkout`
+# on an untracked file fails and the mutations would stack.
+require_clean() { # file
+  if ! git ls-files --error-unmatch "$1" >/dev/null 2>&1; then
+    echo "REFUSING: $1 is not committed; git checkout could not restore it" >&2
+    exit 2
+  fi
+  if ! git diff --quiet -- "$1"; then
+    echo "REFUSING: $1 has uncommitted changes; commit them first" >&2
+    exit 2
+  fi
+}
+require_clean "$F"
+require_clean mobile/src/mailbox/mac.js
+require_clean mobile/src/app/root.js
 
 last_outcome=""
 killed=0
@@ -98,9 +113,9 @@ guards=0
 # The pattern is the module's own, run from the package directory so that the
 # glob is node's to expand (quoted), exactly as mobile/package.json's script
 # does.
-suite() {
+suite() { # suite-pattern (module-relative to mobile/)
   local out code tests fails
-  out=$( (cd mobile && node --test "src/mailbox/client.test.js") 2>&1 )
+  out=$( (cd mobile && node --test "${1:-$SUITE}") 2>&1 )
   code=$?
   # The summary is `# tests N` under the TAP reporter and `ℹ tests N` under the
   # spec reporter (node 23+ default); both forms are read.
@@ -114,10 +129,10 @@ suite() {
 # mutate_test applies one mutation, judges the suite against it, and restores
 # the module. It counts only the guards it was asked to prove; the caller
 # decides what to do with last_outcome.
-mutate_test() { # name, old, [new]
-  local name="$1" old="$2" new="${3-}"
-  git checkout -- "$F"
-  if ! python3 - "$F" "$old" "$new" <<'PY'
+mutate_test() { # name, old, [new], [file], [suite]
+  local name="$1" old="$2" new="${3-}" file="${4-$F}" suite_pattern="${5-$SUITE}"
+  git checkout -- "$file"
+  if ! python3 - "$file" "$old" "$new" <<'PY'
 import sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p).read()
@@ -126,19 +141,19 @@ open(p, 'w').write(s.replace(old, new))
 PY
   then
     echo "APPLY-FAILED  $name"
-    git checkout -- "$F"
+    git checkout -- "$file"
     last_outcome=apply-failed
     unapplied=$((unapplied + 1))
     return
   fi
-  if git diff --quiet -- "$F"; then
+  if git diff --quiet -- "$file"; then
     echo "NO-OP         $name"
-    git checkout -- "$F"
+    git checkout -- "$file"
     last_outcome=no-op
     unapplied=$((unapplied + 1))
     return
   fi
-  if suite; then
+  if suite "$suite_pattern"; then
     echo "SURVIVED      $name   <-- the tests did not catch this"
     last_outcome=survived
     survivors=$((survivors + 1))
@@ -147,7 +162,7 @@ PY
     last_outcome=killed
     killed=$((killed + 1))
   fi
-  git checkout -- "$F"
+  git checkout -- "$file"
 }
 
 # run proves one guard and counts it.
@@ -159,7 +174,7 @@ run() { # name, old, [new]
 # 1. The positive control: the suite passes on the pristine module, over tests
 #    that actually ran. Nothing below is measured against anything otherwise.
 git checkout -- "$F"
-if ! suite; then
+if ! suite "$SUITE"; then
   echo "REFUSING: the suite does not pass on the pristine $F ($LAST_TESTS tests ran);" >&2
   echo "          a mutation's failure could not be told from the baseline's." >&2
   printf '%s\n' "$LAST_OUT" | tail -20 >&2
@@ -227,6 +242,30 @@ run "a message the phone already acked is not spoken again" \
 run "the queue: two passes in flight at once do not speak a message twice" \
   "    const run = queue.then(() => fn(), () => fn());" \
   "    const run = fn();"
+
+# 7. What the phone will not write, and the two guards outside client.js: the
+#    tag comparison itself, and the scan that keeps D113's one write path.
+run "a text nobody can sign is refused before the key is touched" \
+  "    if (unsignable !== null) return refuse(CLIENT_CODES.UNSIGNABLE, unsignable);" \
+  "    if (false) return refuse(CLIENT_CODES.UNSIGNABLE, unsignable);"
+run "the schema validates the record before it is written" \
+  "    if (!valid.ok) return refuse(valid.code, valid.field);" \
+  "    if (false) return refuse(valid.code, valid.field);"
+run "the client object carries its six names and nothing else" \
+  "    pending,
+  });" \
+  "    pending,
+    raw: (path, value) => store.write(path, value),
+  });"
+run "the tag comparison is over the whole tag (mac.js)" \
+  "  return sameTag(offered, expected);" \
+  "  return offered.slice(0, 8) === expected.slice(0, 8);" \
+  mobile/src/mailbox/mac.js src/mailbox/mac.test.js
+run "the store is written in one file only (the scan)" \
+  "export function createRoot({ React, store, View, Text }) {" \
+  "export async function aSecondWritePath(store) { return store.write('mailbox/u/inbox/x', 1); }
+export function createRoot({ React, store, View, Text }) {" \
+  mobile/src/app/root.js src/mailbox/write-path.test.js
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"

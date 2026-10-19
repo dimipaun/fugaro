@@ -33,7 +33,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { KIND, OUTCOME, REFUSAL, initialState, step } from '../../../shared/mailbox/index.js';
-import { validateMessage } from '../../../shared/mailbox-schema/index.js';
+import { REFUSALS as SCHEMA_REFUSALS, validateMessage } from '../../../shared/mailbox-schema/index.js';
 import { REASON, STATE, evaluatePresence } from '../../../shared/presence/index.js';
 import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
 import { CLIENT_CODES, MAILBOX_TTL_MS, PRESENCE_REASON, createMailboxClient, toPresenceHeartbeat } from './client.js';
@@ -189,6 +189,23 @@ async function harness(options = {}) {
   };
 }
 
+/**
+ * P3.1's `SecretStore`, with a log of how many times the material was asked
+ * for. "The key was not touched" is a claim about the ASK, not about what the
+ * store answered, so the count is the thing a test asserts.
+ */
+function countingKeys(inner) {
+  const asked = [];
+  return {
+    asked: () => Object.freeze([...asked]),
+    put: (accountId, item, value) => inner.put(accountId, item, value),
+    use: (accountId, item, fn) => {
+      asked.push(item);
+      return inner.use(accountId, item, fn);
+    },
+  };
+}
+
 /** Put the pairing key in the store, the way `fugaro pair` would (D111). */
 async function pair(keys, key = MAC_KEY, accountId = ACCOUNT.id) {
   const made = secret('macKey', key);
@@ -333,6 +350,18 @@ test('the client is frozen, and so are the paths it writes to', async () => {
   }, TypeError);
 });
 
+test('the client object is exactly its six names, and nothing else is on it', async () => {
+  // `index.test.js` pins the DOOR's export set; the object the builder returns
+  // is the other half of the same rule, and it is the one a screen holds. A
+  // `raw(path, value)` added here "for one screen" would be a second write path
+  // with its own key handling -- the thing D113 and this whole task are about.
+  const h = await harness();
+  assert.deepEqual(Object.keys(h.client).sort(), ['flush', 'ok', 'paths', 'pending', 'poll', 'send']);
+  for (const name of ['raw', 'write', 'read', 'store', 'keys', 'key', 'mac', 'database', 'ref']) {
+    assert.equal(name in h.client, false, name);
+  }
+});
+
 test('the mailbox is the account\'s uid, and the key is the account\'s id', async () => {
   // D114's tuple names the installation (the keychain item); the rules' `$mb ==
   // auth.uid` names the mailbox. A client that conflated them would write to
@@ -422,6 +451,63 @@ test('a text that is not text, or too long, is refused before anything is signed
   // The bound itself is the schema's, and the schema's own limit passes.
   assert.equal((await h.client.send('a'.repeat(4096))).ok, true);
   assert.equal(h.store.writes().length, 1, 'only the utterance that fits was attempted');
+});
+
+test('a text nobody can sign is refused as unsignable, and never as key-unreadable', async () => {
+  // `canonicalBytes` throws for the characters the two languages spell
+  // differently -- U+2028 and U+2029, which Go's encoder escapes and
+  // JavaScript's does not, and an unpaired surrogate -- so the tag cannot be
+  // computed for them at all. That throw happens INSIDE the key's callback,
+  // where it would otherwise be indistinguishable from a Keychain that would not
+  // open: the owner would be sent to re-pair over a character in their own
+  // sentence. It is asked before the key is touched instead.
+  const h = await harness({ keys: countingKeys(new SecretStore(new MemorySecureStore())), newId: () => 'm-1' });
+  for (const [name, text] of [
+    ['U+2028 LINE SEPARATOR', 'run 42 finished'],
+    ['U+2029 PARAGRAPH SEPARATOR', 'run 42 finished'],
+    ['an unpaired high surrogate', 'run 42\ud800finished'],
+    ['an unpaired low surrogate', 'run 42\udc00finished'],
+  ]) {
+    assert.deepEqual(await h.client.send(text), refuse(CLIENT_CODES.UNSIGNABLE, 'text'), name);
+  }
+  assert.deepEqual(h.keys.asked(), [], 'the key was not even asked for');
+  assert.deepEqual(h.store.writes(), [], 'and nothing was written');
+  assert.deepEqual(h.client.pending(), [], 'nor is an unsendable utterance something to show as pending');
+  // Nothing was recorded as used either: the id source's first id is still
+  // free, so the same sentence without the character is a message.
+  const sent = await h.client.send('run 42 finished');
+  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0 });
+  assert.equal(h.keys.asked().length, 1, 'the key is asked for once, by the send that could be signed');
+  assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
+  assertD113WriteSet(h.store, h.paths);
+});
+
+test('a control character is refused with the schema\'s reason, and nothing is written', async () => {
+  // The other half of the same question, and a different answer: U+0007 and its
+  // neighbours ARE signable (`JSON.stringify` escapes them the same way in both
+  // languages), so the tag is made -- and it is the schema that refuses the
+  // record, with its own code, before the write. Deleting that validation would
+  // leave a message carrying a control character in the inbox, so this test is
+  // what holds the validation in place.
+  const h = await harness();
+  for (const [name, text] of [
+    ['U+0000 NUL', 'run\u000042'],
+    ['U+0007 BELL', 'run 42\u0007'],
+    ['U+000B LINE TABULATION', 'run\u000b42'],
+    ['U+007F DELETE', 'run 42\u007f'],
+  ]) {
+    assert.deepEqual(await h.client.send(text), refuse(SCHEMA_REFUSALS.BAD_CHARACTER, 'text'), name);
+  }
+  assert.deepEqual(h.store.writes(), [], 'a record the schema refuses is never attempted');
+  assert.deepEqual(h.client.pending(), []);
+  // The edge of that rule is the SCHEMA's and not this module's: its text rule
+  // is the C0 controls and DEL, so a line break, a tab and a C1 control are all
+  // sent -- D118 redacts and signs a sentence, it does not flatten it, and a
+  // second character rule here would be a rule the consumer does not share.
+  for (const text of ['run 42\nfinished', 'run 42\tfinished', 'run 42\r\nfinished', 'run 42\u009cfinished']) {
+    assert.equal((await h.client.send(text)).ok, true, JSON.stringify(text));
+  }
+  assertD113WriteSet(h.store, h.paths);
 });
 
 test('a clock that is not a time, and an id that is not a database key, are refused', async () => {

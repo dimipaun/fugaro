@@ -52,7 +52,12 @@
 import { validateAccount } from '../accounts/account.js';
 import { SECRET_ITEMS } from '../accounts/secret.js';
 import { SECURE_STORE_CODES } from '../accounts/secure-store.js';
-import { TEXT_MAX, validateHeartbeat, validateMessage } from '../../../shared/mailbox-schema/index.js';
+import {
+  TEXT_MAX,
+  canonicalBytes,
+  validateHeartbeat,
+  validateMessage,
+} from '../../../shared/mailbox-schema/index.js';
 import {
   MAX_INTERVAL_MS,
   MIN_INTERVAL_MS,
@@ -144,6 +149,54 @@ function refuse(code, field) {
 
 function freezeList(items) {
   return Object.freeze(items);
+}
+
+/**
+ * Does this value have ONE canonical byte string -- the question `macOf` is
+ * about to ask, put before the key is touched?
+ *
+ * `canonicalBytes` is the authority and is **asked** rather than reimplemented:
+ * it throws for a value the two languages would spell differently (U+2028 and
+ * U+2029, which Go's encoder escapes and JavaScript's does not; an unpaired
+ * surrogate) and for a value with no canonical form at all. A record carrying
+ * one cannot be signed by anyone, at either end.
+ *
+ * It does **not** refuse a control character: `JSON.stringify` escapes those
+ * the same way in both languages, so U+0007 signs and the schema is what
+ * refuses it (`bad-character`). Two different questions, two different codes.
+ */
+function signable(value) {
+  try {
+    canonicalBytes(value, WRITE_DIRECTION);
+    return true;
+  } catch (error) {
+    // `canonicalBytes` refuses a value by THROWING a TypeError, and that is the
+    // only thing this catch may read as "cannot be signed": a ReferenceError or
+    // a TypeError from anywhere else would be a bug in this module, and reading
+    // it as a refusal would hide it behind a sentence about the owner's text.
+    if (error instanceof TypeError) return false;
+    throw error;
+  }
+}
+
+/**
+ * Which field of a record has no canonical byte string -- `text` for a sentence
+ * holding U+2028, `sender` for an Auth uid holding an unpaired surrogate --
+ * or `null` when every field of it can be signed.
+ *
+ * The whole record is asked first and the fields are asked only to NAME the
+ * culprit: a refusal that could not say which field it was about would send the
+ * owner through their whole sentence looking for a character nothing displays.
+ */
+function unsignableField(record) {
+  if (signable(record)) return null;
+  for (const field of Object.keys(record)) {
+    if (!signable({ [field]: record[field] })) return field;
+  }
+  // Unreachable while the record is a flat object of scalars built here, and
+  // answered as "the text" rather than as `null` if it ever is reached: the
+  // text is the only field a caller supplies.
+  return 'text';
 }
 
 /**
@@ -315,10 +368,12 @@ export function createMailboxClient(options = {}) {
    * written to this mailbox's inbox and nowhere else.
    *
    * The order is the rule. The text is redacted before it is signed (D118), the
-   * tag is computed inside the key's callback (so no code here ever holds the
-   * key), and the finished record is validated by the schema before it is
-   * written -- so a record the rules or the consumer would refuse is never
-   * attempted, and no unsigned record ever reaches the store.
+   * record is asked whether it HAS a canonical byte string before the key is
+   * touched (`unsignable` -- a character the two languages spell differently is
+   * not a key problem), the tag is computed inside the key's callback (so no
+   * code here ever holds the key), and the finished record is validated by the
+   * schema before it is written -- so a record the rules or the consumer would
+   * refuse is never attempted, and no unsigned record ever reaches the store.
    *
    * @param {unknown} text what the owner said
    * @returns {Promise<{ok: true, id: string, at: number}
@@ -333,6 +388,20 @@ export function createMailboxClient(options = {}) {
     if (at === null) return refuse(CLIENT_CODES.BAD_CLOCK, 'now');
     const id = newId();
     if (!isDatabaseKey(id)) return refuse(CLIENT_CODES.BAD_ID, 'newId');
+
+    // `mac` is outside the bytes it covers, so the tag is made over the record
+    // without it and attached after: one definition of the signed bytes, the
+    // schema's.
+    const base = Object.freeze({ id, sender: from, text: body.text, at });
+    // **Before the key is touched, and never as `key-unreadable`.** A field with
+    // no single canonical byte string makes `canonicalBytes` throw, and inside
+    // the key's callback that throw is indistinguishable from a Keychain that
+    // would not open -- so the owner would be sent to re-pair over a character
+    // in their own sentence. Nothing is signed, nothing is written, and no id is
+    // recorded as used (which is why this is asked before `minted` is touched).
+    const unsignable = unsignableField(base);
+    if (unsignable !== null) return refuse(CLIENT_CODES.UNSIGNABLE, unsignable);
+
     // An id already minted is not reused: the rules refuse the second write
     // (`!data.exists()`), the consumer keeps the FIRST message, and this
     // utterance would be lost silently. That is the id source's bug, and it is
@@ -340,11 +409,7 @@ export function createMailboxClient(options = {}) {
     if (minted.has(id)) return refuse(CLIENT_CODES.ID_CONFLICT, 'newId');
     minted.add(id);
 
-    // `mac` is outside the bytes it covers, so the tag is made over the record
-    // without it and attached after: one definition of the signed bytes, the
-    // schema's.
-    const base = Object.freeze({ id, sender: from, text: body.text, at });
-    const tag = await withKey((key) => macOf(base, key, 'inbox'));
+    const tag = await withKey((key) => macOf(base, key, WRITE_DIRECTION));
     if (!tag.ok) return keyRefusal(tag);
     const record = Object.freeze({ ...base, mac: tag.result });
     const valid = validateMessage(record);

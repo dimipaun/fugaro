@@ -202,6 +202,31 @@ test('a tag that is missing, malformed, or another record\'s is refused', () => 
   }
 });
 
+test('a tag that differs only past the eighth character is refused too', () => {
+  // The comparison is over the WHOLE tag. Every other case in this file differs
+  // in the first character (a wrong case, a `z`, an `f`) or in the length, so a
+  // comparison that stopped after eight hex characters -- 32 bits, which an
+  // attacker can search -- would answer `true` here and every one of them would
+  // still pass. The positions below are spread over the rest of the tag,
+  // including the last character.
+  const message = { id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1_700_000_000_000 };
+  const mac = macOf(message, KEY, 'inbox');
+  assert.equal(verifyMac({ ...message, mac }, KEY, 'inbox'), true, 'the control');
+  assert.equal(mac.length, 64);
+  for (const position of [8, 9, 15, 16, 31, 32, 48, 63]) {
+    const flipped = `${mac.slice(0, position)}${mac[position] === 'a' ? 'b' : 'a'}${mac.slice(position + 1)}`;
+    assert.notEqual(flipped, mac);
+    assert.equal(
+      verifyMac({ ...message, mac: flipped }, KEY, 'inbox'),
+      false,
+      `a tag whose hex character ${position} was changed`,
+    );
+    // ... and the same record signed again with the altered tag is not equal to
+    // the original either: the control is about the comparison, not the hash.
+    assert.equal(macOf(message, KEY, 'inbox'), mac);
+  }
+});
+
 test('a key that is not the pairing key is refused, and the refusal never throws', () => {
   const message = { id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1_700_000_000_000 };
   const signed = { ...message, mac: macOf(message, KEY, 'inbox') };
