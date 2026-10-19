@@ -1667,7 +1667,7 @@ func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 		// the launcher grants it had just measured. The surface a person has
 		// to be able to read is the whole point of such a check, and the
 		// summary line is exactly what tells them the read found nothing.
-		if !c.OK && c.Severity != "info" {
+		if !c.OK {
 			failed = true
 		}
 		line := c.ID + ": "
