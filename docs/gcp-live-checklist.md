@@ -4958,6 +4958,11 @@ grep -n "cosign verify-blob" website/data/install.yaml
    #623), a code block on Getting Started, a block of the rendered CLI reference on the docs
    hub, a usage line on the caps guide, and the chat's `fugaro watch` line on the home page.
    After each click, paste into a text editor and read it back.
+   **The caps guide's usage lines sit behind one disclosure** since the owner's brief of
+   2026-10-19: the page leads with what a job costs, and the commands are the detail under the
+   **Set the caps** summary. Open it before this step — a closed `details` prints its commands
+   in the DOM but not on the screen — and step 4 is unchanged, since a reader needs no script
+   to open it.
    **FACT:** for each control, what the clipboard held. The content has to be **that command
    and nothing else** — no `$` prompt, no blinking caret, no line of output beside it, no page
    furniture. The block whose command runs to several lines is the case that makes this check

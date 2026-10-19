@@ -89,9 +89,9 @@
 // same deltas — `main`'s fix rounds and this branch's redesign's own; the `fugaro watch`
 // picture landing on the homepage; the menu's drawer coming out and the script's comments going
 // back in step with it; the console's release turning `features.console_downloads` on;
-// Getting Started's three bands; the console's screenshot slider; and the run on How It Works
-// becoming one vertical timeline — each re-derived in the commit that moved it (D192). None of
-// those figures is repeated here, because a figure in a comment is a figure that moves with
+// Getting Started's three bands; the console's screenshot slider; the run on How It Works
+// becoming one vertical timeline; and the caps-and-costs rework — each re-derived in the commit
+// that moved it (D192). None of those figures is repeated here, because a figure in a comment is a figure that moves with
 // nothing when the build moves, which is what happened to the copy that used to be in this one;
 // the case below reads the README's figures and holds them to the build it makes itself.
 //
