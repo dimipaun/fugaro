@@ -28,9 +28,9 @@
 #
 # GATED OFF since 0.8.6 (owner's ruling, 2026-10-18: "Gate it off by default;
 # redesign for 0.9.0" — moved to 0.9.5 by the owner's ruling of 2026-10-19, so
-# 0.9.0 ships with the role still gated off, as 0.8.6 and 0.8.7 do). The
-# scoped role and its conditioned binding exist only
-# when var.managed_deployer_scoped is true, and nothing sets it: the condition
+# 0.9.0 ships with the role still gated off, as 0.8.6 and 0.8.7 do). The scoped
+# role and its conditioned binding exist only when var.managed_deployer_scoped
+# is true, and nothing sets it: the condition
 # below cannot be accepted by IAM as written. It joins 9 clauses with 17
 # logical operators where IAM allows 12, it calls resource.name.contains(),
 # which is not a supported function (startsWith, endsWith, extract, == and !=
