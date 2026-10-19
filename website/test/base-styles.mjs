@@ -2698,7 +2698,16 @@ test('the copy-control placement rule reads every command block, and refuses the
  */
 export function installCommandFailures(css) {
   const out = []
-  const rules = allRules(css).filter((rule) => /\.home-install-command(?![\w-])/.test(rule.selector))
+  // Every rule that styles a command block's own `<pre>`, **wherever the block is**. The
+  // homepage's install commands carry a class of their own, and every other command block on the
+  // site — Getting Started's install cards, the chat's watch command — is reached by
+  // `base.css`'s `.command-block > pre`. Reading only the homepage's class left the site's other
+  // install commands held by nothing, which is where this rule's own defect then reappeared: the
+  // `pre` gives up the width of the copy control beside it, so the page whose whole job is the
+  // install pushed `go install …@latest` out of its card first.
+  const rules = allRules(css).filter(
+    (rule) => /\.home-install-command(?![\w-])/.test(rule.selector) || /\.command-block\s*>\s*pre(?![\w-])/.test(rule.selector),
+  )
   if (rules.length === 0) return out
   const declared = (property) => rules.map(declarations).map((d) => d[property]).filter(Boolean).pop() ?? ''
   // A `<pre>`'s own default when the stylesheet declares nothing: the command keeps the single
@@ -2719,21 +2728,24 @@ export function installCommandFailures(css) {
   return out
 }
 
-test('the homepage’s install commands wrap rather than being cut off', () => {
+test('every command block on the site wraps rather than being cut off', () => {
   const failures = []
   let checked = 0
   for (const { rel, html } of builtPages()) {
-    if (!html.includes('home-install-command')) continue
+    // A command block *element*: the marker is the `[data-copy]` attribute the control needs,
+    // written the way markup writes it — the stylesheet every page carries names the class and
+    // the attribute, so a substring test on either would say every page has a command block.
+    if (!html.includes('data-copy ')) continue
     checked += 1
     failures.push(...installCommandFailures(pageCss(html)).map((line) => `${rel}: ${line}`))
   }
-  assert.ok(checked > 0, 'no built page carries an install command, and the homepage offers the two ways to install the CLI (changes spec 2026-10-18, item 4)')
-  assert.deepEqual(failures, [], `an install command is cut off rather than read:\n  ${failures.join('\n  ')}`)
+  assert.ok(checked > 0, 'no built page carries a command block, and the homepage offers the two ways to install the CLI (changes spec 2026-10-18, item 4)')
+  assert.deepEqual(failures, [], `a command is cut off rather than read:\n  ${failures.join('\n  ')}`)
 })
 
-test('every install-command refusal fires on the defect it names', () => {
+test('every command-block refusal fires on the defect it names', () => {
   const css = TODAY()
-  assert.ok(css.includes('home-install-command'), 'the homepage carries no install command, so the cases below would pass without reading the block they are about')
+  assert.ok(css.includes('command-block'), 'the homepage carries no command block, so the cases below would pass without reading the block they are about')
   assert.deepEqual(installCommandFailures(css), [], 'the install-command rule fails on the built stylesheet, so the cases below are not proving what they name')
 
   // The defect as it shipped: a `<pre>` that keeps the command on its line and scrolls the
@@ -2754,6 +2766,22 @@ test('every install-command refusal fires on the defect it names', () => {
   assert.ok(
     unbreakableFailures.some((f) => /nothing breaks its long token/.test(f)),
     `a command that wraps without a break opportunity was not refused; the check said:\n  ${unbreakableFailures.join('\n  ') || '(nothing)'}`,
+  )
+
+  // **And the same defect on a page the homepage's class never reached**, which is the review's
+  // finding: Getting Started's install cards carry no `home-install-command` — the assertion
+  // below says so — so a check that read only that class returned nothing for the page whose
+  // whole job is the install, while `base.css`'s `.command-block > pre` is the rule that decides
+  // every command on it. Planting the clipped `pre` there is refused now, and would not have
+  // been refused before the widening.
+  const install = pageCss(readFileSync(path.join(DIST, 'getting-started', 'index.html'), 'utf8'))
+  assert.ok(!install.includes('.home-install-command'), 'the install page carries the homepage’s install-command class, so this case would not prove the widening it is about')
+  const installClipped = install.replace('white-space:pre-wrap;overflow-wrap:anywhere', 'white-space:pre;overflow-x:auto')
+  assert.notEqual(installClipped, install, 'this fixture rewrites the command block’s own declarations, and the built stylesheet no longer carries them')
+  const installFailures = installCommandFailures(installClipped)
+  assert.ok(
+    installFailures.some((f) => /does not wrap it/.test(f)),
+    `the install page's clipped command was not refused; the check said:\n  ${installFailures.join('\n  ') || '(nothing)'}`,
   )
 })
 

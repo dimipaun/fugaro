@@ -53,20 +53,31 @@
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: 333,814 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
-//     weighed 267,051 bytes: its HTML (the whole generated CLI reference) plus the first-party
+//   - Page weight per page: 333,869 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
+//     weighed 267,095 bytes: its HTML (the whole generated CLI reference) plus the first-party
 //     files it fetches — the script above and the logo and icons the layout links; × 1.25,
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,053,935 bytes. Every file in `dist/` on that build summed to 843,148
+//   - Whole site: 1,054,485 bytes. Every file in `dist/` on that build summed to 843,588
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up. The last fix round re-derived it 54 bytes under the merge's: the
 //     install section's own top padding came off, because the flow above it carries the gap
 //     between them, and that is a shorter `padding` in the stylesheet — the homepage's own CSS
 //     is inlined in its page, so the page that carries it and the site figure move together.
-//     The page weight above does not move with it: the heaviest page is the docs hub, which
-//     renders neither the flow nor the install section.
+//     The page weight did not move with it: the heaviest page is the docs hub, which renders
+//     neither the flow nor the install section.
+//     **The round after that moved both figures up**, by the two declarations that make a
+//     command wrap — `white-space: pre-wrap; overflow-wrap: anywhere`, moved from the
+//     homepage's own `.home-install-command` onto `base.css`'s `.command-block > pre` because
+//     the copy control now shares the command's row and every command on the site gives up the
+//     control's width. The base stylesheet is inlined into every page, so ten of the eleven
+//     grew by those 44 bytes and the homepage did not, the declarations having left one of its
+//     own rules for the base one: 440 bytes onto the site figure and 44 onto the page weight,
+//     which is derived from the heaviest page — the docs hub — and that page carries the same
+//     inlined rule. The README states the same figures and the same reason, one bullet up from
+//     this file's name in its gates list, and the case below is what holds the figures to the
+//     build.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:

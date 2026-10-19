@@ -10,18 +10,24 @@
  * **Why it is not in the hero any more.** The hero used to carry the promise, the install
  * commands and the chat, and item 4 asks for the run's picture to be the thing under the
  * promise rather than the fourth block down: the homepage is now the promise and its call to
- * action, the diagram, the chat, and then this — the commands, for the reader who has read
- * what Fugaro is and decided. It sits below the picture rather than above it, and it is
- * quieter than both: smaller type, one step of border, no accent of its own, so the loudest
- * thing on the page stays the diagram (spec item 4's acceptance).
+ * action, the chat, the diagram, and then this — the commands, for the reader who has read
+ * what Fugaro is and decided. It sits below the diagram and it is the page's last section, and
+ * the quietest of the three: smaller type, one step of border, no accent of its own, so the
+ * loudest thing on the page stays the diagram (spec item 4's acceptance). The order is the
+ * built `dist/index.html`'s — `index.astro` renders Hero, then `.home-chat`, then `.home-flow`,
+ * then this component; review round 5 moved the chat above the diagram, which is the reverse of
+ * the order the earlier rounds recorded.
  *
  * **The commands wrap rather than being cut off.** The two paths share a row of about 22 rem
  * each, and `go install github.com/dimipaun/fugaro/cmd/fugaro@latest` is wider than that at
  * the size a command is set: with `overflow-x: auto` alone the line was silently clipped at
  * the card's edge (`…@late`), which is a command a reader cannot read and cannot see is
- * incomplete. The `pre` below wraps its command instead — `white-space: pre-wrap` with
+ * incomplete. A command block's `pre` wraps its command instead — `white-space: pre-wrap` with
  * `overflow-wrap: anywhere`, so a long token breaks rather than running out of the card — and
- * `website/test/base-styles.mjs` refuses an install command whose rule clips it.
+ * `website/test/base-styles.mjs` refuses a command block whose rule clips one. The wrapping is
+ * declared once, on `base.css`'s `.command-block > pre`, rather than here: the control sits in
+ * the command's own row, so every command on the site gives up the control's width, and this
+ * component's own rule would have reached only this page's two.
  */
 import { loadSite } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
@@ -131,11 +137,12 @@ const paths = HOME_PATHS.map((id) => {
     color: var(--text-muted);
   }
 
-  /* The command wraps instead of scrolling out of sight: `white-space: pre-wrap` keeps the
-     command's own line structure, and `overflow-wrap: anywhere` lets a long token — the
-     `go install …@latest` line is one 44-character token — break at the card's edge rather
-     than run past it. `website/test/base-styles.mjs` reads this rule and refuses a command
-     block that would clip its command silently. */
+  /* The command's own look. What it does *not* do here is decide that the command wraps: the
+     copy control sits in the command's row, so every command block's `pre` gives up the
+     control's width, and `base.css`'s `.command-block > pre` is where the wrapping is declared
+     — for this page's commands and for Getting Started's, which this rule never reached
+     (review of this branch). One rule, one place, and `website/test/base-styles.mjs`'s
+     `installCommandFailures` reads that selector as well as this class. */
   .home-install-command {
     margin: 0;
     padding: var(--space-2xs) var(--space-sm);
@@ -144,8 +151,6 @@ const paths = HOME_PATHS.map((id) => {
     color: var(--text);
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
 
   .home-install-note {

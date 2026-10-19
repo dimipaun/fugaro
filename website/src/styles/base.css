@@ -391,10 +391,25 @@ a.skip-link:focus {
 
 /* The command takes the width the control leaves, and breaks inside itself rather than
  * pushing the control out of the block: a `pre`'s content box is as wide as its longest line,
- * and `min-width: 0` is what lets it shrink below that. */
+ * and `min-width: 0` is what lets it shrink below that.
+ *
+ * **And it wraps, at every width and on every page.** The control sits in the command's own row
+ * now, so the `pre` gives up the control's width — about 45 px, the button plus the row's gap —
+ * and a `pre` that only scrolls (the `pre` default, `white-space: pre` with `overflow-x: auto`)
+ * hides the end of a long command instead of showing it: `go install
+ * github.com/dimipaun/fugaro/cmd/fugaro@latest` is 55 characters on one line, which is 495 px
+ * at 15 px in the install cards — wider than the 468 px box Getting Started gives it — and the
+ * reader sees `…@late`. `pre-wrap` keeps the command's own line structure; `overflow-wrap:
+ * anywhere` gives a token with no break opportunity somewhere to break. The two declarations
+ * used to live on the homepage's own `.home-install-command`, which is why the defect came back
+ * on the pages this rule is the only one to reach (review of this branch, again): every command
+ * block on the site is held by this one, and `website/test/base-styles.mjs`'s
+ * `installCommandFailures` reads this selector as well as the homepage's class. */
 .command-block > pre {
   flex: 1 1 auto;
   min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* The control's own box: its button, its confirmation and nothing else. It is the first item

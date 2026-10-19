@@ -171,7 +171,15 @@ added or removed without this sentence moving fails there:
   commit that moved it. The review of that round's changes then took the install section's own
   top padding off — the flow above it already carries the gap between the two blocks — which
   is the whole-site figure 54 bytes lower and the page weight where it was, the heaviest page
-  being the docs hub, which renders neither block. That is the same rule every time (D192),
+  being the docs hub, which renders neither block. The round after that moved both figures
+  **up**: the two declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap:
+  anywhere`) moved from the homepage's own `.home-install-command` onto `base.css`'s
+  `.command-block > pre`, because the copy control now shares the command's row and every
+  command on the site gives up the control's width, and the base stylesheet is inlined into
+  every page — ten of the eleven grew by those 44 bytes and the homepage did not, the
+  declarations having left one of its own rules for the base one. That is the whole-site figure
+  440 bytes higher, and the page weight 44, because the page it is derived from — the heaviest
+  one, the docs hub — carries the same inlined rule. That is the same rule every time (D192),
   and it is also why **the page and the site move with the script**: a script every page
   loads is a page's weight as well as its JavaScript.
 
@@ -198,10 +206,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,001,442 bytes. Three times 333,814: the heaviest page, the
-    docs hub, at 267,051 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,001,607 bytes. Three times 333,869: the heaviest page, the
+    docs hub, at 267,095 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,161,805 bytes. Three times 1,053,935 (every file in `dist/`, 843,148
+  - **Whole site:** 3,163,455 bytes. Three times 1,054,485 (every file in `dist/`, 843,588
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -250,8 +258,12 @@ added or removed without this sentence moving fails there:
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
   is a statement about the built pages, though, and it is this file's rules: the homepage's lead
-  region holds one element and it is the promise, so the install block and the chat are the
-  section the heading opens; Getting Started's install section opens with its commands, with the
+  region holds four elements — the promise, the row of links under it, and the two links in that
+  row — and the `h2` it stops at is the chat's own *Through your agent*: the illustration the
+  page puts directly under the promise is that heading's own block, sitting between the `h1` and
+  the `h2` that opens it, so the gate takes those elements out of the region before reading it.
+  The chat, the diagram and the install block are the sections that open after the lead region;
+  Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
   first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its

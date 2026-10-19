@@ -223,8 +223,8 @@ here goes stale the way the byte budgets did before D192.
   the same script again. So the figures below are derived once, over the build the merge
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
-  **page weight per page 1,001,442** (three times 333,814; the docs hub 267,051 bytes) and
-  **whole site 3,161,805** (three times 1,053,935; 843,148 bytes across 21 files). The fix
+  **page weight per page 1,001,607** (three times 333,869; the docs hub 267,095 bytes) and
+  **whole site 3,163,455** (three times 1,054,485; 843,588 bytes across 21 files). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
@@ -232,7 +232,12 @@ here goes stale the way the byte budgets did before D192.
   bytes lower: the install section's own top padding came off, because the flow above it
   already carries the gap between the two blocks (the fifth round below). The page weight did
   not move with it — the heaviest page is the docs hub, and that page renders neither the flow
-  nor the install section — and the JavaScript is untouched. The figures above are the build
+  nor the install section — and the JavaScript is untouched. And the round that followed the
+  fifth moved both figures the other way, 440 bytes onto the site and 44 onto the page weight,
+  by moving the two declarations that make a command wrap onto `base.css`'s
+  `.command-block > pre`, which every page inlines: the copy control shares the command's row
+  now, so the rule belongs to every command block on the site rather than to the homepage's
+  install class alone (the fifth round below). The figures above are the build
   this branch ships. It is the
   sixth re-derivation on this branch's side — the second fix round moved the homepage's order,
   the flow's treatment, the chat's launch line, the install command's wrapping and the chat's
