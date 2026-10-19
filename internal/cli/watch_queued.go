@@ -326,8 +326,14 @@ type queuedScanner struct {
 	// one repository's run reads. pruneFinishedCache drops entries whose
 	// FinishedAt has aged out of finishedLookback, so the cache never
 	// grows past what one scan's window could hold.
+	//
+	// The job is cached beside the row, not left to be re-read: a cache hit
+	// reads no launch.json, and the scan's jobs map is what stamps a row's
+	// job onto the view (watch.MergeJobs), so an entry that carried only the
+	// row would give the scan that first saw a run finish a job for it and
+	// every later scan none.
 	cacheMu       sync.Mutex
-	finishedCache map[string]watch.FinishedRun
+	finishedCache map[string]finishedEntry
 
 	env *cloudEnv
 	// index places the job names the runs' launch.json records, when the
@@ -441,22 +447,32 @@ func (s *queuedScanner) connect(ctx context.Context) (*cloudEnv, error) {
 	}
 }
 
-// cachedFinished is key's cached finished run, if any.
-func (s *queuedScanner) cachedFinished(key string) (watch.FinishedRun, bool) {
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
-	f, ok := s.finishedCache[key]
-	return f, ok
+// finishedEntry is one entry of the finished cache: the row a read produced,
+// and the job its launch.json named ("" when it had none to name — the same
+// empty scanResult.Job the read itself carries).
+type finishedEntry struct {
+	run watch.FinishedRun
+	job string
 }
 
-// cacheFinished remembers f under key, so a later scan does not re-read it.
-func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun) {
+// cachedFinished is key's cached entry, if any.
+func (s *queuedScanner) cachedFinished(key string) (finishedEntry, bool) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	c, ok := s.finishedCache[key]
+	return c, ok
+}
+
+// cacheFinished remembers f — the row res produced and the job it was read
+// with — under key, so a later scan does not re-read it and still reports
+// the same run.
+func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun, job string) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if s.finishedCache == nil {
-		s.finishedCache = map[string]watch.FinishedRun{}
+		s.finishedCache = map[string]finishedEntry{}
 	}
-	s.finishedCache[key] = f
+	s.finishedCache[key] = finishedEntry{run: f, job: job}
 }
 
 // pruneFinishedCache drops every cached entry whose FinishedAt is before
@@ -466,8 +482,8 @@ func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun) {
 func (s *queuedScanner) pruneFinishedCache(finishedSince time.Time) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	for key, f := range s.finishedCache {
-		if f.FinishedAt.Before(finishedSince) {
+	for key, c := range s.finishedCache {
+		if c.run.FinishedAt.Before(finishedSince) {
 			delete(s.finishedCache, key)
 		}
 	}
@@ -507,8 +523,12 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 	results := make([]result, len(ids))
 	var toRead []int
 	for i, id := range ids {
-		if f, ok := s.cachedFinished(slug + "/" + id); ok {
-			results[i] = result{scanResult{IsFinished: true, Finished: f}, nil, true}
+		if c, ok := s.cachedFinished(slug + "/" + id); ok {
+			// The job comes back with the row: the jobs map below is built from
+			// these results, and a row with no job is a row MergeJobs leaves as
+			// it is — a finished run would show its job for the scan that read
+			// it and none for every scan afterwards.
+			results[i] = result{scanResult{IsFinished: true, Finished: c.run, Job: c.job}, nil, true}
 			continue
 		}
 		toRead = append(toRead, i)
@@ -525,7 +545,7 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 					continue // cut off: the result is not trusted
 				}
 				if res.IsFinished {
-					s.cacheFinished(slug+"/"+ids[i], res.Finished)
+					s.cacheFinished(slug+"/"+ids[i], res.Finished, res.Job)
 				}
 				results[i] = result{res, err, true}
 			}
