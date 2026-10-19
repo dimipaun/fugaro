@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -21,10 +23,14 @@ import (
 // has to get right and a reviewer is least likely to check twice:
 //
 //  1. **the numbers it takes.** D193–D200 is claimed to be the next FREE block,
-//     which is only true while the highest number written anywhere in docs/ is
-//     D192 — so this test reads that highest number out of the tree rather than
-//     trusting the plan's memory of it, and refuses a claim of a free block that
-//     is not free.
+//     which is a claim about the tree, so it is read from the tree and not from
+//     the plan's memory of it. Two halves, and both are over documents rather
+//     than over a phrase: the blocks the two allocation documents record are
+//     walked, so a block reaching into D193–D200 is a collision; and **every
+//     markdown file under docs/ is walked** for a range statement that reaches
+//     into the block, so a number taken in a third document — which the two-
+//     document walk cannot see — is caught by the same test. Each place the plan
+//     states its block must state it as D193–D200 and as the next free one.
 //  2. **the checks it takes, and the ones it leaves.** 111–113, the first free
 //     numbers after EVERY claim — 105–109 are reserved and unused, and the plan
 //     applies "an unused number is not a free number" to them exactly as the
@@ -50,18 +56,15 @@ import (
 // tree does not have is red the moment it is written down.
 //
 // Mutation (verified, run and restored): change D200 to D199 in the block the
-// plan claims; delete one flag name from §4.2; write a check row or a name for
-// 105 back into §12; add a `## Check 111` heading to the register; commit
+// plan claims; write a check row or a name for 105 back into §12; add a
+// `## Check 111` heading to the register; delete one flag name from §4.2; commit
 // `mobile/GoogleService-Info.plist` (the file the shape filter cannot see) or
 // `mobile/google-services.json`; state a check number the register does not
 // write as its highest section; un-date the Check 110 row's "nothing above 109"
-// claim; record 105, 106 and 107 as taken in the coordinator's checks row; or
-// cite a path the tree does not have — this test fails, each of them.
+// claim; record 105, 106 and 107 as taken in the coordinator's checks row; take a
+// number in D193–D200 from a third document under docs/; or cite a path the tree
+// does not have — this test fails, each of them.
 const telemetryPlan = "docs/plans/2026-10-19-mobile-telemetry.md"
-
-// telemetryBlockRE is the plan's own statement of the block it takes, in the
-// several places it makes it.
-var telemetryBlockRE = regexp.MustCompile(`D193[–-]D200`)
 
 // The two allocation documents, and the shapes a block is written in there:
 // `**D193–D200**` (a closed range) and `**D201 onward**` (open).
@@ -114,21 +117,65 @@ func telemetryCovers(b [3]int, n int) bool {
 	return b[2] == 1 || n <= b[1]
 }
 
+// telemetryStatedBlockRE finds a block statement the plan makes that starts at
+// D193. Every one of them has to end at D200, and that is asserted per statement
+// rather than by counting occurrences: a count anywhere in the document stays
+// green while one of the places says D193–D199, which is the drift this pin is
+// for.
+var telemetryStatedBlockRE = regexp.MustCompile(`D193[–-]D([0-9]+)`)
+
+// telemetryBlockPlaces are the places the plan states its block, each of which a
+// reader can land on without reading the others. The names are the readers, not
+// the line numbers: §2 is where the numbers are taken, §3 is the decisions table
+// a reader takes to the owner, and the closing paragraph is what the document
+// says it is when somebody quotes it.
+var telemetryBlockPlaces = []struct{ name, heading string }{
+	{"§2, The numbers this plan takes", "## 2. The numbers this plan takes"},
+	{"§3, Owner decisions", "## 3. Owner decisions"},
+	{"the closing status paragraph", "*Status of this document"},
+}
+
 func TestTelemetryPlanTakesTheNextFreeDecisionBlock(t *testing.T) {
 	doc := readDoc(t, telemetryPlan)
 
-	// The block, stated as a block, and stated as the next free one.
-	if n := len(telemetryBlockRE.FindAllString(doc, -1)); n < 3 {
-		t.Errorf("%s states the block it takes (D193–D200) in %d places: it must say so where the plan is described, where the numbers are taken and in the decisions table, so a reader who lands anywhere knows which block this is", telemetryPlan, n)
+	// The block, stated as a block — and every statement of it ending where the
+	// block ends. The first version of this pin counted occurrences anywhere in
+	// the document (`len(FindAllString) < 3`), which the plan's own §2.1 table
+	// demonstrated the weakness of: it could say D193–D199 while the sentence
+	// below it, the decisions heading and the closing paragraph all still said
+	// D193–D200, and the suite stayed green.
+	stated := telemetryStatedBlockRE.FindAllStringSubmatch(doc, -1)
+	if len(stated) < 3 {
+		t.Fatalf("%s states a block starting at D193 in %d places: it must say so where the numbers are taken, in the decisions table and in the closing paragraph, so a reader who lands anywhere knows which block this is", telemetryPlan, len(stated))
 	}
-	section := planSection(t, doc, "## 2. The numbers this plan takes")
-	for _, want := range []string{
-		"D193–D200", // the block
-		"free",      // that it is free
-	} {
-		if !strings.Contains(section, want) {
-			t.Errorf("%s's §2 does not say %q: the block it takes must be stated as the next free one, and that is the claim this test checks against the tree", telemetryPlan, want)
+	for _, m := range stated {
+		if m[1] != "200" {
+			t.Errorf("%s states the block it takes as D193–D%s: the block is D193–D200, and a block statement that ends anywhere else is a different block — the decisions table and the sentence beside it then disagree about which rows the owner is being asked for", telemetryPlan, m[1])
 		}
+	}
+	for _, place := range telemetryBlockPlaces {
+		start := strings.Index(doc, place.heading)
+		if start < 0 {
+			t.Fatalf("%s has no %q: update this test's markers rather than letting a place go unchecked", telemetryPlan, place.heading)
+		}
+		section := doc[start:]
+		if j := strings.Index(section[len(place.heading):], "\n## "); j >= 0 && place.heading != "*Status of this document" {
+			section = section[:len(place.heading)+j]
+		}
+		// The block, in the place itself, and — where the place is the one that
+		// takes the numbers — that it is the next free one.
+		if !strings.Contains(section, "D193–D200") {
+			t.Errorf("%s's %s does not state the block it takes (D193–D200): a place a reader lands on without reading the others has to say which block this is", telemetryPlan, place.name)
+		}
+		if place.heading == "## 2. The numbers this plan takes" && !strings.Contains(section, "free") {
+			t.Errorf("%s's §2 does not say the block is free: the brief asks for the next free block, and this is the place the plan takes it", telemetryPlan)
+		}
+	}
+	// The closing paragraph is what the document says it is when somebody quotes
+	// it, and it is a paragraph rather than a section — the sentence above takes
+	// it to the end of the file, which is where it is.
+	if closing := doc[strings.LastIndex(doc, "*Status of this document"):]; !strings.Contains(closing, "D193–D200") || !strings.Contains(closing, "free") {
+		t.Errorf("%s's closing status paragraph does not state the block it takes (D193–D200) as the next free one: that paragraph is the document's own summary, and it is the one a reader quotes", telemetryPlan)
 	}
 
 	// The claim, checked against the two documents that allocate blocks rather
@@ -173,6 +220,99 @@ func TestTelemetryPlanTakesTheNextFreeDecisionBlock(t *testing.T) {
 	}
 	if !strings.Contains(doc, "D194–D200 are open") && !strings.Contains(doc, "D194–D200 open") {
 		t.Errorf("%s does not record that D194–D200 are open for the owner: the plan recommends seven answers and approves nothing, and a block that reads as answered would let a task start on a recommendation", telemetryPlan)
+	}
+}
+
+// telemetryRangeRE finds a decision-number range as the documents write it:
+// "D1–D20", "D180–D192", "**D193–D200**", "D39–D54b". It needs the dash, so an
+// "onward" row ("D201 onward") and a bare mention ("D193 is already answered")
+// are not ranges and are not read as one.
+var telemetryRangeRE = regexp.MustCompile(`D([0-9]+)[a-z]?[–-]D?([0-9]+)`)
+
+// telemetryPlanWords are how a document says it is talking about THIS plan. A
+// paragraph that names one of them and states a range inside D193–D200 is
+// registering this plan, not staking a claim on it — docs/mobile/README.md's row
+// and the plan register's Phase 7 both do exactly that, and the block itself is
+// written across two wrapped lines there.
+var telemetryPlanWords = []string{"telemetry", "Phase 7", "P7.", "next free decision block"}
+
+// TestTelemetryPlanTakesTheOnlyBlockReachingD193 is the claim "D193–D200 is the
+// next free block", checked against **every markdown file under docs/** rather
+// than against the two allocation documents' summaries. The pin's own header said
+// it read the highest D-number written anywhere in docs/ out of the tree while
+// the code walked two files, so a number taken in a third document — a new design
+// claiming D193–D199, say — was not caught by the very test that pins "next
+// free". It is caught now, and the walk is over the tree.
+//
+// The statements allowed to reach into D193–D200 are this plan's own block, and
+// nothing else: a document that states D193–D200 is stating what this plan took
+// (docs/mobile/README.md's row and the phase in the plan register it that way),
+// and a document stating any other range that touches the block is a second
+// claim on a number that is taken.
+//
+// Mutation (verified, run and restored): append "**D193–D199** the widgets plan's"
+// to any document under docs/ other than this plan — docs/mobile/spec.md was
+// used — and this test fails, naming the file and the line.
+func TestTelemetryPlanTakesTheOnlyBlockReachingD193(t *testing.T) {
+	var files []string
+	err := filepath.WalkDir("../../docs", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, ".md") {
+			files = append(files, strings.TrimPrefix(path, "../../"))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The walk has to have read the tree: a regexp that stopped matching would
+	// otherwise pass by finding nothing.
+	if len(files) < 20 {
+		t.Fatalf("the walk over docs/ read %d markdown files, which is too few for it to be the tree: update this test's markers rather than letting a vacuous walk pass", len(files))
+	}
+	ranges := 0
+	for _, file := range files {
+		if file == telemetryPlan {
+			continue // this plan's own statements are the ones the pin is about
+		}
+		// **A paragraph, not a line**, because these documents wrap: the phase that
+		// registers this plan writes its block on one line and what the block is on
+		// the next, and reading them apart turns a sentence about this plan into a
+		// claim by somebody else.
+		line := 1
+		for _, para := range strings.Split(readDoc(t, file), "\n\n") {
+			flat := strings.Join(strings.Fields(para), " ")
+			about := false
+			for _, word := range telemetryPlanWords {
+				if strings.Contains(flat, word) {
+					about = true
+				}
+			}
+			for _, m := range telemetryRangeRE.FindAllStringSubmatch(flat, -1) {
+				lo, errLo := strconv.Atoi(m[1])
+				hi, errHi := strconv.Atoi(m[2])
+				if errLo != nil || errHi != nil || hi < lo {
+					continue
+				}
+				ranges++
+				if hi < 193 || lo > 200 {
+					continue
+				}
+				if lo == 193 && hi == 200 || about {
+					continue // this plan's block, or a paragraph about this plan
+				}
+				t.Errorf("%s:%d names the block D%d–D%d, which reaches into D193–D200: %s takes that block and no decision number is taken twice, so this is a statement made about a block that is not free", file, line, lo, hi, telemetryPlan)
+			}
+			line += strings.Count(para, "\n") + 2
+		}
+	}
+	if ranges < 20 {
+		t.Fatalf("the walk found %d decision-number ranges under docs/: too few for the reading above to mean anything, and a range matcher that stopped working would otherwise pass by finding no collision", ranges)
 	}
 }
 
@@ -379,20 +519,24 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 	doc := readDoc(t, telemetryPlan)
 
 	// The index: a row and a status sentence, the way the other mobile plans
-	// (and design/push-notifications.md) are registered.
+	// (and design/push-notifications.md) are registered. **The row is the unit
+	// checked, not the document**: these claims used to be searched for over the
+	// whole of docs/mobile/README.md, so the telemetry file-table row could lose
+	// its block or its check numbers while the numbers table below still named
+	// them, and the suite stayed green — a reader who followed the file table
+	// would have found no record of what the plan takes.
 	index := readDoc(t, "docs/mobile/README.md")
-	if !strings.Contains(index, "plans/2026-10-19-mobile-telemetry.md") {
-		t.Errorf("docs/mobile/README.md's file table has no row for %s: an unregistered plan is a plan the next reader does not find", telemetryPlan)
-	}
-	for _, want := range append([]string{"D193"}, telemetryTakenChecks...) {
-		if !strings.Contains(index, want) {
-			t.Errorf("docs/mobile/README.md's telemetry row does not name %s: the index records what a plan takes — its decision block and its checks — or a collision is found by the writer of the next plan", want)
+	fileRow := telemetryIndexRow(t, index, "| [../plans/2026-10-19-mobile-telemetry.md]")
+	for _, want := range append([]string{"D193–D200"}, telemetryTakenChecks...) {
+		if !strings.Contains(fileRow, want) {
+			t.Errorf("docs/mobile/README.md's telemetry file-table row does not name %s: the row is what a reader checking this plan lands on, and it is the row that has to record what the plan takes — its decision block and its checks — or a collision is found by the writer of the next plan", want)
 		}
 	}
 	// A reserved number is never reused: the functional spec's row keeps its
 	// original words and the telemetry plan's note is dated beside them.
-	if !strings.Contains(index, "105–109 reserved and unused") {
-		t.Errorf("docs/mobile/README.md no longer carries \"105–109 reserved and unused\": that phrase is the anchor docs_coordinator_test.go reads the 105–109 block from, and the telemetry plan's dated note must sit beside it rather than replace it")
+	reservedRow := telemetryIndexRow(t, index, "| **Checks 100–109** |")
+	if !strings.Contains(reservedRow, "105–109 reserved and unused") {
+		t.Errorf("docs/mobile/README.md's Checks 100–109 row no longer carries \"105–109 reserved and unused\": that phrase is the anchor docs_coordinator_test.go reads the 105–109 block from, and the telemetry plan's dated note must sit beside it in that row rather than replace it")
 	}
 
 	// **The two rows agree.** The Check 110 row (the voice design's own reading,
@@ -402,7 +546,6 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 	// record 111–113 as taken while the row below said nothing above 109 was
 	// claimed. Both must now say the same thing, and neither may carry the
 	// undated claim.
-	reservedRow := telemetryIndexRow(t, index, "| **Checks 100–109** |")
 	takenRow := telemetryIndexRow(t, index, "| **Check 110** |")
 	for _, row := range []struct{ name, text string }{
 		{"the Checks 100–109 row", reservedRow},
