@@ -1098,7 +1098,7 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
     slot,
     'the slot for the watch screenshot is not the element after the `fugaro watch` heading, and item 3 puts it right after the chat, with the command bar below it (changes spec 2026-10-18, item 3)',
   )
-  const figure = findAll((page), (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
+  const figure = findAll(page, (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
   assert.ok(figure, 'the homepage renders no <figure class="chat">, and the conversation and its caption are the figure (changes spec 2026-10-18, item 3)')
   for (let parent = slot.parent; parent; parent = parent.parent) {
     assert.notEqual(
@@ -1134,23 +1134,26 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
     `the watch screenshot is loaded as ${JSON.stringify(src)}${image.attrs.has('srcset') ? ' with a srcset' : ''}, and a page that fetches its own picture does not name another host for it: no scheme, no protocol-relative URL, no candidate list this check cannot follow (Global Constraint 9; \`test/origins.mjs\`)`,
   )
 
-  // **The alt names what the picture is**, because the picture is a terminal full of the
-  // owner's own run titles and numbers: a reader who cannot see it gets the transcription's
-  // gist (`public/images/fugaro-watch.txt` ships beside the image for exactly that), and
-  // `alt=""` would mark a reader's only account of a page's one photograph as decoration
-  // (the a11y gate refuses a missing `alt`; this refuses an empty one here).
+  // **The alt says what the picture shows**, because the picture is a terminal full of the
+  // owner's own run titles and spend: a reader who cannot see it is owed an account of the
+  // screen, and the transcription ships beside the image (`public/images/fugaro-watch.txt`) as
+  // the text that account is taken from. The a11y gate refuses a missing `alt`; what this
+  // refuses is an empty one — `alt=""` marks a reader's only account of a page's one
+  // photograph as decoration — and a stub too short to be one. The floor is a floor and not the
+  // wording: what the reader is told is the owner's, the same way the picture is.
   const alt = (image.attrs.get('alt') ?? '').trim()
   assert.ok(
     alt.length >= 40,
-    `the watch screenshot's alt is ${JSON.stringify(alt)}, and the picture is the owner's real \`fugaro watch\` screen: a reader who cannot see it is owed what it shows, not a label of four words (owner spec 2026-10-18, item 5; \`public/images/fugaro-watch.txt\`)`,
+    `the watch screenshot's alt is ${JSON.stringify(alt)}, and the picture is the owner's real \`fugaro watch\` screen: a reader who cannot see it is owed what the screen shows, from the transcription that ships beside the image (owner spec 2026-10-18, item 5; \`public/images/fugaro-watch.txt\`)`,
   )
 
   // **And the dimensions are the capture's own**, so the browser reserves the box before the
   // file arrives and the command bar under it does not jump — which is the whole reason the
   // attributes are there. They are held to the capture `docs/website/redesign/README.md`
-  // records rather than to themselves: a declared box of the wrong SHAPE (1459 x 440, a
-  // transposed pair) reserves the wrong box and squashes the picture to fit it, and that is
-  // this failure. The file the page names is the one the record is about.
+  // records rather than to themselves: a declared box of the wrong SHAPE — `1459 x 440`, one
+  // pixel off the height, or the two numbers swapped — reserves the wrong box and scales the
+  // picture into it, and that is this failure. The file the page names is the one the record
+  // is about.
   const record = /`website\/public\/images\/fugaro-watch\.png` \((\d+) x (\d+) px, a 2x retina capture, so (\d+) x (\d+) logical\)/.exec(
     repoFile('docs/website/redesign/README.md'),
   )
