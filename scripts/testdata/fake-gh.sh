@@ -8,11 +8,15 @@
 #                    perform a real squash merge against it
 #   FAKE_GH_REPO     nameWithOwner to report (default o/r)
 #   FAKE_GH_UNAUTH   non-empty: "gh auth status" fails
-#   FAKE_GH_CHECK_TEST / _TERRAFORM / _RULES   success (default) | failed |
-#                    missing | pending | cancelled: what the check-runs api
-#                    reports for that name
-#   FAKE_GH_POST_TEST / _TERRAFORM / _RULES    same, but only once a PR has
-#                    merged (overrides the above from then on)
+#   FAKE_GH_CHECK_TEST / _TERRAFORM / _RULES / _CONSOLE   success (default) |
+#                    failed | missing | pending | cancelled: what the
+#                    check-runs api reports for that name. _CONSOLE answers for
+#                    both console matrix legs, the two check runs the console
+#                    workflow reports (Task 4.6), so a test that sets it reads
+#                    the gate's answer for the first leg it requires,
+#                    `console (ubuntu-latest)`
+#   FAKE_GH_POST_TEST / _TERRAFORM / _RULES / _CONSOLE   same, but only once a
+#                    PR has merged (overrides the above from then on)
 #   FAKE_GH_PRE_PENDING_CALLS  before the merge, the api reports "pending"
 #                    for the first N calls per check name (CI still running
 #                    on main), then the configured FAKE_GH_CHECK_* value
@@ -26,8 +30,8 @@
 #   FAKE_GH_IDENTICAL_PR  non-empty: after the merge, the commit's pulls api
 #                    lists the PR (head = the pushed release branch); unset,
 #                    it lists none (the identical-tree lookup finds nothing)
-#   FAKE_GH_HEAD_TEST / _TERRAFORM / _RULES   success (default) | failed |
-#                    missing | pending | cancelled on that PR head
+#   FAKE_GH_HEAD_TEST / _TERRAFORM / _RULES / _CONSOLE   success (default) |
+#                    failed | missing | pending | cancelled on that PR head
 #   FAKE_GH_HEAD_TREE      override the tree sha the api reports for the PR head
 #   FAKE_GH_PULLS_FAIL    non-empty: the pulls api call fails
 #   FAKE_GH_GIT_FAIL      non-empty: the git commits (tree) api call fails
@@ -38,6 +42,11 @@
 #                    (default: the real merge commit)
 # The api asserts that, once a PR has merged, it is only asked about the
 # merge commit and that PR's head (checks and tree).
+# A required check name with no arm above -- one added to release-gate.sh's
+# `names` that no test here sets up -- is an **error**, not a default
+# `success`: a fake that vouched for any name it did not recognise kept every
+# release.sh test green when a sixth name nobody produces entered the gate.
+# TestFakeGHAnswersEveryCheckTheGateRequires holds the two lists together.
 set -eu
 dir=$FAKE_GH_DIR
 printf '%s\n' "$*" >>"$dir/log"
@@ -50,6 +59,7 @@ head_conclusion() {
     test) printf '%s' "${FAKE_GH_HEAD_TEST:-success}" ;;
     terraform) printf '%s' "${FAKE_GH_HEAD_TERRAFORM:-success}" ;;
     rules) printf '%s' "${FAKE_GH_HEAD_RULES:-success}" ;;
+    "console (ubuntu-latest)" | "console (macos-latest)") printf '%s' "${FAKE_GH_HEAD_CONSOLE:-success}" ;;
   esac
 }
 
@@ -58,6 +68,7 @@ check_conclusion() {
     test) pre=${FAKE_GH_CHECK_TEST:-success} post=${FAKE_GH_POST_TEST:-$pre} ;;
     terraform) pre=${FAKE_GH_CHECK_TERRAFORM:-success} post=${FAKE_GH_POST_TERRAFORM:-$pre} ;;
     rules) pre=${FAKE_GH_CHECK_RULES:-success} post=${FAKE_GH_POST_RULES:-$pre} ;;
+    "console (ubuntu-latest)" | "console (macos-latest)") pre=${FAKE_GH_CHECK_CONSOLE:-success} post=${FAKE_GH_POST_CONSOLE:-$pre} ;;
   esac
   if [ -s "$dir/pr_merge_sha" ]; then
     n=$(($(cat "$dir/api_calls_$1" 2>/dev/null || echo 0) + 1))
@@ -192,7 +203,7 @@ case "$1 ${2:-}" in
       exit 0
     fi
     if [ -n "$merge" ] && [ -s "$dir/pr_branch" ] && [ "$sha" = "$(head_sha)" ]; then
-      for name in test terraform rules; do
+      for name in test terraform rules "console (ubuntu-latest)" "console (macos-latest)"; do
         case "$*" in
           *".name == \"$name\""*)
             head_conclusion "$name"
@@ -205,7 +216,7 @@ case "$1 ${2:-}" in
       echo "fake-gh.sh: api asked about $sha, but the merge commit is $merge" >&2
       exit 1
     fi
-    for name in test terraform rules; do
+    for name in test terraform rules "console (ubuntu-latest)" "console (macos-latest)"; do
       case "$*" in
         *".name == \"$name\""*)
           check_conclusion "$name"
@@ -213,8 +224,8 @@ case "$1 ${2:-}" in
           ;;
       esac
     done
-    echo success
-    exit 0
+    printf 'fake-gh.sh: the api asked about a required check name this fake has no arm for: %s\n' "$*" >&2
+    exit 1
     ;;
 esac
 

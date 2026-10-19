@@ -320,6 +320,29 @@ message from a bad state: `wrong-type`, `empty-string`, `bad-key`, `too-long`,
 `bad-character`, `bad-timestamp`, and the three this module shares with it —
 `not-an-object`, `unknown-field`, `missing-field`.
 
+P6.3 added a `mac` to every message and the four message kinds to the schema,
+so nine of the schema's refusal codes reach the mailbox through a delivery,
+unchanged and unprefixed but for the field: `too-many` and `too-few` (a
+prompt's options and a heartbeat's agents are bounded lists), `unknown-verb`
+(an action record's verb), `bad-target` and `bad-sha` (an action record that
+could not be executed as it is written), `bad-mac` (a tag that is not a
+32-byte HMAC-SHA-256 in lowercase hex), `duplicate-entry` (two options, or two
+agents, that a spoken "option two" or "talk to <agent>" could not tell apart),
+and `field-not-allowed` (a field on a kind of message that does not carry it) —
+plus `unknown-kind` below. A delivery's refusal set is the schema's whole table
+(`Object.values(REFUSALS)`), so a code added there reaches here without an edit
+in this module.
+`unknown-kind` is spelled the same in both modules and means a different
+thing in each: the schema's is a message's `kind`, this module's is a
+delivery's. They are told apart by the field, exactly as the three shared
+codes above are.
+
+A `mac` is checkable only with the key, and this module has none: it validates
+the tag's SHAPE, never its value, and `verifyMac` is the consumer's question
+(P4.1, D171). A delivery whose tag does not verify is one the consumer must
+refuse before it calls this module at all — see `shared/mailbox-schema`'s
+vectors for what "verifies" means byte for byte.
+
 The prefix is the whole of this module's addition: a refusal is never rewritten,
 never softened and never merged into a code of this module's own — except that
 an unknown key is reported as `message`, never by its name (see above).

@@ -100,7 +100,7 @@ func TestCancelWaitsForAnInFlightLaunch(t *testing.T) {
 	started := make(chan string, 1)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		exec := f.run.Start(gcp.JobName(appSlug, "web"))
+		exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
 		f.run.SetState(exec, backend.StateRunning)
 		_ = s.WriteLaunch(context.Background(), &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()})
 		started <- exec
@@ -231,8 +231,10 @@ func executionPages(f *cloudFixture) (n int) {
 }
 
 // startAt starts an execution of the web job created age ago, in state s.
+// It carries the FUGARO_RUN a launch leaves on an execution (the run it names
+// is not stored: these are counted, never followed).
 func startAt(f *cloudFixture, s backend.State, age time.Duration) {
-	e := f.run.Start(gcp.JobName(appSlug, "web"))
+	e := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, "20260927-100000-abcd")
 	f.run.SetState(e, s)
 	f.run.SetCreated(e, time.Now().Add(-age))
 }

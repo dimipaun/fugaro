@@ -5,6 +5,7 @@ package safetext
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -175,4 +176,37 @@ func skipString(s string, i int) int {
 		i++
 	}
 	return i
+}
+
+// FieldMax is the most runes Field keeps of one untrusted value.
+const FieldMax = 512
+
+// Field is one untrusted value — an address out of a plan, a rule's or an
+// API's own words, an address someone passed on a command line — made fit to
+// be interpolated into a line of this program's own that a person, or the
+// coding agent a refusal is aimed at, reads. Every whitespace character, the
+// Unicode line and paragraph separators and NEL included, becomes a space;
+// everything Strip drops is dropped (C0 and C1 controls, escape sequences,
+// bidi controls, zero-width and other format characters, invalid UTF-8);
+// runs of spaces collapse to one; and the result is cut to FieldMax runes,
+// ending in "…" when it was cut, so no value can push the text it sits in out
+// of sight.
+//
+// A value that is already one plain line of printable text, under the cap, is
+// returned unchanged, so an ordinary address reads exactly as it did.
+func Field(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r == 0x85 || r == 0x2028 || r == 0x2029 || unicode.IsSpace(r):
+			return ' '
+		case unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, strings.ToValidUTF8(s, ""))
+	s = strings.Join(strings.Fields(Strip(s)), " ")
+	if utf8.RuneCountInString(s) > FieldMax {
+		s = Clip(s, FieldMax-1) + "…"
+	}
+	return s
 }

@@ -1,0 +1,100 @@
+#!/bin/sh
+# A stub `fugaro`, for the end-to-end specs that launch the real console
+# (desktop-console plan Tasks 3.3 and 3.4c).
+#
+# The console resolves its `fugaro` the way design section 3.4 rule 4 says: the
+# configured path, then the well-known prefixes, then every absolute entry of
+# the app's own `PATH`. There is no `FUGARO_BIN` and this task does not add one,
+# so the only way a spec can choose which CLI the app reads is to put a binary
+# where that resolution looks -- `test/support/cliStub.ts` copies this file into
+# a scratch directory and points the app's `PATH` (and `HOME`, so `~/.local/bin`
+# is covered too) at it.
+#
+# What it answers, and nothing else:
+#
+#   * `version` -- the line in `version.txt`, which sits beside it and which the
+#     spec writes. That is the whole of `fugaro version` on this tree -- one
+#     human line, no `--json` (design section 4.3 gap 2) -- and it is what
+#     `src/main/spawn.ts`'s `probeVersion` runs at startup.
+#   * `doctor --json --dir D --project P` -- a minimal `doctorOutput`
+#     (contract section 6.4). It is what `verifyCandidate` runs to prove an
+#     installation is usable, so a spec that adds one through the picker needs
+#     it; nothing in the dashboard draws it.
+#   * `watch --json --project P` -- the frames in `frames.ndjson` beside it, one
+#     compact document per line, which `cliStub.ts` writes from the committed
+#     `test/fixtures/synthetic.ndjson`. This is the read the Live screen makes
+#     (Task 3.4c), and it is the *whole* recording: the stub prints it and
+#     exits 0, which is the stream's own end and the supervisor's cue to restart
+#     it, exactly as a real `watch` that returned cleanly would be.
+#
+# **Everything else is refused, loudly, with exit 2.** A stub that answered
+# whatever it was asked would hide the thing these specs are about: if the
+# console ever asked the stub for something else -- a write, a verb outside the
+# allow-list -- the spec would rather fail here, with the argv it was handed,
+# than pass on an answer the console should never have been able to obtain.
+#
+# **And so is a missing `--project`.** Every command but `version` carries one
+# (design section 3.4 rule 3), and it must be the project the spec seeded, which
+# is the line in `project.txt` beside this script. A console that dropped the
+# flag, or sent another installation's project, is refused here rather than
+# answered with a document for the wrong project. `set -eu` and exit 2 are the
+# shape `probeVersion` already treats as "a binary this console will not run".
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+refuse() {
+  echo "the stub fugaro: $1" >&2
+  exit 2
+}
+
+command=${1:-}
+if [ $# -gt 0 ]; then
+  shift
+fi
+
+if [ "$command" = 'version' ]; then
+  if [ $# -gt 0 ]; then
+    refuse "'version' takes no arguments, and was asked for '$*'"
+  fi
+  cat "${here}/version.txt"
+  exit 0
+fi
+
+# The project this invocation names, if any. The flag takes its value as the
+# next argument (`--project P`), which is the only spelling `argvFor` emits.
+project=''
+awaiting_project='no'
+for argument in "$@"; do
+  if [ "$awaiting_project" = 'yes' ]; then
+    project=$argument
+    awaiting_project='no'
+    continue
+  fi
+  if [ "$argument" = '--project' ]; then
+    awaiting_project='yes'
+  fi
+done
+if [ "$awaiting_project" = 'yes' ]; then
+  refuse "'$command' was given a --project with no value"
+fi
+
+seeded=''
+if [ -f "${here}/project.txt" ]; then
+  seeded=$(cat "${here}/project.txt")
+fi
+if [ -z "$project" ] || [ "$project" != "$seeded" ]; then
+  refuse "'$command' was asked without --project ${seeded:-<none seeded>} (got '${project:-nothing}')"
+fi
+
+case "$command" in
+  watch)
+    cat "${here}/frames.ndjson"
+    ;;
+  doctor)
+    printf '{"ok":true,"checks":[{"id":"project","ok":true}],"project":"%s"}\n' "$project"
+    ;;
+  *)
+    refuse "the stub fugaro answers 'version', 'doctor --json' and 'watch --json', and was asked for '$command'"
+    ;;
+esac

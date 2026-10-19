@@ -242,7 +242,7 @@ func TestRunPRTakesOverLockWhenBackendConfirmsTermination(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
 	holder := runIDAt(0, "000100", "bbbb")
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	key := lock.Key(appSlug, "fugaro/"+rootID)
 	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
@@ -266,7 +266,7 @@ func TestRunPRRefusesLockWhenExecutionStillRunning(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
 	holder := runIDAt(0, "000100", "bbbb")
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateRunning)
 	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
 	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
@@ -324,7 +324,7 @@ func TestCheckBranchLockRequiresTheSameExecutionNamed(t *testing.T) {
 	env := envOn(t, f, bucket)
 	defer env.Close()
 	holder := runIDAt(0, "000100", "bbbb")
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	env.be = mismatchedNameBackend{Backend: env.be, answerAs: "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/some-other-run"}
 	branch := "fugaro/" + rootID
@@ -353,7 +353,7 @@ func TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand(t *testing.T) {
 	env := envOn(t, f, g.Bucket(t, "runs"))
 	defer env.Close()
 	holder := runIDAt(0, "000100", "bbbb")
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	branch := "fugaro/" + rootID
 	key := lock.Key(appSlug, branch)
@@ -401,7 +401,7 @@ func TestLockClearMessageNeverReReadsTheGeneration(t *testing.T) {
 	env := envOn(t, f, g.Bucket(t, "runs"))
 	defer env.Close()
 	holder := runIDAt(0, "000100", "bbbb")
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	branch := "fugaro/" + rootID
 	key := lock.Key(appSlug, branch)
@@ -469,7 +469,7 @@ func TestLockMessagesSanitizeTheRunID(t *testing.T) {
 	t.Run("the cleared note", func(t *testing.T) {
 		f := newCloudFixture(t)
 		seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-		exec := f.run.Start(gcp.JobName(appSlug, "web"))
+		exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, hostileID)
 		f.run.SetState(exec, backend.StateFailed)
 		data, _ := json.Marshal(lock.Holder{RunID: hostileID, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
 		putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
@@ -487,7 +487,7 @@ func TestLockMessagesSanitizeTheRunID(t *testing.T) {
 		g := gcpfake.NewGCS(t)
 		env := envOn(t, f, g.Bucket(t, "runs"))
 		defer env.Close()
-		exec := f.run.Start(gcp.JobName(appSlug, "web"))
+		exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, hostileID)
 		f.run.SetState(exec, backend.StateFailed)
 		branch := "fugaro/" + rootID
 		key := lock.Key(appSlug, branch)
@@ -516,7 +516,7 @@ func TestRunPRRefusesWhenLockChangesDuringTakeover(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
 	holder := runIDAt(0, "000100", "bbbb")
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, holder)
 	f.run.SetState(exec, backend.StateFailed)
 	key := lock.Key(appSlug, "fugaro/"+rootID)
 	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})

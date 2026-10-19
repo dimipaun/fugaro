@@ -27,8 +27,17 @@
  * describe a group the aggregation suppressed. A thin group is absent from the file and
  * the page renders what is there; a file that carries one anyway stops the build in W1.3's
  * pipeline rather than reaching a reader (D96's answer fixes the minimum at 20 runs).
+ *
+ * **What the redesign took out (P4).** A paragraph above the command list explained that
+ * the list is rendered from `website/content/cli-reference.md` and why that makes it
+ * honest, and a second one explained the mode at length; the scope sentences beside each
+ * command were long enough to be paragraphs of their own, and the empty state said where a
+ * figure would come from in three sentences. The two paragraphs are now one short one, each
+ * scope is a line, and the empty state is two sentences — the facts are the same ones, and
+ * the page says them in the words a reader scanning a command list needs (D186, D188).
  */
 import { loadSite } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
 
 const site = loadSite()
 
@@ -100,28 +109,27 @@ const commands = readReference(reference)
 const GUIDE = [
   {
     path: 'fugaro budget set',
-    scope:
-      "The caps: the project's own daily and per-run caps, the defaults a repository without caps of its own inherits, and one repository's own — with the largest single lease and the mode, which are project-wide.",
+    scope: "The project's own daily and per-run caps, the defaults a repository inherits, and one repository's own.",
   },
   {
     path: 'fugaro budget show',
-    scope: "What is set now, what today has counted, what is left under the caps, the kill switches and the runs in flight.",
+    scope: "What is set now, and what today has counted.",
   },
   {
     path: 'fugaro budget preview',
-    scope: 'What a batch would cost before it runs: the worst case for a number of planned runs against the cap that is left today — a ceiling, not a forecast.',
+    scope: 'A batch’s worst case against the cap left today.',
   },
   {
     path: 'fugaro budget prices',
-    scope: 'The model prices the budget counts with: the table built into this binary, the day it was last checked, and any local override the project config applies.',
+    scope: 'The price table the budget counts with.',
   },
   {
     path: 'fugaro budget kill',
-    scope: 'The kill switch: the whole project, or one repository, with the reason recorded.',
+    scope: 'Halt the project, or one repository.',
   },
   {
     path: 'fugaro budget resume',
-    scope: 'Clear a kill switch again.',
+    scope: 'Clear a kill switch.',
   },
 ]
 
@@ -188,20 +196,11 @@ const windowRecipes = countOf('recipes')
 <section id="caps">
   <h2>The caps</h2>
 
-  <p>
-    Every command below is rendered from <code>website/content/cli-reference.md</code>, the
-    reference generated from the command tree: the usage line and the one-line description are
-    the command's own, so this page cannot print a flag the command does not ship.
-  </p>
-
   {parent !== undefined && <p class="lede"><strong>{parent.short}</strong></p>}
 
   <p>
-    A cap is a ceiling on what a run may spend, and the mode decides what happens when one
-    bites: in <code>observe</code> the project counts what a run spent and logs what a cap
-    would have refused, and in <code>enforce</code> it halts. Every subcommand the CLI's own
-    reference renders is below — the build stops if this guide covers fewer — and each row is
-    one of the scopes a cap can be set at or one of the questions asked of it.
+    A cap is a ceiling on what a run may spend: <code>observe</code> counts and logs,
+    <code>enforce</code> halts. Every subcommand is below.
   </p>
 
   <dl class="commands">
@@ -210,7 +209,10 @@ const windowRecipes = countOf('recipes')
       return (
         <div class="command" data-guide={entry.path}>
           <dt>
-            <code class="usage" data-command={command?.usage}>{command?.usage}</code>
+            <div class="command-block" data-copy>
+              <Fragment set:html={copyControlHTML('Copy the usage line')} />
+              <code class="usage" data-command={command?.usage}>{command?.usage}</code>
+            </div>
           </dt>
           <dd>
             <p>{command?.short}</p>
@@ -227,10 +229,8 @@ const windowRecipes = countOf('recipes')
 
   {costs === null || costs.groups.length === 0 ? (
     <p class="empty">
-      This page carries no figures yet — there are not enough runs behind them. A figure here
-      is drawn from an aggregation the owner runs, read-only, over one named installation's own
-      run records, and until that has been run, or while no recipe has enough runs to publish, the honest state is this one: an empty figure is
-      honest, an invented one is not.
+      No figures yet: not enough runs behind them. A figure here comes from the owner's own
+      aggregation; an empty figure is honest, an invented one is not.
     </p>
   ) : (
     <>

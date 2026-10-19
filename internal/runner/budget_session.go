@@ -226,6 +226,13 @@ func strayTokenNoBackend() error {
 // reads the caps and the kill switches, halts the run if it may not begin,
 // creates the registry entry and starts the heartbeat and the kill watch.
 // A halt here has outcome none and exit 0: nothing was locked or pushed.
+// startBudgetBackend opens the run's budget session. It is reached only after
+// admissionCheck has admitted this run — bootstrap calls the check before the
+// lock and before this, and nothing else calls either — so the slug the session
+// is keyed by (r.d.Store.Slug, through the identity the policy read built) is
+// the one task.Slug of the job's provider and the task's repository computes,
+// for the profile the job's own name pins (plan task 3.3: the ordering is the
+// security property, and this is the lease it protects).
 func (r *run) startBudgetBackend(ctx context.Context) error {
 	// The launcher's marker says it minted this run a budget token, which it
 	// only does when the project has a shared budget or a published policy.
@@ -307,11 +314,11 @@ func (r *run) committedDaily() budget.Micros {
 	return m
 }
 
-// registryEntry is what the run says about itself at bootstrap. The task's
-// first line is untrusted text: redacted and clipped by the session.
+// registryEntry is what the run says about itself at bootstrap. The title
+// (task.Spec.TitleLine: the launcher's own --title, else the task's first
+// line) is untrusted text: redacted and clipped by the session.
 func (r *run) registryEntry() budget.AgentEntry {
-	title, _, _ := strings.Cut(strings.TrimSpace(r.spec.Task), "\n")
-	title = r.redact(title)
+	title := r.redact(r.spec.TitleLine())
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}

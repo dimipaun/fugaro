@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,6 +136,261 @@ func TestWorkflowFiles(t *testing.T) {
 	}
 	if want := []string{".github/workflows/a.yaml", ".github/workflows/b.yml"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("WorkflowFiles = %v, want %v", got, want)
+	}
+}
+
+// A change is a difference in content, mode or existence against the base:
+// editing, deleting and adding are all this run's, and so is a file moved
+// into the directory (git reports no rename here, only the add).
+func TestWorkflowFilesSeesEveryKindOfChange(t *testing.T) {
+	cases := []struct {
+		name  string
+		apply func(t *testing.T, repo *Repo)
+		want  []string
+	}{
+		{"edited", func(t *testing.T, repo *Repo) {
+			testutil.WriteFiles(t, repo.Dir, map[string]string{".github/workflows/ci.yml": "on: pull_request\n"})
+			if _, err := repo.CommitAll(ctx, "edit"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml"}},
+		{"deleted", func(t *testing.T, repo *Repo) {
+			if err := os.Remove(filepath.Join(repo.Dir, ".github", "workflows", "ci.yml")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.CommitAll(ctx, "delete"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml"}},
+		{"added", func(t *testing.T, repo *Repo) {
+			testutil.WriteFiles(t, repo.Dir, map[string]string{".github/workflows/new.yml": "on: push\n"})
+			if _, err := repo.CommitAll(ctx, "add"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/new.yml"}},
+		{"renamed in", func(t *testing.T, repo *Repo) {
+			testutil.Git(t, repo.Dir, "mv", "pipeline.yml", ".github/workflows/pipeline.yml")
+			if _, err := repo.CommitAll(ctx, "move it in"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/pipeline.yml"}},
+		{"renamed within", func(t *testing.T, repo *Repo) {
+			testutil.Git(t, repo.Dir, "mv", ".github/workflows/ci.yml", ".github/workflows/ci2.yml")
+			if _, err := repo.CommitAll(ctx, "rename it"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml", ".github/workflows/ci2.yml"}},
+		{"moved out", func(t *testing.T, repo *Repo) {
+			testutil.Git(t, repo.Dir, "mv", ".github/workflows/ci.yml", "ci.yml")
+			if _, err := repo.CommitAll(ctx, "move it out"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml"}},
+		{"a file swapped for a symlink", func(t *testing.T, repo *Repo) {
+			if err := os.Remove(filepath.Join(repo.Dir, ".github", "workflows", "ci.yml")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../evil.yml", filepath.Join(repo.Dir, ".github", "workflows", "ci.yml")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.CommitAll(ctx, "swap"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, _ := setup(t)
+			if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFiles(t, repo.Dir, map[string]string{"pipeline.yml": "steps:\n", ".github/workflows/ci.yml": "on: push\n"})
+			if _, err := repo.CommitAll(ctx, "a person's CI"); err != nil {
+				t.Fatal(err)
+			}
+			base, err := repo.HeadSHA(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := repo.WorkflowFiles(ctx, base); err != nil || len(got) != 0 {
+				t.Fatalf("before the change: %v, %v", got, err)
+			}
+			c.apply(t, repo)
+			got, err := repo.WorkflowFiles(ctx, base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("WorkflowFiles = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// The directory itself, swapped for a symlink or for a submodule (a
+// gitlink), is a change too: it takes .github/workflows/ and everything
+// under it out of the tree the push would land. A pathspec with a trailing
+// slash hides a symlink entirely, and a name-prefix filter drops the path.
+func TestWorkflowFilesSeesTheDirectoryItself(t *testing.T) {
+	cases := []struct {
+		name    string
+		replace func(t *testing.T, repo *Repo)
+	}{
+		{"symlink", func(t *testing.T, repo *Repo) {
+			if err := os.MkdirAll(filepath.Join(repo.Dir, ".github"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../evil", filepath.Join(repo.Dir, ".github", "workflows")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.CommitAll(ctx, "symlink it"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"gitlink", func(t *testing.T, repo *Repo) {
+			// A submodule standing where the directory was, staged by
+			// hand: git add would demand a .gitmodules entry for it.
+			testutil.Git(t, repo.Dir, "update-index", "--add", "--cacheinfo",
+				"160000,1111111111111111111111111111111111111111,.github/workflows")
+			testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "a gitlink")
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, _ := setup(t)
+			if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+				t.Fatal(err)
+			}
+			base, err := repo.HeadSHA(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.replace(t, repo)
+			got, err := repo.WorkflowFiles(ctx, base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(got, workflowRoot) {
+				t.Fatalf("WorkflowFiles = %v, want it to name %s", got, workflowRoot)
+			}
+		})
+	}
+}
+
+// A run that merges or rebases a newer base branch into its own branch
+// carries that base's commits. Their workflow changes are the base's, not
+// the run's: against the commit the run was cut from alone they are
+// reported, and the push is refused for work the run never did.
+func TestWorkflowFilesExceptLeavesOutTheBasesOwnChanges(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	start, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run's own change, before it rebases.
+	testutil.WriteFiles(t, repo.Dir, map[string]string{".github/workflows/ci.yml": "on: pull_request\n"})
+	if _, err := repo.CommitAll(ctx, "the run's CI"); err != nil {
+		t.Fatal(err)
+	}
+	// A person lands a workflow file on main after the run was cut: a
+	// dependabot bump, say, merged while the run was working.
+	seed := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{".github/workflows/person.yml": "on: push\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "a person's CI")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	// The agent rebases onto it, as a run told to keep up with its base does.
+	testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "main")
+	testutil.Git(t, repo.Dir, "rebase", "--quiet", "origin/main")
+	head, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Against the run's own base alone the person's file is blamed on the
+	// run, which is the shape of the merge-only range.
+	mine, err := repo.WorkflowFiles(ctx, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".github/workflows/ci.yml", ".github/workflows/person.yml"}; !reflect.DeepEqual(mine, want) {
+		t.Fatalf("WorkflowFiles = %v, want %v", mine, want)
+	}
+	// Less what the base branch changed itself, only the run's is left.
+	got, err := repo.WorkflowFilesExcept(ctx, start, "origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".github/workflows/ci.yml"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("WorkflowFilesExcept = %v, want %v", got, want)
+	}
+	// The same over the exact commit a checkpoint would push.
+	in, err := repo.WorkflowFilesInExcept(ctx, start, "origin/main", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in, got) {
+		t.Fatalf("WorkflowFilesInExcept = %v, want %v", in, got)
+	}
+	// A base branch that cannot be read falls back to the run's own base
+	// alone — what the guard did before it knew about the base branch's own
+	// commits — so the list is longer rather than empty.
+	files, err := repo.WorkflowFilesExcept(ctx, start, "origin/nope")
+	if err != nil {
+		t.Fatalf("WorkflowFilesExcept with an unknown base ref: %v", err)
+	}
+	if !reflect.DeepEqual(files, mine) {
+		t.Fatalf("WorkflowFilesExcept = %v, want the run's own %v", files, mine)
+	}
+}
+
+// CommitsAhead counts the run's own commits: the base branch's own, merged
+// or rebased in after the run was cut, are not the run's work, so a run
+// that adds nothing still counts none.
+func TestCommitsAheadCountsOnlyTheRunsOwnCommits(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	start, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.CommitsAhead(ctx, start, "origin/main"); err != nil || n != 0 {
+		t.Fatalf("CommitsAhead before any commit = %d, %v; want 0", n, err)
+	}
+	if err := repo.CommitEmpty(ctx, "the run's own"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.CommitsAhead(ctx, start, "origin/main"); err != nil || n != 1 {
+		t.Fatalf("CommitsAhead = %d, %v; want 1", n, err)
+	}
+	// The base branch moves on and the agent rebases onto it: its commit is
+	// not the run's, so the count is unchanged.
+	seed := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{"person.txt": "a person's\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "a person's work")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "main")
+	testutil.Git(t, repo.Dir, "rebase", "--quiet", "origin/main")
+	if n, err := repo.CommitsAhead(ctx, start, "origin/main"); err != nil || n != 1 {
+		t.Fatalf("CommitsAhead after a rebase = %d, %v; want the run's 1", n, err)
+	}
+	// Without the base branch to subtract there is no way to tell the two
+	// apart, which is why the run itself is measured at bootstrap.
+	if n, err := repo.CommitsAhead(ctx, start, ""); err != nil || n != 2 {
+		t.Fatalf("CommitsAhead without a base = %d, %v; want 2", n, err)
+	}
+	// A base commit the checkout does not have (origin names a tip the
+	// agent never fetched) subtracts nothing rather than failing finalize.
+	if n, err := repo.CommitsAhead(ctx, start, "1111111111111111111111111111111111111111"); err != nil || n != 2 {
+		t.Fatalf("CommitsAhead with a base the checkout lacks = %d, %v; want 2", n, err)
 	}
 }
 
@@ -429,5 +686,76 @@ func TestWorkflowFilesSinceAFollowUpStart(t *testing.T) {
 	}
 	if got, _ := repo.WorkflowFiles(ctx, "origin/main"); len(got) != 1 {
 		t.Fatalf("since the base: %v", got)
+	}
+}
+
+// Every commit the push adds is read, whatever the agent does to hide one,
+// and whatever its own git configuration says: GitHub refuses a push for a
+// workflow change in any commit it adds, not only in the tip's tree. The
+// checkout's config and refs are the agent's, so each case is a way it
+// could make git leave a commit or a path out.
+func TestWorkflowFilesSeesWhatTheAgentHides(t *testing.T) {
+	const ci = ".github/workflows/ci.yml"
+	sh := func(t *testing.T, repo *Repo, script string) {
+		t.Helper()
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Dir, cmd.Env = repo.Dir, repo.Environ()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v: %s", script, err, out)
+		}
+	}
+	cases := []struct {
+		name, script, want string
+	}{
+		{"mode only", "git update-index --chmod=-x " + ci + " && git commit -qm 'chmod'", ci},
+		{"changed, then reverted", "echo evil >> " + ci + " && git commit -qam w && git revert --no-edit HEAD >/dev/null", ci},
+		{"behind a merge that keeps one side", "git checkout -qb side && echo evil >> " + ci + " && git commit -qam w && " +
+			"git checkout -q fugaro/x && git merge -q -s ours side -m m", ci},
+		{"only in a merge's own tree", "git checkout -qb side && git commit -q --allow-empty -m s && git checkout -q fugaro/x && " +
+			"git commit -q --allow-empty -m mine && git merge -q --no-ff --no-commit side && echo x > .github/workflows/evil.yml && " +
+			"git add -A && git commit -qm m", ".github/workflows/evil.yml"},
+		{"in a root commit, with log.showRoot off", "git config log.showRoot false && echo x > .github/workflows/evil.yml && git add -A && " +
+			"git reset -q --hard $(git commit-tree $(git write-tree) -m root)", ".github/workflows/evil.yml"},
+		{"under a replace ref", "echo evil >> " + ci + " && git commit -qam w && " +
+			"git replace HEAD $(git commit-tree HEAD~1^{tree} -p HEAD~1 -m fake)", ci},
+		{"a gitlink, with diff.ignoreSubmodules all", "git config diff.ignoreSubmodules all && git rm -rq --cached .github/workflows && " +
+			"git update-index --add --cacheinfo 160000,1111111111111111111111111111111111111111,.github/workflows && git commit -qm g", workflowRoot},
+		{"a case variant of the directory", "git update-index --add --cacheinfo 100644,$(git hash-object -w " + ci + "),.GitHub/Workflows/x.yml && " +
+			"git commit -qm c", ".GitHub/Workflows/x.yml"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, _ := setup(t)
+			if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFiles(t, repo.Dir, map[string]string{ci: "on: push\n"})
+			if _, err := repo.CommitAll(ctx, "a person's CI"); err != nil {
+				t.Fatal(err)
+			}
+			base, err := repo.HeadSHA(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sh(t, repo, c.script)
+			head, err := repo.HeadSHA(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, list := range map[string]func() ([]string, error){
+				"WorkflowFiles":         func() ([]string, error) { return repo.WorkflowFiles(ctx, base) },
+				"WorkflowFilesIn":       func() ([]string, error) { return repo.WorkflowFilesIn(ctx, base, head) },
+				"WorkflowFilesExcept":   func() ([]string, error) { return repo.WorkflowFilesExcept(ctx, base, base) },
+				"WorkflowFilesInExcept": func() ([]string, error) { return repo.WorkflowFilesInExcept(ctx, base, base, head) },
+			} {
+				got, err := list()
+				if err != nil {
+					t.Fatalf("%s: %v", name, err)
+				}
+				if !slices.Contains(got, c.want) {
+					t.Errorf("%s = %v, want it to name %s", name, got, c.want)
+				}
+			}
+		})
 	}
 }

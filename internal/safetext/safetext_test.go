@@ -53,3 +53,33 @@ func TestTableCellEscapesTab(t *testing.T) {
 		t.Errorf("TableCell and OneLine disagree on %q: %q vs %q", hostile, TableCell(hostile), OneLine(hostile))
 	}
 }
+
+// Field is the one bound every refusal puts an untrusted value through: one
+// line, no C0, C1, bidi or format character, and a cap with an ellipsis.
+func TestFieldIsOneBoundedPlainLine(t *testing.T) {
+	csi, rlo := string(rune(0x9b)), string(rune(0x202e))
+	for in, want := range map[string]string{
+		"google_storage_bucket.a":          "google_storage_bucket.a",
+		"a" + csi + "31mb":                 "ab",
+		"a" + rlo + "b":                    "ab",
+		"a\nforged line":                   "a forged line",
+		"a\r\n\t  b":                       "a b",
+		"a\x1b[2Jb\x00c":                   "abc",
+		"a" + string(rune(0x2028)) + "b":   "a b",
+		"a" + string(rune(0x85)) + "b":     "a b",
+		"a" + string(rune(0x2066)) + "b​c": "abc",
+		"a\xffb":                           "ab",
+		"a" + string(rune(0xfff9)) + "b" + string(rune(0x0600)) + "c": "abc",
+	} {
+		if got := Field(in); got != want {
+			t.Errorf("Field(%q) = %q, want %q", in, got, want)
+		}
+	}
+	long := Field(strings.Repeat("x", 10000))
+	if n := len([]rune(long)); n != FieldMax || !strings.HasSuffix(long, "…") {
+		t.Errorf("a 10k value is %d runes (want %d, ending in an ellipsis)", n, FieldMax)
+	}
+	if exact := strings.Repeat("y", FieldMax); Field(exact) != exact {
+		t.Error("a value at the cap was cut")
+	}
+}

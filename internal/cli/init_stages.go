@@ -137,7 +137,7 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
 	}
-	return e.outcome(res, err)
+	return e.outcome(ctx, res, err)
 }
 
 // outcome maps a loop result to init's error, keeping the exit codes the
@@ -146,11 +146,21 @@ func (e *initEngine) converge(ctx context.Context) error {
 // (1), and a run that is unfinished only because the user has to act is 1
 // too. Only an engine's coded remote failures are 2. With --json the
 // result is printed first, whatever the outcome, so CI gets the account.
-func (e *initEngine) outcome(res *initflow.Result, runErr error) error {
+//
+// The creation fact is recorded here, at the top, and not after the loop
+// returned: markCreated only ever warns (an unmarked project is the
+// fail-closed direction), and a warning is appended to the result the print
+// encodes — so a marker warning recorded after it would reach stderr alone,
+// while a --json consumer updating its account read an empty warnings array
+// (TestMarkCreatedWarningsAreInThePrintedResult). It is still after the loop's
+// own stages, so the project stage has set r.res.Created by the time it runs,
+// and it still never changes the outcome.
+func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr error) error {
 	r, o := e.r, e.r.o
 	if res != nil {
 		r.res.Stages, r.res.LeftForYou, r.res.Failed, r.res.Note = res.Stages, res.Left, res.Failed, res.Note
 	}
+	e.markCreated(ctx)
 	switch {
 	case e.envErr != nil:
 		_ = r.printResult()

@@ -441,26 +441,25 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	if name == "" || in.Problem != "" {
 		return nil
 	}
-	// The run's service account can write both objects: follow only an
-	// execution of the run's own job.
-	if err := env.checkExecution(name, in.Slug, in.Task); err != nil {
+	// The run's service account can write both objects: follow only the
+	// execution the run's own FUGARO_RUN names, which is what tells two runs
+	// of one shared job apart (checkExecution). The listing's own entry saves
+	// the read; a run whose execution is outside the listing's window is read
+	// back on its own. A read that fails is this run's own row, not the
+	// listing's: one run's execution failing to read must not hide the other
+	// runs' rows, as a corrupt object of one run does not.
+	eid, _ := backend.ParseExecution(name)
+	var hint *backend.Execution
+	if e, ok := execs[eid.Key()]; ok {
+		hint = &e
+	}
+	x, err := env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
+	if err != nil {
 		in.Problem = "not following its execution: " + err.Error()
 		warnf("warning: run %s/%s: %s\n", in.Slug, in.RunID, in.Problem)
 		return nil
 	}
-	eid, _ := backend.ParseExecution(name)
-	if e, ok := execs[eid.Key()]; ok {
-		in.Exec = &e
-		return nil
-	}
-	// Outside the listing's window, or not listed yet: ask for it alone.
-	e, err := env.be.Execution(ctx, name)
-	switch {
-	case err == nil:
-		in.Exec = &e
-	case !errors.Is(err, backend.ErrNotFound):
-		return fmt.Errorf("run %s/%s: %w", in.Slug, in.RunID, err)
-	}
+	in.Exec = x
 	// The record was read before the execution: a runner that wrote its
 	// final record and exited in between would look like one that died
 	// without finalizing. Once the execution has ended (or is gone), read
@@ -491,6 +490,12 @@ func absent[T any](v *T, err error) (*T, error) {
 	return v, err
 }
 
+// maxSinceDays is the largest day count whose duration fits in int64
+// nanoseconds: time.Duration(days)*24*time.Hour silently wraps to a negative
+// window past it, so a larger count is refused rather than read as "no runs".
+// The desktop console's runs-window schema holds the same bound.
+const maxSinceDays = 106751
+
 // parseSince parses --since: a positive number of days (7d), a positive Go
 // duration (36h, 90m), or 0 for no bound.
 func parseSince(s string) (time.Duration, error) {
@@ -499,7 +504,7 @@ func parseSince(s string) (time.Duration, error) {
 	}
 	if n, ok := strings.CutSuffix(s, "d"); ok {
 		days, err := strconv.Atoi(n)
-		if err != nil || days < 1 {
+		if err != nil || days < 1 || days > maxSinceDays {
 			return 0, fmt.Errorf("--since %q: use a positive number of days (7d) or a Go duration (36h)", s)
 		}
 		return time.Duration(days) * 24 * time.Hour, nil
@@ -540,6 +545,11 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	// every run that opens a pull request has none, and its columns do not
 	// change (design artifact-runs.md §9).
 	showArtifacts := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ArtifactCount > 0 })
+	// The changed-files column appears only when some listed run's record
+	// carries the set (design D27): a run from before the field, or one that
+	// never reached finalize, has none and does not widen every other run's
+	// columns for it.
+	showFiles := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ChangedFiles != nil })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
 	if showRecipe {
 		header += "\tRECIPE"
@@ -552,6 +562,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	if showArtifacts {
 		header += "\tARTIFACTS"
+	}
+	if showFiles {
+		header += "\tFILES"
 	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -583,6 +596,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		if showArtifacts {
 			line += "\t" + artifactCell(r)
 		}
+		if showFiles {
+			line += "\t" + changedFilesCell(r)
+		}
 		fmt.Fprintln(tw, line)
 	}
 	if err := tw.Flush(); err != nil {
@@ -613,6 +629,21 @@ func statusCell(r runview.Row) string {
 		return r.Status + " (" + string(r.Halt.Reason) + ")"
 	}
 	return r.Status
+}
+
+// changedFilesCell is a row's recorded changed-path count (design D27): the
+// count of paths the record holds, and "N/M" when the record was truncated at
+// M paths, so a reader can see that the set it holds is not the whole set.
+// "-" for a run that recorded none — an unknown answer, never a zero.
+func changedFilesCell(r runview.Row) string {
+	cf := r.ChangedFiles
+	if cf == nil {
+		return "-"
+	}
+	if cf.Truncated {
+		return fmt.Sprintf("%d/%d", len(cf.Paths), cf.Total)
+	}
+	return strconv.Itoa(len(cf.Paths))
 }
 
 // validSHA256 reports whether s is a sha256 hex digest: exactly 64 lowercase

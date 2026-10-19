@@ -1,0 +1,49 @@
+{
+  // The console's build (desktop-console plan Task 1.1). Task 1.0's
+  // tsconfig.json is the type checker: it covers the main process, the renderer
+  // and every test together, and it emits nothing. Electron, though, runs a
+  // file, and this is the config that produces it — `npm run build` compiles
+  // src/ to dist/ with `tsc`, and package.json's `main` points at the result.
+  //
+  // `tsc` and not a bundler, because of the pinning rule: the console's
+  // `dependencies` are exactly the one entry Task 1.0 installed
+  // (test/unit/pinning.test.ts asserts the set), and a bundler is a dependency
+  // the console is not allowed to gain in this task. The main process has
+  // nothing to bundle anyway — three modules and two Node builtins. When the
+  // renderer grows a preload and its own modules (Task 1.2), that task can
+  // revisit this; if it does, the thing to keep is that `npm run build` stays
+  // the one command that produces what `npm run test:e2e` launches.
+  //
+  // What `tsc` does NOT do is copy: `dist/` holds JavaScript and nothing else,
+  // so the document the window loads is read from `src/renderer` at runtime
+  // (see `rendererRoot` in src/main/index.ts) rather than from `dist/`. That is
+  // also the one thing Task 4.1's packaging has to settle: a packaged console
+  // needs `src/renderer` on disk, and this task builds no package.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Electron's `main` entry is a CommonJS module unless package.json says
+    // otherwise, and Task 1.0's package.json has no `"type"`: `dist/main/index.js`
+    // is therefore emitted as CJS, which is what `require` in Electron's own
+    // loader and in Playwright's `electron.launch` both expect.
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    // `verbatimModuleSyntax` polices ESM-only syntax at the type level, and it
+    // is off for the CommonJS build. Nothing else about the sources changes:
+    // every `import type` in src/ is already written as one.
+    "verbatimModuleSyntax": false,
+    "esModuleInterop": true,
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": true,
+    // Comments are dropped from what the app runs (Task 3.4a). Two reasons, and
+    // the second is the load-bearing one: the bundle's size is the first, and
+    // the *bundler* is the second -- `tools/bundle-renderer/index.ts` walks the
+    // compiled modules for their `require` calls, and this tree's comments talk
+    // about `require` in prose (the preload's header names `require('electron')`
+    // verbatim, and the entry's names the same call). A scan that could not tell
+    // a comment from a call would refuse a module for its own explanation.
+    "removeComments": true
+  },
+  "include": ["src/**/*.ts"]
+}

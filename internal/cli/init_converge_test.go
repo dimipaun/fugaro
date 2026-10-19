@@ -218,7 +218,7 @@ func TestConvergeKeepsEngineExitCodes(t *testing.T) {
 		st := &engineStage{e: e, name: initflow.Installation, skip: func() string { return "" },
 			run: func(context.Context) error { return stErr }}
 		res, err := initflow.Run(context.Background(), []initflow.Stage{st}, initflow.Options{Yes: true, Terminal: true, Out: io.Discard})
-		return e.outcome(res, err)
+		return e.outcome(context.Background(), res, err)
 	}
 	if got := ExitCode(run(errors.New("plain engine error"))); got != 1 {
 		t.Errorf("uncoded engine error exits %d, want 1", got)

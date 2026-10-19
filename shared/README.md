@@ -27,6 +27,39 @@ approved, and this directory is not evidence that one is.
 
 `mailbox-sim/` (P1.5) is the deterministic mailbox simulator: built, with its own tests and its own mutation proof; see `mailbox-sim/README.md`.
 
+`mailbox-schema/` (P0.2, extended by P6.3) is the message schema and its validation, and
+now the required `mac` on every message of every kind, the `agent`, `kind`, `options`,
+`reply_to` and action-record fields, the canonical serialisation the tag covers and its
+vectors: built, with its own tests, its own mutation proof (78 guards) and
+`vectors.json`, the contract the Go consumer reimplements against; see
+`mailbox-schema/README.md`. The package has one builtin import — `node:crypto`, for
+HMAC-SHA-256 — and it is deliberately **not** in the module's entry point: it is in
+`mailbox-schema/mac.js`, which `mailbox-schema/index.js` never imports, because React
+Native's bundler resolves no `node:` builtin and the phone must still be able to import
+the validator and the canonical serialisation. `index.js` imports nothing at all, a test
+asserts it, and the phone implements HMAC-SHA-256 itself against `vectors.json`. There
+is still no dependency: nothing is installed, nothing is fetched. Note that P6.3 changed
+the schema, and P6.4 has since carried it into
+`internal/budget/rules`' template: the mailbox subtree now gates the same field set —
+`mac` required on every message of every kind and on the heartbeat — and
+`TestMailboxRulesAgreeWithTheSharedSchema` holds the two artifacts' bounds together, and
+`TestMailboxRulesCheckTheSchemasCharacters` holds the rules' character patterns to this
+module's own byte for byte. What the rules still cannot do — and cannot be made to do —
+is check a tag's **value**: they hold no key, the key is D171's and never passes through
+the database, so P6.7 (`fugaro mailbox`) is what verifies a tag rather than merely
+requiring a well-formed one.
+
+`command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`.
+
+`confirm/` (P6.2) is the spoken-confirmation state machine — the read-back, the fixed phrase, the timeout, the replay ledger and D128's refusals — with its own tests, its own mutation proof and `vectors.json` for P6.7's Go parity test; see `confirm/README.md`. It reuses `lease/`'s timestamp bound, recognises the phrase through `command/` (P6.1) and authorises `mailbox-schema/`'s action record (P6.3) field for field.
+
+`prompts/` (P6.5) is the prompt queue — queue by default, the count across accounts at a
+natural pause, "what's pending" per installation, expiry at D118's mailbox TTL, D173's two
+windows, the reminder schedule and the pending cap — and the interrupt policy: D160's set of
+four events read through D127's local switch. Built on `mailbox/`, `mailbox-schema/`,
+`digest/` and `presence/`, with its own tests (55) and its own mutation proof (93 guards);
+see `prompts/README.md`.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has

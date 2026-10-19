@@ -394,9 +394,7 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
   <h1>Frequently asked questions</h1>
 
   <p class="lede">
-    Six answers, each one taken from a document in this repository rather than written here — and
-    each one names the document it came from. Where the detail matters it is a link, not a
-    summary.
+    Six answers, each naming the document it comes from.
   </p>
 
   <div class="questions">
@@ -426,9 +424,8 @@ const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}
 
     {faq.rows.length === 0 ? (
       <p id="comparison-empty">
-        No comparison is published. A row about another tool is a claim this repository cannot
-        verify, so every row carries the source it was read from and the date it was read —
-        and none has been supplied yet.
+        No comparison is published: a row about another tool is a claim this repository
+        cannot verify, and none has been supplied with a source and a date.
       </p>
     ) : (
       <table>

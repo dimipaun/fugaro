@@ -84,6 +84,43 @@ func ClaudeAccountSecret(name string) string {
 	return ClaudeOAuthTokenPrefix + name
 }
 
+// ClaudeAccountOfSecrets is the Claude account a job that mounts exactly
+// these secrets runs as: DefaultClaudeAccount when the list holds the
+// reserved claude-oauth-token (ClaudeAccountSecret(DefaultClaudeAccount)),
+// the name when it holds a named account's token (ClaudeAccountSecret(name)),
+// and "" when it holds neither — an api-key or Vertex profile runs as no
+// Claude account and its job's account segment is empty. ok is false in that
+// last case.
+//
+// It is a pure function of the secret NAMES, and it exists because the two
+// places that need the answer hold different documents: internal/infra builds
+// a project job's name from the operator's local config (projectJobSecrets,
+// which resolves the account through the claude_accounts block) and
+// internal/runner has to reproduce that name from the policy node, which
+// carries a profile's mount list and nothing else (plan task 3.3 step 1). One
+// function for the axis both sides share, so the two cannot disagree about
+// which job a run is in — the runner matching a name the deployer would not
+// have built is a halt on every run of that profile.
+//
+// A profile listing two Claude accounts is refused at deploy time (both mount
+// CLAUDE_CODE_OAUTH_TOKEN, and projectJobSecrets refuses the duplicate
+// variable), and a name shaped like a named account's secret that no
+// claude_accounts entry defines is refused there too (projectSecretEnv: a
+// secret Fugaro neither reserves nor has configured). This reads the first
+// account it finds and does not try to be the second door on either rule:
+// neither case can reach a deployed job.
+func ClaudeAccountOfSecrets(secrets []string) (string, bool) {
+	for _, s := range secrets {
+		if s == ClaudeAccountSecret(DefaultClaudeAccount) {
+			return DefaultClaudeAccount, true
+		}
+		if name, ok := strings.CutPrefix(s, ClaudeOAuthTokenPrefix); ok && name != "" {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // ClaudeAccountBySecret is the account name whose secret is secret, the
 // mirror of ProviderBySecret: used where a secret ID must be traced back
 // to the name a human chose (fugaro secrets set's validation, Task 5).
