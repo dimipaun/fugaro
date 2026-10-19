@@ -209,7 +209,7 @@ function siteSources() {
   return files
 }
 
-test("no built page carries the retired word 'worker' or the chat's retired claim", () => {
+test("no built page outside D188's three carries the retired word 'worker' or the chat's retired claim", () => {
   const failures = wordingFailures(DIST)
   assert.deepEqual(failures, [], `the built site carries wording this gate refuses:\n  ${failures.join('\n  ')}`)
 })

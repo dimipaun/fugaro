@@ -898,8 +898,11 @@ function loadCosts(minRuns: number): CostsFacts | null {
  *   - the **headline** is the README's tagline line — the first non-empty line under the
  *     title, the bold one — and it is the hero's `h1` (F48, D102);
  *   - the **subline** is the line under it: one sentence saying what the product is, which
- *     is the hero's lead, the site's default page description and the OpenGraph and
- *     Twitter card's description (the changes spec of 2026-10-18, item 2).
+ *     is the hero's lead, the site's default page description and the `og:description` a
+ *     shared link shows — the card included, since the head emits one `twitter:card` and no
+ *     second description tag, so the card reads the OpenGraph one (the changes spec of
+ *     2026-10-18, item 2; `website/test/home.mjs` holds both to the README's line and
+ *     asserts there is no `twitter:description`).
  *
  * Both are read rather than copied into a component, because a promise typed into a
  * template is a second copy of the README's line and the one that drifts — and because
