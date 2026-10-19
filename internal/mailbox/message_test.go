@@ -219,8 +219,8 @@ func TestSchemaVectorDirectionPairs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a := object(t, pair["a"], "a")
 			b := object(t, pair["b"], "b")
-			aBytes := canonicalOf(t, a)
-			bBytes := canonicalOf(t, b)
+			aBytes := canonicalOf(t, a, key)
+			bBytes := canonicalOf(t, b, key)
 			// The same record, under two directions, and nothing else
 			// different: the direction alone has to change the bytes and the
 			// tag, or a tag made for the outbox would verify in the inbox.
@@ -237,8 +237,8 @@ func TestSchemaVectorDirectionPairs(t *testing.T) {
 func TestSchemaVectorRefusals(t *testing.T) {
 	file := loadVectors(t)
 	refusals := list(t, file["refusals"], "refusals")
-	if len(refusals) != 31 {
-		t.Fatalf("vectors.json carries %d refusals, not 31: the file, not the replay, is what changed", len(refusals))
+	if len(refusals) != 22 {
+		t.Fatalf("vectors.json carries %d refusals, not 22: the file, not the replay, is what changed", len(refusals))
 	}
 	for _, entry := range refusals {
 		vector := object(t, entry, "refusal")
@@ -275,13 +275,24 @@ func TestSchemaVectorRefusals(t *testing.T) {
 // The four are exercised over every field they apply to rather than one apiece,
 // because empty-string is answered by the FIELD: a single row for a sender would
 // leave the same check unheld for a body, an option's label, an agent's spoken
-// name, an id, the tag and each part of an action. vectors.json now carries nine
-// of these values — the two lists, a kind outside the four, and empty-string on
-// the four fields the module answers through stringField — so both ends are held
-// to the same inputs. The rows with no vector stand in for the fields the file
-// does not carry, and the guard at the end is that no code can be missing from
-// both: a code the package declares and neither the file nor this table names is
-// a failing test, which is the state the four were in.
+// name, an id, the tag and each part of an action.
+//
+// The file is NOT extended with them, and that is deliberate: vectors.json is a
+// merged contract of P6.3's, the plan's file table says no merged module is
+// edited by this plan and that a task which appears to need one changed "is a
+// finding" (§13, §14), and T1's own Files bullet calls the replay read-only.
+// A consumer adding refusals to it is a contract change under a consumer's
+// review, so the nine values that would carry these codes — the four fields
+// empty-string is answered through, the two lists, a kind outside the four, and
+// the two duplicates — are proposed to P6.3's follow-up in the pull request
+// instead. Until that lands, the JavaScript end is held to these four codes by
+// its own unit tests and not by any vector, which is a weaker binding than the
+// other fourteen codes have, and the gap is stated rather than implied.
+//
+// The guard at the end is what makes this table complete rather than merely
+// longer: every code the package declares must be produced by a refusal in
+// vectors.json or by a row here, so a code that neither holds is a failing test,
+// which is the state the four were in.
 func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 	message := func(over Record) Record {
 		record := Record{
@@ -379,7 +390,8 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 
 		// The other codes vectors.json carries no refusal for. They are held by
 		// other tests as well, and they are here because the guard below is only
-		// a guard if every code it does not read out of the file is a row.
+		// a guard if every code it does not read out of the file is a row: the
+		// file holds ten, so these eight are the ones that have to be here.
 		{"an id that is not a database key", message(Record{"id": "m.0001"}), false, CodeBadKey, "id",
 			"a dot opens a path in the database the message is stored in"},
 		{"a character a body cannot carry", message(Record{"text": "a\x01b"}), false, CodeBadCharacter, "text",
@@ -411,7 +423,9 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 	// the four the review named: every code the package declares is produced by
 	// a refusal in vectors.json or by a row here, so a code that neither holds
 	// is a failing test. That is exactly the state the four were in —
-	// implemented, refusable, and green under the deletion of their checks.
+	// implemented, refusable, and green under the deletion of their checks. The
+	// file holds ten codes and this table holds the other eight, which is what
+	// makes the two of them together the whole of Codes.
 	held := map[Code]string{}
 	for _, entry := range list(t, loadVectors(t)["refusals"], "refusals") {
 		refusal := object(t, entry, "refusal")
@@ -1472,8 +1486,10 @@ func tagOf(key, canonical string) string {
 }
 
 // canonicalOf is one side of a direction pair: the bytes the file pins, or a
-// failure if Go produces others.
-func canonicalOf(t *testing.T, side map[string]any) string {
+// failure if Go produces others. The key is the caller's, read out of the same
+// file: a literal here would fail with "the tag is not the one the vector file
+// pins" for a key change that is not about this test at all.
+func canonicalOf(t *testing.T, side map[string]any, key string) string {
 	t.Helper()
 	direction := text(t, side["direction"], "direction")
 	record := object(t, side["message"], "message")
@@ -1484,8 +1500,8 @@ func canonicalOf(t *testing.T, side map[string]any) string {
 	if want := text(t, side["canonical"], "canonical"); string(got) != want {
 		t.Fatalf("the bytes for %s are %s, the vector file pins %s", direction, got, want)
 	}
-	if want := text(t, side["mac"], "mac"); tagOf("not-a-secret-test-key-0001", string(got)) != want {
-		t.Fatalf("the tag for %s is not the one the vector file pins", direction)
+	if want := text(t, side["mac"], "mac"); tagOf(key, string(got)) != want {
+		t.Fatalf("the tag for %s is not the one the vector file pins, over the key it carries (%s)", direction, key)
 	}
 	return string(got)
 }
