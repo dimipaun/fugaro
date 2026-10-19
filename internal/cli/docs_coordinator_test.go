@@ -18,8 +18,9 @@ package cli
 //
 //  * TestDocsCoordinatorIsWritten -- the three files exist and carry the
 //    load-bearing sentences: the status line, the owner, the date, the commit
-//    the reconciliation was run against, and the fact that no question has been
-//    answered.
+//    the reconciliation was run against, and the two facts that arrived with
+//    the owner's answers of 2026-10-19: all sixteen questions are answered, and
+//    none of the answers is an approval.
 //  * TestDocsCoordinatorSpecIsVerbatim -- spec.md carries the spec's own title,
 //    status and eleven sections, and carries none of the reconciliation's
 //    apparatus: the two documents have not been mixed.
@@ -36,15 +37,20 @@ package cli
 //    exists, and -- where a symbol is named -- to a symbol within a few lines
 //    of it.
 //  * TestDocsCoordinatorQuestionsAreNumberedAndOptioned -- Q1..Q16, contiguous,
-//    each with at least two options and a recommendation.
+//    each with at least two options, a recommendation and the owner's recorded
+//    answer of 2026-10-19.
 //
-// Mutation (verified, run and restored) -- twenty, one per way these documents
-// can rot, each planted and reverted:
+// Mutation (verified, run and restored) -- twenty-six, one per way these
+// documents can rot, each planted and reverted:
 //
 //	TestDocsCoordinatorIsWritten
 //	  delete the README's status sentence -> fails, naming it;
-//	  delete the reconciliation's "All sixteen are still OPEN" sentence -> fails;
-//	  delete the README's "Q1–Q16 are all unanswered" -> fails.
+//	  delete the reconciliation's "The owner answered all sixteen" sentence ->
+//	  fails;
+//	  delete the README's "All sixteen questions are answered" sentence -> fails;
+//	  drop "an answer is not an approval" from that README sentence -> fails,
+//	  which is the half of it that matters most;
+//	  revert the README's numbers row to "its open items are Q1–Q16" -> fails.
 //	TestDocsCoordinatorSpecIsVerbatim
 //	  paste a `### Q1 — ` heading into spec.md -> fails;
 //	  delete `## 9. Long-running behaviour` -> fails.
@@ -76,7 +82,11 @@ package cli
 //	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
 //	  delete Q9 -> fails on every question after it;
 //	  leave Q12 with one option -> fails;
-//	  rename Q14's "Recommended" -> fails.
+//	  rename Q14's "Recommended" -> fails;
+//	  restore the section heading "## 3. Open for the owner (Q1–Q16)" -> fails:
+//	  the questions are answered now, and the heading says which;
+//	  strip the "Answered 2026-10-19: option (A)" line out of Q7 -> fails,
+//	  naming Q7: a question with no answer reads as one that is still open.
 //
 // The numbers above are a reading of the document at the commit that last
 // edited this comment, not a constant, and they have gone stale every time the
@@ -158,6 +168,24 @@ const (
 // commit, and a later commit does not make it wrong.
 const coordinatorCheckedAgainst = "c6009b5f"
 
+// coordinatorAnsweredMarker is how every one of the sixteen questions records
+// the owner's answer of 2026-10-19: the option taken, in place, under the
+// question. All sixteen took option (A), the recommended one, so there is a
+// single marker to pin -- and pinning it per question is what makes a question
+// that quietly loses its answer fail, which is the state the document was in
+// until this round.
+const coordinatorAnsweredMarker = "**Answered 2026-10-19: option (A)**"
+
+// coordinatorReadmeAnswered and coordinatorReconciledAnswered are the two
+// documents' own sentences stating that the owner answered all sixteen
+// questions and that answering one is not approving a plan. Each is pinned
+// whole, and each is written on a single line in its document so that the pin
+// is a sentence rather than a fragment that a rewrap can satisfy.
+const (
+	coordinatorReadmeAnswered     = "**All sixteen questions are answered, and none is approved.**"
+	coordinatorReconciledAnswered = "**The owner answered all sixteen on 2026-10-19, each by taking option (A) — the recommendation — and an answer is not an approval.**"
+)
+
 // coordinatorSections are the spec's own section headings, in order: the pin
 // that spec.md is the document the owner wrote and not a summary of it.
 var coordinatorSections = []string{
@@ -186,11 +214,11 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 	}
 	readme := readDoc(t, coordinatorReadme)
 	for _, want := range []string{
-		"reconciliation only; nothing is implemented; the plan waits for the owner's answers",
+		"reconciliation only; nothing is implemented and no plan is approved",
 		"**Owner: Dimi Paun. Date: 2026-10-19.**",
 		coordinatorCheckedAgainst,
 		"**None.** The spec is copied byte for byte",
-		"its open items are **Q1–Q16**",
+		"its items were **Q1–Q16**",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", coordinatorReadme, want)
@@ -205,18 +233,20 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 	if !strings.Contains(reconciled, "2026-10-19") {
 		t.Errorf("%s never states the date it was written", coordinatorReconciled)
 	}
-	// Both documents say, in their own words, that no question has been
-	// answered. This is the one fact in the package that no other check can
-	// see and that a later edit can quietly invert -- a reconciliation whose
-	// recommendations start reading as rulings is the failure this work's
-	// no-D-number rule exists to prevent, and it would arrive as prose rather
-	// than as a table row.
+	// Both documents say, in their own words, two things that only appear as
+	// prose and that a later edit can quietly invert: that the owner answered
+	// all sixteen questions on 2026-10-19, and that an answer is not an
+	// approval. The second is the one that matters -- a reconciliation whose
+	// answers start reading as an approved plan is the failure this work's
+	// no-D-number rule exists to prevent, and nothing else in this package
+	// would see it. A reader who finds the answers described here as a plan
+	// should treat that as an error in the other document.
 	for path, want := range map[string]string{
-		coordinatorReadme:     "Q1–Q16 are all unanswered",
-		coordinatorReconciled: "**All sixteen are still OPEN.** The owner has answered none of them.",
+		coordinatorReadme:     coordinatorReadmeAnswered,
+		coordinatorReconciled: coordinatorReconciledAnswered,
 	} {
 		if !strings.Contains(readDoc(t, path), want) {
-			t.Errorf("%s no longer says the questions are unanswered: it lacks %q. The owner has not answered any of Q1–Q16, and a document that stops saying so reads as though they were decided", path, want)
+			t.Errorf("%s no longer says both that the owner answered Q1–Q16 and that an answer is not an approval: it lacks %q", path, want)
 		}
 	}
 }
@@ -636,7 +666,7 @@ var coordinatorQuestionRE = regexp.MustCompile(`(?m)^### Q([0-9]+) — `)
 // the thing this work's "no D-number" rule exists to prevent.
 func TestDocsCoordinatorQuestionsAreNumberedAndOptioned(t *testing.T) {
 	doc := readDoc(t, coordinatorReconciled)
-	const heading = "## 3. Open for the owner (Q1–Q16)"
+	const heading = "## 3. The owner's answers (Q1–Q16)"
 	start := strings.Index(doc, heading)
 	if start < 0 {
 		t.Fatalf("%s has no %q section", coordinatorReconciled, heading)
@@ -665,6 +695,14 @@ func TestDocsCoordinatorQuestionsAreNumberedAndOptioned(t *testing.T) {
 		if !strings.Contains(body, "Recommended") {
 			t.Errorf("Q%d names no recommendation: the owner is owed the recommended option and why", n)
 		}
+		// Every question records the owner's answer of 2026-10-19 in place. A
+		// question that has lost its answer reads as though it were still open,
+		// which is exactly the state this document was in before this round:
+		// the answers are the owner's and they are recorded, not implied by the
+		// recommendation being the first option.
+		if !strings.Contains(body, coordinatorAnsweredMarker) {
+			t.Errorf("Q%d records no answer: the owner answered all sixteen on 2026-10-19 and every one of them took option (A), so each question carries %q", n, coordinatorAnsweredMarker)
+		}
 	}
 	if len(bounds) != 16 {
 		t.Errorf("the questions section carries %d questions, and this work's index says Q1–Q16", len(bounds))
@@ -677,7 +715,7 @@ func TestDocsCoordinatorQuestionsAreNumberedAndOptioned(t *testing.T) {
 	}
 	// And the section heading itself names the range, so the two cannot drift
 	// apart without one of them looking wrong.
-	wantHeading := "## 3. Open for the owner (Q1–Q" + strconv.Itoa(len(bounds)) + ")"
+	wantHeading := "## 3. The owner's answers (Q1–Q" + strconv.Itoa(len(bounds)) + ")"
 	if !strings.Contains(doc, wantHeading) {
 		t.Errorf("%s's questions section is headed %q while it carries %d questions: the heading and the count disagree", coordinatorReconciled, heading, len(bounds))
 	}

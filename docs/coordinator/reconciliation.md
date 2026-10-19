@@ -9,10 +9,11 @@ actually has. It is the same shape as the earlier reconciliations
 ([docs/credentials-service/reconciliation.md](../credentials-service/reconciliation.md),
 [docs/mobile/reconciliation.md](../mobile/reconciliation.md)): a concept table first,
 then findings each classified **Wrong / Exists / Gap / Rule / Open**, then the
-questions the owner has to answer, then what could not be verified.
+questions the owner had to answer, and the owner's answers to them, then what could not be
+verified.
 
 **Nothing here is implemented, and nothing here is approved.** No Go, no TypeScript, no
-Terraform, no rules change, no live action follows from this document. It allocates no decision number (see [README.md](README.md)): the findings that need the owner are numbered **Q1–Q16**, and they stay questions until the owner answers them.
+Terraform, no rules change, no live action follows from this document. It allocates no decision number (see [README.md](README.md)): the findings that needed the owner were numbered **Q1–Q16**, and **the owner answered all sixteen on 2026-10-19** (§3), each by taking option (A), the recommended one.
 
 ---
 
@@ -67,7 +68,8 @@ not exist. Recording them here so the next reader does not repeat them.
 ## 2. Findings
 
 Numbered **#1–#30**. Each cites a path and a symbol and states its consequence. Where a
-finding needs a decision from the owner, the question it feeds is named.
+finding needed a decision from the owner, the question it feeds is named — and the owner's
+answer to that question is in §3. The findings themselves are unchanged by the answers.
 
 ### Deployment and provisioning
 
@@ -586,17 +588,33 @@ repository. → **Q12**.
 
 ---
 
-## 3. Open for the owner (Q1–Q16)
+## 3. The owner's answers (Q1–Q16)
 
-Sixteen questions. Each names what it changes in [spec.md](spec.md). They are questions,
-not decisions: this work allocates no D-number, and no task starts before the owner answers
-them and then approves a plan.
+Sixteen questions. Each names what it changes in [spec.md](spec.md). They were questions, not
+decisions: this work allocates no D-number, and no task starts on the strength of an answer
+alone.
 
-**All sixteen are still OPEN.** The owner has answered none of them. Every "Recommended"
-below is this document's own proposal, written to be easy to reject, and none of them is a
-ruling: no part of this reconciliation has been accepted, no D-number was allocated when it
-was written, and no review round since has changed that. A reader who finds one of these
-described elsewhere as decided should treat that as an error in the other document.
+**The owner answered all sixteen on 2026-10-19, each by taking option (A) — the recommendation — and an answer is not an approval.** The answer is recorded under each question
+below, in the owner's own choice of option; the wording of every option and of every
+"Consequence" line is this document's, written before the answer, and is left as it was so
+that the answer can be read against what it was choosing between. **Nothing here has been
+accepted, approved or given a decision number**, no plan exists, and the answers choose a
+direction rather than approving work: they are the owner's decision to proceed on that
+option, and the plan that follows is a separate document with its own gate. A reader who finds
+one of these answers described elsewhere as an approved plan, or as a D-number, should treat
+that as an error in the other document.
+
+Three things the answers do not settle, said here so they are not lost:
+
+- **U2 stays an owner check.** Q3's answer (A) reuses the existing App and asks it for
+  `pull_requests: read`; whether the App has actually been granted that on GitHub is
+  configured in GitHub's UI and could not be read from this container (§4, U2). The answer is
+  contingent on it.
+- **U6 and U7 are still drafts**, not merged: Q10's answer (A) is one resident service per
+  installation, and the sibling design in PR #632 is where that service is specified (§4).
+- **The findings in §2 are unchanged.** An answer decides the question it belongs to; it does
+  not re-classify a finding, and none of the "Wrong" findings becomes "Exists" because the
+  owner chose an option. §0, §1, §4 and §5 are likewise untouched.
 
 ### Q1 — Where does the coordinator run, given Fugaro has never run a request-serving Cloud Run service?
 **Changes spec §4.**
@@ -605,12 +623,16 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) The service first, everything else after.** Highest risk: it makes the hardest part (authentication, finding **#4**) the first thing built, before the deterministic value exists.
 *Consequence of (A):* the first service in Fugaro, and the first `fugaro init` stage that adds a reachable resource. It needs its own typed confirmation (`internal/cli/init_review.go`), because it is outside the covered allowlist.
 
+**Answered 2026-10-19: option (A)** — a Cloud Run *service* for the MCP front door in the installation root, with the aggregation as a scheduled Cloud Run *job*: the first service in Fugaro, and the first `fugaro init` stage that adds a reachable resource, so it needs its own typed confirmation.
+
 ### Q2 — Who may call the coordinator, and what is the caller's identity?
 **Changes spec §4 (the "no extra permission model in v1" line) and §7.**
 - **(A) Recommended — Cloud Run IAM invoker with per-person IAM members, exactly as a launcher is granted today, plus a small `fugaro` command that mints the Google ID token so nobody types `gcloud auth print-identity-token`.** It is the only model the repository already validates (`modules/compute/variables.tf:122,144`) and it makes offboarding the launcher-list edit that already exists (finding **#5**). It also reuses the credentials service's own answer for a service's front door (D135, `docs/credentials-service/reconciliation.md:175`). Cost: every developer becomes an IAM member on one more resource, and the ID-token plumbing does not exist yet (finding **#4**).
 - **(B) Firebase Auth ID token as the caller identity, checked in the app, with IAM invoker as a second fence.** Reuses the identity world the phone already plans (D111, `docs/mobile/reconciliation.md`) and the `mu` user claim the rules already understand (`internal/budget/rules/rules.go:362`). Cost: Firebase Auth is a *plan*, not a build, and it puts an authorisation decision in application code rather than in IAM.
 - **(C) A public URL with an application-level shared secret.** **Refused as written**: `allUsers` and `allAuthenticatedUsers` are refused everywhere in this repository (`modules/compute/variables.tf:122`), and a shared secret has no per-person revocation. Listed only so the refusal is on the record.
 *Consequence:* v1's "no extra permission model" is replaced by "the project's existing IAM members list", and the access list (launchers / operators / budget admins) has to be said explicitly — today they are three different things (`internal/infra/firebase.go:117-120`).
+
+**Answered 2026-10-19: option (A)** — Cloud Run IAM invoker with per-person IAM members, as a launcher is granted today, plus a small `fugaro` command that mints the Google ID token: v1's "no extra permission model" becomes "the project's existing IAM members list", and the access list has to be said explicitly.
 
 ### Q3 — What GitHub credential does the coordinator hold, and is read-only a hard rule?
 **Changes spec §3, §6, §7.**
@@ -619,12 +641,16 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) A fine-grained personal access token per project.** Cost: a long-lived human credential, no per-repository scoping guarantee, and it dies with the person who made it.
 *Consequence:* under any option, "the coordinator holds no GitHub write power" becomes a **hard rule** the code enforces by never asking for a write permission — the mechanical form of spec §3's "advisory, not authoritative".
 
+**Answered 2026-10-19: option (A)** — the existing App, minting a new read-only named permission set and never a `write`, with the App's own grant on GitHub needing `pull_requests: read` (U2, still an owner check): under this option "the coordinator holds no GitHub write power" is a hard rule the code enforces.
+
 ### Q4 — Does the coordinator hold a model credential, or wait for the credentials service?
 **Changes spec §8.**
 - **(A) Recommended — no model credential in v1 at all.** The deterministic half (findings **#10**, **#12**, **#13**, **#28**) ships first and needs none; the LLM half waits. This is also PR #632's answer for the sibling service (*"never a model credential in the resident service"*, finding **#29**), so it keeps the two designs compatible.
 - **(B) The coordinator becomes a second long-lived secret holder, as its own opt-in installation-root resource set.** Cost: it needs its own D143-style bounds (SA holds `secretAccessor` on the model secret only; no shell; no admin endpoints; every use audited), and D143/D145 do not already grant it (finding **#22**). It also decides mobile D115's deferred phase-2 question implicitly.
 - **(C) The coordinator calls the credentials service as its model front door, once that service exists.** Cleanest long-term: one identity holds model keys. Cost: it makes the coordinator's LLM half depend on unbuilt work (`docs/credentials-service/README.md:3`), and the service's F36 boundary is *"secrets-only"* — a caller that spends a credential is a different shape from one that issues it.
 *Consequence:* (A) is the only option that does not need a new security decision; (B) and (C) each need one, and (B) also needs a ruling on mobile D115.
+
+**Answered 2026-10-19: option (A)** — no model credential in v1 at all: the deterministic half ships first and needs none, and this is the only option that needs no new security decision.
 
 ### Q5 — Does the coordinator's state live in the Realtime Database or in Firestore?
 **Changes spec §5.**
@@ -633,12 +659,16 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) Both — Firestore for the graph, RTDB for the live pointers the console and the phone read.** Cost: two stores to keep consistent, and the consistency mechanism is the one thing neither store gives you.
 *Consequence:* (A) keeps the console's project view reachable through the CLI, which is the only path the renderer has (finding **#7**).
 
+**Answered 2026-10-19: option (A)** — the Realtime Database, beside the budget, policy, kill and mailbox nodes, so the console's project view stays reachable through the CLI, the only path the renderer has.
+
 ### Q6 — Concurrency and idempotency: which of the repo's existing mechanisms does the coordinator use?
 **Changes spec §9.**
 - **(A) Recommended — the house idiom: deterministic event document IDs, ETag/`If-Match` CAS for the coordinator's own state, generation-matched writes for anything in GCS, and no new lock.** All four already exist (finding **#17**), and the first two are enough for "never contradicts itself" at one service.
 - **(B) A new per-project lock, in the shape of `internal/lock`.** Cost: a second distributed lock in the system, with its own expiry and takeover semantics, for a service that is already a single writer.
 - **(C) Firestore transactions.** Not available: the client has none (finding **#16**). Listed because the spec names it.
 *Consequence:* (A) means spec §9's "Firestore transactions or a per-project lock" is replaced by the mechanism the repository actually has.
+
+**Answered 2026-10-19: option (A)** — the house idiom: deterministic event document IDs, ETag/`If-Match` CAS, generation-matched writes, and no new lock.
 
 ### Q7 — Event intake: webhooks, polling, or the reconciliation job?
 **Changes spec §4 ("wakes on requests and events") and §9.**
@@ -647,12 +677,16 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) Both: polling for the reconciliation sweep, webhooks for latency-sensitive events.** Cost: two paths into the same state, which is two idempotency stories to get right.
 *Consequence:* (A) means the coordinator's "wakes on events" is a *tick*, and the spec's §6 "intent signals" arrive over the MCP front door (which is request-driven) rather than as events.
 
+**Answered 2026-10-19: option (A)** — Cloud Scheduler polling on the existing `history_sweep` pattern: "wakes on events" is a tick, and the spec's §6 intent signals arrive over the MCP front door rather than as events.
+
 ### Q8 — What does the console gain, and does "ask the coordinator" ship in v1?
 **Changes spec §10.**
 - **(A) Recommended — read-only, through the CLI sidecar: new read operations in the IPC table over new `fugaro` commands, exactly as every other screen works.** It needs no change to the console's no-credential D1/D2 or to v2's one-write D22 ruling (finding **#27**), and it makes the project view reachable whichever store Q5 picks.
 - **(B) Read-only plus "ask the coordinator" as a new operation.** Cost: a new interaction that sends free text to a model and renders a model's answer — which is exactly the untrusted-output case (finding **#28**) — and it is a second write-shaped operation beside v2's single launch.
 - **(C) The project view as a separate window or app.** Cost: a new Electron surface with its own CSP, IPC table and hardening review, for a view the existing renderer can draw.
 *Consequence:* under (A), spec §10's "ask the coordinator" is deferred to a second ruling, and its answer must be plain text, never markdown with links.
+
+**Answered 2026-10-19: option (A)** — read-only, through the CLI sidecar, as new read operations over new `fugaro` commands, with no change to the console's no-credential D1/D2 or to v2's one-write D22: spec §10's "ask the coordinator" is deferred to a second ruling.
 
 ### Q9 — How is a two-tier model configuration expressed, and what does the coordinator's provider consent say?
 **Changes spec §8.**
@@ -661,12 +695,16 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) A per-installation setting outside the policy.** Cost: it is invisible to every run and to `fugaro doctor`, and the policy is where every other project-wide model decision lives.
 *Consequence:* under (A), `allow_data_to: ["*"]` for the coordinator's provider is an explicit, visible owner-level statement that every repository's text may go to that provider.
 
+**Answered 2026-10-19: option (A)** — two named slots in the published project policy, in the shape `agent.models` already uses, plus an explicit `allow_data_to` naming every repository the coordinator may read, so that `allow_data_to: ["*"]` is an explicit owner-level statement.
+
 ### Q10 — Does this design absorb the always-on orchestrator (mobile P5.1, PR #632), or the other way round?
 **Changes spec §2, §4, §8.**
 - **(A) Recommended — one resident service per installation, with the coordinator as a role it plays.** PR #632's design already puts it per installation with a scheduler tick and a dedicated service account, which is the same unit as "per Fugaro project" (finding **#1**); the coordinator adds the project-wide state and the MCP front door. Cost: PR #632's *"never a model credential in the resident service"* and this spec's §8 cannot both hold — so this option means **Q4 (A)** for v1 and the model credential arrives only when the credentials service does.
 - **(B) Two services: the orchestrator (per installation, `fugaro run` authority, no model credential) and the coordinator (advisory, project-wide state).** Cost: two always-on surfaces, two service accounts, two sets of grants — and the coordinator still needs its own answer to Q4.
 - **(C) The coordinator absorbs the orchestrator's `fugaro run` authority too.** **Refused as written**: that is mobile D115's deferred question (`docs/mobile/reconciliation.md:326`), and answering it here decides it implicitly.
 *Consequence:* (A) is the option that does not decide D115 by accident, and it is the reason this question exists at all.
+
+**Answered 2026-10-19: option (A)** — one resident service per installation, with the coordinator as a role it plays, which means **Q4 (A)** for v1 and the model credential arriving only when the credentials service does.
 
 ### Q11 — How is the coordinator's spend capped, and charged to the project?
 **Changes spec §9.**
@@ -675,6 +713,8 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) The coordinator mints a synthetic run identity per wake-up and is charged as a run.** Cost: it reuses the per-run machinery exactly, but it means a long-lived service mints run tokens for itself — the one thing D134 ties to a real run's lifetime.
 *Consequence:* the spec's *"counts toward the project's existing spend caps"* is not satisfiable by configuration under any option; it needs a mechanism, and (A) is the option that does not need one yet.
 
+**Answered 2026-10-19: option (A)** — no cap in v1, because there is no model credential in v1: the only option that requires no new budget mechanism, and the question is deferred to the release that has something to cap.
+
 ### Q12 — Which git providers does v1 support?
 **Changes spec §6.**
 - **(A) Recommended — GitHub only, and a Bitbucket project is refused with a line naming the reason.** GitHub is the provider whose credential is project-scoped by the owner's 2026-10-15 ruling; Bitbucket's is per repository and cannot be widened (finding **#30**).
@@ -682,12 +722,16 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) GitHub now, Bitbucket behind a per-provider switch, off by default.** Cost: a switch that cannot be turned on is a switch nobody tests.
 *Consequence:* under (A), the coordinator's own refusals become part of its design, in the way `fugaro validate` already refuses things with a named reason.
 
+**Answered 2026-10-19: option (A)** — GitHub only, with a Bitbucket project refused in a line that names the reason.
+
 ### Q13 — What is v0?
 **Changes spec §2, §5, §7, §8, §10.**
-- **(A) Recommended — a read-only aggregation with no LLM, no service and no MCP: the project's pull requests joined with its run records, drawn in the console by new `fugaro` read commands.** Every input already exists (findings **#9**, **#12**); nothing new is provisioned; it answers the spec's §1 problem ("nobody holds the project-wide view") for the deterministic half; and it is the only version that can ship before Q1–Q12 are answered.
+- **(A) Recommended — a read-only aggregation with no LLM, no service and no MCP: the project's pull requests joined with its run records, drawn in the console by new `fugaro` read commands.** Every input already exists (findings **#9**, **#12**); nothing new is provisioned; it answers the spec's §1 problem ("nobody holds the project-wide view") for the deterministic half; and it is the only version that can ship before Q1–Q12 were answered.
 - **(B) The MCP front door first (`report_intent`, `check_conflicts`).** Cost: it needs the service, the authentication answer and the state store before it can return anything useful — the three hardest questions first.
 - **(C) The full spec at once.** Cost: it decides Q1–Q12 in one go, which is what the owner's gate exists to prevent.
 *Consequence:* under (A), the coordinator's first release is a **view**, not an agent — which is also the smallest thing that proves the state model before anything depends on it.
+
+**Answered 2026-10-19: option (A)** — v0 is a read-only aggregation with no LLM, no service and no MCP: the project's pull requests joined with its run records, drawn in the console by new `fugaro` read commands, so the coordinator's first release is a **view**, not an agent.
 
 ### Q14 — Does override learning ship, and what is the coordinator forbidden to do with what it reads?
 **Changes spec §3 ("Learns from overrides") and §6.**
@@ -696,6 +740,8 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) No override log at all in v1.** Cost: the spec's §3 principle is dropped, and the reasons people give are exactly the business context the coordinator is supposed to be short of.
 *Consequence:* under (A), the coordinator may **read** GitHub text and intent signals as data and may never act on an instruction found in them; it may never write to GitHub; and its answers are plain text.
 
+**Answered 2026-10-19: option (A)** — `record_override` writes and is shown, nothing is fed back into a prompt in v1, and findings #13's and #28's rules are hard rules: the coordinator may read GitHub text and intent signals as data and never act on an instruction found in them.
+
 ### Q15 — Is the coordinator the only writer of its state, and who else may read it?
 **Changes spec §5, §7, §10.**
 - **(A) Recommended — the coordinator is the only writer; the CLI and the phone get a rules read grant, as mobile D112 already plans for the phone.** The console's project view then works through the CLI sidecar (finding **#7**) without asking the coordinator anything, and the phone's "hide old jobs" list works the same way it does today.
@@ -703,12 +749,16 @@ described elsewhere as decided should treat that as an error in the other docume
 - **(C) Local orchestrators write their own intent nodes directly.** **Refused as written**: spec §7 says *"Local agents never touch Firestore directly"*, and a direct write path is a direct poisoning path.
 *Consequence:* under (A), the rules change is an addition to the RTDB template (`internal/budget/rules/rules.json.tmpl`) with its own golden file, which is how every rules change in this repository works.
 
+**Answered 2026-10-19: option (A)** — the coordinator is the only writer; the CLI and the phone get a read grant in the rules, as mobile D112 already plans for the phone, and the change is an addition to the RTDB template with its own golden file.
+
 ### Q16 — Which MCP transport, and what does "MCP authorization" mean here?
 **Changes spec §7.**
 - **(A) Recommended — the streamable HTTP transport, with Cloud Run IAM invoker as the authorization (Q2), recorded as a deliberate departure from the MCP specification's OAuth 2.1-based authorization model.** No OAuth server, no dynamic client registration, no resource metadata — because the repository has none and building one is a project of its own.
 - **(B) Implement the specification's OAuth 2.1 authorization model.** Cost: an authorization server, client registration and resource metadata, none of which exists, for a front door whose callers are the project's own developers.
 - **(C) `stdio` transport only, no HTTP at all.** Cost: it removes the front door entirely — a local process cannot be reached by another developer's orchestrator — which makes the whole §7 interface pointless. Listed because it is the option that needs no service at all.
 *Consequence:* under (A), the departure is written down rather than discovered by the first non-Claude MCP client that tries to authorize against it.
+
+**Answered 2026-10-19: option (A)** — the streamable HTTP transport, with Cloud Run IAM invoker as the authorization (Q2), recorded as a deliberate departure from the MCP specification's OAuth 2.1-based authorization model, so the departure is written down rather than discovered by the first non-Claude MCP client.
 
 ---
 
@@ -743,5 +793,5 @@ the README and for whatever plan follows.
 | **Front agent** | The mobile design's P5.4: the phone's conversational agent. | `docs/mobile/implementation-plan.md:582`. Distinct from both of the above. |
 | **Summarising agent** | The mobile design's agent beside the orchestrator, which condenses task events into spoken updates. | `docs/mobile/spec.md:26`. The nearest existing thing to a "coordinator" in the mobile design, and not the same. |
 | **Run** | One execution of a coding agent in a fresh Cloud Run container, ending in a pull request. | `internal/runstore/`, `internal/backend/`. The unit every budget cap is keyed to. |
-| **Launcher / operator / budget admin** | The three people lists. Launchers start runs; operators hold the run bucket and the preload account; budget admins may write the database. | `internal/infra/firebase.go:117-120`; `internal/localcfg/localcfg.go:360-365`. Q2's access-list question is which of these, if any, may call the coordinator. |
+| **Launcher / operator / budget admin** | The three people lists. Launchers start runs; operators hold the run bucket and the preload account; budget admins may write the database. | `internal/infra/firebase.go:117-120`; `internal/localcfg/localcfg.go:360-365`. Q2's answer is that callers are per-person IAM members on the coordinator, as a launcher is granted today, so the access list has to be said explicitly. |
 | **Project job** | A **shared** Cloud Run job one repository's workflow can run in another's name, created by the `project` Terraform module. | `deploy/terraform/gcp/modules/project/job.tf:10`; `SECURITY.md:93`. **Not** the coordinator, and **not** "the project's job". |

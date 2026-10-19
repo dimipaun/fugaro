@@ -1,17 +1,24 @@
 # The coordinator agent
 
-**Status: reconciliation only; nothing is implemented; the plan waits for the owner's answers.** This directory holds the owner's spec for a **coordinator agent**, the
+**Status: reconciliation only; nothing is implemented and no plan is approved.** This directory holds the owner's spec for a **coordinator agent**, the
 reconciliation of that spec against the code at `origin/main` `c6009b5f` (`release:
-v0.8.6 (#637)`), and the questions the reconciliation could not answer on its own. No Go,
+v0.8.6 (#637)`), the questions the reconciliation could not answer on its own, and the
+owner's answers to them. No Go,
 no TypeScript, no Terraform, no rules change and no live action follows from these
 documents. **Owner: Dimi Paun. Date: 2026-10-19.** The reconciliation was run against
 `c6009b5f`, and every path and symbol in it was read at that commit; the citation check that
 backs that claim, and the shape of citation it does not cover, are stated in
 `internal/cli/docs_coordinator_test.go`'s own comment rather than left implied.
 
-**Every question is still open. Q1–Q16 are all unanswered — the owner has answered none of
-them**, and nothing in this directory has been accepted, approved or given a decision number.
-The recommendations inside are proposals written to be rejected, not rulings.
+**All sixteen questions are answered, and none is approved.** The owner answered Q1–Q16 on
+**2026-10-19**, each by taking **option (A)**, the recommended one; each answer is recorded
+under its question in the reconciliation's §3, with what it means for the spec. **An answer
+is not an approval**: nothing in this directory has been accepted, approved or given a
+decision number, no plan exists, and the plan that follows is a separate document with its
+own gate. The options that were not taken are left in place, unedited, so the answer can be
+read against what it was choosing between. Two things the answers do not settle: **U2 stays
+an owner check** (whether the GitHub App already has `pull_requests: read`, which Q3's answer
+asks it for), and **U6/U7 are still drafts** in open pull requests.
 
 A coordinator is a **per-project service** that aggregates what every local orchestrator is
 doing, owns project-level state, detects conflicts early and suggests sequencing — advisory,
@@ -21,7 +28,7 @@ repository actually has against it.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | **The owner's spec, verbatim** — *"Fugaro Coordinator Agent — Design Spec"*, sections 1–11, exactly as received. Committed alone, in its own commit, before anything else in this directory. |
-| [reconciliation.md](reconciliation.md) | Corrections to the brief this work was written from (§0); the spec's concepts against what the repository has (§1); findings **#1–#30**, each classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol and stating its consequence (§2); **Q1–Q16** for the owner, each with two or three options, the recommendation first and what it changes in the spec (§3); the **UNVERIFIED** table (§4); and the glossary the spec's words need (§5). |
+| [reconciliation.md](reconciliation.md) | Corrections to the brief this work was written from (§0); the spec's concepts against what the repository has (§1); findings **#1–#30**, each classified **Wrong / Exists / Gap / Rule / Open**, each citing a path and a symbol and stating its consequence (§2); **Q1–Q16**, each with two or three options, the recommendation first, what it changes in the spec, and **the owner's answer of 2026-10-19** (§3); the **UNVERIFIED** table (§4); and the glossary the spec's words need (§5). |
 
 ## Typos fixed in `spec.md`
 
@@ -35,7 +42,7 @@ owner's copy is right and `spec.md` is the file to fix.
 | Numbers | Whose | State |
 | --- | --- | --- |
 | **D1–D192** | the console (D1–D38), voice (D39–D54b), managed projects (D55–D78), the website (D90–D109), mobile (D110–D129), the credentials service (D130–D159), the mobile functional spec (D160–D179), the website redesign (D180–D192) | **taken**; the highest number written anywhere in `docs/` at `c6009b5f` is **D192** |
-| **D193 onward** | — | **free.** This work takes **no D-number**: its open items are **Q1–Q16**, and they stay questions until the owner answers them. The spec is the owner's, and the reconciliation is a reconciliation — neither allocates a decision. |
+| **D193 onward** | — | **free.** This work takes **no D-number**: its items were **Q1–Q16**, and the owner answered them on 2026-10-19 without a decision number. An answer picks an option; it does not allocate, and it does not approve. The spec is the owner's, and the reconciliation is a reconciliation — neither allocates a decision. |
 | **Checks 1–109** | the live checklist, up to the mobile functional spec's reserved **105–109** | **taken or reserved**; the highest check *section written* is **70c** |
 | **Check 110** | **claimed by the always-on orchestrator design** (`docs/design/always-on-orchestrator.md`, PR #632, its §7 and Q5) | **claimed, not merged.** This work takes **no check number**, and it must not take 110 while that claim is open: the repository's own rule is that whichever of two open claims merges *second* renumbers itself (`docs/gcp-live-checklist.md`) |
 
