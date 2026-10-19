@@ -314,12 +314,13 @@ P5 and P6), in the same sub-lettering convention. All three are written below:
 **70a** (the mobile header on one row, the drawer by keyboard) by **P3**, **70b**
 (the gist above the fold) by **P5** — merged in #603, and written here after 70a and
 70c because that is the order the parts landed, not the order of the numbers — and
-**70c** (the copy control in a real browser, with a real clipboard) by **P6**, so the
-block 69a–69c arrived in is complete. The number was free when P3 and P6 merged (and
-when P5 did): the highest written `## Check N` section here was **69b**, the website work
-holds 69 and up, and no document in the tree wrote `70` (the redesign plan checked
-that on 2026-10-18). The redesign's §8 proposes this block for the owner to confirm
-with `D180`–`D192` in `docs/website/redesign/reconciliation.md` §9, and the parts
+**70c** (the copy control in a real browser, with a real clipboard) by **P6** — so the
+block this paragraph proposes is complete, where the one Check 69 arrived in is not
+(69c is still Task W2.3's, as the paragraph above says). The number was free when P3 and
+P6 merged (and when P5 did): the highest written `## Check N` section here was **69b**,
+the website work holds 69 and up, and no document in the tree wrote `70` (the redesign
+plan checked that on 2026-10-18). The redesign's §8 proposes this block for the owner to
+confirm with `D180`–`D192` in `docs/website/redesign/reconciliation.md` §9, and the parts
 write their checks rather than waiting on the confirmation because a live check is
 what the owner runs: if the owner allocates differently, these sections renumber
 and the citations follow the allocation, never the other way round.
@@ -4255,12 +4256,13 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    a title above the fold and no gist, which is why the lead's bottom is the second number. RF23
    measured the homepage's `h1` at 893 px at this width — one line below the fold — and every
    other route's inside the first screen. In the console, the two numbers are read the way the
-   script reads them:
+   script reads them — the script's own selectors, so this reads the element the script reads
+   and not a look-alike:
 
    ```js
    const bottom = (el) => el && Math.round(el.getBoundingClientRect().bottom + window.scrollY)
-   bottom(document.querySelector('main h1'))   // h1Bottom
-   bottom(document.querySelector('main p'))    // leadBottom — the lead paragraph
+   bottom(document.querySelector('h1'))        // h1Bottom — the document's first `h1`
+   bottom(document.querySelector('main p'))    // leadBottom — `main`'s first paragraph
    ```
 
    **FACT:** per route, `h1Bottom` and `leadBottom` in pixels, and whether each is under 844.
@@ -4270,8 +4272,9 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    `website/src/pages/index.astro` renders the hero, and `Hero.astro`'s `HERO_PATHS` names the
    paths it renders — Homebrew first, then the Go install — so the first command is the first
    path's first command, and whichever P5 shipped is what this step reads and not a command typed
-   here. At 390 × 844, read `firstCommandBottom` for `/` — the script's key is `main pre`'s bottom
-   — and the copy control's own rectangle beside it (the control the markup wraps each command in,
+   here. At 390 × 844, read `firstCommandBottom` for `/` — the script's key is
+   `document.querySelector('main pre')`'s bottom, measured from the top of the document — and
+   the copy control's own rectangle beside it (the control the markup wraps each command in,
    `[data-copy] button`). The control is P6's and it is in the flow in a row **above** its command,
    so the command's own bottom is the later of the two and a command inside the first screen
    carries its control in with it. What the second rectangle is read for is the other arrangement:

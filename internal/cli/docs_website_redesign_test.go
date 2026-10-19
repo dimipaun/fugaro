@@ -10,13 +10,19 @@ package cli
 // now measures the lead as the region between the `h1` and the first `h2`), but not the
 // check that measures the fold itself, which the register's note under "Check 70 is the
 // website redesign's" recorded as not in the file yet. The ceilings themselves are P4's
-// (#572), which the plan's §3 says in as many words ("part P4 of the plan writes the word
-// ceiling either way"), and the check's section attributes the gates to no part at all.
-// These two tests pin the two halves of the entry the way
-// TestWebsiteChecklistHasCheck69aAnd69b pins the website plan's 69a and 69b -- the row a
-// reader meets first and the section it points at -- because a check that exists as a
-// section but not as a row is a check nobody reads first, and a row with no section is a
-// command nobody can follow.
+// (#572, D188), and the plan says so twice -- §3's constraint 4, "The word ceiling of P4
+// goes there too, beside the byte budgets", and P4's own section of §3, "**The word
+// ceiling, in `website/test/budget.mjs`**" -- while the reconciliation's RF23 puts it the
+// other way round ("part **P4** of the plan writes the word ceiling either way"). The
+// check's section attributes the gates to no part at all.
+//
+// The two tests on the entry pin its two halves the way TestWebsiteChecklistHasCheck69aAnd69b
+// pins the website plan's 69a and 69b -- the row a reader meets first and the section it
+// points at -- because a check that exists as a section but not as a row is a check nobody
+// reads first, and a row with no section is a command nobody can follow. The three tests
+// beside them hold the facts this comment and the section's own wording rest on: the plan's
+// attribution of the ceilings to P4, the register's note about its block of three, and the
+// selectors the check reads its numbers through.
 //
 // What the pair holds 70b to, beyond the shape every entry in the register has:
 //
@@ -203,6 +209,109 @@ func TestWebsiteChecklistHasCheck70bSection(t *testing.T) {
 		if at(pair[0]) == -1 || at(pair[1]) == -1 || at(pair[0]) > at(pair[1]) {
 			t.Errorf("the register's sections are not in order: %s does not come before %s", pair[0], pair[1])
 		}
+	}
+}
+
+// TestWebsiteRedesignPlanAttributesTheWordCeilingToP4 pins the fact this file's header
+// comment rests on, in the documents' own words: the word ceilings (D188: 40 words in a
+// page's lead, 250 per page except the three reference pages) are part P4's work (#572), and
+// the plan says so twice -- §3's constraint 4 and P4's own section of §3 -- while the
+// reconciliation's RF23 says it where the finding is written. The comment cites those
+// sentences, so this holds the citation to what is actually there: a document that
+// re-attributes the ceiling fails here rather than leaving a comment quietly wrong about
+// whose work the ceiling was.
+func TestWebsiteRedesignPlanAttributesTheWordCeilingToP4(t *testing.T) {
+	for _, m := range []struct{ path, want string }{
+		{"docs/website/redesign/implementation-plan.md", "The word ceiling of P4 goes there too, beside the byte budgets."},
+		{"docs/website/redesign/implementation-plan.md", "**The word ceiling, in `website/test/budget.mjs`**"},
+		{"docs/website/redesign/reconciliation.md", "part **P4** of the plan writes the word ceiling either way"},
+	} {
+		flat := strings.Join(strings.Fields(readDoc(t, m.path)), " ")
+		if !strings.Contains(flat, m.want) {
+			t.Errorf("%s does not carry %q: the ceilings are part P4's (#572, D188), and this is the sentence the check's pin cites for that", m.path, m.want)
+		}
+	}
+}
+
+// checklist70Note opens the register's paragraph about the redesign's check 70, the paragraph
+// whose own sentence says what the block of three adds up to.
+const checklist70Note = "**Check 70 is the website redesign's"
+
+// TestWebsiteChecklist70NoteDoesNotClaimCheck69IsComplete pins the one sentence in the
+// register's note about Check 70 that was wrong. The note closes by saying what its block of
+// three adds up to, and the paragraph above it -- the one about Check 69 -- says in as many
+// words that 69c "is not in this file yet". A sentence reading "so the block 69a-69c arrived
+// in is complete" therefore contradicted the register sixteen lines above it; the true claim
+// is about the block *this* paragraph proposes, which is the one all three of whose sections
+// are in the file. The test holds both halves: the claim about 70, and the refusal of the
+// claim about 69.
+func TestWebsiteChecklist70NoteDoesNotClaimCheck69IsComplete(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	i := strings.Index(doc, checklist70Note)
+	if i == -1 {
+		t.Fatalf("%s has no %q paragraph: the register's note about check 70 is where the redesign's sub-lettering is explained", path, checklist70Note)
+	}
+	note := doc[i:]
+	if j := strings.Index(note, "\n\n"); j != -1 {
+		note = note[:j]
+	}
+	flat := strings.Join(strings.Fields(note), " ")
+
+	// The completeness the paragraph may claim is its own: 70a, 70b and 70c are written below
+	// by P3, P5 and P6, and the register's own sections have to hold them for that to be true.
+	for _, want := range []string{"**70a**", "**70b**", "**70c**", "**P3**", "**P5**", "**P6**", "Check 69"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s's note about check 70 does not carry %q: the paragraph says which parts wrote which of the three checks, and what the block adds up to", path, want)
+		}
+	}
+	for _, want := range []string{"## Check 70a:", "## Check 70b:", "## Check 70c:"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s has no %q section: the note says the block is written below, so the register has to hold it", path, want)
+		}
+	}
+
+	// And it may not claim that the block Check 69 arrived in is complete: 69c is Task W2.3's
+	// and is not in this file, which the paragraph above the note says. The sentence is kept
+	// here as it was written, so the wording cannot drift back to it.
+	if strings.Contains(flat, "69a–69c arrived in is complete") {
+		t.Errorf("%s's note about check 70 says the block Check 69 arrived in is complete: it is not -- 69c is not in this file yet, as the paragraph above the note says", path)
+	}
+}
+
+// TestWebsiteChecklistCheck70bReadsTheScriptsOwnSelectors pins the check's measurements to the
+// script's own. The three keys the section reads -- `h1Bottom`, `leadBottom` and
+// `firstCommandBottom` -- are defined in docs/website/redesign/capture-screenshots.mjs through
+// one selector each, and the section says its two numbers are read "the way the script reads
+// them", so it has to read them through those selectors. The trap this guards is a look-alike:
+// the script measures the document's first `h1`, and `main h1` is a different element that
+// happens to be the same one on today's pages -- a check written against `main h1` would pass
+// while measuring an element the script does not.
+func TestWebsiteChecklistCheck70bReadsTheScriptsOwnSelectors(t *testing.T) {
+	const scriptPath = "docs/website/redesign/capture-screenshots.mjs"
+	const path = "docs/gcp-live-checklist.md"
+	script := readDoc(t, scriptPath)
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(docSection(t, path, doc, checklist70bHeading)), " ")
+
+	for _, m := range []struct{ key, sel string }{
+		{"h1Bottom", "'h1'"},                 // the script's `const h1 = q('h1')`
+		{"leadBottom", "'main p'"},           // q('main p')
+		{"firstCommandBottom", "'main pre'"}, // q('main pre')
+	} {
+		if !strings.Contains(script, "q("+m.sel+")") {
+			t.Errorf("%s no longer measures %s with q(%s): the check's Method reads the script's keys out of it, so the key and the selector move together", scriptPath, m.key, m.sel)
+		}
+		if !strings.Contains(flat, "document.querySelector("+m.sel+")") {
+			t.Errorf("%s's section does not read %s with document.querySelector(%s), the script's own selector: the check reads its numbers \"the way the script reads them\"", path, m.key, m.sel)
+		}
+	}
+
+	// The look-alike, refused: the script's `h1` is the document's first, not the one inside
+	// `main`, and the check may not quietly substitute one for the other.
+	if strings.Contains(flat, "document.querySelector('main h1')") {
+		t.Errorf("%s's section reads the h1 with document.querySelector('main h1'): the script reads the document's first `h1` (%s), and a check that measures a different element is not the script's measurement", path, scriptPath)
 	}
 }
 
