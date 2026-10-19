@@ -1348,25 +1348,40 @@ one token, can a document gain a second stylesheet or an inline style.
 
 ### Task 6.3: The layout
 
-**Scope.** `src/renderer/theme/base.css`: the reset, the document, the three bands the
-entry already appends (`section.console-installation`, `nav.console-views`,
-`div.console-panel`, held in that order by `test/e2e/entry.spec.ts`), the nav styled as the
-tab list its `aria-current` already makes it, the chrome fixed and the panel scrolling, the
-installation line's three states, the focus ring as one `:focus-visible` rule off the
-tokens, the three responsive layers of the design's §4.2, and **the chrome's**
-`@media (forced-colors: active)` block of its §4.4. **And `THEME_STYLESHEETS` gains
-`'base.css'` in this commit** — the file and its list entry move together, because the
-bundler refuses a listed file that is missing (design §5.2). After this task the artefact
-is three files: the vocabulary, the values, and the first rules that read them.
+**Scope.** `src/renderer/theme/base.css`: the reset, the document as the **two-column grid**
+the design's §4.1 draws, **the installation rail** and the rules for it — its fixed 216 px
+width, its header row and its collapse control, its rows with their name, project, state
+glyph **and** state word and spend spans, its selected row's 3 px accent border, its foot
+row and its hint — the three bands the entry appends (`section.console-installation`,
+`nav.console-views`, `div.console-panel`, held in that order by `test/e2e/entry.spec.ts`,
+now the grid's second column), the nav styled as the tab list its `aria-current` already
+makes it, the chrome fixed and the panel scrolling, the installation line's three states,
+the focus ring as one `:focus-visible` rule off the tokens, the three responsive layers of
+the design's §4.2, and **the chrome's** `@media (forced-colors: active)` block of its §4.4.
+**The rail's elements are drawn by the entry, and the rules that select them are this
+task's, so `entry.ts` is in this task's Files** — the same rule that puts `degraded-num` in
+Task 6.4's, one task later: a hook and the rule that selects it land in one commit, because
+a stylesheet written against a tree nothing draws is the defect Task 6.4's selector scan
+exists to catch. The rail's **keys** are not here; they are Task 6.5's, which is already the
+task that gives the nav its own. **And `THEME_STYLESHEETS` gains `'base.css'` in this
+commit** — the file and its list entry move together, because the bundler refuses a listed
+file that is missing (design §5.2). After this task the artefact is three files: the
+vocabulary, the values, and the first rules that read them.
 
 **Files.** `src/renderer/theme/base.css`, new; `THEME_STYLESHEETS` in
-`console/tools/bundle-renderer/index.ts` (one entry); `console/test/e2e/entry.spec.ts`
-(the forced-colors smoke's chrome half); `console/README.md`.
+`console/tools/bundle-renderer/index.ts` (one entry); `console/src/renderer/entry.ts` (the
+rail's elements — the header row and its collapse control, the list and its rows, the foot
+row and the hint); `console/test/e2e/entry.spec.ts` (the forced-colors smoke's chrome half,
+and the body-children assertion the rail moves); `console/README.md`.
 
 **Tests.** The forced-colors smoke's chrome half — the current view still marked and the
 chrome's boundary still visible under `emulateMedia({ forcedColors: 'active' })`, written
-first, which is this task's red step; and `entry.spec.ts`'s existing body-children
-assertion. **Not the computed-background assertion**: it reads a *computed* background off a
+first, which is this task's red step, and the rail's own boundary with it, since the rail is
+chrome and its rows are the surface the smoke reads; `entry.spec.ts`'s body-children
+assertion, which gains `console-rail` as the first of the four shapes it lists, because the
+entry appends it before the installation line and the rail is what a reader sees first; and
+a case that the rail draws one row per stored installation with its state word and its
+glyph. **Not the computed-background assertion**: it reads a *computed* background off a
 screen root, so it can pass only once a rule paints one, and the rules that paint a screen
 root are the stylesheets this phase lands. It goes with the recording it guards, because
 that is where the golden baselines are re-made — **what it waits for is the stylesheet, not
@@ -1474,9 +1489,14 @@ dependency and touches no CSP; the main process still cannot read the CSS, so th
 test holds **both** literals equal to their set's `--ground`. And the nav gains the
 WAI-ARIA tablist behaviour it lacks — `role`,
 `aria-selected`, a roving `tabindex` and Arrow/Home/End handling that calls the existing
-`show(id)`, since `entry.ts` has no keydown handling at all today. **The owner's Q1 ruling
-of 2026-10-19 removed this scope**: it is kept as the record of what the task was written
-to do, and the ruled scope is the paragraph above.
+`show(id)` — **and the installation rail gains its own**, because the rail is a tablist in
+its own right (design §4.1): the same roving `tabindex` over its rows, Arrow/Home/End
+between them, Enter to select, and the **shortcut keys** that select by position
+(Command+digit on macOS, Control+digit elsewhere), since `entry.ts` has no keydown handling
+at all today. **The owner's Q1 ruling of 2026-10-19 removed the switch this task is named
+for and left both keyboards**: the scope above is kept as the record of what the task was
+written to do, and what it rules in is the paragraph above plus the nav's keys and the
+rail's.
 
 **Files.** `console/src/renderer/entry.ts`, `console/src/main/window.ts`,
 `console/test/unit/{entry-wiring,theme-tokens}.test.ts`. *As designed:* the same list with
@@ -1499,7 +1519,9 @@ theme's `--ground` (both directions, since there are two literals, with
 task's and cannot be Task 6.1's**, which the plan said before this round: the two literals
 are added to `console/src/main/window.ts` here, so before this task there is no
 `backgroundColor` to compare with anything (design §6.3, §7.5). And a roving-tabindex
-regression. **The two-set wording in this paragraph is the record of what the case was
+regression **in either tablist — the nav's and the rail's — plus a shortcut key that
+selects the row at the wrong position**, which is the case the rail's keys are proved by
+(design §4.1). **The two-set wording in this paragraph is the record of what the case was
 written as, and the owner's Q1 ruling of 2026-10-19 removed it**: one literal, one
 direction, as the paragraph's first sentence says.
 

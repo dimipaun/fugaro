@@ -2184,3 +2184,103 @@ func TestDocsConsoleStylingAccentOnALightGround(t *testing.T) {
 		t.Errorf("%s: the light set's --accent-ink is %q, want #085A82, the tone §3.3 names for accent text on a light ground", path, ink)
 	}
 }
+
+// TestDocsConsoleStylingRailIsSpecified:
+// the owner approved the Claude Design canvas on 2026-10-19, and the rail is the
+// one structural addition it makes to this document. A rail is a region a
+// stylesheet is written against *and* a keyboard drives, so §4.1 has to state
+// the things an implementer writes it from — that it is a left vertical rail,
+// its width, the three state words with the glyph each carries, the shortcut
+// keys that select by position, and the read-only rule the canvas keeps — rather
+// than leaving the canvas's one drawing to a reader's memory. The three words
+// and their glyphs are read off the table §4.1 draws them in, row by row, so a
+// glyph moved to the wrong word is a failing case rather than a plausible table.
+//
+// Its red state is the rail block's absence from §4.1, which is how it was
+// written, and the mutations it is proved against are named in §7.7.
+func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
+	const path = "docs/design/console-styling.md"
+	doc := readDoc(t, path)
+	const railMarker = "**The installation rail — the canvas's one structural addition.**"
+	rail := mdBetween(t, path, doc, railMarker, "### 4.2 Narrow windows")
+	flat := mdFlat(rail)
+
+	for _, want := range []struct{ has, because string }{
+		{"a **left vertical rail**", "the rail's side is half of what it is — the canvas draws it on the left, as vertical tabs — and a region described without its side is one an implementer places by guess"},
+		{"`aside.console-rail`", "the rail is one element the entry appends, and its class is the hook a rule selects"},
+		{"216 px", "the width is the canvas's one fixed number; a rail whose width is unstated is a rail whose rows re-wrap at whatever font the machine has"},
+		{"`div.console-rail-list`", "the list is the rail's tablist, and it is a different element from the rail: a header row and a foot row inside a tablist are children a tablist may not have"},
+		{"Switch with the shortcut keys 1 2 3", "the hint is drawn text, so it is a string an implementer copies rather than one they write"},
+		{"Command-1", "the shortcut's macOS form is a fact about the platform, and a shortcut described as \"the shortcut keys\" alone is one implemented as the wrong modifier"},
+		{"Control-1", "and its form elsewhere is the other half of the same fact"},
+		{"READ ONLY", "the canvas adds a region to a read-only console, and a rail that selects is the place a write could quietly arrive"},
+		{"+ Add installation", "the foot row's label is drawn text, and it is the row that opens the add-installation flow the console already has"},
+		{"role=\"tablist\"", "the rail is a tablist in its own right, which is what makes the arrow keys and a roving tabindex its behaviour rather than the nav's"},
+		{"roving `tabindex`", "a tablist that tabs through every row is the defect this section exists to prevent"},
+		{"Enter selects", "the arrow keys move focus and Enter is what chooses, which is the manual-activation form of the pattern"},
+		{"Home", "Home and End are part of the tablist's pattern and are the two keys a list of twelve rows is actually navigated with"},
+	} {
+		if !strings.Contains(flat, want.has) {
+			t.Errorf("%s: §4.1's rail block does not say %q; %s", path, want.has, want.because)
+		}
+	}
+
+	// The three state words, each read off its own row of the table §4.1 draws
+	// them in, so the word, the glyph and the tone have to be one row's. The
+	// glyph is what §3.5's "never colour alone" rule leans on here: the word is
+	// drawn beside it, and the collapsed rail keeps the glyph and the row's
+	// accessible name.
+	for _, want := range []struct{ word, glyph, token, because string }{
+		{"`running`", "●", "`--ok`", "the dot is the canvas's mark for the installation the console is reading now"},
+		{"`silent`", "▲", "`--warn`", "the triangle is the canvas's mark for the installation whose feed has gone quiet, and a silent row drawn as a dot is the one state an operator must not miss"},
+		{"`idle`", "○", "`--text-muted`", "the open circle is the canvas's mark for a stored installation nothing is being read from"},
+	} {
+		row := mdRow(t, path, rail, "| "+want.word+" |")
+		for _, cell := range []struct{ has, because string }{
+			{want.glyph, want.because},
+			{want.token, "every glyph in this table is drawn in a tone the palette already has; a row that names none is a rule written from a colour §3.2 does not have"},
+		} {
+			if !strings.Contains(row, cell.has) {
+				t.Errorf("%s: §4.1's rail table draws %s without %s on its own row; %s", path, want.word, cell.has, cell.because)
+			}
+		}
+	}
+}
+
+// TestDocsConsoleStylingRailIsInThePlan:
+// the rail is a change to two tasks of phase 6 and not to the design alone: its
+// structure and the stylesheet's rules for it are Task 6.3's, and its keyboard —
+// the tablist behaviour and the shortcut keys — is Task 6.5's, which is already
+// the task that gives the nav its keys. A design that describes a region and a
+// plan whose tasks do not name it is a region nobody builds, so the two scope
+// paragraphs are read here.
+//
+// This case reads the plan as text for the same boundary reason the rest of this
+// file does, and it names the tasks by their clauses rather than by their
+// content: the plan is where a task's scope is stated.
+func TestDocsConsoleStylingRailIsInThePlan(t *testing.T) {
+	const planPath = "docs/plans/2026-10-15-desktop-console.md"
+	plan := readDoc(t, planPath)
+	tasks := mdTaskSections(t, planPath, plan,
+		"### Task 6.1: The token layer",
+		"### Task 6.2: The wiring",
+		"### Task 6.3: The layout",
+		"### Task 6.4: The screens",
+		"### Task 6.5: The theme switch",
+		"### Task 6.6: The golden frames",
+		"## Cross-task dependencies")
+
+	for _, want := range []struct{ task, label, has, because string }{
+		{"6.3", "Scope", "installation rail", "the rail's structure and its rules are the layout task's, and a task that does not name the region is a task whose stylesheet is written against a tree nobody draws"},
+		{"6.3", "Files", "src/renderer/entry.ts", "the rail's elements are the entry's — the same rule that puts `degraded-num` in Task 6.4's Files: the hook and the rule that selects it land in one commit"},
+		{"6.5", "Scope", "shortcut keys", "the rail is a tablist, so its keys are the keyboard task's; a design that leaves the keys unassigned is a rail an operator can only click"},
+	} {
+		clause, ok := mdClause(t, planPath, tasks[taskIndex(t, want.task)], want.label)
+		if !ok {
+			t.Fatalf("%s: Task %s has no **%s** clause; this case is about what that clause says", planPath, want.task, want.label)
+		}
+		if !strings.Contains(mdFlat(clause), want.has) {
+			t.Errorf("%s: Task %s's **%s** does not name %q; %s", planPath, want.task, want.label, want.has, want.because)
+		}
+	}
+}
