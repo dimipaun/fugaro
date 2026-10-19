@@ -9,7 +9,7 @@ all of them, and it changes what they built — the hero's headline and its exam
 four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
 The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
-gates pass (259 tests, `npm run check`, measured 2026-10-19). The three documents of the
+gates pass (264 tests, `npm run check`, measured 2026-10-19). The three documents of the
 first line of work said the opposite, in the present tense — [`../README.md`](../README.md)
 `:3` and `:5`, [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — which is reconciliation
@@ -223,3 +223,31 @@ goes stale the way the byte budgets did before D192.
   plain row drew it at the left of the command it belongs to — the other way round from
   `base.css`'s rule and from every other block. `website/test/base-styles.mjs` reads every
   `[data-copy]` block's own rules and refuses one whose control is laid out first.
+- **The second fix round is where the homepage became the page item 4 asks for.** The first
+  fix round was about claims (the caption, the arrows, the watch bar's control); the second
+  is the one an independent review of the built site asked for, and it changed the look, not
+  the prose: the homepage's order is the headline, its subline and the two calls to action,
+  then the flow **directly under them as the page's centrepiece** (24 px semibold step names,
+  one 17 px line each, a 2 px accent border under a 6 px accent top edge, 2 rem bold numbers,
+  3 px arrows), then the chat, then the `fugaro watch` block with item 5's empty slot, then
+  the install paths last and quieter. The flow's cards are a quarter of the page's column
+  because its list opted out of `base.css`'s measure in the first round; **the chat's turns
+  are an `<ol>` too, so the same cap drew its three turns two across with a hole beside the
+  third** — found by measuring the built page in a browser rather than by reading it, and
+  fixed the same way (`max-width: none`), with `website/test/base-styles.mjs`'s new
+  `chatRowFailures` reading the smallest column and the gap out of the grid rule and the cap
+  out of the cascade. The `go install` command, which the same review found clipped at
+  `...@late`, wraps now (`white-space: pre-wrap`, `overflow-wrap: anywhere`) on both install
+  cards, and `installCommandFailures` refuses a command block that clips instead. The agent's
+  launch is the status line `Fugaro: launching 3 jobs` rather than a command block, which is
+  what item 3 asks for and what `website/test/home.mjs` holds it to. The measurements this
+  round was decided on are numbers from a headless Chromium over the built site (1104 px of
+  row, three 360 px chat cards, no document overflow at 1280 or 390 on either page); whether
+  the page then *looks* right is the owner's check, as D190 requires, and no screenshot is
+  committed.
+- **Item 2's wording still reaches the plugin skills, and that is deferred.** The review's
+  last finding is the phrase "fleeting cloud worker" left in `plugin/skills/working/SKILL.md`
+  and its description. It is the same 0.9.0 change the ruling above describes: the tagline
+  reaches the CLI, the generated CLI reference and the three plugin skills in 0.9.0 and not
+  in this run, and `website/test/wording.mjs` holds the tree to exactly that list. Nothing
+  was changed here, and the finding is recorded as deferred rather than done.
