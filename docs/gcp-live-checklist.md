@@ -330,10 +330,12 @@ on 2026-10-18). The block **100–109** was taken by
 on `main` and in every open pull request before it took one, and Phase 6 proposes
 **100–104** of it; **105–109 stay reserved and unused**, and a reserved number is
 never reused or renumbered. The numbers were free when P6.11 merged: **the
-highest written `## Check N` section in this file was 70c**, and the two blocks
-above it — the credentials service's **90–99** and the mobile work's own first
-block, **80–89**, which the owner allocated on 2026-10-16 — are reservations
-other documents carry and **neither has written a row or a section into this
+highest written `## Check N` section in this file was 89** — the mobile work's
+own first block is **not** unwritten: Task **P4.2a** wrote **81**, **82** and
+**89** into this register, with a row and a `## Check N` section each, which
+`docs/mobile/implementation-plan.md` records — while **80** and **83–88** of that
+block are still **P4.2**'s and unwritten, and the credentials service's **90–99**
+is a reservation whose own document has written **no row and no section into this
 file**: that is a gap in this register's coverage and not a gap in its numbering,
 the shape 69a–69c and 70a–70c arrived in. **Check 110 is not this block's and is
 not written here**: it is *named* by
@@ -4720,9 +4722,10 @@ speech. Neither direction is a defect of the code — both are rates, and a rate
 
 **Method.** On-device STT only, on your own phone in your own voice: **no audio leaves the
 device** (Global Constraint 12), and this check uploads nothing, sends nothing and costs nothing.
-The alias set is **read out of the tree** rather than remembered, because the router's list is
-data and a check that types it from memory measures a set the app may not have. The script is
-written down **before** the first utterance, and it is not changed afterwards: a rate computed
+The alias set **and the command set are read out of the tree** rather than remembered, because
+the router's lists are data and a check that types them from memory measures a set the app may
+not have. The script is written down **before** the first utterance, and it is not changed
+afterwards: a rate computed
 over a script chosen as it went is not a rate. **Never `belong`**: the phone pairs with
 installation `fugaro` (project `fugaro-dev`) for this check, and no step below speaks to, or
 reads anything from, a `belong` device. **No agent runs any step of this check — every command
@@ -4748,6 +4751,15 @@ echo "Check 102: the alias set as the tree writes it: $ALIASES"
 # The phrase the confirmation machine accepts is the other closed list, and the
 # same rule applies: it is read, not remembered.
 grep -n "CONFIRMATION_PHRASES = Object.freeze" "$C"
+# The command set is the third closed list, and the same rule applies: it is
+# READ, not remembered. These are the seven kinds the router matches after a
+# wake word — the five §3.4 commands and D169's two — and a launch ("kick off
+# ...") is NOT one of them: D162's launch is the confirmation machine's
+# pass-through (shared/confirm), not a row in this router's grammar.
+CMDS=$(awk '/^export const COMMAND = Object\.freeze\(\{/,/^\}\);$/' "$C" \
+  | sed -nE "s/^  [A-Z_]+: '([a-z-]+)',?$/\1/p" | tr '\n' ' ')
+[ -n "$CMDS" ] || { echo "Check 102 stopped: the command set could not be read out of $C — read it by hand and record what the file says, rather than what this block expected" >&2; exit 1; }
+echo "Check 102: the command kinds as the tree writes them: $CMDS"
 :
 ```
 
@@ -4758,10 +4770,18 @@ grep -n "CONFIRMATION_PHRASES = Object.freeze" "$C"
    be.
 
 2. **The script, fixed before the first utterance.** **FACT:** the script, verbatim — **N = 30**
-   utterances, each of the form `<alias>, <command>`, covering the five commands of the spec's
-   §3.4 (list agents, what's pending, switch project, switch agent, kick off) plus `confirm` and
-   `cancel that`, with at least three per alias in the set — and the **two conditions** it is
-   spoken in: a quiet room, and a normal room with something playing. The same script in both.
+   utterances, each of the form `<alias>, <command>`, covering **the five commands of the spec's
+   §3.4**, as `shared/command/index.js` writes them — "switch to ⟨project⟩", "talk to
+   ⟨agent⟩", "what project am I on", "list projects" / "list agents", "what's pending" — plus
+   `confirm` and `cancel that`, with at least three per alias in the set — and the **two
+   conditions** it is spoken in: a quiet room, and a normal room with something playing. The
+   same script in both.
+   **The five are the router's own, and they are taken from the list the guard block reads out of
+   the tree**, not from memory: a set written here that the app does not have measures nothing.
+   **A launch is not one of the five**: "kick off …" is D162's launch, and it is not a row in the
+   router's grammar at all, so a `<alias>, kick off …` utterance is `not-understood` and is
+   answered "I didn't catch that" (step 4's direction) — a script that counted it as a command
+   would record a fail-closed pass for an utterance it had mislabelled.
    Nothing is added to the script after the first utterance, and a repeated utterance is
    recorded as a repeat rather than dropped.
 
@@ -4929,10 +4949,17 @@ gh pr view "${PR:?}" --repo "${R:?}" --json headRefName,state,isDraft,headRefOid
    the PR's head and refuses a head that differs from the record's (D169). **FACT:** each
    refusal's code, the PR's head SHA before and after the push, and that nothing ran.
 
-8. **The contrast D162 pins.** Speak `<alias>, kick off <a no-change task>`. **FACT:** that it
-   goes through with **no** read-back and **no** confirmation, and that the caps still apply. A
-   launch that the check did not intend to start is a paid run, which is why the task is a
-   no-change one in the sandbox repository.
+8. **The contrast D162 pins.** **A launch is not an app command, and this step must not read as if
+   it were.** `kick off …` is not a row in the router's grammar (`shared/command`), so
+   `<alias>, kick off <a no-change task>` is `not-understood` and is **never forwarded** (D164):
+   **FACT:** the app answers "I didn't catch that", the agent receives **nothing**, and no run
+   starts. D162's launch is the **confirmation machine's** pass-through instead —
+   `shared/confirm` lists `launch` in `PASS_THROUGH_VERBS`, and P6.7 passes an action record
+   whose verb is `launch` through without a confirmation record — so what this step records is
+   the launch the app itself sends: **FACT:** that it goes through with **no** read-back and
+   **no** confirmation, and that the caps still apply, with the route it took recorded as it is
+   rather than as this check expected it. A launch that the check did not intend to start is a
+   paid run, which is why the task is a no-change one in the sandbox repository.
 
 9. **Restore.** Close the throwaway pull request if it did not merge, and delete its branch
    either way; decline and delete whatever the launch of step 8 opened (never merge it); stop the
