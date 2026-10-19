@@ -36,8 +36,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 930,545 bytes where this repository's own clone, which carries the
-// tags, builds 929,030.
+// deployed site's — builds 930,489 bytes where this repository's own clone, which carries the
+// tags, builds 928,974.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -72,7 +72,7 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,163,182 bytes. Every file in `dist/` on that build summed to 930,545
+//   - Whole site: 1,163,112 bytes. Every file in `dist/` on that build summed to 930,489
 //     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
 //     `fugaro watch` assets); × 1.25, rounded up. **It is the build with no tags** — the one
 //     the gates make, and the one the deployed site is — and the changelog page's own "not yet
@@ -137,6 +137,14 @@
 //     every other one on the page and arriving a section away from what it named. It renders as
 //     its own text now, and `dist/security/index.html` is 18,183 → **18,112** bytes: the site
 //     figure is 930,616 → **930,545**. The page weight and the script did not move.
+//   - **A cross-reference into a section the page renders itself** (round 5 of the same review)
+//     is the last **56 bytes**. The summary's pointer to "Reporting a vulnerability" names a
+//     section `/security/` renders under that very id, but the page resolved every fragment
+//     against the document, so that one link sent the reader to GitHub for a section rendered a
+//     paragraph below it and the page's own `reporting-a-vulnerability` anchor was linked from
+//     nowhere. It resolves to the page's own anchor now — 82 bytes of document URL become 26 —
+//     and `dist/security/index.html` is 18,112 → **18,056** bytes: the site figure is 930,545 →
+//     **930,489**. The page weight and the script did not move.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -590,7 +598,7 @@ test('the README budget lines are read strictly', () => {
 // site was in before the console's release, which the checkout no longer builds — and runs the
 // artifact gates over that copy, so the flag's two states are both held to the ceilings. A
 // derivation held to that copy would be the flag's own bytes rather than the site's: measured on
-// this build, **1,574 bytes smaller** at the site figure — 928,971 against the 930,545 below — the
+// this build, **1,574 bytes smaller** at the site figure — 928,915 against the 930,489 below — the
 // console option's markup on the three pages that render it (the console page's downloads
 // 1,100, Getting Started's option 386, the homepage's call to action 86, and the 2 bytes of space
 // the download row now carries between its link and its checksum, which the flag-off copy does not
@@ -651,8 +659,8 @@ export function derivationFailures(readme, measured) {
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 930,545 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 929,030 with the tags this
+ * builds to two different site figures — 930,489 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 928,974 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation

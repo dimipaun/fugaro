@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **930,545 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **930,489 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **929,030 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **928,974 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -283,6 +283,14 @@ added or removed without this sentence moving fails there:
     18,183 → **18,112**, and off the site figure, 930,616 → **930,545**. The page weight and the
     script did not move: the page changes no file every page loads, and the docs hub is still the
     heaviest page.
+  - **A cross-reference into a section the page renders itself links the page** (round 5 of the
+    same review). `SECURITY.md`'s summary points at "Reporting a vulnerability", and `/security/`
+    renders that very section under that very id — but the page resolved every fragment against
+    the document, so the one reference whose section is on the page sent the reader to GitHub for
+    it, and the page's own `reporting-a-vulnerability` anchor was linked from nowhere. The page
+    resolves a fragment it renders to its own anchor now: **56 bytes off the security page**,
+    18,112 → **18,056**, and off the site figure, 930,545 → **930,489** (the document URL is 82
+    bytes, the page's own anchor 26). The page weight and the script did not move.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -309,7 +317,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,489,546 bytes. Three times 1,163,182 (every file in `dist/`, 930,545
+  - **Whole site:** 3,489,336 bytes. Three times 1,163,112 (every file in `dist/`, 930,489
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 

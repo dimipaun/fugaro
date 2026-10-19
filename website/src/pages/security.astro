@@ -32,9 +32,13 @@
  *      paragraph for paragraph.
  *   2. **A cross-reference inside the document becomes a link into the document.** The "In
  *      short" bullets each end by naming the section they come from
- *      (`([Known limits](#known-limits))`); the page does not render those sections, so the
- *      pointer is rewritten to the document in the repository at the section it names. A
- *      cross-reference the document has **no heading for** is rendered as its own text and
+ *      (`([Known limits](#known-limits))`), and the page renders two of those sections and no
+ *      others. A reference to one of the two the page carries — today the summary's
+ *      `[Reporting a vulnerability](#reporting-a-vulnerability)` — is a link to the page's own
+ *      anchor, because that is where the section is and where a reader can follow it; a
+ *      reference to any other section is rewritten to the document in the repository at the
+ *      section it names. A cross-reference the document has **no heading for** is rendered as
+ *      its own text and
  *      not as a link at all (round 4 of the review): every target the page can build for it
  *      is wrong — the fragment as written is a link that goes nowhere, `website/test/
  *      linkcheck.mjs` refuses a GitHub link whose fragment is not a heading, and the
@@ -44,9 +48,11 @@
  *      bullet under "Known limits" and not a heading); the owner has it in the pull request,
  *      because the fix is a `SECURITY.md` edit. `website/test/security.mjs` pins the whole
  *      rule over the built page — every cross-reference's text and order against the
- *      document's own links, its href against the heading its fragment names, and the
+ *      document's own links, its href against the heading its fragment names (the page's own
+ *      anchor where the page renders that heading, the document's URL otherwise), and the
  *      fragment-less one against the fact that it is not a link — so a fragment dropped,
- *      aimed at another heading, or rendered as an anchor fails there.
+ *      aimed at another heading, sent to GitHub though the page carries it, or rendered as an
+ *      anchor fails there.
  *   3. **The link is the repository's, and its path is read rather than typed.** The URL is
  *      built from `site.yaml`'s repository and the generated file's own `source:` header, so
  *      the page cannot point at a document this repository does not carry.
@@ -113,16 +119,30 @@ const documentAnchors = new Set(
 )
 
 /**
+ * The anchors **this page itself renders**: the two sections it carries, under the ids the
+ * markup above gives their headings. A cross-reference to one of them is a link a reader can
+ * follow here, and it must be the page's own anchor rather than the document's — the section
+ * is on this page, and sending the reader to GitHub for a section they are looking at is the
+ * wrong destination even though the fragment would resolve there too.
+ */
+const pageAnchors = new Set([SUMMARY_ID, REPORTING_ID])
+
+/**
  * A link target in the document, as the page renders it. A path is the document's own and
- * is left as it is; a cross-reference into a section the page does not carry becomes a link
- * to the document in the repository, at the section it names. A fragment the document has
- * no heading for has **no target at all** (`null`), and `inline()` renders that reference as
- * its own text: the only link the page could build for it would send a reader to the top of
- * the file, or to a fragment nothing answers, which is a promise the page cannot keep.
+ * is left as it is; a cross-reference into a section **this page renders** becomes a link to
+ * the page's own anchor, which is the section a reader can reach from here (the summary's
+ * `[Reporting a vulnerability](#reporting-a-vulnerability)` is that case, and it is the page's
+ * own `<h2 id="reporting-a-vulnerability">` that answers it); a cross-reference into any other
+ * section of the document becomes a link to the document in the repository, at the section it
+ * names. A fragment the document has **no heading for** has no target at all (`null`), and
+ * `inline()` renders that reference as its own text: the only link the page could build for it
+ * would send a reader to the top of the file, or to a fragment nothing answers, which is a
+ * promise the page cannot keep.
  */
 function target(raw: string): string | null {
   if (!raw.startsWith('#')) return raw
   const fragment = raw.slice(1)
+  if (pageAnchors.has(fragment)) return `#${fragment}`
   return documentAnchors.has(fragment) ? `${sourceHref}#${fragment}` : null
 }
 

@@ -239,13 +239,17 @@ things about the constraint are not what this branch ships:
   else: the document's own "In short" section as the page's summary, its own "Reporting a
   vulnerability" section, and a link to the policy. The cross-references those two sections
   carry are rewritten — `#known-limits` becomes a link into `SECURITY.md` in the repository
-  at that section, because the page does not render the section it names — and a reference
+  at that section, because the page does not render the section it names, while
+  `#reporting-a-vulnerability` resolves to the page's **own** anchor, because the page does
+  render that section, below the summary that points at it — and a reference
   whose fragment names no heading of the document is rendered as its own text rather than
   as a link, which would land the reader at the top of the file under a word that promises
   a section. So the page is not byte-identical to the document, and its headings are not
   the document's. **What replaces that half of the constraint is
   `website/test/security.mjs`**: it holds the page to the document bullet for bullet and
-  word for word, holds each rewritten cross-reference to the section it names, refuses a
+  word for word, holds each rewritten cross-reference to the section that answers it — the
+  page's own anchor where the page renders that section, the repository URL for the rest —
+  refuses a
   reference rendered as a link where the document has no heading for it, and refuses a page
   that is anything other than the three things. That file — not the Go test — is where a
   change to the page's shape fails.

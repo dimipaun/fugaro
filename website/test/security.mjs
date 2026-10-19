@@ -272,18 +272,30 @@ function documentAnchors(document) {
 }
 
 /**
+ * The anchors the **page itself** renders: the two sections it carries, under the ids its own
+ * markup gives their headings. A cross-reference to one of them is a link into this page, not
+ * into the document — the section is here, and the page's own anchor is where a reader can
+ * follow it. `linkcheck.mjs` holds the other half of that: an internal `#fragment` on a page
+ * has to be an `id` of that page, so an anchor named here that the page did not render would
+ * fail there as well as here.
+ */
+const PAGE_ANCHORS = new Set([SUMMARY_ID, REPORTING_ID])
+
+/**
  * Where the page sends a reader for one of the document's own links: the target as the document
- * writes it, with a fragment resolved against the document in the repository. A fragment the
- * document does not carry a heading for has **no target at all** (`null`) — the page renders
- * that reference as its own text, because every link it could build for it would lie: the
- * fragment as written goes nowhere, and the document's own URL lands the reader at the top of
- * the file under a link that reads like all the others. `SECURITY.md` ships one —
- * `[Money](#money)`, whose target is a bold lead in a bullet under "Known limits" and not a
- * heading.
+ * writes it, with a fragment resolved against the section that answers it. A fragment the page
+ * renders itself is the page's own anchor; any other fragment the document carries a heading
+ * for is the document in the repository at that heading; and a fragment the document does not
+ * carry a heading for has **no target at all** (`null`) — the page renders that reference as
+ * its own text, because every link it could build for it would lie: the fragment as written
+ * goes nowhere, and the document's own URL lands the reader at the top of the file under a link
+ * that reads like all the others. `SECURITY.md` ships one — `[Money](#money)`, whose target is
+ * a bold lead in a bullet under "Known limits" and not a heading.
  */
 function resolvedTarget(raw, anchors, base) {
   if (!raw.startsWith('#')) return raw
   const fragment = raw.slice(1)
+  if (PAGE_ANCHORS.has(fragment)) return `#${fragment}`
   return anchors.has(fragment) ? `${base}#${fragment}` : null
 }
 
@@ -291,17 +303,21 @@ function resolvedTarget(raw, anchors, base) {
  * The page's cross-reference links, pinned to the sections they name (round 4 of the review).
  *
  * The page does not render the document's `[text](#fragment)` links as the document writes
- * them: `security.astro` rewrites each one to point into `SECURITY.md` in the repository, so a
- * reader who follows "Known limits" arrives at the document's own "Known limits" section rather
- * than at the top of the file. That rewriting is the one part of the page no other check reads:
- * `checkSection` compares the words with the inline markup taken off, and
- * `website/test/linkcheck.mjs` asks only that a fragment which is *present* is a heading. So a
- * rewrite that dropped every fragment — or pointed one at a different real heading — would send
- * readers to the top of the document, or to the wrong section, with every gate still green.
+ * them: `security.astro` resolves each one — to the page's own anchor where the page renders
+ * the section that fragment names, and otherwise to `SECURITY.md` in the repository at that
+ * section — so a reader who follows "Known limits" arrives at the document's own "Known
+ * limits" section, and a reader who follows "Reporting a vulnerability" stays on the page they
+ * are reading, at the section the page renders below the summary. That resolution is the one
+ * part of the page no other check reads: `checkSection` compares the words with the inline
+ * markup taken off, and `website/test/linkcheck.mjs` asks only that a fragment which is
+ * *present* is a heading. So a rewrite that dropped every fragment, pointed one at a different
+ * real heading, or sent the reader to GitHub for a section rendered on the page they are
+ * reading, would pass every gate but this one.
  *
  * Both halves are held here: the anchor is the document's own link, text and order, and its
- * href is that link's target resolved against the document's URL in the repository — the same
- * resolution the page makes, because both sides go through the same slug module. And a
+ * href is that link's target resolved the way the page resolves it — the page's own anchor for
+ * the fragments the page renders, the document's URL in the repository for the rest, both read
+ * through the same slug module the page uses. And a
  * reference the document has no heading for is held to the opposite: it is **not** a link on
  * the page, because the only link the page could build for it would send a reader to the top
  * of the file under a word that promises a section (round 4's fourth finding).
@@ -669,6 +685,23 @@ test('the gate refuses each planted defect', (t) => {
     verdict(t, scopeUnlinked).join('\n'),
     /carries 5 links where SECURITY\.md's "In short" section writes 6/,
     'a cross-reference with its link dropped is not refused',
+  )
+
+  // The one cross-reference into a section the page *renders itself*, sent to the document
+  // anyway: the summary's pointer to "Reporting a vulnerability". The fragment resolves on
+  // GitHub too and the section really is there, so `linkcheck.mjs` is satisfied and the words
+  // are unchanged — but the reader is sent to the repository for a section rendered a
+  // paragraph below the link they clicked, and the page's own `reporting-a-vulnerability`
+  // anchor is left linked from nowhere (round 4 of the review).
+  const reportingOffPage = planted(
+    html,
+    /<a href="#reporting-a-vulnerability">Reporting a vulnerability<\/a>/,
+    '<a href="https://github.com/dimipaun/fugaro/blob/main/SECURITY.md#reporting-a-vulnerability">Reporting a vulnerability</a>',
+  )
+  assert.match(
+    verdict(t, reportingOffPage).join('\n'),
+    /points at "[^"]*SECURITY\.md#reporting-a-vulnerability" and not "#reporting-a-vulnerability"/,
+    'a cross-reference into a section the page renders itself is sent to the document, so the page points past its own section to the file it was cut down from',
   )
 
   // A reworded summary bullet: the one edit a page that renders a file is always tempted by.
