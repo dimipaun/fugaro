@@ -151,14 +151,33 @@ func TestStateAssetTypesAreEitherAnAssetTypeOrDeliberatelyNot(t *testing.T) {
 // (google_compute_firewall, google_compute_router, google_compute_router_nat,
 // deploy/terraform/gcp/modules/compute/network.tf) were exactly that, and the
 // compute root the Batch backend's stage applies writes its state into the
-// installation's own bucket, which managedAccounted reads with no prefix.
+// installation's own bucket, which managedAccounted reads with no prefix. Two
+// of those three are decided in stateAssetTypes and the third is recorded in
+// stateAssetTypesUndecided, which is the other answer this test accepts.
 //
 // The walk is the modules' own text, as tf/cover_test.go's
 // TestAllowedTypesCoverTheModules walks it for init's allowlist: a resource
 // block added to any module and left undecided here fails by name.
 func TestStateAssetTypesCoverTheModules(t *testing.T) {
+	for typ, path := range moduleDeclaredTypes(t) {
+		if _, ok := stateAssetTypes[typ]; ok {
+			continue
+		}
+		if _, ok := stateAssetTypesUndecided[typ]; ok {
+			continue
+		}
+		t.Errorf("%s declares %s, which stateAssetTypes does not decide: its resources would stay foreign and this project's fallback would never clear", path, typ)
+	}
+}
+
+// moduleDeclaredTypes is the walk both table tests read: every google provider
+// resource type the tree's Terraform declares, mapped to the first file that
+// declares it (the file is what the failure message has to name).
+func moduleDeclaredTypes(t *testing.T) map[string]string {
+	t.Helper()
 	root := filepath.Join("..", "..", "deploy", "terraform")
 	resRE := regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)"`)
+	declared := map[string]string{}
 	n := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".tf") {
@@ -174,14 +193,47 @@ func TestStateAssetTypesCoverTheModules(t *testing.T) {
 			if !strings.HasPrefix(typ, "google_") {
 				continue // the table translates google provider types only
 			}
-			if _, ok := stateAssetTypes[typ]; !ok {
-				t.Errorf("%s declares %s, which stateAssetTypes does not decide: its resources would stay foreign and this project's fallback would never clear", path, typ)
+			if _, ok := declared[typ]; !ok {
+				declared[typ] = path
 			}
 		}
 		return nil
 	})
 	if err != nil || n < 10 {
 		t.Fatalf("read %d module files: %v", n, err)
+	}
+	return declared
+}
+
+// TestStateAssetTypesUndecidedAreDeclaredAndReasoned holds the undecided map to
+// being what it says it is. A type recorded there is a type this build looked
+// at and could not place, so:
+//
+//   - it is a type a module really declares (otherwise the record is a memory
+//     of a resource that no longer exists, kept forever by nobody's mistake);
+//   - it is not in stateAssetTypes as well (two answers to one question, and
+//     the code would read the map that says "accounts for it" while the record
+//     beside it says "could not place it"); and
+//   - it carries a reason long enough to be one, with how to settle it, since
+//     the whole point of the map is that the next reader does not have to
+//     rediscover why a module-declared type was left to fail closed.
+func TestStateAssetTypesUndecidedAreDeclaredAndReasoned(t *testing.T) {
+	declared := moduleDeclaredTypes(t)
+	for typ, why := range stateAssetTypesUndecided {
+		if _, ok := declared[typ]; !ok {
+			t.Errorf("stateAssetTypesUndecided records %s, which no module in deploy/terraform declares: the record is for a type the tree cannot produce", typ)
+		}
+		if asset, ok := stateAssetTypes[typ]; ok {
+			t.Errorf("%s is in stateAssetTypes (%q) and in stateAssetTypesUndecided at once: the table's answer is the one AccountsOfState reads, so the record would be dead text", typ, asset)
+		}
+		if len(why) < 80 {
+			t.Errorf("stateAssetTypesUndecided records %s with %q, want the open question spelled out with how it is settled", typ, why)
+		}
+		for _, marker := range []string{"TODO", "FIXME", "XXX"} {
+			if strings.Contains(why, marker) {
+				t.Errorf("stateAssetTypesUndecided records %s with a %s marker: the reason is prose the next reader can act on, not a note to whoever comes back", typ, marker)
+			}
+		}
 	}
 }
 

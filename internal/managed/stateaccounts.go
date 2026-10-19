@@ -29,9 +29,10 @@ import (
 // applies and the agent-authored root — because those are the states a
 // managed project holds and D59's premise is that such a project holds only
 // what Fugaro made (the owner's ruling of 2026-10-18). The compute root is
-// listed here although no flag reaches it in this release: its three resources
-// are in the table (they are the last three before the empty ones), and a root
-// whose types are absent would leave a project that ran it foreign for good
+// listed here although no flag reaches it in this release: two of its three
+// resources are in the table (they are the last two before the empty ones) and
+// the third is in stateAssetTypesUndecided below, because a root whose types
+// are absent would leave a project that ran it foreign for good
 // (Inventory.foreign never empties, so Check's fallback never clears).
 //
 // The table is CLOSED, and the direction of everything it does not name is the
@@ -165,14 +166,15 @@ var stateAssetTypes = map[string]string{
 	"google_firestore_database":              "firestore.googleapis.com/Database",
 	// The compute module the Batch backend's own root applies
 	// (deploy/terraform/gcp/modules/compute/network.tf:58,75,84, each with
-	// project = var.project): the NAT, its router and the deny-all ingress
-	// rule on the run-class accounts. The root writes its state into the
-	// installation's own bucket, which managedAccounted reads with no prefix,
-	// so a project that ran --provision-batch holds all three. Their names are
-	// the provider's ids and come from the state like every other entry's.
+	// project = var.project): the deny-all ingress rule on the run-class
+	// accounts and the router the NAT hangs off. The root writes its state
+	// into the installation's own bucket, which managedAccounted reads with no
+	// prefix, so a project that ran --provision-batch holds both. Their names
+	// are the provider's ids and come from the state like every other entry's.
+	// The module's third resource, google_compute_router_nat, is the one type
+	// of the three this build could not place: see stateAssetTypesUndecided.
 	"google_compute_firewall":                        "compute.googleapis.com/Firewall",
 	"google_compute_router":                          "compute.googleapis.com/Router",
-	"google_compute_router_nat":                      "compute.googleapis.com/RouterNat",
 	"google_project_iam_member":                      "",
 	"google_project_iam_binding":                     "",
 	"google_project_iam_policy":                      "",
@@ -190,6 +192,23 @@ var stateAssetTypes = map[string]string{
 	"google_logging_log_view_iam_member":             "",
 	"google_logging_project_exclusion":               "",
 	"google_billing_budget":                          "",
+}
+
+// stateAssetTypesUndecided names the module-declared Terraform types this build
+// could not place in the Cloud Asset listing, with the reason, so that leaving
+// one out of stateAssetTypes is a recorded answer rather than an oversight. The
+// value is the open question and how to settle it; it is documentation with a
+// test behind it (TestStateAssetTypesUndecidedAreDeclaredAndReasoned), not a
+// second answer the code reads.
+//
+// The behaviour is the fallback's, exactly as for a type stateAssetTypes does
+// not name at all: AccountsOfState skips the resource, so it stays Foreign and
+// the project's fallback never clears. That is fail-closed, and it is the right
+// direction for a type this build cannot verify — an inventory type that does
+// not exist would leave such a project foreign just as permanently, while
+// claiming to have accounted for it.
+var stateAssetTypesUndecided = map[string]string{
+	"google_compute_router_nat": "the Compute API carries a RouterNat schema type, but a NAT lives inside its router's `nats[]` there, and nothing in this tree or the module cache names a Cloud Asset Inventory type for it — compute.googleapis.com/Router was easy to confirm and compute.googleapis.com/RouterNat could not be confirmed at all. The inventory's own listing settles it and no offline test can: read the Compute asset types a live provisioned project's whole-project listing answers with (Check 67a, internal/managed's inventory), or the Cloud Asset Inventory documentation's compute types. Unreachable in this release (--provision-batch is refused), so it must be settled before the task that ships provisioning; until then a NAT asset stays foreign, which is the safe direction.",
 }
 
 // stateAssetName is a state resource's name in the terms the whole-project
