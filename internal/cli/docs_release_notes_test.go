@@ -153,7 +153,7 @@ func releaseNotesStepPlace(step string) bool {
 // Nothing here is a claim checked against itself, and nothing is matched as a
 // bare word: the object path comes from the function that builds it, the label
 // from the constants that write it, the profile key from the struct's own YAML
-// tag, the console keys from the console's own closed list, the operator steps
+// tag, the console keys from the CLI structs that write them, the operator steps
 // and the `--by` value from cobra's definitions, and the managed and Batch
 // paragraphs from the shipped gates the commands refuse on.
 //
@@ -161,7 +161,7 @@ func releaseNotesStepPlace(step string) bool {
 // change `sealSince` to "0.8.5"; change `token.ObjectKey`'s last segment; drop
 // the row naming 0.9.0 from projectpolicy.VersionSince; rename
 // managed.ProjectLabelKey; rename the `claude_accounts` YAML tag; remove
-// `launched_by` from the console's RUN_KEYS; remove `--local` from fugaro
+// `launched_by`'s json tag from internal/watch.JSONRun; remove `--local` from fugaro
 // upgrade; move `fugaro managed flag` under another parent; set
 // `userStatsByUser` to "person"; rename the watch table's BY column; delete the
 // sealed token's object name from the first bullet; drop a step's
@@ -249,17 +249,22 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		t.Errorf("fugaro watch's plain frame has no BY column (internal/watch/plain.go's RUN table header): %s offers one to its reader", releaseNotesV090)
 	}
 
-	// The console's accepted keys: the notes name the five keys this release
-	// added, and console/src/shared/schema.ts's RUN_KEYS and FINISHED_KEYS are
-	// the closed lists that decide whether a document is refused whole.
+	// The five keys the console bullet names: they are this release's additions
+	// to the documents `watch --json` and `runs ls --json` write, so they are
+	// checked against the CLI structs that carry them (internal/watch's JSONRun
+	// and JSONFinished. The console's half — that its own closed lists carry
+	// these keys, and that a key they omit refuses a document whole — is pinned
+	// by the console's test suite against these same structs; a Go test may not
+	// read it, because internal/cli may not name a path under the console.
+	runKeys := jsonKeysOf(t, reflect.TypeOf(watch.JSONRun{}))
+	finishedKeys := jsonKeysOf(t, reflect.TypeOf(watch.JSONFinished{}))
 	for _, key := range []string{"job", "profile", "provider", "account", "launched_by"} {
 		if !names("`" + key + "`") {
 			t.Errorf("%s does not name the console key %q this release added", releaseNotesV090, key)
 		}
-		for _, list := range []string{"RUN_KEYS", "FINISHED_KEYS"} {
-			if !consoleSchemaKeys(t, list)[key] {
-				t.Errorf("console/src/shared/schema.ts's %s does not list %q: a key the CLI writes and the list omits makes the console refuse the whole document, which is the skew %s says is gone", list, key, releaseNotesV090)
-			}
+		if !runKeys[key] || !finishedKeys[key] {
+			t.Errorf("%q is not a key of both internal/watch.JSONRun (%v) and JSONFinished (%v): a key the CLI writes and the console's list omits makes it refuse the whole document, and %s says these five no longer do",
+				key, runKeys[key], finishedKeys[key], releaseNotesV090)
 		}
 	}
 
@@ -512,39 +517,24 @@ func watchHasBYColumn(t *testing.T) bool {
 // columns are separated by two or more spaces.
 var releaseNotesCellRE = regexp.MustCompile(`  +`)
 
-// consoleSchema is the console's own closed list of the JSON keys it accepts
-// from `watch --json` and `runs ls --json`.
-const consoleSchema = "../../console/src/shared/schema.ts"
-
-// consoleSchemaKeys is the keys of the exported array name in the console's
-// schema, so the notes' claim that a key no longer refuses a document whole is
-// checked against the list that decides it.
-func consoleSchemaKeys(t *testing.T, name string) map[string]bool {
+// jsonKeysOf is a struct's JSON keys, the wire names a `watch --json` document
+// carries: the notes' console bullet names five of them, and the struct is
+// where each one is written.
+func jsonKeysOf(t *testing.T, typ reflect.Type) map[string]bool {
 	t.Helper()
-	data, err := os.ReadFile(consoleSchema)
-	if err != nil {
-		t.Fatalf("reading %s: %v", consoleSchema, err)
-	}
-	src := string(data)
-	head := "export const " + name + " = ["
-	i := strings.Index(src, head)
-	if i < 0 {
-		t.Fatalf("%s does not declare %s: the console's closed shapes are what the release notes' console bullet is checked against", consoleSchema, name)
-	}
-	rest := src[i+len(head):]
-	j := strings.Index(rest, "]")
-	if j < 0 {
-		t.Fatalf("%s: %s is not closed with ]", consoleSchema, name)
-	}
 	keys := map[string]bool{}
-	for _, m := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(rest[:j], -1) {
-		keys[m[1]] = true
+	for i := 0; i < typ.NumField(); i++ {
+		tag := typ.Field(i).Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		keys[strings.Split(tag, ",")[0]] = true
 	}
-	// The parser's own guard: these two are keys of every document the lists
-	// describe, so a parse that finds them is a parse of the list.
+	// The reader's own guard: every document of both shapes carries these, so a
+	// read that finds them is a read of the struct.
 	for _, want := range []string{"run", "slug"} {
 		if !keys[want] {
-			t.Fatalf("%s: %s parsed without %q (%d keys): the parse is broken, and a list read wrong is not a fact", consoleSchema, name, want, len(keys))
+			t.Fatalf("%s has no %q key (%d keys): the read is broken, and a struct read wrong is not a fact", typ, want, len(keys))
 		}
 	}
 	return keys
