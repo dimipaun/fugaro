@@ -992,6 +992,23 @@ test('the chat says on the page that it is an illustration, and claims no more t
   )
 })
 
+test('the design record quotes the caption the site ships', () => {
+  // The record tells a reader what the chat's caption says, and it quotes the sentence to do
+  // it. A quote rots the moment the caption is rewritten, and this one has outlived a caption
+  // already: review round 5 cut the caption to one sentence, and the record went on quoting
+  // the long one — a sentence that existed nowhere on the site, and nothing said so, because
+  // the caption's own case above reads the built page and never the record. The record is a
+  // description of this branch's artifact (P9), so what it quotes of the artifact is held to
+  // the artifact here, in the file that already holds the caption to its shape.
+  const caption = classText(builtPage(''), 'chat-caption')
+  assert.ok(caption, 'the homepage chat carries no caption, so there is nothing for the design record to quote (changes spec 2026-10-18, item 3)')
+  const record = repoFile('docs/website/redesign/README.md')
+  assert.ok(
+    normalize(record).includes(normalize(caption)),
+    `docs/website/redesign/README.md does not quote the caption the built page ships. The page says ${JSON.stringify(caption)}; the record's reading of the caption quotes a sentence that is not on the site. The record describes the site this branch builds, so the sentence it quotes moves with the caption (P9, changes spec 2026-10-18, item 3)`,
+  )
+})
+
 test('the watch snippet is the command the reader keeps, and it copies itself', () => {
   const page = builtPage('')
   const command = classText(page, 'chat-watch-command')
