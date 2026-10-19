@@ -178,7 +178,13 @@ func TestDocsMobileOrchestratorCitationsExist(t *testing.T) {
 		"docs/design/managed-projects.md",
 		"docs/design/named-oauth-tokens.md",
 		"docs/design/voice.md",
+		// The credentials service: the README for the numbers it holds, and the
+		// two files that actually carry the findings and decisions the design
+		// cites (F36 and D135 are in reconciliation.md, the "stays secrets-only"
+		// boundary is spec.md's — neither is in the README).
 		"docs/credentials-service/README.md",
+		"docs/credentials-service/reconciliation.md",
+		"docs/credentials-service/spec.md",
 		"docs/mobile/implementation-plan.md",
 		"docs/mobile/reconciliation.md",
 		"docs/mobile/functional-spec-reconciliation.md",
@@ -298,6 +304,110 @@ func TestDocsMobileOrchestratorKillPathMatchesTheTree(t *testing.T) {
 	rules := readDoc(t, "internal/budget/rules/rules.go")
 	if !strings.Contains(rules, "config/kill/repos") {
 		t.Errorf("internal/budget/rules/rules.go's KILLS_OFF no longer reads config/kill/repos: %s's citation has gone stale", orchDesign)
+	}
+}
+
+// TestDocsMobileOrchestratorRefusalsNameTheMechanism: §4.9's skew row said
+// `internal/cli/doctor.go` and `internal/infra/firebasedb.go` "both refuse a
+// marker above the binary's version", and doctor does not refuse anything here
+// — `doctorRulesSkew` reports `policy-rules-skew` with `Severity: "warning"`,
+// and `checksFail` fails doctor's exit code on a warning only under `--strict`.
+// The design is a document an implementer builds from, so a refusal it names
+// has to be one the tree makes. Three assertions, in order: the false sentence
+// is gone; the design says doctor reports the skew as a warning and names the
+// mechanism; and the tree still says what the design now says it does.
+func TestDocsMobileOrchestratorRefusalsNameTheMechanism(t *testing.T) {
+	doc := readDoc(t, orchDesign)
+	for _, wrong := range []string{
+		"both refuse a marker",
+		"`internal/cli/doctor.go` and `internal/infra/firebasedb.go`",
+	} {
+		if strings.Contains(doc, wrong) {
+			t.Errorf("%s still carries %q: doctor reports the skew as a warning (doctorRulesSkew) and refuses nothing — the refusal is firebasedb.go's Check", orchDesign, wrong)
+		}
+	}
+	for _, want := range []string{
+		"`doctorRulesSkew` is not one of them",
+		"`Severity: \"warning\"`",
+		"`checksFail` fails doctor's exit code on a warning only under `--strict`",
+		"`internal/infra/firebasedb.go`'s `Check` refuses a marker **above** the binary's version",
+		"`internal/runner/projectpolicy.go`'s `unreadablePolicy`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer says %q: the skew row's mechanisms are what make it true", orchDesign, want)
+		}
+	}
+	// The claims are the tree's, so the tree is asked. A warning severity, and a
+	// warning that only fails under strict, are the two facts the row turns on.
+	doctor := readDoc(t, "internal/cli/doctor.go")
+	if !strings.Contains(doctor, `ID: "policy-rules-skew", Severity: "warning"`) {
+		t.Errorf("internal/cli/doctor.go no longer returns policy-rules-skew at Severity \"warning\": %s's skew row has gone stale", orchDesign)
+	}
+	// The row's point is that this check never fails doctor's exit code on its
+	// own. A branch of it that returned an error severity would make the row
+	// false, whatever the other branches do — so the absence is asserted, not
+	// the count.
+	if strings.Contains(doctor, `ID: "policy-rules-skew", Severity: "error"`) {
+		t.Errorf("internal/cli/doctor.go now returns policy-rules-skew at an error severity: %s's skew row says doctor reports the skew as a warning and refuses nothing", orchDesign)
+	}
+	// The exact arm, tabs and all: a "warning" case that failed without strict
+	// would make the row's "only under --strict" false.
+	if !strings.Contains(doctor, "case \"warning\":\n\t\t\tif strict {") {
+		t.Errorf("internal/cli/doctor.go's checksFail no longer treats a warning as a failure only under strict: %s's skew row has gone stale", orchDesign)
+	}
+	firebasedb := readDoc(t, "internal/infra/firebasedb.go")
+	if !strings.Contains(firebasedb, "markerGen > projectpolicy.RulesVersion") {
+		t.Errorf("internal/infra/firebasedb.go's Check no longer refuses a marker above RulesVersion: %s names it as the refusal", orchDesign)
+	}
+	runner := readDoc(t, "internal/runner/projectpolicy.go")
+	if !strings.Contains(runner, "The run does not start on a ceiling the policy did not set") {
+		t.Errorf("internal/runner/projectpolicy.go's unreadablePolicy no longer carries the sentence %s quotes: the runner's halt is one of the two refusals the row names", orchDesign)
+	}
+}
+
+// TestDocsMobileOrchestratorCredentialsCitationsPointAtTheRightFile: the design
+// cited `docs/credentials-service/README.md` for "F36's boundary; D135" and
+// wrote the service's decisions as a bare `docs/credentials-service/`. That
+// file carries neither: its table is the document index and its numbers table
+// holds D130–D159 as a range, F36 is a finding in reconciliation.md and D135 a
+// decision row in the same file, and the "stays secrets-only" boundary the
+// design quotes is spec.md's. The README stays cited — it is where the 90–99
+// reservation is recorded — so this test asserts the precise file beside it,
+// not in place of it.
+func TestDocsMobileOrchestratorCredentialsCitationsPointAtTheRightFile(t *testing.T) {
+	doc := readDoc(t, orchDesign)
+	rel, err := filepath.Rel("docs/mobile/design", "docs/credentials-service/reconciliation.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(doc, "docs/credentials-service/reconciliation.md") && !strings.Contains(doc, rel) {
+		t.Errorf("%s no longer cites docs/credentials-service/reconciliation.md, which is where F36 and D135 actually are", orchDesign)
+	}
+	for _, wrong := range []string{
+		"`docs/credentials-service/` D135",
+		"`docs/credentials-service/` designs",
+		"README.md](../../credentials-service/README.md) (D130–D159; F36's boundary; D135)",
+	} {
+		if strings.Contains(doc, wrong) {
+			t.Errorf("%s still carries %q: the file named does not hold the finding or the decision", orchDesign, wrong)
+		}
+	}
+	// The premise, from the tree: F36 and D135 are reconciliation.md's, the
+	// boundary sentence is spec.md's, and the README holds the number blocks.
+	recon := readDoc(t, "docs/credentials-service/reconciliation.md")
+	if !strings.Contains(recon, "**F36 (Exists; boundary).**") {
+		t.Errorf("docs/credentials-service/reconciliation.md no longer carries F36: %s's citation has gone stale", orchDesign)
+	}
+	if !strings.Contains(recon, "| **D135** |") {
+		t.Errorf("docs/credentials-service/reconciliation.md no longer carries D135's row: %s's citation has gone stale", orchDesign)
+	}
+	spec := readDoc(t, "docs/credentials-service/spec.md")
+	if !strings.Contains(spec, "the service stays secrets-only") {
+		t.Errorf("docs/credentials-service/spec.md no longer carries the \"stays secrets-only\" boundary %s quotes", orchDesign)
+	}
+	readme := readDoc(t, "docs/credentials-service/README.md")
+	if strings.Contains(readme, "F36") {
+		t.Errorf("docs/credentials-service/README.md now carries F36: %s's correction (that the finding is reconciliation.md's) is what has gone stale", orchDesign)
 	}
 }
 
