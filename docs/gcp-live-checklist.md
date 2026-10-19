@@ -4276,7 +4276,6 @@ the clipboard's permissions and the live region's announcement are the browser's
 here reads a token or a key and no agent runs any step of it.** Until this check runs, the
 controls' **runtime** behaviour is **UNVERIFIED** — the markup's shape is not a clipboard —
 and the row above stays **NOT RUN**.
-**Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
 
 ## Check 81: the deployed rules' fence — the signed-in user's two writes and its read grant (`fugaro-dev` only, never `belong`; run by you; NOT RUN)
 
@@ -4306,9 +4305,12 @@ DB=$(sed -n 's|^ *rtdb_url: *||p' "$C" | tr -d "\"'" | sed -e 's|^https://||' -e
 KEY=$(sed -n 's|^ *firebase_api_key: *||p' "$C" | tr -d "\"'" | head -1)
 SA=$(sed -n 's|^ *token_signer: *||p' "$C" | tr -d "\"'" | head -1)
 # FP is the Firebase project id, which is what Identity Toolkit's
-# accounts:signInWithCustomToken and accounts:delete address — NOT the GCP
-# project id P above (an installation's Firebase project is its own, and the
-# two are the same only by coincidence).
+# accounts:signInWithCustomToken and accounts:delete address, and the project
+# the token signer below is an account of (docs/gcp-setup.md: token_signer is
+# fugaro-token-signer@<fp>.iam.gserviceaccount.com, and internal/localcfg
+# requires exactly that shape) — NOT the GCP project id P above (an
+# installation's Firebase project is its own, and the two are the same only by
+# coincidence).
 FP=$(sed -n 's|^ *firebase_project: *||p' "$C" | tr -d "\"'" | head -1)
 for v in DB KEY SA FP; do [ -n "${!v}" ] || { echo "Check 81 stopped: $v is not set in $C (its budget: section; see docs/gcp-setup.md)" >&2; exit 1; }; done
 W=/tmp/chk81; mkdir -p "$W"
@@ -4327,7 +4329,7 @@ NODE=chk81-probe; NONE=chk81-no-such-repo
 echo "Check 81 ready: P=$P firebase=$FP day=$DAY node=$NODE — DB, KEY, SA and FP are read and never printed (FP is the project id, not a secret)"
 ```
 
-**The two helpers every minting step uses.** `mint <uid> <claims-json>` signs a custom token with the project's own signer through `iam.serviceAccounts.signJwt` — the path `internal/budget/token`'s `Mint` takes (`IAMSigner.SignJWT`, audience `token.Audience`) and the path check 26's step 7 used; `signin <uid> <claims-json>` exchanges it at `accounts:signInWithCustomToken` for an ID token (`internal/budget/token/exchange.go`), which is what `?auth=` takes below. **`sign-jwt` requires your own credentials to hold `fugaroTokenMinter` on the signer** (`iam.serviceAccounts.signJwt` and nothing else, docs/gcp-setup.md "Who can sign run tokens"): a refusal here is a permission finding, not a fault of this check.
+**The two helpers every minting step uses.** `mint <uid> <claims-json>` signs a custom token with the project's own signer through `iam.serviceAccounts.signJwt` — the path `internal/budget/token`'s `Mint` takes (`IAMSigner.SignJWT`, audience `token.Audience`) and the path check 26's step 7 used; `signin <uid> <claims-json>` exchanges it at `accounts:signInWithCustomToken` for an ID token (`internal/budget/token/exchange.go`), which is what `?auth=` takes below. **`sign-jwt` requires your own credentials to hold `fugaroTokenMinter` on the signer** (`iam.serviceAccounts.signJwt` and nothing else, docs/gcp-setup.md "Who can sign run tokens"): a refusal here is a permission finding, not a fault of this check. The `--project` below is **`$FP`, the Firebase project the signer is an account of** (`token_signer` is `fugaro-token-signer@<fp>.iam.gserviceaccount.com`), not the GCP project id `$P` the guard hard-codes: they are the same only on a same-project installation.
 
 ```bash
 # === Check 81: the helpers (after the guard block). ===
@@ -4337,7 +4339,7 @@ mint() { # mint <uid> <claims-json-object> -> the custom token on stdout
   printf '{"iss":"%s","sub":"%s","aud":"%s","iat":%s,"exp":%s,"uid":"%s","claims":%s}' \
     "$SA" "$SA" "$AUD" "$now" "$exp" "$uid" "$claims" > "$W/payload-$uid.json"
   gcloud iam service-accounts sign-jwt "$W/payload-$uid.json" "$W/jwt-$uid.txt" \
-    --iam-account="$SA" --project="$P" >/dev/null || return 1
+    --iam-account="$SA" --project="$FP" >/dev/null || return 1
   cat "$W/jwt-$uid.txt"
 }
 signin() { # signin <uid> <claims-json-object> -> the ID token on stdout
@@ -4418,16 +4420,20 @@ TOK() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }   # the status alone
    ```
    **FACT:** the six statuses, and — for the two 200s — the bodies, which must hold the seeded message and heartbeat and nothing else. **A user that can read the message it wrote is the failure this step exists to catch**: it would mean the deployed document is not this one. (The 200 with an **empty** body is not this: the grant is on the node, and an absent node answers `null` — the seeding here is what makes the two 200s hold content.)
 
-5. **The user's second write — the ack, once, on a message that already exists.** *(Guard block, helpers, tokens, `$OUT` from step 4.)* `acked` is `MAILBOX && newData.exists() && !data.exists()` with `data.parent().exists()`:
+5. **The user's second write — the ack, once, on a message that already exists.** *(Guard block, helpers, tokens, `$OUT` from step 4, operator credentials for the second seed.)* `acked` is `MAILBOX && newData.exists() && !data.exists()` with `data.parent().exists()`:
 
    ```bash
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted; seeds the second message below
    TOK -X PUT "$DB/mailbox/$ALICE/outbox/$OUT/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'   # 200: the one ack
-   TOK -X PUT "$DB/mailbox/$ALICE/outbox/$OUT/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'   # 401: once only
-   TOK -X PUT "$DB/mailbox/$ALICE/outbox/$OUT/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'false'  # 401: newData.val() == true
+   TOK -X PUT "$DB/mailbox/$ALICE/outbox/$OUT/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'   # 401: once only (!data.exists())
+   OUT2=$(printf 'chk81-out2-%s' "$(date +%s)")
+   curl -sS -X PUT "$DB/mailbox/$ALICE/outbox/$OUT2.json?access_token=$AT" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$OUT2\",\"sender\":\"$ALICE\",\"text\":\"seeded by IAM for check 81 step 5\",\"at\":$(date +%s000)}"
+   TOK -X PUT "$DB/mailbox/$ALICE/outbox/$OUT2/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'false'  # 401: newData.val() == true, on a message with no ack yet
    TOK -X PUT "$DB/mailbox/$ALICE/outbox/chk81-absent/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'   # 401: data.parent().exists()
    TOK -X PUT "$DB/mailbox/$BOB/outbox/chk81-absent/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'     # 401: another mailbox
    ```
-   **FACT:** the five statuses and the refused bodies. The fourth line is the guard against an ack that would create its own parent: the message must already exist, which is why the seeding in step 4 is on the path. Read the message back with the operator's credentials and record that it now carries `acked: true` and its `text` is unchanged (an ack that replaced the message would be a different failure).
+   **FACT:** the six statuses and the refused bodies. The third line is refused by the **value** guard (`newData.val() == true`) and not by the write-once one: it is a **different** message from the acked one, seeded here through IAM, because a `false` written to the message the first line already acked would be refused by `!data.exists()` and would prove nothing about the boolean — the case P2.2's `c2` tries on a fresh message. The fifth line is the guard against an ack that would create its own parent: the message must already exist, which is why the seeding in step 4 is on the path. Read the message back with the operator's credentials and record that it now carries `acked: true` and its `text` is unchanged (an ack that replaced the message would be a different failure).
 
 6. **The granted read nodes, everything the grant does not name, and the parents of the granted nodes.** *(Guard block, helpers, tokens.)* This is `TestMailboxReadsAreTheGrantedSet` in the emulator, which is where these path lists come from. Two things make the reading non-obvious and both are in the first column's result: **an RTDB read grant sits at the location it is written on and cascades *down* only**, so the granted nodes and everything under them are readable and their **parents are not** — there is no `.read` at `spend/$day`, `config/caps` or `config/kill`, and a read of one of them is a **401**, not a 200; and **the grant is on the claim, not on the day or the slug**, so a day that is not today and a repository slug that does not exist are readable just the same (the app reads the day it is looking at). A read of an absent node is a 200 whose body is `null`, which is a pass, not a denial:
 
@@ -4616,9 +4622,13 @@ The app is **its own artifact at `mobile/`, outside the Go module** (plan C2), v
 # === Check 89: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
 set -u
 command -v eas >/dev/null || { echo "Check 89 stopped: no eas on PATH (npm i -g eas-cli, then 'eas login' as yourself)" >&2; exit 1; }
-[ -f mobile/app.json ] || { echo "Check 89 stopped: there is no mobile/app.json in this checkout, so there is no app to build (P3.1's; a checkout older than it has nothing to build)" >&2; exit 1; }
-[ -f mobile/eas.json ] || { echo "Check 89 stopped: there is no mobile/eas.json, so there is no build or submit profile to read (P4.4 makes it; this check reads it, it does not create it) — this is the stop a checkout of today hits" >&2; exit 1; }
-cd mobile
+# The repository root, resolved first so this block is re-runnable from
+# anywhere in the checkout: a second run from inside mobile/ must not fail its
+# own file tests (every path below is read from the root).
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "Check 89 stopped: not inside a git checkout; the app is built from the commit a tag names" >&2; exit 1; }
+[ -f "$ROOT/mobile/app.json" ] || { echo "Check 89 stopped: there is no mobile/app.json in this checkout, so there is no app to build (P3.1's; a checkout older than it has nothing to build)" >&2; exit 1; }
+[ -f "$ROOT/mobile/eas.json" ] || { echo "Check 89 stopped: there is no mobile/eas.json in this checkout, so there is no build or submit profile to read (P4.4 makes it; this check reads it, it does not create it) — this is the stop a checkout of today hits" >&2; exit 1; }
+cd "$ROOT/mobile" || { echo "Check 89 stopped: cannot enter $ROOT/mobile" >&2; exit 1; }
 TAG=$(git describe --tags --exact-match 2>/dev/null || true)
 [ -n "$TAG" ] || { echo "Check 89 stopped: HEAD is not a tag; the app is versioned from the release's tag (C6)" >&2; exit 1; }
 SHA=$(git rev-parse HEAD)
@@ -4632,7 +4642,9 @@ if not bid or not pkg:
     sys.exit("Check 89 stopped: mobile/app.json carries no ios.bundleIdentifier or android.package (the store identity P4.4 adds), so there is nothing to submit a build under — a build made now could not reach any track")
 print(e["version"], bid, pkg)
 PY
-)
+) || exit 1   # the store-identity stop has to be a real stop: sys.exit inside a
+                 # command substitution only sets a status, so the guard acts on it
+                 # here -- otherwise it would print the reason and read on
 W=/tmp/chk89; mkdir -p "$W"
 echo "Check 89 ready: $TAG at $SHA — $APP"
 ```
@@ -4664,11 +4676,14 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 5. **No store credential is anywhere it should not be.** *(Guard block, run by you, read-only.)* The credentials belong to the EAS project (server-side, under your account) or to your own machine — never to this repository and never to CI:
 
    ```bash
-   git -C .. ls-files mobile | grep -E '\.(p12|mobileprovision|keystore|jks|json)$' || echo "no credential-shaped file is tracked under mobile/"
+   git -C .. ls-files mobile | grep -E '\.(p12|mobileprovision|keystore|jks|pem|key)$' ||
+     echo "nothing credential-shaped: no key, certificate or keystore is tracked under mobile/"
+   git -C .. ls-files mobile | grep -E '\.json$' | grep -Ev '^mobile/(app|package|package-lock|eas)\.json$' ||
+     echo "and no JSON beyond the app's own files: a google-play-service-account.json or a credentials.json would print on the line above"
    git -C .. log --oneline -1 -- mobile/eas.json
    gh secret list --repo dimipaun/fugaro 2>/dev/null || echo "no gh, or no access: skip this line and say so"
    ```
-   **FACT:** the file list (nothing credential-shaped, e.g. no `google-play-service-account.json`, no `*.p12`, no `*.jks`, no `credentials.json` holding a key), and the secret names in CI — **the names only, never a value**. EAS needs no credential in this repository's CI for this check (nothing here builds the app in CI: P4.3's job is the shared package's tests, and it holds no store credential); if a secret whose name suggests a store or signing key exists, record it and its purpose — a store credential in CI is the finding this step exists to produce. **An agent never reads that secret's value**: this step lists names and stops there.
+   **FACT:** the two file lists — **nothing credential-shaped** (no `*.p12`, no `*.mobileprovision`, no `*.jks`/`*.keystore`, no key) and, of the JSON under `mobile/`, **only the app's own four files** (`app.json`, `package.json`, `package-lock.json`, and `eas.json` once P4.4 adds it: the `|| echo` lines are the empty lists, and a JSON that survives the second grep is the finding, e.g. a `google-play-service-account.json` or a `credentials.json` holding a key — the scan names types, it never opens a file) — and the secret names in CI — **the names only, never a value**. EAS needs no credential in this repository's CI for this check (nothing here builds the app in CI: P4.3's job is the shared package's tests, and it holds no store credential); if a secret whose name suggests a store or signing key exists, record it and its purpose — a store credential in CI is the finding this step exists to produce. **An agent never reads that secret's value**: this step lists names and stops there.
 
 **Passes when:** step 1 finds the `internal` profile with `distribution: store` and `submit.internal.android.track` **`internal`**; step 2's builds finish, both signed with your distribution credentials, each recording the tagged commit `$SHA`; step 3's two submissions land on the internal testing tracks with no public release and no external group; step 4's install reports the release's version; and step 5 finds no credential-shaped file under `mobile/` and no store credential in CI.
 

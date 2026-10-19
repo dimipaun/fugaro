@@ -21,7 +21,7 @@ import (
 // nobody can follow; and a check written as something an agent runs is a check
 // that will be run by an agent -- all of 80-89 are owner-run because a live
 // database's rules, a real installation and a store account are not an agent's
-// to touch (the plan's Global Constraints 1, 8 and 9; D120).
+// to touch (the plan's Global Constraints 9, 10 and 11: store credentials are owner-run, no test may need a live cloud or a device, and `belong` is never touched by an agent; D120).
 //
 // Three ties hold the text to the code, and each of them is the thing the plan's
 // task asks the check to read rather than remember:
@@ -169,7 +169,7 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 		}
 		for _, refuse := range c.refuses {
 			if strings.Contains(section, refuse) {
-				t.Errorf("%s carries %q, which would make an owner-run check something else: these checks are yours to run at your own terminal, on fugaro-dev, against the real database, and no credential and no public store move belongs in one (the plan's Global Constraints 1, 8 and 9; C8)", c.heading, refuse)
+				t.Errorf("%s carries %q, which would make an owner-run check something else: these checks are yours to run at your own terminal, on fugaro-dev, against the real database, and no credential and no public store move belongs in one (the plan's Global Constraints 9, 10 and 11; C8)", c.heading, refuse)
 			}
 		}
 	}

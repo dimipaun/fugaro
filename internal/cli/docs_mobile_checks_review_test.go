@@ -256,6 +256,210 @@ func TestDocsCheck89GuardMatchesWhatExists(t *testing.T) {
 			t.Errorf("## Check 89: the guard does not read/carry %q: it must name the store identity it needs and stop with a sentence when the app does not have it", want)
 		}
 	}
+
+	// The stop has to be a stop. The store identity is read inside a command
+	// substitution (`APP=$(python3 ...)`), and a `sys.exit` there only sets a
+	// status: without the guard acting on it, the block prints "Check 89
+	// stopped: ..." and then goes on to "Check 89 ready", and the owner builds
+	// the very artifact the sentence said could not be submitted.
+	if !stoppedOnCommandSubstitution(guard) {
+		t.Errorf("## Check 89: the guard reads the store identity in a command substitution and does not act on its status (`) || exit 1` after the python block): `sys.exit` inside `$(...)` only sets the substitution's status, so the guard would print \"Check 89 stopped: ...\" and then print \"Check 89 ready\" and the owner would build anyway -- while the preamble and the register row both say it hard-stops")
+	}
+
+	// And it has to be re-runnable, which is what the block's own "re-run this
+	// before every step" says: the file tests have to be resolved from a known
+	// directory, not from wherever the previous run left the shell (the block
+	// ends in mobile/, so a bare `[ -f mobile/app.json ]` fails on the second
+	// run with "there is no mobile/app.json in this checkout" -- a false stop).
+	root := strings.Contains(guard, "$ROOT/mobile/app.json") && strings.Contains(guard, "$ROOT/mobile/eas.json")
+	if !root {
+		t.Errorf("## Check 89: the guard's file tests are not resolved from the repository root (`$ROOT/mobile/app.json`): the block ends in `mobile/`, so a re-run from there tests `mobile/mobile/app.json` and stops with the false message \"there is no mobile/app.json in this checkout\"")
+	}
+	for _, line := range strings.Split(guard, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "[ -f ") {
+			continue
+		}
+		rel := strings.TrimPrefix(line, "[ -f ")
+		if i := strings.IndexAny(rel, " \t"); i >= 0 {
+			rel = rel[:i]
+		}
+		rel = strings.Trim(rel, `"`)
+		if !strings.HasPrefix(rel, "$ROOT/") {
+			t.Errorf("## Check 89: the guard tests %s, a path relative to whatever directory the shell happens to be in: the block ends in mobile/, so every file test has to be resolved from $ROOT (the repository root) for the block to be re-runnable as it says", rel)
+		}
+	}
+}
+
+// stoppedOnCommandSubstitution reports whether the guard acts on the status of
+// the `$(python3 ...)` read of the store identity: the closing fence of the
+// substitution (`)`) has to carry `|| exit 1`.
+func stoppedOnCommandSubstitution(guard string) bool {
+	end := strings.Index(guard, "\nPY\n")
+	if end < 0 {
+		return false
+	}
+	rest := guard[end+len("\nPY\n"):]
+	line, _, _ := strings.Cut(rest, "\n")
+	return strings.HasPrefix(strings.TrimSpace(line), ")") && strings.Contains(line, "|| exit 1")
+}
+
+// TestDocsEachCheckHasOnePasteBackParagraph: a check's "**Paste back:**"
+// paragraph is the register of what the owner reports, so a check carries one
+// and it starts a paragraph of its own. Merge 5965a75 left a second one -- a
+// stale copy of check 69b's, without its cookie clause -- glued to the end of
+// check 70c's, where it read as a step of a check about copy controls; no test
+// looked at the document's paragraphs at all, and this one does.
+func TestDocsEachCheckHasOnePasteBackParagraph(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	parts := regexp.MustCompile(`(?m)^## `).Split(doc, -1)
+	if len(parts) < 2 {
+		t.Fatalf("%s has no `## ` sections", path)
+	}
+	for _, sec := range parts[1:] {
+		head, _, _ := strings.Cut(sec, "\n")
+		if !strings.HasPrefix(head, "Check ") {
+			continue
+		}
+		name := strings.SplitN(head, ":", 2)[0]
+		if n := strings.Count(sec, "**Paste back:**"); n > 1 {
+			t.Errorf("## %s: carries %d \"**Paste back:**\" paragraphs, want one: a check reports back once, and a second one is another check's paragraph that the document's own reading no longer tells apart from this check's", name, n)
+		}
+	}
+
+	lines := strings.Split(doc, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "**Paste back:**") {
+			continue
+		}
+		if i > 0 && strings.TrimSpace(lines[i-1]) != "" {
+			t.Errorf("%s:%d: a \"**Paste back:**\" paragraph starts on a line whose predecessor is non-blank (%q): glued like that it reads as the tail of the paragraph above it, which is how a paragraph from another check sat inside check 70c after merge 5965a75", path, i+1, strings.TrimSpace(lines[i-1]))
+		}
+	}
+}
+
+// TestDocsCheck89CredentialScanSkipsTheAppFiles: check 89 step 5 scans the
+// tracked files under mobile/ for anything credential-shaped, and its pattern
+// listed `json` beside `p12|mobileprovision|keystore|jks` in one alternation,
+// so it matched mobile/app.json, mobile/package.json and
+// mobile/package-lock.json every time: the `|| echo "nothing credential-shaped
+// ..."` half was dead and the FACT line's "empty list" could never be true. The
+// scan is held to the checkout's own file names here: the app's four files must
+// survive it, because a scan that always fires is a finding nobody reads.
+func TestDocsCheck89CredentialScanSkipsTheAppFiles(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 89:")
+	step := stepText(t, section, "5. **No store credential", "\n\n**Passes when:**")
+
+	known := []string{"mobile/app.json", "mobile/package.json", "mobile/package-lock.json", "mobile/eas.json"}
+	detect := regexp.MustCompile(`grep -E '([^']+)'`)
+	exclude := regexp.MustCompile(`grep -Ev '([^']+)'`)
+
+	lines := 0
+	for _, line := range strings.Split(step, "\n") {
+		if !strings.Contains(line, "ls-files mobile") {
+			continue
+		}
+		lines++
+		var detects, excludes []*regexp.Regexp
+		for _, m := range detect.FindAllStringSubmatch(line, -1) {
+			rx, err := regexp.Compile(m[1])
+			if err != nil {
+				t.Errorf("check 89 step 5's pattern %q does not compile: %v", m[1], err)
+				continue
+			}
+			detects = append(detects, rx)
+		}
+		for _, m := range exclude.FindAllStringSubmatch(line, -1) {
+			rx, err := regexp.Compile(m[1])
+			if err != nil {
+				t.Errorf("check 89 step 5's pattern %q does not compile: %v", m[1], err)
+				continue
+			}
+			excludes = append(excludes, rx)
+		}
+		for _, name := range known {
+			flagged := false
+			for _, rx := range detects {
+				if rx.MatchString(name) {
+					flagged = true
+				}
+			}
+			for _, rx := range excludes {
+				if rx.MatchString(name) {
+					flagged = false
+				}
+			}
+			if flagged {
+				t.Errorf("check 89 step 5's scan flags %s, a file of the app's own that is in this checkout: the scan's `|| echo \"nothing credential-shaped ...\"` half would be dead and its FACT line's empty list could never be true -- a scan that always fires is a finding nobody reads (list the credential types, and handle JSON by name)", name)
+			}
+		}
+		if !strings.Contains(line, "||") && !strings.Contains(line, "grep -Ev") {
+			t.Errorf("check 89 step 5's scan line %q has no `|| echo` for its empty list: the step's FACT line says an empty list is the pass, so the line that prints it has to be reachable", line)
+		}
+	}
+	if lines != 2 {
+		t.Errorf("check 89 step 5 has %d `ls-files mobile` scan lines, want 2 (the credential types, and the JSON that is not one of the app's own files)", lines)
+	}
+}
+
+// TestDocsCheck81AckFalseIsOnAFreshMessage: check 81 step 5's `-d 'false'` ack
+// was written to the same node the line above had just acked, so it was refused
+// by the write-once `!data.exists()` and never reached the `newData.val() ==
+// true` guard the comment and the FACT line named (P2.2's `c2` tries that guard
+// on a fresh message). The false ack has to be on its own message.
+func TestDocsCheck81AckFalseIsOnAFreshMessage(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+	step := stepText(t, section, "5. **The user's second write", "6. **The granted read nodes")
+
+	var ackedOnce, booleanAt string
+	for _, line := range strings.Split(step, "\n") {
+		i := strings.Index(line, "acked.json?auth=")
+		if i < 0 {
+			continue
+		}
+		url := line[strings.LastIndex(line[:i], `"`)+1 : i]
+		if strings.Contains(line, "# 200") {
+			ackedOnce = url
+		}
+		if strings.Contains(line, "-d 'false'") {
+			booleanAt = url
+		}
+	}
+	if ackedOnce == "" || booleanAt == "" {
+		t.Fatalf("check 81 step 5 does not carry both the 200 ack and the `-d 'false'` ack (%q, %q): the two are what tells the boolean guard from the write-once one", ackedOnce, booleanAt)
+	}
+	if ackedOnce == booleanAt {
+		t.Errorf("check 81 step 5 writes `-d 'false'` to %s, the node the 200 ack already wrote: the false ack is refused by the write-once `!data.exists()` before `newData.val() == true` is ever reached, so the line and its FACT sentence claim a guard nothing exercised -- the false ack needs a message of its own (seeded by IAM, as step 4 seeds the first)", booleanAt)
+	}
+	if !strings.Contains(step, "access_token=$AT") {
+		t.Errorf("check 81 step 5 has no IAM seeding of the second message: the fresh message the `-d 'false'` line needs is not there, and the boolean guard is again tried on a node that already has an ack")
+	}
+}
+
+// TestDocsCheck81MintSignsInTheFirebaseProject: `mint` calls
+// `gcloud iam service-accounts sign-jwt --iam-account="$SA"`, and `$SA` is the
+// installation's `token_signer` -- `fugaro-token-signer@<fp>.iam.gserviceaccount.com`,
+// an account of the **Firebase** project (internal/localcfg requires exactly
+// that shape). `--project` has to be that project ($FP), not the GCP project id
+// ($P) the guard hard-codes, or the call names an account of one project while
+// telling gcloud to look in another.
+func TestDocsCheck81MintSignsInTheFirebaseProject(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	if !strings.Contains(section, `--iam-account="$SA" --project="$FP"`) {
+		t.Errorf("## Check 81: `mint` does not sign with `--iam-account=\"$SA\" --project=\"$FP\"`: the signer is an account of the Firebase project ($FP), so `--project` has to be its project -- on an installation whose Firebase project is not its GCP project, naming $P is the same $P/$FP confusion the Restore had")
+	}
+	if strings.Contains(section, `--iam-account="$SA" --project="$P"`) {
+		t.Errorf("## Check 81: `mint` still passes `--project=\"$P\"` (the GCP project id) to sign-jwt while signing as $SA (an account of the Firebase project): the two are the same only on a same-project installation")
+	}
 }
 
 // TestDocsCheck81RestoreUsesTheFirebaseProject: the accounts this check adds
