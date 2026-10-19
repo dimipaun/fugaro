@@ -13,8 +13,17 @@ import (
 // The pin for docs/plans/2026-10-18-mobile-mailbox-consumer.md, the CLI plan
 // console D19 requires before mobile task P4.1 (`fugaro mailbox`) may be
 // written. Nothing in the plan is built, so no test can hold its behaviour; the
-// two things a reader can check today are its citations and the one rule it
-// states in three places.
+// things a reader can check today are its citations, the one rule it states in
+// three places, and the lines it quotes from the merged rules template.
+//
+// The quote half is TestMailboxPlanQuotesTheRulesFile: the plan's section 2
+// quotes the mailbox subtree, the config/admin node and the pairing subtree, and
+// an earlier revision asserted the quote was "verbatim" while the merged
+// template said something else — the quote had the inbox validating
+// ['id','sender','text','at'] and the heartbeat ['at','boot'], which is the
+// pre-P6.4 field set. The guard now derives the quote from the file rather than
+// trusting the plan's memory of it, and proves it can fail by mutating a copy of
+// the template in a temp directory.
 //
 // The path half of the citations is derived from the plan rather than listed
 // here (planPaths, below), because a hand-kept list quietly stops covering the
@@ -172,14 +181,27 @@ var planWillCreate = map[string]string{
 	"internal/mailbox/action.go":              "T6",
 	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
 	"internal/mailbox/mac_sign_test.go":       "T2a",
-	"internal/mailbox/testdata/parity.json":   "T1 generates it; the Go side only reads it",
+	"internal/mailbox/testdata/parity.json":   "T8 generates it; the Go side only reads it",
 	"docs/mobile/mailbox-review-checklist.md": "T8",
 	// The parity corpora the shared modules' own test files will write; the
 	// merged modules' index.test.js files exist today, these do not (§13's
 	// "no merged module changes" — test files only).
-	"shared/mailbox/parity.test.js":     "T1",
-	"shared/lease/parity.test.js":       "T3",
-	"shared/mailbox-sim/parity.test.js": "T8",
+	"shared/mailbox/parity.test.js": "T1",
+	"shared/lease/parity.test.js":   "T3",
+}
+
+// planWillCreateElsewhere is the other half of that rule: paths the plan names
+// that belong to another, later task — P6.6's pairing CLI and its sweep rule,
+// whose files are named in the plan's section 2 and its C0 so a reader can see
+// what the key's producer looks like. They must be *absent* too, and naming them
+// here is what keeps the derivation honest: a path the plan cites is either in
+// the tree, or a path this plan's tasks create, or this list — and this list is
+// checked the same way (still absent, still cited), so it cannot rot into a
+// hiding place for a real path.
+var planWillCreateElsewhere = map[string]string{
+	"internal/cli/pair.go":                 "P6.6's `fugaro pair` (approved, not built)",
+	"internal/budget/token/device.go":      "P6.6's device token",
+	"internal/budget/sweep_device_test.go": "P6.6's `m~…` sweep rule's test",
 }
 
 // TestMailboxPlanEveryCitedPathExists is the path half of the citations pin,
@@ -210,6 +232,11 @@ func TestMailboxPlanEveryCitedPathExists(t *testing.T) {
 			}
 			continue
 		}
+		if _, ok := planWillCreateElsewhere[p]; ok {
+			// Absence is asserted by the loop at the end of this test, where the
+			// list is walked with its reasons.
+			continue
+		}
 		if pathExists(p) {
 			continue
 		}
@@ -218,6 +245,17 @@ func TestMailboxPlanEveryCitedPathExists(t *testing.T) {
 	for p, why := range planWillCreate {
 		if !named[p] {
 			t.Errorf("planWillCreate names %s (%s), which the plan no longer cites: the list must only excuse paths the document actually names", p, why)
+		}
+	}
+	// Other tasks' unbuilt files, checked the same way: absent, and still named
+	// by the plan (which is the only reason a reader of P4.1 knows where the key
+	// P6.6 generates comes from).
+	for p, why := range planWillCreateElsewhere {
+		if _, err := os.Stat("../../" + p); err == nil {
+			t.Errorf("%s: %s exists now (%s), so it is no longer a later task's file: it must leave planWillCreateElsewhere and be checked like any other path", mailboxPlan, p, why)
+		}
+		if !named[p] {
+			t.Errorf("planWillCreateElsewhere names %s (%s), which the plan no longer cites: the list must only excuse paths the document actually names", p, why)
 		}
 	}
 }
@@ -280,13 +318,22 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"internal/gcpfake",
 		"internal/safetext",
 		"website/content/cli-reference.md",
-		// The merged substrate, which this plan reuses and never forks.
+		// The merged substrate, which this plan reuses and never forks — and the
+		// Phase 6 modules it consumes as contracts rather than re-implements.
 		"shared/mailbox/index.js",
 		"shared/lease/index.js",
 		"shared/presence/index.js",
 		"shared/digest/index.js",
 		"shared/mailbox-sim/index.js",
 		"shared/mailbox-schema/index.js",
+		"shared/mailbox-schema/mac.js",
+		"shared/mailbox-schema/vectors.json",
+		"shared/confirm/vectors.json",
+		"shared/prompts/index.js",
+		// The P6.6 files the key's producer and the sweeper's `m~` rule live in:
+		// named, and not this plan's to write (§13, §14).
+		"internal/cli/pair.go",
+		"internal/budget/token/device.go",
 		// The plan's authorities.
 		"docs/design/v1.md",
 		"docs/design/voice.md",
@@ -299,14 +346,16 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 	}
 
 	for path, symbols := range map[string][]string{
-		"internal/cli/budget.go":         {"func dbErr(", "func checkDBProject(", "func adminDenied("},
-		"internal/cli/root.go":           {"ExitOK", "ExitUserError", "ExitRemoteError", "func ExitCode(", "func NewRootCmd("},
-		"internal/cli/cancel.go":         {"func cancelRun("},
-		"internal/cli/history.go":        {"func newBudgetHistoryCmd("},
-		"internal/rtdb/client.go":        {"func (c *Client) GetETag(", "func (c *Client) PutIfMatch(", "ErrPrecondition"},
-		"internal/budget/kill.go":        {"func SetKill(", "SetAttempts"},
-		"internal/budget/sweep.go":       {"type Sweeper", "func RunUID("},
-		"internal/budget/rules/rules.go": {"\"MAILBOX\":", "\"CONSUMER\":"},
+		"internal/cli/budget.go":   {"func dbErr(", "func checkDBProject(", "func adminDenied("},
+		"internal/cli/root.go":     {"ExitOK", "ExitUserError", "ExitRemoteError", "func ExitCode(", "func NewRootCmd("},
+		"internal/cli/cancel.go":   {"func cancelRun("},
+		"internal/cli/history.go":  {"func newBudgetHistoryCmd("},
+		"internal/rtdb/client.go":  {"func (c *Client) GetETag(", "func (c *Client) PutIfMatch(", "ErrPrecondition"},
+		"internal/budget/kill.go":  {"func SetKill(", "SetAttempts"},
+		"internal/budget/sweep.go": {"type Sweeper", "func RunUID("},
+		// Rules generation 3 (P6.4, merged): the two claims the plan's C0 and C3
+		// argue about, and the macros the plan's quote of the template names.
+		"internal/budget/rules/rules.go": {"\"MAILBOX\":", "\"CONSUMER\":", "userClaim", "KINDREQ", "MACOK", "BOOTOK", "\"AGENTID\":"},
 		"internal/watch/acks.go":         {"func AckPath("},
 		"internal/watch/prstate.go":      {"func (p *PRState) ask("},
 		"internal/runstore/launch.go":    {"func (s *Store) Claim(", "ClaimTTL"},
@@ -317,7 +366,10 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"shared/presence/index.js":       {"export function evaluatePresence(", "MAX_BOOT_ID_LENGTH"},
 		"shared/digest/index.js":         {"export function digest(", "REDACTED", "redact"},
 		"shared/mailbox-sim/index.js":    {"export function createSimulator(", "export function scheduleFromSeed(", "export function faultFor(", "export function scheduleText(", "export function parseScheduleText(", "export function replyId("},
-		"shared/mailbox-schema/index.js": {"FIELDS", "REQUIRED_FIELDS", "validateMessage", "REFUSALS"},
+		"shared/mailbox-schema/index.js": {"FIELDS", "REQUIRED_FIELDS", "KINDS", "ACTIONS", "DIRECTIONS", "validateMessage", "isMessage", "validateHeartbeat", "export function canonicalBytes(", "REFUSALS"},
+		"shared/mailbox-schema/mac.js":   {"export function macOf(", "export function verifyMac("},
+		// P6.5, merged: the TTL this plan binds rather than declares (M3).
+		"shared/prompts/index.js": {"export const PROMPT_TTL_MS", "export const EXPIRED_REPLY", "export const QUEUE_FULL_REPLY", "export const initialQueue", "export const enqueue", "export const expire", "export const answer", "export const pending", "export const announce", "export const evaluateInterrupt"},
 	} {
 		data, err := os.ReadFile("../../" + path)
 		if err != nil {
@@ -349,6 +401,15 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"validateMessage", "redact", "digest", "createSimulator", "scheduleFromSeed",
 		"faultFor", "scheduleText", "parseScheduleText", "replyId",
 		"MAILBOX", "CONSUMER",
+		// Phase 6's merged contracts, which this plan consumes: the schema's
+		// serialisation and its validator, the tag function, the heartbeat's
+		// validator, the kind and direction vocabularies, the TTL and its two
+		// fixed replies, and the rules macros the quoted block names.
+		"canonicalBytes", "macOf", "verifyMac", "validateHeartbeat", "isMessage",
+		"KINDS", "ACTIONS", "DIRECTIONS", "PROMPT_TTL_MS", "EXPIRED_REPLY",
+		"QUEUE_FULL_REPLY", "initialState", "evaluateInterrupt", "userClaim",
+		"KINDREQ", "MACOK", "BOOTOK", "AGENTID", "AGENTIDX", "PARENTKIND",
+		"TARGETOK", "SHAOK", "OPTIONIDX", "RUNTARGET", "REPOTARGET",
 	} {
 		if !strings.Contains(doc, symbol) {
 			t.Errorf("%s no longer names %s: a citation the plan drops is a reader who cannot find what it points at", mailboxPlan, symbol)
@@ -577,7 +638,7 @@ func TestMailboxPlanMatchesTheMergedGrants(t *testing.T) {
 	// The plan-side half: the read half of M1's CAS has a credential named, and
 	// it is the one the rules leave (no grant admits the consumer to a read).
 	m1 := planSubsection(t, doc, "### M1 —")
-	s2 := planSection(t, doc, "## 2. What the merged rules")
+	s2 := planSection(t, doc, "## 2. What the merged schema")
 	s6 := planSection(t, doc, "## 6. Where state lives")
 	for _, section := range []struct{ name, text string }{{"M1", m1}, {"2", s2}, {"6", s6}} {
 		if !strings.Contains(section.text, "ADC") {
@@ -600,6 +661,137 @@ func TestMailboxPlanMatchesTheMergedGrants(t *testing.T) {
 		if !strings.Contains(m8, want) {
 			t.Errorf("%s's M8 no longer says %q: what the P4.1 sweeper may delete, and what it must refuse, is the finding a review of this plan raised", mailboxPlan, want)
 		}
+	}
+}
+
+// planQuoteRE is the plan's fenced quote of the merged rules template: section 2
+// opens a ```jsonc block that reproduces the mailbox subtree, the config/admin
+// node and the pairing subtree. It is the first such fence in the document.
+var planQuoteRE = regexp.MustCompile("(?s)```jsonc\n(.*?)```")
+
+// planQuote is section 2's quoted block, split into its non-blank trimmed lines.
+// The comparison is line-by-line and trimmed because the plan re-indents the
+// nodes it lifts out of the template — a whole-block byte comparison would fail
+// on whitespace and say nothing about the rules.
+func planQuote(t *testing.T, doc string) []string {
+	t.Helper()
+	m := planQuoteRE.FindStringSubmatch(doc)
+	if m == nil {
+		t.Fatalf("%s has no ```jsonc quote of the rules template: section 2's quote is the only place the plan states what the merged rules say, line for line", mailboxPlan)
+	}
+	var out []string
+	for _, line := range strings.Split(m[1], "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// quoteMismatch returns the quoted lines that are not whole lines of the
+// template, in the order they are quoted. It takes the template's text rather
+// than a path so that the negative control below can hand it a mutated copy: the
+// comparison has to be the same one in both runs or the control proves nothing.
+func quoteMismatch(quoted []string, template string) []string {
+	inFile := map[string]bool{}
+	for _, line := range strings.Split(template, "\n") {
+		inFile[strings.TrimSpace(line)] = true
+	}
+	var missing []string
+	for _, line := range quoted {
+		if !inFile[line] {
+			missing = append(missing, line)
+		}
+	}
+	return missing
+}
+
+// TestMailboxPlanQuotesTheRulesFile holds section 2's quote to the file it
+// quotes. An earlier revision of the plan asserted its quote was "verbatim"
+// while the merged template said something else — the quote had the inbox
+// validating ['id','sender','text','at'] and the heartbeat ['at','boot'], which
+// is what the template carried before P6.4 added `mac` to both — and a plan that
+// misquotes the rules its whole grant argument rests on is worse than one that
+// quotes nothing, because the reader cannot tell which half is the file.
+//
+// So the guard derives the quote from the document at test time and compares it
+// with internal/budget/rules/rules.json.tmpl as it is on this branch, line by
+// line. The last two blocks are the point: the unmutated copy must pass (a
+// comparison that fails on everything proves nothing either), and a copy with
+// one quoted line mutated must fail — which is what makes this a guard rather
+// than a second place the plan's memory is written down.
+//
+// Mutation (verified, run and restored): put the pre-P6.4 field set back in the
+// plan's quote ('at','boot' in the heartbeat's hasChildren) and this test fails
+// naming the quoted line and the file; delete the ```jsonc fence and it fails
+// on the missing quote; remove the mutated copy from the negative control and
+// the test no longer proves it could fail.
+func TestMailboxPlanQuotesTheRulesFile(t *testing.T) {
+	doc := readDoc(t, mailboxPlan)
+	quoted := planQuote(t, doc)
+	if len(quoted) < 60 {
+		t.Fatalf("%s's quoted block has %d lines: section 2 quotes the mailbox subtree, config/admin and pairing, so a block this short means the fence, not the rules, is what shrank", mailboxPlan, len(quoted))
+	}
+	// The markers the grant argument is about: a quote that dropped one of these
+	// would still pass a line-by-line comparison of what was left.
+	for _, marker := range []string{
+		`".write": "CONSUMER && newData.exists() && !data.exists()"`, // C3, the create-only outbox
+		`".write": "CONSUMER && newData.exists()"`,                   // C3/M1, the replaceable heartbeat
+		`KINDREQ`, `MACOK`, `BOOTOK`, `AGENTIDX`, // the kind/field table and the tags P6.4 added
+		`"pairing": {`, `"devices": {`, // the P6.4 nodes P6.6 writes and P4.1 reads none of
+	} {
+		found := false
+		for _, line := range quoted {
+			if strings.Contains(line, marker) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s's quote no longer carries %q: section 2's claims rest on these lines being in the template, so a quote that drops one is an argument with nothing under it", mailboxPlan, marker)
+		}
+	}
+
+	const tmpl = "../../internal/budget/rules/rules.json.tmpl"
+	raw, err := os.ReadFile(tmpl)
+	if err != nil {
+		t.Fatalf("reading the merged rules template: %v", err)
+	}
+	if missing := quoteMismatch(quoted, string(raw)); len(missing) > 0 {
+		t.Errorf("%s quotes %d line(s) of %s that the file does not contain, first %q: the merged rules are what this plan may not contradict, so the quote and the file must be the same text — if the template changed, the quote changes with it",
+			mailboxPlan, len(missing), "internal/budget/rules/rules.json.tmpl", missing[0])
+	}
+
+	// The control, in a temp copy: one quoted line mutated in the file must make
+	// the same comparison fail. The line is chosen from the quote rather than
+	// written here, so the control keeps working if the template's spelling of
+	// these grants is edited — and the replacement is a one-character change to
+	// a claim the plan's C0 and C3 quote, not a line the comparison ignores.
+	mutated := ""
+	for _, line := range quoted {
+		if strings.Contains(line, `".write": "CONSUMER && newData.exists() && !data.exists()"`) {
+			mutated = line
+			break
+		}
+	}
+	if mutated == "" {
+		t.Fatalf("%s's quote no longer contains the outbox grant (%s), so the negative control has no line to mutate", mailboxPlan, "CONSUMER && newData.exists() && !data.exists()")
+	}
+	dir := t.TempDir()
+	path := dir + "/rules.json.tmpl"
+	broken := strings.Replace(string(raw), mutated, strings.Replace(mutated, "CONSUMER", "CONSUMERX", 1), 1)
+	if broken == string(raw) {
+		t.Fatalf("the negative control mutated nothing: %q is not a line of %s as read", mutated, "internal/budget/rules/rules.json.tmpl")
+	}
+	if err := os.WriteFile(path, []byte(broken), 0o600); err != nil {
+		t.Fatalf("writing the mutated copy: %v", err)
+	}
+	copied, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the mutated copy: %v", err)
+	}
+	if missing := quoteMismatch(quoted, string(copied)); len(missing) == 0 {
+		t.Errorf("the comparison passed against a copy of the template with %q mutated to CONSUMERX: it cannot detect a changed grant, so the check above proves nothing about the file it reads", mutated)
 	}
 }
 
