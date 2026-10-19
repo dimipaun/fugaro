@@ -32,8 +32,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 977,921 bytes where this repository's own clone, which carries the
-// tags, builds 976,406.
+// deployed site's — builds 979,563 bytes where this repository's own clone, which carries the
+// tags, builds 978,048.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -113,6 +113,11 @@
 //     homepage call to action's link to the console at 86. The page weight and the
 //     script did not move with it: the heaviest page is the docs hub, which renders no install
 //     option, no download and no hero.
+//   - **Getting Started's three bands** (the owner's feedback of 2026-10-19) added the page's
+//     own "Set up your installation" steps and moved the other install paths into a Details
+//     section below them, moving the site figure alone, 977,921 -> **979,563** (+1,642 bytes,
+//     the page's own HTML). The page weight and the script did not move: the heaviest page is
+//     still the docs hub.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:

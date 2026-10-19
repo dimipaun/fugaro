@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **977,921 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **979,563 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **976,406 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **978,048 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -250,6 +250,14 @@ added or removed without this sentence moving fails there:
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
 
+  - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
+    figure alone, 977,921 → **979,563**, by the **1,642 bytes** the rework costs: the install
+    section shows the quick path above the fold with the console option beside it, the page
+    carries a "Set up your installation" list of its own, and the other install paths and the
+    platform list moved into a Details section below them. The page weight does not move: the
+    heaviest page is still the docs hub, which renders none of it, and the page that grew is
+    Getting Started's, at 25,859 bytes.
+
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -276,7 +284,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,667,206 bytes. Three times 1,222,402 (every file in `dist/`, 977,921
+  - **Whole site:** 3,673,362 bytes. Three times 1,224,454 (every file in `dist/`, 979,563
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
