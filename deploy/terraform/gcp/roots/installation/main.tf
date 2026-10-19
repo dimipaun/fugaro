@@ -76,9 +76,9 @@ module "project" {
   operators       = var.operators
   # The credentials service is deliberately not passed here: a shared job's
   # account loses its model credential when projectAccountMount stops adding
-  # the mount (0.9.5's later work), not by a filter on this module's grant
-  # (modules/project/sa.tf). Until then its accessor grant stands, as it does
-  # today.
+  # the mount (the seam design project-named-oauth-tokens §4.6 names), not by
+  # a filter on this module's grant (modules/project/sa.tf). Until then its
+  # accessor grant stands, as it does today.
 
   # The runs bucket arrives as a name, and every other grant in this tree
   # references the bucket resource itself — which is what orders them. On a
