@@ -2694,14 +2694,14 @@ a scratch copy of the staged file and turned the named test red:
 ## The theme's tokens, and the palette they are painted in (Task 6.1)
 
 `src/renderer/theme/` holds the console's styling, in the four files the plan's File
-Structure tree promised and the design's section 3.1 lays out. Two of them exist today and
-two do not, and that is the phase's own order rather than an omission:
+Structure tree promised and the design's section 3.1 lays out. Three of them exist today and
+one does not, and that is the phase's own order rather than an omission:
 
 | File | Holds | Written by |
 |---|---|---|
 | `src/renderer/theme/tokens.css` | the **vocabulary**: spacing, radii, type sizes, leading, weights, the two row heights, the focus ring's width and offset, and the two motion values. **No colour.** | Task 6.1 (this section) |
 | `src/renderer/theme/palette.css` | the **value set**: every colour token the console paints, each written once. **No size, no spacing, no motion.** | Task 6.1 (this section) |
-| `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (not yet) |
+| `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (the section at the foot of this file) |
 | `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (not yet) |
 
 **As of Task 6.2 these two files are read, served and linked, and the paragraph that follows
@@ -2926,7 +2926,7 @@ structural addition, which the owner approved on 2026-10-19.
 
 | Where | What changed |
 |---|---|
-| `src/renderer/theme/base.css` | **new**: the reset, the grid, the chrome, focus, responsive, forced colors — 557 lines, no colour literal of its own |
+| `src/renderer/theme/base.css` | **new**: the reset, the grid, the chrome, focus, responsive, forced colors — 567 lines, no colour literal of its own |
 | `src/renderer/entry.ts` | **the rail's elements**: twelve exported class hooks, `drawRail`, and the three places the dashboard tells it something (`setState`, `setSpend`) |
 | `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'base.css'`, in the commit that creates the file |
 | `test/unit/theme-selectors.test.ts` | **new**: the §2-inventory selector scan over `base.css` |
@@ -2953,6 +2953,24 @@ banner and full height without it.
 1180 x 780 they are facts about this window rather than values a screen reads, so no §3.1
 table gains a row for them. The first column is `auto` and the rail carries its own width, so
 the collapsed state is one rule on the rail rather than a second grid definition.
+
+### Narrow windows: what a layer drops, and what it keeps announcing
+
+Design §4.2's layers are written in `em` against the root size, so an operator who has raised
+their default text size gets the narrow layout at the same measure of text rather than at the
+same pixel width. This file carries the **chrome's** share of them — the nav wraps and the
+installation line drops to project · mode at 48.75em, and the chrome's padding tightens at
+35em; the tables' and the panels' share is `screens.css`'s and lands with Task 6.4.
+
+**The one cell this task's layer takes out of the layout is the binary path, and it is taken
+out of the layout only.** It is clipped to a 1 px box exactly as the rail's collapse clips its
+spans (design §4.1) — never `display: none`, which would take it out of the accessibility tree
+as well as out of sight. §4.2's rule for a dropped column ("a dropped column is one whose value
+is repeated in a `title`") is read here as the same rule for a dropped line: a value this
+console drops from sight is not a value it stops announcing. The first cut of this rule said
+`display: none` and justified it with a `title` the entry does not write, which a review of the
+branch caught: the path was dropped with nothing left to reach it, and the comment was the only
+thing claiming otherwise.
 
 ### The rail: twelve hooks on thirteen elements, and the entry draws them
 

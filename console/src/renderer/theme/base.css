@@ -484,11 +484,21 @@ div.console-panel {
  */
 @media (max-width: 48.75em) {
   /* The nav wraps to two rows, and the installation line drops to
-   * project · mode: the binary is the one cell that is not a figure, and it
-   * carries its own value in a `title` (the entry writes it), so dropping it
-   * from sight loses nothing a reader can still reach. */
+   * project · mode. The binary is the one cell this layer takes out of the
+   * layout, and it is taken out of the layout **only**: clipped to a 1 px box
+   * exactly as the rail's collapse clips its spans (design section 4.1), never
+   * `display: none`. A value this console drops from sight is not a value it
+   * stops announcing -- section 4.2's rule for a dropped column, read here as
+   * the same rule for a dropped line. */
   section.console-installation p.installation-binary {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 

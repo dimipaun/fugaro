@@ -777,7 +777,17 @@ test.describe('the renderer entry, in the real window', () => {
       await expect(rail.locator('p.console-rail-hint')).toHaveText('Switch with the shortcut keys 1 2 3')
       // And the rail asked for nothing: the log holds the handshake's probe and
       // the live watch, which is what a healthy console spawns -- a row per stored
-      // installation would have added a read here.
+      // installation would have added a read here. The watch is written by the
+      // entry's *first poll*, which is a message round and a spawn behind the rail
+      // being drawn -- the row's `running` is the word the rail opens with, not
+      // evidence that a read has landed -- so this waits for the record the way
+      // the spawn-log case above does rather than reading a log still being
+      // written.
+      await expect
+        .poll(() => launched.records().some((record) => record.argv[1] === 'watch'), {
+          message: 'the live read never reached the spawn log',
+        })
+        .toBe(true)
       const reads = [...new Set(launched.records().map((record) => record.argv[1]))].sort()
       expect(reads, 'the rail made a read of its own').toEqual(['version', 'watch'])
     } finally {
