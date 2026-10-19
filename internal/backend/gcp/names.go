@@ -682,30 +682,6 @@ func LauncherBucketCondition(bucket string) string {
 	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/") || resource.name.startsWith("projects/_/buckets/%s/objects/%s/")`, bucket, bucket, TokenBucketPrefix)
 }
 
-// LauncherBucketConditionRunsTitle and LauncherBucketConditionRuns are that
-// same grant as every release before the seal wrote it: title
-// "fugaro-launchers-runs" and runs/ alone (docs/design/bucket-iam.md H5, as
-// the 0.7.0 hardening had it). Nothing deploys this pair any more — the title
-// changed with the expression on purpose, so an installation still carrying
-// the old binding reads as a different one rather than as the current one
-// (budget-token-channel.md §7.2, D16) — but an installation not re-applied
-// since the seal still holds it, and doctor must tell it apart from a
-// conditional write nobody planned: it is the launchers' own, narrower than
-// the current grant and never wider, so its fix is `fugaro init` and never a
-// removal (hardening.go's RunsBucketFindings).
-const LauncherBucketConditionRunsTitle = "fugaro-launchers-runs"
-
-// LauncherBucketConditionRuns is that binding's expression: the same CEL
-// clause LauncherBucketCondition opens with, for runs/ alone. It panics on a
-// bucket outside the same charset, for the same reason: a comparison against
-// it is byte for byte.
-func LauncherBucketConditionRuns(bucket string) string {
-	if !bucketNameRE.MatchString(bucket) {
-		panic(fmt.Sprintf("gcp.LauncherBucketConditionRuns: bucket name %q has a byte outside [a-z0-9._-]", bucket))
-	}
-	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
-}
-
 // BatchJobPrefix is the prefix every Fugaro Batch job's name starts with
 // (infra.JobPrefix reads it): the launchers' Batch Job Editor grant is
 // narrowed to it, and the reaper's sweep is defined over it.

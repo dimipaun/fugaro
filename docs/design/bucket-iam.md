@@ -110,7 +110,7 @@ So:
 **H1: IAM Conditions on the existing bucket (recommended).** Launchers get two grants:
 
 1. `roles/storage.objectViewer` with no condition, which brings `get` and `list` on the whole bucket.
-2. `roles/storage.objectUser` with the launcher condition, which brings `create`, `delete`, `update` and `get` under `runs/`.
+2. `roles/storage.objectUser` with the launcher condition — `gcp.LauncherBucketCondition`, one clause per prefix — which brings `create`, `delete`, `update` and `get` under `runs/` **and `tokens/`**: the queued run's sealed budget token lives under `tokens/`, the move §3's update records (budget-token-channel.md §7.2, D16), so a launcher that could not write there could not mint one.
 
 This is the same mechanism the job and build accounts have used since M4. Live check 7 verified it for the job account: allowed under its own prefixes, 403 elsewhere, list denied. The bucket already has uniform bucket-level access, which IAM Conditions require. Nothing moves; every reader and writer path stays.
 

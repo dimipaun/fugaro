@@ -52,8 +52,14 @@ func TestDocsProjectNamedOAuthTokensSecurityMdResidual(t *testing.T) {
 		"claude-oauth-token-<name>",
 		"CLAUDE_CODE_OAUTH_TOKEN",
 		"it is there from the start of every run of that job and no run can decline it",
-		// D8's five, one by one.
-		"no launcher reads it",
+		// D8's five, one by one — with the launcher's half stated as it is
+		// (a review of PR #642): no launcher's *credentials* read the value,
+		// and a launcher that may start a run on the account job writes that
+		// run's task text, so it reaches the token the same way the token
+		// reaches a repository on the account's list.
+		"no launcher's own credentials read it",
+		"it writes the task text of every run it starts",
+		"reaching the token that way is reaching everything the token can do",
 		"which only the job and build accounts hold",
 		"A hostile run can use the token during its own run, and after it",
 		"The account is the blast radius, not the repository",
@@ -188,7 +194,12 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		"`claude_accounts.<name>` in the project's local config",
 		"one Cloud Run job and one job service account per\n  `(profile, provider, account)`",
 		"`accounts.<name>.allow_repos`",
-		"no launcher ever reads a token",
+		// The launcher's half of the same claim, as the review of PR #642
+		// states what is true: the credentials read nothing, and the launcher
+		// that can start a run on the account job can have the run read it.
+		"**No launcher's own credentials read a token**",
+		"**but a launcher can have the run do the reading**",
+		"it writes the task text of the runs",
 		// Minting and storing.
 		"claude setup-token",
 		"fugaro secrets set claude-oauth-token-<name>",
@@ -407,7 +418,12 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 		"**The project-wide storage step.**",
 		"the job mounts the **project-wide** copy",
 		"fugaro secrets set claude-oauth-token-<name>",
-		"only when `project_secrets.claude-oauth-token` allow-lists at least one repository",
+		// The bare name's scope, as internal/cli/secrets.go actually decides it
+		// (the review of PR #642): project-wide when the entry lists the
+		// repository in hand, refused for --project-wide with no entry, and
+		// the repository's own copy for a bare command in a checkout.
+		"project-wide only when `project_secrets.claude-oauth-token` allow-lists the repository you run it from",
+		"a bare `fugaro secrets set claude-oauth-token` run in a checkout quietly stores **that repository's own copy**",
 		// The Version 3 rollout, in order.
 		"**The Version 3 rollout.**",
 		"brew upgrade dimipaun/tap/fugaro && fugaro upgrade",
@@ -421,6 +437,19 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 			t.Errorf("docs/gcp-setup.md no longer says %q: the version-3 rollout, the profile field and the project-wide storage step are plan task 4's own additions to the operator runbook", want)
 		}
 	}
+	// The bare token's scope, tied to the code that decides it (the review of
+	// PR #642): the name is not in D2's sweep, and the scope answer for a
+	// checkout is the repository-aware one, which is why a bare command with no
+	// project_secrets entry stores the repository's own copy rather than being
+	// refused (only --project-wide is refused). Change either and the runbook's
+	// sentence is stale.
+	if config.ProjectScopeByDefault(config.ClaudeOAuthToken) {
+		t.Errorf("config.ProjectScopeByDefault(%q) is true, so the bare name is swept project-wide with no project_secrets entry: docs/gcp-setup.md's sentence about the repository's own copy is now wrong", config.ClaudeOAuthToken)
+	}
+	if scope := sourceOfFunc(t, "secrets.go", "projectScopeName"); !strings.Contains(scope, "infra.ProjectSecretCandidate(lc, name, repo)") {
+		t.Error("secrets.go's projectScopeName no longer asks infra.ProjectSecretCandidate with the checkout's repository: docs/gcp-setup.md's sentence about the bare claude-oauth-token's repository copy is now wrong")
+	}
+
 	// The runbook must not still send an operator to the repository copy for a
 	// token a shared job mounts: the default account's scope is stated with the
 	// condition the CLI actually applies (projectWideAccepted).

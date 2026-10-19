@@ -45,9 +45,15 @@ A named account is:
   the `default` account's token exactly when the profile lists `default`; every named account gets a
   job of its own.
 - **one token per job, mounted by the platform**: the account's token is a static `secret_env`
-  entry of the job's container, so it is there from the start of every run of that job, no run can
-  decline it, and **no launcher ever reads a token**. The account is the blast radius of a hostile
-  run ([SECURITY.md](../SECURITY.md), design §6.1).
+  entry of the job's container, so it is there from the start of every run of that job and no run
+  can decline it. **No launcher's own credentials read a token** — the value is not in the job's
+  plain environment, and reading it needs `secretAccessor`, which only the job and build accounts
+  hold — **but a launcher can have the run do the reading**: it writes the task text of the runs
+  it starts, and a run on an account job holds the token, so a launcher that may start one can
+  have it print the token. That is why a launcher is trusted (design D2), and what bounds the
+  reach is the `allow_repos` list below, not the launcher's own credentials. The account is the
+  blast radius of a hostile run ([SECURITY.md](../SECURITY.md), design §6.1 and its threat-model
+  row for a launcher: "that reach is the per-repository job's today, unchanged").
 - **a list**: `accounts.<name>.allow_repos` in the published policy is the exact, per-repository
   list of repositories whose runs may use that token. It is derived at publish, never hand-written
   (§4, §8), and both the launcher and the runner check it.
@@ -227,6 +233,25 @@ The published policy carries the account axis in a node the previous release can
    `--delete` puts the project back on the ceiling its jobs' environments carry, so make it a
    step of its own and not a repair. A re-run of `fugaro init --firebase` is deliberately **not**
    the remedy: it deploys the rules template and marker and never writes `config/policy/shared`.
+
+   **Read the list out first: the publish that follows rebuilds it.** With no node to replace,
+   there is no list to keep, and the publish seeds `allow_repos` from this machine's config — its
+   `repos:` map and the shared config (`seedAllowRepos`) — so a repository you had removed with
+   `fugaro project repos rm` comes back when the config still names it, and one you had added by
+   hand with `fugaro project repos add` is dropped. The node's `clone_urls` block (no command of
+   this release writes one) and any `routing` block a person wrote are dropped with it: a publish
+   carries those only from a node it replaces. So run this **per installation** before the delete
+   and keep what it prints:
+
+   ```bash
+   fugaro project policy show
+   ```
+
+   then, after the publish, read the diff it prints and repair the list with `fugaro project repos
+   add <owner/name>` and `fugaro project repos rm <owner/name>`. Runs of a shared job halt in
+   between — a run on a project job whose published policy defines no such job stops before the
+   agent starts, which is the fail-safe direction and why this is a step of the upgrade rather
+   than a repair to reach for.
 
 3. **Refresh each checkout's runner image, per repository checkout:**
 

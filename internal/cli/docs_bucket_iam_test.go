@@ -98,12 +98,16 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 // above because it also records what the 0.7.0 decision was. When the sealed
 // budget token moved to tokens/ (budget-token-channel.md §7.2, D16) §3 was
 // regenerated and the three lower places were left stating the runs/-only
-// pair, contradicting the table and the code. This pins them:
+// pair, contradicting the table and the code, and a later review (PR #642)
+// found the fourth: §4's H1 item 2, which states in prose what the launcher's
+// objectUser grant brings, and still said runs/ alone. This pins them:
 //
 //   - every launchers' clause the doc spells out, with <bucket> for the
 //     bucket name, is one the code writes for that same placeholder, and
 //     every clause the code writes is spelled out — so a doc that drops the
 //     tokens/ clause, or invents one, fails against gcp.LauncherBucketCondition;
+//   - §4's H1 item 2 names every prefix the code's condition writes, read off
+//     the condition itself;
 //   - the title statements are the current title, built from
 //     gcp.LauncherBucketConditionTitle, and the three stale sentences are
 //     gone. The pre-seal pair may be *named* in H5's own note (doctor has to
@@ -133,6 +137,29 @@ func TestDocsBucketIAMStatesTheLaunchersCurrentCondition(t *testing.T) {
 	}
 	for p := range spelled {
 		t.Errorf("%s spells a %s/ clause, which is not one of the two gcp.LauncherBucketCondition writes", path, p)
+	}
+
+	// §4's H1 item 2 states the grant in prose, and the prose is where a prefix
+	// went missing: it said runs/ alone after the budget token moved to
+	// tokens/. The prefixes are read off the condition, so a change on either
+	// side — a clause added to gcp.LauncherBucketCondition, or a bullet that
+	// stops at runs/ — fails here.
+	const h1Item = "2. `roles/storage.objectUser` with the launcher condition"
+	start := strings.Index(doc, h1Item)
+	if start < 0 {
+		t.Fatalf("%s's §4 no longer opens H1's second item with %q: the launcher's objectUser grant moved, and this test's prose check needs the new wording", path, h1Item)
+	}
+	item := doc[start:]
+	if end := strings.Index(item, "\n\n"); end >= 0 {
+		item = item[:end]
+	}
+	for _, m := range regexp.MustCompile(`/objects/([a-z]+)/"\)`).FindAllStringSubmatch(gcp.LauncherBucketCondition("bucket"), -1) {
+		if !strings.Contains(item, "`"+m[1]+"/`") {
+			t.Errorf("%s's H1 item 2 does not say the launcher condition brings access under `%s/`, which is one of the clauses gcp.LauncherBucketCondition writes: the launchers write the sealed budget token there (budget-token-channel.md §7.2, D16)", path, m[1])
+		}
+	}
+	if stale := "which brings `create`, `delete`, `update` and `get` under `runs/`."; strings.Contains(item, stale) {
+		t.Errorf("%s's H1 item 2 still states the launcher's grant as runs/ alone (%q), while gcp.LauncherBucketCondition covers tokens/ too", path, stale)
 	}
 
 	title := gcp.LauncherBucketConditionTitle

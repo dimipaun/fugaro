@@ -42,8 +42,13 @@ image") instead of running past a gate it does not know. The other direction ref
 older than the binary is refused by this release's runs, by `fugaro run` before the execution
 exists and by `fugaro doctor` (`policy-older-than-binary`), and `fugaro project policy publish`
 will not write over it; remove it with `fugaro project policy publish --delete`, then publish
-again with this Fugaro (re-enrol with `fugaro project repos add` any repository you had added by
-hand, since a publish with no node seeds the list from your config).
+again with this Fugaro — after reading the list you are about to lose with `fugaro project policy
+show`, because a publish with no node seeds the list from your config: a repository you had added
+by hand (`fugaro project repos add`) is dropped, and one you had removed (`fugaro project repos
+rm`) comes back when the config still names it. The node's `clone_urls` block (no command of this
+release writes one) and any `routing` block a person wrote go with it, since a publish carries
+them only from a node it replaces. Repair the list from the diff the publish prints (`fugaro
+project repos add` / `rm`), per installation; a shared job's runs halt in between.
 
 ### Which runs work on a shared job today
 
