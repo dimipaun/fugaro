@@ -904,15 +904,20 @@ build-time guard and by `website/test/home.mjs` from outside the build.
   carried. The section's own `h2` is one step above them (`--font-size-xl`), so the block reads
   as a section with four points under it instead of as four headings and a label.
 - **The gate is the icons' own, and it reads the built page.** `website/test/home.mjs` reads
-  every `<svg>` under each benefit and refuses a point with none or with several, an icon that is
-  not marked as decoration, an icon that references anything (`<use href>`, an `<image>`, an
-  `href` on the `<svg>` itself, an inline `style`) and four points drawn with one picture between
-  them. Each refusal was proved by planting the defect in the component, rebuilding and watching
-  the built-page case fail — not only by its fixture.
+  every `<svg>` under each benefit and refuses a point with none or with several, an icon that
+  draws nothing (`<svg>` with no shape in it, which is a picture nobody sees and the one defect
+  of this set no other gate can catch), an icon that is not marked as decoration or out of the
+  tab order (`aria-hidden="true"`, `focusable="false"` — the pair `a11y.mjs` already holds the
+  flow's arrows to), an icon that references anything (`<use href>`, an `<image>`, an `href` on
+  the `<svg>` itself, an inline `style`) and four points drawn with one picture between them.
+  Each refusal was proved by planting the defect in the component, rebuilding and watching the
+  built-page case fail — not only by its fixture. The glyphs live in the component as drawings
+  rather than as a template branch per name, so a name whose entry holds no shape stops the
+  build instead of shipping an empty box.
 - **The measurements, and the check that is still the owner's.** The figure re-derived in the
   commit is the site's, from the gates' own build (`website/README.md`); the page weight, the
-  script and the word ceilings did not move, because the section is the homepage's and one word
-  of it changed. Nothing was rendered: no browser was driven and no screenshot is committed, and
+  script and the word ceilings did not move, because the section is the homepage's and not one
+  word of it changed. Nothing was rendered: no browser was driven and no screenshot is committed, and
   this run cannot see one. **Whether the four points now look right is the owner's check
   (70a–70c, D190)** — a gate can say the icons are present, decorated, unreferenced and four
   distinct drawings, and it cannot say the section looks good.

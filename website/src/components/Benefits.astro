@@ -141,8 +141,39 @@ const BENEFITS = [
   { name: 'The newest tools and models, ready to use', line: 'You choose the model per role', icon: 'spark' },
 ]
 
-/** The glyphs a benefit may be drawn with: four, and one point each (above). */
-const GLYPHS = ['shield', 'arrows', 'team', 'spark']
+/**
+ * The glyphs a benefit may be drawn with: four, and one point each (above). Each entry **is**
+ * the drawing — the shapes the `<svg>` in the markup below holds — rather than a name the
+ * template is expected to have a branch for, so a name and the picture that goes with it
+ * cannot come apart: an entry with no shape in it is refused by the guard at the foot of this
+ * block, and the section's `<svg>` renders whatever the entry holds. A rename that leaves the
+ * drawing behind is therefore a build that stops here, not a point rendered with an empty
+ * `<svg>` the way it would be if the drawing lived in the template's own branches.
+ *
+ * Inline SVG, one box of 24 by 24 user units, drawn with `currentColor` strokes by the rule
+ * that carries `.benefit-icon`. No `<use>`, no `<image>`, nothing fetched: a glyph a reader's
+ * browser has to download is another request, and this page's own drawing is shapes in its
+ * markup (Global Constraints 4 and 8).
+ */
+const GLYPHS = {
+  /* A shield: the run is a throwaway container in the reader's own project. */
+  shield: '<path d="M12 3l7 3v6c0 4-3.5 6.5-7 8-3.5-1.5-7-4-7-8V6Z" />',
+  /* Two arrows leaving a centre: one task, many job executions. */
+  arrows: '<path d="M11 13L19 5M13 5h6v6M13 11L5 19M11 19H5v-6" />',
+  /* Three people: the policy the project layer publishes, and everyone under it. */
+  team:
+    '<circle cx="12" cy="7.5" r="3" />' +
+    '<circle cx="5.5" cy="10.5" r="2.5" />' +
+    '<circle cx="18.5" cy="10.5" r="2.5" />' +
+    '<path d="M6.5 20.5c0-3 2.5-4.5 5.5-4.5s5.5 1.5 5.5 4.5" />' +
+    '<path d="M2 20.5c0-2.4 1.5-3.8 3.2-4.1" />' +
+    '<path d="M22 20.5c0-2.4-1.5-3.8-3.2-4.1" />',
+  /* A spark: the newest tools and models, ready to use. */
+  spark: '<path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11Z" />',
+}
+
+/** The shapes a glyph is drawn with: what has to be in an entry for it to draw anything. */
+const GLYPH_SHAPES = /<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/
 
 // Hold every benefit to the reason it is, in the reason's own paragraph, here, so a
 // paraphrase — or a line that moved from the reason above it to the one below — stops the
@@ -166,9 +197,20 @@ const GLYPHS = ['shield', 'arrows', 'team', 'spark']
         `website/src/components/Benefits.astro: benefit ${position}'s line ${JSON.stringify(benefit.line)} is not in ${SOURCE}'s reason ${position}, and every line of the benefits is a sentence of the reason its name names rather than one written for the page (the owner's feedback of 2026-10-19; Global Constraint 6). Either the reason was reworded or the line was edited.`,
       )
     }
-    if (!GLYPHS.includes(benefit.icon)) {
+    if (GLYPHS[benefit.icon] === undefined) {
       throw new Error(
-        `website/src/components/Benefits.astro: benefit ${position}, ${JSON.stringify(benefit.name)}, is drawn with ${JSON.stringify(benefit.icon)}, which is no glyph this section draws: the owner's feedback of 2026-10-19 asks each point for an icon, and a glyph a benefit names and the section does not draw is a point rendered with an empty <svg>.`,
+        `website/src/components/Benefits.astro: benefit ${position}, ${JSON.stringify(benefit.name)}, is drawn with ${JSON.stringify(benefit.icon)}, which is no glyph this section draws (${Object.keys(GLYPHS).join(', ')}): the owner's feedback of 2026-10-19 asks each point for an icon, and a glyph a benefit names and the section has no drawing for is a point rendered with an empty <svg>.`,
+      )
+    }
+  }
+  // No glyph in the map is empty. This is the half the membership check above cannot
+  // give: an entry that is an empty string (or a comment, or a group with nothing in it) is a
+  // name the section "has" and a `<svg>` with no shape in it — an invisible icon, which is the
+  // defect the owner's feedback is about, arriving with the build green.
+  for (const [name, shapes] of Object.entries(GLYPHS)) {
+    if (!GLYPH_SHAPES.test(shapes)) {
+      throw new Error(
+        `website/src/components/Benefits.astro: the glyph ${JSON.stringify(name)} holds no shape (${JSON.stringify(shapes)}), and a glyph with no shape in it is an empty <svg>: every point of the benefits is drawn with a picture (the owner's feedback of 2026-10-19), and an entry with nothing to draw is a name with no icon behind it.`,
       )
     }
   }
@@ -191,11 +233,14 @@ const GLYPHS = ['shield', 'arrows', 'team', 'spark']
       BENEFITS.map((benefit) => (
         <li class="benefit">
           {/* The point's glyph: inline, decorative, and drawn with the accent by the rule
-              below (`stroke: currentColor` reads the `color` that rule sets). It is shapes in
-              the markup and nothing else — no `style` attribute, which the deployed policy's
-              `style-src` would have to admit, and no request: a `<use href>` or an `<image>`
-              is a file this page would fetch, and the page fetches nothing for its own
-              drawing (Global Constraints 4 and 8). */}
+              below (`stroke: currentColor` reads the `color` that rule sets). **The drawing is
+              the map's, not a branch here** (`GLYPHS`, above): a template branch per name could
+              be out of step with the map by one word and render an empty `<svg>` with nothing
+              to see it, and a name whose entry holds no shape is refused at the foot of the
+              frontmatter. The shapes are markup and nothing else — no `style` attribute, which
+              the deployed policy's `style-src` would have to admit, and no request: a
+              `<use href>` or an `<image>` is a file this page would fetch, and the page
+              fetches nothing for its own drawing (Global Constraints 4 and 8). */}
           <svg
             class="benefit-icon"
             viewBox="0 0 24 24"
@@ -207,25 +252,7 @@ const GLYPHS = ['shield', 'arrows', 'team', 'spark']
             aria-hidden="true"
             focusable="false"
           >
-            {benefit.icon === 'shield' && (
-              <path d="M12 3l7 3v6c0 4-3.5 6.5-7 8-3.5-1.5-7-4-7-8V6Z" />
-            )}
-            {benefit.icon === 'arrows' && (
-              <path d="M11 13L19 5M13 5h6v6M13 11L5 19M11 19H5v-6" />
-            )}
-            {benefit.icon === 'team' && (
-              <>
-                <circle cx="12" cy="7.5" r="3" />
-                <circle cx="5.5" cy="10.5" r="2.5" />
-                <circle cx="18.5" cy="10.5" r="2.5" />
-                <path d="M6.5 20.5c0-3 2.5-4.5 5.5-4.5s5.5 1.5 5.5 4.5" />
-                <path d="M2 20.5c0-2.4 1.5-3.8 3.2-4.1" />
-                <path d="M22 20.5c0-2.4-1.5-3.8-3.2-4.1" />
-              </>
-            )}
-            {benefit.icon === 'spark' && (
-              <path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11Z" />
-            )}
+            <Fragment set:html={GLYPHS[benefit.icon]} />
           </svg>
           <h3 class="benefit-name">{benefit.name}</h3>
           <p class="benefit-line">{benefit.line}</p>
@@ -258,8 +285,9 @@ const GLYPHS = ['shield', 'arrows', 'team', 'spark']
 
   /* The section's own label, one step above the point names under it and above the size the
      page's other section headings are set in: the feedback of 2026-10-19 moves the four points
-     up two steps of the type scale, and a section whose label stayed where it was would read
-     as the smallest thing in its own block. Nothing else about the heading moves. */
+     up one step of the type scale, and the block as a whole up two — one for the points, one
+     for this heading — because a section whose label stayed where it was would read as the
+     smallest thing in its own block. Nothing else about the heading moves. */
   .benefits-title {
     margin: 0 0 var(--space-md);
     font-family: var(--font-sans);

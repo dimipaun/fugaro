@@ -685,12 +685,22 @@ function attrsOf(el) {
     .join(' ')
 }
 
-/** The drawing inside one `<svg>`: its shapes and their own attributes, and nothing above it. */
+/**
+ * The shapes an `<svg>` can be drawn with. Everything else inside one — a `<title>`, a
+ * `<defs>`, a `<desc>` — is not a picture: a glyph whose whole content is a name for itself
+ * draws nothing, and that is the defect the empty-drawing refusal below is about.
+ */
+const SHAPE_ELEMENTS = new Set(['path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon'])
+
+/**
+ * The drawing inside one `<svg>`: its shapes and their own attributes, and nothing above it.
+ * `''` when the icon has no shape in it at all, whatever else it may hold — which is what the
+ * refusals below read as "this icon draws nothing".
+ */
 function drawingOf(svg) {
   return [...walk(svg)]
-    .filter((el) => el.name !== 'svg')
-    .map((el) => (el.name === undefined ? '' : `${el.name} ${attrsOf(el)}`.trim()))
-    .filter(Boolean)
+    .filter((el) => SHAPE_ELEMENTS.has(el.name))
+    .map((el) => `${el.name} ${attrsOf(el)}`.trim())
     .join(';')
 }
 
@@ -777,13 +787,17 @@ function benefitsOf(html) {
  *     quotation, while the page sold the reader the sentence about safety under the name about
  *     models. Held to the reason's own paragraph, a line that moved stops the build (Global
  *     Constraint 6, D102);
- *   - **every benefit carries exactly one icon, it is decoration, and it fetches nothing.**
- *     The owner's feedback of 2026-10-19 asks each point for an icon; so the page may not
- *     render a benefit with none, with two, with an icon a screen reader is handed as content
- *     beside the name that already says the point, or with one that references a file or an
- *     origin — an icon font, an `<image>`, a `<use href>`, an inline style. The four glyphs are
- *     also held to being four: four points drawn with one picture is one icon used four times,
- *     and the picture then says nothing about the point under it.
+ *   - **every benefit carries exactly one icon, it draws something, it is decoration, and it
+ *     fetches nothing.** The owner's feedback of 2026-10-19 asks each point for an icon; so the
+ *     page may not render a benefit with none, with two, with a `<svg>` that has no shape in it
+ *     and so renders as an empty box, with an icon a screen reader is handed as content beside
+ *     the name that already says the point, with one that is not marked out of the tab order,
+ *     or with one that references a file or an origin — an icon font, an `<image>`, a
+ *     `<use href>`, an inline style. **The empty drawing is the refusal no other gate can
+ *     make**: the element is present, named and clean, and the reader sees nothing, which is
+ *     the defect this round is about. The four glyphs are also held to being four: four points
+ *     drawn with one picture is one icon used four times, and the picture then says nothing
+ *     about the point under it.
  *
  * Written as a function over a benefits section and the README's reasons so a fixture can
  * prove it refuses.
@@ -842,9 +856,25 @@ export function benefitFailures(benefits, reasons) {
       continue
     }
     const [icon] = icons
+    // **The icon has to draw something.** An `<svg>` with no shape in it is a point rendered
+    // with nothing where the owner's feedback of 2026-10-19 asks for a picture, and it is the
+    // one defect of this set that no other check in this file or in `a11y.mjs` can see: the
+    // element is present, named, decorated and clean, and the reader gets an empty box. The
+    // component keeps its glyphs as drawings rather than as template branches for the same
+    // reason, and this is what holds the artifact to it.
+    if (icon.drawing === '') {
+      out.push(
+        `${where}: its icon draws nothing (an <svg> with no shape in it), and an icon is what marks the point — a glyph that renders as an empty box is a point with no picture at all, which is the defect the owner's feedback of 2026-10-19 asks this section not to have`,
+      )
+    }
     if (!icon.hidden) {
       out.push(
         `${where}: its icon is not marked as decoration (aria-hidden="true"), and the picture is the point's — a screen reader handed the glyph as well reads the name beside it twice (the owner's feedback of 2026-10-19)`,
+      )
+    }
+    if (!icon.focusable) {
+      out.push(
+        `${where}: its icon is not marked out of the tab order (focusable="false"), which is the other half of the decoration contract this site already writes on a drawing — \`a11y.mjs\` holds the flow's arrows to the same pair — and an icon is decoration on both (the owner's feedback of 2026-10-19)`,
       )
     }
     if (icon.reference !== '') {
@@ -987,6 +1017,28 @@ test('the benefits refusals fire on a missing icon, a second one, a named glyph 
     /benefit 1 of the benefits: its icon is not marked as decoration/,
     'an icon a screen reader is handed as content beside the name is not refused',
   )
+
+  assert.match(
+    refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>', 'aria-hidden="true"'))),
+    /benefit 1 of the benefits: its icon is not marked out of the tab order/,
+    'an icon that is nothing of the decoration contract but its aria-hidden is not refused',
+  )
+
+  // The empty icon: an `<svg>` that renders as an empty box. Three shapes, a `<title>`, a
+  // `<defs>` and nothing drawn — every one of them a picture a reader never sees, and the one
+  // defect of this set that leaves the element present, named and clean.
+  for (const [what, body] of [
+    ['no children at all', ''],
+    ['a title and nothing else', '<title>shield</title>'],
+    ['an empty group', '<g></g>'],
+    ['definitions with no shape', '<defs><clipPath id="c"></clipPath></defs>'],
+  ]) {
+    assert.match(
+      refusal(plant(0, iconMarkup(body))),
+      /benefit 1 of the benefits: its icon draws nothing/,
+      `an icon of ${what} is not refused: a glyph that renders as an empty box is a point with no picture`,
+    )
+  }
 
   // A reference from inside the `<svg>` and one on the `<svg>` itself: an icon font or an
   // image file arrives through the first, and the second is the shape that has no glyph in it
