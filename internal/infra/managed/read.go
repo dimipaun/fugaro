@@ -54,6 +54,17 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // import internal/infra, whose ProjectNumber answers it; the six lines below
 // are that function's read.)
 //
+// The label is the verdict and not the whole read: without it the project is
+// not managed whatever the runs bucket holds, and the object is still read for
+// one reason only — a version-2 marker about this project whose recorded
+// figure fails Budget.Check is answered as that figure, which is the more
+// specific sentence (the label's own sentence sends its owner to a backfill,
+// which would leave them with a managed project whose amount nothing can be
+// compared against). So a label-less project whose bucket or object cannot be
+// read is answered with the label's reason and no error: the label already
+// decided it, and an error there would fail a command for a project that is
+// not managed.
+//
 // It fails closed, and every way of not being managed is an answer rather
 // than a failure: a project with no fugaro_managed label, a project whose
 // label says something else, no bucket, a bucket in another project, a bucket
