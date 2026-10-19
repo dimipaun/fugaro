@@ -164,8 +164,10 @@ func TestWatchStartedRunNotDuplicatedAsQueued(t *testing.T) {
 	// (finishedLookback, 24h) so the scanner really does read it as a queued
 	// candidate and the live row has to win: seedWatch's own 2026-10-02 id is
 	// older than that window, so a fixed id made this pass without ever
-	// reaching the dedup it names (#651).
-	run := recentRunID(t, 30*time.Second, "a11e")
+	// reaching the dedup it names (#651). runID, not recentRunID: this window
+	// is watch's, measured from watchNow, and minting against lsNow would put
+	// the id somewhere the pinned window never looks.
+	run := runID(30*time.Second, "a11e")
 	f.db.Set(budget.PathAgent(appSlug, run), map[string]any{
 		"repo": "acme/app", "title": "mine", "stage": "code", "round": 2, "auth": "api_key", "spent": 4 * usd1,
 		"startedAt": time.Now().UnixMilli() - 600_000, "updatedAt": time.Now().UnixMilli(), "requestedBy": "someone@example.com"})

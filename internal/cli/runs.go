@@ -54,8 +54,9 @@ var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
 // window, rename it and the guard stops building.
 const lsDefaultSince = "7d"
 
-// lsNow is runs ls's clock: --since's window (the default 7d) is measured
-// back from it, so which runs a listing shows depends on the day it runs.
+// lsNow is runs ls's clock: --since's window (lsDefaultSince by default) is
+// measured back from it, so which runs a listing shows depends on the day it
+// runs.
 // Tests replace it to pin that window instead of minting run IDs dated
 // against the day the test happens to run (internal/cli: runid_test.go).
 var lsNow = time.Now
@@ -99,7 +100,7 @@ func newLsCmd() *cobra.Command {
 		Use:   "ls",
 		Short: "List runs with their status, stage, cost and PR",
 		Long: "List runs, newest first, joining the runs bucket with what the backend knows.\n\n" +
-			"By default ls shows the last 7 days of the local config's repositories (every\n" +
+			"By default ls shows the last " + lsDefaultSince + " of the local config's repositories (every\n" +
 			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
 			"only when its result.json says so; an execution that ended without finalizing\n" +
 			"is an infra_error.\n\n" +
@@ -113,7 +114,7 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
-	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long (7d, 36h, 90m; 0 for all)")
+	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
