@@ -1764,11 +1764,26 @@ config/policy/repos children are removed too, shared node or not: a delete
 that failed on the shared node leaves them behind, and this is what clears
 them.
 
-routing.claude is written where the operator writes it: this config. A publish
-refuses to drop an active route the config does not account for, and refuses
-a config that writes a routing block naming no Claude switch in the same
-state; --remove-routing is how the operator says the block goes away on
-purpose.
+Each repository an account a profile names admits also gets a child under
+config/policy/repos/$slug, holding the NAMES of its admitted accounts and
+nothing else: the accounts published are the ones some profile names,
+qualified by that profile's provider, so an account this config defines but
+no profile names admits nothing a run could read. The children are narrowed before the shared node and widened
+after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.
+When the node this publish writes carries a member an older Fugaro refuses
+whole — a credentials
+block, or routing.claude.via: cascade — the diff warns: older launchers (and,
+for the cascade, older runner images) stop until they are upgraded.
+
+routing.claude is written where the operator writes it: this config. A
+publish refuses to drop an active route the config does not account for, and
+refuses to turn the credentials cascade off — a node carrying
+routing.claude.via: cascade with a config that names no Claude switch is
+refused with its own sentence, because the cascade is not a route: it decides
+which credential carries a Claude call, never where the call goes, and it is
+what hands a run the project's other credentials. A config that writes a
+routing block naming no Claude switch in the same state is refused too.
+--remove-routing is how the operator says the block goes away on purpose.
 
 Usage: `fugaro project policy publish [--seed-repos] [--delete] [--yes] [--remove-routing]`
 

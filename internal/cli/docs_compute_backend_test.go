@@ -16,14 +16,18 @@ import (
 // docs/design/compute-backend.md), written against the tree the branch
 // fugaro/20261019-204914-8a1b stands on (= the branch `integration-0.9.5`, cut
 // from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
-// and this test, the documents and tests a review of them corrected, and no
-// Terraform and no workflow). The one behavioural line among those corrections
+// and this test, the documents and tests a review of them corrected, the
+// credentials-service documents and their own pin test (a later, separate piece
+// of work whose owner ruling is recorded in
+// docs/credentials-service/reconciliation.md §4), and no Terraform and no
+// workflow). The one behavioural line among those corrections
 // is internal/managed/stateaccounts.go's table, which learns the compute
-// module's three types; everything else the branch adds is a comment, a test or
-// a document — and, on the review branch after it, **Task 14 of the plan,
-// built**: the seal's carrier on Batch, its refusal kept and documented (see
-// internal/backend/batch/run.go and docs/design/budget-token-channel.md). No
-// other task of this plan is built.
+// module's three types — the NAT as the table's empty answer, corrected on a
+// later review of the branch; everything else the branch adds is a comment, a
+// test or a document — and, on the review branch after it, **Task 14 of the
+// plan, built**: the seal's carrier on Batch, its refusal kept and documented
+// (see internal/backend/batch/run.go and docs/design/budget-token-channel.md).
+// No other task of this plan is built.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a

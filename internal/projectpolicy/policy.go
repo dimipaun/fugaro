@@ -111,6 +111,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -132,6 +133,24 @@ type Policy struct {
 	Providers  map[string]Provider `json:"providers,omitempty"`
 	Prices     Prices              `json:"model_prices,omitempty"` // the owner's price overrides, keyed by model ID (Prices documents the node's own spelling)
 	Routing    *Routing            `json:"routing,omitempty"`      // the run applies it (internal/runner's applyRouting); nil = direct (D1b)
+
+	// Credentials are the credentials cascade's settings (D152, D153): the
+	// paid-fallback policy, the wait-or-switch threshold, the backoff a
+	// credential with no reset time is held for, and the two owner-headroom
+	// controls (D142). They live here and nowhere else — D153's ruling is that
+	// a repository cannot move a project onto paid tiers, so there is no
+	// fugaro.yaml key for any of them (internal/config refuses one) — and the
+	// cascade they configure is switched on by routing.claude's `via: cascade`
+	// (O3, D150), not by this block: the block says *how* the cascade behaves,
+	// the switch says whether it is on.
+	//
+	// nil is every default (an absent block and a written empty one are the
+	// same policy), and the accessors below are how a reader asks: a consumer
+	// never reads a member directly, because each member's absent meaning is a
+	// value and not a zero (FallbackValue, WaitThresholdDuration,
+	// BackoffInitialDuration, BackoffCapDuration, StopsAfterExhaustion,
+	// ConcurrencyCap).
+	Credentials *Credentials `json:"credentials,omitempty"`
 
 	// Profiles are the project's job profiles (design project-centric §4.1,
 	// task 3.1), keyed by profile name. A repository's workflow selects one by
@@ -198,6 +217,7 @@ var knownTopLevelKeys = map[string]bool{
 	"version": true, "budget": true, "allow_repos": true,
 	"providers": true, "model_prices": true, "routing": true,
 	"profiles": true, "clone_urls": true, "accounts": true,
+	"credentials": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -303,6 +323,305 @@ type Routing = config.Routing
 // never a pattern (D1a). config.RoutingClaude, by the alias above.
 type ClaudeRoute = config.RoutingClaude
 
+// RouteCascade is routing.claude's cascade value (O3, D150): the switch that
+// turns the credentials cascade on for a `cascade` workflow. It is config's own
+// value, aliased, for the reason Routing is aliased — one switch, one
+// declaration — and it is named here because the policy is where an operator
+// reads it.
+//
+// It needs no provider claim while tier C for Claude is off (O3, C3.6), so a
+// project turns the cascade on by writing the via alone: nothing about where a
+// Claude call goes changes, only which credential carries it.
+const RouteCascade = config.RouteCascade
+
+// The values credentials.fallback accepts (D152), spelled as the node spells
+// them. There is no third value: the cascade is A→B→C or A alone, and a name
+// outside these two is refused rather than read as one of them.
+const (
+	// FallbackOAuthOnly is what an absent fallback means, and it is what today's
+	// OAuth runs do: never spend the project's money, wait for the shared
+	// token's reset instead (and let the run wait, whatever the threshold —
+	// the threshold decides between waiting and failing over, and there is
+	// nothing to fail over to).
+	FallbackOAuthOnly = "oauth-only"
+	// FallbackAuto is the cascade: tier A, then the project's Anthropic API key
+	// (tier B), then tier C where it is on. It must be written, and D152 refuses
+	// it without an enforcing per-run ceiling, because it is the value that
+	// starts spending.
+	FallbackAuto = "auto"
+)
+
+// The cascade's defaults (D153): a 15-minute wait-or-switch threshold, and a
+// backoff of 15 minutes doubling to a 5-hour cap for a credential whose
+// exhaustion came with no reset time. They are what an absent member means, so
+// a project that writes nothing gets the spec's resolved behaviour rather than
+// a zero — a zero threshold would fail over on every exhaustion, and a zero cap
+// is a wait that never doubles.
+const (
+	DefaultWaitThreshold       = 15 * time.Minute
+	DefaultBackoffInitial      = 15 * time.Minute
+	DefaultBackoffCap          = 5 * time.Hour
+	DefaultConcurrencyPerToken = 1
+)
+
+// Credentials is the cascade's settings block (D152, D153). Every member is
+// optional and every accessor below answers what an absent one means, so the
+// two spellings of "the operator wrote nothing" — an absent block and an empty
+// one — are one policy.
+//
+// The two controls are D142's owner-headroom pair, and their defaults are the
+// protective ones. The plan names defaults for the threshold and the backoff
+// only, so the two are this task's decision, made on D142's own ground: the
+// tier-A credentials are subscription tokens somebody donated, and a project
+// that has not decided may not spend one of them more than once in a window and
+// may not run more than one run at a time against one. Both are written to be
+// turned off — false, and 0 — and neither is written to be turned on quietly.
+type Credentials struct {
+	// Fallback is FallbackOAuthOnly or FallbackAuto; absent is
+	// FallbackOAuthOnly (D152). A written FallbackAuto needs the budget block
+	// to be enforcing with a positive per_run_usd, which Decode refuses
+	// otherwise: `auto` is the one value that starts spending the project's
+	// money, and it may not be reached by writing one word.
+	Fallback string `json:"fallback,omitempty"`
+	// WaitThreshold is how long a run waits for an exhausted credential's reset
+	// before failing over to the next tier (the spec's wait-or-switch rule),
+	// as a duration string read by config.ParseDuration. Under
+	// FallbackOAuthOnly it is ignored: there is nothing to fail over to, so the
+	// run waits for the earliest reset whatever the threshold says (D152).
+	WaitThreshold string `json:"wait_threshold,omitempty"`
+	// Backoff is the wait a credential is held for when its exhaustion reported
+	// no reset time. nil is DefaultBackoffInitial / DefaultBackoffCap.
+	Backoff *Backoff `json:"backoff,omitempty"`
+	// StopAfterExhaustionPerWindow is D142's first control: a pointer so that
+	// "the operator wrote false" and "the operator wrote nothing" are different
+	// states, since the absent one means true (StopsAfterExhaustion). It is a
+	// *bool rather than a bool for the same reason require_zdr is:
+	// encoding/json fills an absent key with the zero value, and false is the
+	// zero value, so a plain bool could not tell the protective default from
+	// the opt-out.
+	StopAfterExhaustionPerWindow *bool `json:"stop_after_exhaustion_per_window,omitempty"`
+	// ConcurrencyPerToken is D142's second control: at most this many runs may
+	// hold one shared credential at a time. A pointer, so an absent key (one
+	// run at a time, DefaultConcurrencyPerToken) is not the written 0, which
+	// means no cap at all.
+	ConcurrencyPerToken *int `json:"concurrency_per_token,omitempty"`
+}
+
+// Backoff is the wait a backed-off credential is held for: `initial` the first
+// time, doubling on each failed probe up to `cap` (the spec's resolved default,
+// D153). Either member may be left out, and one left out is its default.
+type Backoff struct {
+	Initial string `json:"initial,omitempty"`
+	Cap     string `json:"cap,omitempty"`
+}
+
+// credentialsMembers, backoffMembers are the member names the two structs are
+// spelled with, read from their own json tags (carrierMembers) so a field this
+// type gains is held to its spelling without a second list — the same
+// arrangement accountMembers and profileMembers have.
+var (
+	credentialsMembers = carrierMembers(reflect.TypeOf(Credentials{}))
+	backoffMembers     = carrierMembers(reflect.TypeOf(Backoff{}))
+)
+
+// FallbackValue is the paid-fallback policy in force: FallbackOAuthOnly when
+// the member is absent (D152) and the written value otherwise. It is nil-safe,
+// so a policy with no credentials block reads today's behaviour rather than a
+// zero string no comparison matches.
+func (c *Credentials) FallbackValue() string {
+	if c == nil || c.Fallback == "" {
+		return FallbackOAuthOnly
+	}
+	return c.Fallback
+}
+
+// WaitThresholdDuration is the wait-or-switch threshold in force: the written
+// duration, or DefaultWaitThreshold.
+func (c *Credentials) WaitThresholdDuration() time.Duration {
+	if c == nil {
+		return DefaultWaitThreshold
+	}
+	return credentialsDuration(c.WaitThreshold, DefaultWaitThreshold)
+}
+
+// BackoffInitialDuration is the first wait of a credential backed off with no
+// reset time: the written duration, or DefaultBackoffInitial.
+func (c *Credentials) BackoffInitialDuration() time.Duration {
+	if c == nil || c.Backoff == nil {
+		return DefaultBackoffInitial
+	}
+	return credentialsDuration(c.Backoff.Initial, DefaultBackoffInitial)
+}
+
+// BackoffCapDuration is the longest wait the doubling reaches: the written
+// duration, or DefaultBackoffCap.
+func (c *Credentials) BackoffCapDuration() time.Duration {
+	if c == nil || c.Backoff == nil {
+		return DefaultBackoffCap
+	}
+	return credentialsDuration(c.Backoff.Cap, DefaultBackoffCap)
+}
+
+// StopsAfterExhaustion reports D142's first control: true unless the operator
+// wrote false. The pointer is what makes that sentence possible — an absent key
+// is the protective default, and only a written false is an opt-out.
+func (c *Credentials) StopsAfterExhaustion() bool {
+	return c == nil || c.StopAfterExhaustionPerWindow == nil || *c.StopAfterExhaustionPerWindow
+}
+
+// ConcurrencyCap is D142's second control: the number of runs that may hold one
+// shared credential at a time, DefaultConcurrencyPerToken when the key is
+// absent, and 0 when the operator wrote 0 — 0 is the written "no cap", and it
+// is deliberately not the absent key's meaning.
+func (c *Credentials) ConcurrencyCap() int {
+	if c == nil || c.ConcurrencyPerToken == nil {
+		return DefaultConcurrencyPerToken
+	}
+	return *c.ConcurrencyPerToken
+}
+
+// credentialsDuration reads a written duration, or answers def when the member
+// was not written. A value that is not a positive duration answers def too, and
+// that case is unreachable through the node: Decode refuses it
+// (validCredentialsDuration). It is spelled this way rather than as an error
+// because the alternative for a hand-built policy is a zero — and a zero
+// threshold fails over on every exhaustion, while a zero backoff cap is a wait
+// that never doubles. A reader that cannot be given a bad value must not turn
+// one into the most permissive setting there is.
+func credentialsDuration(value string, def time.Duration) time.Duration {
+	if value == "" {
+		return def
+	}
+	d, err := config.ParseDuration(value)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
+}
+
+// checkCredentialsMembers holds the block's member names to the documented
+// spelling — the top level and the backoff block inside it — for the reason
+// checkMemberNames gives: encoding/json folds a member name, so a strict decode
+// alone reads {"fallback": ..., "Fallback": ...} as whichever the document
+// wrote last. What a folded name costs here is a *setting*: a misspelt
+// concurrency_per_token leaves the cap at its default while the node appears to
+// state one, and a misspelt fallback leaves the cascade at oauth-only under a
+// node that reads as auto.
+//
+// The member-name lists are derived from the structs (carrierMembers), and what
+// the check adds over the strict decode is the fold: a name no member answers
+// to is refused by DisallowUnknownFields first.
+func checkCredentialsMembers(raw json.RawMessage) error {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: credentials: %w", err)
+	}
+	if err := checkMemberNames("credentials", names, credentialsMembers); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return fmt.Errorf("projectpolicy: credentials: %w", err)
+	}
+	b, ok := members["backoff"]
+	if !ok || IsNull(b) {
+		return nil
+	}
+	bnames, err := objectMemberNames(b)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: credentials.backoff: %w", err)
+	}
+	if err := checkMemberNames("credentials.backoff", bnames, backoffMembers); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	return nil
+}
+
+// validCredentials holds the block's values to their rules: D152's fallback
+// rule, which is a property of this block and the budget block together, and
+// the shapes of the durations and the controls.
+//
+// The fallback rule is the one that matters. `auto` is the cascade's paid
+// fallback — tier A, then B, then C where C is on — and D152's ruling is that
+// no project reaches it by writing one word: the budget must be enforcing, with
+// a per-run ceiling above zero, or the value is refused. Observe mode is not
+// enough (the ceiling would be recorded and not enforced), an absent budget
+// block is not enough (the run's ceiling is then whatever its job's environment
+// carries, which this node cannot see), and enforce with per_run_usd 0 is not
+// enough either (a cap of zero is nothing charged against it). The refusal
+// names the two things to set, because the operator can set both and a sentence
+// that named only `fallback` would send them to the one key that is already
+// right.
+func validCredentials(c *Credentials, b Budget) error {
+	switch c.Fallback {
+	case "", FallbackOAuthOnly:
+	case FallbackAuto:
+		if b.Mode != policy.ModeEnforce || b.PerRunUSD <= 0 {
+			return fmt.Errorf("projectpolicy: credentials.fallback: %q is the cascade's paid fallback, and this policy's budget does not bound it: write budget: {mode: %q, per_run_usd: <a ceiling above zero>} in the project policy (currently mode %q, per_run_usd %v). A run under auto may spend the project's Anthropic key (tier B) and, where tier C is on, a third party's; with the ceiling unset or unenforced that spend is one nobody can see or stop — which is why the value must be written and the ceiling must be there (D152)",
+				FallbackAuto, policy.ModeEnforce, b.Mode, b.PerRunUSD)
+		}
+	default:
+		return fmt.Errorf("projectpolicy: credentials.fallback: %q is not a value this Fugaro knows: write %q (never spend the project's money — wait for the shared token's reset) or %q (fall over to the paid tiers), or remove the key, which means %q (D152)",
+			c.Fallback, FallbackOAuthOnly, FallbackAuto, FallbackOAuthOnly)
+	}
+	if _, err := validCredentialsDuration("projectpolicy: credentials.wait_threshold", c.WaitThreshold); err != nil {
+		return err
+	}
+	if c.Backoff != nil {
+		// Both members are held to their spelling and their shape first, so the
+		// comparison below reads values this function has already accepted.
+		if _, err := validCredentialsDuration("projectpolicy: credentials.backoff.initial", c.Backoff.Initial); err != nil {
+			return err
+		}
+		if _, err := validCredentialsDuration("projectpolicy: credentials.backoff.cap", c.Backoff.Cap); err != nil {
+			return err
+		}
+	}
+	// A cap below the wait it caps is a wait that never doubles to it, and the
+	// pair the rule is about is the *effective* pair: an absent member is its
+	// default (D153 — 15m, capped at 5h), which is what the cascade would use.
+	// Comparing only what was written left the state the rule exists to refuse
+	// reachable by writing one member — {"backoff": {"cap": "1m"}} is a 15m
+	// initial with a 1m cap, and {"backoff": {"initial": "10h"}} a 10h initial
+	// with a 5h cap — so a node that writes one of the two is held to the
+	// other's default. The members are compared through the same accessors a
+	// consumer reads, so this refusal and a reader cannot disagree about which
+	// pair is meant.
+	if initial, cap := c.BackoffInitialDuration(), c.BackoffCapDuration(); cap < initial {
+		return fmt.Errorf("projectpolicy: credentials.backoff.cap: %s is below credentials.backoff.initial (%s): a cap below the first wait is a probe schedule that never doubles, so a credential with no reset time would be retried at the same rate for ever. The two are compared as they would be used, and an absent member is its default (%s and %s), so a node that writes only one of them is held to the other's default: write a cap at or above the initial wait, or remove the member you wrote",
+			cap, initial, DefaultBackoffInitial, DefaultBackoffCap)
+	}
+	if c.ConcurrencyPerToken != nil && *c.ConcurrencyPerToken < 0 {
+		return fmt.Errorf("projectpolicy: credentials.concurrency_per_token: %d is not a number of runs: write the number of runs that may hold one shared credential at a time, at least 1, or 0 for no cap at all (D142)",
+			*c.ConcurrencyPerToken)
+	}
+	return nil
+}
+
+// validCredentialsDuration reads one duration member of the block: "" (not
+// written) is no value, and anything else must be a duration config.ParseDuration
+// reads and a positive one.
+//
+// The spelling is config.ParseDuration's — the one profiles.<p>.timeout_class is
+// read with, day counts and all — so "90m" is a threshold here because it is a
+// timeout there, rather than a form this package refused and that one accepted.
+// A non-positive duration is refused rather than read as "no wait": a threshold
+// of zero fails over on every exhaustion (the tier switch becomes the rule),
+// and a backoff of zero is a credential a run retries immediately.
+func validCredentialsDuration(at, value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	d, err := config.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a duration, for example \"90s\", \"15m\" or \"5h\"", at, value)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s: %q is not a positive duration", at, value)
+	}
+	return d, nil
+}
+
 // MaxPolicyBytes bounds the policy node Decode accepts. The node is policy
 // text — rules, patterns, prices and names — read by every run, not a data
 // store, so an oversized node is refused rather than decoded (fail closed: the
@@ -372,6 +691,27 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		if err := validBudget(braw, p.Budget); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: budget: %w", err)
 		}
+	}
+
+	// The credentials block is judged against the budget block decoded just
+	// above, and after it: D152's rule for `fallback: auto` is a property of
+	// the two together (the spend must be bounded), so reading them the other
+	// way round would decide it against a budget this reader has not seen —
+	// a policy whose auto was accepted because the block was still zero.
+	if craw, ok := doc["credentials"]; ok && !IsNull(craw) {
+		if err := checkCredentialsMembers(craw); err != nil {
+			return nil, true, err
+		}
+		dec := json.NewDecoder(bytes.NewReader(craw))
+		dec.DisallowUnknownFields()
+		var c Credentials
+		if err := dec.Decode(&c); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: credentials: %w", err)
+		}
+		if err := validCredentials(&c, p.Budget); err != nil {
+			return nil, true, err
+		}
+		p.Credentials = &c
 	}
 
 	if araw, ok := doc["allow_repos"]; ok && !IsNull(araw) {
@@ -517,6 +857,153 @@ func validCloneURLs(urls CloneURLs) error {
 // runner's own helper then builds. It is a plain lookup and not a decision:
 // whether a repository may run at all is Admits'.
 func (p *Policy) CloneURL(canonical string) string { return p.CloneURLs[canonical] }
+
+// ------------------------------------------------- the per-repository node
+
+// RepoPolicy is one repository's policy child, config/policy/repos/$slug (O4).
+// It is a *different node* from the shared one: the rules let exactly one run
+// token read it — the token whose slug is $slug — so what is written here is
+// what that repository's own run may know, and this release writes one thing
+// into it: the names of the Claude accounts the repository is admitted to.
+//
+// The names are a copy of a fact the shared node already holds inverted
+// (accounts.<name>.allow_repos) and they are published because the reader is
+// not a run: the credentials service, which holds the tier-A tokens and has to
+// decide, per call, whether *this* repository may be given one (C1.11, O4).
+// Publishing them is how the service learns the admissions without reading the
+// operator's local config, which lives on one machine.
+//
+// Nothing here is a secret and nothing here is a value: an account's name is
+// what config.ClaudeAccount is keyed by, and its token is a secret version the
+// service reads as its own service account (D147). A run of the repository
+// gains nothing from this node it could not already infer from its own job
+// (O4) — and the node is still readable by that run, so a value here would be a
+// value a prompt-injected agent can take through /proc.
+//
+// A repository with no admissions has no child at all: publishing writes one
+// per repository that some account covers, so the node's presence is the
+// admission, and "no node" and "an empty list" are not two states a reader has
+// to tell apart. (An empty list is refused anyway — see DecodeRepo.)
+//
+// Credentials is a pointer for the same reason: `omitempty` is a no-op on a
+// struct, so a value-typed field would marshal a repository with nothing
+// admitted as {"credentials":{"accounts":null}} — a document DecodeRepo refuses
+// (a written block must name at least one account), which would make the type
+// this package writes back the one document this package will not read. A nil
+// pointer writes no member at all, which is the state "this repository is
+// admitted to nothing".
+type RepoPolicy struct {
+	Credentials *RepoCredentials `json:"credentials,omitempty"`
+}
+
+// RepoCredentials is the one block this release writes into a repository's
+// node: the accounts it is admitted to, by name.
+type RepoCredentials struct {
+	// Accounts are the account names this repository's runs may use a tier-A
+	// credential from, sorted. Never empty: a written block that names none is
+	// refused, because the operator who wrote one believes they admitted
+	// somebody.
+	Accounts []string `json:"accounts"`
+}
+
+// repoMembers, repoCredentialsMembers are the member names those two structs
+// are spelled with, derived from their json tags as credentialsMembers is.
+var (
+	repoMembers            = carrierMembers(reflect.TypeOf(RepoPolicy{}))
+	repoCredentialsMembers = carrierMembers(reflect.TypeOf(RepoCredentials{}))
+)
+
+// DecodeRepo reads one repository's policy node, config/policy/repos/$slug. It
+// returns (p, found, err) exactly as Decode documents: absent is (nil, false,
+// nil), and a node that exists and cannot be used is (nil, true, err) — an
+// error, never "no admissions", because a reader that turns an unreadable
+// admission list into an empty one hands tier A to nobody (fail closed, which
+// is what "the service cannot read this repository's admissions" must mean) or,
+// worse, reads a list it did not understand as a list it did.
+//
+// It is strict where Decode is tolerant, and the difference is deliberate. The
+// shared node tolerates an unknown top-level key because a newer Fugaro's
+// section must not brick an older reader (P8); this node was introduced by this
+// release, nothing else writes it, and its whole content is an admission — so a
+// key this reader does not know is refused rather than ignored, and a future
+// member there is a version bump, which is a decision for whoever adds it.
+//
+// The rules and the publishing are the same either way: what a repository may
+// use a tier-A credential from is a security decision, and a member that does
+// not fold into this shape (a misspelt `accounts`, a block written as a list)
+// is refused instead of being read as the silent "no accounts".
+func DecodeRepo(raw []byte) (*RepoPolicy, bool, error) {
+	if IsNull(raw) {
+		return nil, false, nil
+	}
+	if len(raw) > MaxPolicyBytes {
+		return nil, true, fmt.Errorf("projectpolicy: the repository's policy node is %d bytes; at most %d are allowed", len(raw), MaxPolicyBytes)
+	}
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return nil, true, fmt.Errorf("projectpolicy: the repository's policy node: %w", err)
+	}
+	if err := checkMemberNames("the repository's policy node", names, repoMembers); err != nil {
+		return nil, true, fmt.Errorf("projectpolicy: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var rp RepoPolicy
+	if err := dec.Decode(&rp); err != nil {
+		return nil, true, fmt.Errorf("projectpolicy: the repository's policy node: %w", err)
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return nil, true, fmt.Errorf("projectpolicy: the repository's policy node: %w", err)
+	}
+	block, ok := members["credentials"]
+	if !ok || IsNull(block) {
+		// No block, or one written as null: a repository this policy admits to
+		// no account. It decodes rather than being refused — the node is
+		// written per repository, and a repository with no account is a legal
+		// state (its runs are simply never given tier A) — and it admits
+		// nothing. The decoded policy carries no block for the same reason: a
+		// null and an absent member are one policy, and the shape a caller
+		// re-marshals must be the shape this function reads.
+		rp.Credentials = nil
+		return &rp, true, nil
+	}
+	bnames, err := objectMemberNames(block)
+	if err != nil {
+		return nil, true, fmt.Errorf("projectpolicy: the repository's policy node's credentials: %w", err)
+	}
+	if err := checkMemberNames("the repository's policy node's credentials", bnames, repoCredentialsMembers); err != nil {
+		return nil, true, fmt.Errorf("projectpolicy: %w", err)
+	}
+	if rp.Credentials == nil || len(rp.Credentials.Accounts) == 0 {
+		return nil, true, errors.New("projectpolicy: the repository's policy node's credentials.accounts: a written credentials block must name at least one account: an absent list, a null one and an empty one would all read as \"this repository may use no account's token\", which is the state a hand-written node uses to take tier A away from a repository by accident — remove the whole credentials block to say that nobody is admitted, or name the accounts")
+	}
+	seen := make(map[string]bool, len(rp.Credentials.Accounts))
+	for i, name := range rp.Credentials.Accounts {
+		if msg := config.ValidClaudeAccountRef(name); msg != "" {
+			return nil, true, fmt.Errorf("projectpolicy: the repository's policy node's credentials.accounts[%d]: %s — an entry here is the NAME of an account of the project policy's accounts block, which is what the credentials service resolves to a token", i, msg)
+		}
+		if seen[name] {
+			return nil, true, fmt.Errorf("projectpolicy: the repository's policy node's credentials.accounts[%d]: an account is listed twice; list each account once", i)
+		}
+		seen[name] = true
+	}
+	return &rp, true, nil
+}
+
+// AdmittedAccounts is the accounts this repository's runs may use a tier-A
+// credential from, sorted, and nil when the node admits none. It is a copy:
+// the decoded node is not a value a caller may edit into a policy that says
+// something else.
+func (r *RepoPolicy) AdmittedAccounts() []string {
+	if r == nil || r.Credentials == nil || len(r.Credentials.Accounts) == 0 {
+		return nil
+	}
+	out := make([]string, len(r.Credentials.Accounts))
+	copy(out, r.Credentials.Accounts)
+	sort.Strings(out)
+	return out
+}
 
 // sortedStringKeys is a stable order for error messages, like sortedKeys.
 func sortedStringKeys[V any](m map[string]V) []string {
