@@ -3239,7 +3239,7 @@ whole styling work makes** — the fifth number hook.
 | `src/renderer/theme/screens.css` | **new**: the per-screen rules, in the design's §2 order, ending with the rows' and badges' forced-colors block |
 | `src/renderer/screens/degraded.ts` | `numberCell` prepends `degraded-num`, which is the class §2.10 says this task adds |
 | `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'screens.css'`, in the commit that creates the file — the list is now the theme directory's whole contents and stays still |
-| `test/unit/theme-selectors.test.ts` | the scan covers `screens.css`, and reads §2 **whole** rather than its tables |
+| `test/unit/theme-selectors.test.ts` | the scan covers `screens.css`, and reads §2 **whole** rather than its tables; a second case checks every element-qualified selector against the tags the console draws |
 | `test/unit/theme-tokens.test.ts` | the `--border`-is-decorative scan of `base.css` and `screens.css` |
 | `test/unit/degraded.test.ts` | every figure the degraded and unavailable screens draw carries `degraded-num`, and no cell that draws a document string does |
 | `test/unit/bundle.test.ts` | the planted-tree case's unlisted file moves out of the theme directory, because after this task there is no unlisted file in it |
@@ -3277,6 +3277,31 @@ design asked for.
 and names no class for the Run screen's root, so a rule spelled `section.run` would select a
 hook §2 does not name — and the licence is the licence. Nothing is lost: the reset gives a
 `section` its own block box and `base.css` sets the document's colour.
+
+### The tags the rules name, and the eleven that named the wrong one
+
+§2's licence is about hooks and says nothing about the element in front of one, and §2.8 is
+where the design warns what that costs: "**The tags are the code's and they matter** … a rule
+spelled `pre.unavailable-install-command` styles nothing at all". A rule with the right class
+and the wrong tag passes the selector scan, because the class *is* a hook §2 names — and then
+matches nothing.
+
+Eleven rules here were written that way, and the tag scan is what found them. It reads the
+`tag.class` pairs out of the code that draws them — the four emitter helpers (`make`, `cell`,
+`textCell`, `numberCell`) with their spread class lists, the raw `factory.create` +
+`setAttribute('class', …)` shape of `entry.ts` (a literal, a module constant such as
+`RAIL_ROW_CLASS`, or the class a local helper was handed at its call sites), and the two roots
+`degraded.ts` picks with a conditional class — and refuses a selector whose pair is not among
+them. `src/shared/version.ts`'s skew section is read too, because `base.css` selects it.
+
+What the eleven were: `p.run-halt-detail` (a `span`), `p.unavailable-searched` (a `div`, as
+§2.8 spells it), `span.projects-enrolled-repo`/`-seen-repo` and `span.run-log-tail-line`
+(`li`s), `span.run-report-path`/`span.run-comments-path` (the containers are `p`s — the
+`-value` hooks their rules meant already have their own mono rule), `span.run-id` (an `h1`),
+and `span.run-ledger-model`/`-compute`/`-total` (the labels are `p`s, in both the ledger rule
+and the forced-colors list). Each kept its rule's intent: the tail line moved beside
+`run-log-message`, its cousin in the log list, and the two diagnosis containers moved to the
+prose rule.
 
 ### The `--border`-is-decorative scan, and the clause that had to be a box
 

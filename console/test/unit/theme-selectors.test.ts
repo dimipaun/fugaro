@@ -475,6 +475,12 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     // rule that spelled it `span` would be a rule no element ever matches, and
     // the selector scan above would still pass it, because `run-id` is a hook
     // §2 names.
+    // `drawnPairs` reads the shapes the console draws through -- four emitter
+    // helpers, the raw `create`/`setAttribute` pair with its three ways of
+    // naming a class, and the two roots `degraded.ts` chooses between. A
+    // **new** way of drawing an element is a shape this scan cannot read, and it
+    // shows up here as a selector it cannot match rather than as a rule that
+    // silently styles nothing; the fix is to teach the scan the shape.
     const drawn = drawnPairs()
     expect(drawn.size, 'the renderer read as drawing nothing').toBeGreaterThan(200)
     const unknown: string[] = []
