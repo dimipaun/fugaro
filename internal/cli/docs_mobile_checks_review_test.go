@@ -930,6 +930,31 @@ func TestDocsCheck81TokenDirIsOwnerOnly(t *testing.T) {
 	if !strings.Contains(guard, "chmod 700") {
 		t.Errorf("## Check 81: the guard does not `chmod 700` $W: `umask 077` only shapes a directory this run creates, and a directory a previous run (or a previous copy of this block) left at 0755 keeps its mode -- the tokens go into the same path either way")
 	}
+
+	// The paragraph above the guard says where each credential lives, and it has
+	// to match the block below it: the key and the ID tokens are shell
+	// variables, and only the minted custom tokens reach $W. It said the key
+	// and every ID token "live in /tmp/chk81", which is where neither is -- an
+	// owner who believes it goes looking in $W for a key that was never written
+	// there, and reads the mode 700 as protecting it.
+	para := ""
+	for _, p := range paragraphsOf(section) {
+		if strings.Contains(p, "is the project's restricted web API key") {
+			para = p
+			break
+		}
+	}
+	if para == "" {
+		t.Fatalf("## Check 81: no paragraph says what $KEY is and where the credentials live: this test holds that account to the guard's own $W, and the guard is what writes the files")
+	}
+	if strings.Contains(para, "live in `/tmp/chk81`") {
+		t.Errorf("## Check 81: the paragraph says the web API key and the ID tokens live in `/tmp/chk81`, and nothing writes either there: $KEY is read out of the project's config and the ID tokens are the output of `signin`, so both are shell variables, and only the minted custom tokens go to $W/jwt-$uid.txt -- the sentence is what tells the owner what the 700 directory is protecting")
+	}
+	for _, want := range []string{"shell's variables", "$W/jwt-$uid.txt"} {
+		if !strings.Contains(para, want) {
+			t.Errorf("## Check 81: the paragraph does not say %q: it is the section's account of where the credentials are, and the guard below it writes the minted tokens to $W and nothing else to a file", want)
+		}
+	}
 }
 
 // TestDocsCheck89RegisterRowDoesNotClaimTheGuardReadsTheTrack: the register row
@@ -1302,6 +1327,116 @@ func TestDocsCheck82SettledLineNeedsNothingPending(t *testing.T) {
 	}
 	if guard > printed || strings.Contains(body[guard:printed], "\n\t}") {
 		t.Errorf("deployDatabase prints the settled line outside its `len(acts) == 0 && !idp.missing && !fs.Pending()` guard: the line is the step's for a database with nothing pending, not its line for one whose rules match, and check 82's cost paragraph and step 4 both say so")
+	}
+}
+
+// TestDocsCheck82NamesTheTestsThatCoverTheRefusal: step 7's FACT asks the owner
+// to record "the sentence above, quoted from the source, and the two test
+// names", and the step described them instead of naming them ("internal/infra's
+// plan test for the refusal", "internal/cli's doctorRulesSkew tests") -- a FACT
+// line the owner cannot fill in, because no function name in the section can be
+// looked up.
+//
+// The names are held to the packages that define them: each has to be a
+// `func <name>(t *testing.T)` in that package's tests, so renaming or deleting
+// the test fails here instead of leaving the checklist sending the owner to a
+// name that no longer exists.
+func TestDocsCheck82NamesTheTestsThatCoverTheRefusal(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 82:")
+	step := stepText(t, section, "7. **The marker above this binary's generation", "**Passes when:**")
+
+	if !strings.Contains(step, "the two test names") {
+		t.Errorf("check 82 step 7's FACT no longer asks for \"the two test names\": this test holds the names the step gives to that request, so it cannot check a step that asks for something else")
+	}
+	want := map[string]string{
+		"TestDBRefusesToDeployOverNewerRules": "internal/infra",
+		"TestDoctorPolicyChecks":              "internal/cli",
+	}
+	named := regexp.MustCompile(`\bTest[A-Za-z0-9_]+`).FindAllString(step, -1)
+	if len(named) != len(want) {
+		t.Fatalf("check 82 step 7 names %d test functions (%v) and its FACT asks the owner for \"the two test names\": the sentence that covers the refusal offline has to name the tests that cover it, one for the plan refusal and one for the reporting", len(named), named)
+	}
+	for _, name := range named {
+		pkg, ok := want[name]
+		if !ok {
+			t.Errorf("check 82 step 7 names %s, and this test does not know it: the two names are the offline coverage of the marker-above refusal, and a name that is not one of them is either a typo or a test the step should not be claiming", name)
+			continue
+		}
+		files, err := filepath.Glob(filepath.Join("..", "..", pkg, "*_test.go"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("no tests in %s (%v): check 82 step 7 names %s as living there", pkg, err, name)
+		}
+		found := false
+		for _, file := range files {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(b), "func "+name+"(t *testing.T) {") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("check 82 step 7 names %s as the test for the marker-above refusal, and %s has no `func %s(t *testing.T)`: the FACT line asks the owner to record the name, so a renamed or deleted test leaves the checklist sending them to a name that does not exist -- the same defect as the sentence that named no test at all", name, pkg, name)
+		}
+	}
+}
+
+// TestDocsReadyLinesDoNotDenyWhatTheyPrint: every check that opens with a guard
+// echoes the values it read on its "ready" line, and check 81's printed the
+// Firebase project id while the same line said "DB, KEY, SA and FP are read and
+// never printed" -- the sentence contradicted the echo on its own line, in the
+// place the owner reads to know what is safe to paste back.
+//
+// The rule is the general one: for whatever a ready line echoes (`$VAR` before
+// the dash), the sentence after the dash may not name it as never printed. The
+// echoed values are what makes a guard stop a finding the owner can act on, so
+// the sentence is what gives way, not the echo.
+func TestDocsReadyLinesDoNotDenyWhatTheyPrint(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	seen := 0
+	for _, check := range []string{"Check 81", "Check 82", "Check 89"} {
+		section := docSection(t, path, doc, "## "+check+":")
+		ready := ""
+		for _, line := range strings.Split(section, "\n") {
+			if strings.Contains(line, `echo "`+check+` ready:`) {
+				ready = line
+			}
+		}
+		if ready == "" {
+			t.Fatalf("## %s: no line echoes a ready message, so this test cannot see what the guard prints: the check's steps are re-run after a stop, and the ready line is what tells the owner which installation they are on", check)
+		}
+		seen++
+		values, said, ok := strings.Cut(ready, "—")
+		if !ok {
+			continue // a ready line that says nothing about what it read
+		}
+		claim, _, ok := strings.Cut(said, "never printed")
+		if !ok {
+			continue // a ready line that claims nothing is held back
+		}
+		for _, m := range regexp.MustCompile(`\$([A-Za-z_][A-Za-z0-9_]*)`).FindAllStringSubmatch(values, -1) {
+			v := m[1]
+			if regexp.MustCompile(`(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(v) + `([^A-Za-z0-9_]|$)`).MatchString(claim) {
+				t.Errorf("## %s: the ready line prints $%s and the same line says %s is never printed:\n%s\n\tthe values before the dash are what the owner reads to know which installation the check is about; only the sentence after the dash may claim something is held back", check, v, v, ready)
+			}
+		}
+		if check == "Check 81" && !strings.Contains(claim, "KEY") {
+			t.Errorf("## %s: the ready line no longer says the web API key is the value it holds back:\n%s\n\t$KEY is the project's restricted web API key, and the line is where the owner reads that the key is not printed", check, ready)
+		}
+	}
+	if seen != 3 {
+		t.Fatalf("this test read %d ready lines, want the three guards of checks 81, 82 and 89: a guard that stops echoing what it read is the same defect in the other direction", seen)
+	}
+
+	// The register row for check 81 says the same thing about the same block,
+	// and the row is what the owner reads before the section.
+	if row := registerRow(t, doc, "81"); strings.Contains(row, "never prints it") {
+		t.Errorf("the register row for check 81 says the setup block reads the backend out of the project's own config and \"never prints it\", and the block echoes the Firebase project id on its ready line: the row is what the owner reads first, and it has to say what the block does")
 	}
 }
 
