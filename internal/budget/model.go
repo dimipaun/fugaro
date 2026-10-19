@@ -368,6 +368,13 @@ type AgentEntry struct {
 	// run then halts with HaltCredsRulesDenied rather than dropping the write
 	// (C1.17), because a run whose credential is unrecorded is one nobody can
 	// account for.
+	//
+	// clipEntry clips it and strips it like every other string of the entry (a
+	// name past the rules' MaxString, or carrying a control or bidi character,
+	// would otherwise have the whole PATCH denied and freeze the run's
+	// registry). A reader that displays it still sanitises with
+	// internal/safetext: an entry written by another release is not this one's
+	// to trust.
 	Credential string `json:"credential,omitempty"`
 	// WaitingUntil is the instant, in epoch milliseconds, the run expects to
 	// resume at while it is waiting for a credential to become usable again
