@@ -708,6 +708,129 @@ func TestValidatedFields(t *testing.T) {
 	}
 }
 
+// TestTheBoundsThemselvesAreAccepted is the other half of the refusal table's
+// bound rows, and it is here because a bound test that only ever pushes past a
+// bound cannot tell `> max` from `>= max`: the refusal table's "one code unit
+// past its bound" rows are all still refused by a bound narrowed by one, and
+// the suite stayed green when the repository's bound and the key's bound were
+// each narrowed that way. The bound IS the largest accepted value — the merged
+// module's `.length` comparisons are inclusive in the same way — so the largest
+// accepted value is what the positive half has to walk, field by field.
+//
+// `mac` and `head_sha` are not here: their lengths are exact rather than
+// bounded, and both of their lengths are pinned as accepted by the vector file
+// the package replays.
+func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
+	message := func(over Record) Record {
+		record := Record{
+			"id": "m-0001", "sender": "phone", "text": "run 42 finished",
+			"at": number("1700000000000"), "mac": strings.Repeat("a", MACMax),
+		}
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
+	cancelled := func(over map[string]any) Record {
+		return message(Record{"kind": "action", "agent": "orchestrator", "action": action(map[string]any{
+			"id": "a-0001", "verb": "cancel",
+			"target":       map[string]any{"run": "20261018-125859-d3c8"},
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}, over)})
+	}
+	merged := func(over map[string]any) Record {
+		return message(Record{"kind": "action", "agent": "orchestrator", "action": action(map[string]any{
+			"id": "a-0001", "verb": "merge",
+			"target":       map[string]any{"repo": "dimipaun/fugaro", "pr": number("532")},
+			"head_sha":     strings.Repeat("a", SHAMin),
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}, over)})
+	}
+	// A repository of exactly TargetMax code units needs both of its halves:
+	// repoPattern wants an owner and a name, so the bound is reached with a
+	// short name and a long owner rather than with one long word.
+	longRepo := strings.Repeat("a", TargetMax-2) + "/b"
+	if len(longRepo) != TargetMax {
+		t.Fatalf("the boundary repository is %d code units, wanted TargetMax (%d)", len(longRepo), TargetMax)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		record    Record
+		heartbeat bool
+		why       string
+	}{
+		{"an id of exactly IDMax", message(Record{"id": strings.Repeat("a", IDMax)}), false,
+			"an id is at most IDMax code units, and the bound itself is one of them"},
+		{"a sender of exactly SenderMax", message(Record{"sender": strings.Repeat("a", SenderMax)}), false,
+			"a sender is bounded like every other string"},
+		{"a body of exactly TextMax", message(Record{"text": strings.Repeat("a", TextMax)}), false,
+			"4096 code units of body is the largest body the phone writes"},
+		{"an agent of exactly AgentMax", message(Record{"agent": strings.Repeat("a", AgentMax)}), false,
+			"an agent id is drawn from its alphabet AND bounded by AgentMax"},
+		{"an option of exactly OptionMax", message(Record{"kind": "prompt", "options": []any{strings.Repeat("a", OptionMax)}}), false,
+			"an option label is bounded like the identity it is read out beside"},
+		{"a reply_to of exactly IDMax", message(Record{"kind": "answer", "reply_to": strings.Repeat("a", IDMax)}), false,
+			"an answer's reply_to is a database key like an id"},
+		{"an action id of exactly IDMax", cancelled(map[string]any{"id": strings.Repeat("a", IDMax)}), false,
+			"the action id is a key, bounded by IDMax"},
+		{"a confirmation id of exactly IDMax", cancelled(map[string]any{
+			"confirmation": map[string]any{"id": strings.Repeat("a", IDMax), "at": number("1700000000000")}}), false,
+			"the confirmation id is a key, bounded by IDMax"},
+		{"a run of exactly TargetMax", cancelled(map[string]any{
+			"target": map[string]any{"run": strings.Repeat("a", TargetMax)}}), false,
+			"a run id reaches `fugaro cancel` bounded by TargetMax, and the bound itself is accepted"},
+		{"a repository of exactly TargetMax", merged(map[string]any{
+			"target": map[string]any{"repo": longRepo, "pr": number("532")}}), false,
+			"a repository reaches `gh pr merge --repo` bounded by TargetMax, and the bound itself is accepted"},
+		{"a boot of exactly BootMax", heartbeatRecord(Record{"boot": strings.Repeat("a", BootMax)}), true,
+			"a boot id is a boot id up to BootMax code units"},
+		{"an agent name of exactly AgentNameMax", heartbeatRecord(Record{"agents": []any{
+			agent("orchestrator", strings.Repeat("a", AgentNameMax))}}), true,
+			"a spoken name is bounded like the id beside it"},
+		{"exactly AgentsMax agents", heartbeatRecord(Record{"agents": manyAgents(AgentsMax)}), true,
+			"a heartbeat advertises at most AgentsMax agents, and AgentsMax is allowed"},
+		{"exactly OptionsMax options", message(Record{"kind": "prompt", "options": manyOptions(OptionsMax)}), false,
+			"a prompt offers at most OptionsMax options, and OptionsMax is allowed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var refusal *Refusal
+			if tc.heartbeat {
+				_, refusal = ValidateHeartbeat(tc.record)
+			} else {
+				_, refusal = ValidateMessage(tc.record)
+			}
+			if refusal != nil {
+				t.Errorf("the value at the bound itself is refused %s: %s", refusal, tc.why)
+			}
+		})
+	}
+}
+
+// heartbeatRecord is the refusal table's heartbeat builder, at package scope so
+// the boundary table can use it too.
+func heartbeatRecord(over Record) Record {
+	record := Record{
+		"at": number("1700000000000"), "boot": "boot-01",
+		"agents": []any{agent("orchestrator", "Orchestrator")},
+		"mac":    strings.Repeat("a", MACMax),
+	}
+	for key, value := range over {
+		record[key] = value
+	}
+	return record
+}
+
+// manyOptions is n distinct option labels, for the bound row: distinct, so that
+// the bound is the only thing that can refuse them.
+func manyOptions(n int) []any {
+	options := make([]any, 0, n)
+	for i := range n {
+		options = append(options, "option-"+strconv.Itoa(i))
+	}
+	return options
+}
+
 // TestDecodeKeepsTheKeyCase is the plan's Red step (a): fold `Text` into `text`
 // — a case-insensitive decode — and this test's refusal becomes an acceptance,
 // because a record whose only `text` came from folding validates perfectly.
