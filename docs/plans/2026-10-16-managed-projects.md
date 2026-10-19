@@ -870,7 +870,7 @@ Each row is one mergeable PR, green on its own:
 
 **Commit:** `managed: the marker and delete-list negatives, re-run against the compute backend's run credential`
 
-### Task 6.3: Prune the delete list after the applied delete, or bind its entries to the before-identity — SECURITY-SENSITIVE, independent opus review — UNSCHEDULED until the owner schedules it
+### Task 6.3: Prune the delete list after the applied delete, or bind its entries to the before-identity — SECURITY-SENSITIVE, independent opus review — **BUILT in 0.9.5, as option 2** (the target the owner's ruling of 2026-10-19 set; the heading said UNSCHEDULED until then)
 
 **Files:** `internal/infra/managed/deletelist.go`, `internal/infra/tf/managed_cover.go` and their tests; the apply path of Task 3.1.
 
@@ -880,6 +880,8 @@ Each row is one mergeable PR, green on its own:
 2. **Bind each entry to the before-identity.** An entry carries the address and the identity of the object it approves (project, type, name or ID as `before` shows it), and the cover admits a delete only when `before` matches. It closes reuse without a write after the apply, but it changes the owner-approved format and what `fugaro allow-delete` asks the owner for.
 
 **Tests:** whichever is chosen, a second delete at an address whose approved delete was applied is refused; under option 2, a listed address whose `before` names another object is refused.
+
+**Built, as option 2 — where the code is.** `tf.DeleteEntry{Address, Before}` and `tf.Approves` (`internal/infra/tf/identity.go`) are the rule: a removal is admitted only when an entry names its address AND the entry's `Before` is `RemovalIdentity.String` of the object the plan's `before` view describes (the type and whichever of id, name and project that view carries), an entry with no identity approves nothing, and a removal whose `before` shows none of the three is refused rather than approved for its type alone. `tf.GuardEntries` and the managed cover's `WithDeleteEntries` both take the entries (`internal/infra/tf/guard.go`, `internal/infra/tf/managed_cover.go`), and `Spec.AllowDelete` is a `[]tf.DeleteEntry` (`internal/managed/plan.go`). The object's format is version 2 (`internal/infra/managed/deletelist.go`): the version check is what carries the migration, so a version-1 object is read as **no entries** — every delete refused, and the writer's own read reports it as an object it cannot read, so replacing it needs the typed confirmation and the message says an older Fugaro wrote it. `fugaro allow-delete` takes `ADDRESS=IDENTITY` arguments (cut at the first `=`, the identity required to begin with `type=`), prints the entries it holds, and still writes the whole list rather than appending (internal/cli/allow_delete.go). Option 1 was not taken: it needs a write after the apply, and therefore the owner's ruling on D74's "never the apply identity", which option 2 does not. What the choice changes for the owner is D74's format, recorded in that row's answer column.
 
 **Depends on:** Task 1.4 (the list) and Task 3.1 (the apply that would prune it).
 
