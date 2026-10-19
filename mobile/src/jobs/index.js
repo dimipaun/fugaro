@@ -32,7 +32,6 @@ export {
   KILL_STATES,
   LIST_CODES,
   NOTHING,
-  NO_VALUE,
   ROW_FIELDS,
   jobField,
 } from './fields.js';
@@ -43,4 +42,4 @@ export { READ_STATES, heartbeatRow } from './heartbeat.js';
 
 export { JobList, createJobList, jobList } from './list.js';
 
-export { NO_REASON, NOT_SHOWN, PRINTED_FIELDS, SERIES, isList, lines, text } from './lines.js';
+export { NO_REASON, NOT_SHOWN, SERIES, lines, text } from './lines.js';

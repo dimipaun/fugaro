@@ -117,12 +117,12 @@ export const KILL_STATES = Object.freeze(['on', 'off']);
  * a presence reading carrying anything else is refused. */
 export const HEARTBEAT_STATES = Object.freeze(['live', 'stale', 'offline', 'clock-differs', 'unknown']);
 
-/** What the screen prints for a figure it has none of: the contract's gap mark
- * (`src/feed/availability.js`'s `GAP_MARK`), used by `lines.js` when the
- * series is broken or the feed has sent nothing yet. Re-exported nowhere else:
- * a caller that wants to print a figure asks the feed's `shown`. */
-export const NO_VALUE = 'n/a';
-
-/** The label a line carries when the thing itself is absent: the day, the
- * project. A caption rather than a figure, so it is not `shown`'s job. */
-export const NOTHING = '—';
+/** What a line says when the **thing itself** is absent -- the project, the day
+ * -- as opposed to a field the document did not carry. A caption rather than a
+ * figure, so it is not `shown`'s job, and deliberately **not** one of the other
+ * two marks: `n/a` is `shown`'s word for an `unavailable` figure (`n/a` in the
+ * screen's own words comes from there and from nowhere else, which is why this
+ * module defines no second copy of it), and `GAP_MARK` (`—`) is the contract's
+ * mark for a **broken series**. Three absences, three different strings; a test
+ * in `lines.test.js` holds them apart. */
+export const NOTHING = 'not known';

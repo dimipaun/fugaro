@@ -196,6 +196,34 @@ test('the lines are the table\'s fields, in the table\'s order, and frozen', () 
   assert.ok(drawn.every((line) => Object.isFrozen(line)));
 });
 
+test('the three absences are three different strings', () => {
+  // `n/a` -- a field the document did not carry, in `shown`'s own word (the feed
+  // owns that one and this module defines no second copy of it);
+  // `—` (`GAP_MARK`) -- the series broke, the contract's mark;
+  // `not known` (`NOTHING`) -- the **thing itself** is absent: the day, the
+  // project.
+  //
+  // Three absences with two of them spelled the same would be a screen a reader
+  // has to guess at: the mark that says "the spend series broke" would also be
+  // the mark that says "there is no project here". This is the test that keeps
+  // them apart.
+  const missing = jobList({ snapshot: snapshotOf(documentOf({ counted_usd: null })) });
+  const broken = jobList({ snapshot: snapshotOf(documentOf({ counted_usd: 0 }), { broken: true, dayChanged: true }) });
+  const nothing = jobList({ snapshot: snapshotOf(null, { liveness: 'no-document', broken: true }) });
+
+  assert.equal(lineText(missing, 'Spend (counted)'), 'n/a');
+  assert.equal(lineText(broken, 'Spend (counted)'), GAP_MARK);
+  assert.equal(lineText(nothing, 'Project'), NOTHING);
+  const marks = new Set(['n/a', GAP_MARK, NOTHING]);
+  assert.equal(marks.size, 3, 'the three absences are three different strings');
+  // ... and a caption is never drawn for a figure, nor a figure's mark for a
+  // caption: the day and the project are the only lines that say `not known`.
+  for (const label of ['Spend (counted)', 'Spend (spent)', 'Daily cap', 'Cap used']) {
+    assert.notEqual(lineText(missing, label), NOTHING, label);
+    assert.notEqual(lineText(nothing, label), NOTHING, label);
+  }
+});
+
 test('a field the feed did not build is not printed as a number', () => {
   // `lines` is reachable with a list a caller assembled by hand (it asks only
   // that the list be one `jobList` shaped). A field that is not a figure is

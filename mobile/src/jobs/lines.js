@@ -36,7 +36,7 @@
 // about a renderer nobody has run.
 
 import { GAP_MARK, isEmpty, isFigure, shown } from '../feed/index.js';
-import { HEARTBEAT_STATES, JOB_FIELDS, NOTHING, ROW_FIELDS } from './fields.js';
+import { HEARTBEAT_STATES, JOB_FIELDS, KILL_STATES, NOTHING } from './fields.js';
 
 /** What the screen says about a series that has broken: §10.7's break, in the
  * list's own word. Not a figure and not an availability state -- it is the
@@ -55,8 +55,10 @@ export const NOT_SHOWN = 'not shown';
 export const NO_REASON = 'no reason given';
 
 /** Is this a list `jobList` built? A refusal is not one, and a caller that
- * hands one here has a bug rather than a list to draw. */
-export function isList(list) {
+ * hands one here has a bug rather than a list to draw. Private: the only caller
+ * is `lines`, and a screen holding a refusal is a screen that did not read
+ * `ok`. */
+function isList(list) {
   return list !== null && typeof list === 'object' && list.ok === true && 'row' in list && 'heartbeat' in list;
 }
 
@@ -72,8 +74,11 @@ function fieldText(list, name) {
   if (list.row === null) return GAP_MARK;
   const value = list.row[name];
   if (name === 'kill') {
-    if (value.on !== true) return 'off';
-    return `on (${value.reason ?? NO_REASON})`;
+    // The two words come from the table's vocabulary rather than from two
+    // literals here, so the screen's spelling of a state has one home.
+    const [on, off] = KILL_STATES;
+    if (value.on !== true) return off;
+    return `${on} (${value.reason ?? NO_REASON})`;
   }
   if (name === 'burn') {
     if (value.shown !== true) return NOT_SHOWN;
@@ -127,6 +132,3 @@ export function text(list) {
     .map((line) => `${line.label}: ${line.text}`)
     .join('\n');
 }
-
-/** The field names this module prints, for a test that pins the set. */
-export const PRINTED_FIELDS = ROW_FIELDS;

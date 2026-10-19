@@ -410,7 +410,7 @@ that screen's module, and its files are:
 
 | File | What it holds |
 | --- | --- |
-| `fields.js` | the table: one entry per field on the row, each carrying the granted family it is read from (`JOB_FIELDS`), plus the closed vocabularies (`KILL_STATES`, `HEARTBEAT_STATES`) and the two marks (`NO_VALUE`, `NOTHING`) |
+| `fields.js` | the table: one entry per field on the row, each carrying the granted family it is read from (`JOB_FIELDS`), plus the closed vocabularies (`KILL_STATES`, `HEARTBEAT_STATES`) and the caption `NOTHING` |
 | `row.js` | the project's row, built from P3.2's document: every field must be a **figure** the feed built, and a field that is not is a refusal rather than a coerced value |
 | `heartbeat.js` | P3.6's presence reading as one state. `unknown` when nothing has read the mailbox — which is **not** `offline` (rule 3, "silence is not death", seen from this side) |
 | `list.js` | `jobList()` — the pure judgement of a snapshot plus a presence reading — and `createJobList()`, the wiring the feed's door names as this task's |
@@ -419,11 +419,16 @@ that screen's module, and its files are:
 | `scope.test.js` | the scan below |
 | `row.test.js`, `heartbeat.test.js`, `list.test.js`, `lines.test.js` | the behavioural half |
 
-### The row, and the two marks that must not be confused
+### The row, and the three absences that must not be confused
 
 `n/a` is what `shown` says for a field the document **did not carry**
-(`unavailable`); `—` (`GAP_MARK`) is what a screen draws when the **series
-broke**. A `0` is a measurement and appears only where a counter measured zero.
+(`unavailable`) — the feed owns that word, which is why this module defines no
+second copy of it; `—` (`GAP_MARK`) is what a screen draws when the **series
+broke**; and `not known` (`NOTHING`) is what a line says when the **thing
+itself** is absent: the day, the project. Three absences, three different
+strings — a test holds them apart, because two of them spelled the same would be
+a screen a reader has to guess at. A `0` is a measurement and appears only where
+a counter measured zero.
 That difference is the whole of §10.7's "must not draw the zero": on a day
 break the reader assembles the new day's document, which carries a zero counter,
 and `jobList` draws `row: null` for it — so the zero cannot reach a screen that
@@ -487,9 +492,12 @@ so a mistyped pattern cannot pass for a clean tree, and with test files exempt
 
 ### The job list's mutations
 
-Each was planted, the run went red, the bug was removed. The last three were
-planted **after** the rest and found claims with no test behind them: the tests
-they went red against did not exist yet, so fixing that was writing them.
+Each was planted, the run went red, the bug was removed. Three were planted
+**after** the rest and found claims with no test behind them: the tests they
+went red against did not exist yet, so fixing that was writing them. The last
+three are the review's own pass over the module's surface: two dead exports
+(`NO_VALUE`, `PRINTED_FIELDS`, both gone) and a caption mark spelled the same as
+the contract's gap mark.
 
 | Mutation | Went red |
 | --- | --- |
@@ -508,6 +516,9 @@ they went red against did not exist yet, so fixing that was writing them.
 | the module reaches for a repository | `no repository row and no repository name` |
 | a screen reaches around the feed's door | `the feed is reached through its door…` |
 | a run is named | `no run is named, and neither family the grant denies is asked for` |
+| the kill switch's two words are swapped (`KILL_STATES`) | `a kill switch is on or off…` |
+| the caption mark becomes the gap mark | `the three absences are three different strings` |
+| the door re-exports a name nothing uses | `the door carries the module's surface, and no dead name` |
 
 ## Which files may write a credential
 

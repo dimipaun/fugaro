@@ -212,3 +212,66 @@ test('the module\'s specifiers resolve inside the app', () => {
   }
   assert.deepEqual(bad, []);
 });
+
+/** The names a file's `export { … } from '…'` blocks carry, sorted. */
+function doorNames(text) {
+  const names = new Set();
+  for (const block of code(text).matchAll(/export\s*\{([^}]*)\}\s*from/g)) {
+    for (const entry of block[1].split(',')) {
+      const name = entry.trim().split(/\s+as\s+/).pop().trim();
+      if (name.length > 0) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+/** The names in `names` that no file other than the door uses. */
+function deadNames(names, files, door = 'src/jobs/index.js') {
+  const rest = [...files].filter(([file]) => file !== door);
+  return names.filter((name) => !rest.some(([, text]) => new RegExp(`\\b${name}\\b`).test(code(text))));
+}
+
+test('the door carries the module\'s surface, and no dead name', () => {
+  // The door's surface as an **exact set**, the rule P3.2's `index.test.js`
+  // gives: a re-export added without a thought is how an internal helper ends
+  // up reachable from a screen. This is the whole of it -- the field table and
+  // its vocabularies, the row, the heartbeat, the list and its wiring, and what
+  // the screen says.
+  const files = sources();
+  const door = files.find(([file]) => file === 'src/jobs/index.js')[1];
+  assert.deepEqual(doorNames(door), [
+    'HEARTBEAT_STATES',
+    'JOB_FAMILIES',
+    'JOB_FIELDS',
+    'JobList',
+    'KILL_STATES',
+    'LIST_CODES',
+    'NOTHING',
+    'NOT_SHOWN',
+    'NO_REASON',
+    'READ_STATES',
+    'ROW_FIELDS',
+    'SERIES',
+    'createJobList',
+    'heartbeatRow',
+    'jobField',
+    'jobList',
+    'killState',
+    'lines',
+    'projectRow',
+    'text',
+  ]);
+
+  // ... and a positive control for the rule below, before it is applied: a name
+  // on the door that nothing else uses is exactly what that rule is for.
+  const planted = new Map([
+    ['src/jobs/index.js', "export { GHOST } from './fields.js';\n"],
+    ['src/jobs/fields.js', 'const x = 1;\n'],
+  ]);
+  assert.deepEqual(deadNames(['GHOST'], [...planted]), ['GHOST']);
+
+  // Every name the door carries is used somewhere that is not the door. A dead
+  // export is a name a reviewer has to check is still true: `PRINTED_FIELDS`
+  // and `NO_VALUE` were both, and both are gone.
+  assert.deepEqual(deadNames(doorNames(door), files), []);
+});
