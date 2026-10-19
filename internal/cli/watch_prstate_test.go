@@ -223,10 +223,17 @@ func TestEmitLiveFramesApplyPRState(t *testing.T) {
 			PRURL: "https://github.com/acme/app/pull/43", PRNumber: 43, FinishedAt: now.Add(-9 * time.Minute)},
 	}, now)
 	var buf bytes.Buffer
+	// The lookup's own timeout is generous on purpose: this test asserts the
+	// ANSWER (which row the frame drops), so it must not also be a test of how
+	// fast a loaded machine can start a shell — a lookup killed at a short
+	// timeout would answer "unknown", leave the row listed, and fail here as
+	// if the filter were broken. The wait below is longer than that timeout
+	// for the same reason: it is a wait for the lookup, not a deadline of its
+	// own.
 	d := &WatchDeps{Out: &buf, LC: &localcfg.Config{Name: "aurora"},
 		Filter:  watch.Filter{Keep: 6 * time.Hour, KeepCount: 15, FailedKeep: 24 * time.Hour},
 		Acks:    watch.LoadAcks(filepath.Join(t.TempDir(), "watch-acks.json")),
-		PRState: watch.NewPRState(watch.PRStateOptions{})}
+		PRState: watch.NewPRState(watch.PRStateOptions{Timeout: 30 * time.Second})}
 	o := &watchOptions{plain: true}
 
 	if err := d.emit(o, v, false); err != nil {
@@ -235,7 +242,7 @@ func TestEmitLiveFramesApplyPRState(t *testing.T) {
 	if first := buf.String(); !strings.Contains(first, "Ready for your review (2)") {
 		t.Fatalf("the first live frame must draw the list as it is:\n%s", first)
 	}
-	d.PRState.Settle(5 * time.Second)
+	d.PRState.Settle(30 * time.Second)
 	buf.Reset()
 	if err := d.emit(o, v, false); err != nil {
 		t.Fatal(err)
