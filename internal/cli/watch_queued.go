@@ -326,8 +326,15 @@ type queuedScanner struct {
 	// one repository's run reads. pruneFinishedCache drops entries whose
 	// FinishedAt has aged out of finishedLookback, so the cache never
 	// grows past what one scan's window could hold.
+	//
+	// An entry carries the run's job as well as its row: the row is what the
+	// scan reports (watch.FinishedRun), and the job is what the scan stamps
+	// onto it (Jobs, watch.MergeJobs), so both are what a cache hit has to
+	// reproduce — a cached row served without its job would drop `job`,
+	// `profile`, `provider` and `account` from that run's entry on every poll
+	// after the first, which is the loss JSONFinished's comment forbids.
 	cacheMu       sync.Mutex
-	finishedCache map[string]watch.FinishedRun
+	finishedCache map[string]cachedFinishedRun
 
 	env *cloudEnv
 	// index places the job names the runs' launch.json records, when the
@@ -441,22 +448,31 @@ func (s *queuedScanner) connect(ctx context.Context) (*cloudEnv, error) {
 	}
 }
 
-// cachedFinished is key's cached finished run, if any.
-func (s *queuedScanner) cachedFinished(key string) (watch.FinishedRun, bool) {
-	s.cacheMu.Lock()
-	defer s.cacheMu.Unlock()
-	f, ok := s.finishedCache[key]
-	return f, ok
+// cachedFinishedRun is one entry of the finished cache: the row a read
+// produced, and the job that read found in the run's launch.json (scanResult's
+// own two fields, so a cache hit reproduces the whole of what the read
+// returned). job is "" when the run has no launch.json to read.
+type cachedFinishedRun struct {
+	row watch.FinishedRun
+	job string
 }
 
-// cacheFinished remembers f under key, so a later scan does not re-read it.
-func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun) {
+// cachedFinished is key's cached finished run, if any.
+func (s *queuedScanner) cachedFinished(key string) (cachedFinishedRun, bool) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	c, ok := s.finishedCache[key]
+	return c, ok
+}
+
+// cacheFinished remembers c under key, so a later scan does not re-read it.
+func (s *queuedScanner) cacheFinished(key string, c cachedFinishedRun) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if s.finishedCache == nil {
-		s.finishedCache = map[string]watch.FinishedRun{}
+		s.finishedCache = map[string]cachedFinishedRun{}
 	}
-	s.finishedCache[key] = f
+	s.finishedCache[key] = c
 }
 
 // pruneFinishedCache drops every cached entry whose FinishedAt is before
@@ -466,8 +482,8 @@ func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun) {
 func (s *queuedScanner) pruneFinishedCache(finishedSince time.Time) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	for key, f := range s.finishedCache {
-		if f.FinishedAt.Before(finishedSince) {
+	for key, c := range s.finishedCache {
+		if c.row.FinishedAt.Before(finishedSince) {
 			delete(s.finishedCache, key)
 		}
 	}
@@ -507,8 +523,12 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 	results := make([]result, len(ids))
 	var toRead []int
 	for i, id := range ids {
-		if f, ok := s.cachedFinished(slug + "/" + id); ok {
-			results[i] = result{scanResult{IsFinished: true, Finished: f}, nil, true}
+		if c, ok := s.cachedFinished(slug + "/" + id); ok {
+			// The cached row and the job its own read found: the scan's jobs
+			// map is what a frame stamps from, and it is rebuilt from this
+			// scan's results alone, so a hit that left the job out would
+			// un-stamp the run on every poll after the first.
+			results[i] = result{scanResult{IsFinished: true, Finished: c.row, Job: c.job}, nil, true}
 			continue
 		}
 		toRead = append(toRead, i)
@@ -525,7 +545,7 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 					continue // cut off: the result is not trusted
 				}
 				if res.IsFinished {
-					s.cacheFinished(slug+"/"+ids[i], res.Finished)
+					s.cacheFinished(slug+"/"+ids[i], cachedFinishedRun{row: res.Finished, job: res.Job})
 				}
 				results[i] = result{res, err, true}
 			}

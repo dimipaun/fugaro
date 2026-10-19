@@ -53,6 +53,22 @@ func putFinished(t *testing.T, put func(key string, data []byte), slug, run, sta
 	put("runs/"+slug+"/"+run+"/result.json", result)
 }
 
+// putFinishedWithJob is putFinished plus the launch.json whose job the scan
+// reports beside the row (a finished run keeps its launch.json: it is written
+// at launch and never removed).
+func putFinishedWithJob(t *testing.T, put func(key string, data []byte), slug, run, status string, finishedAt time.Time, job string) {
+	t.Helper()
+	putFinished(t, put, slug, run, status, finishedAt)
+	launch, err := json.Marshal(map[string]any{
+		"version": 1, "run_id": run, "backend": "cloud-run", "job": job,
+		"execution": "projects/p/locations/r/jobs/" + job + "/executions/e-" + run, "launched_at": finishedAt.Add(-time.Minute).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put("runs/"+slug+"/"+run+"/launch.json", launch)
+}
+
 // openedScanner is a scanner whose bucket is already open on b.
 func openedScanner(b *blob.Bucket) *queuedScanner {
 	lc := &localcfg.Config{}
@@ -475,13 +491,61 @@ func TestScanCachesFinishedRunsAcrossPolls(t *testing.T) {
 	}
 }
 
+// A cached finished run keeps the job its launch.json names. The row is cached
+// so a later poll does not re-read it, and the job has to travel with it: the
+// scan's jobs map is rebuilt from each scan's own results (scanRepo), and it is
+// what a frame stamps from (watch.MergeJobs), so a cache hit that served the
+// row alone would leave the run's `job`, `profile`, `provider` and `account`
+// out of its finished[] entry on every poll after the first — the loss
+// JSONFinished's comment forbids for exactly this reader.
+//
+// Mutation (run, restore): serve the row alone on a hit again
+// (`scanResult{IsFinished: true, Finished: c.row}`), or cache `res.Finished`
+// instead of the pair — the second poll finds no job for the run and the loop
+// below fails on it; the first poll, which reads the run, still passes.
+func TestScanKeepsTheJobOfACachedFinishedRun(t *testing.T) {
+	b := memblob.OpenBucket(nil)
+	ctx := context.Background()
+	put := func(key string, data []byte) {
+		if err := b.WriteAll(ctx, key, data, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const job = "fugaro-p-standard-github-04522f006502"
+	finished := time.Now().UTC().Add(-time.Hour).Format("20060102-150405") + "-aaaa"
+	putFinishedWithJob(t, put, "acme-a", finished, "succeeded", time.Now().Add(-45*time.Minute), job)
+
+	sc := openedScanner(b)
+	sc.slugs = func(context.Context, *cloudEnv) ([]string, error) { return []string{"acme-a"}, nil }
+	var reads atomic.Int32
+	sc.readRun = func(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, now time.Time) (scanResult, error) {
+		reads.Add(1)
+		return scanRun(ctx, env, slug, id, w, now)
+	}
+	key := watch.RunKeyOf("acme-a", finished)
+	for _, poll := range []string{"the poll that read the run", "the poll served from the finished cache"} {
+		if _, _, _, err := sc.scan(ctx); err != nil {
+			t.Fatalf("%s: %v", poll, err)
+		}
+		ref, ok := sc.Jobs()[key]
+		if !ok || ref.Job != job {
+			t.Fatalf("%s: jobs[%+v] = %+v (present %v), want the job %q of %s's launch.json: a run's job is not re-read with its cached row, so it has to be served with it",
+				poll, key, ref, ok, job, finished)
+		}
+	}
+	// And the second poll really was a cache hit: one read, for the first.
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("%d reads over two polls, want 1: a finished run is read once and cached", got)
+	}
+}
+
 // The finished cache is bounded: an entry aged out of finishedLookback is
 // dropped, not kept forever.
 func TestPruneFinishedCacheDropsStaleEntries(t *testing.T) {
 	sc := newQueuedScanner(&localcfg.Config{}, "")
 	now := time.Now()
-	sc.cacheFinished("acme-a/old", watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)})
-	sc.cacheFinished("acme-a/new", watch.FinishedRun{FinishedAt: now.Add(-time.Hour)})
+	sc.cacheFinished("acme-a/old", cachedFinishedRun{row: watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)}})
+	sc.cacheFinished("acme-a/new", cachedFinishedRun{row: watch.FinishedRun{FinishedAt: now.Add(-time.Hour)}})
 	sc.pruneFinishedCache(now.Add(-finishedLookback))
 	if _, ok := sc.cachedFinished("acme-a/old"); ok {
 		t.Fatal("an entry older than the lookback must be pruned")
