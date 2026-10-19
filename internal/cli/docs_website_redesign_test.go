@@ -10,11 +10,12 @@ package cli
 // now measures the lead as the region between the `h1` and the first `h2`), but not the
 // check that measures the fold itself, which the register's note under "Check 70 is the
 // website redesign's" recorded as not in the file yet. The ceilings themselves are P4's
-// (#572, D188), and the plan says so twice -- §3's constraint 4, "The word ceiling of P4
-// goes there too, beside the byte budgets", and P4's own section of §3, "**The word
-// ceiling, in `website/test/budget.mjs`**" -- while the reconciliation's RF23 puts it the
-// other way round ("part **P4** of the plan writes the word ceiling either way"). The
-// check's section attributes the gates to no part at all.
+// (#572, D188), and the plan says so twice -- §2's constraint 4, "The word ceiling of P4
+// goes there too, beside the byte budgets" (§2 is the plan's own constraints; §3 is "The
+// parts" and has no numbered constraints), and P4's own section of §3, "**The word ceiling,
+// in `website/test/budget.mjs`**" -- while the reconciliation's RF23 puts it the other way
+// round ("part **P4** of the plan writes the word ceiling either way"). The check's section
+// attributes the gates to no part at all.
 //
 // The two tests on the entry pin its two halves the way TestWebsiteChecklistHasCheck69aAnd69b
 // pins the website plan's 69a and 69b -- the row a reader meets first and the section it
@@ -42,6 +43,7 @@ package cli
 //     about a project.
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -212,24 +214,84 @@ func TestWebsiteChecklistHasCheck70bSection(t *testing.T) {
 	}
 }
 
-// TestWebsiteRedesignPlanAttributesTheWordCeilingToP4 pins the fact this file's header
-// comment rests on, in the documents' own words: the word ceilings (D188: 40 words in a
-// page's lead, 250 per page except the three reference pages) are part P4's work (#572), and
-// the plan says so twice -- §3's constraint 4 and P4's own section of §3 -- while the
-// reconciliation's RF23 says it where the finding is written. The comment cites those
-// sentences, so this holds the citation to what is actually there: a document that
-// re-attributes the ceiling fails here rather than leaving a comment quietly wrong about
-// whose work the ceiling was.
+// TestWebsiteRedesignPlanAttributesTheWordCeilingToP4 pins the fact the header comment above
+// rests on, in the documents' own words *and in the places the comment cites*: the word
+// ceilings (D188: 40 words in a page's lead, 250 per page except the three reference pages)
+// are part P4's work (#572). The plan says so in §2's constraint 4 -- §2 is "What is new in
+// this plan's constraints, on top of the first plan's §3", and its fourth constraint is "One
+// source of truth per fact", which puts the ceiling beside the byte budgets -- and again in
+// §3, "The parts", in P4's own section, where the gate that enforces it is named. The
+// reconciliation's RF23 says it too, where the finding is written.
+//
+// The sentence is read out of the section and the constraint rather than out of the whole
+// document, because a citation names a place: a sentence that moves to another section or
+// another constraint is a citation gone stale, and a test that only looks for the text
+// anywhere in the file cannot see it. The citation in the comment is checked too -- the
+// sentence was cited to §3, which is "The parts" and has no numbered constraints at all, for
+// a round of review -- because a comment is source no compiler reads.
 func TestWebsiteRedesignPlanAttributesTheWordCeilingToP4(t *testing.T) {
-	for _, m := range []struct{ path, want string }{
-		{"docs/website/redesign/implementation-plan.md", "The word ceiling of P4 goes there too, beside the byte budgets."},
-		{"docs/website/redesign/implementation-plan.md", "**The word ceiling, in `website/test/budget.mjs`**"},
-		{"docs/website/redesign/reconciliation.md", "part **P4** of the plan writes the word ceiling either way"},
-	} {
-		flat := strings.Join(strings.Fields(readDoc(t, m.path)), " ")
-		if !strings.Contains(flat, m.want) {
-			t.Errorf("%s does not carry %q: the ceilings are part P4's (#572, D188), and this is the sentence the check's pin cites for that", m.path, m.want)
-		}
+	const planPath = "docs/website/redesign/implementation-plan.md"
+	const ceilingSentence = "The word ceiling of P4 goes there too, beside the byte budgets."
+	plan := readDoc(t, planPath)
+
+	// §2's constraint 4, and not another of its constraints: the section is cut at the next
+	// "## " heading and the constraint at the next numbered item, the way the document
+	// numbers them.
+	sec2 := docSection(t, planPath, plan, "## 2. What is new in this plan's constraints")
+	c4 := strings.Index(sec2, "\n4. **")
+	c5 := -1
+	if c4 != -1 {
+		c5 = strings.Index(sec2[c4+1:], "\n5. **")
+	}
+	if c4 == -1 || c5 == -1 {
+		t.Fatalf("%s's §2 has no constraint 4 followed by a constraint 5: the ceiling's sentence is cited to that constraint", planPath)
+	}
+	if item := sec2[c4+1 : c4+1+c5]; !strings.Contains(item, ceilingSentence) {
+		t.Errorf("%s's §2 constraint 4 does not carry %q: the ceilings are part P4's (#572, D188) and that constraint is the sentence's place", planPath, ceilingSentence)
+	}
+
+	// §3, "The parts", and P4's own section of it, where the gate the ceiling lives in is
+	// named.
+	sec3 := docSection(t, planPath, plan, "## 3. The parts")
+	p4 := strings.Index(sec3, "### P4 —")
+	if p4 == -1 {
+		t.Fatalf("%s's §3 has no P4 section: the ceiling is P4's, and §3's section for the part is where its gate is named", planPath)
+	}
+	partP4 := sec3[p4:]
+	if next := strings.Index(partP4, "\n### "); next != -1 {
+		partP4 = partP4[:next]
+	}
+	if want := "**The word ceiling, in `website/test/budget.mjs`**"; !strings.Contains(partP4, want) {
+		t.Errorf("%s's P4 section does not carry %q: the ceiling is enforced in that gate, which is what the comment cites §3 for", planPath, want)
+	}
+
+	// The reconciliation, where the finding is written and where the ceiling is P4's either
+	// way.
+	const recPath = "docs/website/redesign/reconciliation.md"
+	if want := "part **P4** of the plan writes the word ceiling either way"; !strings.Contains(strings.Join(strings.Fields(readDoc(t, recPath)), " "), want) {
+		t.Errorf("%s does not carry %q: RF23 is the finding this check answers, and it is where the ceiling is attributed to P4 in as many words", recPath, want)
+	}
+
+	// And the comment itself, which nothing else reads: it cites the sentence to §2's
+	// constraint 4, and this file is the only place that claim is written down. The header is
+	// this file's leading comment block -- it opens with the line below and runs to the blank
+	// line before `import` -- and the phrase is kept on one line there, so the citation is one
+	// string rather than a wrap.
+	src, err := os.ReadFile("docs_website_redesign_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := string(src)
+	i := strings.Index(header, "// The website redesign's live check 70b")
+	if i == -1 {
+		t.Fatalf("this file has no header comment opening %q: the citation this test guards is written there", "// The website redesign's live check 70b")
+	}
+	header = header[i:]
+	if j := strings.Index(header, "\n\n"); j != -1 {
+		header = header[:j]
+	}
+	if !strings.Contains(header, "§2's constraint 4") {
+		t.Errorf("this file's header no longer cites the ceiling's sentence to §2's constraint 4: §3 is \"The parts\" and has no numbered constraints, so a header that says §3 cites a place the sentence is not")
 	}
 }
 
