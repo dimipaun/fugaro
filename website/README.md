@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **978,623 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **980,771 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **977,108 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **979,256 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -162,7 +162,7 @@ added or removed without this sentence moving fails there:
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 977,051 with the flag off to 978,623 with it on:
+    moves the **site figure up by 1,572 bytes**, from 979,199 with the flag off to 980,771 with it on:
     the console option's own markup on the three pages that render it — the console page's
     downloads section (each artifact's checksum beside its link, and the verification command)
     1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
@@ -249,12 +249,18 @@ added or removed without this sentence moving fails there:
     downloads section, Getting Started's console option and the hero's link to the console.
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
-  - **The homepage's prompt line** (the owner's brief of 2026-10-19, item 1) moved the site
+  - **The homepage's prompt line** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 977,921 → **978,623**, by **702 bytes**: the request the hero renders under
     the headline, the `>` mark in front of it and the two rules that draw it as the chat's own
     bubble — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
     because the three files that changed all render on that one page, so the page weight and
     the script stand where they stood.
+  - **The benefits** (the same feedback) moved the site figure alone again,
+    978,623 → **980,771**, by **2,148 bytes**: the section's four names and four lines, its
+    heading and its grid, and the scoped stylesheet rules that draw it — all of it on the
+    homepage, which is the one page that renders it. The page weight and the script did not
+    move: the heaviest page is the docs hub, and it carries no benefits. The words the section
+    costs the homepage are what moved the word ceiling above, in this same commit.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -282,7 +288,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,669,837 bytes. Three times 1,223,279 (every file in `dist/`, 978,623
+  - **Whole site:** 3,677,892 bytes. Three times 1,225,964 (every file in `dist/`, 980,771
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -315,7 +321,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 250 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 300 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -329,6 +335,16 @@ added or removed without this sentence moving fails there:
     The ceiling is set against the site as it was measured before the redesign
     (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268 — every one of them over it).
+    **D188's number was 250, and the owner's feedback of 2026-10-19 is what moved it.**
+    That brief asks the homepage for a Benefits section, which is a fourth required block on
+    the one page that already carried the three the briefs before it require — the promise,
+    the chat (changes spec item 3) and the flow (item 4) — and the four together measure 296
+    words. The number here is therefore the smallest round ceiling above the page that
+    carries every block its briefs require, and it is still a ceiling rather than a target:
+    the highest of the pages that gained nothing from that brief is Getting Started at 250
+    words, and a page that wants the extra 50 has to carry a brief's own block for them.
+    The raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
+    number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
@@ -534,9 +550,10 @@ homepage's call to action to the flag-off half (the row is exactly the two links
 before, and mentions the console nowhere), and `website/test/console-option.mjs` holds Getting
 Started to it in **both** states: the shipped one, read off the built page, and the released
 one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
-(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started sits at
-D188's 250-word ceiling — the owner's flip has to be the whole change and may not be the change
-that breaks the ceiling. A data file that says the console has shipped while the flag says it
+(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started was at the
+ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
+of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
+change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 
 **The flip, in the site's own data, is four values:** `site.yaml`'s

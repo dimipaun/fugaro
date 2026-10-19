@@ -32,8 +32,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 978,623 bytes where this repository's own clone, which carries the
-// tags, builds 977,108.
+// deployed site's — builds 980,771 bytes where this repository's own clone, which carries the
+// tags, builds 979,256.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -68,7 +68,7 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,223,279 bytes. Every file in `dist/` on that build summed to 978,623
+//   - Whole site: 1,225,964 bytes. Every file in `dist/` on that build summed to 980,771
 //     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
 //     `fugaro watch` assets); × 1.25, rounded up. **It is the build with no tags** — the one
 //     the gates make, and the one the deployed site is — and the changelog page's own "not yet
@@ -113,7 +113,7 @@
 //     homepage call to action's link to the console at 86. The page weight and the
 //     script did not move with it: the heaviest page is the docs hub, which renders no install
 //     option, no download and no hero.
-//   - **The homepage's prompt line** (the owner's brief of 2026-10-19, item 1) moved the site
+//   - **The homepage's prompt line** (the owner's feedback of 2026-10-19) moved the site
 //     figure alone, 977,921 → **978,623**, by **702 bytes**: the request the hero renders under
 //     the headline, the `>` mark in front of it and the two rules that draw it as the chat's own
 //     bubble, all of them in the homepage's inline stylesheet and its HTML. Nothing outside the
@@ -121,6 +121,12 @@
 //     module the two read the request from, and all three render on that one page — so the page
 //     weight and the script stand where they stood: the heaviest page is the docs hub, and the
 //     prompt line is not on it.
+//   - **The benefits** (the same feedback) moved the site figure alone again,
+//     978,623 → **980,771**, by **2,148 bytes**: `Benefits.astro`'s section, its four names and
+//     four lines, and the scoped rules that draw the grid, all of them in the homepage's inline
+//     stylesheet and its HTML. The page weight and the script stand where they stood — the
+//     heaviest page is the docs hub, and it carries no benefits — and the words the section
+//     costs the homepage are what moved the word ceiling, in the same commit.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -332,7 +338,7 @@ function textBetween(main, from, to) {
  * **Where the homepage stands today** (2026-10-19): its `h1` is the headline, its first `h2`
  * is the chat's own "Through your agent" — the chat is the first block under the promise
  * (review round 5) and its heading is inside it — and the region between the two headings is
- * the request the hero renders under the headline (the owner's brief of 2026-10-19, item 1),
+ * the request the hero renders under the headline (the owner's feedback of 2026-10-19),
  * the promise and its two calls to action: **23 words**, the number the built page measures.
  * Both readings agree here, because everything between the `h1` and that heading is inside
  * the hero's own section; they did not agree on the homepage of two rounds ago, when the
@@ -575,7 +581,7 @@ test('the README budget lines are read strictly', () => {
 // site was in before the console's release, which the checkout no longer builds — and runs the
 // artifact gates over that copy, so the flag's two states are both held to the ceilings. A
 // derivation held to that copy would be the flag's own bytes rather than the site's: measured on
-// this build, **1,572 bytes smaller** at the site figure — 977,051 against the 978,623 below — the
+// this build, **1,572 bytes smaller** at the site figure — 979,199 against the 980,771 below — the
 // console option's markup on the three pages that render it (the console page's downloads
 // 1,100, Getting Started's option 386 and the homepage's call to action 86), and
 // nothing at all at the page weight. The direction is the flag's own: turning
@@ -634,8 +640,8 @@ export function derivationFailures(readme, measured) {
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 978,623 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 977,108 with the tags this
+ * builds to two different site figures — 980,771 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 979,256 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation

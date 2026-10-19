@@ -1,11 +1,11 @@
 // website/src/lib/agent-request.mjs — the one line the site shows a reader typing at their
-// agent (website changes spec of 2026-10-18, item 3; the owner's brief of 2026-10-19, item 1).
+// agent (website changes spec of 2026-10-18, item 3; the owner's feedback of 2026-10-19).
 //
 // Two components render it, and they are the two places the site makes the same claim:
 //
 //   - the chat's first turn (`AgentChat.astro`), where it is what the reader says before the
 //     agent answers with the runs it launched (changes spec item 3), and
-//   - the hero's prompt line (`Hero.astro`), which is the owner's brief of 2026-10-19, item 1:
+//   - the hero's prompt line (`Hero.astro`), which is the owner's feedback of 2026-10-19:
 //     the home page has to say, in as few words as possible, that a reader drives Fugaro
 //     through the coding agent they already have — and the fewest words that say it are the
 //     line they type, with nothing around it.

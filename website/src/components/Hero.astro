@@ -1,7 +1,8 @@
 ---
 /**
  * website/src/components/Hero.astro — the hero (website plan, Task W1.4; changes spec of
- * 2026-10-18, items 2 and 4; the owner's brief of 2026-10-19, items 1 and 6).
+ * 2026-10-18, items 2 and 4; the owner's brief of 2026-10-19, item 6, and the owner's
+ * feedback of 2026-10-19).
  *
  * The first screen of the site, and the one place where a marketing site is most tempted to
  * write its own words. So it writes none:
@@ -15,8 +16,8 @@
  *      written for the page is the one nobody maintains (D102, Global Constraint 6). It is
  *      the promise under the headline, the site's default description and the cards' — one
  *      line in the README, three places on the site (changes spec item 2).
- *   3. **The prompt line is the request, and nothing else around it** (the owner's brief of
- *      2026-10-19, item 1). The brief: "the hero says in as few words as possible that you
+ *   3. **The prompt line is the request, and nothing else around it** (the owner's feedback of
+ *      2026-10-19). The owner's words: "the hero says in as few words as possible that you
  *      drive Fugaro through your coding agent, with the one prompt line `> Fan out these
  *      three bug fixes.` … as the centrepiece; cut every explanatory paragraph that repeats
  *      it." So the line sits directly under the headline, drawn as the chat's own bubble, and
@@ -77,7 +78,7 @@ const LEAD = site.subline
 // The prompt line: the request `src/lib/agent-request.mjs` holds, which is also the chat's
 // first turn below. Read from that module rather than typed here, because the hero's line and
 // the chat's first turn are one sentence, and the module is where the line is held to the
-// changes spec it is quoted from (the owner's brief of 2026-10-19, item 1; changes spec item
+// changes spec it is quoted from (the owner's feedback of 2026-10-19; changes spec item
 // 3; Global Constraint 6). `data-source` names that document, and
 // `website/test/home.mjs` reads the attribute and holds the line to it from outside the build.
 const PROMPT = REQUEST
@@ -96,7 +97,7 @@ const consoleExists = facts.features.consoleDownloads
 <section class="hero" aria-labelledby="hero-tagline">
   <h1 class="hero-tagline" id="hero-tagline">{tagline}</h1>
 
-  {/* The prompt line (the owner's brief of 2026-10-19, item 1): the one thing a reader does
+  {/* The prompt line (the owner's feedback of 2026-10-19): the one thing a reader does
       with Fugaro, in the words they say it in. It is the request the chat's first turn speaks,
       drawn as the chat's own bubble — a reader who scrolls on meets the same line inside the
       conversation — and the `>` in front of it is the prompt mark, `aria-hidden` because a
@@ -185,7 +186,7 @@ const consoleExists = facts.features.consoleDownloads
     color: var(--text);
   }
 
-  /* The prompt line (the owner's brief of 2026-10-19, item 1). It is drawn as the chat's own
+  /* The prompt line (the owner's feedback of 2026-10-19). It is drawn as the chat's own
      bubble — a bordered box on the ground, the radius and the border `.turn-body` in
      `AgentChat.astro` gives a turn — so the line a reader meets here is visibly the line the
      figure below shows them typing. `align-self: flex-start` is what makes it a message

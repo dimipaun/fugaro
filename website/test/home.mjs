@@ -612,6 +612,186 @@ test("the hero's subline is README.md's subline, byte for byte", () => {
 })
 
 /**
+ * README.md's `## Why Fugaro` reasons, as the section writes them: each `**N. Name.**`
+ * paragraph, as its name and the paragraph the reason is argued in. The paragraph comes back
+ * with the name because a benefit's line is held to **its own reason** and not to the
+ * section: the four are one section, so a line held to the section alone could be moved from
+ * the reason above it to the one below and still be a quotation.
+ */
+function readmeReasons() {
+  const out = []
+  for (const block of readmeSection('Why Fugaro').split(/\n{2,}/)) {
+    const match = /^\*\*\d+\.\s*(.+?)\.\*\*/.exec(block.trim())
+    if (match) out.push({ name: match[1], paragraph: block })
+  }
+  return out
+}
+
+/** The document the benefits section is quoted from, as the page and the component cite it. */
+const BENEFITS_SOURCE = 'README.md#Why Fugaro'
+
+/** A built page's benefits, as the elements it renders: the section's title and its items. */
+function benefitsOf(html) {
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  const doc = parse(html)
+  const sections = findAll(doc, (el) => el.name === 'section' && classes(el).includes('home-benefits'))
+  const out = { sections: sections.length, title: '', source: '', items: [] }
+  for (const section of sections) {
+    const inside = (root, selector) => {
+      const node = [...walk(root)].find((child) => classes(child).includes(selector))
+      return node ? decode(readableText(node)).replace(/\s+/g, ' ').trim() : ''
+    }
+    out.title = inside(section, 'benefits-title')
+    out.source = section.attrs.get('data-source') ?? ''
+    for (const item of walk(section)) {
+      if (item.name !== 'li' || !classes(item).includes('benefit')) continue
+      out.items.push({ name: inside(item, 'benefit-name'), line: inside(item, 'benefit-line') })
+    }
+  }
+  return out
+}
+
+/**
+ * Every failure of the benefits' rule, as the lines a reader of this file sees:
+ *
+ *   - **the page renders the README's reasons, all of them and in the README's order** — one
+ *     benefit per reason, named with the README's own name for it (the number off, which is
+ *     the README's device for counting and not part of the name). A reason the page drops is a
+ *     claim the README makes that the page does not, and the owner's feedback of 2026-10-19
+ *     asks for the section the README has rather than a selection from it;
+ *   - **every line is a sentence of the reason its own name names.** Held to the section alone
+ *     the four lines could be shuffled among the four reasons and each would still be a
+ *     quotation, while the page sold the reader the sentence about safety under the name about
+ *     models. Held to the reason's own paragraph, a line that moved stops the build (Global
+ *     Constraint 6, D102).
+ *
+ * Written as a function over a benefits section and the README's reasons so a fixture can
+ * prove it refuses.
+ */
+export function benefitFailures(benefits, reasons) {
+  const out = []
+  if (benefits.sections !== 1) {
+    return [`the page renders ${benefits.sections} benefits sections, and it renders one: the section is the README's four reasons and not a figure (the owner's feedback of 2026-10-19)`]
+  }
+  if (benefits.title !== 'Benefits') {
+    out.push(
+      `the benefits section is headed ${JSON.stringify(benefits.title)}, and the section a reader looks for is headed "Benefits": the heading is the site's own label for the block, the way "Install" is the install block's (the owner's feedback of 2026-10-19)`,
+    )
+  }
+  if (benefits.source !== BENEFITS_SOURCE) {
+    out.push(
+      `the benefits section cites ${JSON.stringify(benefits.source)}, and its names and lines are README.md's "## Why Fugaro" (Global Constraint 6)`,
+    )
+  }
+  if (benefits.items.length !== reasons.length) {
+    out.push(
+      `the page renders ${benefits.items.length} benefit(s) and README.md's "## Why Fugaro" argues ${reasons.length}: the section is the README's reasons, and one dropped is a claim the README makes that the page does not (the owner's feedback of 2026-10-19)`,
+    )
+  }
+
+  for (const [index, item] of benefits.items.entries()) {
+    const reason = reasons[index]
+    const where = `benefit ${index + 1} of the benefits`
+    if (reason === undefined) {
+      out.push(`${where}, ${JSON.stringify(item.name)}, has no reason to be: README.md's section argues ${reasons.length} and the page renders more (the owner's feedback of 2026-10-19)`)
+      continue
+    }
+    if (item.name !== reason.name) {
+      out.push(
+        `${where} is named ${JSON.stringify(item.name)}, and README.md names reason ${index + 1} ${JSON.stringify(reason.name)}: the page renders the README's reasons in the README's order, with the numbers off (the owner's feedback of 2026-10-19; Global Constraint 6)`,
+      )
+    }
+    if (!normalize(reason.paragraph).includes(normalize(item.line))) {
+      out.push(
+        `${where} carries the line ${JSON.stringify(item.line)}, which is not in README.md's reason ${index + 1}: every line of the benefits is a sentence of the reason its name names rather than one written for the page (the owner's feedback of 2026-10-19; Global Constraint 6)`,
+      )
+    }
+  }
+  return out
+}
+
+/** A page carrying nothing but a benefits section, for the refusals above. */
+function benefitsPage(items, { title = 'Benefits', source = BENEFITS_SOURCE, sections = 1 } = {}) {
+  const body = items
+    .map((item) => `<li class="benefit"><h3 class="benefit-name">${item.name}</h3><p class="benefit-line">${item.line}</p></li>`)
+    .join('')
+  const section = `<section class="home-benefits" aria-labelledby="benefits-title" data-source="${source}"><h2 class="benefits-title" id="benefits-title">${title}</h2><ul class="benefit-list">${body}</ul></section>`
+  return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1>${section.repeat(sections)}</main></body></html>`
+}
+
+test('the benefits are README.md\'s four reasons, each with a line of its own reason', () => {
+  // The owner's feedback of 2026-10-19: "we need a section with Benefits or somesuch as we
+  // have in the README, no?" So the section is the README's, read off the built page and held
+  // to the repository here: four reasons, the README's names for them in the README's order,
+  // and for each one a sentence out of the paragraph that reason is argued in. A section whose
+  // whole job is to persuade is the one place on a site where a sentence of the page's own
+  // would go unnoticed, which is why every line is read back against the document it came from
+  // rather than trusted to the component's own guard (Global Constraint 6, D102).
+  const reasons = readmeReasons()
+  assert.ok(reasons.length > 0, 'README.md\'s "## Why Fugaro" carries no reason this check can read, so the benefits were held to nothing')
+  assert.deepEqual(
+    benefitFailures(benefitsOf(builtPage('')), reasons),
+    [],
+    'the homepage\'s benefits are not the README\'s reasons',
+  )
+})
+
+test('the benefits refusals fire on a paraphrase, a shuffled line and a dropped reason', (t) => {
+  // Three defects, each planted alone beside the section that keeps the rule, so the gate is a
+  // gate rather than a description of today's markup: a line rewritten for the page, a line
+  // that moved from the reason above it to the one below, and a reason the page leaves out.
+  const reasons = readmeReasons()
+  const good = reasons.map((reason) => ({ name: reason.name, line: firstSentence(reason.paragraph) }))
+  assert.deepEqual(benefitFailures(benefitsOf(benefitsPage(good)), reasons), [], 'the fixture section is not the README\'s own, so the three refusals below prove nothing')
+
+  const paraphrased = good.map((item, index) => (index === 0 ? { ...item, line: 'Nothing runs on your laptop at all.' } : item))
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(paraphrased)), reasons).join('\n'),
+    /is not in README\.md's reason 1/,
+    'a benefit line written for the page is not refused',
+  )
+
+  const shuffled = good.map((item, index) => (index === 0 ? { ...item, line: good[1].line } : item))
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(shuffled)), reasons).join('\n'),
+    /is not in README\.md's reason 1/,
+    'a line moved from the reason above it to the one below is not refused',
+  )
+
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(good.slice(0, -1))), reasons).join('\n'),
+    /renders 3 benefit\(s\) and README\.md's "## Why Fugaro" argues 4/,
+    'a dropped reason is not refused',
+  )
+
+  const renamed = good.map((item, index) => (index === 0 ? { ...item, name: 'Safe' } : item))
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(renamed)), reasons).join('\n'),
+    /is named "Safe", and README\.md names reason 1/,
+    'a benefit renamed by the page is not refused',
+  )
+
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(good, { title: 'Why Fugaro' })), reasons).join('\n'),
+    /is headed "Why Fugaro"/,
+    'a section that lost its heading is not refused',
+  )
+
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(good, { source: 'README.md' })), reasons).join('\n'),
+    /cites "README\.md", and its names and lines are README\.md's "## Why Fugaro"/,
+    'a section that cites the whole README instead of the section is not refused',
+  )
+})
+
+/** The first sentence of a paragraph, for the fixture above: markdown markers taken out. */
+function firstSentence(paragraph) {
+  const text = paragraph.replace(/^\*\*[^*]+\*\*\s*/, '').trim()
+  const end = text.indexOf('. ')
+  return end === -1 ? text : text.slice(0, end + 1)
+}
+
+/**
  * The hero's prompt line, as the two facts about it this file reads: what it says, with the
  * prompt mark the page hides from a screen reader taken out (a reader reads the request, not
  * the mark in front of it), and the document its `data-source` cites. `null` when the hero
@@ -619,7 +799,7 @@ test("the hero's subline is README.md's subline, byte for byte", () => {
  */
 function heroPrompt(page) {
   const hero = findAll(parse(page), (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'))[0]
-  assert.ok(hero, "the homepage has no hero section, and the prompt line is the hero's own (the owner's brief of 2026-10-19, item 1)")
+  assert.ok(hero, "the homepage has no hero section, and the prompt line is the hero's own (the owner's feedback of 2026-10-19)")
   const prompt = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-prompt'))
   return prompt === undefined
     ? null
@@ -627,7 +807,7 @@ function heroPrompt(page) {
 }
 
 test("the hero's prompt line is the request, and the chat's first turn is the same sentence", () => {
-  // The owner's brief of 2026-10-19, item 1: the home page has to say, in as few words as
+  // The owner's feedback of 2026-10-19: the home page has to say, in as few words as
   // possible, that a reader drives Fugaro through the coding agent they already have, and the
   // fewest words are the request — "Maybe just the `> Fan out these three bug fixes.`". Two
   // facts are read off the built page, and the second is what makes the line a quotation
@@ -639,8 +819,8 @@ test("the hero's prompt line is the request, and the chat's first turn is the sa
   // reader asking for one thing and the agent answering about another.
   const page = builtPage('')
   const prompt = heroPrompt(page)
-  assert.ok(prompt, "the hero renders no prompt line, and the owner's brief of 2026-10-19 (item 1) puts the request under the headline as what the page is about")
-  assert.ok(prompt.text, "the hero's prompt line is empty: the page's whole statement about how a reader drives Fugaro is that line (the owner's brief of 2026-10-19, item 1)")
+  assert.ok(prompt, "the hero renders no prompt line, and the owner's feedback of 2026-10-19 puts the request under the headline as what the page is about")
+  assert.ok(prompt.text, "the hero's prompt line is empty: the page's whole statement about how a reader drives Fugaro is that line (the owner's feedback of 2026-10-19)")
   assert.ok(
     prompt.source,
     "the hero's prompt line cites no document, and every line on the site says which document it is quoted from (Global Constraint 6)",
@@ -655,7 +835,7 @@ test("the hero's prompt line is the request, and the chat's first turn is the sa
   assert.equal(
     prompt.text,
     turns[0].line,
-    `the hero's prompt line reads ${JSON.stringify(prompt.text)} and the chat's first turn reads ${JSON.stringify(turns[0].line)}: they are one sentence, so the reader is not shown one request under the headline and a different one in the conversation (the owner's brief of 2026-10-19, item 1)`,
+    `the hero's prompt line reads ${JSON.stringify(prompt.text)} and the chat's first turn reads ${JSON.stringify(turns[0].line)}: they are one sentence, so the reader is not shown one request under the headline and a different one in the conversation (the owner's feedback of 2026-10-19)`,
   )
   assert.equal(
     prompt.source,

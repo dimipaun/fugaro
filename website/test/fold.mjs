@@ -14,11 +14,11 @@
 //
 //   1. **The homepage's lead is the promise, its prompt line and its call to action, and
 //      nothing else.** Between the page's `h1` and its first `h2` there are exactly three
-//      elements: the prompt line the owner's brief of 2026-10-19 puts under the headline
+//      elements: the prompt line the owner's feedback of 2026-10-19 puts under the headline
 //      (item 1), the lead paragraph and the row of links under it. This is the shape P5 gave
 //      the hero, with the one thing the changes spec of 2026-10-18 adds to it (item 4: the
-//      promise, its primary call to action, then the picture) and the one thing the brief of
-//      2026-10-19 adds (item 1: the request, in the reader's own words, as the centrepiece of
+//      promise, its primary call to action, then the picture) and the one thing the feedback
+//      of 2026-10-19 adds (the request, in the reader's own words, as the centrepiece of
 //      what the page says about driving Fugaro through their agent) — so the promise and the
 //      one line it is made of are the whole of the prose a reader meets before the first
 //      heading, and so the lead ceiling in `budget.mjs` is a ceiling on the two of them rather
@@ -123,8 +123,8 @@ export function foldFailures(dist) {
         const owner = blockOf(els[firstH2], main)
         const lead = els.slice(h1 + 1, firstH2).filter((el) => !within(el, owner))
         const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : ''))
-        // What the lead region may hold: the promise, the prompt line the owner's brief of
-        // 2026-10-19 puts under the headline — with the `>` mark that draws it as something a
+        // What the lead region may hold: the promise, the prompt line the owner's feedback
+        // of 2026-10-19 puts under the headline — with the `>` mark that draws it as something a
         // reader types, which is a span inside that line rather than a second thing in the
         // region — the row of links under them, and the links in that row. Nothing else. A
         // `figure`, an `ol`, a `pre` or a section's own paragraph is what the refusal below is
@@ -133,7 +133,7 @@ export function foldFailures(dist) {
         const foreign = shape.filter((element) => !allowed.includes(element))
         if (foreign.length > 0) {
           out.push(
-            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape.join(', ')}), and ${JSON.stringify(foreign[0])} is not the promise, its prompt line or its call to action: the request the page is about, the lead paragraph and the links under them are the whole of the page's gist above the fold, so the diagram, the chat and the install block belong below it (changes spec 2026-10-18, item 4; the owner's brief of 2026-10-19, item 1; P5, D188)`,
+            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape.join(', ')}), and ${JSON.stringify(foreign[0])} is not the promise, its prompt line or its call to action: the request the page is about, the lead paragraph and the links under them are the whole of the page's gist above the fold, so the diagram, the chat and the install block belong below it (changes spec 2026-10-18, item 4; the owner's feedback of 2026-10-19; P5, D188)`,
           )
         }
         const promise = lead.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-lead'))
@@ -258,7 +258,7 @@ test('a page that drops the install section\'s own sentence is refused too', (t)
 
 test('the promise, its prompt line and its call to action above the fold are enough, and nothing else is', (t) => {
   // The shape the changes spec of 2026-10-18 asks for (item 4: the promise, its call to
-  // action, then the picture) with the one element the owner's brief of 2026-10-19 adds to it
+  // action, then the picture) with the one element the owner's feedback of 2026-10-19 adds to it
   // (item 1: the request, under the headline), on its own: the lead region holds the prompt
   // line, the promise and the row of links, the first `h2` opens the block below it — the
   // chat's own title, on the homepage as it now stands — and the gate passes it. The

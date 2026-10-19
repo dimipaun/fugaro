@@ -26,6 +26,7 @@ import Base from '../layouts/Base.astro'
 import Hero from '../components/Hero.astro'
 import ArchitectureDiagram from '../components/ArchitectureDiagram.astro'
 import AgentChat from '../components/AgentChat.astro'
+import Benefits from '../components/Benefits.astro'
 import HomeInstall from '../components/HomeInstall.astro'
 ---
 
@@ -40,6 +41,11 @@ import HomeInstall from '../components/HomeInstall.astro'
   <div class="home-flow">
     <ArchitectureDiagram />
   </div>
+  {/* The benefits, between what a run is and how to get one: the flow says what happens to a
+      task, and the README's four reasons are what a reader weighs before they install it
+      (the owner's feedback of 2026-10-19). `Benefits.astro` renders the section and its
+      heading itself, so it is its own landmark rather than a figure in a div. */}
+  <Benefits />
   <HomeInstall />
 </Base>
 
@@ -53,7 +59,8 @@ import HomeInstall from '../components/HomeInstall.astro'
      page between the last card and the "Install" heading, and `base-styles.mjs`'s
      `homeRhythmFailures` now refuses a pair of blocks that both pad one gap). */
   .home-chat,
-  .home-flow {
+  .home-flow,
+  .home-benefits {
     max-width: var(--page-max);
     margin: 0 auto;
     padding: 0 var(--space-md) var(--space-3xl);

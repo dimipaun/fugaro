@@ -1634,15 +1634,18 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
       plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)'),
       [/the gap between them is 144 px/],
     ],
-    // And the same edit on the page's own rule for the two figures, which is one rule for both
-    // of them: the chat's top padding over the hero's bottom one, and the flow's over the
-    // chat's — two pairs padded twice by the one declaration, and both refused. It is the same
-    // rule at every width, so it is refused at each of the three — which is what the count
-    // below holds this case and the one above to.
+    // And the same edit on the page's own rule for the three blocks it places, which is one
+    // rule for all of them: the chat's top padding over the hero's bottom one, the flow's over
+    // the chat's, and the benefits' over the flow's — three pairs padded twice by the one
+    // declaration, and all three refused. It is the same rule at every width, so it is refused
+    // at each of the three — which is what the count below holds this case and the one above
+    // to. **The three pairs are what says the rule covers every block the page places**: the
+    // benefits were added to the selector when the owner's feedback of 2026-10-19 asked for
+    // the section, and a block left out of it would pad its own gap and pass this case.
     [
       'the figures padding the gaps the blocks above them already pad',
       plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)', 'last'),
-      [/the gap between them is 64 px/, /the gap between them is 144 px/],
+      [/the gap between them is 64 px/, /\.home-chat ends with 112 px under it and \.home-flow opens with 32 px over it, so the gap between them is 144 px/, /\.home-flow ends with 112 px under it and \.home-benefits opens with 32 px over it, so the gap between them is 144 px/],
     ],
     // **The case the three widths are for.** The same doubled gap, written inside a rule that is
     // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
