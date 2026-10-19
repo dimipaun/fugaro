@@ -460,16 +460,16 @@ export function bundleRenderer(options: BundleOptions): void {
  *
  * **The list grows with the files, one entry per task, and the refusal below is
  * what forces that rather than tidiness.** A listed file that is missing is a
- * build failure, so a task that named all four files before the last two exist
+ * build failure, so a task that named a file another task has not created yet
  * would turn `npm run build` red the moment it merged. The list is therefore
- * introduced by the task that lands the first two files (Task 6.2, this step)
- * and each later task appends its own in the commit that creates it:
- * `base.css` in Task 6.3 and `screens.css` in Task 6.4.
+ * introduced by the task that lands the theme's first files (Task 6.2, this
+ * step) and each later task appends the file it creates, in the commit that
+ * creates it: every intermediate state is a real build of the files that exist.
  *
  * It is `readonly` and frozen, and it is the list the tests read rather than a
  * second copy of it: `test/unit/bundle.test.ts` checks `console.css` against
- * *this list*, so the case is true here with two files in it and stays true when
- * 6.3 and 6.4 append theirs.
+ * *this list*, so the case is true of the directory as it stands and stays true
+ * as each task appends its file.
  */
 export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
   'tokens.css',
