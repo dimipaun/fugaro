@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **930,616 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **930,545 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **929,101 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **929,030 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -259,7 +259,7 @@ added or removed without this sentence moving fails there:
     what D189 asks of every long page and what the first cut of this page did not do:
     re-deriving it from `SECURITY.md`'s own section moved the page from 17,722 to **18,183
     bytes**, and the page is **47,307 bytes** below the 65,490 it was, so the site figure falls
-    977,921 → **930,614**. The next bullet names the other 2 bytes of this build's figure. The
+    977,921 → **930,614**. The bullets after it name the rest of this build's figure. The
     page weight and the script did not move: the page renders neither the script's behaviour nor
     the docs hub, which is still the heaviest page.
   - **The new spacing gate found a row glued together** (`test/spacing.mjs`, added by the same
@@ -270,7 +270,17 @@ added or removed without this sentence moving fails there:
     .dmga434f3…". The space is written into the component now, one byte for each of the two
     assets, and the site figure is 930,614 → **930,616**. The gate reads every built page and
     takes a class the page's own stylesheet lays out as a block — the docs hub's `.path` — as a
-    boundary a reader sees, so the six seams the hub makes on purpose are not refused.
+    boundary a reader sees, so the seams the hub makes on purpose are not refused; the count is
+    the gate's, measured on the artifact rather than written here.
+  - **A cross-reference the document has no heading for renders as its own text** (the same
+    review round). Every cross-reference in `SECURITY.md`'s "In short" is rewritten to a link
+    into the document at the section it names, and one of them — `[Money](#money)` — names a
+    bold lead in a bullet rather than a heading. Rendered as a link it read like every other
+    cross-reference on the page and landed at the top of the file, a section away from what it
+    named, so the page now renders that one as plain text: **71 bytes off the security page**,
+    18,183 → **18,112**, and off the site figure, 930,616 → **930,545**. The page weight and the
+    script did not move: the page changes no file every page loads, and the docs hub is still the
+    heaviest page.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -297,7 +307,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,489,810 bytes. Three times 1,163,270 (every file in `dist/`, 930,616
+  - **Whole site:** 3,489,546 bytes. Three times 1,163,182 (every file in `dist/`, 930,545
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 

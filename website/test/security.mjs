@@ -274,14 +274,17 @@ function documentAnchors(document) {
 /**
  * Where the page sends a reader for one of the document's own links: the target as the document
  * writes it, with a fragment resolved against the document in the repository. A fragment the
- * document does not carry a heading for resolves to the document itself, which is the one
- * `SECURITY.md` ships — `[Money](#money)` names a bullet in the "In short" list and not a
- * heading, so GitHub scrolls nowhere and the page points at the document instead.
+ * document does not carry a heading for has **no target at all** (`null`) — the page renders
+ * that reference as its own text, because every link it could build for it would lie: the
+ * fragment as written goes nowhere, and the document's own URL lands the reader at the top of
+ * the file under a link that reads like all the others. `SECURITY.md` ships one —
+ * `[Money](#money)`, whose target is a bold lead in a bullet under "Known limits" and not a
+ * heading.
  */
 function resolvedTarget(raw, anchors, base) {
   if (!raw.startsWith('#')) return raw
   const fragment = raw.slice(1)
-  return anchors.has(fragment) ? `${base}#${fragment}` : base
+  return anchors.has(fragment) ? `${base}#${fragment}` : null
 }
 
 /**
@@ -298,19 +301,36 @@ function resolvedTarget(raw, anchors, base) {
  *
  * Both halves are held here: the anchor is the document's own link, text and order, and its
  * href is that link's target resolved against the document's URL in the repository — the same
- * resolution the page makes, because both sides go through the same slug module.
+ * resolution the page makes, because both sides go through the same slug module. And a
+ * reference the document has no heading for is held to the opposite: it is **not** a link on
+ * the page, because the only link the page could build for it would send a reader to the top
+ * of the file under a word that promises a section (round 4's fourth finding).
  */
 function checkLinks(region, { document, heading, kind, fail, what }) {
   const base = `${repository()}/blob/main/${SOURCE}`
   const anchors = documentAnchors(document)
-  const expected = blocksOf(document, heading, kind)
+  const resolved = blocksOf(document, heading, kind)
     .flatMap(linksOf)
-    .map((link) => ({ text: link.text, href: resolvedTarget(link.target, anchors, base) }))
+    .map((link) => ({ text: link.text, target: link.target, href: resolvedTarget(link.target, anchors, base) }))
+  // The references the document writes that name no heading of it: expected as the text the
+  // word-for-word comparison already holds, and expected to be nothing but that text.
+  const unlinkable = resolved.filter((link) => link.href === null)
+  const expected = resolved.filter((link) => link.href !== null)
   const rendered = findAll(region, 'a')
+
+  for (const node of rendered) {
+    const seen = prose(text(node))
+    const reference = unlinkable.find((link) => prose(link.text) === seen)
+    if (reference !== undefined) {
+      fail(
+        `the ${what} renders ${JSON.stringify(seen)} as a link, and ${SOURCE} writes it as a cross-reference to a section the document has no heading for (${JSON.stringify(reference.target)}): the page renders such a reference as its own text and not as a link, because the fragment it names answers nothing and the document's own URL would land the reader at the top of the file (round 4 of the review)`,
+      )
+    }
+  }
 
   if (rendered.length !== expected.length) {
     fail(
-      `the ${what} carries ${rendered.length} links and ${SOURCE}'s "${heading}" section writes ${expected.length}: the links on the page are the document's own cross-references, and a link added or lost here is one the document does not carry (the owner's brief of 2026-10-19)`,
+      `the ${what} carries ${rendered.length} links where ${SOURCE}'s "${heading}" section writes ${expected.length}${unlinkable.length === 0 ? '' : `, the other ${unlinkable.length} of its references naming no heading and so rendering as text`}: the links on the page are the document's own cross-references, and a link added or lost here is one the document does not carry (the owner's brief of 2026-10-19)`,
     )
     return
   }
@@ -622,6 +642,33 @@ test('the gate refuses each planted defect', (t) => {
     verdict(t, retargeted).join('\n'),
     /points at "https:\/\/github\.com\/[^"]*SECURITY\.md#scope" and not "[^"]*SECURITY\.md#known-limits"/,
     'a cross-reference aimed at another heading is not refused',
+  )
+
+  // The one cross-reference the document has no heading for, rendered as a link anyway: the
+  // word reads like every other cross-reference on the page and the link lands at the top of
+  // the file, a section away from what it names (round 4, finding 4).
+  const moneyLinked = planted(
+    html,
+    /, Money\)/,
+    ', <a href="https://github.com/dimipaun/fugaro/blob/main/SECURITY.md">Money</a>)',
+  )
+  assert.match(
+    verdict(t, moneyLinked).join('\n'),
+    /renders "Money" as a link/,
+    'a cross-reference the document has no heading for is rendered as a link, which promises a section the link cannot reach',
+  )
+
+  // And the mirror: a cross-reference the document *does* have a heading for, rendered as bare
+  // text — the link the reader came for is gone, and the words are unchanged.
+  const scopeUnlinked = planted(
+    html,
+    /<a href="https:\/\/github\.com\/dimipaun\/fugaro\/blob\/main\/SECURITY\.md#scope">Scope<\/a>/,
+    'Scope',
+  )
+  assert.match(
+    verdict(t, scopeUnlinked).join('\n'),
+    /carries 5 links where SECURITY\.md's "In short" section writes 6/,
+    'a cross-reference with its link dropped is not refused',
   )
 
   // A reworded summary bullet: the one edit a page that renders a file is always tempted by.
