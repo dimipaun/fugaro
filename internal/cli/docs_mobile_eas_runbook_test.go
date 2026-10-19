@@ -33,9 +33,11 @@ package cli
 //     cannot pass for a clean page.
 //
 // Two more tests hold the edges this runbook must not get wrong: the bundle
-// identity tension it records rather than resolves (P3.1's config test and
-// Check 89's guard want opposite things of mobile/app.json, and both are on the
-// tree), and the directory's own index, which is where a reader finds it.
+// identity tension it records -- P3.1's config test keeps the release identity
+// out of mobile/app.json and Check 89's guard reads the identity out of the
+// config a build resolves, which P4.4's own files settled (PR #675) by moving
+// the read to mobile/app.config.js rather than by amending either fence -- and
+// the directory's own index, which is where a reader finds it.
 //
 // Four tests hold what the page says about **Check 89** to the check. Three of
 // them read what the page claims and refuse the shapes the check does not have:
@@ -64,7 +66,12 @@ package cli
 // placement for the one secret CI may hold, because a repository secret and an
 // environment secret are different fences; and
 // TestDocsMobileEasRunbookSaysP4Dot3IsStagedNotRunning reads ci.yml, so the day
-// the owner copies P4.3's job in, the page has to stop calling it staged.
+// the owner copies P4.3's job in, the page has to stop calling it staged; and
+// TestDocsMobileEasRunbookMatchesTheEasFilesItDescribes reads P4.4's own two
+// files -- mobile/eas.json and mobile/app.config.js, PR #675 -- so §8's profile
+// table, its submit track and its two variable names are held to the files
+// rather than to themselves. (That one skips where the files are not yet in the
+// tree, for the same reason the register comparison does.)
 //
 // Every check above is mutation-proven -- the bug was planted, the run went
 // red, the bug was removed. The mutations, in the order they were run, each
@@ -122,8 +129,18 @@ package cli
 //	| §8's "the first place Check 89's guard turns a wrong value into a stop" restored | TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead |
 //	| §8's register quotation dropped | TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead |
 //	| §8's "the guard does not read this value" dropped | TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead |
+//	| §14's heading put back to "Recorded tensions, not resolved here" (the two it records are settled now, and the heading says so) | TestDocsMobileEasRunbookRecordsTheBundleIdentityTension |
+//	| §14's contents link put back to the old heading's anchor | TestDocsMobileEasRunbookRecordsTheBundleIdentityTension |
+//	| "the owner rules" dropped from §14's opening | TestDocsMobileEasRunbookRecordsTheBundleIdentityTension |
+//	| the register's note about the missing interpreter dropped from §3 | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
+//	| "traceback" planted in the store-identity paragraph (§3), with the register's note left where it is | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
+//	| §14's Tension 2 quotation of the guard's mobile/eas.json stop reworded, with the register's Check 89 in the tree | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| §14's Tension 1 quotation of the store-identity stop reworded, with the register's Check 89 in the tree | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| §14's Tension 1 quotation of the store-identity stop dropped entirely, with the register's Check 89 in the tree | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| main's mobile/eas.json and mobile/app.config.js copied into the tree for the run (then removed), and each of these planted in the copy: `internal`'s `distribution` changed to `internal`; the submit track changed to `production`; `autoIncrement` moved off `internal` onto `preview`; a profile's `environment` renamed; the iOS submit entry filled with a key; `FUGARO_IOS_BUNDLE_ID` renamed in the config | TestDocsMobileEasRunbookMatchesTheEasFilesItDescribes |
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -654,11 +671,15 @@ func TestDocsMobileEasRunbookQuotesCheck89sGuardStops(t *testing.T) {
 			t.Errorf("%s quotes %q, which is not a stop message in the register's Check 89 section: a quotation the register does not carry is this page's own words", mobileEasRunbook, q)
 		}
 	}
-	// And the two stops the page's Tension 1 turns on are among the register's
-	// own sentences, found in the register by what they are about rather than
-	// repeated here: the store identity the guard reads out of app.json, and the
-	// mobile/eas.json file P4.4 adds.
-	for _, marker := range []string{"android.package", "mobile/eas.json"} {
+	// And the two stops the page's Tension 1 and Tension 2 turn on are among the
+	// register's own sentences, found in the register by what they are about
+	// rather than repeated here: the store identity the guard reads out of the
+	// config `mobile/app.config.js` resolves, and the `mobile/eas.json` file
+	// P4.4 adds. The marker for the first is the phrase that is unique to that
+	// stop -- the guard's earlier python line mentions `android.package` too, in
+	// the message for a config that is not a config, and that is a different
+	// stop from the one Tension 1 quotes.
+	for _, marker := range []string{"the config resolved through app.config.js", "mobile/eas.json"} {
 		want := firstCheck89Stop(t, register, marker)
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s does not quote the register's own stop %q: the page describes the stop as the check makes it, in the check's own words", mobileEasRunbook, want)
@@ -704,8 +725,24 @@ func TestDocsMobileEasRunbookPointsAtTheCheckItQuotes(t *testing.T) {
 // message. A page that promised a traceback would send an owner looking for a
 // bug in P4.2a's guard where there is a stop, and the stop's message is the
 // thing to record.
+//
+// The word "traceback" is refused wherever the page is not quoting the
+// register's own note about the *missing interpreter* -- the comment above the
+// guard's `node` test, which says a missing interpreter would be "a traceback,
+// not the sentence this guard promises", and which is why that test is there at
+// all. That note is about a stop the guard *prevents*, not about one it takes,
+// and §3 quotes it verbatim; so the ban is on the crash claim, not on the word:
+// the quotation is subtracted from the page and the bare word refused in what is
+// left. A page that used it of the store-identity line -- the sentence this test
+// exists for -- still fails, and so does one that dropped the register's note
+// for the word alone.
 func TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError(t *testing.T) {
+	const interpreterNote = "a FileNotFoundError -- a traceback, not the sentence this guard promises"
 	doc := runbook(t)
+	if !strings.Contains(doc, interpreterNote) {
+		t.Errorf("%s no longer quotes the register's own note about the missing interpreter (%q): §3 says why the guard tests for `node`, and the reason is that note", mobileEasRunbook, interpreterNote)
+	}
+	rest := strings.ReplaceAll(doc, interpreterNote, "")
 	for _, banned := range []string{
 		"KeyError",
 		"traceback",
@@ -713,7 +750,7 @@ func TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError(t *testing.T) {
 		`d["android"]["package"]`,
 		"dies with a traceback",
 	} {
-		if strings.Contains(doc, banned) {
+		if strings.Contains(rest, banned) {
 			t.Errorf("%s says %q: Check 89's guard reads the two identity fields with .get() and stops with its own message, so there is no crash to describe", mobileEasRunbook, banned)
 		}
 	}
@@ -750,6 +787,164 @@ func TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead(t *testing.T) {
 			t.Errorf("§8 does not say %q: the profile reads are step 1's and the stop on them is the owner's, and §8 is where a reader deciding what to write in eas.json meets that", want)
 		}
 	}
+}
+
+// TestDocsMobileEasRunbookMatchesTheEasFilesItDescribes reads P4.4's own two
+// files -- mobile/eas.json and mobile/app.config.js, merged as PR #675 -- and
+// holds §8 to them. §8 is the page's account of the profiles, the environments
+// and the identities, and it claims the files as its authority: the three
+// profile names, which of them is the store profile, its submit track, the two
+// `cli` settings, which profile may increment its build number, the EAS
+// environment each profile reads, and the two variable names the dynamic config
+// resolves. Every one of those is read out of the file here, not repeated from
+// the page, so an edit to either file that the page does not follow fails here
+// rather than at the store.
+//
+// This branch merged main before #675 landed, so the files are not in this
+// tree and the test skips with that reason rather than passing quietly -- the
+// same shape as check89RegisterStops, one file over. The moment they are in the
+// tree, the same test compares.
+func TestDocsMobileEasRunbookMatchesTheEasFilesItDescribes(t *testing.T) {
+	const (
+		easJSON    = "mobile/eas.json"
+		appConfig  = "mobile/app.config.js"
+		skipReason = "%s is not in this tree: P4.4's own files land with PR #675, which main carries and this branch merged before, so there is nothing here to hold §8 to -- this test compares them as soon as the files are in the tree"
+	)
+	for _, path := range []string{easJSON, appConfig} {
+		if _, err := os.Stat(filepath.Join("..", "..", path)); err != nil {
+			t.Skipf(skipReason, path)
+		}
+	}
+	var eas struct {
+		Cli struct {
+			AppVersionSource string `json:"appVersionSource"`
+			RequireCommit    bool   `json:"requireCommit"`
+		} `json:"cli"`
+		Build map[string]struct {
+			Distribution  string `json:"distribution"`
+			AutoIncrement bool   `json:"autoIncrement"`
+			Environment   string `json:"environment"`
+		} `json:"build"`
+		Submit map[string]struct {
+			IOS     *map[string]any `json:"ios"`
+			Android struct {
+				Track string `json:"track"`
+			} `json:"android"`
+		} `json:"submit"`
+	}
+	if err := json.Unmarshal([]byte(readDoc(t, easJSON)), &eas); err != nil {
+		t.Fatalf("%s is not valid JSON: %v -- §8 describes this file, so a file this test cannot read is not one the page agrees with", easJSON, err)
+	}
+	raw := readDoc(t, mobileEasRunbook)
+	section := sectionText(raw, "## 8. ", "## 9. ")
+	if section == "" {
+		t.Fatal("§8 was renamed: this test reads the section between \"## 8. \" and \"## 9. \", and it has to be repointed at it")
+	}
+
+	// The three profile names, and only them: §8's table is one row each, and a
+	// profile added to the file is a row the page is missing.
+	if len(eas.Build) != 3 {
+		t.Errorf("%s has %d build profiles (%v), want the three §8 describes", easJSON, len(eas.Build), sortedKeys(eas.Build))
+	}
+	for _, name := range []string{"development", "preview", "internal"} {
+		profile, ok := eas.Build[name]
+		if !ok {
+			t.Errorf("%s has no %q build profile: §8's table names it as one of the three", easJSON, name)
+			continue
+		}
+		for _, want := range []string{fmt.Sprintf("| **`%s`** |", name), fmt.Sprintf("environment: %q", profile.Environment)} {
+			if !strings.Contains(section, want) {
+				t.Errorf("§8 does not say %q: the profile table is the page's account of %s, read off the file", want, easJSON)
+			}
+		}
+	}
+
+	// The store profile, which is the one Check 89 builds and submits with: the
+	// distribution, the build number and the submit track are the three values
+	// that decide whether a mistake is a failed build or a public release.
+	internal, ok := eas.Build["internal"]
+	if !ok {
+		t.Fatalf("%s has no `internal` build profile: Check 89's step 1 reads it by that name, so the file and the check have to agree", easJSON)
+	}
+	if internal.Distribution != "store" {
+		t.Errorf("%s's `internal` profile has distribution %q: §8 says the store profile's distribution is \"store\", and an `internal`-distribution profile reaches no store at all", easJSON, internal.Distribution)
+	}
+	if !internal.AutoIncrement {
+		t.Errorf("%s's `internal` profile does not set autoIncrement: §8 says the store profile is the one that raises EAS's build number, because a second internal build and submit would otherwise be refused by both stores", easJSON)
+	}
+	for name, profile := range eas.Build {
+		if name != "internal" && profile.AutoIncrement {
+			t.Errorf("%s's %q profile sets autoIncrement: §8 says it is on `internal` alone, because the other two spend this release's build numbers on artifacts nobody submits", easJSON, name)
+		}
+		if name != "internal" && profile.Distribution == "store" {
+			t.Errorf("%s's %q profile has distribution \"store\": §8 says only `internal` is the store profile", easJSON, name)
+		}
+	}
+	if eas.Cli.AppVersionSource != "remote" {
+		t.Errorf("%s sets cli.appVersionSource to %q: §8's account of autoIncrement rests on it being \"remote\"", easJSON, eas.Cli.AppVersionSource)
+	}
+	if !eas.Cli.RequireCommit {
+		t.Errorf("%s does not set cli.requireCommit: §8 says it is what makes a store build record the commit step 2 compares with $SHA", easJSON)
+	}
+	for _, want := range []string{
+		`distribution: "store"`,
+		"`cli.requireCommit: true`",
+		"`cli.appVersionSource` is `\"remote\"`",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("§8 does not say %q: that is what %s has, and the page claims the file as its authority", want, easJSON)
+		}
+	}
+
+	// The submit side: one submit profile, on the internal track, with the iOS
+	// entry present and naming nothing (EAS prompts for the app at submit time).
+	if len(eas.Submit) != 1 {
+		t.Errorf("%s has %d submit profiles (%v): §8 says `internal` is the one, and `preview` has no submit section at all", easJSON, len(eas.Submit), sortedKeys(eas.Submit))
+	}
+	submit, ok := eas.Submit["internal"]
+	if !ok {
+		t.Fatalf("%s has no `internal` submit profile: Check 89's step 1 reads submit.internal.android.track", easJSON)
+	}
+	if submit.Android.Track != "internal" {
+		t.Errorf("%s submits `internal` builds to track %q: C8's whole content is that this value is `internal`", easJSON, submit.Android.Track)
+	}
+	if submit.IOS == nil {
+		t.Errorf("%s's `internal` submit profile has no `ios` entry: §8 says the entry exists and names nothing", easJSON)
+	} else if len(*submit.IOS) != 0 {
+		t.Errorf("%s's `internal` submit profile's `ios` entry names %d key(s): §8 says it exists and names nothing, so EAS is the one that asks for the app", easJSON, len(*submit.IOS))
+	}
+	for _, want := range []string{
+		"`submit.internal.android.track`",
+		"`\"ios\": {}`",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("§8 does not say %q: that is what %s has", want, easJSON)
+		}
+	}
+
+	// And the two names the dynamic config resolves, so the page's two exports
+	// and the file's two variables are the same two names.
+	config := readDoc(t, appConfig)
+	for _, variable := range []string{"FUGARO_IOS_BUNDLE_ID", "FUGARO_ANDROID_PACKAGE"} {
+		if !strings.Contains(config, variable) {
+			t.Errorf("%s does not name %q: §8 says the store identity reaches a build through this file's two variables", appConfig, variable)
+		}
+		if !strings.Contains(section, variable) {
+			t.Errorf("§8 does not name %q, the variable %s resolves", variable, appConfig)
+		}
+	}
+}
+
+// sortedKeys renders a map's keys sorted, for an error message about a file this
+// test read: the reader of a failure should not have to open the file to learn
+// what was in it.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // sectionText returns the page's text from the line beginning with from up to
@@ -1053,22 +1248,24 @@ func TestDocsMobileEasRunbookDoesNotRestateCheck89(t *testing.T) {
 	}
 }
 
-// TestDocsMobileEasRunbookRecordsTheBundleIdentityTension asserts the one
-// mismatch an owner will meet first is recorded rather than papered over.
-// mobile/src/app-config.test.js (P3.1, on main) asserts mobile/app.json carries
-// no bundle identifier and no Android package; the guard block of Check 89
-// (P4.2a, PR #580) reads both fields out of that same file. Both are on the
-// tree, neither is wrong on its own, and this runbook does not get to decide
-// which is amended -- so it must say so, name both files, and say the owner
-// rules.
+// TestDocsMobileEasRunbookRecordsTheBundleIdentityTension asserts the mismatch
+// an owner would otherwise meet as a surprise is recorded rather than papered
+// over: mobile/src/app-config.test.js (P3.1, on main) asserts mobile/app.json
+// carries no bundle identifier and no Android package, while the guard block of
+// Check 89 (P4.2a, PR #580) reads the identity out of the config a build
+// resolves. The page has to name both sides and say whose the ruling is. It
+// records the settlement too -- P4.4's own files (PR #675) keep P3.1's fence and
+// move the read to mobile/app.config.js -- so this test reads §14's heading,
+// which says the section is about how each tension was settled, and not the
+// earlier "not resolved here" one.
 func TestDocsMobileEasRunbookRecordsTheBundleIdentityTension(t *testing.T) {
 	doc := runbook(t)
 	for _, want := range []string{
-		"Recorded tensions, not resolved here",
 		"app-config.test.js",
 		"bundleIdentifier",
 		"android.package",
 		"the owner rules",
+		"#675",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s does not record %q", mobileEasRunbook, want)
@@ -1076,6 +1273,19 @@ func TestDocsMobileEasRunbookRecordsTheBundleIdentityTension(t *testing.T) {
 	}
 	if !strings.Contains(doc, "mobile/app.json") {
 		t.Errorf("%s records the identity tension without naming the file both sides read", mobileEasRunbook)
+	}
+	// The heading itself, and the contents link that points at it, read as lines
+	// rather than as prose: the sentence appears twice on the page, so a check
+	// that only looked for the words would stay green with the heading put back
+	// to the earlier "not resolved here" and the link left corrected.
+	raw := readDoc(t, mobileEasRunbook)
+	for _, line := range []string{
+		"\n## 14. Recorded tensions, and how each was settled\n",
+		"(#14-recorded-tensions-and-how-each-was-settled)",
+	} {
+		if !strings.Contains(raw, line) {
+			t.Errorf("%s has no %q: §14 records the two tensions that *are* settled now -- P4.4's own files closed the identity one (PR #675) -- and both the heading and the contents link have to say so", mobileEasRunbook, strings.TrimSpace(line))
+		}
 	}
 }
 

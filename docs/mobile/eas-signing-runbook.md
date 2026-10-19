@@ -28,9 +28,10 @@ P4.4's own line reads *"Files. None in this repository. **Owner-run.** **Depends
 on.** P3.1, P4.2a (check 89's text must be in the register before it is run).
 **Verification.** Check 89: a signed build reaches the store's internal track."* This document is the runbook for that verification; it is prose, and no
 repository file participates in the run. (One exception is recorded under
-[Recorded tensions, not resolved here](#14-recorded-tensions-not-resolved-here):
+[Recorded tensions, and how each was settled](#14-recorded-tensions-and-how-each-was-settled):
 `mobile/eas.json`, which Check 89's guard block attributes to P4.4 while the
-plan's `Files` line says none.)
+plan's `Files` line says none — P4.4's files landed in a change of their own,
+**PR #675**, and §8 is this page's account of them.)
 
 ---
 
@@ -73,8 +74,16 @@ register):**
   released on the stores' cadence);
 - the check's own guard block, its file names and its stop conditions, from the
   register's Check 89 text, including `mobile/app.json`, `mobile/eas.json`,
-  `git describe --tags --exact-match`, `eas whoami`, `eas project:info`,
-  `distribution: store` and `submit.internal.android.track`;
+  `mobile/app.config.js`, `node`, `git describe --tags --exact-match`,
+  `eas whoami`, `eas project:info`, `distribution: store`,
+  `submit.internal.android.track` and the two identity variables the guard
+  exports;
+- **P4.4's own two files, read off the tree rather than off this page**:
+  `mobile/eas.json` (the three profiles, `cli.requireCommit`,
+  `cli.appVersionSource` and the submit track) and `mobile/app.config.js` (the
+  two variable names, the two patterns and what it refuses), both merged as
+  **PR #675** — §8 is this page's account of them, and where they differ the
+  files win;
 - the decision that the internal track and no public release is what is being
   proved: **C8**;
 - what the app may hold, which is **not** a store credential: **D111** (exactly
@@ -106,14 +115,30 @@ transcript of a console anybody in this repository has seen.
 **Check 89 owns this step and this runbook does not repeat it.** The register's
 guard block **is** the precondition: run it, from the checkout you intend to
 build from, and re-run it **before every step** of the check. It stops unless
-`eas` is on your `PATH`, unless it is inside a git checkout, unless
-`mobile/app.json` and `mobile/eas.json` are both present, unless `HEAD` is
-exactly a tag (`git describe --tags --exact-match`), unless the working tree is
-clean — because a store build records the commit it was made from, and a build
-from a dirty tree is not the artifact the release is — and unless `mobile/app.json`
-carries the **store identity**, `ios.bundleIdentifier` and `android.package`:
-that last one is a stop of the guard's own, taken by its python line, and it is
-what §14's Tension 1 is about.
+`eas` is on your `PATH`, unless **`node`** is on your `PATH` — the guard reads
+the store identity by running `mobile/app.config.js` through it, and the
+register says why that test is there: a missing interpreter is *"a
+FileNotFoundError -- a traceback, not the sentence this guard promises"* —
+unless it is inside a git checkout, unless `mobile/app.json`,
+`mobile/eas.json` **and `mobile/app.config.js`** are all present, unless `HEAD`
+is exactly a tag (`git describe --tags --exact-match`), unless the working tree
+is clean — because a store build records the commit it was made from, and a
+build from a dirty tree is not the artifact the release is — and unless the
+**store identity resolves**: the guard reads `FUGARO_IOS_BUNDLE_ID` and
+`FUGARO_ANDROID_PACKAGE` out of your shell, resolves `mobile/app.config.js`
+with them, and stops with that file's own reason when they are unset or
+malformed — and if the resolved config still carries no `ios.bundleIdentifier`
+and no `android.package`, that is the guard's **store identity** stop: there is
+nothing to submit a build under, and it says so in its own words rather than
+failing later.
+
+**The identity is not in `mobile/app.json`, and never will be.** P3.1's
+boundary test refuses a release identity in the committed config, and D125
+makes the identity the owner's; it reaches a build from the two environment
+variables through `mobile/app.config.js`, the dynamic config the build is
+actually made from. §8 says where the two values are set, §14's Tension 1
+records how that was settled, and **§3's third bullet below is the one thing
+this page adds to the guard**: exporting them before you run it.
 
 What this page adds is only the shape of the shell's prerequisites, so the guard
 can pass its own first checks:
@@ -121,18 +146,26 @@ can pass its own first checks:
 - **a Node and npm you control** — `mobile/package.json` pins `engines` to
   `node >=22 <23` and `npm >=10`, and the same manifest's `test` script is the
   whole of the app's verified surface today (see
-  [mobile/README.md](../../mobile/README.md));
+  [mobile/README.md](../../mobile/README.md)). The guard needs `node` itself,
+  for the reason above: the `eas-cli` you install with npm brings one;
 - **the EAS CLI**, installed by you: `npm i -g eas-cli` (or `npx eas-cli@latest`
   if you prefer not to install it globally), then `eas login` **as yourself**.
   `eas whoami` must print **your** Expo account — the guard's own first line
   (`command -v eas`, which stops when the CLI is not on your `PATH`) and Check
   89's step 1 (`eas whoami`, which reads the account) both start there;
 - **a checkout at a tag**, fetched with `git fetch --tags`, with nothing
-  uncommitted.
+  uncommitted;
+- **the two identities, exported in the shell you run the guard from** —
+  `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE`, one public reverse-DNS
+  name each (§8). `eas-cli` resolves `mobile/app.config.js` **locally**, before
+  it uploads anything, and the guard block reads the same two variables, so
+  exporting them once is what lets both pass. §8 has the commands; the values
+  are public identifiers and are **never pasted back** (§11).
 
-**FACT for §3 (owner):** the tag `git describe --tags --exact-match` printed, and
-the output of `eas whoami`. The tag comes back in §11 with the build's
-`gitCommitHash`.
+**FACT for §3 (owner):** the tag `git describe --tags --exact-match` printed, the
+output of `eas whoami`, and **that both identity variables were exported** (the
+names, never the values, and never a credential). The tag comes back in §11 with
+the build's `gitCommitHash`.
 
 ---
 
@@ -366,13 +399,25 @@ value.**
 
 ---
 
-## 8. `mobile/eas.json` — the profiles Check 89 reads
+## 8. `mobile/eas.json` and `mobile/app.config.js` — the profiles, the environments and the identities
 
-The register's guard block refuses to start without **`mobile/eas.json`**, and
-Check 89's step 1 reads the profile **before** using it, because the profile is
-where a mistake becomes a public release rather than a failed build. Those reads
-are the check's, and this page does not restate them; what this page settles is
-**what the values have to be**, so the owner can write the profile once:
+**Both files are in the tree, and both are P4.4's** (PR **#675**): `eas.json`
+carries the build and submit profiles, and `app.config.js` is the dynamic config
+the store identity reaches a build through. The register's guard block refuses
+to start without **`mobile/eas.json`** and **`mobile/app.config.js`**, and Check
+89's step 1 reads the profile **before** using it, because the profile is where
+a mistake becomes a public release rather than a failed build. Those reads are
+the check's, and this page does not restate them; what this page settles is
+**what the values have to be**:
+
+**The three build profiles, as `mobile/eas.json` has them.** Only the first
+reaches a store:
+
+| Profile | What it is | Reaches a store? |
+|---|---|---|
+| **`internal`** | **the store profile, and the one Check 89 uses**: `distribution: "store"`, an Android `app-bundle` (Play's app-signing path), `autoIncrement: true`, `environment: "production"` | **yes** — this is the profile of steps 2 and 3 |
+| **`preview`** | an **internal-distribution** build (`distribution: "internal"`), `environment: "preview"`, and **no `submit` section at all** | no |
+| **`development`** | a **dev client** (`developmentClient: true`) on internal distribution, `environment: "development"` | no |
 
 - the build profile the check uses is named **`internal`** — Check 89's step 1
   calls it **the `internal` profile** — and its **`distribution` must be
@@ -380,21 +425,56 @@ are the check's, and this page does not restate them; what this page settles is
   `distribution: "internal"` is an ad-hoc build with no store submission at all:
   it would build successfully and make every later step meaningless. **Check 89's
   guard does not read this value, and cannot stop on it**: the guard block tests
-  that the two files exist, that `HEAD` is the tag and that the tree is clean,
-  and no line of it opens `mobile/eas.json`. The read is **step 1's**, which you
-  run by hand (`jq '.build.internal.distribution' eas.json`), and the register
-  says exactly why the stop is yours: *"`jq` is a read, so the guard cannot stop
-  on a value only the run's owner can judge"*;
+  that the three files exist, that `eas` and `node` are on your `PATH`, that
+  `HEAD` is the tag, that the tree is clean and that the store identity
+  resolves, and no line of it opens `mobile/eas.json`. The read is **step 1's**,
+  which you run by hand (`jq '.build.internal.distribution' eas.json`), and the
+  register says exactly why the stop is yours: *"`jq` is a read, so the guard
+  cannot stop on a value only the run's owner can judge"*;
 - the submit profile's Android track must be **`internal`** — Check 89's step 1
   reads `submit.internal.android.track` and requires `internal`, and **never
   `production`, never anything beta-shaped**: C8's whole content is that one
-  value;
-- an `ios` submit entry must exist for the same profile, carrying the App Store
-  Connect app id the check prints.
-- **A second, store-credential-free profile** is what a CI job could use if you
-  ever add one (§10): a `preview`-style profile with internal distribution, no
-  `submit` section and no credential of any kind. That profile is the only one
-  CI may ever build, and it is not the profile Check 89 uses.
+  value. The `ios` submit entry **exists and names nothing** (`"ios": {}`): EAS
+  prompts for the App Store Connect app at submit time, and step 1 records that
+  the entry is there;
+- **`autoIncrement: true` is on `internal` alone, and it is not a convenience.**
+  `cli.appVersionSource` is `"remote"`, so the **build number**
+  (`expo.ios.buildNumber`, `expo.android.versionCode`) lives on the EAS project
+  rather than in a file here; App Store Connect rejects a build whose number
+  repeats one it already has, and Play rejects a duplicate version code, so a
+  store profile with `remote` and no `autoIncrement` builds once and then stops.
+  `development` and `preview` reach no store, so incrementing for them would
+  spend this release's build numbers on artifacts nobody ever submits. **The
+  build number is not the version the stores show and not the version step 4
+  compares with the tag** — that one is `expo.version` in `app.json`, the line
+  C6 ties to the release tag (§14, Tension 3);
+- **`cli.requireCommit: true`** is what makes a store build record the commit it
+  was made from — the `gitCommitHash` step 2 compares with `$SHA`;
+- **each profile names the EAS environment it builds with**: `development`,
+  `preview`, and `production` for `internal`. Those are **Expo's** environments
+  — sets of EAS environment variables on the EAS project — and they are **not**
+  GitHub's protected environments of §9. Same word, different system: §9 is
+  about a repository setting, this is about the EAS project, and a profile that
+  named none would resolve EAS's default environment instead;
+- **the store identity is two EAS environment variables, not a file and not a
+  credential.** `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` — one public
+  reverse-DNS name each, the same name for both stores — are set **once per
+  environment** with `eas env:set --visibility plaintext` (they are public
+  identifiers: `plaintext` gains nothing by hiding and loses the readability
+  that makes a wrong one obvious), and **exported in the shell** for a local
+  `eas build`/`eas submit`, because `eas-cli` resolves `mobile/app.config.js`
+  locally before it uploads anything. `app.config.js` validates each against
+  that store's own rule — Apple allows no underscore, Play allows no hyphen and
+  no segment starting with a digit — and its refusal names the variable and the
+  fix while **never repeating the value**. `mobile/README.md`, "Building for
+  internal testing", is where the commands are written out;
+- **no identity value is committed** — not in `app.json` (P3.1's boundary test
+  refuses it there), not in `eas.json`, not in `app.config.js`. That is D125's
+  "the identity is the owner's" made mechanical, and it is why the guard reads
+  the identity out of **your shell** rather than out of a file;
+- **the `preview` profile is the one CI could ever build**, if a workflow is
+  added (§10): internal distribution, no `submit` section, no credential of any
+  kind. It is not the profile Check 89 uses;
 - **A profile whose submit section names a public track is a stop** — edit it and
   re-run, rather than submitting and trying to halt a release afterwards. That
   sentence is Check 89's own, and it is repeated here only because it is the one
@@ -403,6 +483,8 @@ are the check's, and this page does not restate them; what this page settles is
 **FACT for §8 (owner):** the `internal` profile's `distribution`; its submit
 track; whether an `ios` submit entry exists; and the **names** of any credential
 files the profiles reference (`serviceAccountKeyPath`). **Never their contents.**
+The two identity values are public, and they are still not pasted back: §11's
+list is Check 89's, and it asks for the profile's values, not the identity's.
 
 ---
 
@@ -512,7 +594,7 @@ have, and the reasons each line is what it is:
 |---|---|
 | **Trigger** | the **`push` of a `v*` tag, and nothing else** — the app is versioned with the CLI's tag (C6), and a tag is the one ref that means "this commit is a release". If you prefer to build on demand, the alternative is **`workflow_dispatch` from `main`** with the same locks — **except for one setting: §9's deployment-branch policy must then name `main` as well as `v*`**, or GitHub refuses the deployment from a ref the environment excludes and the run never reaches the build. What the alternative costs is that a build is then not tied to a tag, so its `gitCommitHash` has to be compared to the tag by hand. **Refused either way: `pull_request`, `pull_request_target`, `workflow_run` and every scheduled trigger** — a signing job that runs on a pull request from any branch of this repository is the defect the console's two files exist to prevent, and those two files are **installed**: `.github/workflows/console-tests.yml` runs unconditionally on every pull request and push to `main` and holds no secret, while `.github/workflows/console-release.yml` holds the signing material and runs only on a `v*` tag push. One file carrying both would put the signing job on every pull-request run, and a fork's pull request is not the only way in. |
 | **Locks** | **two**, as the website's promote job has: `environment: mobile-release` (its only required reviewer is you, §9 — and its deployment-branch policy has to admit the trigger's own ref, which the row above pins down) **and** a guard on the actor, `if: github.actor == 'dimipaun'`, so a dispatch by anybody else is skipped before a runner or an approval request exists. |
-| **What it may do** | build a **test artifact** — the store-credential-free profile of §8 — and nothing else. **Never `eas submit`.** D120's answer is explicit that *"CI at most builds a **test** artifact with no store credential"*, and that sentence is the ceiling: not a store build, not a submission, not a store credential. |
+| **What it may do** | build a **test artifact** — the store-credential-free **`preview`** profile of §8, and never the `internal` one — and nothing else. **Never `eas submit`.** D120's answer is explicit that *"CI at most builds a **test** artifact with no store credential"*, and that sentence is the ceiling: not a store build, not a submission, not a store credential. |
 | **Permissions** | declared explicitly and minimally, at the workflow level **and** on the job: **`permissions:`** with **`contents: read`** and nothing else — no `id-token: write`, no `packages: write`, and never `permissions: write-all`. A build job needs the checkout and a token, not a write scope over the repository. |
 | **Actions** | pinned, every one, to a **full 40-character commit SHA** with a `# vX.Y.Z` comment beside it, as every other workflow in this repository is (a tag is mutable; a commit is not). Before copying the file in, compare the pins against `main`'s, so the copy cannot downgrade one. |
 | **Secrets** | reached **only** through the job-level `environment:` — `secrets.EXPO_TOKEN`, which is the **`mobile-release` environment secret of §9 and never a repository secret** (a repository secret is readable by any workflow in the repository; an environment secret only by a job that names the environment) — and no other secret, and **no literal** beside any reference: no value, no long base64 blob, no `password:` with something after it. |
@@ -538,6 +620,29 @@ step are the check, and each is written to be re-run from a fresh shell. Its
 five steps are, in outline: the EAS project and the profile; the signed build;
 the internal track and no public release; the install and the version; and no
 store credential anywhere it should not be.
+
+**The three commands steps 2 and 3 run**, with the two names in them that this
+page settles in §8 — the profile `internal` and the environment the identities
+were set in:
+
+```bash
+export FUGARO_IOS_BUNDLE_ID='<the reverse-DNS identity>'      # §8: public, never pasted back
+export FUGARO_ANDROID_PACKAGE="$FUGARO_IOS_BUNDLE_ID"        # one name for both stores
+eas build --platform all --profile internal --non-interactive
+eas submit --platform ios --profile internal --latest
+eas submit --platform android --profile internal --latest
+```
+
+**`--profile internal` on every line is the whole of it.** `eas submit` **without
+a profile** is exactly the failure step 3's negative is about — its default is
+not the internal track — and the register's own instruction is to stop and edit
+rather than submit and try to halt a release afterwards. `--non-interactive` is
+what makes a build fail instead of stopping to ask, and the register says to
+**drop it on the first run** if EAS has to ask you about a credential the project
+does not hold yet, which the first build after P4.4 usually does. The two
+`export`s are the guard's own precondition (§3) and `eas-cli`'s local
+resolution of `mobile/app.config.js` (§8), not a convenience: without them the
+build is refused before it starts.
 
 | Step | What it proves | How it can be wrong |
 |---|---|---|
@@ -654,83 +759,84 @@ copy of it, which is why §7's rule is "never", not "not yet".
 
 ---
 
-## 14. Recorded tensions, not resolved here
+## 14. Recorded tensions, and how each was settled
 
-**These are mismatches between files that are already on this tree, or that
-P4.2a is writing. This runbook does not get to decide between them; the owner
-rules, and whichever way each goes, the losing file is amended in its own pull
-request.**
+**This section records mismatches between files on this tree, and — for the two
+that have since been ruled — how. The rulings are not this runbook's: **the
+owner rules**, and the first two were settled by P4.4's own files (**PR #675**)
+and by P4.2a's amendment of the register's Check 89. The two that are still open
+say so, and the ones that are settled say what changed on this page because of
+them.**
 
-**Tension 1 — the bundle identifier and the Android package, and `mobile/app.json`.**
-It is one file, and today two things are asked of it:
+**Tension 1 — the bundle identifier and the Android package: SETTLED (PR #675),
+and this page follows the ruling.** It was one file with two things asked of it.
+P3.1's own test (`mobile/src/app-config.test.js`, merged) asserts that
+`mobile/app.json` carries **no** `bundleIdentifier`, **no** Android `package`
+and no reverse-DNS string at all, with the reason written into the test:
+*"the release identities (the iOS bundle identifier and the Android package)
+are absent too: those are the owner's, and they differ per installation
+(D125's release path, check 89 is owner-run)"*. Check 89's first guard block read
+**both fields out of that same file** and stopped without them. The ruling keeps
+P3.1's fence and moves the read — the second of the two ways this section used to
+list:
 
-- **P3.1's own test** (`mobile/src/app-config.test.js`, merged) asserts that
-  `mobile/app.json` carries **no** `bundleIdentifier`, **no** Android `package`
-  and no reverse-DNS string at all, with the reason written into the test:
-  *"the release identities (the iOS bundle identifier and the Android package)
-  are absent too: those are the owner's, and they differ per installation
-  (D125's release path, check 89 is owner-run)"*.
-- **Check 89's guard block** (P4.2a, **PR #580**) reads **both fields out of that
-  same file** — `expo.ios.bundleIdentifier` and `expo.android.package` — and
-  stops without them. Its own words, verbatim, from `docs/gcp-live-checklist.md`
-  section **"Check 89"**: `sys.exit("Check 89 stopped: mobile/app.json carries no
-  ios.bundleIdentifier or android.package (the store identity P4.4 adds), so
-  there is nothing to submit a build under — a build made now could not reach any
-  track")`, followed by a bare `|| exit 1`, whose comment in the same block reads
-  *"the store-identity stop has to be a real stop: sys.exit inside a command
-  substitution only sets a status, so the guard acts on it here -- otherwise it
-  would print the reason and read on"*. The guard reads the two fields with
-  `.get()` and tests `if not bid or not pkg`, so an absent field is **not** an
-  error it trips over: it is the stop it was written to make, and it takes it
-  with its own message.
+- **the identities do not go into `mobile/app.json`.** They reach a build from
+  two EAS environment variables — `FUGARO_IOS_BUNDLE_ID` and
+  `FUGARO_ANDROID_PACKAGE`, one public reverse-DNS name each — through
+  `mobile/app.config.js`, the dynamic config P4.4 added (Expo's
+  `({ config }) => ({ ...config, ... })` form). Neither `eas.json` nor the
+  config file holds a value: **no committed file carries an identity** (D125),
+  the value is set once per EAS environment, and it is exported in the shell for
+  a local build (§8);
+- **Check 89's guard reads them the way a build does**, and the register's text
+  was amended to match. Its own words, verbatim, from
+  `docs/gcp-live-checklist.md` section **"Check 89"**: a variable missing from
+  your shell stops the guard with its own sentence naming the variable and the
+  fix; and if the config resolves with neither field, it exits with
+  `sys.exit("Check 89 stopped: the config resolved through app.config.js
+  carries no ios.bundleIdentifier or android.package, so there is nothing to
+  submit a build under — a build made now could not reach any track")`, followed
+  by a bare `|| exit 1`, whose comment in the same block reads *"the store-identity
+  stop has to be a real stop: sys.exit inside a command substitution only sets a
+  status, so the guard acts on it here -- otherwise it would print the reason and
+  read on"*. The guard reads the two fields with `.get()` and tests
+  `if not bid or not pkg`, so an absent field is **not** an error it trips over:
+  it is the stop it was written to make, and it takes it with its own message.
 
-Both are defensible and they cannot both hold. **The stop you will actually see
-first today is not this tension's, and it is worth knowing which is which.** The
-guard's `[ -f mobile/app.json ]` test does **not** fire — P3.1 has merged and the
-file is on the tree — but the `[ -f mobile/eas.json ]` test immediately below it
-**does**, because `mobile/eas.json` does not exist yet (Tension 2), and the guard
-exits with its own message, which names itself as today's stop:
-*"Check 89 stopped: there is no mobile/eas.json in this checkout, so there is no
-build or submit profile to read (P4.4 makes it; this check reads it, it does not
-create it) — this is the stop a checkout of today hits"*. **The store-identity
-stop is the state a reader meets only once §8's profile exists and is
-committed**, and it is the same kind of stop, not a crash: with `mobile/eas.json`
-present and `mobile/app.json` still carrying neither field, the guard gets past
-its file tests, reaches its python line, and exits there with the sentence quoted
-above — one of its own stop messages, printed on stderr, with no crash and no
-partial run. So there are two distinct states, and they are the same finding
-arriving at two different moments: there is no app identity to build from yet.
-The two ways out:
+**What that changes for you:** §3's prerequisites gain the two `export`s, and §8
+says where the values are set. **FACT for §14 (owner):** that both variables were
+set in the EAS project's three environments and exported for the run — **the
+names, never a value**.
 
-1. **the identities go into `mobile/app.json`**, which is the only site Check
-   89's guard reads, and P3.1's test loses its two absence assertions (D125's
-   "they differ per installation" then rests on the values being the owner's,
-   not on their absence); or
-2. **Check 89's guard reads the identity elsewhere** — from `mobile/eas.json`,
-   or from `eas project:info` — and the register's text is amended by P4.2a.
+**Tension 2 — `mobile/eas.json`, and what P4.4's `Files` line meant: SETTLED
+(PR #675), and the file is in the tree.** The plan's P4.4 line says *"Files. None
+in this repository."*, and Check 89's guard says `mobile/eas.json` is P4.4's
+(*"P4.4 makes it; this check reads it, it does not create it"*). Read together
+they were a contradiction — prose and a register that both claim to be the
+authority for the same file. They are not one now: **`mobile/eas.json` is
+committed**, with the three profiles §8 describes, and the guard's file test no
+longer describes a checkout that lacks it as *today's* stop. Its own words,
+verbatim, from the same section: *"Check 89 stopped: there is no mobile/eas.json
+in this checkout, so there is no build or submit profile to read (P4.4 makes it;
+this check reads it, it does not create it)"*. What remains true is the plain
+reading of the guard's message: a checkout **older** than P4.4 has no profiles,
+and the guard stops there rather than building against defaults nobody chose.
+The plan's `Files` line is the plan's, and P4.4's files landed in a change of
+their own; **this page does not amend the plan**, and §15 lists the file.
 
-**Whichever way it goes, this runbook does not write either file**, and §5 and §6
-are written so that you can put the two values where your ruling says they go.
-**FACT for §14 (owner):** which of the two you ruled, and the commit that
-amended the losing file.
-
-**Tension 2 — `mobile/eas.json`, and what P4.4's `Files` line means.** The
-plan's P4.4 line says *"Files. None in this repository."*; Check 89's guard says
-`mobile/eas.json` is P4.4's (*"P4.4 makes it; this check reads it, it does not
-create it"*). Read together: the register is the authority for what the check
-reads, so **`mobile/eas.json` is part of this run** — but this runbook is prose
-and writes no file, and if the owner makes the profile by hand at the terminal
-(the natural reading of "owner-run, no agent performs any step"), the plan's
-`Files` line stands as written. **FACT for §14 (owner):** whether the profile was
-hand-written at the terminal, or committed in a later change.
-
-**Tension 3 — the version the app reports.** C6 says the app is versioned with
-the CLI's tag; `mobile/app.json`'s `version` is `0.0.0` today and P3.1's test
-pins it to `mobile/package.json`'s. Check 89's step 4 records that the installed
-app reports the version the guard's `$TAG` names. How a tag becomes
-`expo.version` is not decided in this runbook, and it has to be decided before
-step 4 can pass. **FACT for §14 (owner):** the rule you choose, and where it is
-written down.
+**Tension 3 — the version the app reports: SETTLED, and it is `expo.version`.**
+C6 says the app is versioned with the CLI's tag; `mobile/app.json`'s `version`
+is `0.0.0` today and P3.1's test pins it to `mobile/package.json`'s. The rule
+that reconciles them is the one `mobile/eas.json` and `mobile/README.md` now
+carry together: the **build number** (`expo.ios.buildNumber`,
+`expo.android.versionCode`) is EAS's, kept on the project by
+`cli.appVersionSource: "remote"` and raised by `autoIncrement: true` on
+`internal` (§8) — **the build number is not the version the stores show** — and
+the version the stores show, and the one Check 89's step 4 compares with `$TAG`,
+is **`expo.version` in `mobile/app.json`**, which a release sets to the version
+the tag names. `0.0.0` is the placeholder that says no release has been cut yet.
+**FACT for §14 (owner):** that `expo.version` was set to the release's version
+before step 4, and the commit that did it.
 
 **Tension 4 — three check numbers, and the register's step 4 has them wrong.**
 This is a numbering mismatch rather than a rule conflict, and it is recorded
@@ -773,6 +879,7 @@ what it says, and this page paraphrases none of them as certain):
 | [../gcp-live-checklist.md](../gcp-live-checklist.md) | **Check 89** — the steps, the guard block, the `FACT` lines, the pass and fail conditions and the restore step (**P4.2a**, merged as PR **#580** on 2026-10-19) |
 | [reconciliation.md](reconciliation.md) | **D111**, **D120**, **D125** and the findings behind them (F24, U6) |
 | [../../mobile/app.json](../../mobile/app.json) and [../../mobile/package.json](../../mobile/package.json) | the app's Expo config and its `engines` (**P3.1**) |
+| [../../mobile/eas.json](../../mobile/eas.json) and [../../mobile/app.config.js](../../mobile/app.config.js) | the three build profiles, the submit track and `cli`'s `appVersionSource`/`requireCommit`; and the two identity variable names, the reverse-DNS patterns and what the dynamic config refuses (**P4.4**, merged as PR **#675**) — §8 is this page's account of both, and where they differ **the files win** |
 | [../../mobile/README.md](../../mobile/README.md) | what the app is, where its two secrets live, and what is not verified |
 | [../../.github/workflows/website-promote.yml](../../.github/workflows/website-promote.yml) and [../../.github/workflows/console-release.yml](../../.github/workflows/console-release.yml) | the two protected environments this repository has, read off the files themselves: `environment: website-live` in `website-promote.yml`'s `promote` job and `environment: console-release` in `console-release.yml`'s `release` job, each declared on a job. [../../.github/workflows/release.yml](../../.github/workflows/release.yml) is there too, as the counter-example: no environment, keyless signing (§2, §9) |
 | [../pending-workflows/README.md](../pending-workflows/README.md) | how a staged workflow is copied in, and why an agent may not copy it |
