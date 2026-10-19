@@ -703,6 +703,40 @@ test('getting started renders the install commands from install.yaml, and no com
   assert.deepEqual(printed, commands, 'the commands the page prints are not exactly install.yaml\'s, in its own order')
 })
 
+test('the setup steps print the plugin commands install.yaml carries, and no spelling of their own', async (t) => {
+  // The `#setup` band's last two steps tell a reader to run `fugaro init` and `/fugaro:setup`,
+  // which are the plugin path's own commands in install.yaml — the file the page renders every
+  // other command from. A step is one line of prose and the commands in it looked like prose,
+  // so they were typed into the page until this case existed: a rename in install.yaml moved
+  // #details' plugin path and left the steps above it telling a reader to run a command the
+  // file no longer carries. The page renders them from the path now, and this is what holds
+  // the two together — every `<code>` in the band, in order, is install.yaml's own text.
+  const built = buildWith(t, () => {})
+  const page = builtPage(built, '/getting-started/')
+
+  const install = repoFile('website/data/install.yaml')
+  const plugin = install.slice(install.indexOf('- id: plugin'))
+  const commands = [...plugin.matchAll(/- \|-\n((?: {8}[^\n]*\n?)+)/g)].map((match) =>
+    collapse(
+      match[1]
+        .split('\n')
+        .map((line) => line.slice(8))
+        .join('\n'),
+    ),
+  )
+  assert.ok(commands.length >= 2, `install.yaml's plugin path carries ${commands.length} command(s), which is too few to be the two the setup steps name`)
+  const [initCommand, setupCommand] = commands
+
+  const band = /<section id="setup"[\s\S]*?<\/section>/.exec(page)
+  assert.ok(band, 'Getting Started carries no `#setup` section, and the page is three bands (the owner\'s brief of 2026-10-19)')
+  const printed = [...band[0].matchAll(/<code[^>]*>([\s\S]*?)<\/code>/g)].map((match) => collapse(decode(match[1].replace(/<[^>]+>/g, ''))))
+  assert.deepEqual(
+    printed,
+    [initCommand, setupCommand, initCommand],
+    `the setup steps print ${JSON.stringify(printed)} where install.yaml's plugin path carries ${JSON.stringify(commands)}: the steps render the file's own commands, so a command renamed there moves the steps with it, and a step that spells one itself is the fourth copy of the install instructions this page refuses (Global Constraint 6)`,
+  )
+})
+
 test('getting started promises commands only where install.yaml carries them', async (t) => {
   // install.yaml is allowed to carry a path with no commands — the release archive,
   // whose facts are a Releases page and a name template rather than a command line —

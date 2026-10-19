@@ -59,20 +59,20 @@ The columns below say which field needs which state. The recurring shapes:
 **Command:** `internal/cli/watch.go` `newWatchCmd` / `runWatch` /
 `watchStream` / `WatchDeps.emit`.
 **Document:** `internal/watch/json.go` `JSONDoc`, built by
-`BuildJSON(project string, v View) JSONDoc` (`json.go:148`).
+`BuildJSON(project string, v View) JSONDoc` in `internal/watch/json.go`.
 
 Emitted **compact, one object per line** (`json.NewEncoder(d.Out).Encode(...)`,
 `WatchDeps.emit`, `internal/cli/watch.go`), which is what makes the feed
 line-delimited JSON — one of exactly two line-delimited documents the console
 reads, the other being `logs RUN --json` (§6.2, §9).
 
-### `JSONDoc` (`internal/watch/json.go:97`)
+### `JSONDoc` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
 | `project` | string | — | no | measured (`d.LC.Name`) |
-| `mode` | string | — | no | **`observe` or `enforce`, never `""`** — `watch.Build` seeds `budget.ModeObserve` and switches only on `budget.ModeEnforce` (`internal/watch/build.go:256`), so an unset `/config/mode` reads `observe` here. `budget show --json` (§3) is the one document that can carry `""` |
-| `day` | string | `YYYY-MM-DD`, UTC | no | measured — `View.Day`; `""` before the first day is set (`internal/watch/build.go:165`) |
+| `mode` | string | — | no | **`observe` or `enforce`, never `""`** — `watch.Build` seeds `budget.ModeObserve` and switches only on `budget.ModeEnforce` (`watch.Build`, `internal/watch/build.go`), so an unset `/config/mode` reads `observe` here. `budget show --json` (§3) is the one document that can carry `""` |
+| `day` | string | `YYYY-MM-DD`, UTC | no | measured — `View.Day`; `""` before the first day is set (`watch.Build`, `internal/watch/build.go`) |
 | `now` | string | RFC 3339, UTC | no | measured |
 | `connection` | `JSONConn` | — | no | see below |
 | `total` | `JSONTotal` | — | no | see below |
@@ -88,18 +88,18 @@ exactly one input — an unset `/config/mode`. Both spell the code's own values
 
 | Command | Values `mode` can carry |
 |---|---|
-| `watch --json` | `observe`, `enforce` — `Build` seeds `observe` and switches only on `enforce`, so an unset `/config/mode` reads `observe` here (`internal/watch/build.go:256`) |
-| `budget show --json` | `observe`, `enforce`, `""` — an unset (or unrecognised) `/config/mode` reads `""` and appends a warning (`internal/cli/budget.go:457`) |
+| `watch --json` | `observe`, `enforce` — `Build` seeds `observe` and switches only on `enforce`, so an unset `/config/mode` reads `observe` here (`watch.Build`) |
+| `budget show --json` | `observe`, `enforce`, `""` — an unset (or unrecognised) `/config/mode` reads `""` and appends a warning (`runBudgetShow`, `internal/cli/budget.go`) |
 
 A console that treated `watch --json`'s `mode` as possibly `""` would carry a
 comparison the feed never needs; a console that treated `budget show`'s as
 never `""` would miss the warning.
 
-### `JSONConn` (`internal/watch/json.go:24`) — the connectivity state
+### `JSONConn` (`internal/watch/json.go`) — the connectivity state
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
-| `state` | string | — | no | `live`, `stale`, `offline`, `refused` or `polling` (`connNames`, `json.go:145`; the constants are `ConnLive`… in `internal/watch`) |
+| `state` | string | — | no | `live`, `stale`, `offline`, `refused` or `polling` (`connNames`; the constants are `ConnLive`… in `internal/watch`) |
 | `reason` | string | — | **yes** | why, when there is one |
 | `age_seconds` | float64 | seconds | no | measured |
 
@@ -107,7 +107,7 @@ never `""` would miss the warning.
 permission refusal, which `watchStream` emits once and then returns `dbErr`
 (`internal/cli/watch.go`).
 
-### `JSONTotal` (`internal/watch/json.go:30`)
+### `JSONTotal` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -115,13 +115,13 @@ permission refusal, which `watchStream` emits once and then returns `dbErr`
 | `spent_usd` | float64 | USD | no | measured |
 | `notional_usd` | float64 | USD | no | **notional** — never billed, never capped, never summed into a real total |
 | `daily_cap_usd` | `*float64` | USD | no | **null = unavailable** (no cap set) |
-| `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`, `json.go:122`) |
+| `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`) |
 | `burn` | `JSONBurn` | — | no | see below |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
 | `runs` | int | count | no | measured |
 | `run_hours` | float64 | hours | no | measured |
 
-### `JSONBurn` (`internal/watch/json.go:18`)
+### `JSONBurn` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -129,19 +129,19 @@ permission refusal, which `watchStream` emits once and then returns `dbErr`
 | `usd_per_min` | float64 | USD/min | no | measured when `known`, **unavailable when not** — read `known` first |
 | `fast` | bool | — | no | the fast-burn alert (`Burn.Fast`) |
 
-The window is `watch.BurnWindow` (**5 minutes**, `internal/watch/state.go:31`),
+The window is `watch.BurnWindow` (**5 minutes**, `internal/watch/state.go`),
 the design's §6.2 screen-1 rule; Task 2.1 asserts the console's constant cannot
 drift from it.
 
-### `JSONKill` (`internal/watch/json.go:12`)
+### `JSONKill` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
 | `by` | string | — | **yes** | who, when known |
-| `at` | string | RFC 3339 | **yes** | when, when known (`jsonKill`, `json.go:134`) |
+| `at` | string | RFC 3339 | **yes** | when, when known (`jsonKill`) |
 | `reason` | string | — | **yes** | why |
 
-### `JSONRepo` (`internal/watch/json.go:42`)
+### `JSONRepo` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -153,7 +153,7 @@ drift from it.
 | `burn` | `JSONBurn` | — | no | as above |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
 
-### `JSONRun` (`internal/watch/json.go:54`) — a live or queued run
+### `JSONRun` (`internal/watch/json.go`) — a live or queued run
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -170,20 +170,23 @@ drift from it.
 | `notional` | bool | — | no | **the availability state of `spent_usd`** |
 | `spent_usd` | `*float64` | USD | no | **null = unavailable** |
 | `age_seconds` | `*float64` | seconds | no | **null = unavailable** |
-| `health` | string | — | no | `ok`, `silent` or `lost` (`HealthSilent` = 60 s, `HealthLost` = 180 s — `SilentAfter`/`LostAfter`, `internal/watch/build.go:14`) |
+| `health` | string | — | no | `ok`, `silent` or `lost` (`HealthSilent` = 60 s, `HealthLost` = 180 s — `SilentAfter`/`LostAfter`, `internal/watch/build.go`) |
 | `deadline` | string | — | no | `ok`, `near` or `over` — amber past 80% of the stage deadline |
 | `halted` | string | — | **yes** | why, when halted |
 | `queued` | bool | — | **yes** | a run known only from the runs bucket (`MergeQueued`) |
-| `stuck` | bool | — | **yes** | queued past `QueuedStuckAfter` (**10 min**, `internal/watch/queued.go:17`) |
+| `stuck` | bool | — | **yes** | queued past `QueuedStuckAfter` (**10 min**, `internal/watch/queued.go`) |
 | `workflow` | string | — | **yes** | from `task.json`, queued runs only |
 | `requested_by` | string | — | **yes** | from `task.json`, queued runs only — **a person's address**: the Spend screen's person view is off by default (D15) |
+| `job` | string | — | **yes** | the Cloud Run job this run is in, from the run's own `launch.json` (`runstore.Launch.Job`) — the same read that produces the queued rows, so a live row has it too. Absent when the reader has no `launch.json` for the run. Under the project-centric model this is the **shared** job of a (profile, provider, account), not one repository's. **Display text, not an authority**: `launch.json` is writable by every launcher and, on a shared job, by every run (SECURITY.md, D4), so the value is what that object says, stripped of control characters — never a name to act on |
+| `profile` / `provider` / `account` | string | — | **yes** | the (profile, provider, account) the job's name was **computed from**, matched against the project's published policy — never parsed back out of the name (R2-5), so a `job` no profile computes gets none of them. `profile` and `provider` are present together or absent together; `account` is present only beside them and only for a job of a named Claude account — a profile that lists `claude_accounts` gets **one job per account** beside its no-account job (`config.ProjectJobAccounts`), so a run on a named account's job carries that account's name, and a run on the profile's no-account job carries none. An absent `account` is **not** "this job mounts no credential": the no-account job holds the default account's token when the profile lists `default` and none otherwise (`config.ProjectJobTokenAccount`), so what is empty is the account axis of the job's name, never a claim about the run's credential. All three are absent for a run on a **per-repository** job (a baked workflow, a Bitbucket repository, an installation that has not migrated), whose name is no project job's. `provider` here is the **profile's** provider, not a general stamp of the repository's: it is the reason the field exists on the two run shapes but does not close §7's gap 7 |
+| `launched_by` | string | — | **yes** | who started the run, from the run's own `launch.json` (`runstore.Launch.LaunchedBy`, **CLI 0.9.0**) — a person's address, or the identity an automated launch runs as (a service account, a CI runner). It is the **full recorded identity**: the text views show the short form a column has room for (`runview.LauncherShort` — the part before an address's `@`, the whole value for anything else). Absent when the record has none — one whose `launch.json` the reader does not have, or a launch built without a launcher (the recovery backfill from `result.json`, a local run with no cloud execution, or the synthetic launch `fugaro logs` builds) — **never a value the CLI invents**. **Display text, not an authority**: `launch.json` is writable by every launcher (SECURITY.md, D4), the value is sanitised and capped like every other bucket-derived string (`safetext.Field`, 512 runes), and no policy, admission or budget rule reads it |
 
 **A live run carries no PR field at all** — no `pr_url`, no `pr_number`, no
 `pr` (design §4.3 gap 6, §5.1 rule 2). The console renders no link for a live
 row; the run-detail screen reads `diagnose RUN --json` for the one run whose
 detail is open.
 
-### `JSONFinished` (`internal/watch/json.go:83`) — a finished run
+### `JSONFinished` (`internal/watch/json.go`) — a finished run
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -195,6 +198,9 @@ detail is open.
 | `failed` | bool | — | no | measured |
 | `pr_url` | string | URL | **yes** | **absent when the run has no PR — do not build a link from it** (gap 7) |
 | `pr_number` | int | number | **yes** | **absent (0) when the run has no PR** |
+| `job` | string | — | **yes** | as on `JSONRun`: a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose the job it ran on |
+| `profile` / `provider` / `account` | string | — | **yes** | as on `JSONRun` (`account` present only on a named account's job, absent on the profile's no-account job and, with the other two, on a per-repository job) |
+| `launched_by` | string | — | **yes** | as on `JSONRun` (**CLI 0.9.0**): a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose who launched it either. Absent when the launch record has none |
 | `age_seconds` | float64 | seconds | no | measured |
 
 ### The three facts the whole feed turns on
@@ -202,11 +208,11 @@ detail is open.
 These are also asserted by name in `TestDocsDesktopConsoleContractStatesTheThreeFeedFacts`.
 
 **(i) One document per change, compact, at most one a second.**
-`watchStream` (`internal/cli/watch.go:332`) emits when the model is
+`watchStream` (`internal/cli/watch.go`) emits when the model is
 `dirty` **and** at least `gap` has passed since the last document, and in
-`--json` mode `gap = watchJSONGap` = **`time.Second`** (`internal/cli/watch.go:33`).
+`--json` mode `gap = watchJSONGap` = **`time.Second`** (`internal/cli/watch.go`).
 The first document waits for all four streams or `watchFirstFrame` (**5 s**,
-`internal/cli/watch.go:36`); a `refused` connection is the one case that
+`internal/cli/watch.go`); a `refused` connection is the one case that
 bypasses those tests — it emits immediately if the refusal arrives *during* the
 stream, and the ordinary refusal emits nothing at all, because it is caught
 before the stream starts (§10.5). The encoder is `json.NewEncoder(d.Out)` with **no `SetIndent`** —
@@ -214,23 +220,23 @@ one of the two compact, one-line-per-document commands in the console's set
 (`logs RUN --json` is the other, §6.2).
 
 **(ii) `--repo` narrows the JSON too.** `WatchDeps.emit` calls
-`watch.FilterRepo(v, d.RepoKey)` **before** encoding (`internal/cli/watch.go:260`),
+`watch.FilterRepo(v, d.RepoKey)` **before** encoding,
 so `watch --json --repo R` carries only `R`'s repository block and runs;
-`FilterRepo` is `internal/watch/json.go:192`. What *is* unfiltered is the other
+`FilterRepo` is `internal/watch/json.go`. What *is* unfiltered is the other
 axis: `finished[]` and `ready[]` ignore `--all`/`--keep`/`--keep-count`. The
 cobra help text still says "--json is always unfiltered" (it means the
 finished-run axis), so **the code is the authority here, not the help string**,
 and the console remembers that a `--repo` feed is narrowed.
 
 **(iii) The synthetic and degraded modes emit different things.**
-`watchDegradedDoc` (`internal/cli/watch.go:399`) is `lsDoc` **embedded** plus
+`watchDegradedDoc` (`internal/cli/watch.go`) is `lsDoc` **embedded** plus
 two fields:
 
 | Field | Type | omitempty | Meaning |
 |---|---|---|---|
 | (everything `lsDoc` has) | — | — | `project`, `runs[]`, `totals`, `warnings[]` — see §5 |
 | `degraded` | bool | no | always `true` in this mode |
-| `notice` | string | no | `degradedNotice` = `"no budget backend: showing run records only"` (`internal/cli/watch.go:38`) |
+| `notice` | string | no | `degradedNotice` = `"no budget backend: showing run records only"` |
 
 **Nothing in it has a cap, a burn rate, a kill state or a repository block**,
 because none of those exist without the database. A screen that expects
@@ -248,8 +254,8 @@ parse error or a crash (design §2.1, §4.3 gap 1).
 ## 3. `fugaro budget show --json`
 
 **Command:** `internal/cli/budget.go` `newBudgetShowCmd` / `runBudgetShow`.
-**Document:** `budgetShowDoc` (`internal/cli/budget.go:310`), indented two
-spaces (`enc.SetIndent("", "  ")`, `budget.go:580`).
+**Document:** `budgetShowDoc`, indented two
+spaces (`enc.SetIndent("", "  ")`, `internal/cli/budget.go`).
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -264,45 +270,45 @@ spaces (`enc.SetIndent("", "  ")`, `budget.go:580`).
 | `running` | `[]showRun` | — | no | `[]` when none |
 | `warnings` | `[]string` | — | no | `[]` when none; CLI-worded, shown verbatim |
 
-`showGlobal` (`budget.go:258`): `daily_cap_usd` `*float64`, `per_run_cap_usd`
+`showGlobal`: `daily_cap_usd` `*float64`, `per_run_cap_usd`
 `*float64`, `counted_usd`/`spent_usd` float64, `notional_usd` float64
 (**notional**), `headroom_usd` `*float64` (**null = unavailable**),
 `kill` `*showKill` (null = not killed). All caps are **null = unavailable** and
 never `0`.
 
-`showDefaults` (`budget.go:268`): `repo_daily_cap_usd`, `repo_per_run_cap_usd`,
+`showDefaults`: `repo_daily_cap_usd`, `repo_per_run_cap_usd`,
 both `*float64`.
 
-`showRepo` (`budget.go:273`): `slug`, `repo` (`omitempty`),
+`showRepo`: `slug`, `repo` (`omitempty`),
 `daily_cap_usd` `*float64`, `daily_cap_source` (string, no `omitempty` —
 **`repo`, `default` or `none`**), `per_run_cap_usd` `*float64`,
 **`per_run_cap_source`** (string, no `omitempty` — `repo`, `default`, `global`
-or `none`; `perRunCapSource`, `budget.go:293`), `counted_usd`, `spent_usd`,
+or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
 `notional_usd`, `headroom_usd` `*float64`, `kill` `*showKill`,
 `running` `[]showRun`. **`per_run_cap_source` is the "binding scope named"
 the design's §6.2 Spend screen draws** — it is already in the document and
 needs no CLI change (§4.3's "not a gap" note).
 
-`showRun` (`budget.go:239`): `slug`, `run`, `repo`°, `workflow`°, `title`°,
+`showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
 `stage`°, `round` (**int**, `omitempty` — unlike `watch`'s string),
 `auth`°, `coder`°, `reviewer`°, `spent_usd` float64 (no `omitempty`),
 `pr_url`°, `halted`°, `started_at`°, `updated_at`° (RFC 3339 strings), `stale`
 bool°. `°` = `omitempty`.
 
-`showKill` (`budget.go:233`): `by`°, `at`°, `reason`° — the same shape as
+`showKill`: `by`°, `at`°, `reason`° — the same shape as
 `JSONKill`.
 
-**Flags, read off the cobra command** (`budget.go:211`): `--repo`, `--all`,
+**Flags, read off the cobra command** (`newBudgetShowCmd`): `--repo`, `--all`,
 `--json`, plus `addCloudFlags`' `--config`, `--project`, `--gcp-project`,
 `--region`.
 
 ## 4. `fugaro report --json`
 
 **Command:** `internal/cli/report.go` `newReportCmd` / `runReport`.
-**Document:** `internal/report/render.go` `JSONDoc` (`render.go:200`), written
-by **`report.JSON(w io.Writer, rep Report, m Meta) error` (`render.go:235`)** —
+**Document:** `internal/report/render.go` `JSONDoc`, written
+by **`report.JSON(w io.Writer, rep Report, m Meta) error`** —
 the exported writer, not a `cli`-side struct. Indented two spaces
-(`render.go:246`). A schema note also lives above the type
+(`report.JSON`, `internal/report/render.go`). A schema note also lives above the type
 (`render.go`'s comment block: `by`, `since`, `until`, `weeks`, `rows`,
 `totals`, `warnings`).
 
@@ -312,7 +318,7 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 `"iso-utc-monday"`** — the ISO week convention is declared, not inferred),
 `rows` `[]JSONLine`, `totals` `JSONLine`, `warnings` `[]string`.
 
-`JSONLine` (`render.go:173`): `key`, `start`°, `end`°, `partial` bool,
+`JSONLine`: `key`, `start`°, `end`°, `partial` bool,
 `model_micros` int64, `model_usd` string, `notional_micros` `*int64`,
 `notional_usd` `*string`, `compute_micros` `*int64`, `compute_usd` `*string`,
 `compute_estimated` bool, `run_hours` `*float64`, `runs` int64, `calls` int64,
@@ -321,19 +327,19 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 - **`*_usd` are exact decimal strings of the integer `*_micros`** (`USD6`), not
   floats: the console parses the string, and micros is the integer of record.
 - **`notional_micros`/`notional_usd` are null when not tracked** —
-  `w.NotionalTracked` (`jsonLine`, `render.go:214`). That is *unavailable*,
+  `w.NotionalTracked` (`jsonLine`). That is *unavailable*,
   and it is **notional**, never added to a real total (design §6.2, "one
   account of cost").
 - **`compute_micros`/`compute_usd` are null unless `ComputeState ==
   ComputeKnown`**, and a present one is **estimated** (`compute_estimated`
   true). Null = *unavailable*, never `0`.
 - **`run_hours` follows `compute_micros`** — set only when `ComputeState ==
-  ComputeKnown` (`jsonLine`, `render.go:214`), so it is null for the same rows.
+  ComputeKnown` (`jsonLine`), so it is null for the same rows.
   The key carries **no `omitempty`**, so it is always present and **null**
   rather than absent when the hours are not known: read it as
   *unavailable*, never as a measured `0`. A degraded `report` is the whole
   document's null case — `reportDegraded` builds on the run records and sets
-  `rep.NoHours = true` (`internal/cli/report.go:414`), and `source` says
+  `rep.NoHours = true` (`reportDegraded`), and `source` says
   `"run-records"`, so every row's `run_hours` is null (there is no flag for
   this; the path is chosen by whether spend history is enabled).
 - **`tokens` is absent entirely when not tracked** (`TokensTracked`).
@@ -341,16 +347,16 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   Firestore document. A day beyond the retained window is a **gap**, not a row
   of zeros.
 
-`JSONTokens` (`render.go:192`): `in`, `out`, `cache_read`, `cache_write`, all
+`JSONTokens`: `in`, `out`, `cache_read`, `cache_write`, all
 int64, none `omitempty`.
 
-**Flags** (`report.go:81`): `--repo`, `--since`, `--until`, `--by`, `--json`,
+**Flags** (`newReportCmd`, `internal/cli/report.go`): `--repo`, `--since`, `--until`, `--by`, `--json`,
 `--csv` (the allow-list excludes `--csv`), plus the cloud flags.
 
 ## 5. `fugaro runs ls --json` (and the degraded feed's body)
 
 **Command:** `internal/cli/runs.go` `newLsCmd` / `runLs`.
-**Document:** `lsDoc` (`runs.go:63`), indented (`runs.go:529`), and
+**Document:** `lsDoc`, indented (`printRows`), and
 **embedded** by `watchDegradedDoc` (§2, fact (iii)).
 
 | Field | Type | omitempty | Availability state |
@@ -360,7 +366,7 @@ int64, none `omitempty`.
 | `totals` | `runview.Totals` | no | below |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
-`runview.Row` (`internal/runview/runview.go:57`) is the run shape behind
+`runview.Row` (`internal/runview/runview.go`) is the run shape behind
 **both** `runs ls --json` and `diagnose --json`'s `row`. The fields the console
 reads:
 
@@ -376,6 +382,7 @@ reads:
 | `status`, `stage`, `reason` | string | `status` no, other two yes | |
 | `halt` | `*runstore.Halt` | **yes** | why a run halted |
 | `batch`, `requested_by` | string | **yes** | `requested_by` is a person's address |
+| `launched_by` | string | **yes** | who started the run, from its `launch.json` (**CLI 0.9.0**); absent when the record has none. The same value `JSONRun`/`JSONFinished` carry, and display text only — see `JSONRun`'s row |
 | `pr_url` | string | **yes** | the URL as the host gave it |
 | `execution`, `log_url` | string | **yes** | `log_url` is what `logs RUN --url` prints |
 | `created` | time.Time | no | RFC 3339 |
@@ -420,14 +427,14 @@ paths kept, and sets `truncated` when the record said so or when `paths` is
 short of `total`. A tampered record therefore reaches the console bounded and
 with its truncation flagged, never larger or dressed as whole.
 
-`runview.Totals` (`runview.go:436`): `runs` int, `model_usd` float64,
+`runview.Totals`: `runs` int, `model_usd` float64,
 `model_notional_usd` float64 (**notional** — kept apart from `model_usd` by
-`Sum`, `runview.go:448`), `compute_usd` float64 (**estimated**),
+`Sum`), `compute_usd` float64 (**estimated**),
 `total_usd` float64, `compute_not_estimated` int (**the count of rows whose
 compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
-**Flags** (`f := cmd.Flags()`, `runs.go:100`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
+**Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
 `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
 allow-list excludes `--watch` (it is `watch` under another name).
 
@@ -436,8 +443,8 @@ allow-list excludes `--watch` (it is `watch` under another name).
 ### 6.1 `fugaro diagnose RUN --json`
 
 **Command:** `internal/cli/diagnose.go` `newDiagnoseCmd` (`Use: "diagnose RUN"`),
-indented (`printDiagnosis`, `diagnose.go:445`). **Document:** `Diagnosis`
-(`diagnose.go:40`) — a **flat** struct with no `MarshalJSON`, so its keys are
+indented (`printDiagnosis`). **Document:** `Diagnosis`
+(`internal/cli/diagnose.go`) — a **flat** struct with no `MarshalJSON`, so its keys are
 exactly its own tags and nothing is nested under a `process` or `checks` key:
 
 | Field | Type | omitempty | Note |
@@ -472,13 +479,13 @@ they cannot be combined**: `runLogs` refuses `--url` with `--json` or
 `--follow`.
 
 - `logs RUN --json` prints **one compact `logLine` object per line** — not an
-  indented document: `printLogEntry` (`logs.go:210`) marshals each entry with
+  indented document: `printLogEntry` marshals each entry with
   `json.Marshal` and writes it with a trailing newline, the same one-object-
   per-line shape as the `watch` feed, and the other of the two line-delimited
-  documents the console reads. `logLine` (`logs.go:33`): `time` (RFC 3339),
+  documents the console reads. `logLine`: `time` (RFC 3339),
   `severity`, `stage`°, `stream`°, `event`°, `message` (no `omitempty` on
   time/severity/message). Every field is **redacted** (`redactEntry`,
-  `logs.go:199`), and `message` is job-written text: the display layer
+  `redactEntry`), and `message` is job-written text: the display layer
   re-sanitizes it. **The console caps the window**: it reads a bounded number
   of lines with a timeout and never passes `--follow` (design §2.3, §5.1;
   Task 2.3 asserts the cap and that no spawn carries `--follow`).
@@ -492,7 +499,7 @@ they cannot be combined**: `runLogs` refuses `--url` with `--json` or
 **Not on the console's allow-list** — `cancel` is a write (design §4.2) and v1
 has no write path. It is recorded here because §7's gap list and the design's
 allow-list "never" table both name it, and because its document is the shape a
-future v1.1 button would consume. `cancelResult` (`internal/cli/cancel.go:45`):
+future v1.1 button would consume. `cancelResult`:
 `project`, `run`, `status`, `marker` bool, `hard` bool, `pr`°, `no_pr`° bool,
 `lock_held`° bool. Its status constants (`cancelFinalized`, `cancelCancelled`,
 `cancelNotLaunched`, `cancelLaunching`, `cancelUnfinalized`,
@@ -500,7 +507,7 @@ future v1.1 button would consume. `cancelResult` (`internal/cli/cancel.go:45`):
 
 **Its document is compact — one object per line**, the `logs RUN --json` shape
 (§6.2) rather than the indented one every command in the console's set emits:
-`printCancel` (`cancel.go:474`) marshals the struct with `json.Marshal` and
+`printCancel` marshals the struct with `json.Marshal` and
 writes it with a trailing newline. A v1.1 button that parsed it as an indented
 document would read nothing; `cancel` is one of the three commands this file
 describes that are line-delimited, and the only one outside the console's set
@@ -508,8 +515,8 @@ describes that are line-delimited, and the only one outside the console's set
 
 ### 6.4 `fugaro doctor --json`
 
-**Command:** `internal/cli/doctor.go` `newDoctorCmd`, indented
-(`doctor.go:276`). **Document:** `doctorOutput` (`doctor.go:127`): `ok` bool,
+**Command:** `internal/cli/doctor.go` `newDoctorCmd`, indented. **Document:**
+`doctorOutput`: `ok` bool,
 `checks` `[]doctorCheck`, `project`° (`doctorProject`), `fugaro_yaml`°
 (`doctorFugaroYAML`), `secrets`° (**`[]secretEntry` — names and metadata only,
 never a value**), `plugin` (`pluginwire.Report`), `release`° (`releaseInfo`:
@@ -517,12 +524,12 @@ the binary's tag and commit), `error`° (**why doctor could not run its checks �
 `--json` prints an object on every outcome**, so the console always gets
 parseable JSON).
 
-`doctorCheck` (`doctor.go:42`): `id`, `ok` bool, `problem`°, `fix`°,
+`doctorCheck`: `id`, `ok` bool, `problem`°, `fix`°,
 `severity`°. **The environment view renders `problem` and `fix` verbatim**, as
 the CLI worded them — including the "not on the `PATH` the console gives the
 CLI" class of finding the design's §3.4 rule 5 describes.
 
-**Flags** (`doctor.go:195`): `--dir` (default `.`), `--plugin`, `--strict`,
+**Flags** (`newDoctorCmd`): `--dir` (default `.`), `--plugin`, `--strict`,
 `--json`, **`--check-github-app`** — the last of which reads the App's private
 key out of Secret Manager and is therefore unreachable by the console by
 argument list, not by command name (design §5.1's second table). The console
@@ -532,7 +539,7 @@ plugin wiring, not the environment the console draws).
 ### 6.5 `fugaro accounts ls --json`
 
 **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
-(`accounts.go:159`). **Document:** `accountsListDoc` (`accounts.go:60`):
+(`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
 `note`° (why selection failed). **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
@@ -543,12 +550,12 @@ accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 ### 6.6 `fugaro secrets ls --json`
 
 **Command:** `internal/cli/secrets.go` `newSecretsLsCmd`, indented
-(`secrets.go:668`). **The document is a bare JSON array** — `enc.Encode(entries)`
-(`secrets.go:669`), not an object with a wrapper key. Each element is
-`secretEntry` (`secrets.go:486`): `name`° (the logical name, from the
+(`printSecrets`, `internal/cli/secrets.go`). **The document is a bare JSON array** — `enc.Encode(entries)`
+in `printSecrets`, not an object with a wrapper key. Each element is
+`secretEntry`: `name`° (the logical name, from the
 `fugaro_secret` label), `scope`° (`repo` / `project` / a project secret with a
 repo override), `allowed`° (`[]string`, `--project-wide` only), `missing`° (`true` on a name a job of the repository needs that has no enabled version — `--repo` only; such a row has an empty `id` and no `created`), and the
-embedded **`gcp.SecretInfo`** (`internal/backend/gcp/secrets.go:40`), whose own
+embedded **`gcp.SecretInfo`**, whose own
 JSON keys are `id`, `created` (RFC 3339), `labels`°, `versions` (the count of
 versions not destroyed) and `latest`° (the newest enabled version, if any) —
 **names, labels and version counts only; `createTime` and `versionCount` are
@@ -561,7 +568,7 @@ the command resolves the checkout's origin), `--json`, plus the cloud flags.
 
 **Command:** `internal/cli/root.go` `newVersionCmd`, **`cobra.NoArgs` with no
 `Flags()` at all**. It prints **one line of plain text** — the `Version`
-variable (`root.go:13`, `var Version = "dev"`), i.e. the release tag of a
+variable (`Version`, `var Version = "dev"`), i.e. the release tag of a
 built binary. There is **no `--json` and no flag of any kind**, which is why
 the handshake is the one spawn that carries no `--project` (§8), and why the
 root command sets no cobra `Version` field (`fugaro --version` fails). The
@@ -683,6 +690,89 @@ this, and they answer different halves: an older CLI has no `plan graph` at all,
 and a newer *planner* can write a `schema_version` the CLI refuses. The console
 shows the CLI's refusal sentence rather than a graph.
 
+### 6.10 `fugaro runs stats --json` (**CLI 0.9.0**)
+
+**Command:** `internal/cli/runs_stats.go` `newRunsStatsCmd` / `runRunsStats`.
+**Document:** `userStatsDoc`, indented (`writeUserStats`), both in
+`internal/cli/runs_stats.go` — cited by symbol, not by line: an indented
+document is written by one function and a line number here rots at the next
+insertion above it. This is the one command in this document the console
+**does not spawn yet**: it is the data behind the Spend screen's by-person
+view (CLI 0.9.0), and the section is here so the screen that follows has a
+shape read off the code rather than assumed from a design. It is read-only —
+the figures come from the run records (`launch.json`'s `launched_by`, and
+`result.json`'s outcome and settled cost), never from the budget database, so
+there is no write path behind it and no counter a screen has to reconcile.
+
+| Field | Type | omitempty | Availability state |
+|---|---|---|---|
+| `project` | string | no | the Fugaro project, the marker's name |
+| `by` | string | no | the breakdown asked for: `"user"`, the only value the command publishes |
+| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an operator of the installation (the identity the local config's `user:`/git names, listed in its `terraform.operators`) sees `"all"`; a plain launcher gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
+| `you` | string | no | the identity the view was resolved for, in the same domain a row's key is. `""` is *unavailable*, not anonymous: the CLI could not tell who the caller is — no identity at all, or one with nothing printable in it — which `--all-users` gets past. It is `"unknown"` only when the caller's own identity literally says so, never as a stand-in for "no key of its own", because that word is a group of runs rather than a person. A screen must not read `you` as a row it can always find in `rows` (see below) |
+| `operator` | bool | no | whether the installation's own lists place `you` as an operator. A screen must not render `"all"` as "you are an operator": `--all-users` produces `"all"` with `operator: false` |
+| `since` | string | no | the window's first UTC day (`YYYY-MM-DD`); `""` (unbounded) for `--since 0` |
+| `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
+| `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
+| `truncated` | bool | no | **the window held more runs than `max_runs`**: every figure is over its newest `max_runs` alone. The bound is on the read and not on a person: it is applied before the view is, so a private view can be over fewer of the caller's own runs than `max_runs` suggests. A console must show this the way it shows a gap, never as the window's own total |
+| `rows` | `[]userstats.Row` | no | `[]` when none. One row per (user, currency) — dollars are never added across currencies |
+| `totals` | `[]userstats.Row` | no | one per currency, in currency order, with `user` `""` |
+| `unlaunched` | int | no | runs in the window with neither a launch nor a record (never launched, cancelled before launch, or a stale claim). They never started: they are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
+| `notes` | `[]string` | no | the lines the human table prints before and after its own: whose numbers these are, what the money counts, and what the read left out. The document and the table say the same things |
+
+**The `"own"` view filters a read that is not its own.** It holds the runs
+whose `launch.json` recorded the caller's own identity — the recorded text
+itself, `launch.json`'s `launched_by`, the identity `fugaro run` records at
+launch (not the `requested_by` that `runs ls --mine` compares) — rather than
+every run under the key `you` names. The two differ when a key is shared: identities
+that sanitise to the same text are one row, and the other person's runs are
+not the caller's own, so a row in `"own"` can be smaller than the same key's
+row with `--all-users`. The row a private view does show is keyed by `you`,
+since every run in it recorded the caller's identity and that identity's key
+is `you`.
+
+`truncated` and `unlaunched` are the read's, computed over everyone's runs in
+the window before the caller's row is picked out of it — they are counts of
+runs, and a run that never launched has no launcher to attribute. So in
+`"own"` a screen reads them as facts about the window, not about the person: a
+truncated private view may cover fewer of the caller's runs than `max_runs`,
+and `unlaunched` is not a count of runs they started. `"own"` with `rows: []` is
+likewise a state of its own, not an error: a window the caller started nothing
+in, or a caller whose identity has no key of its own — nothing printable in it,
+or a text that reads as `"unknown"` itself. The unattributed row is every run
+of the window that recorded no launcher, so it is never shown as a person's
+own; the human output says so in a note, and `--all-users` still shows it with
+everyone else's.
+
+An identity that cannot be resolved **at all** — the local config's `user:`
+empty and `git config user.email` answering nothing — is neither of those: the
+command is **refused** instead, with no document at all and an error naming
+`--all-users`, the one way to the full table that never needed to know who the
+caller is. There is no `"own"` document to describe for it, which is why the
+refusal is stated here rather than as a third state of `rows`.
+
+`userstats.Row` is the group shape
+behind **both** `rows` and `totals`; the counts are an embedded `Counts`
+(`Counts`), so they are flattened into the same object on the wire.
+**The counts add up**, which is how a screen reads the shape:
+`runs == succeeded + failed + halted + infra_error + other + no_record`.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `user` | string | no | the launcher the run's own `launch.json` recorded, sanitised to one printable line and capped at 128 runes; `"unknown"` (report's `budget.UnknownPerson` spelling) when the run recorded none — never guessed from the task, the record or the account it ran under. **Untrusted display text**: a service account or a CI identity is a row like a person's, and nothing is authorised by this string. **Two identities that sanitise to the same text share a row**: the 128-rune cap is one way to the collision and characters the sanitising drops (`alice` and `alice` + U+200B) the other, so a row is a key rather than a person. The `"own"` view does not follow the key — see the note below |
+| `currency` | string | no | the unit the money columns are in; `"USD"` today (`CurrencyUSD`) |
+| `runs` | int | no | every run of the group in the window, averaged or not |
+| `succeeded`, `failed`, `halted`, `infra_error` | int | no | the four settled statuses, spelled as `result.json` spells them |
+| `other` | int | no | a record that settled as none of the four: still running, or cancelled |
+| `no_record` | int | no | **no usable `result.json`**: not finalised yet, or the object cannot be read. Its status and its money are unknown — never a measured `0` |
+| `counted_usd` | float64 | no | the group's **model** dollars that count toward the caps (`model_basis` `api-list`/vertex). Compute is attributed to nobody, here or in the budget database's own person view |
+| `notional_usd` | float64 | no | the group's model dollars on a **subscription** (`agent.auth oauth`): **notional**, counted toward no cap and nobody's bill. Kept apart from `counted_usd` by construction and never summed with it |
+| `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
+| `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
+
+**Flags** (`newRunsStatsCmd`): `--by`, `--repo`, `--all`, `--since`,
+`--max-runs`, `--all-users`, `--json`, plus the cloud flags.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -698,15 +788,20 @@ the closing here.
 | 1 | The degraded path prints a **plain sentence to stdout** on the same stream as the documents | `runWatchDegraded`, `internal/cli/watch.go` (`"%s\nrun records unavailable (retrying): %s\n"`) | Skip any line that is not a JSON object; show it as a header warning (§2, fact (iii)) |
 | 2 | `version` has **no `--json`** and no flags at all | `newVersionCmd`, `internal/cli/root.go` — `cobra.NoArgs`, no `Flags()` | Parse the human line, pinned by a test |
 | 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Projects screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
-| 4 | **No schema version in the `watch --json` document** | `JSONDoc`, `internal/watch/json.go:97` — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
+| 4 | **No schema version in the `watch --json` document** | `JSONDoc` (`internal/watch/json.go`) — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
 | 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory. **Closed 2026-10-18: `fugaro config list --json` exists (§6.8), so the typed name becomes a pick from the list of names the CLI prints — the field stays for an installation the operator adds before the CLI is updated** |
-| 6 | **No PR field on a run that has not finished** | `JSONRun` (`json.go:54`) carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished` (`json.go:91-92`); `runview.Row` (`runview.go:57`) spells the pair `pr_url` + `pr` (`runview.go:109`) | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
-| 7 | **No provider on any shape** | `JSONRun`, `JSONFinished` and `runview.Row` each carry `repo` and no provider or origin host; `doctor --json`'s `doctorOutput` reports none; the kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket |
+| 6 | **No PR field on a run that has not finished** | `JSONRun` carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished`; `runview.Row` spells the pair `pr_url` + `pr` | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
+| 7 | **No provider a console can build a link from** | `runview.Row` and `diagnose`'s row carry no provider, and `doctor --json`'s `doctorOutput` reports none. `JSONRun` and `JSONFinished` now do carry `provider` (phase 3, Task 3.5), and it is the right answer for the runs that have one — a shared project job's profile pins the provider its runs clone from — but it is **absent on every per-repository job**, which in phase 3 is every Bitbucket repository and every baked workflow. The kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket — and that run is exactly one of the runs whose `provider` is absent |
 
 **And no shape anywhere has a `repository` field** — the repository is `repo`
-on every one of them — and **no shape carries a provider**, which is why a
-link rebuilt as `https://github.com/<repo>/pull/<n>` is not merely useless but
-wrong (design §5.1 rule 2).
+on every one of them. **`watch --json`'s run and finished rows carry a
+`provider`; nothing else does, and it is the job profile's, not a stamp for
+every repository.** So a link rebuilt as `https://github.com/<repo>/pull/<n>`
+is still not merely useless but wrong (design §5.1 rule 2), and **gap 7 stays
+open**: the console's detail screen reads `diagnose RUN --json`, whose row has
+the field no more than it did, and a Bitbucket run's own feed rows have none
+either. Closing it means the provider on the row the console actually builds
+from — a change this document does not make.
 
 Two things that look like gaps and are not: `budget show --json` already
 carries the effective per-run cap with its binding scope
@@ -715,20 +810,20 @@ metadata-only form (§6.6).
 
 ## 8. The flag inventory the spawn contract turns on
 
-Read off each cobra command — `addCloudFlags` (`internal/cli/cloud.go:51`) —
+Read off each cobra command — `addCloudFlags` —
 and **not** off this document or the design:
 
 | Command | `--config`, `--project` (and `--gcp-project`, `--region`) |
 |---|---|
-| `watch` | yes (`internal/cli/watch.go:170`) |
-| `budget show` | yes (`internal/cli/budget.go:229`) |
-| `report` | yes (`internal/cli/report.go:88`) |
-| `runs ls` | yes (`internal/cli/runs.go:111`) |
-| `diagnose` | yes (`internal/cli/diagnose.go:98`) |
-| `logs` | yes (`internal/cli/logs.go:58`) |
-| `secrets ls` | yes (`internal/cli/secrets.go:74`, via `secretsOptions.addFlags`) |
-| `accounts ls` | yes (`internal/cli/accounts.go:43`) |
-| `doctor` | yes (`internal/cli/doctor.go:195`) |
+| `watch` | yes (`newWatchCmd`) |
+| `budget show` | yes (`newBudgetShowCmd`) |
+| `report` | yes (`newReportCmd`) |
+| `runs ls` | yes (`newLsCmd`) |
+| `diagnose` | yes (`newDiagnoseCmd`) |
+| `logs` | yes (`newLogsCmd`) |
+| `secrets ls` | yes (`secretsOptions.addFlags`) |
+| `accounts ls` | yes (`newAccountsLsCmd`) |
+| `doctor` | yes (`newDoctorCmd`) |
 | **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`) |
 | **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |

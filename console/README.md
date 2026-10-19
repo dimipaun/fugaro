@@ -2686,3 +2686,68 @@ a scratch copy of the staged file and turned the named test red:
 | the `ditto -c -k --keepParent` zip of the bundle dropped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that line; and `TestDocsConsoleNotarizeAndStapleScript`, on the calls the fake `xcrun` and `ditto` log |
 | the script left non-executable | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on its file mode (the signing step runs it directly) |
 | the "Re-copy required" note deleted from `docs/pending-workflows/README.md` while the staged and applied files differ | `TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn`: the owner is the one who has to copy the file in, and that section is where they read it |
+
+## The theme's tokens, and the palette they are painted in (Task 6.1)
+
+`src/renderer/theme/` holds the console's styling, in the four files the plan's File
+Structure tree promised and the design's section 3.1 lays out. Two of them exist today and
+two do not, and that is the phase's own order rather than an omission:
+
+| File | Holds | Written by |
+|---|---|---|
+| `src/renderer/theme/tokens.css` | the **vocabulary**: spacing, radii, type sizes, leading, weights, the two row heights, the focus ring's width and offset, and the two motion values. **No colour.** | Task 6.1 (this section) |
+| `src/renderer/theme/palette.css` | the **value set**: every colour token the console paints, each written once. **No size, no spacing, no motion.** | Task 6.1 (this section) |
+| `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (not yet) |
+| `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (not yet) |
+
+**Nothing reads these two files yet, and that is stated rather than left to be discovered.**
+They are inert until Task 6.2 lands the bundler's stylesheet step, the `/console.css` entry
+in `SERVED_FILES`, the three `<link>` elements and the unit tests that pin them: a merge of
+this file pair alone changes nothing on screen. When 6.2 lands, the four files become **one**
+served artifact, `dist/bundle/console.css`, concatenated in the design's order (vocabulary,
+values, then the rules that read them) — and the packaged-file list in this README and in
+`package.json`'s `build.files` has to name it, which `test/unit/build-files.test.ts` holds
+(`bundlerOutputs` gains it in that task's commit, so an app that ships without its
+stylesheet fails a test rather than drawing an unstyled window).
+
+### Dark only, which is the owner's ruling of 2026-10-19
+
+The design's Q1 asked whether the console ships a light theme and recommended light and
+dark with the OS deciding. **The owner ruled dark only**: the console ships one value set,
+matching the `CONSOLE_THEME` its screens are drawn with today, and the light set is
+deferred — the design's section 3.3 table stays as the record of it, for whichever later
+task the owner hands it to. So `palette.css` sets `color-scheme: dark` outright, and no
+theme file uses `light-dark()`, reads `prefers-color-scheme`, declares the OS-driven
+`light dark` pair or keys a block on `data-theme='light'`. Each of those four spellings is
+the way a light theme could arrive without a task owning it, and
+`test/unit/theme-tokens.test.ts` fails by name on every one of them.
+
+### The colour contract is a test, and it reads the file rather than a copy of it
+
+`test/unit/theme-tokens.test.ts` parses `palette.css`'s hex literals out of the stylesheet
+itself and computes every pair the design's section 3.4 tabulates — 4.5:1 for body-size
+text and the five state colours on all three surfaces, 3:1 for the accent and the control
+border as UI colours, 4.5:1 for a label on a filled control — with WCAG 2.1's
+relative-luminance definition, the same arithmetic `website/test/a11y.mjs` uses. It also
+holds the value set to the design's section 3.2 table name by name and literal by literal,
+keeps `--border` below 3:1 (it is a decorative hairline, never a control's extent), keeps
+the five state colours at least 50° apart in hue, and refuses a colour in the vocabulary.
+The red step is kept as a case: a deliberately failing fixture, `#646464` on `#14141F`,
+must print `--text-muted on --surface is 3.1:1, needs 4.5:1` — one decimal, because that is
+the line `a11y.mjs`'s own committed fixture prints.
+
+**Three** of the cases the design's section 6.3 assigns to `theme-tokens.test.ts` are not in
+the file, and two different reasons put them elsewhere:
+
+- the **"vocabulary complete and identical in both sets"** case is *replaced*: under the
+  owner's dark-only ruling there is one value set, so it would compare a set with itself.
+  What catches what it was written for is here instead — the vocabulary is declared
+  **exactly** (every token of the design's section 3.1 table is present, and no name
+  outside it), no colour is spelled in `tokens.css`, and no step is spelled in
+  `palette.css`;
+- the **`--border`-is-decorative scan** of `base.css` and `screens.css` is Task 6.4's: both
+  files are created later, by Tasks 6.3 and 6.4, so the case lands in the task that writes
+  what it reads;
+- the **window-background comparison** against `consoleWindowOptions` is Task 6.5's:
+  `backgroundColor` is a key that task adds to `src/main/window.ts`, and under the ruling it
+  is one literal, `#0A0E16`, checked against the one `--ground`.

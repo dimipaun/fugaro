@@ -33,7 +33,7 @@ The remote agent cannot see this conversation, your files or the user's machine.
 
 ## Monitor
 
-- `fugaro runs ls` lists runs (`--repo`, `--mine`, `--since`, `--batch`, `--pr`); `fugaro runs ls --watch` redraws until every run has settled.
+- `fugaro runs ls` lists runs (`--repo`, `--mine`, `--since`, `--batch`, `--pr`) and its `BY` column says who started each one; `fugaro runs ls --watch` redraws until every run has settled, and `fugaro runs stats` aggregates the same records by the person who started them.
 - `fugaro watch` is the live screen of spend, repositories and running agents. It is a terminal screen only the user can read; for a snapshot you can read, run `fugaro watch --once`.
 - `fugaro logs <run>` prints the run's logs, `-f` follows them.
 - `fugaro diagnose <run>` explains one run: its stage, reason, tests, review findings, the agent's last word, cost and pull request.

@@ -120,15 +120,25 @@ func TestDocsCheckoutSaysWhatOldRevisionsCost(t *testing.T) {
 }
 
 // TestDocsCheckoutSaysWhetherCloneIsShipped (review M6/H2): the doc's claim
-// about the clone gate has to match the gate. While cloneShipped is false
-// (`internal/cli/recipes_skew.go`) no clone job can be deployed — `fugaro
-// init --repo` and `fugaro image refresh` refuse — so a doc that describes
-// the switch as something a user can do today is wrong. When Task 18 flips
-// the gate, this fails until the doc says so too.
+// about the clone gate has to match the gate. cloneShipped
+// (`internal/cli/recipes_skew.go`) has been true since 0.9.0 — a clone job
+// can be deployed and a clone run launches — so a doc that still tells the
+// reader the option is not shipped sends them away from something that
+// works, which is the mirror image of the failure this test was written
+// for (a doc promising a switch the gate refuses). Flipping the gate back
+// fails it until the doc says so too.
+//
+// Mutation (run, restore): set cloneShipped back to false in
+// recipes_skew.go, or drop the "is shipped" sentence from docs/checkout.md
+// — the test fails on either, which is the point: the two have to move
+// together.
 func TestDocsCheckoutSaysWhetherCloneIsShipped(t *testing.T) {
 	doc := docsCheckoutDoc(t)
-	saysNotShipped := strings.Contains(doc, "is not shipped yet")
-	if saysNotShipped == cloneShipped {
-		t.Fatalf("docs/checkout.md says clone is not shipped = %v, but cloneShipped = %v", saysNotShipped, cloneShipped)
+	saysShipped := strings.Contains(doc, "**`checkout: clone` is shipped**")
+	if saysShipped != cloneShipped {
+		t.Fatalf("docs/checkout.md says clone is shipped = %v, but cloneShipped = %v", saysShipped, cloneShipped)
+	}
+	if strings.Contains(doc, "is not shipped yet") {
+		t.Error("docs/checkout.md still says checkout: clone is not shipped yet")
 	}
 }

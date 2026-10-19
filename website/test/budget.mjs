@@ -25,89 +25,75 @@
 // console option into this build — plus 25 %, which is D192's rule and the rule the README's
 // loose figures are three times.
 //
-// **The numbers are not in this file.** They are the five lines `website/README.md` states —
-// the ones this file reads, so the README's numbers are the enforced ones — and every exact
-// figure in this header would be a second copy of them to drift. What follows is the rule, the
-// causes, and what the cases below measure; the arithmetic itself is the case at the end of
-// this file, which refuses a README whose numbers are not the derivation of the build it can
-// measure.
+// The count below is read off **the gates' own build of the site**, which is the artifact the
+// derivation case at the end of this file measures (see "the build the README's figures are a
+// derivation OF"), rather than carried from the merge. **That artifact is a copy of the
+// repository in a temp directory rather than the checkout's `dist/`**, and the reason is the
+// site's own build moving with the checkout's git state: the changelog renders each release
+// file's "not yet released" state where `git tag --list` finds no tag
+// (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
+// deployed site's — builds a larger site than this repository's own clone, which carries the
+// tags, by exactly that page's own bytes. The two figures and that difference are written in
+// `website/README.md`, and the case below reads the pair there and holds them to their own
+// arithmetic: one place states them, and this file states the rule.
 //
-// The count is read off **the gates' own build of the site**, which is the artifact that case
-// measures (see "the build the README's figures are a derivation OF"), rather than carried from
-// the merge. **That artifact is a copy of the repository in a temp directory rather than the
-// checkout's `dist/`**, and the reason is that the site's own build moves with the checkout's
-// git state: the changelog renders each release file's "not yet released" state where
-// `git tag --list` finds no tag (`src/lib/changelog.mjs`), so a shallow checkout —
-// `website-preview.yml`'s, and so the deployed site's — builds a larger site than this
-// repository's own clone, which carries the tags.
+// **The three figures themselves are not written here, and that is the correction of
+// 2026-10-19.** They live in `website/README.md`'s budget lines, which the case below reads and
+// holds to the build it makes itself; a comment that repeated them was a second place to forget,
+// and it was forgotten — a round re-derived the site figure in the README and left the copy here
+// stating the build before it. What the three bullets below keep is the **rule** each figure is
+// derived by, and the round-by-round history that follows them lives in the README as well: the
+// same rounds, the same causes and the same deltas, each re-derived in the commit that moved it,
+// with no figure repeated here (D192).
 //
-//   - JavaScript per page: the one script the site ships, `public/scripts/site.js` (P6, P3,
-//     D183, W3.2's gate, the cookie deletion the owner's ruling of 2026-10-18 added to a
-//     withdrawal, and that ruling's brief item 1: a group's submenu opens when the pointer
-//     arrives at it, bound only where `matchMedia` reports a pointer that hovers and only for a
-//     pointer that reports itself a mouse or a pen, and re-decided whenever that answer changes).
-//     Every page loads it exactly once, so the file's own size IS the whole of a page's
-//     JavaScript — which is why the case below reads the artifact rather than trusting the
-//     README's line, and why D192 requires the figure to be re-derived in the same commit that
-//     changes the script. The script took five corrections on 2026-10-19 and the day before,
-//     each re-derived in its own commit: the event that says which pointer arrived, and the
-//     query's `change` that says the device's answer has moved; the focus a click or a tap moves
-//     is the pointer's and opens nothing, because the click that brought it toggles the group
-//     itself, while the keyboard's focus opens one; the handback of the focus a browser makes
-//     when a sibling in the `name` set opens is only the browser's, since a press on the page's
-//     own text moves the focus to the body without a `focusin` to hear; a group has two readers,
-//     so the pointer's close is owed when nobody is left reading and a keyboard reader standing
-//     in the group holds it open until the focus goes; and the keyboard's way into a group is
-//     bound beside the browser's own state rather than inside the hover behaviour, because the
-//     keyboard is the device's and not the pointer's.
-//   - Page weight per page: the heaviest page on 2026-10-19, `docs/index.html`: its HTML (the
-//     whole generated CLI reference) plus the first-party files it fetches — the script above
-//     and the logo and icons the layout links; × 1.25, rounded up. One ceiling for every page
-//     rather than one per page, so a page that grows with the product (the changelog, the
-//     reference) is held to the same line as the rest instead of to its own history.
-//   - Whole site: every file in `dist/` on that build (23 files: eleven pages, the script, the
-//     brand icons, the manifest and the two `fugaro watch` assets); × 1.25, rounded up. **It is
-//     the build with no tags** — the one the gates make, and the one the deployed site is — and
-//     the changelog page's own "not yet released" labels are part of it; a full clone, whose
-//     checkout carries the release tags, builds the same site smaller.
+//   - JavaScript per page: the one script the site ships,
+//     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
+//     ruling of 2026-10-18 added to a withdrawal, and that ruling's brief item 1: a group's
+//     submenu opens when the pointer arrives at it, bound only where `matchMedia` reports a
+//     pointer that hovers and only for a pointer that reports itself a mouse or a pen, and
+//     re-decided whenever that answer changes), × 1.25, rounded up. The event
+//     that says which pointer arrived, and the query's `change` that says the device's answer has
+//     moved, re-derived all three figures here on 2026-10-19; the same day's second correction
+//     did it again — the focus a click or a tap moves is the pointer's and opens nothing (the
+//     click that brought it toggles the group itself), the keyboard's focus still opens one, and
+//     a group the browser closes because a sibling in its `name` set opened hands the reader's
+//     focus back — and the third did it once more: that handback is only the browser's, since a
+//     press on the page's own text moves the focus to the body without a `focusin` to hear, so a
+//     close the reader asks for from outside the menu gives nothing back — and the fourth did it
+//     again: a group has two readers, and the pointer's close is owed when nobody is left reading,
+//     so a keyboard reader standing in the group holds it open, the close lands when the focus
+//     goes, and a focus arriving inside `CLOSE_AFTER_MS` cancels the close the pointer asked for
+//     — and the fifth re-derived all three again: the keyboard's way into a group is bound beside
+//     the browser's own state rather than inside the hover behaviour, because the keyboard is the
+//     device's and not the pointer's, so a phone or a tablet with a keyboard attached answers the
+//     hover query no and still has a second level Tab can enter; and the guard that keeps a close
+//     from reopening the group it handed the focus back to lasts for that focus and no longer.
+//     Every page
+//     loads the script exactly once — so the file's own size IS the whole of a page's
+//     JavaScript — which is why the case below reads the artifact rather than trusting this
+//     line, and why D192 requires the README's figure to be re-derived in the same commit that
+//     changes the script.
+//   - Page weight per page: the heaviest page, `docs/index.html` — its HTML (the whole generated
+//     CLI reference) plus the first-party files it fetches: the script above and the logo and
+//     icons the layout links — × 1.25, rounded up. One ceiling for every page rather than one per
+//     page, so a page that grows with the product (the changelog, the reference) is held to the
+//     same line as the rest instead of to its own history.
+//   - Whole site: every file in `dist/` — eleven pages, the script, the brand icons, the manifest
+//     and the two `fugaro watch` assets — × 1.25, rounded up. **It is the build with no tags** —
+//     the one the gates make, and the one the deployed site is — and the changelog page's own
+//     "not yet released" labels are part of it; a full clone, whose checkout carries the release
+//     tags, builds the same site smaller by exactly those labels.
 //
-// **Where this build's numbers come from**, round by round, each measured over two builds
-// rather than argued — the README states the figures and the same reason, one bullet up from
-// this file's name in its gates list, and the case below is what holds them to the build:
-//   - `main`'s fix rounds moved the script and the pages they touched, and this branch's
-//     redesign's own rounds moved the homepage's order, the flow's treatment, the chat's turns
-//     and the command's wrapping; each was re-derived in the commit that shipped the bytes.
-//   - **The `fugaro watch` screenshot landed on the homepage** (`main`'s #655) and moved the
-//     site figure alone: the owner's capture and its transcription are served by `public/` and
-//     are in every build's `dist/`, and the derivation the figure named before them predated the
-//     assets — the two assets, plus the homepage markup that put the picture in its slot, are the
-//     whole of the move. The page weight did not move with it: the picture is on the homepage,
-//     and the heaviest page is the docs hub, which renders neither the chat nor the screenshot.
-//     The script was untouched by that round.
-//   - **The menu (item 1), and the review round after it**, measured against that build file by
-//     file. Taking the drawer out — the "Menu" toggle, the panel it opened and the sibling
-//     combinator that showed it — leaves each of the eleven pages lighter, the base stylesheet
-//     every one of them inlines being that much shorter, and takes bytes off the script. The
-//     review round then put the script's own comments back in step with the menu, three of them
-//     still describing the retired drawer, which is bytes back onto the script — comments are
-//     part of the file the browser fetches. The site figure moved with the eleven pages and the
-//     script, and the page weight with both, the docs hub inlining the stylesheet and fetching
-//     the script. Nothing else in the artifact moved in that round — the console's link was
-//     behind a flag that build had off.
-//   - **The console's release turned `features.console_downloads` on** (W3.1), and moved the
-//     site figure alone: the console page's downloads section — each artifact's published name
-//     as a link, the SHA-256 the release recorded for its bytes beside it, and the command that
-//     checks a download against the release's own sums file — the console option's own markup on
-//     Getting Started and the homepage call to action's link to the console. The page weight and
-//     the script did not move with it: the heaviest page is the docs hub, which renders no
-//     install option, no download and no hero.
-//   - **The caps-and-costs rework** (the owner's brief of 2026-10-19) moved the site figure
-//     alone, on that one page: the table of what a job costs and its provenance note, rendered
-//     from `website/data/typical-costs.yaml`, against the per-command scope sentences the page
-//     no longer carries and the `<details>` the commands now sit behind — and then the review of
-//     that rework, the scroll box the nowrap columns need and the page's own lead rule. The page
-//     weight and the script did not move: the heaviest page is the docs hub, and the caps page is
-//     not it.
+// **Where this build's three numbers come from** is written in `website/README.md` too, one
+// bullet up from this file's name in its gates list: the same rounds, the same causes and the
+// same deltas — `main`'s fix rounds and this branch's redesign's own; the `fugaro watch`
+// picture landing on the homepage; the menu's drawer coming out and the script's comments going
+// back in step with it; the console's release turning `features.console_downloads` on;
+// Getting Started's three bands; the console's screenshot slider; the run on How It Works
+// becoming one vertical timeline; and the caps-and-costs rework — each re-derived in the commit
+// that moved it (D192). None of those figures is repeated here, because a figure in a comment is a figure that moves with
+// nothing when the build moves, which is what happened to the copy that used to be in this one;
+// the case below reads the README's figures and holds them to the build it makes itself.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -560,13 +546,14 @@ test('the README budget lines are read strictly', () => {
 // reason). `console-option.mjs` builds the site with the console's flag flipped — the state the
 // site was in before the console's release, which the checkout no longer builds — and runs the
 // artifact gates over that copy, so the flag's two states are both held to the ceilings. A
-// derivation held to that copy would be the flag's own bytes rather than the site's: measured on
-// this build it is **smaller** at the site figure — the console option's markup is the whole of
-// the difference (the console page's downloads, Getting Started's option and the homepage's call
-// to action) — and nothing at all at the page weight. The direction is the flag's own: turning
-// `features.console_downloads` on added those bytes, so the copy that flips it back off is the
-// smaller build. The checkout's own `dist/` is the other artifact the numbers may not name,
-// because its git state moves it (the changelog's "not yet released" labels,
+// derivation held to that copy would be the flag's own bytes rather than the site's: it is
+// smaller at the site figure by exactly the console option's markup on the three pages that
+// render it — the console page's downloads section, Getting Started's option and the homepage's
+// call to action — and by nothing at all at the page weight. The direction is the flag's own:
+// turning `features.console_downloads` on added those bytes, so the copy that flips it back off
+// is the smaller build. The checkout's own `dist/` is the other artifact the numbers may not
+// name, because its git state moves it by the changelog page's own bytes (its "not yet
+// released" labels,
 // above). What is left is the gates' own build: a copy of the repository with no `.git`, made by
 // `test/lib/build.mjs`'s `buildCopy`, which is what the case below measures (`documentedBuild`).
 const DERIVATIONS = {
@@ -609,27 +596,33 @@ export function derivationFailures(readme, measured) {
  * build with the console's flag flipped off, the state the checkout no longer builds — is a
  * DIFFERENT build rather than another copy of this one: flipping `features.console_downloads`
  * adds the console option's markup to the three pages that render it (the console page's
- * downloads, Getting Started's option and the homepage's call to action), which is the whole of
- * the site figure's difference — and it is the SMALLER of the two, since the copy is the
- * flag-off state and this build is the flag-on one. The derivation is not held to it.
+ * downloads section, Getting Started's option and the homepage's call to action), and it is the
+ * SMALLER of the two, since the copy is the flag-off state and this build is the flag-on one.
+ * The derivation is not held to it, and no byte count for it is written here: `console-option.mjs`
+ * is the case that measures that copy, and a figure repeated in this comment would move with
+ * nothing the next time the flag's markup does.
  *
  * Nor is it held to `website/dist`, which `npm run check` builds first — and that is the
  * correction this reading carries (2026-10-19). `dist/` is the site built from the checkout the
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — the larger one in a checkout with no tags, which is
- * what `.github/workflows/website-preview.yml`'s default checkout is, and the smaller one with
- * the tags this repository's own clone carries, the changelog page being the whole of the
- * difference. A README figure derived from either one is a figure the other environment refuses,
- * which is exactly what happened: `website-preview` could not deploy, because the derivation
- * named a build the run could not measure.
+ * builds to two different site figures — the larger in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and the smaller with the tags
+ * this repository's own clone carries, the changelog page's own bytes being the whole of the
+ * difference. **Both figures are written in `website/README.md`'s paragraph about the two shapes,
+ * and nowhere else**: the case below reads the pair from there and holds it to that arithmetic,
+ * because a figure copied into this comment is a figure that moves with nothing — which is what
+ * happened here, the copy stating the build before the last re-derivation. A README figure
+ * derived from either build is a figure the other environment refuses, which is exactly what
+ * happened: `website-preview` could not deploy, because the derivation named a build the run
+ * could not measure.
  *
  * A copy of the repository has no `.git` at all, so the build the gates make is the same build
- * everywhere: the figures below are re-derived from it, and the site's own `dist/` — whichever
- * of the two shapes it takes — is held to the ceilings above like any other artifact. The
+ * everywhere: the README's figures are derived from it, and the site's own `dist/` — whichever
+ * of the two shapes it takes — is held to the README's ceilings like any other artifact. The
  * "not yet released" state is what the deployed site shows (nothing deploys from a checkout that
- * fetches tags), so the figures that follow are the deployed site's rather than the smaller one a
+ * fetches tags), so the README's figures are the deployed site's rather than the smaller one a
  * full clone builds.
  */
 let DOCUMENTED_BUILD = null
@@ -684,6 +677,52 @@ test('a budget raised without re-deriving it is refused', () => {
       `a ${key} derivation far above the real build is not refused`,
     )
   }
+})
+
+// ---- the site's two build shapes, held to each other ------------------------------------
+//
+// The derivation above is measured on ONE build, on purpose: a copy of the repository with no
+// `.git`, which is the no-tags shape every environment builds the same way. The site's other
+// shape — a checkout whose tags let the changelog render the released state — is the smaller
+// one, and its figure is not gate-enforced (nothing here can tag a build), so it drifted once:
+// a round re-derived the site figure by the bytes it added and left the clone figure where it
+// was, putting the two further apart than the changelog page they differ by. What can be held
+// without a tagged build is their own arithmetic, in the one place this repository writes the
+// pair as figures: `website/README.md`'s paragraph about the two shapes. The clone build is
+// the no-tags build less the changelog page's "not yet released" labels, and the README names
+// that page's own bytes as the whole of the difference. **The pair is read here from the README
+// and from nowhere else**, which is what the README's own sentence about this case says: the
+// figures a reader sees are stated in one place, and this file's prose repeats none of them —
+// a copy in a comment moved with nothing the last time the build moved, which is why there is
+// no other spelling left to hold.
+const PAIR =
+  /\*\*([\d,]+) bytes in a checkout with no\s+tags\*\*[\s\S]*?\*\*([\d,]+) bytes with the tags this repository's own clone carries\*\*/
+const CHANGELOG_DELTA = /the changelog page's ([\d,]+) bytes being the whole of the difference/
+
+test('the site’s two build shapes are stated with one pair of figures, a changelog page apart', () => {
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const n = (s) => Number(s.replace(/,/g, ''))
+
+  const pair = PAIR.exec(readme)
+  assert.ok(
+    pair,
+    'website/README.md no longer states the site\'s two build shapes in the form this case reads — "**N bytes in a checkout with no tags** … **N bytes with the tags this repository\'s own clone carries**" — so the pair is not held to its own arithmetic anywhere: this paragraph is the one place the two figures are written, and a rewrite that drops one of them leaves the other stated with nothing reading it',
+  )
+  const [noTags, clone] = [n(pair[1]), n(pair[2])]
+
+  const delta = CHANGELOG_DELTA.exec(readme)
+  assert.ok(delta, "website/README.md no longer names the changelog page's own bytes as the whole of the difference between the site's two builds")
+  const changelog = n(delta[1])
+  assert.ok(changelog > 0, 'the difference between the two builds is zero bytes, which no changelog page is')
+  assert.ok(
+    noTags > clone,
+    `website/README.md states the no-tags build as ${noTags} bytes and the clone build as ${clone}: the no-tags build is the larger of the two, the changelog printing its "not yet released" labels in it`,
+  )
+  assert.equal(
+    noTags - clone,
+    changelog,
+    `website/README.md's two builds are ${noTags - clone} bytes apart and the same paragraph names the changelog page's ${changelog} bytes as the whole of the difference: the smaller figure is the no-tags one less that page, so a re-derivation that moves one of them moves the other`,
+  )
 })
 
 // ---- the word ceilings' own refusals, kept ----------------------------------------------

@@ -499,8 +499,15 @@ const (
 	// calls with the run's stored key.
 	attachDirectAnthropic = "Anthropic (direct)"
 	// attachRouteOAuth is Anthropic reached with a Claude subscription's
-	// oauth token.
-	attachRouteOAuth = "Anthropic (oauth token)"
+	// oauth token. The label names the secret the token is stored under
+	// (config.ClaudeOAuthToken) rather than a bare "oauth token": the
+	// reserved name is what tells this credential apart from another
+	// harness's — codex-oauth-token is reserved for Codex
+	// (config.CodexOAuthToken, owner ruling of 2026-10-18), and a harness
+	// added later reuses the shape — so a destination line that said only
+	// "oauth token" would name a credential the owner cannot find and could
+	// not tell from the next one.
+	attachRouteOAuth = "Anthropic (" + config.ClaudeOAuthToken + ")"
 )
 
 // attachRouteFor names the destination of a model no provider claims, which

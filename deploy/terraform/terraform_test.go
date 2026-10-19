@@ -18,6 +18,63 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
+// TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites: the project job's
+// tftest supplies the two IAM condition titles as input variables and asserts
+// the module passes them through, so a title internal/infra never writes is
+// nothing but consistent with itself. The 2026-10-19 review found exactly that
+// there: the bucket condition's title read "fugaro-project-job-runs", a string
+// that occurs nowhere else in the repository, while internal/infra writes
+// gcp.BucketConditionTitle(saID) = "fugaro-" + saID (the golden tfvars carry
+// "fugaro-fugaro-p-standard-git-0ca96e64",
+// internal/infra/testdata/installation-budget-job.tfvars.json) and
+// internal/infra/tf's own plan review requires title ==
+// BucketConditionTitlePrefix + <account id>, so a plan carrying the literal
+// would have been rejected by it. Each title is derived here instead, from the
+// account id of the block it sits in, through the two functions internal/infra
+// builds them with.
+func TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites(t *testing.T) {
+	const path = "gcp/roots/installation/tests/project_job.tftest.hcl"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	text := string(data)
+	// An assignment, not a comparison: the same file asserts on
+	// google_service_account.job.account_id == "..." and on a condition's own
+	// title == "...", and those are the module's values read back, not the
+	// variables this test is about.
+	reAccount := regexp.MustCompile(`account_id\s*=\s*"([^"]+)"`)
+	reBucketTitle := regexp.MustCompile(`bucket_condition\s*=\s*\{[^}]*?title\s*=\s*"([^"]+)"`)
+	reTokenTitle := regexp.MustCompile(`token_condition\s*=\s*\{[^}]*?title\s*=\s*"([^"]+)"`)
+
+	accounts := reAccount.FindAllStringSubmatchIndex(text, -1)
+	if len(accounts) == 0 {
+		t.Fatalf("%s declares no job account: the test file this checks is gone or reworded", path)
+	}
+	for n, a := range accounts {
+		// Each block's own account id, its titles following it and the next
+		// block's account id the boundary.
+		end := len(text)
+		if n+1 < len(accounts) {
+			end = accounts[n+1][0]
+		}
+		sec := text[a[0]:end]
+		id := text[a[2]:a[3]]
+		bucket := reBucketTitle.FindStringSubmatch(sec)
+		token := reTokenTitle.FindStringSubmatch(sec)
+		if bucket == nil || token == nil {
+			t.Errorf("%s: the block whose account id is %q declares no bucket_condition/token_condition title of its own (bucket %v, token %v): this test pairs each account with the titles that follow it, so a reworded block must not leave it pairing the wrong two", path, id, bucket, token)
+			continue
+		}
+		if want := gcp.BucketConditionTitle(id); bucket[1] != want {
+			t.Errorf("%s: the block whose account id is %q gives its bucket condition the title %q, want %q (gcp.BucketConditionTitle, the title internal/infra writes into the tfvars and its plan review requires): a plan carrying the other would be rejected by internal/infra/tf/cover.go, and nothing else in the repository spells that string", path, id, bucket[1], want)
+		}
+		if want := gcp.ProjectTokenBucketConditionTitle(id); token[1] != want {
+			t.Errorf("%s: the block whose account id is %q gives its tokens/ condition the title %q, want %q (gcp.ProjectTokenBucketConditionTitle)", path, id, token[1], want)
+		}
+	}
+}
+
 // The embedded tree is what fugaro init writes into its workdir, so every
 // root, module and lock file it needs must be in it. Each task that adds a
 // root or module adds its paths here.
@@ -57,6 +114,11 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/repo/.terraform.lock.hcl",
 		"gcp/roots/repo/tests/repo.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/bitbucket-oauth.tfvars.json",
+		// The shared project job's plan test (design project-centric §4.1,
+		// plan tasks 3.2 and 3.5), in the installation root's own test
+		// directory beside installation.tftest.hcl: what a task that adds a
+		// root's test file owes this list.
+		"gcp/roots/installation/tests/project_job.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/github-vertex.tfvars.json",
 		"gcp/modules/installation/history.tf",
 		"gcp/modules/firebase/versions.tf",
@@ -1206,6 +1268,125 @@ func firstAttr(body, name string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant pins the
+// claim D75 makes in prose — serviceAccountTokenCreator is "one grant on that
+// account, for var.operators" — as a property of the whole tree, because the
+// role scanner does not hold it. checkLiteralRole exempts
+// roles/iam.serviceAccountTokenCreator beside roles/iam.serviceAccountUser so
+// the deployer's impersonation grant is allowed at all, and an exemption
+// cannot tell an operator impersonating the deployer from the same role on a
+// job account, which is a credential that runs as that account. A literal
+// token-creator grant is therefore allowed in exactly one place, and it is the
+// deployer's own block: the deployer account, written as a literal path, for
+// var.operators.
+//
+// Its members are people on the review screen (internal/infra/tf's grantRules)
+// and the plan itself is screened again by Cover.deployerTokenCreator, so what
+// this test is the file-level half of is: no second block anywhere grants the
+// role, and the one that does is the one D75 describes.
+func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T) {
+	const (
+		role = "roles/iam.serviceAccountTokenCreator"
+		// The install module's deployer account, as deployer.tf writes it.
+		account = `"projects/${var.project}/serviceAccounts/fugaro-deployer@${var.project}.iam.gserviceaccount.com"`
+		file    = "gcp/modules/installation/deployer.tf"
+		block   = "google_service_account_iam_member.fugaro_deployer_token_creator"
+	)
+	var sites []string
+	walk(t, func(path string, b []byte) {
+		code := stripComments(string(b))
+		for _, m := range quotedRoleRE.FindAllStringSubmatch(code, -1) {
+			if m[1] == role {
+				sites = append(sites, path)
+			}
+		}
+	})
+	if len(sites) != 1 || sites[0] != file {
+		t.Errorf("the literal %s appears in %v; want once, in %s (D75's impersonation grant, and nothing else in the tree)", role, sites, file)
+	}
+
+	var found bool
+	walk(t, func(path string, b []byte) {
+		if path != file {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.name != block {
+				continue
+			}
+			found = true
+			if !hasAttr(blk.body, "service_account_id", account) {
+				t.Errorf("%s: %s does not name the deployer account as the literal %s: a grant whose account is computed is a grant nobody can check, and this is the account an operator is impersonating", path, blk.name, account)
+			}
+			if !hasAttr(blk.body, "for_each", "toset(var.operators)") {
+				t.Errorf("%s: %s is not for var.operators, the people the owner names at init", path, blk.name)
+			}
+			if !hasAttr(blk.body, "member", "each.value") {
+				t.Errorf("%s: %s does not grant the role to each.value", path, blk.name)
+			}
+		}
+	})
+	if !found {
+		t.Fatalf("%s has no %s", file, block)
+	}
+}
+
+// TestInstallationServiceAccountGrantsNameTheirAccount pins the one shape the
+// installation module's service-account grants have to have: the account is a
+// literal path built from var.project, never read from the account resource's
+// own name attribute.
+//
+// Why it is a rule and not a preference. The installation module is the one
+// that creates the deployer account (D75), and the review that screens the
+// apply — internal/infra/tf's Cover.onDeployer — refuses every
+// service-account grant in a deployer-creating module whose account is
+// computed, because a computed account there could be the deployer, and actAs
+// on the deployer is a job that runs as the deployer. A grant written as
+// google_service_account.<x>.name is therefore not merely unreadable: it makes
+// the installation apply stop riding the run's one confirmation and ask for
+// its own, printing a reason that is false about the module's own grant. The
+// operators' actAs on the scheduler account did exactly that (scheduler.tf),
+// which is what this test was added for.
+//
+// deployer.tf's token-creator grant gives the same reason for the same choice
+// in its own comment; this holds the whole module to it. The other modules are
+// not held to it: none of them creates the deployer, so a grant there may read
+// its account from the resource, and most of them do.
+func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
+	const dir = "gcp/modules/installation/"
+	// The literal form: var.project twice — the account path and its own
+	// domain — and the account's ID, either written out or read from a
+	// variable the module validates as a service account ID. What the pattern
+	// is here to refuse is an account read from the account RESOURCE's own
+	// name attribute (google_service_account.<x>.name), which is the shape
+	// that is unknown at plan time.
+	literalSA := regexp.MustCompile(`^"projects/\$\{var\.project\}/serviceAccounts/([a-z][a-z0-9-]*|\$\{var\.[A-Za-z0-9_.\[\]]+\})@\$\{var\.project\}\.iam\.gserviceaccount\.com"$`)
+	n := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, dir) {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.typ != "google_service_account_iam_member" {
+				continue
+			}
+			n++
+			id := firstAttr(blk.body, "service_account_id")
+			// Only deployer.tf grants on the deployer (the token-creator
+			// rule); another file's grant naming it is actAs on the deployer.
+			if m := literalSA.FindStringSubmatch(id); m != nil && m[1] == "fugaro-deployer" && !strings.HasSuffix(path, "/deployer.tf") {
+				t.Errorf("%s: %s grants on the deployer account outside deployer.tf (%q)", path, blk.name, id)
+			}
+			if !literalSA.MatchString(id) {
+				t.Errorf("%s: %s names its account as %q: a service-account grant in the installation module must name its account as a literal path, because this module creates the deployer account and cover.onDeployer refuses a computed account beside it — the apply then asks its own confirmation and refuses the module's own grant", path, blk.name, id)
+			}
+		}
+	})
+	if n < 2 {
+		t.Errorf("found only %d service-account grants in %s: the scan is not seeing the module's own grants", n, dir)
+	}
 }
 
 // REGRESSION (same-project layout): the project-level roles any job, build or
@@ -2696,6 +2877,148 @@ func allResourceBlocks(t *testing.T, path string, src []byte) []block {
 	return out
 }
 
+// TestLauncherConditionPreconditionMatchesGo pins the installation module's
+// runs_launcher precondition to gcp.LauncherBucketCondition and its title:
+// the launchers' write is widened to tokens/ (the budget token's move,
+// docs/design/budget-token-channel.md §7.2, D16) in the Go that writes the
+// tfvars, the install guard and the plan cover, and in this precondition, and
+// a change that moved one without the other would refuse every installation
+// or, worse, let a different condition through. The precondition is rendered
+// for a bucket and compared with Go's own strings.
+func TestLauncherConditionPreconditionMatchesGo(t *testing.T) {
+	const bucket = "fugaro-runs-proj-1234"
+	b, err := os.ReadFile("gcp/modules/installation/iam.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`condition\s*=\s*var\.launcher_bucket_condition\.title == "([^"]*)" && var\.launcher_bucket_condition\.expression == "((?:[^"\\]|\\.)*)"\n`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("no runs_launcher precondition of the expected shape in modules/installation/iam.tf")
+	}
+	title := string(m[1])
+	expr := strings.ReplaceAll(strings.ReplaceAll(string(m[2]), `\"`, `"`), "${var.runs_bucket}", bucket)
+	if title != gcp.LauncherBucketConditionTitle || expr != gcp.LauncherBucketCondition(bucket) {
+		t.Fatalf("the precondition pins\n  %q / %q\nand Go writes\n  %q / %q", title, expr, gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(bucket))
+	}
+}
+
+// TestJobTokenGrantIsReadOnlyOnTokens pins both job modules' job_tokens
+// grants — the per-repository job's (modules/workflow, gcp.TokenBucketCondition)
+// and the shared project job's (modules/project,
+// gcp.ProjectTokenBucketCondition) — to objectViewer (no create, no delete: a
+// peer run cannot remove or replace a queued run's token, D16), with a
+// precondition on tokens/ of this runs bucket in one clause, and the jobs'
+// objectUser grants never naming tokens/. The project module's grant is
+// otherwise pinned only by the recorded installation golden plan, which a
+// change to the module does not regenerate, so without this a role widened to
+// objectUser there passed every test.
+func TestJobTokenGrantIsReadOnlyOnTokens(t *testing.T) {
+	for _, tc := range []struct{ file, variable string }{
+		{"gcp/modules/workflow/sa.tf", "var.workflow"},
+		{"gcp/modules/project/sa.tf", "var.job"},
+	} {
+		b, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		i := strings.Index(src, `resource "google_storage_bucket_iam_member" "job_tokens" {`)
+		if i < 0 {
+			t.Errorf("no job_tokens grant in %s", tc.file)
+			continue
+		}
+		block := src[i:]
+		block = block[:strings.Index(block, "\n}\n")]
+		if !strings.Contains(block, `role   = "roles/storage.objectViewer"`) {
+			t.Errorf("%s: the job's tokens/ grant is not objectViewer:\n%s", tc.file, block)
+		}
+		if !strings.Contains(block, `objects/`+gcp.TokenBucketPrefix+`/")`) || !strings.Contains(block, `!strcontains(`+tc.variable+`.token_condition.expression, "||")`) {
+			t.Errorf("%s: the job's tokens/ grant has no precondition on one tokens/ clause:\n%s", tc.file, block)
+		}
+	}
+	if strings.Contains(gcp.BucketCondition("b", gcp.JobBucketPrefixes, "s"), "/"+gcp.TokenBucketPrefix+"/") {
+		t.Error("the job's objectUser condition reaches tokens/")
+	}
+	if strings.Contains(gcp.ProjectBucketCondition("b", gcp.JobBucketPrefixes), "/"+gcp.TokenBucketPrefix+"/") {
+		t.Error("the project job's objectUser condition reaches tokens/")
+	}
+}
+
+// TestProjectJobSecretGrantFollowsTheMount pins the one property that makes a
+// project job's account axis a credential boundary rather than a label: the
+// module grants secretmanager.secretAccessor on each secret the job's *own*
+// secret_env names, to that job's own account, at the secret level — one
+// member per (job, mounted secret), never a project-wide role, never another
+// job's secret — and the container mounts exactly those entries through
+// secret_key_ref (design project-named-oauth-tokens §4.3 and D2, plan task 2).
+//
+// The grant and the mount are one list, which is what makes the credentials
+// service a clean swap (§4.6): removing an account's one secret_env entry
+// removes its member with it and moves nothing else — not the job's name, not
+// its account, not its profile.
+//
+// Mutation (run, restore): iterate anything but var.job.secret_env in the
+// member's for_each (a literal set, var.secrets, another variable) — the
+// member and the mount then describe different secrets, and this fails.
+func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
+	path := "gcp/modules/project/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member")
+	if len(blocks) != 1 {
+		t.Fatalf("%s has %d secretAccessor resources, want the one the project job's mounts drive", path, len(blocks))
+	}
+	body := blocks[0].body
+	for _, want := range []string{
+		// One member per secret this job mounts, and none for a secret it
+		// does not: the list is the job's own secret_env, not the
+		// installation's secrets and not another job's.
+		"for_each = toset(values(var.job.secret_env))",
+		// The secret's own ID, at the secret level: never the project.
+		"secret_id = var.secrets[each.value]",
+		"role      = \"roles/secretmanager.secretAccessor\"",
+		// The job's own account and no other member, ever.
+		"member    = google_service_account.job.member",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: google_secret_manager_secret_iam_member.job does not hold %q:\n%s", path, want, body)
+		}
+	}
+	if strings.Contains(body, "var.project_number") || strings.Contains(body, `"allUsers"`) || strings.Contains(body, `"allAuthenticatedUsers"`) {
+		t.Errorf("%s: the job's secret grant names something wider than the job's own account:\n%s", path, body)
+	}
+
+	// And the container mounts each of those entries, as a secret_key_ref to
+	// the same container: the mount is the carrier, so a secret_env entry the
+	// job does not mount would be a grant with no reader, and a mount with no
+	// entry would be a variable the job's account cannot read.
+	jobPath := "gcp/modules/project/job.tf"
+	jb, err := os.ReadFile(jobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := resourceBlocks(t, jobPath, jb, "google_cloud_run_v2_job")
+	if len(jobs) != 1 {
+		t.Fatalf("%s has %d jobs, want the one shared project job", jobPath, len(jobs))
+	}
+	for _, want := range []string{
+		"for_each = var.job.secret_env",
+		"secret  = var.secrets[env.value]",
+		`version = "latest"`,
+	} {
+		if !strings.Contains(jobs[0].body, want) {
+			t.Errorf("%s: the job's container does not mount its secret_env through %q:\n%s", jobPath, want, jobs[0].body)
+		}
+	}
+	// The values never travel in the plain environment: every secret the job
+	// mounts is a value_source, and the plain env is the profile's own.
+	if strings.Contains(jobs[0].body, "value = var.secrets") {
+		t.Errorf("%s: a secret's value is written into the job's plain environment", jobPath)
+	}
+}
+
 // customRolePermissions is the snapshot of the permissions Google allows in a
 // custom role (GA, customRolesSupportLevel empty), for the service prefixes
 // the modules use. See the header of the file for how it is made and refreshed.
@@ -2776,13 +3099,14 @@ func TestCustomRolePermissionsAreAllowedByGoogle(t *testing.T) {
 	// Known-invalid entries not fixed by this change, keyed "file|permission".
 	// The compute module is not part of the installation root's apply: it is
 	// applied only by fugaro init --provision-batch, which refuses before any
-	// cloud call while internal/cli's batchProvisionShipped is false (0.8.6;
-	// the reaper is redesigned for 0.9.0). Which permission its reaper needs
+	// cloud call while internal/cli's batchProvisionShipped is false (0.8.6
+	// onward; the reaper is redesigned in a later release — the Cloud Batch
+	// backend is excluded from 0.9.0). Which permission its reaper needs
 	// to cancel a Batch job is that design call (Google lists
 	// batch.jobs.create/delete/get/list only). Remove the entry when the
 	// module is fixed: the test fails while it is stale.
 	knownInvalid := map[string]string{
-		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute module: --provision-batch refuses until 0.9.0 (batchProvisionShipped)",
+		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute module: --provision-batch refuses until the compute backend's release, which is not 0.9.0 (batchProvisionShipped)",
 	}
 	usedKnown := map[string]bool{}
 	allowed := loadPermissionSnapshot(t)
