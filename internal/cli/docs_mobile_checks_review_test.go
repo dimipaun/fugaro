@@ -1185,6 +1185,24 @@ func TestDocsCheck81Step5CountsItsTokLines(t *testing.T) {
 	if !strings.Contains(step5, "the five `TOK` statuses") {
 		t.Errorf("check 81 step 5's FACT line does not say `the five `TOK` statuses`: its block is %d `TOK` lines and one IAM seed, and step 4 counts its own six `TOK` lines the same way, so a count of six is the seed counted in or the TOK lines miscounted", len(toks5))
 	}
+	// The other half of the same sentence: it says how many `curl` lines the
+	// block has, to say that none of them is one of the five statuses. The
+	// device node generation 3 added is a third `curl` (one IAM write and the
+	// two read-backs), and the sentence kept saying "four" for a round.
+	block5 := codeBlockAfter(t, step5, "AT=$(gcloud auth print-access-token)")
+	curls := 0
+	for _, line := range strings.Split(block5, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "curl ") {
+			curls++
+		}
+	}
+	words := []string{"no", "one", "two", "three", "four", "five"}
+	if curls >= len(words) {
+		t.Fatalf("check 81 step 5's block has %d `curl` lines and this test has no word for that count: write one", curls)
+	}
+	if want := fmt.Sprintf("the block's %s `curl` lines", words[curls]); !strings.Contains(step5, want) {
+		t.Errorf("check 81 step 5's block has %d `curl` lines (the two IAM writes and the two read-backs) and its FACT line does not say %q: the sentence is what tells the owner that those lines are not among the statuses the step records", curls, want)
+	}
 	for _, want := range []struct {
 		ord string
 		n   int
