@@ -824,7 +824,11 @@ test-names marker, and `r.Warning` as the warning sentence the Go source builds
 plus the globs marker — and compares them segment by segment, in order. So a
 segment added to `verify.go` (a `; N skipped` for the `Skipped` count the summary
 does not print today, say) fails here instead of leaving the scrub refusing an
-ordinary recording. The list that was too *short* is
+ordinary recording. The segment scan skips the `if` line a segment sits under (a
+condition names what it guards without writing it), so the one condition a
+segment *is* decided by is read on its own: the counts are written under
+`r.Kind == KindTest` and no other kind, which is what lets the grammar slice that
+group off for a build or a lint and require it for a test. The list that was too *short* is
 the failure that review found: a stage the runner writes and the scrub does
 not know is not a leak, it is a recorder that throws on an ordinary run.
 `bootstrap`, `review_first` and `finalize` were missing from `stage`, `vertex`
@@ -844,7 +848,18 @@ read it.
 Held by `test/unit/normal-fixture.test.ts`: the shape, the invariants, a scan of
 every decoded key and string value (after NFKC, case and zero-width folding)
 against forbidden substrings and a positive allow-list of shapes, and the scrub's
-refusals, each mutation-proven. Held by `test/unit/scrub-vocabulary.test.ts`: that
+refusals, each mutation-proven. One rule in that scan refuses a run of twelve
+decimal digits — a leaked amount, identifier or stamp the allow-list would
+otherwise take for an invented value — and it reads a number, not a digest: the
+header's SHA-256 is hex, so twelve consecutive digits occur inside it about 7% of
+the time (145 of 2000 scrubs, measured), and the digest is redrawn every run
+because the scrub draws a fresh clock offset. As a bare `\d{12}` the rule failed
+the scan at random, about one run in fourteen; it now matches a run only with no
+hex digit beside it,
+so the digits inside a longer hex token (a digest, a pseudonym, a commit) are not
+a number standing on its own, while a planted `123456789012` still is. The proof
+is a deterministic case (a 64-character digest with a twelve-digit run planted in
+it) plus a loop that scrubs and scans 300 drawings of the clock. Held by `test/unit/scrub-vocabulary.test.ts`: that
 the scrub accepts every stage, auth and mode the CLI writes and refuses what it
 does not, that the verify shape is the one `internal/verify/verify.go` writes
 (every tail variant, the `FAILED` spelling, the `exit -1` a killed process
@@ -855,6 +870,18 @@ the warning globs to the CLI's own two, that the nullable Go
 fields may be null, and that the clock shift is drawn per run — all
 mutation-proven, and the vocabularies themselves pinned against the Go source by
 the drift test named above.
+
+**A test line carries its counts; no other kind carries any.** `Record.Summary`
+appends `, %d tests, %d failures` under `if r.Kind == KindTest` and nowhere else,
+so the grammar's first tail group is sliced off entirely for a build or a lint
+and required **whole** for a test. Requiring it whole is what the writer does, not
+a tightening for its own sake: every run writes it, and the 120-rune clip lands
+far past it, so a test line that stops at `(exit 0)` — or part way through the
+counts — is one no run can produce, and an earlier grammar took it as a clipped
+one. Both directions are tested (`fugaro verify build #5: passed (exit 0)` passes,
+the same line with counts does not), the clip test's cuts now start where the
+counts end, and the drift test reads the `KindTest` condition itself, since its
+segment scan skips the `if` line.
 
 **The scan pins the verify line's globs slot; nothing can pin its name slots.**
 The verify line is the one value whose middle the CLI fills from the repository

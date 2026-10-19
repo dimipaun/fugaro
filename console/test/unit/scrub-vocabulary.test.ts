@@ -169,10 +169,15 @@ describe('the scrub: the verify line verify.go writes', () => {
     const doc = raw()
     at(doc, 'runs', 0)['verify'] = clipped
     expect(() => scrubDocument(doc, 0)).not.toThrow()
-    // Every cut at or after the writer's fixed head is one the clip could make
-    // (the head is shorter than the clip, so a cut can never land inside it).
+    // Every cut at or after the writer's counts is one the clip could make (the
+    // head is shorter than the clip, so a cut can never land inside it -- and
+    // neither can it land inside the counts of a test, which end far before it).
     const head = 'fugaro verify test #5: passed (exit 0'.length
-    for (let n = head; n <= clipped.length; n++) {
+    const afterCounts = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures'.length
+    for (let n = head; n < afterCounts; n++) {
+      expect(isVerifySummary([...clipped].slice(0, n).join('')), `cut at ${n}`).toBe(false)
+    }
+    for (let n = afterCounts; n <= clipped.length; n++) {
       expect(isVerifySummary([...clipped].slice(0, n).join('')), `cut at ${n}`).toBe(true)
     }
   })
@@ -188,8 +193,10 @@ describe('the scrub: the verify line verify.go writes', () => {
       'fugaro verify test #5: passed', // no exit code, no parens
       'fugaro verify test #5: failed (exit 0, 1 tests, 0 failures)', // lower-case failure word
       'fugaro verify test #5: passed (exit zero)',
-      'fugaro verify test #5: passed (exit 0, 41 tests)', // counts cut short in the writer's own grammar
+      'fugaro verify test #5: passed (exit 0)', // the counts of a test run are not optional
+      'fugaro verify test #5: passed (exit 0, 41 tests)', // ...nor can their tail be cut short
       'fugaro verify lint #5: passed (exit 0, 41 tests, 0 failures)', // a lint carries no counts
+      'fugaro verify build #5: passed (exit 0, 41 tests, 0 failures)', // ...and neither does a build
       'fugaro verify test #5: passed (exit 0; whatever)', // no segment of the writer says this
       'fugaro verify test #5: passed (exit 0, 41 tests, 0 failures) extra',
       'fugaro verify  #5: passed (exit 0)',
@@ -199,6 +206,32 @@ describe('the scrub: the verify line verify.go writes', () => {
       const doc = raw()
       at(doc, 'runs', 0)['verify'] = line
       expect(() => scrubDocument(doc, 0), line).toThrow(/a value outside the CLI vocabulary/)
+    }
+  })
+
+  it('requires the counts of a test run, and refuses them on any other kind', () => {
+    // `Record.Summary` appends `, %d tests, %d failures` under
+    // `if r.Kind == KindTest` and nowhere else (the drift test pins that
+    // condition, since its tail scan skips `if` lines). So for a test the
+    // segment is not optional -- the writer always writes it, and the 120-rune
+    // clip ends far after it -- and for a build or a lint it is a segment the
+    // writer never writes.
+    const withCounts = (rest: string): string => `fugaro verify test #5: passed (exit 0${rest})`
+    for (const rest of ['', ', ', ', 41', ', 41 tests', ', 41 tests, ', ', 41 tests, 0']) {
+      expect(isVerifySummary(withCounts(rest)), `test${JSON.stringify(rest)}`).toBe(false)
+      expect(isKnownVerifySummary(withCounts(rest)), `known test${JSON.stringify(rest)}`).toBe(false)
+    }
+    for (const rest of [', 41 tests, 0 failures', ', 41 tests, 0 failures: TestA, TestB']) {
+      expect(isVerifySummary(withCounts(rest)), `test${rest}`).toBe(true)
+      expect(isKnownVerifySummary(withCounts(rest)), `known test${rest}`).toBe(true)
+    }
+    for (const kind of ['build', 'lint']) {
+      expect(isVerifySummary(`fugaro verify ${kind} #5: passed (exit 0)`), kind).toBe(true)
+      expect(isKnownVerifySummary(`fugaro verify ${kind} #5: passed (exit 0)`), kind).toBe(true)
+      expect(isVerifySummary(`fugaro verify ${kind} #5: passed (exit 0, 41 tests, 0 failures)`), kind).toBe(false)
+      expect(isVerifySummary(`fugaro verify ${kind} #5: passed (exit 0, 0 tests)`), kind).toBe(false)
+      // ...while the segments a build or a lint does write are still there.
+      expect(isVerifySummary(`fugaro verify ${kind} #5: FAILED (exit 1; timed out)`), kind).toBe(true)
     }
   })
 
@@ -213,8 +246,8 @@ describe('the scrub: the verify line verify.go writes', () => {
   it('accepts every line the writer produces when the slots are pinned too', () => {
     for (const [what, line] of LINES) expect(isKnownVerifySummary(line), what).toBe(true)
     const full = 'fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: TestA, pkg/sub.TestB; warning: no JUnit reports found under **/junit*.xml)'
-    const head = 'fugaro verify test #5: passed (exit 0'.length
-    for (let n = head; n <= full.length; n++) {
+    const afterCounts = 'fugaro verify test #5: passed (exit 0, 2 tests, 0 failures'.length
+    for (let n = afterCounts; n <= full.length; n++) {
       expect(isKnownVerifySummary([...full].slice(0, n).join('')), `cut at ${n}`).toBe(true)
     }
   })

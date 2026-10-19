@@ -126,7 +126,27 @@ const FORBIDDEN = [
   'dimi', 'dimipaun', 'youkno', 'edgeapp', 'belong', 'edgeserver', 'edgeweb', 'fugaro-dev', 'fugaro-prod',
   'sk-', 'aiza', 'gh' + 'p_', 'xox',
 ]
-const TWELVE_DIGITS = /\d{12}/
+/**
+ * TWELVE_DIGITS is a run of twelve decimal digits standing on its own: a leaked
+ * number (an amount, an identifier, a timestamp) that the allow-list below would
+ * otherwise wave through as an invented one.
+ *
+ * "Standing on its own" is the whole of the rule, and it is what makes this scan
+ * deterministic. The header carries a 64-character SHA-256 digest, which is hex,
+ * so each of its characters is a digit five eighths of the time: twelve
+ * consecutive digits occur inside one about 7% of the time (measured: 145 of
+ * 2000 scrubs), and every run draws a fresh clock shift, so the digest is a
+ * fresh draw too. A bare /\d{12}/ therefore failed this scan at random -- about
+ * one run in fourteen -- while twelve digits with a hex digit beside them are
+ * part of a longer hex token (a digest, a pseudonym, a commit) and not a number
+ * the scan is for.
+ */
+const TWELVE_DIGITS = /(?<![0-9a-f])\d{12}(?![0-9a-f])/
+
+/** DIGEST_WITH_A_DIGIT_RUN is a well-formed 64-hex SHA-256 digest that carries
+ * twelve consecutive decimal digits -- what a real digest carries about 7% of
+ * the time, so one run in fourteen. */
+const DIGEST_WITH_A_DIGIT_RUN = 'abcdef' + '123456789012' + 'ab'.repeat(23)
 
 /** normalise is NFKC, lowercase, zero-width characters stripped. */
 function normalise(text: string): string {
@@ -251,6 +271,23 @@ describe('the normal fixture: nothing real is in it', () => {
     expect(scan(line('# Task: example task 1'))).toEqual([])
   })
 
+  it('does not read twelve digits inside a hex digest as a leaked number', () => {
+    // The other half of the digit rule, and the one that is deterministic: a
+    // digest is the fixture's own header field, and a run of digits inside one
+    // is hex, not the number the rule is for. The digest below is the shape the
+    // header really carries (64 hex characters) with a twelve-digit run planted
+    // in it, which a real digest produces at random -- see TWELVE_DIGITS.
+    const header = readFileSync(FIXTURE, 'utf8').split('\n')[0]!
+    const planted = header.replace(/[0-9a-f]{64}/, DIGEST_WITH_A_DIGIT_RUN)
+    expect(planted).not.toBe(header)
+    expect(planted).toContain('123456789012')
+    expect(scan(`${planted}\n`)).toEqual([])
+    // ...and a run that stands on its own is still caught, which is what the
+    // hex exemption gives up nothing for.
+    expect(scan(line('123456789012'))).toContain('a 12-digit run')
+    expect(scan(line('acme-123456789012'))).toContain('a 12-digit run')
+  })
+
   it('refuses a verify line whose slots carry text the CLI does not write there', () => {
     // The verify line is the one value whose middle the CLI fills from the
     // repository: the test names its reports carry and the globs it reads. A
@@ -275,6 +312,10 @@ describe('the normal fixture: nothing real is in it', () => {
     expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: TestA, pkg/sub.TestB)'))).toEqual([])
     expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: test_mod.py::test_add[1-2])'))).toEqual([])
     expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml, **/buil'))).toEqual([])
+    // A test line that stops before its counts is one verify.go cannot produce
+    // (it writes them unconditionally for a test), so the allow-list refuses it
+    // rather than taking it as a clipped or a quiet line.
+    expect(scan(line('fugaro verify test #5: passed (exit 0)'))).toContain('a string outside the allow-list')
   })
 
   it('finds a removed value with a changed prefix, and a removed number', () => {
@@ -408,6 +449,21 @@ describe('the scrub', () => {
       expect(removed).toContain(real)
     }
     expect(scan(text, removed)).toEqual([])
+  })
+
+  it('scans 300 scrubs with a fresh drawn clock each, and never trips the digit rule', () => {
+    // The clock offset is drawn per run and never given here, so every iteration
+    // writes a different header digest (and different run IDs, and a different
+    // `recorded`). 300 of them is the flake this test is for: with a bare
+    // /\d{12}/ the scan read twelve digits inside the hex digest as a leaked
+    // number about 7% of the time (145 of 2000 scrubs, measured), so three
+    // hundred draws caught it with near certainty while a single run of the test
+    // above did not.
+    for (let i = 0; i < 300; i++) {
+      let removed: readonly string[] = []
+      const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r })
+      expect(scan(text, removed), `iteration ${i}`).toEqual([])
+    }
   })
 
   it('the scan on the scrub output catches a scrub that keeps a real title or a real amount', () => {

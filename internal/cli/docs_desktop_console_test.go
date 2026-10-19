@@ -5047,6 +5047,22 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	if !slices.Equal(goTail, tsTail) {
 		t.Errorf("%s: Record.Summary appends %q, the scrub's VERIFY_TAIL renders %q: a tail segment added, reworded, dropped or reordered in verify.go has to move the scrub with it", scrubTS, goTail, tsTail)
 	}
+
+	// The counts are the one tail segment a KIND decides on, and the scrub's
+	// grammar encodes that decision twice: VERIFY_TAIL's first group is the
+	// counts, sliced off entirely for a build or a lint (VERIFY_TEST_TAIL_FROM)
+	// and required WHOLE for a test (VERIFY_TEST_GROUPS_REQUIRED), because
+	// verify.go writes them under a KindTest condition and the 120-rune clip
+	// lands far after them. summaryTail above skips `if` lines -- a condition
+	// names what it guards without writing it -- so the condition itself is read
+	// here: were the counts moved to another kind, or written unconditionally,
+	// the scrub would refuse an ordinary recording of that kind while every
+	// rendering above stayed equal.
+	counts := sourceValues(t, "internal/verify/verify.go", verifyGo,
+		`if r\.Kind == (\w+) \{\s*s \+= fmt\.Sprintf\(", %d tests, %d failures"`)
+	if len(counts) != 1 || counts[0] != "KindTest" {
+		t.Errorf("internal/verify/verify.go writes the counts under r.Kind == %v; >>%s<< slices them off for every kind but a test and requires them whole for a test, so the two have to agree", counts, scrubTS)
+	}
 }
 
 // tailDigits, tailNames and tailGlobs mark, in the two renderings compared

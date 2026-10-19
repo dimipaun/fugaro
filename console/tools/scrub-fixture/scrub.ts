@@ -171,7 +171,9 @@ type VerifySlot = 'names' | 'globs'
  * VERIFY_HEAD matches: `Record.Summary` in internal/verify/verify.go, in the
  * order it appends them. `parts` are the literal texts, `digits` a `%d`, and
  * `free` a slot the writer fills from the repository -- the test names its
- * reports carry, and the globs it was configured to read.
+ * reports carry, and the globs it was configured to read. The first group is the
+ * counts: only a test run writes them (VERIFY_TEST_TAIL_FROM) and a test run
+ * always writes them (VERIFY_TEST_GROUPS_REQUIRED).
  */
 type VerifyPart = { readonly text: string } | { readonly digits: true } | { readonly free: VerifySlot }
 const VERIFY_TAIL: readonly (readonly VerifyPart[])[] = [
@@ -246,9 +248,24 @@ const VERIFY_SLOTS: Record<'globs', { full: (v: string) => boolean; cut: (v: str
     cut: (v) => isGlobList(v, true),
   },
 }
-/** VERIFY_TEST_TAIL_FROM is the index of the first tail part a non-test kind
- * does not write: only a test run carries the counts. */
+/** VERIFY_TEST_TAIL_FROM is the index of the first tail group a non-test kind
+ * does not write: only a test run carries the counts, and `Record.Summary`
+ * writes them under `if r.Kind == KindTest` alone, so for a build or a lint the
+ * group is not optional but absent -- `TestDocsDesktopConsoleScrubVocabulary-
+ * MatchesTheGoSource` pins that condition, because its tail scan skips `if`
+ * lines (a condition names what it guards without writing it). */
 const VERIFY_TEST_TAIL_FROM = 1
+
+/**
+ * VERIFY_TEST_GROUPS_REQUIRED is how many leading tail groups a test run always
+ * writes: the counts, and `Record.Summary` writes them unconditionally for
+ * KindTest. The clip cannot take them away either -- they end far inside
+ * VERIFY_CLIP_RUNES runes -- so a test line that stops before them, or part way
+ * through them, is one the writer cannot produce: the walk may not fall back on
+ * "the writer had nothing to say here", which is what it does for every optional
+ * segment.
+ */
+const VERIFY_TEST_GROUPS_REQUIRED = 1
 
 /**
  * VERIFY_HEAD matches the writer's head exactly: the kind, the rerun flag, the
@@ -272,10 +289,13 @@ export const VERIFY_HEAD = new RegExp(
  * is what the registry does to it.
  *
  * It is a matcher rather than one regular expression because the value is a
- * PREFIX of the writer's line, not the line: every tail part may be absent
- * (the writer appends it only when it has something to say), and the cut may
- * land inside any of them, so "is this a prefix of what the writer can write"
- * is the question, and this walks the parts to answer it.
+ * PREFIX of the writer's line, not the line: every optional tail part may be
+ * absent (the writer appends it only when it has something to say), and the cut
+ * may land inside any of them, so "is this a prefix of what the writer can
+ * write" is the question, and this walks the parts to answer it. The counts of
+ * a test run are the exception in both directions: the writer always writes
+ * them, and the clip can never cut them, so a test line without them is one no
+ * run can produce (VERIFY_TEST_GROUPS_REQUIRED).
  *
  * The slots are open: whatever the repository put in them, the writer wrote.
  */
@@ -306,18 +326,26 @@ function verifySummary(value: string, pinned: boolean): boolean {
   const head = VERIFY_HEAD.exec(value)
   if (head === null) return false
   const rest = value.slice(head[0].length)
-  const from = head[1] === 'test' ? 0 : VERIFY_TEST_TAIL_FROM
-  return isPrefixOfTail(VERIFY_TAIL.slice(from), rest, pinned)
+  // A test run's counts are the one group that is not up to the writer's
+  // discretion, so the tail starts there and the group is required whole; a
+  // build or a lint never writes them, so its tail starts after them.
+  const test = head[1] === 'test'
+  return isPrefixOfTail(test ? VERIFY_TAIL : VERIFY_TAIL.slice(VERIFY_TEST_TAIL_FROM), rest, pinned,
+    test ? VERIFY_TEST_GROUPS_REQUIRED : 0)
 }
 
 /** isPrefixOfTail reports whether `rest` is a prefix of some line the groups can
- * render: every group may be absent, every literal may be cut short, a digit run
- * is any number of digits (a cut may land inside it), and a free slot is either
- * open -- it absorbs whatever is left -- or pinned to its vocabulary, in which
- * case it takes a whole piece or the piece a cut left. Memoised on (group, part,
- * offset): the free slots make the walk branch, and the same positions are
+ * render: every optional group may be absent, every literal may be cut short, a
+ * digit run is any number of digits (a cut may land inside it), and a free slot
+ * is either open -- it absorbs whatever is left -- or pinned to its vocabulary,
+ * in which case it takes a whole piece or the piece a cut left. The first
+ * `required` groups are the exception: the writer always writes them and the cut
+ * can never reach them, so they must be there and whole. Memoised on (group,
+ * part, offset): the free slots make the walk branch, and the same positions are
  * reached by many routes. */
-function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string, pinned: boolean): boolean {
+function isPrefixOfTail(
+  groups: readonly (readonly VerifyPart[])[], rest: string, pinned: boolean, required = 0,
+): boolean {
   const width = rest.length + 1
   const memo = new Map<number, boolean>()
   const walkGroup = (group: number, at: number): boolean => {
@@ -326,9 +354,12 @@ function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string
     const key = group * width + at
     const hit = memo.get(key)
     if (hit !== undefined) return hit
-    // The writer appends this segment only when it has something to say, so it
-    // may be absent; else it is present, possibly with the cut inside it.
-    const out = walkGroup(group + 1, at) || walkPart(group, 0, at)
+    // The writer appends an optional segment only when it has something to say,
+    // so it may be absent; else it is present, possibly with the cut inside it.
+    // A REQUIRED group is the one segment the writer always writes, so the walk
+    // may not skip it -- which is how `fugaro verify test #5: passed (exit 0)`,
+    // a line verify.go cannot produce, used to be accepted.
+    const out = (group < required ? false : walkGroup(group + 1, at)) || walkPart(group, 0, at)
     memo.set(key, out)
     return out
   }
@@ -338,22 +369,31 @@ function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string
     const piece = parts[part]!
     const tail = rest.slice(at)
     if ('text' in piece) {
-      if (tail.length <= piece.text.length) return piece.text.startsWith(tail)
-      return tail.startsWith(piece.text) && walkPart(group, part + 1, at + piece.text.length)
+      // A cut may land inside a literal -- but not in a required group, where
+      // the whole literal has to be there.
+      if (group < required || tail.length > piece.text.length) {
+        return tail.startsWith(piece.text) && walkPart(group, part + 1, at + piece.text.length)
+      }
+      return piece.text.startsWith(tail)
     }
     if ('digits' in piece) {
       const run = /^\d+/.exec(tail)?.[0] ?? ''
       // A cut may land between the text before a `%d` and the digits
       // themselves (`(exit 0, ` is a prefix of `(exit 0, 0 tests, ...)`), but
-      // only there: with digits still to come, the run is never empty.
-      if (run === '') return tail === '' && walkPart(group, part + 1, at)
+      // only there: with digits still to come, the run is never empty. In a
+      // required group even that much is missing text, so the whole number has
+      // to be there.
+      if (run === '') return group >= required && tail === '' && walkPart(group, part + 1, at)
+      if (group < required) return walkPart(group, part + 1, at + run.length)
       for (let n = 1; n <= run.length; n++) if (walkPart(group, part + 1, at + n)) return true
       return false
     }
     // A free slot is open -- it absorbs whatever the repository put there --
     // unless the slot has a vocabulary and this is the pinned matcher: only the
     // globs slot does (VERIFY_SLOTS), because a test ID is the report's own text
-    // and no character class can hold it without refusing real ones.
+    // and no character class can hold it without refusing real ones. No required
+    // group has a free slot (the counts are two `%d`s and two literals), so
+    // `required` does not have to be read here.
     const slot = pinned && piece.free === 'globs' ? VERIFY_SLOTS.globs : undefined
     if (slot === undefined) {
       for (let n = 0; n <= tail.length; n++) if (walkPart(group, part + 1, at + n)) return true
