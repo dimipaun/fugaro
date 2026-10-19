@@ -326,6 +326,13 @@ test('the plan, sentence two: the offline state shows from P1.4, and the app ref
   assert.deepEqual({ ...accepted }, { ok: false, code: 'offline', field: 'presence' });
   assert.equal(h.writes(), before, 'and NOTHING was written: no message into the void');
   assert.deepEqual(h.screen.state().refused, { code: 'offline', field: 'presence' }, 'and the refusal is shown');
+
+  // The message is judged before the presence is: an empty message is refused
+  // as an empty message, offline or not, because the code names the fault the
+  // caller can fix. Without this the two guards could be swapped and no test
+  // would tell -- the client refuses an empty text with the same code.
+  assert.deepEqual({ ...(await h.screen.accept('')) }, { ok: false, code: 'bad-text', field: 'text' });
+  assert.equal(h.writes(), before, 'and still nothing was written');
 });
 
 test('a live orchestrator is what lifts the refusal, and it is P1.4 that says so', async () => {
