@@ -666,13 +666,16 @@ func TestChecklistCheck90RowDoesNotOverclaimU2AndU3(t *testing.T) {
 			t.Errorf("the register's row for Check 90 claims more than the check settles: it says %q", bad)
 		}
 	}
-	for _, want := range []string{"settles U1 and U4", "Anthropic's documentation", "only if a usage limit can be observed"} {
+	// The row's own U4 clause is pinned by
+	// TestChecklistCheck90RecordsU4sThirdPartOnlyWhenALimitIsMet; what is here
+	// is that it may not read as if the check settled U2 or U3.
+	for _, want := range []string{"settles U1", "Anthropic's documentation", "only if a usage limit can be observed"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("the register's row for Check 90 does not say what the check does and does not settle: it lacks %q", want)
 		}
 	}
 	check := docSection(t, checklistPath, doc, chk90Heading)
-	for _, want := range []string{"Anthropic's documentation", "U3 stays open", "settle two of"} {
+	for _, want := range []string{"Anthropic's documentation", "U3 stays open", "settle one of"} {
 		if !strings.Contains(check, want) {
 			t.Errorf("Check 90's own summary does not state what it settles: it lacks %q", want)
 		}
@@ -695,6 +698,107 @@ func TestChecklistCheck90RowDoesNotOverclaimU2AndU3(t *testing.T) {
 		if strings.Contains(line, "is U2's answer") {
 			t.Errorf("Check 90 still says the check answers U2 on a line of its own: %.140s", line)
 		}
+	}
+}
+
+// TestChecklistCheck90RecordsU4sThirdPartOnlyWhenALimitIsMet: the register's row
+// 90 said Check 90 "settles U1 and U4", and U4 is three parts — Claude Code's
+// client timeout, its retry count and the wording it prints for a usage limit —
+// of which no step recorded the third: step 7's FACT read the wire's status,
+// error type and reset headers, and step 8 times a delayed request and counts
+// the attempts, which is the timeout and the retry count, and F15 keeps that
+// wording UNVERIFIED (the skill's loose "usage limit" match is what would read
+// it). Step 7 asks for it now, when a limit is met, and the row, the section's
+// own summary, the plan's Check 90 row and C0.3, and reconciliation's U4 row all
+// say the same three things: the timeout and the retry count are settled, the
+// wording only if a usage limit can be observed, and it stays UNVERIFIED
+// otherwise — as U3 does when no limit can be met.
+func TestChecklistCheck90RecordsU4sThirdPartOnlyWhenALimitIsMet(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	row := docTail(t, checklistPath, doc, "| 90 | The OAuth header swap")
+	row = row[:strings.Index(row, "\n")]
+	for _, want := range []string{
+		"settles U1, and U4's client timeout and retry count",
+		"what Claude Code itself prints when it meets one",
+		"only if a usage limit can be observed",
+		"that part stays UNVERIFIED otherwise",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the register's row for Check 90 does not say which parts of U4 the check settles: it lacks %q", want)
+		}
+	}
+	if strings.Contains(row, "settles U1 and U4") {
+		t.Error("the register's row for Check 90 still says the check settles U4 whole, though no step records the wording Claude Code prints for a limit")
+	}
+	check := docSection(t, checklistPath, doc, chk90Heading)
+	step7 := stepBlock(t, checklistPath, check, "### Check 90 step 7:")
+	for _, want := range []string{
+		"what `claude` itself printed for the limit",
+		"U4's third part",
+		"that part of U4 stays UNVERIFIED",
+	} {
+		if !strings.Contains(step7, want) {
+			t.Errorf("Check 90's step 7 does not record Claude Code's own wording for a limit, which is U4's third part: it lacks %q", want)
+		}
+	}
+	// The step the wording would otherwise be read off is step 8, and its FACT is
+	// the timeout and the retry count: this pins that it still records only that,
+	// so a later summary cannot source the wording to a step that never had it.
+	step8 := stepBlock(t, checklistPath, check, "### Check 90 step 8:")
+	if !strings.Contains(step8, "the exact text of a give-up") {
+		t.Error("Check 90's step 8 no longer records the give-up's own text, which its FACT line claims")
+	}
+	for _, want := range []string{
+		"U4**'s client timeout and retry count",
+		"Claude Code's own wording when it meets a limit",
+		"stays UNVERIFIED",
+	} {
+		if !strings.Contains(check, want) {
+			t.Errorf("Check 90's own summary does not say what it settles of U4: it lacks %q", want)
+		}
+	}
+	// The section's pass condition and its paste-back line carry the same claim:
+	// when step 7 met a limit, the wording it recorded is part of what the run
+	// returns and pastes back, not only a line inside the step.
+	for _, want := range []string{
+		"U4's timings and retry count are recorded (step 8)",
+		"when step 7 met a limit, Claude Code's own wording for it",
+		"when step 7 met a limit, what the client itself printed for it",
+	} {
+		if !strings.Contains(check, want) {
+			t.Errorf("Check 90 does not carry Claude Code's own wording for a limit through to what the run returns: it lacks %q", want)
+		}
+	}
+	if strings.Contains(check, "**U4** (Claude Code's client timeout and retries)") {
+		t.Error("Check 90's summary still counts U4 among the items the check settles whole")
+	}
+	const reconPath = "docs/credentials-service/reconciliation.md"
+	recon := readDoc(t, reconPath)
+	u4 := docTail(t, reconPath, recon, "| U4 | Claude Code's client timeout, retry count and usage-limit text")
+	u4 = u4[:strings.Index(u4, "\n")]
+	for _, want := range []string{
+		"step 8 records the timeout and the retry count",
+		"step 7 records the client's own wording only if a usage limit can be observed",
+		"stays UNVERIFIED otherwise",
+	} {
+		if !strings.Contains(u4, want) {
+			t.Errorf("reconciliation's U4 row does not agree with the register on what Check 90 settles: it lacks %q", want)
+		}
+	}
+	const planPath = "docs/credentials-service/implementation-plan.md"
+	plan := readDoc(t, planPath)
+	planRow := docTail(t, planPath, plan, "| **90** | **Header swap.**")
+	planRow = planRow[:strings.Index(planRow, "\n")]
+	for _, want := range []string{
+		"its own wording for a usage limit when one can be observed",
+		"stays UNVERIFIED if none is",
+	} {
+		if !strings.Contains(planRow, want) {
+			t.Errorf("the plan's own Check 90 row does not say what the check records of U4: it lacks %q", want)
+		}
+	}
+	if c03 := taskBlock(t, planPath, plan, "### Task C0.3: Checks 90 and 91"); !strings.Contains(c03, "the client's own wording for it, which is U4's third part") {
+		t.Error("C0.3 does not list the client's own wording for a limit among the check's FACT lines, though step 7 asks for it")
 	}
 }
 
@@ -1008,7 +1112,7 @@ func TestChecklistCheck47IsSupersededNotHeld(t *testing.T) {
 func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	const path = "docs/credentials-service/implementation-plan.md"
 	doc := readDoc(t, path)
-	gc1 := docTail(t, path, doc, "1. **This pull request adds the documents")
+	gc1 := docTail(t, path, doc, "1. **This pull request changes ten files")
 	if i := strings.Index(gc1, "\n2. **"); i != -1 {
 		gc1 = gc1[:i]
 	}
@@ -1051,8 +1155,42 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	if strings.Contains(doc, "**this pull request** (docs only)") {
 		t.Error("the plan's review focus still calls this pull request docs only, though it adds two Go test files")
 	}
-	if !strings.Contains(doc, "the four documents and the two test files that pin them") {
-		t.Error("the plan's review focus does not say what this pull request is: the documents and the two test files that pin them")
+	// ... and it has to name them: the constraint's "the documents" was four
+	// credential documents, and the pull request's diff
+	// (`git diff origin/integration-0.9.0 --name-status`) is the ten paths
+	// below. `spec.md` is the one document under docs/credentials-service/ that
+	// is not among them — it is already on the base, added by #512 — so a
+	// constraint that claims to add it describes someone else's change, and one
+	// that names four documents leaves the register and the four superseded
+	// design documents out.
+	for _, file := range []string{
+		"docs/credentials-service/implementation-plan.md",
+		"docs/credentials-service/README.md",
+		"docs/credentials-service/reconciliation.md",
+		"docs/gcp-live-checklist.md",
+		"docs/design/mixed-credentials.md",
+		"docs/design/project-centric.md",
+		"docs/design/m9-budget-and-dashboard.md",
+		"docs/plans/2026-10-14-oauth-reviewer-stage.md",
+		cliGuard,
+		rulesGuard,
+	} {
+		if !strings.Contains(gc1, file) {
+			t.Errorf("Global Constraint 1 does not name %s, which this pull request changes", file)
+		}
+		readDoc(t, file) // the path it names is one the tree really has
+	}
+	if !strings.Contains(gc1, "spec.md") || !strings.Contains(gc1, "already on the base") {
+		t.Error("Global Constraint 1 does not say spec.md is already on the base, so the reader cannot tell it is the one credential document this pull request leaves alone")
+	}
+	if strings.Contains(gc1, "it adds and edits `spec.md`") {
+		t.Error("Global Constraint 1 still says this pull request adds spec.md, which the base already carries")
+	}
+	if !strings.Contains(doc, "the eight documents and the two test files that pin them") {
+		t.Error("the plan's review focus does not say what this pull request is: the eight documents and the two test files that pin them")
+	}
+	if strings.Contains(doc, "the four documents and the two test files") {
+		t.Error("the plan's review focus still counts four documents, but the pull request changes eight")
 	}
 }
 
