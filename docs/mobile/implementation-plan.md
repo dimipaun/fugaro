@@ -688,7 +688,8 @@ owner with a recommendation each**. **Checks 105, 106 and 107**, out of the free
 renumbered**, and this phase renumbers nothing.
 
 **Three things this phase is not.** It is **not approved** (the gate below still stands, and
-Phase 7 enters it as a new step 8). It **changes no rules file, no Terraform, no `fugaro`
+Phase 7 enters it as a new **step 7b**, which is the label the gate below carries). It
+**changes no rules file, no Terraform, no `fugaro`
 command and no workflow** — the only live action in the whole phase is the owner creating the
 Firebase project and uploading two EAS file secrets. And it **moves no existing task**: Phase
 3, Phase 6 and Phase 7 are independent, and the voice-less MVP is unaffected (D198).

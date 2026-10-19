@@ -111,9 +111,15 @@ pass (§3 is written to be read that way).
 The brief's instruction is *"new check numbers from the free block after 104"*. Read from the
 register ([gcp-live-checklist.md](../gcp-live-checklist.md)):
 
-- The **highest check section written** is `## Check 70c` (`:4708`). Checks **80–89** have
-  summary rows in the register (80–89, written by mobile tasks P4.2a and P4.2) and **none of
-  them has a section**.
+- The **highest check section written** is `## Check 89` (`docs/gcp-live-checklist.md`, the
+  *"a signed EAS build, and the store's internal track"* section). Checks **80–89** all have
+  summary rows in the register (written by mobile tasks P4.2a and P4.2), and **three of them —
+  81, 82 and 89 — also have a written section**, which is why the register's last written
+  section is 89 and not 70c. *(This paragraph said "the highest check section written is
+  `## Check 70c`" and that none of 80–89 had a section. That was false and it read as if the
+  register stopped at 70c: `## Check 81`, `## Check 82` and `## Check 89` were all written by
+  P4.2a before this plan, and the coordinator's own table carried the same stale reading,
+  which this change corrects there too.)*
 - **90–99** are the credentials service's, **100–104** are the functional spec v0.1's
   (approved 2026-10-18, to be written by P6.11), and **105–109** are **reserved and unused**
   ([mobile/README.md](../mobile/README.md): *"**105–109 reserved and unused**"*).
@@ -588,7 +594,7 @@ step of 105, 106 or 107.**
 ```
 D193 (answered) ─┐
 D199, D200 ──────┴─► P7.1 ──┬─► P7.2 ──┐
-D194 (project) ─────────────┘          ├─► P7.4 ──► P7.6 (owner-run)
+D194 (project) ─────────────┘          ├─► P7.4
 D195, D196 ────────────────────────────┤
 P0.3 (shared/url, merged) ──► P7.2     │
                              P7.3 ─────┴─► P7.5
@@ -602,7 +608,7 @@ PR #675 ──► P7.1            PR #689 ──► P7.4
 | **1** | **P7.2** the consent gate · **P7.3** the allow-list and the scan | **both SECURITY-SENSITIVE** | `shared/telemetry-consent/`, `mobile/src/telemetry/consent.js`, `mobile/src/app/root.js` · `mobile/src/telemetry/` (the event module and its two tests), one entry in `mobile/src/mailbox/write-path.test.js` |
 | **2** | **P7.4** the labels and the website's paragraph | standard (website) / **owner** (the forms) | `website/src/pages/privacy.astro`, the website's gates |
 | **3** | **P7.5** checks 105–107 written | standard | `docs/gcp-live-checklist.md` |
-| **owner** | **P7.6** the checks run | owner | none |
+| **owner** | the checks **run** — P7.5 writes 105–107 and the owner runs them. **This is not a task and has no number**: running a check merges nothing, so the phase is five tasks and not six | owner | none |
 
 **P7.2 and P7.3 are parallel** — different directories, and the only shared file between them
 is none. **P7.4 waits on P7.3** because the labels are answered from the allow-list, not from
@@ -657,9 +663,9 @@ agent runs any step of any of them.** They are **written by P7.5 and run by the 
 
 | # | The check | Task | Why it cannot be a test |
 |---|---|---|---|
-| **105** | **Nothing is collected before consent.** On a device, with both stores' internal builds, the app's first launch shows the consent sheet and **no request to any Firebase or Crashlytics origin appears** in the device's network panel (or in the Firebase console's realtime view) until the switch is turned on; after it is on, the app's own `app_launch` and `consent_set` events appear, and the console's debug view shows them arriving for **the Fugaro-operated project and no other**. The negative control is the one that matters: **turn the switch off again and no further event is collected.** | P7.5 writes it; **P7.6 runs it** | Needs a real device, a real store build, a real network and the Firebase console. No hermetic test can see a native SDK's own socket. |
-| **106** | **A real crash reaches the Fugaro-operated project, with nothing that names anything in it.** Crash the app deliberately from the debug menu on a device whose consent is on; the report appears in Crashlytics under the Fugaro-operated project; **its breadcrumbs, its custom keys, its logs and its device fields contain no message text, no mailbox key, no account id, no `authUid`, no project id, no token and no MAC**; and `setUserId` is absent from the report. Then the second half: **with consent off, the same crash produces no report at all.** | P7.5 writes it; **P7.6 runs it** | Needs a real device, a real crash and the Crashlytics console — the redaction is a property of a report that only exists after a crash. |
-| **107** | **The two store forms match what the app sends, and the page says it too.** The Play **Data safety** form and the App Store **privacy label** are the answers of §8.1 and §8.2, category by category, and **each ticked category is justified by traffic observed in 105 and 106** — with the two over-declared categories (`User IDs`, `Other in-app messages`) recorded **as** over-declared, in the owner's own words; and `https://fugaro.dev/privacy/` carries the app's paragraph (§8.3) **on the same day the first SDK-carrying build is submitted**. | P7.5 writes it; **P7.6 runs it** | Needs the two consoles, the live site and the owner's own accounts. |
+| **105** | **Nothing is collected before consent.** On a device, with both stores' internal builds, the app's first launch shows the consent sheet and **no request to any Firebase or Crashlytics origin appears** in the device's network panel (or in the Firebase console's realtime view) until the switch is turned on; after it is on, the app's own `app_launch` and `consent_set` events appear, and the console's debug view shows them arriving for **the Fugaro-operated project and no other**. The negative control is the one that matters: **turn the switch off again and no further event is collected.** | P7.5 writes it; **the owner runs it** | Needs a real device, a real store build, a real network and the Firebase console. No hermetic test can see a native SDK's own socket. |
+| **106** | **A real crash reaches the Fugaro-operated project, with nothing that names anything in it.** Crash the app deliberately from the debug menu on a device whose consent is on; the report appears in Crashlytics under the Fugaro-operated project; **its breadcrumbs, its custom keys, its logs and its device fields contain no message text, no mailbox key, no account id, no `authUid`, no project id, no token and no MAC**; and `setUserId` is absent from the report. Then the second half: **with consent off, the same crash produces no report at all.** | P7.5 writes it; **the owner runs it** | Needs a real device, a real crash and the Crashlytics console — the redaction is a property of a report that only exists after a crash. |
+| **107** | **The two store forms match what the app sends, and the page says it too.** The Play **Data safety** form and the App Store **privacy label** are the answers of §8.1 and §8.2, category by category, and **each ticked category is justified by traffic observed in 105 and 106** — with the two over-declared categories (`User IDs`, `Other in-app messages`) recorded **as** over-declared, in the owner's own words; and `https://fugaro.dev/privacy/` carries the app's paragraph (§8.3) **on the same day the first SDK-carrying build is submitted**. | P7.5 writes it; **the owner runs it** | Needs the two consoles, the live site and the owner's own accounts. |
 
 **105, 106 and 107 are owner-run. 108 and 109 stay free and are not taken by this plan. 110
 is another work's claim and is not touched.**

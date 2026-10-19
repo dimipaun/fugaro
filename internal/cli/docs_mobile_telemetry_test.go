@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -363,5 +364,73 @@ func TestTelemetryPlanCitesOnlyPathsThatExist(t *testing.T) {
 		if !named[p] {
 			t.Errorf("telemetryWillCreate names %s (%s), which the plan no longer cites: the list must only excuse paths the document actually names", p, why)
 		}
+	}
+}
+
+// TestTelemetryPlanAgreesWithItsOwnRegistration pins the three agreements a
+// review of this change found broken, each between two documents this change
+// edits. They are the failure mode a plan plus a registration always has: the
+// same fact written twice, corrected once.
+//
+//  1. **The phase is five tasks.** The plan, the mobile plan's Phase 7 section
+//     and the index all say P7.1–P7.5, and §10.1's order diagram, its level
+//     table and §12's three check rows all said "P7.6" — a task defined
+//     nowhere, because running a check merges nothing and is the owner's. Every
+//     reference is now named as the owner's step, and no P7.6 exists.
+//  2. **The gate step is 7b.** The Phase 7 intro said "a new step 8" while the
+//     step added beside it, and the plan's §13, both say "7b". One gate, one
+//     label.
+//  3. **The highest check section written is the register's, not the plan's
+//     memory of it.** §2.2 said "## Check 70c" and that none of 80–89 had a
+//     section; the register writes `## Check 81`, `## Check 82` and
+//     `## Check 89`. The premise is now read from the register.
+//
+// Mutation (verified, run and restored): put "P7.6" back in the level table;
+// change "step 7b" to "step 8"; or change "## Check 89" to "## Check 88" — this
+// test fails, each of them.
+func TestTelemetryPlanAgreesWithItsOwnRegistration(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+	plan := readDoc(t, "docs/mobile/implementation-plan.md")
+	index := readDoc(t, telemetryMobileReadme)
+
+	// (1) No P7.6 anywhere: the phase is five tasks, and running a check is not
+	// one of them.
+	for _, tc := range []struct{ path, text string }{
+		{telemetryPlan, doc},
+		{"docs/mobile/implementation-plan.md", plan},
+		{telemetryMobileReadme, index},
+	} {
+		if strings.Contains(tc.text, "P7.6") {
+			t.Errorf("%s names P7.6: Phase 7 is five tasks (P7.1–P7.5) and no sixth is defined anywhere — running checks 105–107 is the owner's, it merges nothing, and it must not be written as a task", tc.path)
+		}
+	}
+
+	// (2) One gate, one label, and it is the one the step itself carries.
+	if !strings.Contains(plan, "step 7b") {
+		t.Errorf("docs/mobile/implementation-plan.md does not say \"step 7b\": the gate step this phase adds is labelled 7b in the gate itself, and the Phase 7 intro has to agree with it")
+	}
+	if strings.Contains(plan, "step 8") || strings.Contains(doc, "step 8") {
+		t.Errorf("the telemetry plan or the mobile plan says \"step 8\": the gate's seven steps were not renumbered and this phase adds one sub-step, labelled 7b — a reader told to look for a step 8 finds none")
+	}
+	if !strings.Contains(doc, "step 7b") {
+		t.Errorf("%s does not say \"step 7b\": it tells the reader which gate step its phase enters, and the label has to be the one the gate carries", telemetryPlan)
+	}
+
+	// (3) The highest written check section, read from the register and required
+	// to be the one the plan states. A premise this plan derives a whole block
+	// from is not a thing to state from memory.
+	register := readDoc(t, "docs/gcp-live-checklist.md")
+	highest := 0
+	for _, m := range regexp.MustCompile(`(?m)^## Check ([0-9]+)[a-z]?\b`).FindAllStringSubmatch(register, -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > highest {
+			highest = n
+		}
+	}
+	if highest == 0 {
+		t.Fatal("the register carries no written check section: this assertion would otherwise pass whatever the plan claims about the highest one")
+	}
+	want := fmt.Sprintf("## Check %d", highest)
+	if !strings.Contains(doc, want) {
+		t.Errorf("%s does not state %q: the register's highest written check section is %d, and the plan's \"free block after 104\" rests on that reading — a stated premise is read from the register, not remembered", telemetryPlan, want, highest)
 	}
 }
