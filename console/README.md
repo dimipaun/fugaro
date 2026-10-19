@@ -2694,15 +2694,16 @@ a scratch copy of the staged file and turned the named test red:
 ## The theme's tokens, and the palette they are painted in (Task 6.1)
 
 `src/renderer/theme/` holds the console's styling, in the four files the plan's File
-Structure tree promised and the design's section 3.1 lays out. Three of them exist today and
-one does not, and that is the phase's own order rather than an omission:
+Structure tree promised and the design's section 3.1 lays out. All four exist as of Task
+6.4, and the column below names the task that wrote each — which is also the phase's order,
+and the order the bundler concatenates them in:
 
 | File | Holds | Written by |
 |---|---|---|
 | `src/renderer/theme/tokens.css` | the **vocabulary**: spacing, radii, type sizes, leading, weights, the two row heights, the focus ring's width and offset, and the two motion values. **No colour.** | Task 6.1 (this section) |
 | `src/renderer/theme/palette.css` | the **value set**: every colour token the console paints, each written once. **No size, no spacing, no motion.** | Task 6.1 (this section) |
 | `src/renderer/theme/base.css` | the reset, the document, the three bands, the nav, focus, the responsive layers and the chrome's forced-colors block | Task 6.3 (the section at the foot of this file) |
-| `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (not yet) |
+| `src/renderer/theme/screens.css` | the per-screen rules, in the order the design's section 2 lists the screens | Task 6.4 (the section at the foot of this file) |
 
 **As of Task 6.2 these two files are read, served and linked, and the paragraph that follows
 is the record of the stage before that.** Each is named by `THEME_STYLESHEETS` in
@@ -2761,9 +2762,9 @@ the file, and two different reasons put them elsewhere:
   **exactly** (every token of the design's section 3.1 table is present, and no name
   outside it), no colour is spelled in `tokens.css`, and no step is spelled in
   `palette.css`;
-- the **`--border`-is-decorative scan** of `base.css` and `screens.css` is Task 6.4's: both
-  files are created later, by Tasks 6.3 and 6.4, so the case lands in the task that writes
-  what it reads;
+- the **`--border`-is-decorative scan** of `base.css` and `screens.css` was Task 6.4's,
+  because both files are created later than Task 6.1 — the case lands in the task that
+  writes what it reads, and Task 6.4 wrote it;
 - the **window-background comparison** against `consoleWindowOptions` is Task 6.5's:
   `backgroundColor` is a key that task adds to `src/main/window.ts`, and under the ruling it
   is one literal, `#0A0E16`, checked against the one `--ground`.
@@ -3224,3 +3225,103 @@ decorative scan is 6.4's, the rows' `role`/`aria-selected` and the keys are 6.5'
 window-background comparison is 6.5's, and the eight golden frames are 6.6's, which is
 owner-run. **The goldens are held, not unchanged**: this task's layout is exactly the kind of
 change 6.6 exists to record once, at the end, rather than mid-phase.
+
+## The screens (Task 6.4)
+
+Task 6.3 drew the layout and the rail, and nothing had yet styled a screen: the four screens,
+the degraded and unavailable screens, the refusal document and the picker were drawing into a
+document whose reset, grid and chrome were painted and whose contents were not. This task is
+the fourth and last layer, `src/renderer/theme/screens.css`, plus the **one code change the
+whole styling work makes** — the fifth number hook.
+
+| Where | What changed |
+|---|---|
+| `src/renderer/theme/screens.css` | **new**: the per-screen rules, in the design's §2 order, ending with the rows' and badges' forced-colors block |
+| `src/renderer/screens/degraded.ts` | `numberCell` prepends `degraded-num`, which is the class §2.10 says this task adds |
+| `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'screens.css'`, in the commit that creates the file — the list is now the theme directory's whole contents and stays still |
+| `test/unit/theme-selectors.test.ts` | the scan covers `screens.css`, and reads §2 **whole** rather than its tables |
+| `test/unit/theme-tokens.test.ts` | the `--border`-is-decorative scan of `base.css` and `screens.css` |
+| `test/unit/degraded.test.ts` | every figure the degraded and unavailable screens draw carries `degraded-num`, and no cell that draws a document string does |
+| `test/unit/bundle.test.ts` | the planted-tree case's unlisted file moves out of the theme directory, because after this task there is no unlisted file in it |
+| `test/e2e/{live,spend,projects,run,degraded}.spec.ts` | the forced-colors smoke's per-screen half |
+| this file | the section you are reading |
+
+### The five number hooks, and the one that did not exist
+
+Design §2.10 is the licence for the only code change here: Live, Spend, Projects and Run each
+have a `numberCell` that prepends `live-num`, `spend-num`, `projects-number` or `run-number`,
+and the degraded screen's prepended **nothing** — so its feed age, its counts and its money
+were the only figures in the console with no tabular-figures and no right-align hook. It
+prepends `degraded-num` now, `screens.css` carries one rule for all five, and two cases in
+`degraded.test.ts` fail if the prepend is removed (one of them reads `span`s only, because
+§2.7 gives the `ol` region and the count span the same class).
+
+### The selector scan reads §2 whole, and expands its shorthand
+
+`theme-selectors.test.ts` was narrowed to §2's **tables** in Task 6.3, which is where every
+hook of the four screens and of the chrome is listed. §2.7 and §2.8 have **no tables at all**
+and name the degraded, unavailable and refusal hooks in their prose, and §2.4's `data-*` list
+is a prose line under its table — so a scan left as it was would refuse `section.degraded`,
+`div.unavailable-body` and `[data-panel]` while claiming the design does not name hooks it
+names two paragraphs further down. The reading is widened, not loosened: `HOOK` keeps only
+tokens shaped like a hook, and `NOT_A_LICENCE` keeps out the two attributes §2 names **in
+order to refuse them** (`data-hidden`, `data-skew`).
+
+§2.7 also abbreviates: `(degraded-run-id, -repo, -status, …, -total)` and `degraded-since` +
+`-word`/`-at`/`-age`. Two conventions in one paragraph — the suffix replaces the last segment
+in the first and is appended in the second — so the scan expands **both** readings. A licence
+that names a hook too many is harmless; one that names a hook too few refuses a rule the
+design asked for.
+
+**`section.run` is deliberately not in `screens.css`.** §2.6's table starts at `run-header`
+and names no class for the Run screen's root, so a rule spelled `section.run` would select a
+hook §2 does not name — and the licence is the licence. Nothing is lost: the reset gives a
+`section` its own block box and `base.css` sets the document's colour.
+
+### The `--border`-is-decorative scan, and the clause that had to be a box
+
+Design §6.3 places this case in this task because it reads `base.css` and `screens.css`, and
+both exist now. Three clauses: `--border` in an `outline`; `--border` at any width other than
+`--rule-width` (§3.4: "1 px hairlines only"); and `--border` drawing a **box** on a control,
+whose extent is `--border-strong`.
+
+The third clause is a box and not any border, and the rail is why: its rows are
+`button.console-rail-row` and the design draws the hairline **between** them with
+`border-bottom` on that button. Read as "no border on a control", the scan would refuse the
+rail Task 6.3 drew and the design specifies. A one-sided border is a rule; only an all-sides
+one is an extent.
+
+### Two figures the canvas draws that a stylesheet cannot compute
+
+The cap bar's fill (`data-fill`, `"12.5%"` or `"n/a"`) and a sparkline bar's height
+(`data-height`) are **strings in a `data-*` attribute**: CSS cannot read one as a length, and
+the console writes no inline style (`style-src 'self'`, and `screen-literals.test.ts` refuses
+a `.style` write anywhere under `src/renderer/`). So the cap is drawn as its percentage with a
+state-coloured rule beneath it — the number and the tone, which is the two channels §3.5 rule
+3 requires of exactly that reading — and the burn window is drawn as a row of ticks whose tone
+says measured or gap, with the rate in each bar's `title`. Neither figure is dropped and
+neither is invented; what is lost is the *length* of a bar, which is a drawing the code does
+not publish as a number a stylesheet could use.
+
+### Narrow windows: what the screens' layer does, and the rule that outranks it
+
+§4.2's first row would have the widest tables drop their least load-bearing columns. **This
+file wraps instead, and says why**: a dropped column is allowed only when its value is
+repeated in a `title`, and the cells a Log, Jobs or `spend-rows` table would drop — tokens in
+and out, a job's model and compute — carry a value with no `title` behind it, because
+`putReading` writes one only for a reading with no number. Hiding them would be the console
+lying about spend, which §6.1 rule 1 forbids more strongly than any layout does. What the
+layer does do is §4.2's own: the three-column figure groups become two at 48.75em and stack at
+35em, and the burn window narrows at 62.5em.
+
+### What this task does not own
+
+The eight golden frames are Task 6.6's, which is owner-run and records once at the end of the
+phase; the computed-background assertion belongs with that recording, for the reason Task 6.3
+gives. The rail's `role`/`aria-selected`, the keys and the window background are Task 6.5's.
+
+**The five forced-colors cases are written but not run in the container this task was
+implemented in**: Playwright's Electron launch needs a display and a GTK/NSS/glib stack the
+image does not have. `npm run test:unit` is green there and `tsc --noEmit` typechecks the
+specs; the e2e suite is the one verification this branch could not complete, and the pull
+request says so.
