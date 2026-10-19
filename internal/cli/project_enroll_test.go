@@ -617,6 +617,27 @@ var hostileSeenName = "evil\x1b[31mred\nline\rcarriage‮override​zero"
 // is what a name that long does to the line it is printed in.
 var longSeenName = strings.Repeat("z", 4*safetext.FieldMax)
 
+// denseSeenName is the third half, and the one the bound is really about: a
+// name every character of which is escaped. pluginwire's escape writes one
+// character as six (\uXXXX), so a name of safetext.FieldMax zero-width joiners
+// is three thousand runes wide in the escaped form — six times the cap, past
+// even seenLineMaxRunes — if the bound is put on what the escaper reads rather
+// than on what it prints. Both durable sources accept the name: a bucket
+// object key has no length limit, and budget.FromFields checks only that a
+// spendDaily slug is valid UTF-8 and not empty.
+//
+// Written as runes, so the source stays plain text: U+200D is what a run
+// writes into a name, not what this file holds.
+var denseSeenName = strings.Repeat(string(rune(0x200D)), safetext.FieldMax)
+
+// tabbedSeenName is the whitespace half: a name carrying a literal tab. It is
+// a value safetext.Field would change (every unicode space becomes a space, a
+// tab included) and that pluginwire.PrintableN deliberately keeps, so it is
+// the one shape where the escaped form and Field's disagree — printed through
+// PrintableN alone it shifts the rest of the line out of the column, which no
+// other run-written value in this program does.
+var tabbedSeenName = "acme\tcookie"
+
 // seenLineMaxRunes bounds a line of a listing that names a run-written
 // repository: the bounded printable form (safetext.FieldMax) plus this
 // program's own longest note wrapped around one (the sources, the refusal and
@@ -649,7 +670,13 @@ func assertBoundedAndInert(t *testing.T, what, out string) {
 			t.Errorf("%s printed a %d-rune line, past the %d the bounded form allows: the name was printed unbounded:\n%s", what, n, seenLineMaxRunes, line)
 		}
 		for _, r := range line {
-			if (r < 0x20 && r != '\t') || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			// A tab is refused here as much as any other C0 control: these
+			// listings print every run-written value through safetext.Field's
+			// whitespace rule (printableName), which maps a tab to a space, and
+			// a live one would shift the rest of the line out of the column the
+			// operator is reading. A tab that survived would be the one
+			// run-written value in this program that is not normalised.
+			if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
 				t.Errorf("%s printed the control character %U: a run-written name rewrote the output:\n%q", what, r, out)
 				break
 			}
@@ -672,10 +699,14 @@ func assertBoundedAndInert(t *testing.T, what, out string) {
 // printable form is safetext.Field, the one the rest of the CLI prints
 // run-written text through (runview's rows, watch).
 //
-// Mutation (verified, run and restored): print r.Name raw at the seen entry's
-// own cell — this test fails on the escape sequence, on the carriage return,
-// on the override, on the zero-width joiner, on the extra line the newline
-// adds and on the line length the over-long name makes.
+// Mutations (both verified, run and restored): print r.Name raw at the seen
+// entry's own cell — this test fails on the escape sequence, on the carriage
+// return, on the override, on the zero-width joiner, on the extra line the
+// newline adds and on the line length the over-long name makes; and put the
+// bound on what the escaper reads instead of what it prints (printableName
+// returning pluginwire.PrintableN(s, safetext.FieldMax) whole-string) — it
+// fails on the dense name: six characters per escaped one is a line of three
+// thousand runes, past the listing's own bound.
 //
 // An earlier version of this comment said that the name-carrying branch of
 // notAdmittedSentence was unreachable because projectpolicy.ValidPattern gated
@@ -696,11 +727,15 @@ func TestProjectReposLsPrintsSeenNamesBoundedAndInert(t *testing.T) {
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": []string{"github/acme/app"},
 	})
-	// Both durable sources — the bucket holds the one carrying the controls (a
-	// path component of the file-backed bucket this test reads is at most 255
-	// bytes, where a real bucket's object key is not), spendDaily the long one.
+	// Both durable sources, and all four halves of the class: the bucket holds
+	// the one carrying the controls and the one carrying the tab (a path
+	// component of the file-backed bucket this test reads is at most 255 bytes,
+	// where a real bucket's object key is not, so the long and the dense name
+	// go in through spendDaily's slug field).
 	putRun(t, f.dir, hostileSeenName)
+	putRun(t, f.dir, tabbedSeenName)
 	f.spent(t, budget.DayDate(budget.Day(f.now)), longSeenName, longSeenName)
+	f.spent(t, budget.DayDate(budget.Day(f.now)), denseSeenName, denseSeenName)
 
 	out, _, err := execute(t, "project", "repos", "ls")
 	if err != nil {
@@ -719,8 +754,8 @@ func TestProjectReposLsPrintsSeenNamesBoundedAndInert(t *testing.T) {
 			entries++
 		}
 	}
-	if entries != 2 {
-		t.Errorf("the seen half holds %d lines after the header, want one per repository (2): a run-written name added one:\n%s", entries, seen)
+	if entries != 4 {
+		t.Errorf("the seen half holds %d lines after the header, want one per repository (4): a run-written name added one:\n%s", entries, seen)
 	}
 	bounded := printableName(hostileSeenName)
 	if !strings.Contains(seen, bounded) {
@@ -728,6 +763,26 @@ func TestProjectReposLsPrintsSeenNamesBoundedAndInert(t *testing.T) {
 	}
 	if !strings.Contains(seen, printableName(longSeenName)) {
 		t.Errorf("the over-long seen name is not printed in its bounded form: four times the cap came back unbounded")
+	}
+	// The dense name: every character of it is escaped, so this is the bound
+	// the listings' line bound rests on. Printed through PrintableN's own
+	// limit it would be six times the cap and this assertion — and
+	// assertBoundedAndInert's line bound — would fail.
+	if dense := printableName(denseSeenName); !strings.Contains(seen, dense) {
+		t.Errorf("the name of format characters is not printed in its bounded form (want %d runes):\n%s", len([]rune(dense)), seen)
+	}
+	if strings.Contains(seen, denseSeenName) {
+		t.Errorf("the name of format characters is printed raw, so it is invisible and unbounded at once:\n%s", seen)
+	}
+	// The tab is normalised to a space, the way every other run-written value
+	// in this program is: a live tab shifts everything after it out of the
+	// column the operator is reading. Nothing else this command prints carries
+	// one, so the whole half is the unit.
+	if strings.ContainsRune(seen, '\t') {
+		t.Errorf("a name carrying a tab is printed with it live, so the line it is on is shifted:\n%s", seen)
+	}
+	if line := listLine(t, seen, "acme cookie"); strings.ContainsRune(line, '\t') {
+		t.Errorf("a name carrying a tab is printed with it live: %q", line)
 	}
 	// The note is printed on the entry's own line, and neither copy of the
 	// sentence carries the name: the hostile name is not a repository
@@ -914,6 +969,10 @@ func TestProjectShowRunningNamesBoundedAndInert(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.db.Set(budget.PathAgent(hostileSeenName, "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
+	// And the dense name, which is what the --json half's bound is about: the
+	// escaped form is six characters per character of the name, so a bound on
+	// what the escaper reads would put three thousand runes in the document.
+	f.db.Set(budget.PathAgent(denseSeenName, "20261015-120000-bbbb"), map[string]any{"run_id": "20261015-120000-bbbb"})
 
 	out, _, err := execute(t, "project", "show")
 	if err != nil {
@@ -936,18 +995,22 @@ func TestProjectShowRunningNamesBoundedAndInert(t *testing.T) {
 		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
 	}
 	for _, got := range [][]string{doc.Running, doc.RunningNotEnrolled} {
-		if len(got) != 1 {
-			t.Fatalf("--json = %s, want one run-written repository in each list", js)
+		if len(got) != 2 {
+			t.Fatalf("--json = %s, want both run-written repositories in each list", js)
 		}
-		assertBoundedJSONName(t, "--json", got[0])
+		for _, name := range got {
+			assertBoundedJSONName(t, "--json", name)
+		}
 	}
-	if doc.Running[0] != doc.RunningNotEnrolled[0] {
-		t.Errorf("--json names the same repository differently in its two lists: %q and %q", doc.Running[0], doc.RunningNotEnrolled[0])
+	if !slices.Equal(doc.Running, doc.RunningNotEnrolled) {
+		t.Errorf("--json names the same repositories differently in its two lists: %q and %q", doc.Running, doc.RunningNotEnrolled)
 	}
 	// The table prints the value the document carries, so the two forms of one
 	// command agree.
-	if !strings.Contains(out, doc.Running[0]) {
-		t.Errorf("`project show` does not print the repository --json names (%q):\n%s", doc.Running[0], out)
+	for _, name := range doc.Running {
+		if !strings.Contains(out, name) {
+			t.Errorf("`project show` does not print the repository --json names (%q):\n%s", name, out)
+		}
 	}
 }
 
@@ -963,7 +1026,7 @@ func assertBoundedJSONName(t *testing.T, what, got string) {
 		t.Errorf("%s carries %q, which is not the bounded printable form", what, got)
 	}
 	for _, r := range got {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || r == 0x200b {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || r == 0x200b || r == 0x200d {
 			t.Errorf("%s carries %q, in which the run-written name survives: %U", what, got, r)
 		}
 	}

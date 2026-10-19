@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -1916,30 +1918,52 @@ func boundedNames(names []string) []string {
 }
 
 // printableName is one run-written name as every listing of this package
-// prints it: bounded to one inert line (safetext.Field's job), and still
-// distinct from every other name.
+// prints it: one inert line, bounded, still distinct from every other name,
+// and with its whitespace normalised the way safetext.Field normalises it.
 //
-// Field is the first half and not the second. It drops what Strip drops —
-// bidi controls, zero-width and other format characters, invalid UTF-8 — so a
-// name carrying U+2066 and U+2069 between its letters and a plain name of the
-// same letters without them print as one and the same line. An operator reads
-// that line as the entry of whichever of the two they have in mind, and the
-// two are not the same entry: one is admitted by the allow-list and the other
-// is refused. A name Field would change is therefore printed through
-// pluginwire.PrintableN, which escapes each of those characters as \uXXXX
-// instead of dropping it and cuts at the same bound (safetext.FieldMax), so a
-// name reads as what it is — and the same choice the CLI makes for a policy
+// Field is the first half of that and not the whole of it. It drops what Strip
+// drops — bidi controls, zero-width and other format characters, invalid UTF-8
+// — so a name carrying U+2066 and U+2069 between its letters and a plain name
+// of the same letters without them print as one and the same line. An operator
+// reads that line as the entry of whichever of the two they have in mind, and
+// the two are not the same entry: one is admitted by the allow-list and the
+// other is refused. A name Field would change is therefore escaped with
+// pluginwire's rule (each of those characters as \uXXXX) instead of dropped,
+// so a name reads as what it is — the same choice the CLI makes for a policy
 // node's unknown keys (unknownPolicyKeysText), whose provenance this shares.
+//
+// Two things Field does that PrintableN does not, and that are done here
+// rather than inherited:
+//
+// The bound is on what is printed, and PrintableN's is on what it reads. It
+// counts runes of *input* against its argument and writes six characters for
+// each escaped one, so PrintableN(s, safetext.FieldMax) is no bound on the
+// line: a name of safetext.FieldMax zero-width joiners — which both durable
+// sources accept, a bucket object key having no length limit and
+// budget.FromFields checking only that a slug is valid UTF-8 and not empty —
+// comes out over three thousand runes wide, past even the listings' own line
+// bound (seenLineMaxRunes) and enough to push this program's words off the
+// screen, which is the whole point of bounding the name. So each rune is
+// escaped on its own here and the loop stops the moment the next one would
+// cross FieldMax, with Field's own ellipsis — printableNameMax is
+// safetext.FieldMax, the same bound Field has, not a multiple of it.
+//
+// Whitespace is normalised first, by Field's rule: every unicode space — tab,
+// newline, NEL and the line and paragraph separators among them — becomes one
+// space, runs of them collapse, and the ends are trimmed. PrintableN is
+// deliberately not Field here (it keeps a literal tab), and a tab in a listing
+// line shifts everything after it out of the column the operator is reading,
+// which is the one thing no other run-written value in this program does. The
+// reading that costs is a name that differs from another only in whitespace:
+// both print alike, and neither is a repository identifier (the alphabet has
+// no space in it) nor reaches a command. What is *not* normalised is the
+// format characters above, which are escaped — two names that differ in one of
+// those still read as two.
 //
 // What is escaped is inert either way: Printable escapes every control and
 // format character, so the result is still one line no terminal acts on. It
 // reaches no command: the advisory this package builds is enrollableArg's,
 // which returns only a value over the repository alphabet.
-//
-// Its length bound is printableNameMax, not FieldMax: the escaped form grows
-// (one character becomes six) and PrintableN cuts the *result* at FieldMax
-// runes before appending its own marker. The bound is the same order as
-// Field's and is what the listings' line bound is built on (seenLineMaxRunes).
 //
 // The one reading it does not separate is a name that literally spells an
 // escape ("x⁦y" typed as nine ASCII characters), which Field leaves
@@ -1952,13 +1976,51 @@ func printableName(s string) string {
 	if f := safetext.Field(s); f == s {
 		return f
 	}
-	return pluginwire.PrintableN(s, safetext.FieldMax)
+	var b strings.Builder
+	used := 0
+	for _, r := range normalisedSpaces(s) {
+		e := pluginwire.PrintableN(string(r), 1)
+		n := utf8.RuneCountInString(e)
+		if used+n > safetext.FieldMax-1 {
+			b.WriteRune('…')
+			break
+		}
+		b.WriteString(e)
+		used += n
+	}
+	return b.String()
 }
 
-// printableNameMax is the most runes printableName returns: pluginwire
-// .PrintableN keeps safetext.FieldMax runes of the name and then appends its
-// own truncation marker, which is this constant's second term.
-const printableNameMax = safetext.FieldMax + len("... (truncated)")
+// printableNameMax is the most runes printableName returns. Its bound is on
+// what is printed, so it is safetext.FieldMax itself: the ellipsis stands in
+// for the rune it replaced.
+const printableNameMax = safetext.FieldMax
+
+// normalisedSpaces is s with Field's whitespace rule applied and nothing else.
+// Field does the same and then drops the format characters (and the invalid
+// UTF-8) as well; those are kept here, because printableName escapes them
+// rather than dropping them, so that two names that differ in one still read
+// as two.
+func normalisedSpaces(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	space := false
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			// Leading whitespace is dropped, interior runs are collapsed to
+			// one space, trailing whitespace never flushes: strings.Fields
+			// and its Join, which is what Field does with the same rule.
+			space = b.Len() > 0
+			continue
+		}
+		if space {
+			b.WriteByte(' ')
+			space = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
 
 // allowSources says where each entry of the published allow-list came from,
 // for `project show`. It is the same seed the publisher would compute, so an
