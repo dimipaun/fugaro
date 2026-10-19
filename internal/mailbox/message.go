@@ -259,51 +259,26 @@ func decodeValue(dec *json.Decoder, data []byte, depth int) (any, error) {
 	end := dec.InputOffset()
 	delim, isDelim := tok.(json.Delim)
 	if !isDelim {
-		switch tok.(type) {
-		case string:
-			if hasLoneSurrogateEscape(data[start:end]) {
-				return unquoteKeepingLoneSurrogates(data[start:end])
-			}
-			return tok, nil
-		case nil, bool, json.Number:
-			return tok, nil
+		// A string is the one token that may have to be read back out of its
+		// own bytes; nil, true, false and a number are kept as they came.
+		// Those four and a delimiter are the whole of what Token returns, so
+		// there is no case for a token of any other type: the branch that used
+		// to answer one here — `unexpected JSON token %v` — was a refusal no
+		// document could reach, and dead code in a decoder is a branch a
+		// reader has to decide is dead before trusting the ones beside it.
+		if _, isString := tok.(string); isString && hasLoneSurrogateEscape(data[start:end]) {
+			return unquoteKeepingLoneSurrogates(data[start:end])
 		}
-		return nil, fmt.Errorf("mailbox: unexpected JSON token %v", tok)
+		return tok, nil
 	}
-	switch delim {
-	case '{':
-		object := map[string]any{}
-		for dec.More() {
-			keyStart := dec.InputOffset()
-			keyTok, err := dec.Token()
-			if err != nil {
-				return nil, fmt.Errorf("mailbox: reading a record's key: %w", err)
-			}
-			keyEnd := dec.InputOffset()
-			key, ok := keyTok.(string)
-			if !ok {
-				return nil, fmt.Errorf("mailbox: a record's key is not a string: %v", keyTok)
-			}
-			if hasLoneSurrogateEscape(data[keyStart:keyEnd]) {
-				key, err = unquoteKeepingLoneSurrogates(data[keyStart:keyEnd])
-				if err != nil {
-					return nil, fmt.Errorf("mailbox: reading a record's key: %w", err)
-				}
-			}
-			if _, duplicate := object[key]; duplicate {
-				return nil, fmt.Errorf("mailbox: the key %q appears twice in one record", key)
-			}
-			value, err := decodeValue(dec, data, depth+1)
-			if err != nil {
-				return nil, err
-			}
-			object[key] = value
-		}
-		if _, err := dec.Token(); err != nil { // the closing brace
-			return nil, fmt.Errorf("mailbox: reading a record: %w", err)
-		}
-		return object, nil
-	case '[':
+	// Token answers a value position with `{` or `[`, and answers a closing
+	// delimiter there with a syntax error of its own ("invalid character '}'
+	// looking for beginning of value") that the branch above has already
+	// returned. So the list below is the `[`, and everything else reaching here
+	// is an object: the `case '{':` and the `default:` that used to spell the
+	// two of them were cases for a token the decoder cannot produce, and the
+	// `default:` was a refusal no document could reach.
+	if delim == '[' {
 		list := []any{}
 		for dec.More() {
 			item, err := decodeValue(dec, data, depth+1)
@@ -316,9 +291,54 @@ func decodeValue(dec *json.Decoder, data []byte, depth int) (any, error) {
 			return nil, fmt.Errorf("mailbox: reading a record: %w", err)
 		}
 		return list, nil
-	default:
-		return nil, fmt.Errorf("mailbox: unexpected JSON delimiter %q", delim)
 	}
+	object := map[string]any{}
+	for dec.More() {
+		key, err := readKey(dec, data)
+		if err != nil {
+			return nil, err
+		}
+		if _, duplicate := object[key]; duplicate {
+			return nil, fmt.Errorf("mailbox: the key %q appears twice in one record", key)
+		}
+		value, err := decodeValue(dec, data, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		object[key] = value
+	}
+	if _, err := dec.Token(); err != nil { // the closing brace
+		return nil, fmt.Errorf("mailbox: reading a record: %w", err)
+	}
+	return object, nil
+}
+
+// readKey reads one object's key exactly as it was written.
+//
+// The token is always a string: json.Decoder answers an object's key with a
+// string and reports every other token in that position as a syntax error of
+// its own, so the assertion is written without its ok flag — a key it could
+// not read would be the empty string, which the record then carries and the
+// validator refuses (unknown-field, or empty-string where the key is one it
+// names), never a key this function invented. The two checks that used to sit
+// here were branches no document could reach.
+//
+// A key that spells a lone surrogate is kept as the fault it is, so the
+// validator answers unknown-field for it as the module does; its error is
+// returned unwrapped, because the unquoter's own message already names the
+// literal's fault and the caller adds nothing but a second prefix.
+func readKey(dec *json.Decoder, data []byte) (string, error) {
+	start := dec.InputOffset()
+	tok, err := dec.Token()
+	if err != nil {
+		return "", fmt.Errorf("mailbox: reading a record's key: %w", err)
+	}
+	end := dec.InputOffset()
+	key, _ := tok.(string)
+	if hasLoneSurrogateEscape(data[start:end]) {
+		return unquoteKeepingLoneSurrogates(data[start:end])
+	}
+	return key, nil
 }
 
 // hasLoneSurrogateEscape reports whether a JSON string literal — its own bytes,
@@ -713,7 +733,7 @@ func ValidateMessage(r Record) (*Message, *Refusal) {
 		message.ReplyTo, message.HasReplyTo = replyTo.value, true
 	}
 	if r.has("action") {
-		action := actionField(r["action"], message.Kind)
+		action := actionField(r["action"])
 		if action.bad != nil {
 			return nil, action.bad
 		}
@@ -998,9 +1018,13 @@ func encodeJSONString(value string) (string, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(value); err != nil {
-		return "", fmt.Errorf("mailbox: encoding a string: %w", err)
-	}
+	// Encode's error is not read: it reports one for a writer that fails and
+	// for a value it cannot marshal, and neither can happen here — buf is a
+	// bytes.Buffer, whose Write cannot fail, and the value is a string
+	// canonicalString has already passed. Reading an error that cannot come is
+	// a branch no test can reach, and a branch no test can reach is one a
+	// reader has to prove impossible before trusting the checks beside it.
+	_ = enc.Encode(value)
 	return strings.TrimSuffix(buf.String(), "\n"), nil
 }
 
@@ -1276,10 +1300,13 @@ func kindField(value any) (string, *Refusal) {
 // the consumer runs `fugaro cancel RUN` or `gh pr merge <n> --repo
 // <owner/name>` from these fields and nothing else, and a record missing any of
 // them is one that cannot be checked before it runs.
-func actionField(value any, kind string) checked[*Action] {
-	if kind != "action" {
-		return bad[*Action](CodeFieldNotAllowed, "action")
-	}
+//
+// The kind is not a parameter, and that is the honest signature: the (kind,
+// field) table in ValidateMessage has already refused an `action` on every kind
+// that does not carry one, with this same refusal — field-not-allowed at
+// `action` — so the check that used to open this function guarded a record no
+// caller could hand it.
+func actionField(value any) checked[*Action] {
 	record, isObject := asObject(value)
 	if !isObject {
 		return bad[*Action](CodeNotAnObject, "action")

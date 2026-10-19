@@ -12,9 +12,12 @@ import (
 
 // The pin for docs/plans/2026-10-18-mobile-mailbox-consumer.md, the CLI plan
 // console D19 requires before mobile task P4.1 (`fugaro mailbox`) may be
-// written. Nothing in the plan is built, so no test can hold its behaviour; the
-// things a reader can check today are its citations, the one rule it states in
-// three places, and the lines it quotes from the merged rules template.
+// written. T1 has landed — `internal/mailbox`'s message binding and its replay
+// of the merged vectors — and every other task of the plan has not, so what
+// this pin holds is what a reader can check today: the plan's citations, the
+// one rule it states in three places, the lines it quotes from the merged rules
+// template, and, for the three paths T1 built, that they are in the tree rather
+// than in planWillCreate below.
 //
 // The quote half is TestMailboxPlanQuotesTheRulesFile: the plan's section 2
 // quotes the mailbox subtree, the config/admin node and the pairing subtree, and

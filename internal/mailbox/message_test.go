@@ -333,6 +333,11 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 	cancelled := func(over map[string]any) Record {
 		return message(Record{"kind": "action", "action": cancel(over)})
 	}
+	merged := func(over map[string]any) Record {
+		return message(Record{"kind": "action", "action": merge(over)})
+	}
+	runID := "20261018-125859-d3c8"
+	repoName := "dimipaun/fugaro"
 
 	table := []struct {
 		name      string
@@ -401,6 +406,170 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 		{"a merge whose target is a run", message(Record{"kind": "action", "action": merge(map[string]any{
 			"target": map[string]any{"run": "20261018-125859-d3c8"}})}), false, CodeBadTarget, "action.target",
 			"a merge resolves to a repository, whatever the record says"},
+
+		// The wrong type, field by field. It is a different refusal from the
+		// same field failing its shape — a number where an id belongs is
+		// wrong-type, not bad-key — and the two used to be one row apiece.
+		{"an id that is not a string", message(Record{"id": number("1")}), false, CodeWrongType, "id",
+			"an id is a database key, and a number is not one"},
+		{"a sender that is not a string", message(Record{"sender": true}), false, CodeWrongType, "sender",
+			"the mailbox a message belongs to is named, not counted"},
+		{"a body that is not a string", message(Record{"text": number("1")}), false, CodeWrongType, "text",
+			"a body is characters"},
+
+		// The two separators: Go's encoder escapes U+2028 and U+2029 even
+		// with SetEscapeHTML off, where JSON.stringify leaves both raw, so a
+		// record carrying either has two canonical forms and can be neither
+		// tagged nor verified. The schema refuses both in every string, and a
+		// key answers it as bad-key where a value answers bad-character.
+		{"a body carrying U+2028", message(Record{"text": "a b"}), false, CodeBadCharacter, "text",
+			"Go escapes U+2028 and JavaScript does not, so its bytes are not one string"},
+		{"a body carrying U+2029", message(Record{"text": "a b"}), false, CodeBadCharacter, "text",
+			"U+2029 is the same fault as U+2028"},
+		{"an id carrying U+2028", message(Record{"id": "a b"}), false, CodeBadKey, "id",
+			"a separator in a database key is bad-key, as every other unencodable character is"},
+		{"an id carrying U+2029", message(Record{"id": "a b"}), false, CodeBadKey, "id",
+			"U+2029 in a key is the same refusal as U+2028"},
+		{"a kind that is not a string", message(Record{"kind": true}), false, CodeWrongType, "kind",
+			"\"not a kind\" and \"not a string\" are different questions"},
+		{"an agent that is not a string", message(Record{"agent": number("1")}), false, CodeWrongType, "agent",
+			"the agent a message is addressed to is named by its id"},
+		{"an agent id drawn from outside its alphabet", message(Record{"agent": "orchestrator!"}), false, CodeBadCharacter, "agent",
+			"an agent id is [A-Za-z0-9._:-] and nothing else"},
+		{"options that are not a list", message(Record{"kind": "prompt", "options": "merge it"}), false, CodeWrongType, "options",
+			"one option is not a list of options"},
+		{"agents that are not a list", heartbeat(Record{"agents": "orchestrator"}), true, CodeWrongType, "agents",
+			"an advertised list is a list, not one id"},
+
+		// A list's own bound and the entries it holds.
+		{"more agents than a heartbeat advertises", heartbeat(Record{"agents": manyAgents(AgentsMax + 1)}), true, CodeTooMany, "agents",
+			"a heartbeat advertises at most AgentsMax agents"},
+		{"an advertised agent with a field the schema does not name", heartbeat(Record{"agents": []any{
+			map[string]any{"id": "orchestrator", "name": "Orchestrator", "role": "boss"}}}), true, CodeUnknownField, "agents[0].role",
+			"an advertised agent is {id, name}, exactly"},
+		{"an advertised agent with no name", heartbeat(Record{"agents": []any{
+			map[string]any{"id": "orchestrator"}}}), true, CodeMissingField, "agents[0].name",
+			"an agent the app cannot say aloud cannot be advertised"},
+
+		// The (kind, field) table. A field a kind cannot carry is
+		// field-not-allowed and never unknown-field: two ends disagreeing about
+		// whether a message is an action is the ambiguity this schema refuses.
+		{"options on a kind that does not carry them", message(Record{"kind": "answer", "reply_to": "m-0000",
+			"options": []any{"merge it"}}), false, CodeFieldNotAllowed, "options",
+			"an answer names the prompt it settles and offers nothing"},
+		{"a reply on a kind that does not carry one", message(Record{"kind": "prompt",
+			"options": []any{"merge it"}, "reply_to": "m-0000"}), false, CodeFieldNotAllowed, "reply_to",
+			"a prompt is answered; it does not answer"},
+		{"an action on a kind that does not carry one", message(Record{"kind": "prompt",
+			"options": []any{"merge it"}, "action": cancel(nil)}), false, CodeFieldNotAllowed, "action",
+			"a kind carries its own fields and no others"},
+
+		// The action record: what it is, what it must carry, and what its verb
+		// lets it carry.
+		{"an action that is not an object", message(Record{"kind": "action", "action": "cancel"}), false, CodeNotAnObject, "action",
+			"an action is a record of its parts, not a verb on its own"},
+		{"an action with no confirmation", message(Record{"kind": "action", "action": map[string]any{
+			"id": "a-0001", "verb": "cancel", "target": map[string]any{"run": runID}}}), false, CodeMissingField, "action.confirmation",
+			"an action with nothing confirming it is never executed"},
+		{"a verb that is not a string", cancelled(map[string]any{"verb": number("1")}), false, CodeWrongType, "action.verb",
+			"a verb is one of three words"},
+		{"a head SHA on a verb that has no head", cancelled(map[string]any{
+			"head_sha": strings.Repeat("a", SHAMin)}), false, CodeFieldNotAllowed, "action.head_sha",
+			"a cancel names a run, and a run has no head to compare"},
+
+		// The target: the shape it is, whether it is complete and well formed,
+		// and only then whether it agrees with the verb. The shape rules are
+		// security rules — the run id reaches `fugaro cancel` and the repository
+		// `gh pr merge --repo` as ARGV elements.
+		{"a target that is not an object", cancelled(map[string]any{"target": runID}), false, CodeNotAnObject, "action.target",
+			"a target is a record of the one thing the action resolves to"},
+		{"a target naming both a run and a repository", cancelled(map[string]any{"target": map[string]any{
+			"run": runID, "repo": repoName, "pr": number("532")}}), false, CodeBadTarget, "action.target",
+			"the consumer would have to guess which one the user confirmed"},
+		{"a target naming neither shape", cancelled(map[string]any{"target": map[string]any{}}), false, CodeBadTarget, "action.target",
+			"a target that names nothing is not a target"},
+		{"a run target with a field the schema does not name", cancelled(map[string]any{"target": map[string]any{
+			"run": runID, "head": "x"}}), false, CodeUnknownField, "action.target.head",
+			"a run target carries the run and nothing else"},
+		{"a run that is not a string", cancelled(map[string]any{"target": map[string]any{
+			"run": number("1")}}), false, CodeWrongType, "action.target.run",
+			"the run id is passed to a command as one argument"},
+		{"a run longer than its bound", cancelled(map[string]any{"target": map[string]any{
+			"run": strings.Repeat("2", TargetMax+1)}}), false, CodeTooLong, "action.target.run",
+			"a run id is bounded like every other string"},
+		{"a run with a character a command line cannot carry", cancelled(map[string]any{"target": map[string]any{
+			"run": "20261018 125859"}}), false, CodeBadCharacter, "action.target.run",
+			"a space is not a character a run id is drawn from"},
+		{"a run id that begins with a flag character", cancelled(map[string]any{"target": map[string]any{
+			"run": "-20261018-125859"}}), false, CodeBadTarget, "action.target.run",
+			"`fugaro cancel --force` is a command line the record would choose"},
+		{"a run id that begins with a dot", cancelled(map[string]any{"target": map[string]any{
+			"run": ".20261018-125859"}}), false, CodeBadTarget, "action.target.run",
+			"a leading dot is a path to whatever reads it"},
+		{"a repository target with a field the schema does not name", merged(map[string]any{"target": map[string]any{
+			"repo": repoName, "pr": number("532"), "tag": "v1"}}), false, CodeUnknownField, "action.target.tag",
+			"a repository target carries the repository and the number, and nothing else"},
+		{"a repository target with no pull request number", merged(map[string]any{"target": map[string]any{
+			"repo": repoName}}), false, CodeMissingField, "action.target.pr",
+			"a repository alone is not a pull request"},
+		{"a repository that is not a string", merged(map[string]any{"target": map[string]any{
+			"repo": number("1"), "pr": number("532")}}), false, CodeWrongType, "action.target.repo",
+			"the repository is passed to `gh pr merge --repo` as one argument"},
+		{"a repository longer than its bound", merged(map[string]any{"target": map[string]any{
+			"repo": strings.Repeat("a", TargetMax) + "/b", "pr": number("532")}}), false, CodeTooLong, "action.target.repo",
+			"a repository is bounded like every other string"},
+		{"a repository with a character a command line cannot carry", merged(map[string]any{"target": map[string]any{
+			"repo": repoName + ";rm", "pr": number("532")}}), false, CodeBadCharacter, "action.target.repo",
+			"a semicolon is not a character a repository is drawn from"},
+		{"a repository that is one name and not two", merged(map[string]any{"target": map[string]any{
+			"repo": "dimipaun", "pr": number("532")}}), false, CodeBadTarget, "action.target.repo",
+			"`gh pr merge --repo dimipaun` names no repository"},
+		{"a repository that begins with a flag character", merged(map[string]any{"target": map[string]any{
+			"repo": "-" + repoName, "pr": number("532")}}), false, CodeBadTarget, "action.target.repo",
+			"`gh pr merge --repo --foo` is a command line the record would choose"},
+		{"a pull request number that is not a number", merged(map[string]any{"target": map[string]any{
+			"repo": repoName, "pr": "532"}}), false, CodeWrongType, "action.target.pr",
+			"a number written as a string is not a number"},
+		{"a pull request number that is not whole", merged(map[string]any{"target": map[string]any{
+			"repo": repoName, "pr": number("532.5")}}), false, CodeBadTarget, "action.target.pr",
+			"there is no pull request 532.5"},
+		{"a pull request number below one", merged(map[string]any{"target": map[string]any{
+			"repo": repoName, "pr": number("0")}}), false, CodeBadTarget, "action.target.pr",
+			"pull requests are numbered from one"},
+		{"a cancel whose target is a repository", cancelled(map[string]any{"target": map[string]any{
+			"repo": repoName, "pr": number("532")}}), false, CodeBadTarget, "action.target",
+			"a cancel cancels a run (D169), whatever the record says"},
+
+		// The confirmation, and the head SHA a merge carries.
+		{"a confirmation that is not an object", cancelled(map[string]any{"confirmation": "c-0001"}), false, CodeNotAnObject, "action.confirmation",
+			"a confirmation is an id and a time, not a bare id"},
+		{"a confirmation with a field the schema does not name", cancelled(map[string]any{"confirmation": map[string]any{
+			"id": "c-0001", "at": number("1700000000000"), "by": "phone"}}), false, CodeUnknownField, "action.confirmation.by",
+			"a confirmation carries the ledger's id and the time it was given"},
+		{"a confirmation with no time", cancelled(map[string]any{"confirmation": map[string]any{
+			"id": "c-0001"}}), false, CodeMissingField, "action.confirmation.at",
+			"the command window is measured from the time it was given"},
+		{"a confirmation at a time that is not a number", cancelled(map[string]any{"confirmation": map[string]any{
+			"id": "c-0001", "at": "1700000000000"}}), false, CodeWrongType, "action.confirmation.at",
+			"an epoch millisecond written as a string is not one"},
+		{"a head SHA that is not a string", merged(map[string]any{"head_sha": number("1")}), false, CodeBadSHA, "action.head_sha",
+			"an object name is a string of hex, not a number"},
+
+		// A time, and the flag the phone writes later.
+		{"a time before the epoch", message(Record{"at": number("-1")}), false, CodeBadTimestamp, "at",
+			"epoch milliseconds are not negative"},
+		{"a time that is not a number at all", message(Record{"at": json.Number("soon")}), false, CodeWrongType, "at",
+			"a json.Number that is not a number is the wrong type, not a bad time"},
+		{"an acked flag that is not a boolean", message(Record{"acked": "yes"}), false, CodeWrongType, "acked",
+			"`acked` says whether the phone has read the message, and that is true or false"},
+
+		// The heartbeat's own three fields.
+		{"a heartbeat at a time before the epoch", heartbeat(Record{"at": number("-1")}), true, CodeBadTimestamp, "at",
+			"a heartbeat is stamped like every other record"},
+		{"a boot id drawn from outside its alphabet", heartbeat(Record{"boot": "boot/01"}), true, CodeBadCharacter, "boot",
+			"a boot id is drawn from the same alphabet an agent id is"},
+		{"a heartbeat tag that is not hex", heartbeat(Record{"mac": strings.Repeat("F", MACMax)}), true, CodeBadMAC, "mac",
+			"hex has one spelling here, so one tag has one string"},
 	}
 	for _, tc := range table {
 		t.Run(tc.name, func(t *testing.T) {
@@ -439,6 +608,16 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 			t.Errorf("the code %s is declared and nothing holds it: no refusal in vectors.json carries it and no row above produces it", code)
 		}
 	}
+}
+
+// manyAgents is n distinct advertised agents, for the rows about the list's
+// bound: distinct, so that the bound is the only thing that can refuse them.
+func manyAgents(n int) []any {
+	agents := make([]any, 0, n)
+	for i := range n {
+		agents = append(agents, agent("agent-"+strconv.Itoa(i), "Agent"))
+	}
+	return agents
 }
 
 // agent is one entry of a heartbeat's advertised list.
@@ -1142,6 +1321,10 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 		{"a high half before an ordinary escape", `"\uD83D\u00e9"`, "\xed\xa0\xbd\xc3\xa9"},
 		{"escapes beside a lone half", `"a\\b\"c\nd\uD800"`, "a\\b\"c\nd\xed\xa0\x80"},
 		{"a raw character beside a lone half", `"é\uD800"`, "é\xed\xa0\x80"},
+		{"a backspace beside a lone half", `"a\bb\uD800"`, "a\bb\xed\xa0\x80"},
+		{"a form feed beside a lone half", `"a\fb\uD800"`, "a\fb\xed\xa0\x80"},
+		{"a carriage return beside a lone half", `"a\rb\uD800"`, "a\rb\xed\xa0\x80"},
+		{"a tab beside a lone half", `"a\tb\uD800"`, "a\tb\xed\xa0\x80"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := unquoteKeepingLoneSurrogates([]byte(tc.literal))
@@ -1554,3 +1737,134 @@ func text(t *testing.T, value any, where string) string {
 // number is a JSON number literal for a record built in Go, which is what a
 // record decoded from the wire carries.
 func number(literal string) any { return json.Number(literal) }
+
+// TestRefusalErrorSpellsTheCodeAndTheField pins the two spellings Refusal has
+// as an error. They are the binding's log line and its `--json` document, so
+// they are the same kind of contract the codes are: the code and the field,
+// and never the message's text.
+func TestRefusalErrorSpellsTheCodeAndTheField(t *testing.T) {
+	if got, want := (&Refusal{Code: CodeBadTarget, Field: "action.target.run"}).Error(), "bad-target (action.target.run)"; got != want {
+		t.Errorf("a refusal with a field spells %q, wanted %q", got, want)
+	}
+	if got, want := (&Refusal{Code: CodeNotAnObject}).Error(), "not-an-object"; got != want {
+		t.Errorf("a refusal with no field spells %q, wanted %q", got, want)
+	}
+	if got, want := refuse(CodeBadMAC, "mac").Error(), "bad-mac (mac)"; got != want {
+		t.Errorf("refuse spells %q, wanted %q", got, want)
+	}
+}
+
+// TestDecodeRefusesDocumentsThatAreNotOneValue walks the decoder's own
+// refusals: a document that ends before its record does, a token where a value
+// belongs, and a second value after the first. Each is a document a plain
+// json.Unmarshal would answer differently — three of them with a map and no
+// error at all — so each is pinned by the message it carries rather than by
+// "it failed", which is the shape of assertion a deletion survives.
+func TestDecodeRefusesDocumentsThatAreNotOneValue(t *testing.T) {
+	for _, tc := range []struct {
+		document string
+		wantErr  string
+	}{
+		{"", "reading a record"},
+		{"{", "reading a record's key"},
+		{`{"a":`, "reading a record"},
+		{"[1", "reading a record"},
+		{"[}", "reading a record: invalid character '}'"},
+		{"{\"a\":1]", "reading a record: invalid character ']'"},
+		{"[1}", "reading a record: invalid character '}'"},
+		{"{} x", "reading a record: invalid character 'x'"},
+		{"{} {}", "more than one JSON value"},
+	} {
+		t.Run(tc.document, func(t *testing.T) {
+			record, err := Decode([]byte(tc.document))
+			if err == nil {
+				t.Fatalf("%q decoded to %v, and it is not one JSON value", tc.document, record)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("%q failed with %q, wanted it to name %q", tc.document, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestTheSurrogateScannerAnswersForSpansNoDocumentCanHold is the scanner's own
+// edge: it is handed raw bytes, and every span it cannot read is answered false
+// — "no lone surrogate here" — rather than by reading past the end of the
+// literal. The spans a decoder can produce are the first four rows; the rest
+// are the ones it cannot, and they are here because a scanner that panicked or
+// looped on one would take the decoder with it.
+func TestTheSurrogateScannerAnswersForSpansNoDocumentCanHold(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		span string
+		want bool
+	}{
+		{"a literal with no escape", `"plain"`, false},
+		{"a lone high half", `"\uD800"`, true},
+		{"a lone low half", `"\uDC00"`, true},
+		{"a pair", `"\uD83D\uDE00"`, false},
+		{"an escaped backslash before the escape", `"\\uD800"`, false},
+		{"a high half whose pair does not follow", `"\uD83D\u0041"`, true},
+		{"no quote at all", "plain", false},
+		{"a literal ending in a backslash", `"a\"`, false},
+		{"an escape with no room for its digits", `"\u1"`, false},
+		{"an escape whose digits are not hexadecimal", `"\uZZZZ"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasLoneSurrogateEscape([]byte(tc.span)); got != tc.want {
+				t.Errorf("the scanner answers %v for %s, wanted %v", got, tc.span, tc.want)
+			}
+		})
+	}
+}
+
+// TestTheVerdictsForARecordThatIsNotThere: both validators answer nil with the
+// one refusal that has no field, and IsMessage is the same verdict as a
+// boolean — a filter's whole API, and a function no test called before this.
+func TestTheVerdictsForARecordThatIsNotThere(t *testing.T) {
+	if IsMessage(nil) {
+		t.Error("IsMessage answers true for no record at all")
+	}
+	if _, refusal := ValidateMessage(nil); refusal == nil || refusal.Code != CodeNotAnObject {
+		t.Errorf("ValidateMessage on no record answers %v, wanted not-an-object", refusal)
+	}
+	if _, refusal := ValidateHeartbeat(nil); refusal == nil || refusal.Code != CodeNotAnObject || refusal.Field != "" {
+		t.Errorf("ValidateHeartbeat on no record answers %v, wanted not-an-object with no field", refusal)
+	}
+
+	message := plainMessage(t)
+	if !IsMessage(message) {
+		t.Error("IsMessage answers false for the vector file's own plain message")
+	}
+	if IsMessage(Record{"at": number("1700000000000")}) {
+		t.Error("IsMessage answers true for a message with no tag")
+	}
+	beat := Record{"at": number("1700000000000"), "boot": "boot-01", "mac": strings.Repeat("f", MACMax)}
+	if _, refusal := ValidateHeartbeat(beat); refusal != nil {
+		t.Fatalf("the test's own heartbeat is refused %s", refusal)
+	}
+	if IsMessage(beat) {
+		t.Error("IsMessage answers true for a heartbeat")
+	}
+}
+
+// TestTheSerialiserSpellsABooleanAsItself: a boolean is a value a record
+// carries, so it has a canonical form and it is `true` or `false` — not `1`,
+// not `\u0000`. And serialiseNumber, which serialiseValue reaches only for a
+// value it has already found to be a number, still refuses a value that is not
+// one rather than printing a zero: it is the same function a later caller
+// reaches with a type this package does not speak.
+func TestTheSerialiserSpellsABooleanAsItself(t *testing.T) {
+	got, err := CanonicalBytes(Record{"flag": true, "off": false}, "inbox")
+	if err != nil {
+		t.Fatalf("a record with two booleans has no canonical form: %v", err)
+	}
+	if want := `{"direction":"inbox","flag":true,"off":false}`; string(got) != want {
+		t.Errorf("it serialised to %s, wanted %s", got, want)
+	}
+	if _, err := serialiseNumber("x"); err == nil {
+		t.Error("serialiseNumber answers a string with no error")
+	} else if !strings.Contains(err.Error(), "not a value a message carries") {
+		t.Errorf("serialiseNumber failed with %q, wanted it to name a type this package does not carry", err)
+	}
+}
