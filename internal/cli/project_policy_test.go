@@ -238,11 +238,18 @@ func (c policyWriteFails) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // TestProjectPolicyPublishPrintsNoDiffItDidNotWrite: the diff is a claim about
 // the node, so it goes out after the write that makes it true. On a write that
-// failed the operator reads the failure and "nothing was written", not a full
-// diff of a policy the node does not hold — a diff printed first reads as a
-// change that happened (the review finding on this change; `project repos
+// failed the operator reads the failure and that the node is as it was, not a
+// full diff of a policy the node does not hold — a diff printed first reads as
+// a change that happened (the review finding on this change; `project repos
 // edit` prints its line after its write for the same reason,
 // TestProjectReposEditRefusesAConcurrentWriter).
+//
+// "The node is as it was" and not "nothing was written" is deliberate, and it
+// is the other half of the review finding this change answers: the admissions
+// are a second write, narrowed before this one, and a failure here does not
+// undo them — so the sentence names what *this* write did not do, and the
+// admissions are named beside it when there were any (this fixture has none;
+// TestPolicyAdmissionsAreTightenedBeforeTheSharedNode is the case with them).
 func TestProjectPolicyPublishPrintsNoDiffItDidNotWrite(t *testing.T) {
 	f := newProjectFixture(t, "")
 	budgetTransport = policyWriteFails{rt: http.DefaultTransport}
@@ -252,8 +259,11 @@ func TestProjectPolicyPublishPrintsNoDiffItDidNotWrite(t *testing.T) {
 	if err == nil {
 		t.Fatal("a write the database refused was reported as a successful publish")
 	}
-	if !strings.Contains(err.Error(), "nothing was written") {
-		t.Errorf("err = %v, want it to say nothing was written", err)
+	if !strings.Contains(err.Error(), projectpolicy.PathShared()+" is as it was") {
+		t.Errorf("err = %v, want it to say the node is as it was", err)
+	}
+	if strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("err = %v claims nothing was written: the admissions are another write, and this message does not know they were not made", err)
 	}
 	for _, marker := range []string{"not published yet", "allow_repos", "set "} {
 		if strings.Contains(out, marker) {
@@ -2457,6 +2467,69 @@ func TestProjectPolicyPublishRefusesToDropARoutingBlock(t *testing.T) {
 	}
 	if pol := publishedPolicy(t, f); pol.Routing == nil || pol.Routing.Claude.ViaValue() != config.RouteDirect {
 		t.Errorf("the node still routes: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+}
+
+// TestProjectPolicyPublishRefusesToTurnTheCascadeOff: deleting routing.claude
+// from the operator's config means "the cascade is off", and a publish is the
+// one place that difference is settled — so it refuses, rather than keeping a
+// switch the config no longer writes. The cascade is not a route (it decides
+// which credential carries a Claude call, never where the call goes:
+// projectpolicy.RouteCascade, O3, D150), so it is refused with a sentence
+// written for the cascade — what the switch hands out, and the ways to say it
+// goes on purpose.
+//
+// This is the independent review's major finding on 653decaf: that commit read
+// "a via other than direct" as the routes only, which stopped refusing the
+// cascade, and the publish then kept it in silence.
+func TestProjectPolicyPublishRefusesToTurnTheCascadeOff(t *testing.T) {
+	f := newProjectFixtureWith(t, projectProvidersYAML, "routing:\n  claude:\n    via: cascade\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	pol := publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
+		t.Fatalf("the fixture did not publish the cascade this case is about: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	before := nodeJSON(t, f, projectpolicy.PathShared())
+
+	// The config loses the switch: that turns the cascade off, and a publish
+	// must not decide it did not mean that.
+	rewriteRoutingBlock(t, f, "")
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the publish went through and kept the cascade the config no longer writes:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	for _, want := range []string{"credentials cascade", "claude via cascade", "via: cascade", "via: direct", "--remove-routing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if now := nodeJSON(t, f, projectpolicy.PathShared()); now != before {
+		t.Errorf("the refused publish changed the node:\n%s", now)
+	}
+
+	// The remedy that keeps it: write the switch again.
+	rewriteRoutingBlock(t, f, "routing:\n  claude:\n    via: cascade\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the remedy the refusal names does not work: %v", err)
+	}
+	if pol := publishedPolicy(t, f); pol.Routing == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
+		t.Errorf("the config's cascade did not come back: %+v", pol.Routing)
+	}
+
+	// The remedy that ends it: --remove-routing, and the diff prints the drop
+	// rather than making it quietly.
+	rewriteRoutingBlock(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish", "--remove-routing")
+	if err != nil {
+		t.Fatalf("--remove-routing did not drop the cascade: %v", err)
+	}
+	if !strings.Contains(out, "- routing.claude.via: cascade") {
+		t.Errorf("the diff does not print the removal of the cascade:\n%s", out)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); ok {
+		t.Errorf("the node still carries a routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
 }
 
