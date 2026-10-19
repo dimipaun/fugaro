@@ -378,7 +378,10 @@ here goes stale the way the byte budgets did before D192.
   the `4 3` bottom row it draws, `budget.mjs`'s lead reading is written from the built page,
   and `docs/gcp-live-checklist.md`'s copy-control failure example names the mechanism `site.js`
   has (`sourceOf` over the `[data-copy]` block's own `pre`/`code`) rather than the
-  `[data-copy-source]` mark it no longer has. The measurements this round was decided on are
+  `[data-copy-source]` mark it no longer has. The comments that described the old order went
+  with the order: `index.astro`, `Hero.astro`, `fold.mjs` — whose rule 1 is read off the first
+  `h2`, now the chat's own title, and whose fixture is that shape — and `budget.mjs`'s lead
+  reading. The measurements this round was decided on are
   from a headless Chromium over the built site at 1280, 768 and 375: the four cards of the row
   are one height (218 px) with every name on one line, every top-level block starts where the
   one above it ends (no empty band, and the watch slot is `display: none` until PR #622's image
