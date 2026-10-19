@@ -298,3 +298,31 @@ func TestDeleteHintsAPIs(t *testing.T) {
 		}
 	}
 }
+
+// managed_deployer_scoped is left out of the tfvars unless the installation
+// opts in, so a default installation's tfvars are the same bytes as before the
+// variable existed and its plan has no scoped deployer role or binding (0.8.6
+// gates them off: deploy/terraform/gcp/modules/installation/deployer.tf). The
+// opt-in writes the key, which must be a variable of the installation root.
+func TestInstallationManagedDeployerScopedIsOptIn(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	s, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := InstallationVars(s)
+	if strings.Contains(string(data), "managed_deployer_scoped") {
+		t.Errorf("the default tfvars name managed_deployer_scoped:\n%s", data)
+	}
+	s, err = Installation(lc, InstallOptions{ManagedDeployerScoped: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ = InstallationVars(s)
+	if !slices.Contains(jsonKeys(t, data), "managed_deployer_scoped") || !strings.Contains(string(data), `"managed_deployer_scoped": true`) {
+		t.Errorf("the opt-in's tfvars do not set managed_deployer_scoped to true:\n%s", data)
+	}
+	if _, ok := rootVariables(t)["managed_deployer_scoped"]; !ok {
+		t.Error("managed_deployer_scoped is not a variable of the installation root")
+	}
+}

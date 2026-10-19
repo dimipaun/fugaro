@@ -47,6 +47,7 @@ module "installation" {
   enable_budget             = var.enable_budget
   history                   = var.history
   project_secrets           = var.project_secrets
+  managed_deployer_scoped   = var.managed_deployer_scoped
 }
 
 # The shared project jobs (design docs/design/project-centric.md §4.1): one
