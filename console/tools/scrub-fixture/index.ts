@@ -8,6 +8,11 @@
 // writer a recording goes through, so the loader accepts it, then back through
 // `loadFixture` before a byte is written. It prints the COUNT of values replaced and
 // nothing else: no hash, no list, no derivative of a removed value is written anywhere.
+//
+// The clock shift is drawn for the run (`scrubDocument` does it) and this command
+// line has no way to set it: an offset an operator can choose is an offset an
+// operator can write down. So two runs of this command on the same input produce
+// two different files, differing only in the clock and the run IDs that follow it.
 
 import { readFileSync, writeFileSync } from 'node:fs'
 

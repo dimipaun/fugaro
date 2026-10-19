@@ -732,7 +732,9 @@ present); **every value in the file is invented**, so the header says
 installation produced these values). The raw recording is never committed and is
 deleted after the scrub. **It is not reproducible from this repository, by
 design:** the committed fixture is the only artefact, and nothing is kept that
-could lead back to a removed value (no list, no hash, no salt).
+could lead back to a removed value (no list, no hash, no salt). *A file of
+digests of the removed values was in PR #643's branch until review removed it;
+the paragraph below says what that leaves exposed, and it is not nothing.*
 
 ```
 node node_modules/typescript/bin/tsc -p tsconfig.record-fixture.json
@@ -740,30 +742,141 @@ node .record-fixture/tools/scrub-fixture/index.js --in <raw.json, outside the re
   --out test/fixtures/normal.ndjson --cli 0.8.6
 ```
 
-The command prints the COUNT of values it replaced and nothing else. A file of
-hashes of the removed values was in the first push of this branch and was removed:
-a bare hash of a low-entropy value (a small integer, a dollar amount, a repo-style
-name) is recovered by a dictionary, so such a list leaks what it hides. The test
-instead gets the removed values in memory, through a callback the scrub run is
-given, on a scrub of a synthetic input; nothing derived from a removed value is
-written anywhere.
+The command prints the COUNT of values it replaced and nothing else, and the test
+gets the removed values in memory, through a callback the scrub run is given, on a
+scrub of a synthetic input: nothing derived from a removed value is written
+anywhere. One file of digests did exist on PR #643's branch, and **it is still in
+the pull request's history — this is the honest account of it.** PR #643's first
+commit (`d41f726b`) added `console/tools/scrub-fixture/normal.scrubbed.json`, a
+JSON array of the unsalted SHA-256 digests of the values the scrub had replaced,
+and a later commit on the same branch (`2fc37c7fd8`) removed it again. The PR was
+**squash-merged**, so neither commit is on `main` and no commit on `main` ever
+held the file — but the pull request's own history on GitHub still does, and a
+squash does not delete anything from the remote. (Those two commits are not in a
+clone of `main` either: `git cat-file` does not know them, and this branch was
+created after the squash, so nothing was ever in its history either. So this
+paragraph is the account of what the PR's history holds, and a reader here cannot
+read the file itself to check it.) An unsalted SHA-256 digest is a dictionary: a
+small integer, a dollar amount or a repository name is recovered from a bare
+digest by trying candidates, so the values that file covered must be treated as
+**exposed**, not merely removed. Those values were a public repository's name, the
+project's name and some development spend figures. Nothing here undoes that; the
+note is here because a reader of this file is the person most likely to believe
+the opposite.
 
-The scrub (`scrub.ts`) is deterministic and fail-closed: an unknown key is a
-refusal, and every key it copies has its own typed rule (numbers are copied; an
-enum is copied only if the value is in the CLI's vocabulary; a free string is
-refused unless the key has an explicit replacement). It replaces the project,
-repo, slug, run ID, title (`# Task: example task N`), models, requester and kill
-actor, PR URL, workflow, recipe and every dollar amount, and **shifts the whole
-clock by a fixed offset** (`now`, `day`, the header's `recorded`, `kill.at`, and
-the run IDs' timestamps, which are the shifted `now` minus the run's own age, so
+The scrub (`scrub.ts`) is fail-closed: an unknown key is a refusal, and every key
+it copies has its own typed rule (numbers are copied; an enum is copied only if
+the value is in the CLI's vocabulary; a free string is refused unless the key has
+an explicit replacement). It replaces the project, repo, slug, run ID, title
+(`# Task: example task N`), models, requester and kill actor, PR URL, workflow,
+recipe and every dollar amount, and **shifts the whole clock by a random offset
+drawn for the run** (`now`, `day`, the header's `recorded`, `kill.at`, and the
+run IDs' timestamps, which are the shifted `now` minus the run's own age, so
 every `age_seconds` stays consistent). Totals, percentages, `runs` and
 `run_hours` are recomputed from the invented rows so the document's invariants
 hold. The result then goes through the console's redactor with a public key (as
 `synthetic.ndjson` does), which is why the repo and slug read as pseudonyms
 (`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
 them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,
-`VERIFY_SHAPE`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
-verify, connection state, `queued_note`, and the ages and burn numbers.
+`VERIFY_KINDS`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
+verify, connection state, `queued_note`, and the ages and burn numbers. A
+connection `reason` is the one value with a free-text branch: the two sentences
+the CLI writes itself are kept, and the transport's own error text is replaced
+rather than copied (see the vocabularies below).
+
+**The clock shift is drawn, not committed** (owner review of PR #643, item 2).
+`scrubDocument` takes the offset as an argument and, given none, draws a
+crypto-random one of up to ±400 days; the tool never passes one and never prints
+it. So the scrub is **not reproducible byte for byte between runs**, and that is
+the point: the fixture of PR #643 was shifted by `TIME_SHIFT_MS`, a constant in
+the file, and that constant added back to its `now` gave the real recording
+instant exactly. The committed fixture was re-scrubbed from its own structure
+under a drawn offset (`console: re-scrub the normal fixture…`), so the file on
+`main` is not a shift of anything and the old constant is dead against it — it
+still recovers the instant from the *history* of that write, which is why the
+paragraph above says what it says. Nothing but the clock, the run IDs, the
+header's `recorded` and its checksum moved in that re-scrub: the invented
+project, repos, slugs, titles, amounts and verify lines are the ones they were.
+
+**The vocabularies are derived from the Go source, and a Go test holds them
+there.** Every list in `scrub.ts` names the writer it came from, and
+`TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource` — in
+`internal/cli/docs_desktop_console_test.go`, the one Go file Task 0.3's boundary
+test allows to mention a `console/` path, reading this file as bytes and
+importing nothing from it, so the allow-list keeps its single entry — reads the
+lists back out of the file and compares them with the constants the source writes
+them from: the runs[].stage vocabulary, the config's allowed `agent.auth`, the
+budget's modes, the three verify kinds, the two status words and the rerun flag,
+the one warning sentence and the clean-tree note, the connection, health,
+deadline, status and outcome tables, the two connection `reason` sentences
+`internal/watch/state.go` writes itself (`CONNECTION_REASONS`), the two
+`commands.reports` globs the warning
+sentence carries (`VERIFY_REPORT_GLOBS`, against `internal/config/defaults.go`),
+and the 120-rune clip the registry puts on the summary (`VERIFY_CLIP_RUNES`,
+against internal/runner's `verifySummaryRunes`) — the scrub needs the number
+because a clipped line is a PREFIX of the writer's, which is what its matchers
+are built to accept. The verify line's *head* is not a list but a
+grammar, so it is held differently: the test reads `VERIFY_HEAD`'s regex source
+out of the file, fills its `${...}` interpolations with the values it derived,
+compiles it and tries it against lines built from `verify.go`'s own format
+string — with the exit code `internal/procgroup/procgroup.go` leaves for a
+process it killed, which is `-1`, so a timed-out verify writes `(exit -1; timed
+out)` and a pattern narrowed to `\d+` fails there. The *tail* is held the same
+way, and was the gap this round closed: the test renders `Record.Summary`'s
+segments and the file's `VERIFY_TAIL` from their own sources — a literal as
+written, the writer's `%d` as a digits marker, each `strings.Join` as a
+test-names marker, and `r.Warning` as the warning sentence the Go source builds
+plus the globs marker — and compares them segment by segment, in order. So a
+segment added to `verify.go` (a `; N skipped` for the `Skipped` count the summary
+does not print today, say) fails here instead of leaving the scrub refusing an
+ordinary recording. The segment scan skips the `if` line a segment sits under (a
+condition names what it guards without writing it), so the one condition a
+segment *is* decided by is read on its own: the counts are written under
+`r.Kind == KindTest` and no other kind, which is what lets the grammar slice that
+group off for a build or a lint and require it for a test. The list that was too *short* is
+the failure that review found: a value the CLI writes and the scrub does
+not know is not a leak, it is a recorder that throws on an ordinary run.
+`bootstrap` and `review_first` were missing from `stage`, `vertex`
+from `auth`, and `warn` was a mode no CLI writes.
+
+**A list that is too *long* is the same failure from the other side, and the
+scan has to read the right field to see it.** `stage` held five names
+`runs[].stage` cannot carry — `provision`, `check`, `render`, `writeback`,
+`finalize` — because the scan took every stage string in `internal/runner`. Only
+one of those is the row's: `internal/watch/build.go` writes `dash(e.Stage)` from
+the run's **registry entry**, which is given a stage by exactly two writers — the
+literal it is created with, `bootstrap`
+(`internal/runner/budget_session.go`'s `registryEntry`), and `beginBudgetStage`,
+whose only caller is `r.stage(ctx, name, ...)`, so the rest are that helper's
+call sites. The others are other documents: `r.rec.Stage` (`render`,
+`writeback`, `check`, `finalize`) is the run record's own stage in `result.json`,
+and `provisionStage` names the timing row provisioning records. The scan now
+reads the entry's literal plus `r.stage`'s call sites plus the `queued`
+`internal/watch/queued.go` gives a runs-bucket row with no entry yet, and pins
+that `beginBudgetStage` still has that one caller taking its own `name`
+argument. `sameSet` compared the two lists in both directions already — the
+premise, not the comparison, was what a too-long list slipped past.
+
+**A connection reason is kept only when the CLI wrote it.** `connection.reason`
+had no rule at all, so any recording made while the link was not live failed the
+scrub — `internal/watch/state.go` sets `access refused` for a permission error
+and `connecting` before the first event, and its third branch is the transport's
+own error, one-lined and clipped there. Those two sentences are
+`CONNECTION_REASONS`, held against the source by the drift test; anything else
+that is a string is **replaced** with `INVENTED_CONNECTION_REASON`, so the free
+text never reaches the fixture, and anything that is not a string is refused.
+The scan that gates a commit carries all three values in its allow-list, and
+`normal-fixture.test.ts` holds the whole path — scrub, redactor, writer, scan —
+for each of them: accepting a reason the scan then refuses would leave the
+recording the rule exists for uncommittable, which is the shape of the finding.
+That test is one case of a **round-trip property** the file also holds in full:
+every value of every list in `VOCAB`, and every invented value the scrub writes
+in its place, goes through the whole tool and the result is scanned, so a
+vocabulary value the allow-list cannot carry fails there rather than at the
+first real recording. (The verify line is the one value the property does not
+sweep: the scrub keeps it as the writer wrote it, while the scan's matcher pins
+the globs slot to the CLI's own two defaults on purpose, so the two matchers are
+not meant to agree.)
 
 **Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
 `repo-at-cap` (they need cloud writes), and the other cases still await a
@@ -779,7 +892,79 @@ read it.
 Held by `test/unit/normal-fixture.test.ts`: the shape, the invariants, a scan of
 every decoded key and string value (after NFKC, case and zero-width folding)
 against forbidden substrings and a positive allow-list of shapes, and the scrub's
-refusals, each mutation-proven.
+refusals, each mutation-proven. One rule in that scan refuses a run of twelve or
+more decimal digits — a leaked amount, identifier or epoch-millisecond stamp the
+allow-list would otherwise take for an invented value. It reads a number, not a
+digest: the header's SHA-256 is hex, so twelve consecutive digits occur inside it
+about 7% of the time (1504 of 20000 digests, and 145 of 2000 scrubs, measured),
+and the digest is redrawn every run because the scrub draws a fresh clock
+offset. As a bare `\d{12}` the rule failed the scan at random, about one run in
+fourteen; it now matches a run only with no hex digit beside it, so the digits
+inside a longer hex token (a digest, a pseudonym, a commit) are not a number
+standing on its own — 0 of 20000 digests, measured — while a planted
+`123456789012`, `1234567890123` or `acme-123456789012` still is. The run is the
+whole maximal one (`\d{12,}`): a fixed twelve would match neither lookaround
+inside a thirteen-digit stamp, since every twelve-character window there has a
+digit on both sides, and that stamp is exactly what the rule is for — the verify
+line's name slot is open in the allow-list, because `junit.go` copies an ID
+verbatim, so this rule is the only guard against a number riding in it. The proof
+is a deterministic case (a 64-character digest with a twelve-digit run planted in
+it, plus runs of 12, 13 and 20 digits standing on their own) and a loop that
+scrubs and scans 300 drawings of the clock. Held by `test/unit/scrub-vocabulary.test.ts`: that
+the scrub accepts every stage, auth and mode the CLI writes and refuses what it
+does not — the stage list it loops over is `VOCAB.stage` itself, so this file
+keeps no second copy of it — that the connection `reason` the CLI wrote is kept
+and the transport's own error text replaced, that the verify shape is the one
+`internal/verify/verify.go` writes
+(every tail variant, the `FAILED` spelling, the `exit -1` a killed process
+leaves, and the 120-rune clip) and refuses a line it cannot, that the pinned
+matcher takes the IDs `junit.go` builds verbatim — pytest parametrisations, names
+with spaces or a bare comma, `TestFoo#01`, an escaped bidi character — and holds
+the warning globs to the CLI's own two, that the nullable Go
+fields may be null, and that the clock shift is drawn per run — all
+mutation-proven, and the vocabularies themselves pinned against the Go source by
+the drift test named above.
+
+**A test line carries its counts; no other kind carries any.** `Record.Summary`
+appends `, %d tests, %d failures` under `if r.Kind == KindTest` and nowhere else,
+so the grammar's first tail group is sliced off entirely for a build or a lint
+and required **whole** for a test. Requiring it whole is what the writer does, not
+a tightening for its own sake: every run writes it, and the 120-rune clip lands
+far past it, so a test line that stops at `(exit 0)` — or part way through the
+counts — is one no run can produce, and an earlier grammar took it as a clipped
+one. Both directions are tested (`fugaro verify build #5: passed (exit 0)` passes,
+the same line with counts does not), the clip test's cuts now start where the
+counts end, and the drift test reads the `KindTest` condition itself, since its
+segment scan skips the `if` line.
+
+**The scan pins the verify line's globs slot; nothing can pin its name slots.**
+The verify line is the one value whose middle the CLI fills from the repository
+it ran in — the test names its reports carry and the globs it was configured to
+read — so `scrub.ts` has two matchers for it. `isVerifySummary` is the scrub's
+rule and leaves those slots open on purpose: a real recording's test names are
+the writer's own output, and a vocabulary that refused one would refuse an
+ordinary run. The fixture's scan uses `isKnownVerifySummary`, the same grammar
+with the **globs** slot pinned to the two `commands.reports` defaults the CLI
+writes there with no configuration — any other glob is text the CLI was never
+given, and with an open slot `**/acme-payroll/*.xml` passed the scan too.
+
+The name slots are open in **both** matchers, and that is not a leftover: an
+earlier round pinned them to a character class that looked like Go test names
+(`[A-Za-z0-9_.:/\-#]` and `, `), which was wrong twice over. `internal/verify/
+junit.go` builds each ID as `classname + "." + name`, verbatim from the JUnit
+XML, so a pytest parametrisation (`test_mod.py::test_add[1-2]`, and one carrying
+`, ` of its own), a name with a space, the `#01` `go-junit-report` appends to a
+duplicated subtest, and the escape `internal/pluginwire` writes in place of a
+control or bidi character are all ordinary names — and a recording the pinned
+matcher refuses cannot be committed, which is the failure these vocabularies
+exist to avoid. What guards that slot is the fixture scan's forbidden-substring
+pass, which runs over the **whole** verify value, name list included: a
+`dimipaun/fugaro` planted in a failed-name slot is caught by that pass, not by
+the shape matcher.
+
+The warning sentence is not a slot in either matcher —
+`Record.Summary` writes one sentence there, and the drift test fails first if
+`verify.go` ever gains a second one.
 
 ### The eight recordings, and why seven of them are missing
 
