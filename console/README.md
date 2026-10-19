@@ -2800,7 +2800,14 @@ The step also refuses an **`@import`** and a **remote `url()`** in any theme fil
 bundle is one file and the console is offline (`connect-src 'none'`), so an import would
 either fail at runtime or be a request the CSP forbids. `url(./mark.png)` and
 `url(data:...)` are admitted — a path on this origin, and a byte string rather than a
-request (`img-src 'self' data:` allows the second).
+request (`img-src 'self' data:` allows the second). The `@import` scan is **ASCII
+case-insensitive**, matching `CSS_URL_RE` and `REMOTE_SCHEME_RE` beside it and matching CSS
+itself, where at-rule names are case-insensitive: `@IMPORT url("./base.css");` is the same
+rule, and it is the spelling that would otherwise slip through — its target is relative, so
+the remote-URL refusal does not see it, and the emitted `console.css` would carry an import
+at a path that is not in `dist/bundle/` and drop that layer out of the cascade with nothing
+failing. `test/unit/bundle.test.ts` plants `@import`, `@IMPORT` and `@Import`, and controls
+with the word spelled without its `@`.
 
 **No CSS is parsed, minified, autoprefixed or rewritten.** The bytes on disk are the bytes
 served, which is what makes `theme-tokens.test.ts`'s contrast arithmetic meaningful: it
@@ -2846,6 +2853,7 @@ Each was planted for real, run, and removed. The red step is the failure, not th
 | a stray `.css` planted in `src/renderer/theme/` | `npm run build`, with `… holds stray.css, which THEME_STYLESHEETS does not list` |
 | a listed stylesheet deleted from the theme directory | `npm run build`, with `THEME_STYLESHEETS names tokens.css, which … does not hold` |
 | `@import` added to a theme file | `npm run build`, with `… holds an @import` |
+| the same rule spelled `@IMPORT` | `bundle.test.ts`, on the case-insensitive scan — the mutant was planted (the `i` flag dropped) and the case observed failing |
 | `url(https://…)` added to a theme file | `npm run build`, with `… loads url(https://…) from another origin` |
 | `/console.css` dropped from `SERVED_FILES` | `bundle.test.ts`, on the directory equality |
 | a `<link>`'s `href` changed in one document | `csp-document.test.ts`, on that document's one stylesheet |

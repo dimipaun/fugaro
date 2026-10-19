@@ -696,19 +696,47 @@ describe('the stylesheet step', () => {
     })
   })
 
-  it('refuses an @import', () => {
+  it('refuses an @import, in every spelling CSS allows', () => {
     // The mutation: the bundle is one file and the console is offline
     // (`connect-src 'none'`), so an import is either a runtime failure or a
     // request the CSP forbids.
+    //
+    // Every spelling, and the upper-case one is the case that matters rather
+    // than a courtesy: at-rule names are ASCII case-insensitive in CSS, so
+    // `@IMPORT url("./base.css");` is the same rule -- and it is the one
+    // spelling the remote-URL refusal cannot catch, because its target is
+    // relative. A case-sensitive scan would emit it into `console.css`, where
+    // the path is not in `dist/bundle/`, and the layer would 404 and drop out
+    // of the cascade with nothing failing. Both spellings, and both with the
+    // at-rule written at the start of a line and inline after a declaration,
+    // because the scan is over the whole file either way.
     const name = THEME_STYLESHEETS[0] ?? ''
-    withPlantedStylesheet(
-      { ...themeFiles(), [name]: `${themeFiles()[name] ?? ''}\n@import url("./base.css");\n` },
-      (options) => {
+    const real = themeFiles()[name] ?? ''
+    const plants = [
+      '@import url("./base.css");',
+      '@IMPORT url("./base.css");',
+      '@Import url("./base.css");',
+      'a { color: red; } @import "./base.css";',
+      '@import  "base.css";',
+    ]
+    for (const plant of plants) {
+      withPlantedStylesheet({ ...themeFiles(), [name]: `${real}\n${plant}\n` }, (options) => {
         expect(() => {
           bundleStylesheet(options)
         }).toThrow(/holds an @import/)
-      },
-    )
+      })
+    }
+    // The control the scan needs: it is about the at-rule, not about the word.
+    // A stylesheet that writes the word with no `@` before it is not an import
+    // in any spelling and must build. (The scan is deliberately not a parse, so
+    // a *string* holding the at-rule spelling is refused as well -- that is the
+    // direction it errs in, and it is why the control drops the `@` rather than
+    // just the case.)
+    withPlantedStylesheet({ ...themeFiles(), [name]: `${real}\n.a { content: "import"; }\n` }, (options) => {
+      expect(() => {
+        bundleStylesheet(options)
+      }).not.toThrow()
+    })
   })
 
   it('refuses a url() on another origin, and admits one on this one', () => {
