@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eight checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Nine checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,031,084 bytes in a checkout with no tags** and to **1,031,084 bytes with the
+  commit builds to **1,035,063 bytes in a checkout with no tags** and to **1,035,063 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -347,6 +347,30 @@ added or removed without this sentence moving fails there:
     the heaviest page is the docs hub, which renders none of this, and it is one page's inline
     stylesheet either way. The clone figure moved by the same bytes as each of these rounds.
 
+  - **The privacy statement gained its software part** (the owner's request of 2026-10-19),
+    and moved the site figure alone, 1,031,084 → **1,033,358**, by the **2,274 bytes** of that
+    page's own markup, and the words ceiling below with it, 250 → **622**. The page is the one
+    the App Store and Play listings link as a privacy policy, so it now carries two named
+    parts — "The website", which is what it always said, and "The software", which covers the
+    CLI, the console and the phone app — and the words the second part needs are what re-derive
+    the ceiling. The page weight and the script did not move: the heaviest page is still the
+    docs hub, and `public/scripts/site.js` is untouched.
+  - **The phone app's reporting was written into that part** (the owner's request of the same
+    day), and moved the site figure again, 1,033,358 → **1,034,706**, by the **1,348 bytes** those
+    paragraphs add, with the words ceiling re-derived in the same commit, 622 → **842**: the
+    page names Firebase Crashlytics and Firebase Analytics, states what is collected and what
+    is never sent, the opt-in default and the way back, holds Google as the processor for the
+    Fugaro project under Google's own policy (linked, not restated), and says that earlier
+    builds send nothing. The page weight, the script and the number of files did not move.
+  - **The deletion section was carved out from under it** (the same round, on review), and the
+    page moved again, 1,034,706 → **1,035,063**, by the **357 bytes** the carve-out adds: the
+    section that said "everything the software holds lives in your own accounts … removing the
+    installation removes it" was contradicted by the reports above it, so it now names the
+    reports as the exception, says nothing about them is the reader's to delete, says how the
+    sending is stopped and where to ask about a report already sent — and the words ceiling was
+    re-derived with it, 842 → **919**. The page weight, the script and the number of files did
+    not move. The clone figure moved by the same bytes as each of these rounds.
+
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -373,7 +397,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,866,565 bytes. Three times 1,288,855 (every file in `dist/`, 1,031,084
+  - **Whole site:** 3,881,487 bytes. Three times 1,293,829 (every file in `dist/`, 1,035,063
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -406,7 +430,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 300 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 919 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -417,18 +441,29 @@ added or removed without this sentence moving fails there:
     sees. `/docs/`, `/security/`
     and `/changelog/` are exempt, which is D188's own list: each renders a document of this
     repository rather than a page of the site, and the brief allows those to stay long.
-    The ceiling is set against the site as it was measured before the redesign
-    (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
-    getting-started 431, privacy 277, community 268 — every one of them over it).
-    **D188's number was 250, and the owner's feedback of 2026-10-19 is what moved it.**
-    That brief asks the homepage for a Benefits section, which is a fourth required block on
-    the one page that already carried the three the briefs before it require — the promise,
-    the chat (changes spec item 3) and the flow (item 4) — and the four together measure 294
-    words. The number here is therefore the smallest round ceiling above the page that
-    carries every block its briefs require, and it is still a ceiling rather than a target:
-    the highest of the pages that gained nothing from that brief is Getting Started at 250
-    words, and a page that wants the extra 50 has to carry a brief's own block for them.
-    The raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
+    **The number is no longer D188's own, and it is derived rather than picked.** The
+    privacy statement is the page the App Store and Play listings link as a privacy policy,
+    so it carries the software as well as the site and is the one page that is not the
+    site's pitch; the number is that page's own count on the gates' own build — **735
+    words** — plus 25 %, rounded up, which is **919**. `budget.mjs`'s
+    `wordsCeilingFailures` holds the derivation to the built page the way the same file
+    holds the byte budgets to theirs, so a sentence added there re-derives this line in the
+    commit that adds it. **The raise is that page's and nobody else's**: every other page of
+    the site stays within D188's own number, and the same function holds them there, so this
+    number is a ceiling one page reaches and not a licence the rest can grow into. (D188's
+    number was itself set against the site as it was measured before the redesign —
+    `docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
+    getting-started 431, privacy 277, community 268, every one of them over it — and the
+    redesign brought every one of those pages but the privacy statement inside it.)
+    **D188's number was 250, and the owner's feedback of 2026-10-19 is what moved it to
+    300.** That brief asks the homepage for a Benefits section, which is a fourth required
+    block on the one page that already carried the three the briefs before it require — the
+    promise, the chat (changes spec item 3) and the flow (item 4) — and the four together
+    measure 294 words. D188's number is therefore the smallest round ceiling above the page
+    that carries every block its briefs require, and it is still a ceiling rather than a
+    target: the highest of the pages that gained nothing from that brief is Getting Started at
+    250 words, and a page that wants the extra 50 has to carry a brief's own block for them.
+    That raise is recorded as a reading in `docs/website/redesign/README.md`, the way every
     number the briefs do not spell out is.
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
@@ -528,6 +563,66 @@ added or removed without this sentence moving fails there:
   the stylesheet, and watches the named refusal come back.
   Each of those rules was then mutation-proved the other way: removed from the function, with the
   refusal it names watched failing.
+- `test/privacy.mjs` — the privacy statement's software part, and the seven rules that keep it
+  honest (the owner's request of 2026-10-19). The page is the one the App Store and Play
+  listings link as a privacy policy, so it now says what the CLI, the console and the phone app
+  do as well as what the site does, and this file holds each of those sentences to the thing
+  that makes it true rather than to a copy of the sentence:
+  - **the two parts** — "The website" and "The software" as the page's two `h2`s, in that order,
+    because the store reviewer's part is a part of the page and not a subsection of the site's —
+    **and as siblings at the same level**, since a part nested inside the other is a page whose
+    two scopes cannot be read, which `consent.mjs`'s own site-part reader refuses for the same
+    reason;
+  - **the app's reporting, held in both directions** — the page names Firebase Crashlytics and
+    Firebase Analytics, so the file refuses that naming unless the repository holds the plan for
+    it (`docs/plans/2026-10-19-mobile-telemetry.md`) or `mobile/package.json` already carries the
+    two packages, and it refuses either package being declared while the page stays silent. A
+    page that names a reporter and says nothing about which version of the app carries it is
+    refused while the reports are still only planned, which is why the paragraph ends on
+    "Earlier builds of the app send nothing at all." — the sentence a later task replaces with
+    the plan's existence. The paragraphs' claims are each a sentence the file looks for: what is
+    collected, the ban list, the opt-in default, the switch that turns it off, Google as the
+    holder, and the link to Google's own Firebase policy rather than a restatement of it — and
+    so is the section a reader deletes an app to find. **"Deleting your data" is read on its own**
+    (from its heading to the next one) and has to say that the reports are the exception: the
+    Fugaro project, not the reader, holds them, deleting the app does not take them out, the
+    switch stops the sending, and the issue tracker is where to ask about a report already sent.
+    Without that, the page said both "everything the software holds lives in your own accounts"
+    and that the app reports to a project the Fugaro project operates, and nothing held the two
+    apart;
+  - **no advertising identifier, and no undisclosed reporter** — every executable file, manifest
+    and lockfile under `mobile/` is scanned for the analytics, crash-reporting and advertising
+    SDKs and for the platform's advertising-identifier APIs, all of them named in the test. The
+    app's own two reporters are admitted by name rather than left in the scan's list, so the page
+    and the scan agree about what the app carries; a task that added a third fails the sentence
+    rather than letting it quietly become false;
+  - **the phone's two credentials and where they live** — `SECRET_ITEMS` in
+    `mobile/src/accounts/secret.js` must be D111's `idToken` and `macKey` and no more, the page
+    must name those two, secure storage, the Keychain and the Keystore, and the tuple field
+    `firebaseProjectId` is what makes "your own Firebase project" true;
+  - **the update check** — read from `internal/updatecheck` (GitHub's public "latest release"
+    endpoint for THIS repository, a 24-hour cache) and from the two switches `internal/cli` and
+    `internal/localcfg` define, so a page that stops naming a switch, a check pointed at another
+    repository or a shorter cache each fails;
+  - **the host the project operates** — no production source under `cmd/`, `internal/`,
+    `console/src/`, `mobile/src/` or `shared/` may name the site's canonical host, since the page
+    says the software talks "to nothing the Fugaro project operates" (the one file that names it
+    is a Go test whose fixtures test the boundary rule itself, recorded in the test so the
+    exception stays visible);
+  - **the contact route and no address** — the contact section links the issue tracker and
+    `SECURITY.md`'s reporting route and nothing else, and the page carries no e-mail address, by
+    the owner's ruling that there is no address to publish; and
+  - **no terms page** — no built page links to `/terms`, and no sitemap the build produced names
+    one, which is the owner's ruling of the same day written where the link would have gone.
+
+  Each rule is one exported function with its own case, and each has a second case that plants
+  the defect it refuses — a lost part, a part nested under the other, a dependency that collects,
+  a reporter the page does not name, a page naming a reporter nothing in the tree holds, a third
+  secret, an endpoint pointed elsewhere, a source naming the host, a third contact route, an
+  address, a `/terms` link — and watches the named refusal come back. The word ceiling's own derivation — the
+  privacy statement's own count plus 25 %, the number `website/README.md` states, and every
+  other page of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that
+  measures it and the byte figures it is a sibling of.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull

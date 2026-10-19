@@ -94,8 +94,10 @@
 // back in step with it; the console's release turning `features.console_downloads` on;
 // Getting Started's three bands; the console's screenshot slider; the run on How It Works
 // becoming one vertical timeline; the caps-and-costs rework; the changelog's product
-// summaries; and the homepage's prompt line, benefits, pull request caption and the benefits'
-// block rule — each re-derived in the commit that moved it (D192). None of those figures is
+// summaries; the homepage's prompt line, benefits, pull request caption and the benefits'
+// block rule; and the privacy statement's software part, the phone app's reporting written into
+// it and the deletion section carved out from under it — each re-derived in the commit that
+// moved it (D192). None of those figures is
 // repeated here, because a figure in a comment is a figure that moves with
 // nothing when the build moves, which is what happened to the copy that used to be in this one;
 // the case below reads the README's figures and holds them to the build it makes itself.
@@ -896,5 +898,117 @@ test('the word reader counts what a reader reads, and nothing else', (t) => {
 
   // A page with no `main` is not this gate's subject: `a11y.mjs` refuses the landmark.
   assert.equal(pageWords(shell('', '<h1>t</h1>')), null)
+})
+
+// ---- the words ceiling is derived, and the raise is one page's ---------------------------
+//
+// The words ceiling stopped being D188's own number on 2026-10-19 (the owner's request), and the
+// reason is the privacy statement: it is the page the App Store and Play listings link as a
+// privacy policy, so it carries "The software" as well as "The website" and is the one page
+// of the site that is not the site's pitch. **The number is derived from that page and from
+// nothing else** — its own count on this build plus 25 %, which is D192's headroom figure,
+// rounded up — and this section is the pair of rules that derivation owes:
+//
+//   1. the README's number is that page's own count plus a quarter, so a sentence added
+//      there re-derives the line in the commit that adds it, the way a byte that moves
+//      re-derives its figure; and
+//   2. **every other page of the site stays within D188's own number**, so the raised ceiling is a
+//      ceiling one page reaches rather than a licence the other eight can grow into. That
+//      half is the one worth having: without it, raising the number for one page would have
+//      silently retired D188's promise for every page of the site, and nothing would say so.
+//
+// Both halves are one function over the built artifact, in the shape the other gates keep
+// their refusals in, and each half has a fixture case below that plants its defect and
+// watches the named refusal come back.
+
+/**
+ * D188's own words-per-page ceiling, the number the raise above it is measured against: 250 as
+ * D188 set it, and 300 since the owner's feedback of 2026-10-19 asked the homepage for a fourth
+ * required block (its Benefits section, 294 words with the three before it). website/README.md
+ * records that reading beside the words line.
+ */
+export const D188_WORDS = 300
+
+/** The one page the words ceiling is derived from, by its built URL. */
+const WORDS_CEILING_PAGE = '/privacy/'
+
+/**
+ * Every way the words ceiling departs from its derivation, or a page departs from D188's own
+ * number. `dist` defaults to the same build the byte figures above are derived from — the
+ * gates' own build of the site, made by `buildCopy` — so the README's two kinds of number are
+ * held to one build rather than to two.
+ */
+export function wordsCeilingFailures(readme, dist = documentedBuild()) {
+  const out = []
+  const budgets = readmeBudgets(readme)
+  const pages = builtPages(dist)
+  const source = pages.find((page) => page.url === WORDS_CEILING_PAGE)
+  assert.ok(
+    source,
+    `the build carries no ${WORDS_CEILING_PAGE} page, so the words ceiling has nothing to be derived from: the number in website/README.md is that page's own count plus a quarter (D192)`,
+  )
+  const counts = pageWords(source.html)
+  assert.ok(counts, `${source.rel} has no \`main\`, so this reader measures nothing and the ceiling below would be a number nothing holds`)
+
+  const derived = Math.ceil(counts.words * 1.25)
+  if (budgets.words !== derived) {
+    out.push(
+      `website/README.md states ${budgets.words} words per page and ${WORDS_CEILING_PAGE} is ${counts.words} words: re-derive the ceiling in the commit that moves the page, because ${counts.words} plus 25 % is ${derived} (D192)`,
+    )
+  }
+
+  for (const page of pages) {
+    if (page.url === WORDS_CEILING_PAGE || DOCUMENT_PAGES.has(page.url)) continue
+    const other = pageWords(page.html)
+    if (other === null) continue
+    if (other.words > D188_WORDS) {
+      out.push(
+        `${page.rel} is ${other.words} words: the ceiling of ${budgets.words} is the privacy statement's own, and every other page of the site stays within D188's ${D188_WORDS} — a page that needs more is a page that says so in website/README.md`,
+      )
+    }
+  }
+  return out
+}
+
+test("the words ceiling is the privacy statement's own count plus a quarter, and D188's own number still holds every other page", () => {
+  assert.deepEqual(
+    wordsCeilingFailures(readFileSync(path.join(SITE, 'README.md'), 'utf8')),
+    [],
+    'the words ceiling and the pages it governs are not the ones website/README.md states',
+  )
+})
+
+test('a words ceiling raised without re-deriving it is refused', () => {
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const stated = /^[ \t]*- \*\*Words per page:\*\* ([\d,]+) words/m.exec(readme)
+  assert.ok(stated, 'the README states no words-per-page ceiling to raise')
+  const raised = readme.replace(`**Words per page:** ${stated[1]} words`, '**Words per page:** 1,500 words')
+  assert.match(
+    wordsCeilingFailures(raised).join('\n'),
+    /re-derive the ceiling in the commit that moves the page/,
+    'a words ceiling raised without being re-derived from the page that sets it is not refused',
+  )
+})
+
+test("a page that grows into the privacy statement's ceiling is refused, and one that stays inside D188's is not", (t) => {
+  // A fixture build, because this half is a rule about every page and the real artifact's
+  // pages are all inside D188's number today: two pages, the one that sets the ceiling and
+  // one that grows into it. The ceiling is derived from the first, so the second's failure is
+  // the second rule's and not the first's.
+  const dist = distOf(t, {
+    'privacy/index.html': fixture(0, 300),
+    'inside/index.html': fixture(0, D188_WORDS),
+    'over/index.html': fixture(0, D188_WORDS + 1),
+  })
+  // The five lines `readmeBudgets` reads, with the words line derived from the fixture above
+  // and the rest out of the way: this case is about the second rule, so the first must pass.
+  const readme = ['- **JavaScript per page:** 0 bytes', '- **Page weight per page:** 1 bytes', '- **Whole site:** 1 bytes', "- **Words in a page's lead:** 100000 words", `- **Words per page:** ${Math.ceil(300 * 1.25)} words`].join('\n')
+  const failures = wordsCeilingFailures(readme, dist)
+  assert.equal(failures.length, 1, failures.join('\n'))
+  assert.match(failures[0], new RegExp(`^over/index\\.html is ${D188_WORDS + 1} words`))
+  assert.ok(
+    !failures.some((line) => /inside/.test(line)),
+    `a page exactly at D188's ${D188_WORDS} words is refused: the ceiling is a ceiling, not a floor at one word less`,
+  )
 })
 

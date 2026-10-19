@@ -177,9 +177,11 @@ type websiteFactsFile struct {
 	MinRuns int `yaml:"min_runs"`
 	// AllowedHosts is the host list the site's link and origin checks enforce
 	// (W1.11): a link to a host that is not on it fails the build. It is the
-	// hosts the site actually links -- github.com and raw.githubusercontent.com
-	// -- plus the site's own canonical origin, and nothing else, because every
-	// entry is a promise that a reader's browser may talk to that host.
+	// hosts the site actually links -- github.com, raw.githubusercontent.com,
+	// and firebase.google.com for the Firebase privacy policy the privacy
+	// statement links rather than restating -- plus the site's own canonical
+	// origin, and nothing else, because every entry is a promise that a
+	// reader's browser may talk to that host.
 	AllowedHosts []string `yaml:"allowed_hosts"`
 }
 
