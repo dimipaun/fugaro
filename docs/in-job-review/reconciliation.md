@@ -1,0 +1,361 @@
+# In-job review — reconciliation
+
+**Status: reconciliation only; no code is implemented; the plan waits for the owner's answers.** This document reconciles the owner's spec ([spec.md](spec.md), Oct 18, 2026) against the code, classifies every concrete claim it makes, and turns the claims that need a decision into questions **Q1–Q17** (§4). Nothing here is approved and nothing follows it: a recommendation is not a go.
+
+**Checked against:** `origin/main` at `82ba600d984a420c595cf06417af6d781c18535a`, on **2026-10-19**. Where a fact lives only on another branch the text says so and names the branch. `graphify` has no graph for this repository (there is no `graphify-out/`), so every claim below was located with `git grep` and then read in place; every path and Go symbol cited was re-checked to exist on `82ba600` before it was written. Line numbers are never cited in a citation; a few appear inside quoted code only where the quote is the point.
+
+**Where this document disagrees with [spec.md](spec.md), this document wins.**
+
+## 0. What the spec is, and what it really is in this repository
+
+The spec asks to **move review inside the cloud job**: a job runs the coding loop on a cheap model, then runs the reviews its **review plan** names (possibly several, in parallel, on a stronger model), bounces blocker/major findings back into the coding loop, caps the outer rounds, hands minor findings to one cleanup pass, and returns the pull request **plus a structured verdict** (`approve` / `escalate`, with flags). It also rebases onto the target branch first, checks its own time budget before starting another round, offers the same review loop as a **review-only** job, and logs every finding's outcome for calibration.
+
+Read against the code, the loop it describes **already exists**, in one shape: a **recipe** (`internal/recipe`) runs `implement`, an optional `check` gate, an optional cheap `first_line` review loop, and one senior `review` loop with a round cap and bounce-back — all inside the Cloud Run job, all serially, with a fresh agent session per review and a `ship`/`changes` verdict. The spec's genuine additions are: a **review plan** (several named reviews, per-review model and effort, chosen per task), **parallel** execution of those reviews, **severity-based routing** inside the loop, a **structured verdict object** on the run record, **rebase/staleness** handling, a **round-level time-budget check**, and a **findings-outcome log**. Its §1 numbers (5 local review slots, 20–30 minutes each, Opus for security-sensitive work) match the owner's own stated process in [dogfooding.md](../dogfooding.md) and [credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md), not any code constant.
+
+## 1. Corrections to the brief this work was given
+
+These are corrections to the brief's own framing, stated first so the findings below can rely on them.
+
+### 1.1 There is no `.claude/rules` directory, and no `CLAUDE.md`
+
+The brief says to read `CLAUDE.md` and "the `.claude/rules` files your area triggers". This repository has neither: `.claude/` holds only `skills/new-release/SKILL.md`, and there is no root `CLAUDE.md`. The **Rule** class below therefore means a conflict with **`SECURITY.md`**, a **design or plan document**, or a rule the code enforces, and each Rule finding names which.
+
+### 1.2 "Agents never force-push" is not what the repository says
+
+The brief states the rule as "plain pushes only". The code says something narrower and more precise, and the difference matters for §8 of the spec:
+
+- `gitops.Push` and `gitops.PushExisting` (`internal/gitops/gitops.go`) push with `git push --quiet --force-with-lease=<ref>:<tip> origin HEAD:<ref>` — the runner **does** force-push, with a lease, on its own run branch. The guards are `checkRunBranch` (only a `fugaro/<run-id>` ref is ever pushed; the base branch can never be the target), `tipBelongsToRun` (the remote tip must be an ancestor of HEAD or appear in HEAD's reflog), `PushExisting`'s stricter `ErrForeignTip`/`ErrBranchGone`, and `internal/gitops/rejected.go` (`ClassifyPush`, `PushRejected`).
+- **Checkpoint** pushes are the ones that are fast-forward only: `gitops.PushFastForward` (`internal/gitops/checkpoint.go`) resolves `ErrNotFastForward`, and [git-providers.md](../git-providers.md) says so ("it never forces and never replaces a commit already on the branch").
+
+So the standing rule is: *the base branch is never pushed; a checkpoint never overwrites anything; a finalize push overwrites only the run's own branch, and only when its remote tip is one of the run's own commits.* A rebase of a follow-up would rewrite a branch with an open pull request, and — because the remote tip still equals `r.follow.startSHA`, which is exactly `PushExisting`'s `expected` — **the existing guards would allow it**. That is why §8 needs an owner ruling (§4, Q11) rather than an assumption either way.
+
+### 1.3 `design-mixed-credentials` is not a branch; its document is on `main`
+
+The brief asks to check for a `docs/design/*mixed*` document on "any branch". There is no `design-mixed-credentials` branch on `origin` (only `origin/main` and this run's branch). The document is on `main` as [`docs/design/mixed-credentials.md`](../design/mixed-credentials.md), and it is the corrected, shipped-aware version. Nothing is lost by its absence; §3 records what it still contributes.
+
+### 1.4 The credentials service documents are at `docs/credentials-service/`, not under `docs/design/`
+
+Four files: `README.md`, `spec.md`, `reconciliation.md`, `implementation-plan.md`. All four say **plan only; nothing is implemented**, decisions D130–D154 answered 2026-10-17, no item open, **no task approved**, and the product work waits for 0.9.0 and the budget-token seal. They are the most recent word on the credential question and they **supersede** several things the mixed-credentials design still proposes (§3).
+
+## 2. Findings
+
+Each finding is classified **Wrong** (the spec contradicts the code), **Exists** (the spec proposes what is there under another name), **Gap** (the code forces a case the spec is silent on), **Rule** (a conflict with `SECURITY.md`, a design/plan document, or a rule the code enforces) or **Open** (a question the spec raises and does not answer). Where in the code, then the consequence.
+
+### 2.1 Headline table: spec concept → what the repository already has
+
+| Spec concept | What exists, and under what name | New? |
+|---|---|---|
+| A review loop inside the cloud job, chosen per run | **Recipes**: `internal/recipe` (`Recipe`, `Step`, `StepKind`, `Mode`), the embedded catalog `internal/recipe/catalog/*.yaml`, resolution over repo/project/catalog, `fugaro run --recipe` | Exists |
+| "Inner loop (cheap model): code → compile → test → first-pass review → fix" | `implement` + the `check` step (`recipe.CheckCommand`, run as a gate before `implement`) + the `first_line` step (`recipe.StepFirstLine`, `run.firstLine`), on the coder's model, `agent.first_line_review` / `agent.first_line_rounds` | Exists |
+| "Outer loop (senior reviewer on Opus)" | The `review` step (`recipe.StepReview`, `run.seniorLoop`) on `agent.models.reviewer` (`config.Agent.ModelFor`, `config.StageRole`) | Exists |
+| "Cap outer-loop rounds at 2–3 (configurable per review)" | `recipe.Step.MaxRounds` (1–10), `agent.review_rounds` (default 2), per-task `task.Overrides.ReviewRounds` | Exists, but per **step**, not per reviewer |
+| "Reviews run in parallel" | Nothing. `seniorLoop` (internal/runner/runner.go) runs one `review` stage per round, in a `for` loop | New |
+| "each with its own fresh context (diff + spec only)" | Exists: every review round calls `r.stage(..., agent.Request{SessionID: agent.NewSessionID()})`; `runner.ReviewPrompt` asks for `git diff origin/<base>...HEAD` and says "Do not modify any files." | Exists |
+| `severity: blocker \| major \| minor` | `runner.Finding{Severity, File, Summary}`; `runner.VerdictSchema` declares `severity` as a **free-form string** — there is no enum and no `major`/`minor` constant anywhere in `internal/`. Only `blocker` is ever set by Go (`ParseVerdict`'s unparseable fallback) | Partial |
+| Severity-based routing (blocker/major → loop, minor → batched) | Nothing reads `Finding.Severity`. The loop routes on the **verdict token** alone (`ship` → ready, anything else → `fix` then another round) | New |
+| "Findings from all reviews merged into one list; one fix pass per round" | One reviewer's list goes to one `FixPrompt` — so one pass per round already, but there is only ever one list. Only the **count** is persisted (`runstore.ReviewSummary.Findings`, an `int`) | Partial |
+| Verdict `approve` / `escalate` | `ship` / `changes` (`runner.VerdictSchema`'s enum); the run record's `status`/`outcome`; `Decide`'s reason "review round %d still has %s" | Wrong vocabulary |
+| Verdict `flags` | Nothing | New |
+| Review-only jobs | `review-only` and `pick` recipes (`mode: review`), `run.runReviewMode`, launch with `--recipe review-only --pr N`; never pushes (`skipPR`); comments the verdict on the pull request | Exists |
+| Rebase onto the target branch first | Nothing: no `rebase`, no `merge`, no conflict detection, no staleness check in the runner | New |
+| "Check remaining time before another round" | `runner.Budget` (`Exhausted`, `StageContext`, `StepDeadline`, `finalizeAt`) — a **stage**-level bound, no round-level check, no remaining-time value handed to the agent | Partial |
+| Job limit ~2–2.5 h → raise to ~3 h | This repository's own `fugaro.yaml`: `timeouts: { total: 2h, ... }`; the code default is 90m; Cloud Run's ceiling is `gcp.MaxTaskTimeout`, 168h | Exists (as config) |
+| Presets, referenced by name | The recipe catalog (`default`, `solo`, `standard`, `premium`, `test-and-fix`, `lint-fix`, `review-only`, `pick`) | Exists, different axis |
+| Calibration: log findings and their outcomes | Nothing. No outcomes store, no finding identity, no cross-run correlation | New |
+
+### 2.2 Area (a): the recipe and its review loop
+
+**#1 (Exists). The spec's §3 loop is the recipe loop, already shipped.** `internal/recipe` parses a strictly-parsed YAML recipe; `internal/runner/plan.go` `planOf` turns it into `[]planStep`; `run.agentLoop` (internal/runner/runner.go) runs `implement`, then the steps in order. `review` is required, exactly once, and last (`checkPlan` refuses a plan that does not end with a review). **Consequence:** §3 is a description of `standard`/`default`, not a new loop. The spec should say which recipe it is extending, or say it is a new recipe.
+
+**#2 (Exists). "Inner loop … first-pass review → fix, until green" is the `first_line` step plus the `check` gate.** `recipe.StepFirstLine` runs the coder's model in a fresh session (`run.firstLine`), never decides readiness, and is bounded by `MaxFirstLineRounds` (1–3). The "compile → test" half is the `check` step (`recipe.CheckBuild`/`CheckTest`/`CheckLint`), which the runner executes as a gate before `implement` and which names only a `commands.*` key of the run's own `fugaro.yaml`. `agent.first_line_review: auto` (the default for that key) turns the cheap review on only when a provider serves the coder and none serves the reviewer. **Consequence:** §3.2 is Exists; the spec's "until green" is stronger than today's fixed round cap, and is a Gap (#3).
+
+**#3 (Gap). "…until green" is a loop condition the recipe format cannot express.** The only loop control the format allows is `max_rounds` (a count) and `review: { bounce: first_line }` (one bounce, back to a `first_line` step already in the recipe). `goto`, `on_reject`, `on_pass` and `on_fail` are reserved keys refused by `recipe.Parse` with messages of their own ([recipes.md](../recipes.md) §8; [design/recipes.md](../design/recipes.md) decision 5 and §12). **Consequence:** "until green" either means "for `max_rounds` rounds" (Exists) or it needs one of those reserved constructs, which is a change to a format with a documented refusal for each.
+
+**#4 (Wrong). §4's example puts `model:` inside a review plan, and a recipe may never name a model.** `model` and `models` are reserved recipe keys; the parser refuses either with its own message, and [design/recipes.md](../design/recipes.md) decision 2 gives the reason ("By role only. A recipe never names a model; models come from `agent.models`"). `docs/recipes.md` §8 repeats it: "`model` and `models`: a recipe never names a model". **Consequence:** the review plan of §4 **cannot** be a recipe field. It is task or config data, or the rule changes on purpose — Q1 and Q2.
+
+**#5 (Rule). §6's severity routing is the "outcome rules are not configurable" the format deliberately refuses.** `docs/recipes.md` §8 and [design/recipes.md](../design/recipes.md) decision 5 refuse `on_pass`/`on_fail`/`goto`/`on_reject` as reserved. Readiness is fixed: `internal/runner/outcome.go` `Decide` marks the pull request ready only when the final commit has a clean-tree passing test record **and** the senior verdict is `ship`. Adding "minor findings do not trigger a round; blockers do" changes that rule, not a knob. **Consequence:** §6 is a Rule conflict, and it is the second reason a review plan cannot be plain recipe data.
+
+**#6 (Exists). §4's presets exist on a different axis.** The catalog already gives named presets — `standard` (cheap loop, then senior, bounce back), `premium` (`roles: {coder: reviewer}`, no cheap stage: "high-stakes or subtle work (concurrency, security, data migrations)"), `solo`, `test-and-fix`, `lint-fix`, `review-only`, `pick` — resolved per run (`--recipe`), per repository (`agent.recipe`) or per project (a project recipe). They select a **loop shape**; the spec's `trivial`/`standard`/`security-sensitive` select a **review plan** (how many reviewers, on which model, at which effort). **Consequence:** Exists, but the two preset vocabularies would collide by name (`standard` means both) — Q3.
+
+**#7 (Exists, weaker). "The orchestrator already chooses reviews per task" is true only as a repository/project setting today.** The per-task knobs are `task.Overrides.ReviewRounds`, `task.Overrides.Model` and `task.Overrides.MaxBudgetUSD` (`internal/task` `Overrides`), and **no launcher flag sets any of them**: `fugaro run` has no `--model`, no `--review-rounds`; only `--total-timeout` populates an override. There is no `--var`/`--param` either. Per-run choice is therefore `--recipe` (and `--token`, `--title`). **Consequence:** "states that choice up front" needs a carrier that does not exist: a new task field and its flag (area (g), #22–#24).
+
+**#8 (Open). §3.6 "Return the PR plus a structured verdict" — to whom, and how?** The job already writes `result.json` and comments on the pull request (`postReviewComments` in `mode: review`; the draft/ready state and the PR body otherwise). The spec does not say whether the verdict is a new object on the run record, the pull-request comment, the exit code, or all three. `internal/cli/root.go` `ExitCode` maps an error to `ExitOK`/`ExitUserError`/`ExitRemoteError`, and `exec.go` maps a runner error to `ExitRemoteError` — the record, not the exit code, is the contract today. Q7.
+
+### 2.3 Area (b): models and credentials — one job, two credentials
+
+**#9 (Exists). The cheap inner loop on a routed provider is today's shipped setup, and this repository runs it.** `config.ModelProvider` (`internal/config/providers.go`) holds the route (`Kind`, `BaseURL`, `Auth`, `Secret`, `Models`, `AllowDataTo`, `RouteFeePct`, `RequireZDR`, `PricePolicy`); `config.CheckProviderPolicy` refuses a model no provider claims or that is not `allow_data_to`-allowed for the repository; `config.CheckProviderAuth` requires `agent.auth: api-key` for a routed model; `internal/runner/providerkey.go` `ProviderCredential` reads the provider's mounted key; `internal/gateway/route.go` `Route` carries it. `internal/config/routing.go` (`Routing`, `RoutingClaude.Via` ∈ `direct|openrouter|auto`, `CheckRouting`) is the owner-written switch that supersedes the older explicit `anthropic/<id>` claim (`config.CheckClaudeClaim`). This repository's own `fugaro.yaml` pins `coder` **and** `reviewer` to `deepseek/deepseek-v4.1-flash` under `auth: api-key`. **Consequence:** §4's "DeepSeek for the inner loop" is Exists.
+
+**#10 (Exists, with a hard limit). One job can already hold two model credentials — but not the two the spec's Path B wants.** Verified in the code: `runner.startGateway` (internal/runner/gateway.go) builds a `gateway.Options` whose `Upstream.APIKey` is the Anthropic key **and** whose `Routes` each carry their own `Credential func() (string, error)` (`internal/gateway/route.go`). Both live in one gateway process, in one job, for the whole run. So **Path A** (DeepSeek coder + Claude reviewer on an Anthropic API key) and **Path C** (a Claude model through an OpenRouter route) both work today; C is the shipped opt-in. What does **not** work: `oauth` alongside any provider route (`CheckProviderAuth`: "a run does not mix credentials"), and **`agent.stage_auth` / `StageAuth` does not exist in Go at all** — it appears only in documents ([mixed-credentials.md](../design/mixed-credentials.md) §5, `docs/gcp-live-checklist.md` Check 47, and the held plan `docs/plans/2026-10-14-oauth-reviewer-stage.md`). **Consequence:** the spec's "ONE JOB with TWO MODEL CREDENTIALS" is satisfied **only** on the API-key/route path. The subscription-token path (Path B) is unbuilt, held, and superseded by the credentials service.
+
+**#11 (Gap). Which of the credential paths this spec assumes is unstated, and the newest owner ruling moved the ground.** [credentials-service/reconciliation.md](../credentials-service/reconciliation.md) §0 states what is genuinely new there and, in its F5 (Rule; M10 invariant), that per-call credential switching "breaks M10's 'a run does not mix credentials' rule" and needs the invariant lifted in one place with its real content kept (an OAuth token is never sent to a non-Anthropic upstream). Its D133 is that invariant; Global Constraint 5 makes it assert in code and by a test. **Consequence:** if in-job review is to be built on the credentials service, it inherits that dependency and the 0.9.0 gate; if it is built on Path A/C, it needs none of it. Q9.
+
+**#12 (Gap). Spend is attributed per model and per route, but not per credential, and there is no per-review cap.** `result.json`'s `cost` carries `model_usd`, `model_basis`, `model_by` (per model) and `route_by` (per provider route) — `internal/runstore/cost.go`, `internal/runner/cost.go` — and `RouteBy`'s own comment says "Claude calls have no route and are not in it", so an Opus reviewer on an Anthropic API key appears in `model_by` and **not** in `route_by`. There is **no** `credential:` field anywhere; the only credential-shaped identity recorded is `runstore.Record.OAuthAccount`, which is informational. The binding caps are `budget.per_run_usd` (the owner's local config, written into the job's environment as `FUGARO_MAX_RUN_USD` by `internal/infra/spec.go` `budgetEnv`, so **frozen at deploy time**, and the effective cap is the *lower* of that and the database's — `internal/runner/policy.go`, `internal/budget/lease.go`), `budget.per_day_usd`, and `agent.max_budget_usd` (Claude Code's own estimate, ~25× too high for a non-Anthropic model — [dogfooding.md](../dogfooding.md), and this repository sets it to `500` for that reason). **Consequence:** "capped per model and per review" is a Gap: per model Exists (display), per review does not exist, and a per-review cap would have to be a new budget dimension or a stage bound.
+
+**#13 (Rule). Named OAuth accounts cannot carry a per-stage choice, by design.** `config.ClaudeAccount` holds only `AllowDataTo`; the secret id is derived by `ClaudeAccountSecret`; the account is chosen at **launch** (`fugaro run --token`, `agent.oauth_token`) and resolves to a **whole job variant** (`gcp.WorkflowVariant`, one Cloud Run job and one service account per (repository, workflow, account)). The design's own T1/T2 keep account definitions in the operator's local config only, never in `fugaro.yaml` or the project layer, because a bucket write choosing which account burns is "strictly worse than today". **Consequence:** a review plan that names an **account** (as opposed to a model) would reopen exactly the hole T1 closes — Q9's options must say so.
+
+### 2.4 Area (c): parallelism inside one job
+
+**#14 (Gap). Reviews run serially, and there is nothing in the tree to run them otherwise.** `run.seniorLoop` calls `r.stage(ctx, "review", ...)` in a `for round := 1; round <= st.Rounds; round++` loop, awaiting each; `fix` and `firstLine` are likewise sequential. There is no `errgroup` and no `semaphore` anywhere in `internal/` (grep: none). At the platform level, `deploy/terraform/gcp/modules/workflow/job.tf` and `.../modules/project/job.tf` both set `task_count = 1` and `max_retries = 0`. `max_parallel` — the 20-run default (`internal/localcfg` `Config.MaxParallel`, enforced by `internal/cli/run.go` `checkMaxParallel`) — bounds **concurrent job executions at launch**, not anything inside one job; `--attempts N` is N separate executions. **Consequence:** §5's parallel reviews are genuinely new work, and they are new *inside a job*, where no concurrency primitive exists yet.
+
+**#15 (Exists). "Fresh context (diff + spec only)" is already how a reviewer is built.** Each review round starts a new session (`agent.NewSessionID()`), so the reviewer never sees the coder's transcript; `runner.ReviewPrompt` scopes it to `git diff origin/<base>...HEAD`. `roles: {reviewer: coder}` ("solo") is the explicit exception, and the doc says what it means ("the same model reviews, in a new session that has not seen the coder's reasoning"). **Consequence:** §5's first bullet is Exists; the spec should say that the fresh session is the mechanism, and that the reviewer still reads the whole checkout with its own tools.
+
+**#16 (Gap). Per-reviewer cost and transcript accounting does not exist, and cannot be derived from the run ledger.** The gateway keeps **one ledger per run** (`runner/gateway.go` `gw.Ledger()`, `endGatewayStage`, `r.lastStage`, `r.modelBy`); `internal/runner/cost.go` folds each stage into `result.json`'s `stages[]` as `StageTiming{name, duration_s, model_usd, model}`. Two agent processes in one job would share that one ledger, and concurrent ones would fold into whichever stage was open. The transcript is per stage (`session/<id>.jsonl`, `run.saveSession`) and the redactor (`internal/agent/redact.go`) wraps the whole stream. **Consequence:** "the transcript and cost accounting per reviewer" needs a new dimension (a reviewer index) on both the ledger fold and the transcript naming — not a free consequence of running two sessions.
+
+**#17 (Gap). Memory and CPU are sized for one agent process.** This repository's workflow asks for `resources: { cpu: 4, memory: 8Gi }` (`fugaro.yaml`); the code defaults are the same (`internal/config/defaults.go`). Terraform takes them from `var.workflow.{cpu,memory}` (`modules/workflow/job.tf`), validated by `gcp.CheckResources`. Nothing multiplies them, and Cloud Run cannot vary them per execution — the **profile** is the granularity ([project-centric.md](../design/project-centric.md) §4.1). **Consequence:** N concurrent reviewers inside one job are N concurrent `claude` processes in one 8 GiB container; the plan must say whether the profile grows or the reviews stay serial. Q4.
+
+### 2.5 Area (d): timeouts and the time budget
+
+**#18 (Wrong). The numbers in §9 are close but the repository's own numbers are specific, and the "24 h" ceiling is not the code's.** This repository's `fugaro.yaml` sets `timeouts: { total: 2h, stage: 90m, verify: 25m, finalize_reserve: 5m }`, so its deployed job task timeout is `2h + 2m` = 2 h 2 m (`internal/infra/spec.go` `WorkflowSpec.TaskTimeoutS`, `backend.TaskTimeoutSlack` = 2 min). The **code default** when a workflow sets nothing is `timeouts.total` = **90m** → 92m, with `stage = min(40m, total)`, `verify = min(30m, total)`, `finalize_reserve = min(5m, total/5)` (`internal/config/defaults.go` `applyDefaults`; validated in `internal/config/validate.go`). `backend.DefaultTaskTimeout` is 10 min, Cloud Run's own default, used only as a fallback when a job sets none. The ceiling is **`gcp.MaxTaskTimeout` = 168 h** (`internal/backend/gcp/limits.go`), which is what `projectpolicy.validTimeoutClass` and `internal/cli/run.go` check a profile's `timeout_class` and `--total-timeout` against; the per-run override cap is `backend.MaxRunTime` = 24 h. **Consequence:** "Cloud Run jobs allow up to 24 h" is Wrong against this codebase (it is 168 h; 24 h is Fugaro's own override cap). "Current job limit ~2–2.5 h" is right **for this repository**, and a consequence of its `fugaro.yaml`, not a platform limit.
+
+**#19 (Exists, as configuration). "Raise the limit to ~3 h" is a one-line change plus a redeploy.** Setting `timeouts.total: 3h` in `fugaro.yaml` (workflow scope; project-layer and override scopes are allowed — `internal/config/scope.go` `Scopes` rows for `workflows.*.timeouts.*`) changes the deployed `task_timeout_s`, which is **baked into the Cloud Run job at deploy time**, so it needs `fugaro init --repo` (or `fugaro image refresh`'s re-apply path) before it takes effect on the job, exactly as `budget.per_run_usd` does ([dogfooding.md](../dogfooding.md)). `--total-timeout` is the per-run override. **Consequence:** low-risk, but it is a deploy, and the spec's "raise the limit" should say at which scope.
+
+**#20 (Gap). "Before starting another outer-loop round, the recipe checks the remaining time" has no counterpart, and today's failure mode is exactly the one the spec wants to avoid.** `runner.Budget` knows everything needed — `Start`, `Total`, `Reserve`, `Stage`, `finalizeAt()`, `Exhausted()`, `StageContext` (deadline = `min(now+Stage, finalizeAt)`), `StepDeadline` — and `runStageError`/`Budget.StageError` already names "time budget exhausted during <stage>". But nothing consults it **between rounds**: a review or fix that runs past the budget is cut **mid-stage** by its context, which is the "killed mid-fix" the spec calls out. There is also no remaining-time value handed to the agent (no `FUGARO_DEADLINE`, no `RemainingTime`; the only env is the budget-token grace `FUGARO_BUDGET_GRACE`) and no estimate of what "enough for a full round" means. The record's `deadline` is `r.lockDeadline()` = task timeout + 1 min, which doubles as the branch-lock expiry (`internal/runner/lockcache.go`). **Consequence:** the check itself is cheap to add and the deadline exists; the *estimate* of a round's cost does not, and is the real design question. Q10.
+
+**#21 (Gap). The recipe has no wall-clock budget of its own.** `planStep` carries `Kind`, `Rounds`, `Bounce`, `FirstRounds` — no time. A recipe can pin rounds but cannot say "stop this loop after 40 minutes". **Consequence:** §9's "if there isn't enough for a full round" has to be computed from the run's budget and a per-stage number, or a new recipe field is needed (which is another format change).
+
+### 2.6 Area (e): the verdict contract and run state
+
+**#22 (Wrong). The verdict vocabulary is `ship` / `changes`, not `approve` / `escalate`.** `runner.VerdictSchema` is passed to `claude --json-schema` and declares `verdict` as `{"enum": ["ship","changes"]}`; `runner.Verdict{Verdict, Findings, Keep}`; `runstore.ReviewedPR.Verdict` (schema enum `["ship","changes"]`) records it for `mode: review` runs; `Decide` and `run.seniorReview` read `"ship"`. `ParseVerdict` treats anything unparseable as `changes` **with one synthetic `blocker` finding** ("review produced no parseable verdict"). **Consequence:** §6's names are new, and renaming would touch the schema, the prompt, `docs/recipes.md`'s readiness sentences and every test that writes a verdict — Q6.
+
+**#23 (Exists under another name). "`escalate`" already has an observable equivalent, but it is not a field.** When the senior rounds end without `ship`, `finalize` (internal/runner/runner.go) takes its default arm and writes `status: failed`, `outcome: draft`, with `Decide`'s reason "review round N still has M findings" (`internal/runner/outcome.go` `Decide`, `Plural`). A halt writes `status: halted` + `outcome: draft`; a cancel writes `cancelled` + `draft`. **Consequence:** the escalation *signal* exists; the spec's "verdict" is a restructuring of `status`/`outcome`/`reason`, and the plan must not duplicate state the console and `runs ls` already read.
+
+**#24 (Wrong — and it is the "FAILED, passed review" confusion the brief names).** The display layer is wrong today, and it is wrong in a way this spec would fix. `internal/watch/finished.go` `finishedRow` stores the run's **status string** in `RunRow.Stage`; `internal/watch/plain.go` `finishedOutcomeText` and `internal/watch/render.go` then do `word := strings.ToUpper(run.Stage)` and append `", passed review"` for **any** `outcome: draft`. So a run whose senior verdict was `changes` with open blockers renders **`FAILED, passed review`** — a false statement, and `internal/watch/filter.go`'s own comment encodes the wrong assumption ("a draft outcome (passed review on a draft whose test failed)"). `fugaro runs ls` does **not** do this (it prints the status, with " (draft)" for the PR column); `fugaro diagnose` does not either. **Consequence:** this is Exists/Wrong: the confusion is a rendering bug, not a contract gap, and it is cheap to fix independently of everything else in this spec — Q6, and it is the one item here that could ship on its own.
+
+**#25 (Wrong). `result.json` carries no top-level verdict and no findings list.** The type is `runstore.Record` (`internal/runstore/runstore.go`; there is no `ResultJSON` type). Its review fields are `reviews []ReviewSummary` (`round`, `tier`, `verdict`, `findings` — **an int, the count** — `bounce`) and, for `mode: review`, `reviewed []ReviewedPR` (the pull requests, their commits and verdicts). `schemas/result.schema.json` is `additionalProperties: false` with `required: ["version","run_id","status","stage","outcome","cost_usd","started_at"]` and `"version": {"const": 1}` — the schema key is **`version`**, not `schema_version`. The structured findings (`runner.Finding{severity,file,summary}`) exist only transiently inside the runner and are surfaced only by `fugaro diagnose` (`internal/cli/diagnose.go`, `Diagnosis.Findings`), recovered from the stored transcript. **Consequence:** §6's "the job returns a structured verdict … findings, flags" is new record surface, and `additionalProperties: false` means the schema, the runner and the console-side readers must change together — Q7.
+
+**#26 (Gap). The console never reads `result.json`, so a new field's reach is through the CLI, not the record.** `console/docs/json-contract.md` states the rule ("the console adds no reader"); the console's `RecordView` mirrors `runview.Row` (what `fugaro runs ls --json` emits), not the record, and its schema key is a **shape discriminator**, `shape: 'live' | 'degraded'` (`console/src/shared/schema.ts`), with `LIVE_KEYS`/`DEGRADED_KEYS`/`LIVE_MARKERS` lists and `decodeSnapshot`/`skewFor` refusing an unknown shape. `console/docs/json-contract.md` has no status line of its own. **Consequence:** a verdict object reaches the console only if `runs ls --json` (or `watch --json`) carries it; the plan must decide whether it does, and then whether the shape lists change. Q7.
+
+### 2.7 Area (f): rebase and stale base
+
+**#27 (Wrong). Nothing rebases, merges, detects a conflict, or notices a stale base — anywhere.** A first run branches from the task's ref tip (`gitops.CheckoutNewBranch`, `git checkout -f -B <branch> FETCH_HEAD`); a follow-up checks the pull request's own branch out from `origin` exactly as it is (`internal/runner/followup.go` `checkoutFollowUp`, `gitops.RemoteTip`, erroring "branch %s no longer exists on origin" when it is gone); the configuration comes from the base branch (`readBaseConfig`, `gitops.FetchBase`). `gitops.AheadOf`/`CountAhead`/`CommitsAhead` exist but measure the run's own commits for push guards and reporting, not base staleness. There is no `mergeable` field on `gitprov.PRInfo` and no `Mergeable` symbol anywhere. `internal/cli/followup.go` `recheckFollowUp` re-validates the PR's checks and staleness **status from the provider**, which is a display fact, not a merge. **Consequence:** §8's "rebase first" is entirely new, and the conflict path it describes has no detector to hang off.
+
+**#28 (Rule — see §1.2). The force-push question is real and must be ruled on, not assumed.** With the guards read exactly: a rebase of a follow-up would leave the remote tip equal to `r.follow.startSHA`, which is `PushExisting`'s `expected`, so `git push --force-with-lease` would be permitted — the run would rewrite a branch that already has a pull request, silently invalidating any review already done on it and any checkpointers' assumptions. This does not violate any written rule of the form "never force-push", because no such rule exists; it does violate the substance of two: [git-providers.md](../git-providers.md)'s "the base branch is never pushed… it overwrites the remote branch only when… its tip is one of the run's own commits" (true, but the *review* on the PR is what gets invalidated) and the checkpoint posture that a push never replaces a commit already on the branch. **Merge-instead-of-rebase** (a merge commit that leaves the branch's own history published and appended to) is the alternative that needs no rewrite and no ruling. Q11.
+
+**#29 (Gap). "A cheap review of the conflict resolution" has no scoping mechanism.** A review stage's scope is the whole branch (`ReviewPrompt`: `git diff origin/<base>...HEAD`), and the `first_line` step would be the cheap reviewer — but it reviews the same diff, not "just the conflict resolution". A review limited to the merge commit's own diff would be a new prompt/scope. **Consequence:** §8's second alternative (a cheap review-only job on just the conflict resolution) needs either a new diff scope or an owner decision to review the whole branch. Q11.
+
+**#30 (Gap). "For a reviewed PR waiting to merge: if it rebases cleanly and tests pass, no re-review" describes a flow the job does not have.** There is no state "waiting to merge"; there is a follow-up (`fugaro run --pr N`), which keeps the pull request's recipe and **always** runs its review step (docs/recipes.md §1: "A follow-up … keeps its recipe, so its check still runs… the gate passing does not mean that work is done"). The "no re-review" rule is therefore an **orchestrator-side** decision, or a new recipe/flag, not a job behaviour. **Consequence:** the spec's §8 last two bullets move work to the launcher; the plan must say where. Q11.
+
+### 2.8 Area (g): the orchestrator side and how a review plan reaches the job
+
+**#31 (Exists). The carriers are known and three.** A per-task plan would ride `internal/task` `Spec`, written as `runs/<slug>/<run-id>/task.json` by `runstore.Store.CreateTask` and read by `run.bootstrap` (`task.Parse`); a per-repository or per-project plan would ride `fugaro.yaml` or the project layer (`config.LayerKey` = `fugaro/project-layer.yaml`, `config.ParseProjectLayer`, merged by `config.Resolve`); a project-wide default could ride the project policy (`internal/projectpolicy` `Policy`, `Profiles`). The repo's own scope table (`internal/config/scope.go` `Scopes`, pinned by `internal/config/docs_scope_test.go` `TestScopeTableMatchesDocs`) decides which layer may set which key, and `agent.models.*` is already Project + Repo settable. **Consequence:** Exists; the question is which carrier the spec wants and what the preset means. Q1.
+
+**#32 (Rule, and it is a cost of every new task field). `task.Parse` decodes with `DisallowUnknownFields`, so a new field is a breaking change for an older runner.** The precedent is explicit and uniform: `internal/cli/recipes_skew.go` holds one constant per field — `recipesSince` 0.5.0, `layeredSince` 0.6.0, `recipesV07Since` 0.7.0, `cloneSince` 0.7.5, `catalogSince` 0.7.5, `gitSecretIDSince` 0.7.5, `namedTokensSince` 0.6.5, `artifactsSince` 0.8.0, `titlesSince` 0.8.5, `policySince` 0.8.0 — each judged against the job's **build record** by `checkImageSince`/`checkCloneImageSince`/`checkRecipeImage`, with `fugaro image refresh` as the named remedy. The named-tokens design states the pattern in its own words (`docs/design/named-oauth-tokens.md` §5: "A runner *older* than this feature refuses a task that sets it … The CLI must therefore check the job's deployed image"). **Consequence:** a `review_plan` task field needs its own `…Since` constant, its own refusal text, and a release that ships it before any launcher may set it — the plan must budget for that, and the answer is not free.
+
+**#33 (Gap). There is no "task type" for a preset to key on.** The spec's §10 muses about "task types where DeepSeek misses things Opus catches". No such concept exists: `internal/projectpolicy`'s profiles are **job** profiles (provider, cpu, memory, timeout class, secrets, allowed repositories), not task types, and there is no taxonomy of tasks anywhere. **Consequence:** "tune presets by task type" needs a task-type vocabulary first, or it stays a per-repository default. Q8.
+
+### 2.9 Area (h): calibration
+
+**#34 (Gap). There is no store for finding outcomes, and finding identity does not exist.** What a run records today: `reviews[]` per round (`round`, `tier`, `verdict`, `findings` — a count, `bounce`), `stages[]` per stage (`name`, `duration_s`, `model_usd`, `model`), the agent session and transcript objects (`session/<id>.jsonl`, `run.saveSession`), `result.json`, and the pull-request comment `mode: review` posts (`postReviewComments`). The **text** of a finding is never persisted; `fugaro diagnose` recovers it by re-parsing the stored transcript. There is no id on a finding, no state (`fixed` / `dismissed` / `caught later`), and nothing that links a finding raised in round 2 of one run to a finding raised in a later review of the same code. **Consequence:** §10 is new end to end, and it needs a finding identity before it can need a store. Q8.
+
+**#35 (Gap). "Caught later by a stronger reviewer" needs correlation across two runs, and the natural home has privacy and size consequences.** A local review and a cloud review are today two different things with no link: a local session is the owner's own agent; a cloud run persists `result.json` and its transcript prefix under `runs/<slug>/<run-id>/` in the runs bucket (`gs://fugaro-runs-<gcp-project>`), read with the strict readers in `internal/blobx` and capped like other objects (`docs/design/artifact-runs.md`'s cap family, `config.LayerMaxBytes`, the artifact caps). Writing a per-finding outcomes log there is a new object class in a bucket every run of the repository can read, with the retention and privacy questions `SECURITY.md` answers for other classes. **Consequence:** Q8 must include where it lives and for how long, not only what it contains.
+
+### 2.10 Area (i): security
+
+**#36 (Rule). "Reviewers are read-only" is prose, not enforcement, and the repository says so openly.** The agent's argv is fixed: `internal/agent/agent.go` `Args` returns `-p --output-format stream-json --verbose --dangerously-skip-permissions`, continued with `--session-id`/`--resume`. There is **no** `--allowedTools`, `--disallowedTools` or `--permission-mode` anywhere in the tree, and no read-only mode. The only permission rule Fugaro writes is a **deny** list — `internal/agent/settings.go` `deniedWebTools` = `WebSearch`, `WebFetch`, emitted into the managed settings only when the gateway is on. Read-only is (a) a sentence in the prompt — `runner.ReviewPrompt`: "Do not modify any files." — and (b) content hygiene: `internal/runner/reviewmode.go` `stripClaudeConfig` deletes every `.claude`/`.claude-plugin` directory plus `.mcp.json`/`CLAUDE.local.md` before the review stage, and `readReviewCommandFromBase` reads a `/name` review command as **text** from the base branch with its frontmatter stripped. `SECURITY.md` ("Running Fugaro on repositories with external contributors") is explicit: "None of this is a sandbox, though: the reviewing agent is still the same unsandboxed process, as the same user, in the same container, as every other run." **Consequence:** §5's "reviewers are read-only" is a Rule conflict with the security policy's own words unless it means "instructed, not enforced" — which is what it means today. Q12.
+
+**#37 (Gap). "Every fix traces back to the finding that asked for it" is not recorded.** The `fix` stage is driven by `runner.FixPrompt(v)` built from the verdict's findings, so the *link* exists in the prompt at the time — and then it is gone: the record keeps a count, and the transcript is redacted text. **Consequence:** the traceability the spec asks for needs the findings and the fix's association persisted, which is #34's store again.
+
+**#38 (Rule, and it is the largest one). The repository's standing posture is that a run's own `ship` is not independent review.** This is stated in three places and is the direct counter-position to the spec's §2 goal:
+
+- [dogfooding.md](../dogfooding.md): "**The in-loop reviewer is a cheap model too, so its `ship` verdict is weak.** … the run's own review is a smoke check, not independent review: keep the real review **outside** the loop … **A run's own `ship` never replaces it.**"
+- [dogfooding.md](../dogfooding.md), on what went through runs: "Through the **subagent review loop in a local session**, with your eyes on it: anything that handles money or security."
+- [credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md), Global Constraint 10: "**Every task marked SECURITY-SENSITIVE, and every task that changes a SECURITY.md security claim or writes `creds/` as the operator, gets opus and a mandatory independent review** by a reviewer that did not write it, before merge. That is nearly every code task here." — and each such task in that plan repeats "Reviewer: opus + mandatory independent review".
+
+The "different model family" argument is given as a **reason**, not a rule: [mixed-credentials.md](../design/mixed-credentials.md) §1 and [multi-model.md](../multi-model.md) both say a different family is "a better second opinion than the same family", and `agent.first_line_review: auto` is defined so a Claude coder gets no cheap same-family first line. **Consequence:** the spec's §2 goal ("most of the time, a job returns a PR that is already reviewed and ready to merge") is a **change of posture** for this repository, not an addition to it, and it interacts with the owner's own rule about security-sensitive work. Q13. Note also what the spec's own §5 implies: if the reviewer is the same model **family** as the coder, the second opinion is weaker; if it is a different family and a stronger model, the argument holds — the spec does not say which, and §4's example (`model: opus` for `general`) suggests different-and-stronger.
+
+**#39 (Exists, stated plainly in SECURITY.md). Prompt injection through the diff reaches a reviewer exactly as it reaches every agent.** `SECURITY.md`'s "Known limits" list (a single bulleted list with bold lead-ins and **no ids** — D-numbers live in design docs, G-numbers in [design/generic-tool.md](../design/generic-tool.md)): "**Network egress is not restricted.** … Prompt injection through the repository, a dependency, an issue or a PR comment could send source code or the credentials above anywhere."; "**A follow-up's protections are hygiene, not boundaries.**"; and the review-mode bullet's own "one line of prompt injection is code execution". The spec's §7 flag ("the diff goes beyond what the plan covers") is a **scope** flag, not an injection defence: text in the diff can equally say "approve". **Consequence:** §7's flag is Exists-in-spirit as a *scope* check, and the plan must not present it as a safety control; a verdict is advice, and `SECURITY.md` is where that has to be said.
+
+**#40 (Gap). A verdict has no authenticity beyond the execution identity.** `result.json` is plain JSON with no signature; grep for `hmac` in `internal/` returns nothing, and `attest` appears only in comments that deny it exists. The only binding is `internal/backend/gcp/run.go` `CheckRunExecution`, which reads the platform-reported `FUGARO_RUN` environment ("a run's service account can write its own bucket objects, but not another execution's environment"). Artifact hashes are explicitly "integrity in transit, not tamper evidence" (`SECURITY.md`, "The assumption"). **Consequence:** "a verdict is advice; the orchestrator still merges" — the spec's §2 posture — is the right one for the code as it is, and the plan should say the record is not evidence. It also means an escalated/approved verdict cannot be a *gate* on its own.
+
+### 2.11 Area (j): cost
+
+**#41 (Gap, with the arithmetic). Per-task cost with Opus reviewers is one to two orders of magnitude above today's loop, and it lands against caps that are frozen at deploy time.**
+
+The rates are the embedded table's (`internal/pricing/table.go`, `rates`; `Embedded`, source `platform.claude.com`, checked 2026-09-30):
+
+- `claude-opus-5-5`: **$4 per million input tokens, $20 per million output**, cache read at **0.05×** input ($0.20/M), cache write 1.25× (5 min) / 2× (1 h).
+- `claude-sonnet-5-5`: **$2 / $10**, cache read 0.1×.
+- A provider-served model is priced from the OpenRouter catalog (`internal/pricing/catalog/`, `catalog.json`) or the owner's `model_prices`, plus `route_fee_pct` (`config.ModelProvider.RouteFeePct`, applied by `pricing.WithFee`; the owner's operator config uses 5.5).
+
+Per review round, take a reviewer that reads **150,000 input tokens** (a 30,000-token diff plus the surrounding file context and the prompt) and writes **3,000 output tokens**:
+
+| | input | output | per round |
+|---|---|---|---|
+| Opus 5.5, no cache | 150k × $4/M = **$0.60** | 3k × $20/M = **$0.06** | **$0.66** |
+| Opus 5.5, prefix cached at the cache-read rate | 150k × $0.20/M = **$0.03** | $0.06 | **$0.09** (+ a one-off write premium of 150k × $5/M = $0.75 for a 5-minute cache) |
+| Sonnet 5.5, no cache | 150k × $2/M = **$0.30** | 3k × $10/M = **$0.03** | **$0.33** |
+| Claude through OpenRouter | as above **× 1.055** | | |
+
+For a run with a `general` and an `adversarial-security` review at `max_rounds: 2`–`3` (the spec's §4 example), **four to six Opus review rounds**: 4 × $0.66 = **$2.64** uncached, 6 × $0.66 = **$3.96**, and ~$7.00 with no caching and a large diff (300k tokens). Cached, the same run is **$0.36–$0.54** plus write premiums. Compare with today: [dogfooding.md](../dogfooding.md) says "the cloud loop costs cents per run", and this repository ends runs at **$0.13–$0.22** of real spend. So the spec's design costs **one to two orders of magnitude more per run than the loop it replaces**, before counting the review-only jobs §7 and §8 add.
+
+Against the caps: `budget.per_run_usd` (the binding one; written into the job as `FUGARO_MAX_RUN_USD` at deploy, so a database raise changes nothing until `fugaro init --repo` re-runs), `budget.per_day_usd`, and `agent.max_budget_usd` (Claude Code's own estimate — useless as a real cap for a provider model, ~25× high). `fugaro budget preview` (`internal/cli/budget_preview.go`) prints a ceiling and a `typical:` line from the last 30 days of real-cost runs; **subscription (`oauth`) runs are notional and are excluded**, which matters if the reviewer stage ever moves to OAuth. **Consequence:** the plan needs a per-run (or per-review) ceiling number *and* a decision that `budget.per_run_usd` is raised with it, or the first in-job Opus review will halt the run at the cap. Q14.
+
+### 2.12 Area (k): the owner's current process and the fix-round runs
+
+**#42 (Exists). The fix-round cloud runs the spec refers to are follow-ups.** `fugaro run --pr N` (`internal/cli/followup.go` `newFollowUpSpec`, `internal/runner/followup.go` `prepareFollowUp`/`checkoutFollowUp`/`pushFollowUp`) continues the pull request it was launched for: it reads the previous run's record, selects trusted comments (`internal/followup/Select`, nonce-delimited, `followup.trusted` and a live collaborator check), restores or resumes the prior session, and updates the **same** pull request. It takes `--recipe`, `--task-file`, `--token`, `--title`. A follow-up gets **no git credentials** in the agent's environment (`refreshGitAuth`), and it refuses a `mode: review` recipe outright. **Consequence:** the spec's "sent back by the orchestrator for more work" is Exists; the fix-round flow already carries the recipe and thus the loop.
+
+**#43 (Exists; the numbers are the owner's, not the code's). "5 parallel review slots at 20–30 minutes each (roughly 10–15 reviews/hour)"** matches no constant anywhere; the nearest real caps are `max_parallel` = 20 (concurrent **job executions**, launch-side) and the per-stage `timeouts.stage` (90m in this repository, 40m by default). The "Opus for security-sensitive work" half is the owner's stated practice ([dogfooding.md](../dogfooding.md); [credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md), Global Constraint 10). **Consequence:** no code claim to reconcile; the spec's §1 should say these are operating numbers, so the plan does not go looking for a constant.
+
+## 3. What the parked mixed-credentials design still contributes, and what supersedes it
+
+**Still load-bearing.** [mixed-credentials.md](../design/mixed-credentials.md) §2 ("What exists today, verified in the code") is the cleanest statement of the credential facts an in-job reviewer depends on: one `agent.auth` per workflow; a provider-routed model needs `api-key`; the gateway holds the Anthropic key and the provider keys; the managed settings file is the one routing point; `ClaudePatterns` refuses `claude-*`/`anthropic/*` as provider patterns except through the explicit claim. Its §4 records the **shipped** Claude-through-OpenRouter opt-in (`config.CheckClaudeClaim`, `internal/config/routing.go`) and its §8 records the open cache-marker question (Checks 45/46/50, not run). Its §6 is the plain statement of Path B's residual risk (the token and a cheap model share one job; `/proc`; the metadata server) — which is the same risk *any* in-job reviewer inherits.
+
+**Superseded.** Its §5 (Path B: `stage_auth: {reviewer: oauth}`) is now the **held** plan `docs/plans/2026-10-14-oauth-reviewer-stage.md`, and the whole per-call credential-selection problem has moved to [credentials-service/](../credentials-service/README.md), whose §0 says plainly what is genuinely new there (credential out of the job; per-call switching, which breaks "a run does not mix credentials"; shared exhaustion state; OAuth through a proxy). Its §10 phase 4 ("the separate-job reviewer") is the opposite of this spec's goal.
+
+**Consequence for this work:** the spec's "outer loop wants Opus" is buildable **today** on Path A (an Anthropic API key) or Path C (a Claude model through an OpenRouter route, the shipped opt-in) — no new credential plumbing at all. Path B is held, and the credentials service is not on `main`. Q9.
+
+## 4. Open for the owner
+
+Each question: the options, my recommendation first **with the reason**, the consequence of each, and which part of the spec it changes. Findings with one defensible answer are in §5 as resolutions, not questions.
+
+**Q1. Where does a review plan live, and who may write it?**
+1. **(Recommended) A task field (`review_plan` in `task.Spec`) plus a `--review-plan` flag, version-gated with its own `…Since` constant.** It is the only carrier that is genuinely per task, it follows the `recipe`/`oauth_token`/`title` precedent exactly (`internal/cli/recipes_skew.go`, `checkImageSince`), and it keeps "the orchestrator states its choice up front" true by construction.
+2. A repository key (`agent.review_plan` in `fugaro.yaml`), project-layer settable. Cheaper to ship (no new task field, no version gate) but per **repository**, not per task — which is the opposite of §4's "attaches to a job".
+3. An operator-only preset table in the local config, referenced by name from the task. Safest (no bucket text can name a model) but it makes every preset change an owner action.
+4. Do not add a carrier; express the plan as recipes and pick a recipe per task. Cheapest of all and consistent with today's model — but it cannot express "two reviews in one run" at all, so it fails §5.
+
+Changes: §4 entirely. Consequence of (1): one new task field, one new skew constant, one release that ships it before any launcher may set it, plus the `fugaro image refresh` remedy.
+
+**Q2. §4's per-review `model:` — is the "a recipe never names a model" rule kept?**
+1. **(Recommended) Keep the rule and put the plan outside the recipe** (Q1's option 1 or 2). The rule is written down twice, tested by the parser, and it is why a repository's `fugaro.yaml` cannot reach around the owner's allow-list; the plan is task/config data, so it does not need to break it.
+2. Relax it for `review_plan` only, with an explicit opt-in, mirroring the `anthropic/<id>` claim's shape (`config.CheckClaudeClaim`: one literal, never a pattern). Honest, but it is a second hole of the same kind and it needs its own refusal set and tests.
+3. Move models out of the spec's example entirely (a `type` names a role, and the role's model comes from `agent.models`) — clean, but it cannot express §5's "one reviewer on Opus, one on Sonnet".
+
+Changes: §4's field list; combined with #4 it decides whether this is a format change or a task-field change.
+
+**Q3. The preset vocabulary collides with the recipe catalog's. Which wins?**
+1. **(Recommended) New names for the review-plan presets** (`trivial`, `standard`, `security-sensitive` in the spec vs `default`, `solo`, `standard`, `premium`, … in the catalog: `standard` means two different things). Rename the plan presets (e.g. `one-general`, `general-plus-security`, `security-sensitive`) or namespace them (`plan:general`). Cheap and unambiguous.
+2. Rename the catalog's `standard` to free the word. Expensive: it is in the docs, the renames table (`recipe.Renamed`), the tests and every published project recipe.
+3. Make the plan preset a property of a recipe (a recipe may reference a plan). This is the cleanest product story, but it puts the plan inside the recipe and so collides with Q2.
+
+Changes: §4's "Suggested starting presets".
+
+**Q4. Do the reviews in a plan actually run in parallel, inside one 8 GiB job?**
+1. **(Recommended for the first slice) Serial, but structured as a plan.** The plan is the durable idea; parallelism is an optimisation. Serial reviews need no new concurrency primitive, no per-reviewer ledger dimension (#16) and no bigger profile, and the wall-clock saving is real but bounded (~30 min per extra reviewer).
+2. **Parallel as N `claude` processes in one job.** Gets the wall-clock win; costs N × (memory, CPU) against a profile that is fixed at deploy (§#17), needs a per-reviewer stage/ledger dimension and per-reviewer transcript naming, and multiplies the `/proc` and injection surface in one container.
+3. Parallel **inside one agent process** (Claude Code's own subagents). No new process accounting and no profile change; but the reviewers then share one context, which is exactly what "fresh context" is meant to avoid — unless each subagent starts fresh, which is unverified here.
+
+Changes: §5's first bullet; and the answer decides whether `timeouts.total` and the profile must grow.
+
+**Q5. Does a plan's finding routing replace the fixed readiness rule?**
+1. **(Recommended) No: keep `Decide`'s rule and let the plan only choose who reviews and how many rounds.** "Minor findings never trigger a senior round" is then expressed as the rounds ending (the run finishes as `failed`/`draft` with the minors listed), not as a new rule. Zero change to the readiness contract and the PR's draft semantics.
+2. Add the routing and accept that readiness becomes plan-dependent. It is what the spec asks, it needs the `on_pass`/`on_fail` refusals consciously lifted, and it makes "ready" mean different things for different plans — the console and `runs ls` then need to say which.
+3. Middle ground: severity decides only whether a *cheap* round follows (a plan-driven `bounce`), never readiness.
+
+Changes: §6's routing bullets; the readiness sentences in `docs/recipes.md` §1 and `docs/design/recipes.md` decision 5 if option 2.
+
+**Q6. The verdict vocabulary and the `FAILED, passed review` rendering.**
+1. **(Recommended) Fix the rendering now, keep `ship`/`changes`, and add the plan's verdict as a *record* object rather than a rename.** The rendering fix is small, independent, and removes a false statement (`internal/watch/plain.go` `finishedOutcomeText`, `internal/watch/render.go`: "`, passed review`" must depend on the last senior review summary, not on `outcome == draft`). Renaming `ship` costs a schema enum change, a prompt change, a `ReviewedPR` enum change and many tests, and buys only vocabulary.
+2. Rename to `approve`/`escalate` everywhere, schema included. Matches the spec's words exactly; it is a breaking change to `schemas/result.schema.json` (`additionalProperties: false`, `version` const 1) and to `console/docs/json-contract.md`'s `reviewed[].verdict` pin.
+3. Add `approve`/`escalate` as **new** top-level fields beside the existing ones and keep `ship`/`changes` where they are. Most compatible and the most state to keep consistent — the plan must then say which one is authoritative.
+
+Changes: §6 (verdict), and it is the one part of this spec that can ship alone.
+
+**Q7. What does the verdict object look like on the run record, and does the console see it?**
+1. **(Recommended) A single `verdict` object on `runstore.Record`** — `approve`/`escalate`, the merged findings (severity, file, summary), the flags, and the round it came from — with the schema's `version` bumped and `console/docs/json-contract.md` updated only if `runs ls --json`/`watch --json` carry it. One place to read; one schema change.
+2. Keep it out of `result.json` and post it as a structured pull-request comment (which `mode: review` already does). No schema change, no console change; but the orchestrator has to scrape a comment, and the comment is redacted and capped at 60 KiB.
+3. Both, with the record authoritative. Most useful, most to keep in sync.
+
+Changes: §6's "structured verdict"; adds a finding-identity requirement (#34) if findings are to be listed.
+
+**Q8. Calibration: what is logged, where, and for how long?**
+1. **(Recommended) Defer §10 past the first slice, and in the meantime persist the findings themselves (not just the count) in `result.json`.** Outcome logging needs finding identity across runs and two sources (local and cloud) that do not exist (#34, #35); persisting what is already computed (`runner.Verdict.Findings`) costs nothing and makes the later calibration possible.
+2. Build an outcomes log in the runs bucket now, per repository, appended by the runner. It is a new object class in a bucket every run of the repository reads, so it needs the retention and privacy answers ([SECURITY.md](../SECURITY.md)) first — and a local review still has nowhere to write.
+3. Keep everything in the transcript and mine it offline. No new surface at all; but the transcript is redacted text and building an outcome from it is guesswork.
+
+Changes: §10 entirely.
+
+**Q9. Which credential path does in-job review assume?**
+1. **(Recommended) Path A or C — an Anthropic API key, or a Claude model through an OpenRouter route (the shipped opt-in) — and say so in the spec.** Both work in one job today (`runner.startGateway`: one `Upstream.APIKey` plus per-route credentials), need no plumbing, no branch and no 0.9.0 gate, and cost real dollars that the gateway caps. This repository's own `fugaro.yaml` already runs `auth: api-key`.
+2. Wait for the credentials service, which is the owner's own newer direction, is gated on 0.9.0 and the budget-token seal, and has no approved task.
+3. Path B (the OAuth token for the reviewer stage only), which is held (`docs/plans/2026-10-14-oauth-reviewer-stage.md`), needs infra and runner changes, cannot be capped by the gateway, and is superseded by (2).
+
+Changes: §3.3's "senior reviewer on Opus" and §9's cost picture; it also decides whether the spec inherits the "a run does not mix credentials" question.
+
+**Q10. The round-level time check: what is "enough for a full round"?**
+1. **(Recommended) A fixed per-round reservation in config** (e.g. `timeouts.round`), checked by the runner before starting a round against `Budget.finalizeAt()`; stop cleanly with the existing escalation signal (`status: failed`, `outcome: draft`, a reason naming the budget) when it does not fit. Deterministic, cheap, and it uses the deadline that already exists.
+2. An estimate learned from the run's own history (mean round duration from `stages[]`). More accurate, more machinery, and wrong on the first plan with a bigger diff.
+3. No reservation: let `StageContext` cut the stage as it does today, and only make the *reason* clearer. Nothing new; the spec's "instead of being killed mid-fix" is not delivered.
+
+Changes: §9's second bullet; (1) needs a new config key and a recipe-visible meaning.
+
+**Q11. Rebase or merge for the follow-up, and what happens on a conflict?**
+1. **(Recommended) Merge the target branch in, do not rebase.** It needs no history rewrite, so no force-push question arises at all (§1.2), it leaves already-posted checkpoints and any pull-request review valid, and a conflict is resolved as a merge commit whose own diff can be reviewed on its own. Cost: a merge commit in the branch's history, which changes what the PR's "Files changed" shows (GitHub hides merge-commit changes against the base).
+2. Rebase, on the owner's explicit ruling, accepting that the run rewrites a published branch with an open pull request. The existing `gitops.PushExisting` guards would permit it; the branch's checkpoints and any review already done would be invalidated; and `SECURITY.md`'s trust model would need a sentence.
+3. Neither: keep today's behaviour (work on the branch as it is) and make staleness an orchestrator concern, as it is now. Nothing to build; §8 is dropped from this work.
+
+Changes: §8 entirely. Any answer other than (3) also needs the conflict detector that does not exist (#27).
+
+**Q12. "Reviewers are read-only" — instruction or enforcement?**
+1. **(Recommended) Instruction, stated as such, with the existing content hygiene.** It is what the code does and what `SECURITY.md` already says ("None of this is a sandbox"); the honest framing is that the reviewer is told not to modify files and that nothing enforces it.
+2. Enforce it with a Claude Code tool allow-list (deny `Edit`/`Write`/`Bash` write paths). Not built anywhere today, and the reviewer does need `Read`/`Grep`/`Bash(git diff)`; a deny list is feasible but it is new agent-surface work with its own bypass questions.
+3. Enforce it structurally: a separate unprivileged user with no inherited environment, no metadata-server route and no egress. The only real answer, and explicitly not built (`SECURITY.md`, review-mode bullet).
+
+Changes: §5's "Reviewers are read-only"; (3) is a much larger piece of work that this spec would then depend on.
+
+**Q13. Does an in-job verdict replace the owner's independent review, or precede it?**
+1. **(Recommended) Precede it for ordinary work; never for security-sensitive work.** The spec's §2 goal then holds for the cheap-loop majority while [dogfooding.md](../dogfooding.md) and [credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md)'s Global Constraint 10 keep their force for the tasks that handle money or security — which is the owner's own 2026-10-18 process, unchanged. The spec should carry that sentence.
+2. Replace it whenever the plan's reviewer is a stronger, different-family model. That is a real change of posture and it contradicts the standing rule as written; it needs the rule amended in both documents, not just this spec.
+3. Never: in-job review is always additional. Safest; makes the laptop the bottleneck the spec set out to remove, so it fails §1.
+
+Changes: §2 (the goal) and §3.6's "the orchestrator only gives final sign-off".
+
+**Q14. What is the per-run ceiling for a plan with Opus reviewers, and does `budget.per_run_usd` move with it?**
+1. **(Recommended) A named per-run number in this spec (order $5–$10 with cache misses, order $1 with caching — see #41's arithmetic), and `budget.per_run_usd` raised to match, redeployed with `fugaro init --repo`.** Without both, the first in-job Opus review halts the run at the cap, which reads as a bug.
+2. A per-review cap instead of a per-run one. Closer to the spec's "capped per review"; needs a new budget dimension (`internal/budget/model.go` has no per-credential or per-stage cap), which is security-sensitive budget code with its own review.
+3. No new number: rely on `budget.per_run_usd` as it stands. Cheapest; the spec's §4 example plan would not fit under a cents-per-run cap.
+
+Changes: §9's time/cost picture and §4's `max_rounds` example; (1) is a local-config change plus a redeploy.
+
+**Q15. Are the review plan's reviews billed as line items the owner can see?**
+1. **(Recommended) Yes: one `stages[]` entry per review round** (`StageTiming` already carries `name`, `duration_s`, `model_usd`, `model`), plus `model_by`/`route_by` as they are. Per-review visibility with no new dimension, and it is what the console's cost cell can show.
+2. A new per-reviewer dimension (`reviewer: 1|2`) on the record and the ledger. Needed for §5's parallelism to be legible when two reviews run at once (a shared ledger folds them together, #16).
+
+Changes: §4's `max_rounds`/§10's calibration; the answer depends on Q4 (serial vs parallel).
+
+**Q16. Is the review-only entry point extended, or is a new one added?**
+1. **(Recommended) Extend `review-only`/`pick` (`mode: review`) to take a plan; do not invent a second entry point.** `review-only` already exists, already reviews an arbitrary open pull request read-only, already never pushes, already comments a verdict, and already refuses untrusted authors. A plan parameter on the existing recipe is a much smaller change than a parallel path. Caveat: `mode: review` pins its single `review` step to `max_rounds: 1` ([recipes.md](../recipes.md) §3), so a plan whose reviews carry their own `max_rounds` either lifts that pin for `mode: review` or means "one round of each review in the plan" — the plan must say which.
+2. A new standalone command (`fugaro review --pr N`). Cleaner product surface; duplicates the checkout, the trust gate, the comment and the record.
+3. Leave review-only alone and build the plan only for coding jobs. Smallest; leaves §7's "one review format, two entry points" undelivered.
+
+Changes: §7's first bullet, and the `mode: review` constraints in `docs/recipes.md` §3 (`max_rounds` pinned to 1, no `roles`, `--pr` required).
+
+**Q17. Should the spec's "the diff goes beyond what the plan covers" flag be a diff-path check or a model judgement?**
+1. **(Recommended) A deterministic diff-path check in the plan** (e.g. a plan may declare path classes; paths under `auth/`, `payments/`, `iam/`, `secrets/` with no `adversarial-security` review produce a flag). Deterministic, testable, and it cannot be talked out of it by the diff's own text — which matters, because the reviewer reads untrusted text (#39).
+2. A model judgement ("does this diff need a security review?"). Flexible; it is exactly the surface an injected instruction can reach, and it makes the flag's meaning unpredictable.
+3. Both, with the path check as the floor. Most coverage, most to explain.
+
+Changes: §7's third bullet.
+
+## 5. Resolutions (one defensible answer; not questions)
+
+**R1.** §4's plan **cannot** be a recipe field: `model`/`models` are reserved and refused by `recipe.Parse` (#4), and severity routing is the "outcome rules are not configurable" refusal (#5). This is settled, not open — the only question is which carrier replaces it (Q1/Q2).
+
+**R2.** §9's "(Cloud Run jobs allow up to 24 h.)" is **wrong for this codebase**: Fugaro's ceiling constant is `gcp.MaxTaskTimeout` = 168 h, and 24 h is `backend.MaxRunTime`, its own `--total-timeout` override cap (#18). The parenthetical should be dropped; the "~2–2.5 h" figure is this repository's `fugaro.yaml`, not a platform limit.
+
+**R3.** §7's entry point **exists**: `fugaro run --recipe review-only --pr N`, `mode: review`, read-only checkout, never pushes, comments the verdict, trusted-author-only. The spec should build on it rather than describe it as new (#22 in §2.1's table; Q16).
+
+**R4.** The reviewer already runs with a **fresh context** (`agent.NewSessionID()` per round, `runner.ReviewPrompt` scoped to the branch diff) — §5's first bullet is a description of what is there, and the plan should not re-specify it (#15).
+
+**R5.** A new task field costs a version gate. `task.Parse` uses `DisallowUnknownFields` and every existing spec field has a `…Since` constant and a build-record check in `internal/cli/recipes_skew.go` (#32). Whatever Q1 answers, the plan must include that gate and the `fugaro image refresh` remedy.
+
+**R6.** `k8s`-style speculation aside, there is **no** `stage_auth`, no `StageAuth`, no credential cascade and no `tokens/` prefix in the tree; the budget-token **seal** symbol does not exist either. Documents that mention them are plans (#11).
+
+**R7.** The "FAILED, passed review" rendering is a **bug**, independent of this spec, and can be fixed in its own small change (#24, Q6).
+
+**R8.** `result.json`'s schema key is `version` (const 1) with `additionalProperties: false`; there is no `schema_version` key, and the console never reads `result.json` — it reads the CLI's JSON and keys its own documents by `shape: 'live' | 'degraded'` (#25, #26).
+
+## 6. UNVERIFIED
+
+| # | What is unverified | Why it matters |
+|---|---|---|
+| U1 | Whether two concurrent `claude` processes in one 8 GiB job are safe and affordable in practice (memory, `/proc` surface, ledger fold) | Q4's option 2 rests on it; nothing in the tree runs two |
+| U2 | Whether Claude Code's own subagents can each start a fresh context (Q4 option 3) | It is the only way to get parallelism with no new accounting |
+| U3 | Whether a merge-instead-of-rebase changes what reviewers see on GitHub (the merge commit's own changes are hidden against the base) | Q11's option 1 |
+| U4 | The real cache-hit behaviour of a Claude reviewer through an OpenRouter route | [mixed-credentials.md](../design/mixed-credentials.md) §8 already lists it (Checks 45/46/50, not run); it is the difference between ~$1 and ~$7 a run in #41 |
+| U5 | Whether `--force-with-lease` plus the existing `PushExisting` guards really would allow a follow-up's rebase to land (reasoned from the code, never run) | Q11's option 2; §1.2 |
+| U6 | The cost of one Opus review round on this repository's real diffs (the #41 table is arithmetic on assumed token counts, not a measurement) | Q14's ceiling number |
+
+## 7. What changes if the owner answers
+
+Nothing is implemented by this document. When the owner answers Q1–Q17, the next run writes `implementation-plan.md` in this folder from those answers, and only then does any code, Terraform, schema or recipe change follow — each task needing its own explicit go, as [credentials-service/README.md](../credentials-service/README.md) states for its own plan.
