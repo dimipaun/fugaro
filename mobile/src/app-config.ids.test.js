@@ -39,8 +39,11 @@
 // And the fence around the file itself: **the identity is committed nowhere**.
 // Every fixture here is the fictional `com.example.sample`, and the last test
 // walks every tracked file under `mobile/` and `docs/mobile/` for the owner's
-// own value, which belongs in the EAS project and in the two instruction files
-// that tell the owner to set it there -- not in a test, a comment or a doc.
+// own value, which belongs in the EAS project -- not in a test, a comment or a
+// doc. The file that does tell the owner how to set it is `mobile/README.md`,
+// and it is **inside** that walk: it writes `<the reverse-DNS identity>` where
+// the value goes, and the pin checks that it does. Nothing under either root
+// carries the value, and there is no exception in the tree today.
 //
 // Every refusal below is mutation-proven the same way the tree's other guards
 // are: the property is stated as a table, the mutation that breaks it is named
@@ -412,20 +415,26 @@ test("Expo's entry reads process.env, and refuses a call with no static config",
 const OWNER_IDENTITY = ['dev', 'fugaro', 'app'].join('.');
 
 /**
- * The files that may carry it: **instructions, not configuration.** The runbook
- * tells the owner which value to set in EAS, and the owner-facing register tells
- * them what a run should show -- both are read by the owner at their own
- * terminal, and neither is read by a build. Nothing under `mobile/` may.
+ * The files that may carry it: **instructions, not configuration.**
  *
- * (The register itself is `docs/gcp-live-checklist.md`, outside the two roots
- * this pin walks, and it names no value either: it prints whatever the guard
- * resolved out of the owner's own environment.)
+ * It is empty, and empty is the property rather than an oversight: no file
+ * under `mobile/` or `docs/mobile/` carries the owner's value. The files that
+ * tell the owner to set it are `mobile/README.md` -- **inside** this walk, and
+ * it writes `<the reverse-DNS identity>` where the value goes -- and
+ * `docs/gcp-live-checklist.md`, which is **outside** it and names no value
+ * either (its guard prints whatever the owner's own environment resolved).
+ *
+ * An owner-run runbook under `docs/mobile/` whose `eas env:set` commands have
+ * to spell the value out is the one case this set exists for; it would add its
+ * path here, in the change that adds the file. `identityLiterals` takes the set
+ * as an argument so that exception's effect is proven by a control below
+ * instead of by a path that is not in the tree.
  */
-const IDENTITY_ALLOWED = new Set(['docs/mobile/eas-signing-runbook.md']);
+const IDENTITY_ALLOWED = new Set();
 
 /** The files under the two roots whose text carries the owner's identity. */
-function identityLiterals(files) {
-  return files.filter(({ path, text }) => text.includes(OWNER_IDENTITY) && !IDENTITY_ALLOWED.has(path)).map(({ path }) => path);
+function identityLiterals(files, allowed = IDENTITY_ALLOWED) {
+  return files.filter(({ path, text }) => text.includes(OWNER_IDENTITY) && !allowed.has(path)).map(({ path }) => path);
 }
 
 /** Every tracked (and untracked-but-not-ignored) file under `mobile/` and
@@ -445,11 +454,17 @@ function scannedFiles() {
 
 test('the owner’s identity is committed nowhere under mobile/ or docs/mobile/', () => {
   // The positive control: the walk flags a planted file, and it does not flag
-  // the allow-listed instruction file. Mutation: make `identityLiterals` return
-  // an empty list and the first line goes red.
+  // one that carries a fictional sample. Mutation: make `identityLiterals`
+  // return an empty list and the first line goes red.
   assert.deepEqual(identityLiterals([{ path: 'mobile/src/x.js', text: `const id = '${OWNER_IDENTITY}';` }]), ['mobile/src/x.js']);
-  assert.deepEqual(identityLiterals([{ path: 'docs/mobile/eas-signing-runbook.md', text: OWNER_IDENTITY }]), []);
   assert.deepEqual(identityLiterals([{ path: 'mobile/src/x.js', text: 'com.example.sample' }]), []);
+  // ... and the exception mechanism itself, exercised with the set an owner-run
+  // runbook would add: it is empty in this tree, so this is the only place the
+  // mechanism can be shown to work -- and it is proven here rather than by a
+  // path that does not exist (mutation: ignore the `allowed` argument and this
+  // line goes red).
+  assert.equal(IDENTITY_ALLOWED.size, 0, 'nothing under these two roots may carry the value: the set is the exception list, and there is no exception today');
+  assert.deepEqual(identityLiterals([{ path: 'docs/mobile/eas-signing-runbook.md', text: OWNER_IDENTITY }], new Set(['docs/mobile/eas-signing-runbook.md'])), []);
 
   // ... and the real tree: the fixtures here and in `app-config.test.js` are
   // fictional samples, and nothing else under the app or its docs carries the
@@ -463,4 +478,15 @@ test('the owner’s identity is committed nowhere under mobile/ or docs/mobile/'
   for (const path of ['mobile/app.config.js', 'mobile/eas.json', 'mobile/src/app-config.ids.test.js']) {
     assert.equal(files.some((file) => file.path === path), true, `${path} is in the walk`);
   }
+  // ... and the file that tells the owner how to set the value is in the walk
+  // too, writing the placeholder where the value goes. That is the whole of the
+  // answer to "where does the owner read it": the README is instructions and is
+  // inside the fence, and it carries `<the reverse-DNS identity>`, not the
+  // identity. Mutation: paste the owner's value into the README's example
+  // commands and this goes red (the pin above) while this line says why the
+  // README is not an exception.
+  const readme = files.find((file) => file.path === 'mobile/README.md');
+  assert.equal(readme === undefined, false, 'the walk covers mobile/README.md, the file that tells the owner how to set the value');
+  assert.equal(readme.text.includes('<the reverse-DNS identity>'), true, 'the README writes the placeholder where the value goes');
+  assert.equal(readme.text.includes(OWNER_IDENTITY), false, 'and not the value itself');
 });

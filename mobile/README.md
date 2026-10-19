@@ -138,7 +138,13 @@ eas submit --platform android --profile internal --latest
 `app-bundle` (the Play app-signing path) and `submit.internal.android.track`
 **exactly `internal`** — C8's whole content is that one value. The iOS submit
 side names nothing at all: EAS prompts for it. `cli.appVersionSource` is
-`remote` (the store version is EAS's to move, not a file's) and
+`remote`, and what that moves is the **build number** — `expo.ios.buildNumber`
+and `expo.android.versionCode`: EAS holds it on the project and increments it,
+so no file here carries one. It is **not** the version the stores show, and it
+is not the version check 89 step 4 compares with the tag: that one is
+`expo.version` in `app.json`, the line C6 ties to the release tag, so releasing
+this app means setting it to the version being released (`0.0.0` in the tree is
+the placeholder a release replaces — nothing here bumps it for you). And
 `cli.requireCommit` is `true` (a store build records the commit it was made
 from). `development` is a dev client on internal distribution and `preview` is
 an internal-distribution build — neither reaches a store — and each profile

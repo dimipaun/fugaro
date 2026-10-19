@@ -201,7 +201,26 @@ test('no identity is committed here: the variables are EAS environment variables
   }
 });
 
-test('versions are EAS’s, and a build is made from a committed tree', () => {
-  assert.equal(EAS.cli?.appVersionSource, 'remote', 'the store version is EAS\'s to move, not a file\'s');
+test('the build number is EAS’s, the version is the tree’s, and a build is a committed tree', () => {
+  // `appVersionSource` is where the **build number** lives and increments --
+  // `expo.ios.buildNumber` and `expo.android.versionCode` -- and **not** the
+  // version the stores show or the app reports: that one is `expo.version` in
+  // `app.json`, the line C6 ties to the release tag, and check 89 step 4 is
+  // the step that compares the installed app's version with the tag. Read the
+  // other way round it tells a reader to leave `app.json` alone, and step 4
+  // then fails on an app that reports `0.0.0`.
+  assert.equal(EAS.cli?.appVersionSource, 'remote', 'the build number is EAS\'s to hold and increment, not a file\'s');
   assert.equal(EAS.cli?.requireCommit, true, 'a store build records the commit it was made from');
+  // ... and the file a reader trusts about it says the same thing. Mutation:
+  // put "the store version is EAS's to move, not a file's" back into the
+  // README's paragraph on this key and the first two lines below go red.
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const at = readme.indexOf('`cli.appVersionSource`');
+  assert.notEqual(at, -1, 'the README explains `cli.appVersionSource` where the owner reads the profiles');
+  const rest = readme.slice(at);
+  const end = rest.indexOf('\n\n');
+  const about = end < 0 ? rest : rest.slice(0, end);
+  assert.match(about, /build number/, 'the README says which number `appVersionSource` moves');
+  assert.match(about, /expo\.version/, 'and names the version line that is the tree\'s to set (C6, check 89 step 4)');
+  assert.equal(about.includes("the store version is EAS's to move"), false, 'the README does not hand the store version to EAS');
 });

@@ -4924,6 +4924,11 @@ The app is **its own artifact at `mobile/`, outside the Go module** (plan C2), v
 # === Check 89: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
 set -u
 command -v eas >/dev/null || { echo "Check 89 stopped: no eas on PATH (npm i -g eas-cli, then 'eas login' as yourself)" >&2; exit 1; }
+# node as well, and for the same reason the block tests for eas first: the
+# store identity is read by running mobile/app.config.js through node, and a
+# missing interpreter is a Python FileNotFoundError -- a traceback, not the
+# sentence this guard promises. The eas-cli you installed with npm brought it.
+command -v node >/dev/null || { echo "Check 89 stopped: no node on PATH, and the guard reads the store identity by resolving mobile/app.config.js with it (the eas-cli you installed with npm brought it)" >&2; exit 1; }
 # The repository root, resolved first so this block is re-runnable from
 # anywhere in the checkout: a second run from inside mobile/ must not fail its
 # own file tests (every path below is read from the root).
@@ -4963,9 +4968,19 @@ if r.returncode != 0:
     lines = [l for l in r.stderr.splitlines() if l.strip()]
     reason = next((l for l in lines if l.startswith("Error:")), lines[0] if lines else "no message from node")
     sys.exit("Check 89 stopped: mobile/app.config.js refused the store identity this shell holds, and a build would be refused the same way -- " + reason)
-e = json.loads(r.stdout)
-bid = (e.get("ios") or {}).get("bundleIdentifier")
-pkg = (e.get("android") or {}).get("package")
+# A node that printed something which is not the config (a warning line on
+# stdout, an empty document, a `null`) is a stop with a sentence, not a
+# JSONDecodeError traceback: the guard's whole job is to say why it stopped.
+try:
+    e = json.loads(r.stdout)
+except ValueError:
+    sys.exit("Check 89 stopped: mobile/app.config.js printed something that is not a JSON config, so the store identity could not be read from it and a build made now could not reach any track (re-run `node --input-type=module -e ...` from mobile/ by hand if a tool printed a line of its own on stdout)")
+if not isinstance(e, dict):
+    sys.exit("Check 89 stopped: mobile/app.config.js printed a %s where the config should be, so there is no ios.bundleIdentifier or android.package to submit a build under" % type(e).__name__)
+ios = e.get("ios") if isinstance(e.get("ios"), dict) else {}
+android = e.get("android") if isinstance(e.get("android"), dict) else {}
+bid = ios.get("bundleIdentifier")
+pkg = android.get("package")
 if not bid or not pkg:
     sys.exit("Check 89 stopped: the config resolved through app.config.js carries no ios.bundleIdentifier or android.package, so there is nothing to submit a build under — a build made now could not reach any track")
 print(e["version"], bid, pkg)
