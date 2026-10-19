@@ -1583,9 +1583,11 @@ var runAccountGrants = setOf(
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
 
 	// A project job account's (phase 3, modules/project/sa.tf): the same
-	// shape, its secrets keyed by the profile's mounts; its bucket grant is
-	// the workflow job's key above, under the widened condition.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset([ for name in values(var.job.secret_env) : name if var.credentials_service == null || !contains(var.credentials_service.secrets, name) ]) | perms=`,
+	// shape, its secrets keyed by the profile's mounts, and NOT filtered
+	// against the credentials service's secrets — its model credential goes
+	// when the mount goes, not when the grant does (C1.18); its bucket grant
+	// is the workflow job's key above, under the widened condition.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.job.secret_env)) | perms=`,
 
 	// The build account's (a build's credential): its secrets, its own
 	// registry, the shared ones read-only, builds/ under its condition, actAs

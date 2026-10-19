@@ -74,10 +74,11 @@ module "project" {
   job_runner_role = module.installation.role_ids.job_runner
   launchers       = var.launchers
   operators       = var.operators
-  # A shared job's account is a job account too: with the credentials
-  # service on it loses its accessor grant on the model secrets the same way
-  # a repository's job account does (C1.18).
-  credentials_service = module.installation.credentials_service
+  # The credentials service is deliberately not passed here: a shared job's
+  # account loses its model credential when projectAccountMount stops adding
+  # the mount (0.9.5's later work), not by a filter on this module's grant
+  # (modules/project/sa.tf). Until then its accessor grant stands, as it does
+  # today.
 
   # The runs bucket arrives as a name, and every other grant in this tree
   # references the bucket resource itself — which is what orders them. On a

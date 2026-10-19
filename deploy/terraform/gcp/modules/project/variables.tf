@@ -175,13 +175,3 @@ variable "operators" {
     error_message = "operators must be IAM members: user:, group:, serviceAccount: or domain: followed by the address."
   }
 }
-
-variable "credentials_service" {
-  description = "The installation's credentials service (design docs/credentials-service, D146, D147), null when the installation has not opted in: its name, its region and the model secrets it holds, by logical name. With it on, this job's account loses its accessor grant on those secrets — no job account of the installation holds a model credential any more, and the service's own account is the only identity that reads one (D143, Check 94)."
-  type = object({
-    name    = string
-    region  = string
-    secrets = list(string)
-  })
-  default = null
-}

@@ -2978,13 +2978,12 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 	for _, want := range []string{
 		// One member per secret this job mounts, and none for a secret it
 		// does not: the list is the job's own secret_env, not the
-		// installation's secrets and not another job's — less the model
-		// secrets when the installation has the credentials service on
-		// (0.9.5, D143, D146: the service's own account is then the only
-		// identity that reads one, and the job calls the cascade with its
-		// own identity instead, Check 94). The drop is the same one
-		// modules/workflow/sa.tf makes, by logical name.
-		"for_each = toset([\n    for name in values(var.job.secret_env) :\n    name if var.credentials_service == null || !contains(var.credentials_service.secrets, name)\n  ])",
+		// installation's secrets and not another job's. The credentials
+		// service does not filter it (0.9.5, C1.18): a shared job's account
+		// loses a model credential when projectAccountMount stops adding the
+		// entry, and this for_each follows that entry — see
+		// modules/project/sa.tf.
+		"for_each = toset(values(var.job.secret_env))",
 		// The secret's own ID, at the secret level: never the project.
 		"secret_id = var.secrets[each.value]",
 		"role      = \"roles/secretmanager.secretAccessor\"",

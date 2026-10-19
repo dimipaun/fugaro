@@ -1428,3 +1428,144 @@ run "resolved_secret_job_grant" {
     error_message = "the job account's accessor grant on an unresolved name must stay the repository's own container"
   }
 }
+
+# The credentials service off (the installation every repository has today,
+# D147): the job account keeps its accessor grant on each secret its workflow
+# mounts, and holds nothing on a service that does not exist.
+run "credentials_service_off" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 0
+    error_message = "an installation that has not opted in creates no service, so the job account is granted nothing on one"
+  }
+  assert {
+    condition = toset(keys(google_secret_manager_secret_iam_member.job)) == toset([
+      "claude-oauth-token", "bitbucket-token", "sandbox-probe",
+    ])
+    error_message = "with the service off the job account keeps accessor on every secret its workflow mounts, exactly as today"
+  }
+}
+
+# The credentials service on (D143, D146, D147): the model secrets leave the
+# job account's accessor grant — even the repository's own container of one,
+# because the drop is by logical name — and the job account gets run.invoker
+# on the service instead, which its IAM-checked ingress makes the only way in.
+#
+# The mount stays: dropping a model secret from the job's environment is
+# C1.20's spec.go change, not this one's. So the plan here is a job that
+# mounts a secret it can no longer read, and the assertion below says so out
+# loud rather than letting it be discovered at run time.
+run "credentials_service_on" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = {
+      name    = "fugaro-credentials"
+      region  = "us-east5"
+      secrets = ["claude-oauth-token"]
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = toset(keys(google_secret_manager_secret_iam_member.job)) == toset([
+      "bitbucket-token", "sandbox-probe",
+    ])
+    error_message = "with the service on the job account holds no accessor grant on a model secret: the service's own account is the only identity that reads one (Check 94)"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.job :
+      m.role == "roles/secretmanager.secretAccessor" &&
+    m.member == "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the grants that remain are still secretAccessor to the job's own account: the drop moves one secret, not the shape"
+  }
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env :
+    e if length(e.value_source) > 0]) == 3
+    error_message = "the job must still mount its three secrets: removing a model secret's mount is C1.20's change, and this task leaves a job mounting what it mounts today"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service_iam_member.credentials) == 1 &&
+      google_cloud_run_v2_service_iam_member.credentials[0].role == "roles/run.invoker" &&
+      google_cloud_run_v2_service_iam_member.credentials[0].name == "fugaro-credentials" &&
+      google_cloud_run_v2_service_iam_member.credentials[0].location == "us-east5" &&
+    google_cloud_run_v2_service_iam_member.credentials[0].member == "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com")
+    error_message = "the job account must reach the cascade with its own identity: run.invoker on the service the opt-in names, in its region, and nothing wider"
+  }
+}
+
+# A service the opt-in cannot address is refused at the repository too, and
+# with the same message: the name and the region here are the two values every
+# job account's run.invoker grant is built from.
+run "credentials_service_needs_an_address" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation = merge(var.bitbucket.installation, {
+      credentials_service = {
+        name    = "FugaroCredentials"
+        region  = "us-east5"
+        secrets = ["claude-oauth-token"]
+      }
+    })
+    repo = var.bitbucket.repo
+  }
+
+  expect_failures = [var.installation]
+}

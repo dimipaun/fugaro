@@ -1884,7 +1884,7 @@ run "credentials_service_on" {
   assert {
     condition = (output.credentials_service.name == "fugaro-credentials" &&
       output.credentials_service.region == "us-east5" &&
-      output.credentials_service.secrets == tolist(["claude-oauth-token"]))
+    output.credentials_service.secrets == tolist(["claude-oauth-token"]))
     error_message = "the output carries the service's name and region (the job accounts' run.invoker grant) and the model secrets it holds (dropped from those accounts' accessor grants)"
   }
 }

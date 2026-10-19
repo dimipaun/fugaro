@@ -85,19 +85,16 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
 # names through an IAM condition, is not adopted (Check 52's U3 is unanswered,
 # so nothing here depends on it).
 #
-# The model secrets are dropped when the installation has the credentials
-# service on, exactly as modules/workflow/sa.tf drops them: a shared job's
-# account is a job account like any other, and with the service on the
-# service's own account is the only identity that reads a model credential
-# (D143, D146, Check 94). The task that added this (C1.18) named only the
-# workflow module, whose grant the plan believed was the only one; a project
-# job's account mounts a Claude account's token through
-# projectAccountMount, so the same drop is needed here.
+# Deliberately NOT filtered against the credentials service's secrets the way
+# modules/workflow/sa.tf's grant is (0.9.5, C1.18): a shared job's account
+# loses its model credential when the mount goes, not when the grant does.
+# projectAccountMount stops adding the secret_env entry (the seam §4.6 names)
+# and this for_each iterates that entry, so the member goes with it and
+# nothing else moves. Dropping the grant alone would leave the container
+# mounting a secret its account can no longer read — a job that fails at run
+# time — for as long as the mount is still there.
 resource "google_secret_manager_secret_iam_member" "job" {
-  for_each = toset([
-    for name in values(var.job.secret_env) :
-    name if var.credentials_service == null || !contains(var.credentials_service.secrets, name)
-  ])
+  for_each = toset(values(var.job.secret_env))
 
   project   = var.project
   secret_id = var.secrets[each.value]
