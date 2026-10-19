@@ -37,6 +37,18 @@ package cli
 // Check 89's guard want opposite things of mobile/app.json, and both are on the
 // tree), and the directory's own index, which is where a reader finds it.
 //
+// Four tests hold what the page says about **Check 89** to the check. Three of
+// them read what the page claims and refuse the shapes the check does not have:
+// the guard's own stop messages are quoted verbatim, not "there is no build
+// profile to read" and not a KeyError or a traceback
+// (TestDocsMobileEasRunbookQuotesCheck89sGuardStops,
+// TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError), and the profile reads
+// are step 1's hand-run `jq` with the owner's own stop on them, not the guard's
+// (TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead). They pin the
+// quotes as literals because docs/gcp-live-checklist.md is not on this branch:
+// P4.2a's text lands on main with PR #580, so the page -- and these tests --
+// cannot read it here.
+//
 // Three tests hold what the page says about the *repository* to the repository:
 // TestDocsMobileEasRunbookNamesEveryProtectedEnvironment derives the protected
 // environments -- and the job each one is declared in -- from the workflow files
@@ -91,6 +103,16 @@ package cli
 //	| §9's website-live row dropped the `environment:` content citation | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
 //	| a line number ("(line 70)") put back into §2's citation | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
 //	| a probe workflow declaring website-live in another job (tmp-probe.yml, removed after) | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
+//	| Check 89's store-identity stop reworded (a paraphrase, not the guard's words) | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| Check 89's mobile/eas.json stop reduced to "there is no build profile to read" | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| the file and section the quotation comes from dropped from Tension 1 | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| the store identity dropped from §3's list of the guard's stops | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| "KeyError" planted in the store-identity paragraph | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
+//	| "traceback" planted in the store-identity paragraph | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
+//	| `d["ios"]["bundleIdentifier"]` planted again | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
+//	| §8's "the first place Check 89's guard turns a wrong value into a stop" restored | TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead |
+//	| §8's register quotation dropped | TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead |
+//	| §8's "the guard does not read this value" dropped | TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead |
 
 import (
 	"fmt"
@@ -518,6 +540,126 @@ func TestDocsMobileEasRunbookNamesEveryProtectedEnvironment(t *testing.T) {
 	if !strings.Contains(doc, "keyless") {
 		t.Errorf("%s does not say release.yml signs keyless: it is the workflow an owner would otherwise assume reads a signing secret through an environment, and it does not", mobileEasRunbook)
 	}
+}
+
+// check89GuardStops are Check 89's own stop messages about the app's files,
+// verbatim from docs/gcp-live-checklist.md's "Check 89" section (P4.2a, merged
+// into main as PR #580 on 2026-10-19). The runbook quotes them instead of
+// paraphrasing them, because a reader who goes looking for the stop has to find
+// the sentence the check actually prints. The page cannot read that section
+// itself: P4.2a's text lands on main with #580, and a test that read the
+// checklist would be asserting a file this branch does not carry -- so the
+// quotes are held here, and the page is refused the shapes the guard does *not*
+// have (see TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError).
+var check89GuardStops = []string{
+	"Check 89 stopped: mobile/app.json carries no ios.bundleIdentifier or android.package (the store identity P4.4 adds), so there is nothing to submit a build under — a build made now could not reach any track",
+	"Check 89 stopped: there is no mobile/eas.json in this checkout, so there is no build or submit profile to read (P4.4 makes it; this check reads it, it does not create it) — this is the stop a checkout of today hits",
+}
+
+// TestDocsMobileEasRunbookQuotesCheck89sGuardStops: the page describes what the
+// guard does when the store identity is absent, and it has to describe the stop
+// the guard really makes. The guard reads `ios.bundleIdentifier` and
+// `android.package` with `.get()` and tests `if not bid or not pkg`, so their
+// absence is the stop it was written for -- printed on stderr from `sys.exit`
+// and acted on by `|| exit 1`, which the block's own comment says is there
+// precisely so the reason is not printed and read past.
+func TestDocsMobileEasRunbookQuotesCheck89sGuardStops(t *testing.T) {
+	doc := runbook(t)
+	for _, want := range check89GuardStops {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not quote Check 89's guard stop %q: the page describes the stop as the check makes it, in the check's own words", mobileEasRunbook, want)
+		}
+	}
+	// The file and the section the quotes come from, named where the quotes are:
+	// a verbatim quotation an owner cannot go and check is a paraphrase with
+	// punctuation.
+	block := sectionText(readDoc(t, mobileEasRunbook), "**Tension 1 —", "**Tension 2 —")
+	if block == "" {
+		t.Fatal("§14's Tension 1 was renamed: this test reads the text between \"**Tension 1 —\" and \"**Tension 2 —\", and it has to be repointed at it")
+	}
+	for _, want := range []string{"docs/gcp-live-checklist.md", `"Check 89"`} {
+		if !strings.Contains(block, want) {
+			t.Errorf("§14's Tension 1 does not name %s, the file and the section its verbatim quotation comes from", want)
+		}
+	}
+	// And §3's list of what the guard stops on has the store identity in it: the
+	// guard's file tests are not the whole of it.
+	guardList := blockAt(readDoc(t, mobileEasRunbook), "**Check 89 owns this step")
+	for _, want := range []string{"store identity", "`android.package`"} {
+		if !strings.Contains(guardList, want) {
+			t.Errorf("§3's account of the guard block does not name %q: the guard stops on the store identity too, and a reader who took the file tests for the whole of it would meet that stop as a surprise", want)
+		}
+	}
+}
+
+// TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError: the page said the
+// guard's python line "reads `d[\"ios\"][\"bundleIdentifier\"]`" and that the
+// check "dies with a traceback rather than one of its own stop messages". Both
+// are wrong about the same line: it indexes with `.get()` and stops with its own
+// message. A page that promised a traceback would send an owner looking for a
+// bug in P4.2a's guard where there is a stop, and the stop's message is the
+// thing to record.
+func TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError(t *testing.T) {
+	doc := runbook(t)
+	for _, banned := range []string{
+		"KeyError",
+		"traceback",
+		`d["ios"]["bundleIdentifier"]`,
+		`d["android"]["package"]`,
+		"dies with a traceback",
+	} {
+		if strings.Contains(doc, banned) {
+			t.Errorf("%s says %q: Check 89's guard reads the two identity fields with .get() and stops with its own message, so there is no crash to describe", mobileEasRunbook, banned)
+		}
+	}
+}
+
+// TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead: §8 said the
+// `distribution: store` check was "the first place Check 89's guard turns a
+// wrong value into a stop". The guard reads no value out of `mobile/eas.json` at
+// all -- it tests that the file exists -- and the register says why the stop is
+// the owner's: "`jq` is a read, so the guard cannot stop on a value only the
+// run's owner can judge". The read is step 1's, run by hand, and the stop is
+// taken there ("edit it and re-run").
+func TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead(t *testing.T) {
+	raw := readDoc(t, mobileEasRunbook)
+	section := sectionText(raw, "## 8. ", "## 9. ")
+	if section == "" {
+		t.Fatal("§8 was renamed: this test reads the section between \"## 8. \" and \"## 9. \", and it has to be repointed at it")
+	}
+	for _, banned := range []string{
+		"the first place Check 89's guard turns a wrong value into a stop",
+		"Check 89's guard turns a wrong value into a stop",
+	} {
+		if strings.Contains(raw, banned) {
+			t.Errorf("%s says %q: no line of the guard opens mobile/eas.json, so a wrong profile value is step 1's hand-run read and the owner's own stop, not the guard's", mobileEasRunbook, banned)
+		}
+	}
+	// §8 has to say it in the register's words, so the reader meets the rule and
+	// not this page's summary of it.
+	for _, want := range []string{
+		"`jq` is a read, so the guard cannot stop on a value only the run's owner can judge",
+		"guard does not read this value",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("§8 does not say %q: the profile reads are step 1's and the stop on them is the owner's, and §8 is where a reader deciding what to write in eas.json meets that", want)
+		}
+	}
+}
+
+// sectionText returns the page's text from the line beginning with from up to
+// the line beginning with to, with its whitespace collapsed -- the unit a claim
+// about a whole section is held to.
+func sectionText(doc, from, to string) string {
+	start := strings.Index(doc, from)
+	if start < 0 {
+		return ""
+	}
+	rest := doc[start:]
+	if end := strings.Index(rest, to); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.Join(strings.Fields(rest), " ")
 }
 
 // TestDocsMobileEasRunbookPlacesExpoTokenInTheEnvironmentSecret holds the three

@@ -24,9 +24,9 @@ otherwise take:**
   consoles.
 
 **The plan already says where this work sits, and this page does not move it.**
-P4.4's own line reads *"Files. None in this repository. Owner-run. Depends on
-P3.1, P4.2a. Verification. Check 89: a signed build reaches the store's internal
-track."* This document is the runbook for that verification; it is prose, and no
+P4.4's own line reads *"Files. None in this repository. **Owner-run.** **Depends
+on.** P3.1, P4.2a (check 89's text must be in the register before it is run).
+**Verification.** Check 89: a signed build reaches the store's internal track."* This document is the runbook for that verification; it is prose, and no
 repository file participates in the run. (One exception is recorded under
 [Recorded tensions, not resolved here](#14-recorded-tensions-not-resolved-here):
 `mobile/eas.json`, which Check 89's guard block attributes to P4.4 while the
@@ -39,7 +39,7 @@ plan's `Files` line says none.)
 | | |
 |---|---|
 | **It is** | the setup the owner performs **once** so that Check 89 can run at all: the Expo/EAS project, the Apple and Google prerequisites, the signing credentials and where they live, the two repository settings they need, and the rollback. |
-| **It is not** | the check. **This runbook does not restate Check 89. The register is its authority.** Check 89's steps, its guard block, its `FACT` lines, its pass and fail conditions and its restore step are written into [../gcp-live-checklist.md](../gcp-live-checklist.md) by **task P4.2a** (**PR #580**, whose branch is `fugaro/20261018-130217-49c7`); that section may not be on `main` yet when you read this page, and **the register's text, not this one, is what you follow** when the two describe the same thing. Where they differ, the register wins and this page has a defect to fix. |
+| **It is not** | the check. **This runbook does not restate Check 89. The register is its authority.** Check 89's steps, its guard block, its `FACT` lines, its pass and fail conditions and its restore step are written into [../gcp-live-checklist.md](../gcp-live-checklist.md) by **task P4.2a**, merged into `main` as **PR #580** on **2026-10-19** (that pull request's own branch was `fugaro/20261018-130217-49c7`), so the section is in the register you read today; **the register's text, not this one, is what you follow** when the two describe the same thing. Where they differ, the register wins and this page has a defect to fix. |
 | **It is not** | a workflow. **This runbook describes a workflow and writes none.** No file is created under `.github/workflows/` by this task or by any agent (Global Constraint 8), and §10 describes the shape a later staged file under `docs/pending-workflows/` would have rather than writing it. **No agent copies a workflow file into `.github/workflows/`**: that copy-in is the owner's step, per [the copy procedure](../pending-workflows/README.md). |
 | **It is not** | a claim that anything works. Until Check 89 runs, the app has no signed artifact and no store presence at all, the register's row 89 stays **NOT RUN**, and the plan's open item 5 stands: *"Checks 80–89 are owner-run and none has been run."* |
 
@@ -106,11 +106,14 @@ transcript of a console anybody in this repository has seen.
 **Check 89 owns this step and this runbook does not repeat it.** The register's
 guard block **is** the precondition: run it, from the checkout you intend to
 build from, and re-run it **before every step** of the check. It stops unless
-`eas` is on your `PATH`, unless `mobile/app.json` and `mobile/eas.json` are
-present, unless `HEAD` is exactly a tag (`git describe --tags --exact-match`),
-and unless the working tree is clean — because a store build records the commit
-it was made from, and a build from a dirty tree is not the artifact the release
-is.
+`eas` is on your `PATH`, unless it is inside a git checkout, unless
+`mobile/app.json` and `mobile/eas.json` are both present, unless `HEAD` is
+exactly a tag (`git describe --tags --exact-match`), unless the working tree is
+clean — because a store build records the commit it was made from, and a build
+from a dirty tree is not the artifact the release is — and unless `mobile/app.json`
+carries the **store identity**, `ios.bundleIdentifier` and `android.package`:
+that last one is a stop of the guard's own, taken by its python line, and it is
+what §14's Tension 1 is about.
 
 What this page adds is only the shape of the shell's prerequisites, so the guard
 can pass its own first checks:
@@ -121,8 +124,9 @@ can pass its own first checks:
   [mobile/README.md](../../mobile/README.md));
 - **the EAS CLI**, installed by you: `npm i -g eas-cli` (or `npx eas-cli@latest`
   if you prefer not to install it globally), then `eas login` **as yourself**.
-  `eas whoami` must print **your** Expo account — the guard's first line and
-  Check 89's step 1 both start there;
+  `eas whoami` must print **your** Expo account — the guard's own first line
+  (`command -v eas`, which stops when the CLI is not on your `PATH`) and Check
+  89's step 1 (`eas whoami`, which reads the account) both start there;
 - **a checkout at a tag**, fetched with `git fetch --tags`, with nothing
   uncommitted.
 
@@ -374,8 +378,13 @@ are the check's, and this page does not restate them; what this page settles is
   calls it **the `internal` profile** — and its **`distribution` must be
   `store`**.
   `distribution: "internal"` is an ad-hoc build with no store submission at all:
-  it would build successfully and make every later step meaningless. This is the
-  first place Check 89's guard turns a wrong value into a stop;
+  it would build successfully and make every later step meaningless. **Check 89's
+  guard does not read this value, and cannot stop on it**: the guard block tests
+  that the two files exist, that `HEAD` is the tag and that the tree is clean,
+  and no line of it opens `mobile/eas.json`. The read is **step 1's**, which you
+  run by hand (`jq '.build.internal.distribution' eas.json`), and the register
+  says exactly why the stop is yours: *"`jq` is a read, so the guard cannot stop
+  on a value only the run's owner can judge"*;
 - the submit profile's Android track must be **`internal`** — Check 89's step 1
   reads `submit.internal.android.track` and requires `internal`, and **never
   `production`, never anything beta-shaped**: C8's whole content is that one
@@ -663,21 +672,33 @@ It is one file, and today two things are asked of it:
   (D125's release path, check 89 is owner-run)"*.
 - **Check 89's guard block** (P4.2a, **PR #580**) reads **both fields out of that
   same file** — `expo.ios.bundleIdentifier` and `expo.android.package` — and
-  prints them as its ready line.
+  stops without them. Its own words, verbatim, from `docs/gcp-live-checklist.md`
+  section **"Check 89"**: `sys.exit("Check 89 stopped: mobile/app.json carries no
+  ios.bundleIdentifier or android.package (the store identity P4.4 adds), so
+  there is nothing to submit a build under — a build made now could not reach any
+  track")`, followed by a bare `|| exit 1`, whose comment in the same block reads
+  *"the store-identity stop has to be a real stop: sys.exit inside a command
+  substitution only sets a status, so the guard acts on it here -- otherwise it
+  would print the reason and read on"*. The guard reads the two fields with
+  `.get()` and tests `if not bid or not pkg`, so an absent field is **not** an
+  error it trips over: it is the stop it was written to make, and it takes it
+  with its own message.
 
 Both are defensible and they cannot both hold. **The stop you will actually see
 first today is not this tension's, and it is worth knowing which is which.** The
 guard's `[ -f mobile/app.json ]` test does **not** fire — P3.1 has merged and the
 file is on the tree — but the `[ -f mobile/eas.json ]` test immediately below it
 **does**, because `mobile/eas.json` does not exist yet (Tension 2), and the guard
-exits with its own message: *"there is no mobile/eas.json, so there is no build
-profile to read"*. **The `KeyError` is the state a reader meets only once §8's
-profile exists and is committed.** With `mobile/eas.json` present and
-`mobile/app.json` still carrying neither field, the guard gets past its file
-tests, and then its python line — the one that reads
-`d["ios"]["bundleIdentifier"]` and `d["android"]["package"]` to build the ready
-line — raises and the check dies with a traceback rather than one of its own stop
-messages. So there are two distinct states, and they are the same finding
+exits with its own message, which names itself as today's stop:
+*"Check 89 stopped: there is no mobile/eas.json in this checkout, so there is no
+build or submit profile to read (P4.4 makes it; this check reads it, it does not
+create it) — this is the stop a checkout of today hits"*. **The store-identity
+stop is the state a reader meets only once §8's profile exists and is
+committed**, and it is the same kind of stop, not a crash: with `mobile/eas.json`
+present and `mobile/app.json` still carrying neither field, the guard gets past
+its file tests, reaches its python line, and exits there with the sentence quoted
+above — one of its own stop messages, printed on stderr, with no crash and no
+partial run. So there are two distinct states, and they are the same finding
 arriving at two different moments: there is no app identity to build from yet.
 The two ways out:
 
@@ -749,7 +770,7 @@ what it says, and this page paraphrases none of them as certain):
 | File | What it settles |
 |---|---|
 | [implementation-plan.md](implementation-plan.md) | Task **P4.4**, its dependencies, its verification and its reviewer tier; **Global Constraint 9**; checks 80–89 and open item 5; **C2**, **C6**, **C8** |
-| [../gcp-live-checklist.md](../gcp-live-checklist.md) | **Check 89** — the steps, the guard block, the `FACT` lines, the pass and fail conditions and the restore step (**P4.2a**, PR **#580**) |
+| [../gcp-live-checklist.md](../gcp-live-checklist.md) | **Check 89** — the steps, the guard block, the `FACT` lines, the pass and fail conditions and the restore step (**P4.2a**, merged as PR **#580** on 2026-10-19) |
 | [reconciliation.md](reconciliation.md) | **D111**, **D120**, **D125** and the findings behind them (F24, U6) |
 | [../../mobile/app.json](../../mobile/app.json) and [../../mobile/package.json](../../mobile/package.json) | the app's Expo config and its `engines` (**P3.1**) |
 | [../../mobile/README.md](../../mobile/README.md) | what the app is, where its two secrets live, and what is not verified |
@@ -778,7 +799,7 @@ points at:
 *Status of this document: written 2026-10-18, **never run**. It is the runbook
 for Task P4.4 of [implementation-plan.md](implementation-plan.md); the check it
 serves is **Check 89** in [../gcp-live-checklist.md](../gcp-live-checklist.md),
-written by P4.2a (PR **#580**) and **NOT RUN**. No agent performs any step of it.
+written by P4.2a and merged as PR **#580** on 2026-10-19, and **NOT RUN**. No agent performs any step of it.
 Related: [README.md](README.md) · [reconciliation.md](reconciliation.md) ·
 [../../mobile/README.md](../../mobile/README.md) ·
 [../pending-workflows/README.md](../pending-workflows/README.md).*
