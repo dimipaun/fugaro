@@ -29,24 +29,37 @@ func recentRunID(t *testing.T, offset time.Duration, suffix string) string {
 
 // TestLsWindowFollowsTheClock proves ls's --since window is measured from
 // lsNow, the seam recentRunID mints against, and not from a wall clock the
-// tests cannot move: it lists a run minted 400 days in the past and gets it
-// back when the clock is moved with it, and not when it is not. A test that
+// tests cannot move: it mints a run and lists it with the clock 30 and 400
+// days ahead, and 400 days behind, and gets it back every time. The last
+// case is the discriminating one: a run 400 days old is dropped by the real
+// clock, so only the injected clock could have listed it. A test that
 // hard-codes its date cannot make this claim, which is why the guard above
 // bans it.
 func TestLsWindowFollowsTheClock(t *testing.T) {
+	defer func(old func() time.Time) { lsNow = old }(lsNow)
+	real := time.Now().UTC()
+	listAt := func(t *testing.T, at time.Time) {
+		t.Helper()
+		f := newCloudFixture(t)
+		f.run.Project, f.run.Region = "proj-1234", "us-east5"
+		lsNow = func() time.Time { return at }
+		id := recentRunID(t, time.Minute, "feed")
+		seedRun(t, f, id, "", "someone@example.com", false)
+		if got, errOut := lsJSON(t); len(got.Runs) != 1 || got.Runs[0].RunID != id {
+			t.Fatalf("ls at %s = %+v, want %s listed (%q)", at.Format(time.RFC3339), got.Runs, id, errOut)
+		}
+	}
+	t.Run("30 days ahead", func(t *testing.T) { listAt(t, real.Add(30*24*time.Hour)) })
+	t.Run("400 days ahead", func(t *testing.T) { listAt(t, real.Add(400*24*time.Hour)) })
+	t.Run("400 days behind", func(t *testing.T) { listAt(t, real.Add(-400*24*time.Hour)) })
+
+	// The same 400-day-old run is dropped once the clock is real: what
+	// listed it above was the injected clock, not luck.
 	f := newCloudFixture(t)
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
-	defer func(old func() time.Time) { lsNow = old }(lsNow)
-	lsNow = func() time.Time { return time.Now().UTC().Add(-400 * 24 * time.Hour) }
+	lsNow = func() time.Time { return real.Add(-400 * 24 * time.Hour) }
 	id := recentRunID(t, time.Minute, "feed")
 	seedRun(t, f, id, "", "someone@example.com", false)
-
-	got, errOut := lsJSON(t)
-	if len(got.Runs) != 1 || got.Runs[0].RunID != id {
-		t.Fatalf("ls at the injected clock = %+v, want %s listed (%q)", got.Runs, id, errOut)
-	}
-	// The same run is 400 days old to the real clock: the default window
-	// drops it, so what listed it above was the injected clock, not luck.
 	lsNow = time.Now
 	if got, _ := lsJSON(t); len(got.Runs) != 0 {
 		t.Fatalf("ls at the real clock = %+v, want the 400-day-old run dropped", got.Runs)
