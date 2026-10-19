@@ -2277,6 +2277,22 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 			t.Errorf("%s: §4.1 does not say %q; %s", path, want.has, want.because)
 		}
 	}
+	// §4.2's three figures are viewport widths written in `em` against the root
+	// size, and the rail is 216 px of each. A document that calls them the
+	// content column's is a document whose layers are read as firing at the
+	// column width they no longer describe.
+	if strings.Contains(structure, "breakpoints are the *content column's*") {
+		t.Errorf("%s: §4.1 calls §4.2's breakpoints the content column's; they are the window's, and with a 216 px rail each query fires with the column that much narrower", path)
+	}
+	narrow := mdFlat(mdBetween(t, path, doc, "### 4.2 ", "### 4.3 "))
+	for _, want := range []struct{ has, because string }{
+		{"216 px", "§4.2 is where the rail's width is subtracted from the widths its table names: a section that never mentions it leaves the three figures reading as content widths"},
+		{"narrower than the number it names", "and where the subtraction is stated, so the implementer writes the media queries knowing which column they describe"},
+	} {
+		if !strings.Contains(narrow, want.has) {
+			t.Errorf("%s: §4.2 does not say %q; %s", path, want.has, want.because)
+		}
+	}
 
 	// `--ok` was bound to one reading before the rail, and the rail's running row
 	// is a second. The tone's role cell and §3.5's rule are the two places the
