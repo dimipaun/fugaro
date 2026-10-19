@@ -1136,12 +1136,23 @@ func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
 			t.Errorf("%s: %s exists, so Phase 3 is under shared/ after all and the correction is wrong", path, dir)
 		}
 	}
-	// And the three Phase 3 tasks the document says are not merged have no
+	// And the Phase 3 tasks the document says are not merged have no
 	// directory: the claim is about this tree, so it is checked against it.
-	for _, dir := range []string{"mobile/src/jobs", "mobile/src/audio", "mobile/src/voice"} {
+	// P3.3 left this list when its work landed on the branch that carries it --
+	// the document says so in place, and says it is still unmerged -- so the
+	// two that remain are the two the document still calls absent.
+	for _, dir := range []string{"mobile/src/audio", "mobile/src/voice"} {
 		if _, err := os.Stat("../../" + dir); err == nil {
 			t.Errorf("%s: %s exists, so that Phase 3 task is merged and the document's list of what is not is stale", path, dir)
 		}
+	}
+	// ... and the one that left the list is here, which is what the document
+	// now says about it: written, in this tree, and not merged.
+	if _, err := os.Stat("../../mobile/src/jobs"); err != nil {
+		t.Errorf("%s: mobile/src/jobs does not exist, so P3.3 is not the state the document records: %v", path, err)
+	}
+	if !strings.Contains(recon, "**written and not merged**") {
+		t.Errorf("%s lacks \"**written and not merged**\"; that is how P3.3 is recorded", path)
 	}
 }
 
