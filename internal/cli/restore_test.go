@@ -584,6 +584,35 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 	})
 
+	// The stranded base images are judged on the file's config, not on the
+	// selection --region changed. With no registry_host recorded, the host is
+	// derived from the region (<region>-docker.pkg.dev/<gcp_project>), and the
+	// old installation's images are in the file's region: judging them on the
+	// selection's region would derive another host, find nothing under it, and
+	// carry the lost project's references into the moved config.
+	//
+	// Mutation (verified, run and restored): pass lc instead of onDisk to
+	// restoreBaseImages in restoreConfig — the old registry's entry is kept and
+	// nothing is named as stranded, and this subtest fails.
+	t.Run("the base images are judged in the file's region when --region is given", func(t *testing.T) {
+		onDisk := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+			BaseImages: map[string]string{
+				"base": "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/fugaro-base:0.7.5",
+			}}
+		selected := *onDisk
+		selected.Region = "us-central1" // what --region leaves behind
+		next, left, err := restoreConfig(&selected, onDisk, restoreNewProj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(next.BaseImages) != 0 {
+			t.Errorf("base_images = %v, want none: the entry is under the lost project's registry in the file's region (us-east5), whatever --region said", next.BaseImages)
+		}
+		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "kinds: base") {
+			t.Errorf("the stranded base kind is not named: %v", left)
+		}
+	})
+
 	// The budget backend is the one thing that cannot move on its own: its
 	// RTDB, its Firestore database, its restricted key and its signer are the
 	// old project's, and where they live next is the operator's decision

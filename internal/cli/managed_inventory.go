@@ -78,7 +78,7 @@ func managedInventory(ctx context.Context, lc *localcfg.Config, c *infra.Clients
 		return managedmode.CheckedInventory(managedmode.Unread(lc.Name, lc.GCPProject, managedmode.CauseNoReader,
 			"no whole-project read could be built: "+safetext.Field(err.Error())))
 	}
-	accounted, err := managedAccounted(ctx, c, lc.GCPProject, installationStateBucket(lc))
+	accounted, err := managedAccounted(ctx, c, lc.GCPProject)
 	if err != nil {
 		return managedmode.CheckedInventory(managedmode.Unread(lc.Name, lc.GCPProject, managedmode.CauseStateUnread, safetext.Field(err.Error())))
 	}
@@ -88,48 +88,25 @@ func managedInventory(ctx context.Context, lc *localcfg.Config, c *infra.Clients
 		ProjectNumber: int64(number),
 		Assets:        assets,
 		Accounted:     accounted,
-		StateBucket:   installationStateBucket(lc),
 	}
 	return managedmode.CheckedInventory(in.Check(ctx))
 }
 
-// installationStateBucket is the installation's own state bucket as this
-// project names it: terraform.state_bucket when the config carries one — a
-// project created with `fugaro init --state-bucket` writes the name back into
-// its config — and fugaro-tfstate-<gcp_project> when it does not.
-//
-// It is the same name the creating path resolves, in the same order
-// (firstOf(o.StateBucket, lc.Terraform.StateBucket, "fugaro-tfstate-"+lc.GCPProject),
-// internal/infra/tfvars.go's InstallationSpec.StateBucket), so the bucket the
-// inventory reads is the bucket the installation's state is in. Reading the
-// default name alone would fail to list the real one — CauseStateUnread on
-// every managed apply, and the real bucket reading as foreign beside it.
-//
-// D77's managed state bucket is NOT configurable and is not resolved here:
-// only the deployer ever creates or grants it (internal/managed's
-// EnsureManagedStateBucket), so its name is the function of the project id
-// managed.ManagedStateBucketName alone.
-func installationStateBucket(lc *localcfg.Config) string {
-	if lc.Terraform.StateBucket != "" {
-		return lc.Terraform.StateBucket
-	}
-	return managedmode.InstallationsStateBucket(lc.GCPProject)
-}
-
 // managedAccounted is what the installation's own state accounts for, read out
 // of the two state buckets this project has: the installation's own
-// (stateBucket — fugaro-tfstate-<gcp_project> unless the project's config names
-// another: the installation root, the Firebase root, every repository's root
-// and the compute root) and D77's dedicated managed bucket
-// (fugaro-managed-tfstate-<gcp_project>, prefix fugaro/managed: the
+// (fugaro-tfstate-<gcp_project>: the installation root, the Firebase root,
+// every repository's root and the compute root) and D77's dedicated managed
+// bucket (fugaro-managed-tfstate-<gcp_project>, prefix fugaro/managed: the
 // agent-authored root the apply is about).
 //
-// The installation's bucket is the project's own name for it
-// (installationStateBucket, the same resolution the creating path makes);
-// D77's is a function of the GCP project and is never taken from a flag or
-// from the project's config (managed.ManagedStateBucketName): only the
-// deployer creates it and grants on it, so a caller could not name a different
-// one and be believed.
+// Both names are functions of the GCP project and are never taken from a flag
+// or from the project's config (managed.ManagedStateBucketName,
+// managed.InstallationsStateBucket): a bucket a caller could name is a bucket
+// this command would believe instead of the project's own. A project whose
+// config names another installation state bucket (terraform.state_bucket) is
+// not one a managed creation or `fugaro managed flag` admits — both refuse a
+// state bucket that is not the derived name — so the derived name is the
+// installation's state bucket for every managed project.
 //
 // What LEAVES this list is written down where the table of Terraform types is
 // (internal/managed/stateaccounts.go): the state holds no entry for the
@@ -152,9 +129,9 @@ func installationStateBucket(lc *localcfg.Config) string {
 // of accounts, and the caller turns it into the fallback: reading "the state
 // accounts for nothing" would make every resource of the project foreign and
 // blame the project for a read this program could not make.
-func managedAccounted(ctx context.Context, c *infra.Clients, gcpProject, stateBucket string) ([]managedmode.StateResource, error) {
+func managedAccounted(ctx context.Context, c *infra.Clients, gcpProject string) ([]managedmode.StateResource, error) {
 	buckets := []struct{ bucket, prefix string }{
-		{stateBucket, ""},
+		{managedmode.InstallationsStateBucket(gcpProject), ""},
 		{managedmode.ManagedStateBucketName(gcpProject), infra.StatePrefixManaged},
 	}
 	var out []managedmode.StateResource

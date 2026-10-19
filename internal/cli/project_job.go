@@ -452,6 +452,12 @@ func checkProjectJobAccountCovers(p *projectpolicy.Policy, profile, provider, ac
 // exists to refuse would go through. Even the plain-ref fallback is a fact
 // about the repository rather than about the working tree.
 //
+// Only the auth is judged on the ref: launchProjectJobFor still takes the
+// workflow, the checkout mode and the profile from the working tree's
+// resolution (co), and a difference there fails closed in the run (the
+// runner's job-profile and job-binding checks refuse it, or the run lacks the
+// credential) rather than launching on another account.
+//
 // Nothing is fetched to make the read: a fetch is a network write into a
 // repository this command does not own. A checkout that does not hold the ref
 // at all is therefore refused with the message naming it (an operator can

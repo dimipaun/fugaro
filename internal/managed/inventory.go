@@ -173,16 +173,6 @@ type Inventory struct {
 	// then foreign and the run keeps its confirmations. The safe direction,
 	// and not an accident.
 	Accounted []StateResource
-	// StateBucket is the installation's own state bucket as the project's
-	// config names it (fugaro init --state-bucket writes a non-default name
-	// back into the config), or "" for the default
-	// InstallationsStateBucket(GCPProject). It is what installationCreated
-	// ignores by name, and the caller that reads the accounted side has to
-	// resolve it from the same place: a bucket a caller could name is a bucket
-	// the ignored side would believe instead of the project's own, and the
-	// installation's own state bucket is not a caller's choice but the
-	// project's — see internal/cli's installationStateBucket.
-	StateBucket string
 }
 
 // StateResource is one resource the installation's state accounts for, in the
@@ -393,7 +383,7 @@ func (in Inventory) installationCreated(a Asset) bool {
 	switch a.Type {
 	case "storage.googleapis.com/Bucket":
 		name := lastSegment(a.Name)
-		return name == in.installationsStateBucket() || name == ManagedStateBucketName(in.GCPProject)
+		return name == InstallationsStateBucket(in.GCPProject) || name == ManagedStateBucketName(in.GCPProject)
 	case "firebase.googleapis.com/FirebaseProject":
 		return assetPath(a.Name) == "projects/"+in.GCPProject
 	case "firestore.googleapis.com/Database":
@@ -407,16 +397,6 @@ func (in Inventory) installationCreated(a Asset) bool {
 		return key == inframanaged.MarkerObject || key == inframanaged.AllowDeleteObject
 	}
 	return false
-}
-
-// installationsStateBucket is the installation's own state bucket by the name
-// this project gives it: StateBucket when the caller has it from the config,
-// and the default when it does not.
-func (in Inventory) installationsStateBucket() string {
-	if in.StateBucket != "" {
-		return in.StateBucket
-	}
-	return InstallationsStateBucket(in.GCPProject)
 }
 
 // gcpCreated is the second half of what a clean project is, and it is the
