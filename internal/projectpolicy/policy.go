@@ -567,22 +567,29 @@ func validCredentials(c *Credentials, b Budget) error {
 	if _, err := validCredentialsDuration("projectpolicy: credentials.wait_threshold", c.WaitThreshold); err != nil {
 		return err
 	}
-	var initial, cap time.Duration
 	if c.Backoff != nil {
-		var err error
-		if initial, err = validCredentialsDuration("projectpolicy: credentials.backoff.initial", c.Backoff.Initial); err != nil {
+		// Both members are held to their spelling and their shape first, so the
+		// comparison below reads values this function has already accepted.
+		if _, err := validCredentialsDuration("projectpolicy: credentials.backoff.initial", c.Backoff.Initial); err != nil {
 			return err
 		}
-		if cap, err = validCredentialsDuration("projectpolicy: credentials.backoff.cap", c.Backoff.Cap); err != nil {
+		if _, err := validCredentialsDuration("projectpolicy: credentials.backoff.cap", c.Backoff.Cap); err != nil {
 			return err
 		}
 	}
 	// A cap below the wait it caps is a wait that never doubles to it, and the
-	// two are only comparable when both were written: an absent member is its
-	// default, and the defaults (15m, 5h) are in order.
-	if initial > 0 && cap > 0 && cap < initial {
-		return fmt.Errorf("projectpolicy: credentials.backoff.cap: %q is shorter than credentials.backoff.initial (%q): a cap below the first wait is a probe schedule that never doubles, so a credential with no reset time would be retried at the same rate for ever. Write a cap at or above the initial wait",
-			c.Backoff.Cap, c.Backoff.Initial)
+	// pair the rule is about is the *effective* pair: an absent member is its
+	// default (D153 — 15m, capped at 5h), which is what the cascade would use.
+	// Comparing only what was written left the state the rule exists to refuse
+	// reachable by writing one member — {"backoff": {"cap": "1m"}} is a 15m
+	// initial with a 1m cap, and {"backoff": {"initial": "10h"}} a 10h initial
+	// with a 5h cap — so a node that writes one of the two is held to the
+	// other's default. The members are compared through the same accessors a
+	// consumer reads, so this refusal and a reader cannot disagree about which
+	// pair is meant.
+	if initial, cap := c.BackoffInitialDuration(), c.BackoffCapDuration(); cap < initial {
+		return fmt.Errorf("projectpolicy: credentials.backoff.cap: %s is below credentials.backoff.initial (%s): a cap below the first wait is a probe schedule that never doubles, so a credential with no reset time would be retried at the same rate for ever. The two are compared as they would be used, and an absent member is its default (%s and %s), so a node that writes only one of them is held to the other's default: write a cap at or above the initial wait, or remove the member you wrote",
+			cap, initial, DefaultBackoffInitial, DefaultBackoffCap)
 	}
 	if c.ConcurrencyPerToken != nil && *c.ConcurrencyPerToken < 0 {
 		return fmt.Errorf("projectpolicy: credentials.concurrency_per_token: %d is not a number of runs: write the number of runs that may hold one shared credential at a time, at least 1, or 0 for no cap at all (D142)",
@@ -877,8 +884,16 @@ func (p *Policy) CloneURL(canonical string) string { return p.CloneURLs[canonica
 // per repository that some account covers, so the node's presence is the
 // admission, and "no node" and "an empty list" are not two states a reader has
 // to tell apart. (An empty list is refused anyway — see DecodeRepo.)
+//
+// Credentials is a pointer for the same reason: `omitempty` is a no-op on a
+// struct, so a value-typed field would marshal a repository with nothing
+// admitted as {"credentials":{"accounts":null}} — a document DecodeRepo refuses
+// (a written block must name at least one account), which would make the type
+// this package writes back the one document this package will not read. A nil
+// pointer writes no member at all, which is the state "this repository is
+// admitted to nothing".
 type RepoPolicy struct {
-	Credentials RepoCredentials `json:"credentials,omitempty"`
+	Credentials *RepoCredentials `json:"credentials,omitempty"`
 }
 
 // RepoCredentials is the one block this release writes into a repository's
@@ -947,7 +962,10 @@ func DecodeRepo(raw []byte) (*RepoPolicy, bool, error) {
 		// no account. It decodes rather than being refused — the node is
 		// written per repository, and a repository with no account is a legal
 		// state (its runs are simply never given tier A) — and it admits
-		// nothing.
+		// nothing. The decoded policy carries no block for the same reason: a
+		// null and an absent member are one policy, and the shape a caller
+		// re-marshals must be the shape this function reads.
+		rp.Credentials = nil
 		return &rp, true, nil
 	}
 	bnames, err := objectMemberNames(block)
@@ -957,7 +975,7 @@ func DecodeRepo(raw []byte) (*RepoPolicy, bool, error) {
 	if err := checkMemberNames("the repository's policy node's credentials", bnames, repoCredentialsMembers); err != nil {
 		return nil, true, fmt.Errorf("projectpolicy: %w", err)
 	}
-	if len(rp.Credentials.Accounts) == 0 {
+	if rp.Credentials == nil || len(rp.Credentials.Accounts) == 0 {
 		return nil, true, errors.New("projectpolicy: the repository's policy node's credentials.accounts: a written credentials block must name at least one account: an absent list, a null one and an empty one would all read as \"this repository may use no account's token\", which is the state a hand-written node uses to take tier A away from a repository by accident — remove the whole credentials block to say that nobody is admitted, or name the accounts")
 	}
 	seen := make(map[string]bool, len(rp.Credentials.Accounts))
@@ -978,7 +996,7 @@ func DecodeRepo(raw []byte) (*RepoPolicy, bool, error) {
 // the decoded node is not a value a caller may edit into a policy that says
 // something else.
 func (r *RepoPolicy) AdmittedAccounts() []string {
-	if r == nil || len(r.Credentials.Accounts) == 0 {
+	if r == nil || r.Credentials == nil || len(r.Credentials.Accounts) == 0 {
 		return nil
 	}
 	out := make([]string, len(r.Credentials.Accounts))

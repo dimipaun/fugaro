@@ -1,6 +1,7 @@
 package projectpolicy
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +212,74 @@ func TestPolicyCredentialsUnknownKeyRefused(t *testing.T) {
 	}
 }
 
+// TestPolicyBackoffCapAboveItsEffectiveInitial: the cap and the initial wait
+// are refused when the cap is below the wait, and the pair that decides that is
+// the *effective* pair — an absent member is its default (D153: 15m, capped at
+// 5h), so the rule reads the two values the cascade would actually use. Reading
+// only the written pair let a node through with an effective cap below its
+// effective initial, which is the state the rule exists to refuse: two
+// single-member spellings of it,
+//
+//	{"backoff": {"cap": "1m"}}      → 15m initial, 1m cap
+//	{"backoff": {"initial": "10h"}} → 10h initial, 5h cap
+//
+// both of which the earlier check accepted because "no value written" read as
+// "nothing to compare" rather than as the default it is. A cap below the first
+// wait is a probe schedule that never doubles, so a credential with no reset
+// time is retried at the same rate for ever — no backoff at all, on the settings
+// that decide how hard the cascade leans on somebody's subscription quota.
+//
+// The boundary is asserted too, on the effective values: a cap equal to the
+// initial (and an initial equal to the cap) is in order, so the rule is a
+// comparison and not a round of "the two must differ".
+func TestPolicyBackoffCapAboveItsEffectiveInitial(t *testing.T) {
+	for _, tc := range []struct{ name, node string }{
+		{"a cap written below the default initial", `{"backoff": {"cap": "1m"}}`},
+		{"an initial written above the default cap", `{"backoff": {"initial": "10h"}}`},
+		{"a cap written below a written initial", `{"backoff": {"initial": "2h", "cap": "1m"}}`},
+		{"an initial written above a written cap", `{"backoff": {"initial": "6h", "cap": "5h"}}`},
+		{"a cap written a second below the default initial", `{"backoff": {"cap": "14m59s"}}`},
+	} {
+		p, found, err := Decode([]byte(`{"version": 3, "credentials": ` + tc.node + `}`))
+		if err == nil {
+			t.Errorf("%s: accepted (%v), want refused: the *effective* pair is what the cascade would use", tc.name, p)
+			continue
+		}
+		if !found || p != nil {
+			t.Errorf("%s: Decode = (%v, %v, %v), want (nil, true, err)", tc.name, p, found, err)
+		}
+		// The refusal names the key to fix and both effective values, so the
+		// operator who wrote one member is told what the other one is.
+		for _, want := range []string{"credentials.backoff.cap", "cap", "initial"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal is %q, want it to name %s", tc.name, err.Error(), want)
+			}
+		}
+	}
+	// The states that are in order, including the two boundaries: the comparison
+	// is cap < initial, on the effective values.
+	for _, tc := range []struct{ name, node string }{
+		{"no backoff block at all", `{"wait_threshold": "1m"}`},
+		{"an empty backoff block", `{"backoff": {}}`},
+		{"a cap equal to the default initial", `{"backoff": {"cap": "15m"}}`},
+		{"an initial equal to the default cap", `{"backoff": {"initial": "5h"}}`},
+		{"a cap above the default initial", `{"backoff": {"cap": "30m"}}`},
+		{"an initial below the default cap", `{"backoff": {"initial": "2h"}}`},
+		{"a written pair in order", `{"backoff": {"initial": "1m", "cap": "1h"}}`},
+		{"a written pair equal", `{"backoff": {"initial": "2h", "cap": "2h"}}`},
+	} {
+		if p, found, err := Decode([]byte(`{"version": 3, "credentials": ` + tc.node + `}`)); err != nil || !found || p == nil {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a policy", tc.name, p, found, err)
+		}
+	}
+	// And the effective values are the ones the accessors answer, so this test
+	// and a reader of the block cannot disagree about which pair is meant.
+	p, _, err := Decode([]byte(`{"version": 3, "credentials": {"backoff": {"initial": "10h"}}}`))
+	if err == nil {
+		t.Fatalf("a node the effective comparison refuses was accepted: initial %s, cap %s", p.Credentials.BackoffInitialDuration(), p.Credentials.BackoffCapDuration())
+	}
+}
+
 // TestPolicyCredentialsCarryNoVersionBump: the plan's version-skew section,
 // asserted rather than assumed. The member is additive and is read by a
 // *tolerant* reader, so `Version` does not move: an older runner decodes a node
@@ -255,6 +324,68 @@ func TestPolicyCredentialsCarryNoVersionBump(t *testing.T) {
 	}
 	if p.Budget.Mode != "observe" {
 		t.Errorf("Budget.Mode = %q, want observe: the rest of the policy stays in force beside an unknown key", p.Budget.Mode)
+	}
+}
+
+// TestRepoPolicyWithNoAdmissionsWritesNoBlock: RepoPolicy is the *wire* type of
+// a repository's node — the shape a reader of the node decodes and the shape
+// the publisher writes back — so the two have to be the same shape, and this
+// test is the pair.
+//
+// A repository this policy admits to nothing must marshal with no credentials
+// member at all. With a value-typed field the `omitempty` is a no-op (it does
+// nothing for a struct) and the document is
+// {"credentials":{"accounts":null}} — which DecodeRepo refuses, because a
+// written block must name at least one account. The type this package writes
+// back would then be the one document this package will not read, and the
+// refusal message would send the operator to remove a block the publisher wrote
+// itself.
+//
+// Mutation (verified, run and restored): make Credentials a value again
+// (RepoCredentials) — the first assertion fails with the null-accounts document
+// above, and the round-trip below it fails on DecodeRepo's refusal.
+func TestRepoPolicyWithNoAdmissionsWritesNoBlock(t *testing.T) {
+	b, err := json.Marshal(RepoPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(b), `{}`; got != want {
+		t.Errorf("a repository policy with nothing admitted marshals to %s, want %s: a repository with no admissions writes no credentials member, because a written block has to name an account", got, want)
+	}
+	// And what it writes, it reads: the round trip is what makes the publisher
+	// and the reader one shape rather than two.
+	rp, found, err := DecodeRepo(b)
+	if err != nil || !found || rp == nil {
+		t.Fatalf("DecodeRepo(%s) = (%v, %v, %v), want a node", b, rp, found, err)
+	}
+	if got := rp.AdmittedAccounts(); len(got) != 0 {
+		t.Errorf("the round trip admits %v, want nothing", got)
+	}
+	// A null block is the same policy as an absent one (Decode's rule for the
+	// shared node too), and it round-trips to no block as well: a publisher
+	// handed a node with a written null must not keep the null.
+	rp, found, err = DecodeRepo([]byte(`{"credentials": null}`))
+	if err != nil || !found || rp == nil {
+		t.Fatalf("a null block = (%v, %v, %v), want a node", rp, found, err)
+	}
+	if got := rp.AdmittedAccounts(); len(got) != 0 {
+		t.Errorf("a null block admits %v, want nothing", got)
+	}
+	if b, err := json.Marshal(rp); err != nil {
+		t.Fatal(err)
+	} else if got := string(b); got != `{}` {
+		t.Errorf("a null block re-marshals to %s, want {}", got)
+	}
+	// The block the publisher does write is the block the reader reads.
+	b, err = json.Marshal(RepoPolicy{Credentials: &RepoCredentials{Accounts: []string{"ops", "spare"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(b), `{"credentials":{"accounts":["ops","spare"]}}`; got != want {
+		t.Errorf("a repository policy with two admissions marshals to %s, want %s", got, want)
+	}
+	if rp, found, err := DecodeRepo(b); err != nil || !found || len(rp.AdmittedAccounts()) != 2 {
+		t.Errorf("the publisher's own document does not decode = (%v, %v, %v)", rp, found, err)
 	}
 }
 
