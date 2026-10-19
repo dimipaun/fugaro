@@ -1301,7 +1301,8 @@ cover" section is **gone**, so a citation of it is a citation of nothing, and `/
 no longer where the program's statement is sent. `website/test/privacy.mjs` holds the page's
 two parts, their order and their sentences to the repository — including the phone app's two
 credentials and their storage, and the crash and usage reporting the app will carry with its
-opt-in switch (D193, the same owner's ruling) — and `website/test/consent.mjs` refuses a page
+opt-in switch (the same owner's ruling of 2026-10-19) — and `website/test/consent.mjs` refuses a
+page
 whose two parts are not siblings, which is what keeps the two scopes readable.
 
 **What that changes here, and what it does not.** A push disclosure now has a stated home on
@@ -1337,7 +1338,7 @@ what the app sends, and `SECURITY.md` is where this installation's reach is set 
   stated today, so a push subsection would sit there rather than in "The website", which is
   about what the site does with a visitor's browser. It is a *place*, not a promise: no push
   sentence is on the page now, and `website/test/privacy.mjs` would hold one to this design
-  the way it holds the reporting sentences to D193's.
+  the way it holds the reporting sentences to that ruling's.
 
 **What such a statement would have to say**, in the design's own words: the phone registers a
 push token with Google's Firebase Cloud Messaging (and, on iOS, Apple's APNs by relay);

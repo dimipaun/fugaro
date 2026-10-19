@@ -4622,8 +4622,9 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    a document of this repository rather than a page of the site. **The 250 is no longer the whole
    of the page ceiling** (the owner's request of 2026-10-19): the privacy statement is the
    privacy policy the App Store and Play listings link, so it is not held to the site's pitch
-   ceiling — the README's number for it is that page's own count plus 25 % (673 and 842 at this
-   commit), derived by `budget.mjs`'s `wordsCeilingFailures`, and the same function refuses any
+   ceiling — the README's number for it is that page's own count plus 25 %, derived by
+   `budget.mjs`'s `wordsCeilingFailures` (read the two figures out of the README itself rather
+   than from this section: they move with the page), and the same function refuses any
    **other** page over 250, which is the half of the rule that keeps the raise from being the
    site's. Read the numbers out of the README the gate reads (the block above) rather than from
    this section, and count the words the way the gate counts them: every word a reader sees inside `main`, command blocks and code spans
