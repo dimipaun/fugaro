@@ -392,6 +392,24 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 			// replaced.
 			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)",
 		},
+		// The label is missing AND the object read fails: the label alone
+		// decides this project (read.go's last return), and the read's error
+		// is dropped rather than returned — a caller failing a command for a
+		// project the label has already refused would be reporting the wrong
+		// thing. So this row's verdict is the one above, and `fails` is
+		// false: the API did not answer and the answer is still the
+		// label's.
+		"no label, and the object read fails too": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f := newStorage(t)
+				f.AddBucket(testBucket, testProjectNumber, testManaged)
+				f.Put(testBucket, MarkerObject, []byte(markerJSON))
+				f.RefusePath(MarkerObject, http.StatusInternalServerError, "INTERNAL", "", "backend error")
+				c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
+				return s, c
+			},
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)",
+		},
 		"a project whose fugaro_managed label says something else": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f := newStorage(t)
@@ -471,8 +489,9 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		// package prints, and it is the one place a control character really
 		// arrives (a 5xx body, or a proxy's): this row's message carries a
 		// newline and an escape sequence, so the assertion below is about
-		// safetext.OneLine rather than about the fixtures holding no control
-		// character — deleting that boundary fails here and nowhere else.
+		// safetext.Field (read.go's one boundary for every return) rather
+		// than about the fixtures holding no control character — deleting
+		// that boundary fails here and nowhere else.
 		"the object read fails with a body that is not one line": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
