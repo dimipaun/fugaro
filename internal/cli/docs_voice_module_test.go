@@ -929,6 +929,31 @@ var voiceModuleQuotations = []voiceModuleQuotation{
 		"Fugaro, cancel that",
 		"shared/command/README.md",
 	},
+	// #29: the credential tiers and the cascade are the credentials spec's
+	// words. The document had credited the "only identity" sentence to
+	// D130/D131, which do not carry it and answer a different question.
+	{
+		"A, then B, then C",
+		"docs/credentials-service/spec.md",
+	},
+	{
+		"the only Fugaro runtime identity with access to model credentials",
+		"docs/credentials-service/reconciliation.md",
+	},
+	{
+		"the spec's wording overclaims",
+		"docs/credentials-service/reconciliation.md",
+	},
+	// #29: D130's own answer, which the document read backwards -- it
+	// supersedes Path B's mechanism rather than keeping it.
+	{
+		"Path B's mechanism and the held plan",
+		"docs/credentials-service/reconciliation.md",
+	},
+	{
+		"Paths A and C as tiers B and C",
+		"docs/credentials-service/reconciliation.md",
+	},
 }
 
 // voiceModuleQuoteText folds a quotation and its source into one comparable
@@ -947,8 +972,9 @@ func voiceModuleQuoteText(s string) string {
 // A review of an earlier revision found two quotations whose words the cited
 // source does not contain -- the failure class is silent, because a quotation
 // mark reads as evidence -- so the pairs are pinned, the wrong versions are
-// banned, and the two citations #29 got wrong are pinned in their corrected
-// form. Quotations of the providers' public documentation, of the brief that
+// banned, and the citations and cross-references a later review found wrong
+// are pinned in their corrected form. Quotations of the providers' public
+// documentation, of the brief that
 // asked for this document, and of the document's own headings are outside this
 // test by construction: the document says in section 0 which is which.
 func TestDocsVoiceModuleReconciliationQuotesAreVerbatim(t *testing.T) {
@@ -978,18 +1004,37 @@ func TestDocsVoiceModuleReconciliationQuotesAreVerbatim(t *testing.T) {
 		`"may this leave the machine at all, under what conditions, and how the answer is carried"`,
 		`"the app needs a process"`,
 		`"Fugaro, cancel it"`,
+		// The wrong citations and cross-references a later review found: each
+		// names a source, a test or a finding that does not carry the claim.
+		"See #23 for what that costs",
+		"a mailbox message (see #28)",
+		"**D130**/**D131** keep A, B and C where they are",
+		"`voice-spec.md` §4's diagram and component table; `voice.md` D39",
+		"`voice.md` **F16** states it",
+		"pinned by `internal/cli/docs_desktop_console_test.go`'s `TestDocsDesktopConsoleContractNamesEveryWatchField`",
+		"(`mobile/src/feed/index.js`: *\"The phone reads database",
 	} {
 		if strings.Contains(recon, banned) {
 			t.Errorf("%s carries %q again; that is a quotation its source does not contain, or this document's own words in quotation marks", path, banned)
 		}
 	}
-	// The two citations #29 got wrong, pinned in the corrected form.
+	// The citations and cross-references reviews found wrong, pinned in the
+	// corrected form: each one must name the source, the test or the finding
+	// that actually carries the claim.
 	for _, want := range []string{
 		"the flag's own comment on `secretsOptions.projectWide`, in that file",
 		`the reader rule from ` + "`docs/design/project-secrets.md`" + `'s "Who reads" paragraph`,
+		"**D148** is the decision that corrects it",
+		"**D130** answers a different question",
+		"`voice.md` **F12** (the middle box is not a Fugaro service)",
+		"§10.13's reader rules, pinned by `internal/cli/docs_desktop_console_test.go`'s `TestDocsDesktopConsoleContractSettlesTheFeed`",
+		"(`mobile/src/feed/nodes.js`",
+		"defined in `mobile/src/feed/paths.js` and re-exported by `index.js`",
+		"See #17 for what that costs",
+		"a mailbox message (see #23)",
 	} {
 		if !strings.Contains(recon, want) {
-			t.Errorf("%s lacks %q; #29 must cite where the quoted words actually are", path, want)
+			t.Errorf("%s lacks %q; the corrected citation must name where the claim actually is", path, want)
 		}
 	}
 	// And section 0 must keep the audit's own accounting: which quotations are
@@ -997,7 +1042,7 @@ func TestDocsVoiceModuleReconciliationQuotesAreVerbatim(t *testing.T) {
 	for _, want := range []string{
 		"**Quotations.** Every quotation in this document was checked word for word against its source",
 		"**Six quotations were not verbatim and are corrected in this revision**",
-		"**two citations were wrong**",
+		"**nine citations and cross-references were wrong**",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q; section 0 is where the quotation audit is accounted for", path, want)
@@ -1276,7 +1321,35 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 52 entries, numbered (1)–(52).
+// Mutation (verified, run and restored): 63 entries, numbered (1)–(63).
+// (53) Reverting #5's consequence to "See #23 for what that costs" fails
+// TestDocsVoiceModuleReconciliationQuotesAreVerbatim: the cost of a nested,
+// separately signed binary is #17, and the document cites #17 for it elsewhere.
+// (54) Reverting #10's consequence to "a mailbox message (see #28)" fails it:
+// the mailbox route is #23, and #28 is the credentials service's scope.
+// (55) Writing "**D130**/**D131** keep A, B and C where they are" back into
+// #29 fails it: neither row carries that sentence (it is the credentials
+// spec's), and D130 supersedes Path B's mechanism rather than keeping it.
+// (56) Pointing §10.13's reader rules at
+// TestDocsDesktopConsoleContractNamesEveryWatchField fails it: that test pins
+// §2's fields, and the JSON contract document names
+// TestDocsDesktopConsoleContractSettlesTheFeed for §10's facts.
+// (57) Crediting the §2 pipeline row to `voice.md` D39 again fails it: D39 is
+// the console-side data plane, and `voice.md` never uses the word "pipeline".
+// (58) Giving #20's finding back to `voice.md` F16 fails it: F16 is the missing
+// local socket, and F12 is the finding that a Fugaro run is not an orchestrator.
+// (59) Attributing the phone-reads-nodes sentence to `mobile/src/feed/index.js`
+// again fails it: the sentence is `nodes.js`'s header comment, and index.js
+// says in its own header that it re-exports the vocabulary.
+// (60) Dropping the family list's home (", defined in `mobile/src/feed/paths.js`
+// and re-exported by `index.js`") fails it: FAMILIES is defined in paths.js,
+// and index.js only re-exports it.
+// (61) Reordering the credentials spec's cascade to "A, then C, then B" fails
+// it: the source says "A, then B, then C", and the pair is checked both ways.
+// (62) Deleting the cascade quotation from #29's tier bullet fails it: the
+// tiers are the spec's words, and the quotation is what makes them checkable.
+// (63) Reverting §0's accounting to "**two citations were wrong**" fails it:
+// this revision corrected nine citations and cross-references.
 // (52) Three edits to §0's Phase 3 sentence each fail
 // TestDocsVoiceModuleReconciliationPinsItsBaseline: replacing "no Phase 3 task
 // writes anything under `shared/`" with "Phase 3 is partly under `shared/`";
