@@ -242,8 +242,11 @@ func (r *run) unreadablePolicy(err error) error {
 }
 
 // budgetClient builds the client this run reads the project's database with,
-// from its own Firebase identity. TakeObject is called exactly once per run and
-// its result shared with budget.Open (finding 2).
+// from its own Firebase identity. It is the run's one call site of
+// takeBudgetToken — the memo guard below is what makes it one read of the
+// object per run, and TestTheBudgetTokenIsTakenAtOneCallSite is what holds the
+// call site at one — and the unsealed token is shared with budget.Open
+// (finding 2).
 //
 // A nil client with a nil error means this run has no database to read: the job
 // carries no backend, or its budget is off and the runs bucket holds no token
@@ -375,8 +378,11 @@ func errLauncherPredatesSeal(runID string) error {
 	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (fugaro upgrade), then start a new run (fugaro run with the same task): run %s has launched, and retrying its run id would only report it", BudgetTokenEnv, runID)
 }
 
-// takeBudgetToken reads the run's sealed token object, once per run. Its
-// refusals are the shipped ones (plan R10, B1): a job whose environment says
+// takeBudgetToken reads the run's sealed token object. It has one call site —
+// budgetClient, which memoizes what this returns, so the object is read once
+// per run — and that is a shape the source holds rather than one a run's state
+// can show: see TestTheBudgetTokenIsTakenAtOneCallSite. Its refusals are the
+// shipped ones (plan R10, B1): a job whose environment says
 // the budget is on but carries no Firebase API key, or no runs bucket, or a
 // slug or run id that cannot be a database key, is damage to the job, and the
 // run stops before anything else.

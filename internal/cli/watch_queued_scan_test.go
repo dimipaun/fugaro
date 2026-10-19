@@ -15,9 +15,12 @@ import (
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -27,8 +30,16 @@ import (
 // putQueued writes task.json and launch.json for slug/run, launched at.
 func putQueued(t *testing.T, put func(key string, data []byte), slug, run string, at time.Time) {
 	t.Helper()
+	putQueuedJob(t, put, slug, run, "j", at)
+}
+
+// putQueuedJob is putQueued with the job its launch.json names chosen by the
+// caller: the finished-cache test reads a row's job through the policy index,
+// so its launch.json has to carry a name the policy computes.
+func putQueuedJob(t *testing.T, put func(key string, data []byte), slug, run, job string, at time.Time) {
+	t.Helper()
 	launch, err := json.Marshal(map[string]any{
-		"version": 1, "run_id": run, "backend": "cloud-run", "job": "j",
+		"version": 1, "run_id": run, "backend": "cloud-run", "job": job,
 		"execution": "projects/p/locations/r/jobs/j/executions/e-" + run, "launched_at": at.UTC(),
 	})
 	if err != nil {
@@ -488,6 +499,79 @@ func TestPruneFinishedCacheDropsStaleEntries(t *testing.T) {
 	}
 	if _, ok := sc.cachedFinished("acme-a/new"); !ok {
 		t.Fatal("an entry within the lookback must survive pruning")
+	}
+}
+
+// A finished run keeps its job — and the (profile, provider, account) behind
+// it — on every poll after the one that read it.
+//
+// A reader follows a run from runs[] into finished[] and must not lose the job
+// it ran on (the contract JSONFinished's own comment states, watch/json.go):
+// watch.MergeFacts stamps a row's job, profile, provider and account from the
+// scan's facts map, which the scan rebuilds from the runs it *read*. The
+// finished cache exists so a later scan does not re-read an object it has
+// already read — and a cache hit rebuilt the row as {IsFinished, Finished} with
+// no Facts, so the scan that first saw a run finish yielded a row with all four
+// fields and every scan afterwards yielded the same row with all four gone, for
+// the whole 24h finishedLookback (this round's high finding). The row is
+// user-visible while it happens: watch.go treats a change to the facts map as a
+// dirty frame, so the job chip disappears on the next frame and stays gone.
+//
+// The four fields are asserted, not just the job: the job is what the cache
+// loses, and the triple is what the scan resolves from it (projectJobIndex.ref)
+// — the same resolution for a row it read and a row it cached, which this
+// checks holds for both.
+//
+// Mutation (run, restored): cache the entry without its job (the cache hit
+// rebuilding the scanResult with no Facts) — scan 2's finished row is left
+// unstamped and this fails there, with scan 1 still green.
+func TestFinishedCacheKeepsTheJob(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	put := func(key string, data []byte) { g.Put("runs", key, data) }
+	at := time.Now().Add(-time.Minute)
+	id := at.UTC().Format("20060102-150405") + "-aaaa"
+
+	// The published policy the scan resolves a job through: the profile and
+	// provider are the job's own axes, and the account is the one its mount
+	// names — "" here, for a profile that mounts no Claude token.
+	pol := &projectpolicy.Policy{Version: projectpolicy.Version, Profiles: map[string]projectpolicy.Profile{
+		"pmain": {JobProfile: config.JobProfile{Provider: "github", Secrets: []string{"api-token"}}},
+	}}
+	job := gcp.ProjectJobName("pmain", "github", "")
+	putQueuedJob(t, put, "acme-a", id, job, at)
+	putFinished(t, put, "acme-a", id, "succeeded", at.Add(time.Second))
+
+	sc := openedScanner(g.Bucket(t, "runs").Bucket)
+	sc.slugs = func(context.Context, *cloudEnv) ([]string, error) { return []string{"acme-a"}, nil }
+	sc.index = &projectJobIndex{p: pol}
+
+	stamped := func(scan int, fin []watch.FinishedRun) [4]string {
+		t.Helper()
+		if len(fin) != 1 {
+			t.Fatalf("scan %d: finished = %+v, want the one finished run", scan, fin)
+		}
+		// The two steps a frame makes of the scan's rows, in watch.go's own
+		// order (MergeFinished, then MergeFacts).
+		v := watch.MergeFinished(watch.View{}, watch.Config{}, fin, time.Now())
+		v = watch.MergeFacts(v, sc.Facts())
+		row := v.Repos[0].Finished[0]
+		return [4]string{row.Job, row.Profile, row.Provider, row.Account}
+	}
+	want := [4]string{job, "pmain", "github", ""}
+	_, fin1, _, err := sc.scan(ctx)
+	if err != nil {
+		t.Fatalf("scan 1: %v", err)
+	}
+	if got := stamped(1, fin1); got != want {
+		t.Fatalf("scan 1: the finished row's (job, profile, provider, account) = %q, want %q: the scan read launch.json and the policy resolves its name", got, want)
+	}
+	_, fin2, _, err := sc.scan(ctx)
+	if err != nil {
+		t.Fatalf("scan 2: %v", err)
+	}
+	if got := stamped(2, fin2); got != want {
+		t.Fatalf("scan 2: the finished row's (job, profile, provider, account) = %q, want %q: a cached finished row must carry what the read one carried, or every poll after the first drops a finished run's job, profile, provider and account (watch.MergeFacts, the contract JSONFinished states)", got, want)
 	}
 }
 

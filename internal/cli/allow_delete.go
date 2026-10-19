@@ -47,10 +47,11 @@ import (
 //     goes through the program; it does not stop one that goes around it, and
 //     nothing here claims otherwise.
 //
-// And the apply that reads it is not built yet: the managed apply is Task 3.1
-// and the refusal of an applying command's own flag is Task 3.2, so today
-// fugaro init still honours the flag on its own command line. What exists
-// today is the object, its only writer, and its fail-closed read.
+// And the apply that reads it is built: `fugaro managed apply` takes the
+// addresses from this object through managed.GuardAllowList and registers no
+// flag of its own for them (internal/cli/managed_apply.go), so an applying
+// command cannot overrule the owner. fugaro init still honours --allow-delete
+// on its own command line, where the addresses go to tf.Guard directly.
 
 // newAllowDeleteCmd is `fugaro allow-delete [ADDRESS...]`.
 func newAllowDeleteCmd() *cobra.Command {
@@ -78,11 +79,13 @@ list, because an empty list is what an absent one already means.
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
 1.5), so a managed apply can take its allow-list from the owner's object
-instead of from the command line of whatever session is applying. That apply is not built yet — the managed apply
-is Task 3.1, and until it lands fugaro init still honours its own flag. What
-this does not do: a coding agent's session holds the operator's credentials,
-so it can write this object directly (gcloud storage cp) or unset its agent
-marker and run this command itself. The refusal below is a speed bump against
+instead of from the command line of whatever session is applying: fugaro
+managed apply reads this object and takes no address flag of its own, so the
+session that applies cannot widen the list. (fugaro init still honours its own
+--allow-delete on its own command line, where the addresses go to tf.Guard
+directly.) What this does not do: a coding agent's session holds the
+operator's credentials, so it can write this object directly (gcloud storage
+cp) or unset its agent marker and run this command itself. The refusal below is a speed bump against
 an agent that uses the program, not a boundary against one that goes around it
 (SECURITY.md records the wider Owner/Editor bypass).
 

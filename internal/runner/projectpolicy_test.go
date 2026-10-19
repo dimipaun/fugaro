@@ -618,7 +618,9 @@ func TestPolicyNonIntegerMarkerHaltsTheRun(t *testing.T) {
 // that is what the assertion below says. Consume-once does not rest on the
 // object being gone — it rests on the seal's key, which the launcher delivers
 // to the one execution it starts — so a leftover object stays readable for the
-// lifecycle window and gives a second reader nothing.
+// lifecycle window and gives a second reader nothing. (That the take itself
+// is one read of the object is a shape of the source, not of the run's state,
+// and TestTheBudgetTokenIsTakenAtOneCallSite is what holds it.)
 func TestTokenIsTakenOnce(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(1)...)
 	rec, err := b.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}), review("ship", 0))
