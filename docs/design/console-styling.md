@@ -179,15 +179,21 @@ Three facts hold across every screen and are stated once:
 
 ### 2.1 The dashboard's chrome — `src/renderer/entry.ts`
 
-The entry draws the body's three children, in this order, all from `domSurface`'s mount:
-`section.console-installation`, `nav.console-views`, `div.console-panel` (asserted by
-`test/e2e/entry.spec.ts`: `expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])`
-— the run that asserts it is an `ok` one, because **a fourth child precedes these three
-whenever the mode is not `ok`**: `startConsole` appends the version-skew banner to the same
-mount first (§2.8, §4.1)).
+The entry draws the body's four children, in this order, all from `domSurface`'s mount:
+`aside.console-rail` (§4.1's installation rail), `section.console-installation`,
+`nav.console-views`, `div.console-panel` — asserted by `test/e2e/entry.spec.ts`:
+`expect(shape.bodyChildren).toEqual(['console-rail', 'console-installation', 'console-views', 'console-panel'])`
+in an `ok` run. The rail is the canvas's one structural addition and the fourth child is the
+one this document adds to an assertion the spec already carries, so the list is **four names
+and not three**: a spec left at three fails against the entry the same task writes, and a
+table below that lists three regions leaves the rail's hooks unlisted, which §2's licence
+rule does not allow. **A fifth child precedes these four whenever the mode is not `ok`**:
+`startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1), and in
+**refused** mode it is the whole document.
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
+| Installation rail | `aside.console-rail` → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`span.console-rail-name`, `span.console-rail-project`, `span.console-rail-state`, `span.console-rail-spend`), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the dashboard can read** (§4.1), the add row and the hint. The first `role=` in the renderer. **Twelve hooks on thirteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's |
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
 | Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
 | Panel | `div.console-panel` | the mounted screen's root |
@@ -202,9 +208,15 @@ mount first (§2.8, §4.1)).
 - **There is no keyboard handling in `entry.ts` at all**: no `keydown`, no roving tabindex,
   no focus management. Interaction is `click` plus one `visibilitychange` listener. Tab
   order is implicit DOM order. **This is the gap [§4.3](#43-keyboard-and-focus) has to
-  close in CSS and in one small entry change.**
+  close in CSS and in one small entry change** — two of them, since the rail's list is a
+  second tablist (§4.3), and both are Task 6.5's.
 - The only ARIA attribute in the whole renderer is `aria-current`; **no element carries
-  `role=`**.
+  `role=`**. The rail is where that changes, and **the split is the same one the nav gets**:
+  `role="tablist"` on `div.console-rail-list`, `role="tab"` and `aria-selected` on its rows
+  are the renderer's first `role=` and its first tablist, and they are **Task 6.5's** — the
+  keyboard task, which also gives the nav's buttons their role and their `aria-selected` —
+  while the collapse control's `aria-controls`/`aria-expanded` come with the control itself,
+  in Task 6.3.
 
 ### 2.2 The installation picker — `console/src/renderer/installations.html` + `console/src/renderer/installations.ts`
 
@@ -499,6 +511,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
 | no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |
 | skew (refused / reduced) | chrome | the version-skew banner; the nav is missing the withheld buttons |
+| the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
 | empty | picker (status line), Live (a `gap` bar), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box |
 | cap reached | **none — not a state in the code.** The cap is a `percent` reading and a bar's `data-fill` | the stylesheet may colour a threshold; the code emits no flag |
@@ -637,15 +650,15 @@ the site at all. One of them did move, and [§3.4](#34-contrast-computed) is whe
 | Token | Value | Hue | Role |
 |---|---|---|---|
 | `--ground` | `#0A0E16` | 220° | the window's ground |
-| `--surface` | `#121A26` | 216° | a panel, a card |
-| `--surface-alt` | `#18222F` | 214° | a table header, a zebra row |
+| `--surface` | `#121A26` | 216° | a panel, a card, the installation rail's ground (§4.1) |
+| `--surface-alt` | `#18222F` | 214° | a table header, a zebra row, the rail's selected row |
 | `--text` | `#E6EEF5` | 208° | body text |
 | `--text-muted` | `#9FB2C4` | 209° | labels, secondary prose |
 | `--accent` | `#17A8E6` | 198° | structure: rules, the focus ring, a filled control, the cap bar below its threshold |
 | `--accent-ink` | `#6FD8F5` | 193° | the accent **as text** — links, an accent heading |
 | `--border` | `#24303F` | 213° | a **decorative** hairline |
 | `--border-strong` | `#5B7491` | 212° | a border that marks a **control's extent** |
-| `--ok` | `#4CC38A` | 151° | measured and inside the cap |
+| `--ok` | `#4CC38A` | 151° | measured and inside the cap; the rail's `running` row (§4.1) |
 | `--warn` | `#F5A524` | 37° | attention: near deadline, silent, a cap approaching |
 | `--error` | `#F2648C` | 343° | failed, lost, an infra error |
 | `--halted` | `#C9A0FF` | 266° | killed — a **deliberate stop**, not a failure |
@@ -693,8 +706,8 @@ needs its own accent step rather than the same value:
 | Token | Value | Hue | Role |
 |---|---|---|---|
 | `--ground` | `#F2F6FA` | 210° | the window's ground (a blue-tinted paper, not white) |
-| `--surface` | `#FFFFFF` | — | a panel |
-| `--surface-alt` | `#E7EEF5` | 210° | a table header, a zebra row |
+| `--surface` | `#FFFFFF` | — | a panel, the installation rail's ground (§4.1) |
+| `--surface-alt` | `#E7EEF5` | 210° | a table header, a zebra row, the rail's selected row |
 | `--text` | `#0B1219` | 210° | body text |
 | `--text-muted` | `#516274` | 211° | labels, secondary prose |
 | `--accent` | `#0B6E9E` | 200° | structure, a filled control |
@@ -861,6 +874,7 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 
 | State | The non-colour mark, already in the DOM |
 |---|---|
+| the rail's three row states (§4.1) | the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`, both in `span.console-rail-state`; the glyph alone is what the collapsed rail draws, and the row's accessible name then carries the word, so the tone is never the only carrier in either state |
 | killed / halted | the banner's **words**: `KILLED by <who> <when> "<reason>"` / `HALTED` |
 | stale | the banner's sentence, naming the 45 s threshold, plus `last read <at>` |
 | silent / lost / near / over deadline | the flag's **text** (`silent`, `lost`, `near deadline`, …) in `span.live-run-flag` |
@@ -877,8 +891,13 @@ The rules this makes binding on the stylesheet: (1) **a colour never replaces a 
 (2) a state colour is used on a **fill, a rule or a badge**, and the badge keeps its text;
 (3) the one state that is a colour-only reading today — a cap bar past its threshold — is
 always drawn beside its own percentage, so the colour is redundant by construction;
-(4) `--ok` is used for *measured and inside the cap*, never decoratively, per §6.1 rule 3
-("never decoratively").
+(4) `--ok` is used for *measured and inside the cap* **and for the rail's `running` row** —
+the installation the console is reading now, whose word is drawn beside its dot (§4.1), so
+the tone is still a state and not decoration — and never decoratively, per §6.1 rule 3
+("never decoratively"). *The rail's `running` is the second reading `--ok` carries, and it
+was added to this rule and to §3.2's role cell in the same edit that added the rail: a state
+word drawn in a tone whose stated role it does not have is a rule an implementer cannot
+justify against this document.*
 
 **This list is the primary defence; the separation table in [§3.4](#34-contrast-computed)
 is the secondary one.** The rule is not that the states are far apart in hue — an earlier
@@ -1068,22 +1087,34 @@ the dark literal against `--ground` in the dark set and the light literal agains
 in the light set — rather than the ambiguous "equal to `--ground`" the first revision
 wrote.
 
-The document is one column, and the entry appends up to **four** children to it —
-`document.body`, which is the mount `startConsole` is handed:
+**Under the canvas the owner approved on 2026-10-19 the document is a two-column grid**,
+and the entry appends up to **five** children to `document.body`, which is the mount
+`startConsole` is handed. The canvas's one structural addition is a **left vertical
+installation rail** — the block below describes it — and the entry draws it as **one**
+child, `aside.console-rail`, in the grid's first column. The three bands of the bullets
+below are the second column and are otherwise unchanged:
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ section.console-skew   the version-skew banner — reduced mode only        │  when there is one
-├───────────────────────────────────────────────────────────────────────────┤
-│ section.console-installation   project · binary · version · mode          │  1 line
-├───────────────────────────────────────────────────────────────────────────┤
-│ nav.console-views   [ Live ] [ Spend ] [ Projects ]                       │  1 line
-├───────────────────────────────────────────────────────────────────────────┤
-│ div.console-panel                                                         │
-│   section.live | .spend | .projects | .run | .degraded | .console-unavailable
-└───────────────────────────────────────────────────────────────────────────┘
+┌───────────────────┬───────────────────────────────────────────────────────┐
+│ section.console-skew   spans both columns — reduced mode only          │  when there is one
+├───────────────────┼───────────────────────────────────────────────────────┤
+│ aside.console-rail│ section.console-installation   project · binary · …   │  1 line
+│   the installation├───────────────────────────────────────────────────────┤
+│   rail, §4.1 below│ nav.console-views   [ Live ] [ Spend ] [ Projects ]   │  1 line
+│                   ├───────────────────────────────────────────────────────┤
+│                   │ div.console-panel                                     │
+│                   │   section.live | .spend | .projects | .run | .degraded │
+│                   │   | .console-unavailable                              │
+└───────────────────┴───────────────────────────────────────────────────────┘
 ```
 
+- **The rail is the body's second child when there is a banner, and its first when there is
+  not**, and it comes **before** the installation line in both cases: the entry appends it
+  after `startConsole` has drawn the skew banner and before `drawInstallation`'s line, so
+  DOM order and visual order agree — a rail drawn on the left but appended last would put
+  the chrome after the content in the tab order, which is the one thing a rail may not do.
+  Under the canvas's grid the banner **spans both columns**; when it is present the rail and
+  the three bands below it share the rows under it.
 - **The version-skew banner is not in the panel, and it is not the panel's first child
   either.** `startConsole` appends it to the mount it was handed (`app.ts` 333) and that
   mount is `document.body` (`entry.ts` 180-183), so the banner is the body's **first
@@ -1093,7 +1124,7 @@ The document is one column, and the entry appends up to **four** children to it 
   holds the screen and nothing else. It is `section.console-skew` — a section, not a div —
   and it carries `data-theme`, `data-mode` and `data-skew` (`shared/version.ts` 579-587). In
   **refused** mode it is the whole document, because `bootDashboard` returns straight after
-  it and the other three children are never appended.
+  it and **the other four children — the rail included — are never appended**.
 - **The installation line and the nav are chrome and never scroll**; the panel scrolls.
   A sticky header is the difference between a dense screen and a screen that looks broken
   the moment it is longer than the window.
@@ -1107,6 +1138,167 @@ The document is one column, and the entry appends up to **four** children to it 
 - The installation line's three states (`chosen`, `none`, `unreadable`) are styled as
   three states: `chosen` is `--text`, `none` is `--text-muted`, and `unreadable` carries
   the `--warn` rule and its own sentence.
+
+**The installation rail — the canvas's one structural addition.** The canvas the owner
+approved on 2026-10-19 draws a **left vertical rail**: the installations as vertical tabs, a
+region the bands above do not have. It is the canvas's *only* structural addition. The
+content column to its right keeps the title bar, the view nav and the panel exactly as the
+bullets above describe them, and the four screens the canvas draws — Live, Spend, Projects
+and Run detail — are reached as [§2](#2-screen-inventory) says: three from the nav, and Run
+detail from a run row. The rail adds no tab of its own, and the console gains no view.
+
+The rail itself is `aside.console-rail` — the one element the entry appends for it — and its
+tree is **thirteen classed elements**, each element's class a hook a rule may select. Those
+thirteen elements carry **twelve classes**: the foot row and its button share
+`console-rail-add` (a row and the control inside it are one region, and the class names the
+region), so a stylesheet selects twelve distinct hooks and
+[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same twelve. **The count is
+stated here and in §2.1 because it is what a reader checks the tree against**, and the tree
+below is the list:
+
+```
+aside.console-rail                        the rail — the grid's first column
+├─ div.console-rail-head                  the header row
+│   ├─ p.console-rail-title               the word "Installations"
+│   └─ button.console-rail-collapse       the collapse control
+├─ div.console-rail-list  role="tablist"  the installation rows, one tab each
+│   └─ button.console-rail-row  role="tab"
+│       ├─ span.console-rail-name         the installation's name
+│       ├─ span.console-rail-project      its GCP project, in small text
+│       ├─ span.console-rail-state        the state glyph **and** the state word
+│       └─ span.console-rail-spend        the spend
+├─ div.console-rail-add                   the foot row, with a top divider above it
+│   └─ button.console-rail-add            "+ Add installation"
+└─ p.console-rail-hint                    "Switch with the shortcut keys 1 2 3"
+```
+
+- **The width is a fixed 216 px expanded and 56 px collapsed**, two literals in `base.css`
+  and **not tokens**: like `CONSOLE_WINDOW_SIZE`'s 1180 × 780 they are facts about this
+  window rather than values a screen reads, and no §3.1 table gains a row for them. The
+  collapsed width is the icon column — 16 px of padding, a 24 px glyph, 16 px again — so a
+  collapsed row still draws its glyph at the size the expanded rail draws it and the
+  collapse control keeps its own box in the header row above. **Both are stated here rather
+  than left to the task**: a rail whose collapsed width is the implementer's invention is a
+  rail whose icons sit at a different size in the two states, and the canvas draws the
+  icons-only state without its arithmetic. [§4.2](#42-narrow-windows)'s
+  breakpoints are the **window's**, written in `em` against the root size, and the rail is a
+  fixed 216 px of what is left: **the layers therefore fire with the content column 216 px
+  narrower than the width each one names** — §4.2 states it, and the figures are kept as the
+  window's rather than re-cut here, because they were chosen against a window whose resize
+  the operator controls. The rail itself never narrows with the window — it narrows only when
+  the operator collapses it, which is a control and not a media query.
+- **Tokens, and no new ones.** The rail's ground is `--surface`, the rules between its rows
+  are the `--border` hairline, the selected row is `--surface-alt` (the raised surface) with
+  a **3 px `--accent` left border**, the header's title and a row's name are `--text`, and
+  the small text and the add row are `--text-muted`. Every value here is a row of the set
+  that ships, [§3.2](#32-the-dark-value-set--the-consoles-first-screen); the palette gains
+  nothing, and a rule that wants a tone this list does not name is a rule that has not read
+  [§3.1](#31-one-file-one-value-set-one-vocabulary).
+- **The three state words, each beside its glyph.** The glyph is drawn **and** the word is
+  drawn — never one instead of the other ([§3.5](#35-never-colour-alone)):
+
+| Word | Glyph | Tone | What it says |
+|---|---|---|---|
+| `running` | `●` | `--ok` | the console is reading this installation now |
+| `silent` | `▲` | `--warn` | its last read was refused, or its feed has gone quiet |
+| `idle` | `○` | `--text-muted` | it is stored, and nothing is being read from it |
+
+- **The selected row** carries `aria-selected="true"` **and** the 3 px `--accent` left
+  border on `--surface-alt`; the attribute is the machine-readable mark and the border is
+  the drawn one, so the selection is not a colour alone either. The nav's `aria-current`
+  stays the nav's own marker — the rail is a tablist and marks itself as one.
+- **The header row** is a title and a control: `p.console-rail-title` reads
+  "Installations", and `button.console-rail-collapse` toggles the rail between its full
+  width and its icons-only state. **The button has an accessible name in both states** —
+  "Collapse the installations rail" and "Expand the installations rail" — and it carries
+  `aria-controls` naming `div.console-rail-list` and `aria-expanded`, so the state it is
+  about is announced rather than drawn only.
+- **The collapsed state is icons only, and it is a name-preserving collapse.** A row keeps
+  its glyph and drops its name, its project, its state word and its spend from *sight*; the
+  row's accessible name is then the whole of what it draws — the installation's name, its
+  project, the state word and the spend — so the word §3.5 requires is still announced and
+  the collapse removes no fact. The add row keeps its label and its accessible name, the
+  hint is hidden, and the rail's width is the **56 px** the width bullet above states — a
+  second literal beside the 216 px one and not a second token.
+- **The foot row is an entrance to the flow the console already has.** "+ Add installation"
+  opens the **existing** add-installation flow — the installation picker window of §2.2,
+  built by the main process's picker module (ruling C9), whose add form is the one place an
+  installation is created. The rail adds **no inline form, no second add path, no new store
+  operation and no new file**, and it is not a second way to remove or edit anything.
+- **What the rail draws, and the read the console does not have.** The rail draws **one row
+  per installation the dashboard can read**, and today that is **one row: the installation
+  the operator chose**, with its name, its project, its state and its spend. **A row carries
+  four fields and no one read answers all four**, so this document names the read behind
+  each rather than implying one. The **name and the project** are what `installation.current`
+  answers, for that installation and no other: it **takes no argument at all and names no
+  id**, so a renderer cannot ask about an installation other than the one this console is
+  running (`src/main/ipc.ts`, the fourteenth operation). **Its payload keeps one label,
+  `project`** — `ActiveInstallation` carries `id`, `project`, `binary`, `config`, `checkout`,
+  the handshake's version and `mode`, and **no display name** — so the row's name span draws
+  that label and the small-text project span draws the same one: the canvas's two-line
+  identity, drawn from the one label the store keeps. The **state word is the rail's own mark
+  and not a field of any read**: the rail knows whether it is reading this installation now —
+  which is why its one row says `running`, or `silent` when that read was refused or the feed
+  has gone quiet — while `idle`, the stored installation nothing is read from, is the word
+  for a row the read the next bullet names would draw. The **spend is the console's own
+  budget read** — `budget.show` on the dashboard's channel, whose counted and spent dollars
+  §2.4's caps panel already draws — and **no field is added to it for the rail**. The stored
+  list is the picker's own
+  read (§2.2): `INSTALLATION_OPERATIONS` is registered in `src/main/picker.ts` and each
+  channel is gated on **the picker's own document**, so a frame on the dashboard is answered
+  `SENDER_REFUSAL` and the two documents cannot reach each other's surface.
+- **A row per stored installation needs a read this design does not add.** The canvas draws
+  the rail with an installation per row; **this phase draws the rows it can read**, and the
+  read that would fill the rest is **a surface addition — a bounded, schema-checked list read
+  on the dashboard's bridge** — which is exactly what [§11](#11-what-this-document-does-not-decide)
+  withholds: this document does not change the preload or the IPC allow-list, and no task in
+  Phase 6 owns those files. **So no task draws a row for an installation the dashboard cannot
+  read**, and nothing here invents one: the spans in the tree are the shape every row has,
+  the three state words are the rail's vocabulary with `running` the active row's, and the
+  shortcut keys address the rows the rail draws — a rail of one row has one tab stop in its
+  list. **The canvas settled the shape of a row; it did not settle where a non-active row's
+  figures come from, and landing that read is a decision for the owner** (it is a second
+  installations read on a bridge C9 keeps read-only, and the ruling that authorizes it is not
+  this document's to make).
+- **The rail adds no write action, and the console stays READ ONLY.** **The rail cannot
+  choose an installation, and this section does not pretend otherwise**: the console's one
+  choose operation is the picker's (`fugaro:installations/choose`, ruling C9) on the picker's
+  own channel, and a frame on this document cannot reach it — so choosing an installation
+  stays where it is today, in the picker window the header, the degraded screen and this
+  rail's foot row all open. A row's `aria-selected` is the rail's own mark of which row is
+  the active one, and it selects nothing. Nothing on the rail adds, removes or edits an
+  installation, no renderer ever sends a path, and the only file a choose writes is the
+  installations file the picker already writes — the console design's rule 10, as C8's
+  answer amended it, is what keeps that list closed.
+- **The keyboard** — the detail is [§4.3](#43-keyboard-and-focus): the rail's list is **a
+  tablist in its own right**, `div.console-rail-list` with `role="tablist"` and one
+  `role="tab"` row each; it uses a **roving `tabindex`** (the selected row is `0`, the rest
+  `-1`), Arrow Up and Arrow Down move between the rows, **Home** and **End** go to the first
+  and the last, and **Enter selects** — the arrow keys move focus and the key that chooses is
+  Enter, which is the pattern's manual-activation form; **what Enter selects is the row**
+  (the rail's own mark of which row is active), since the command that changes which
+  installation the console reads is the picker's and is unreachable from this document. The
+  **shortcut keys** select by position: **Command-1** to **Command-3** on macOS and
+  **Control-1** to **Control-3** elsewhere address the first three rows **the rail draws**,
+  which is the hint's own sentence. The collapse
+  control is a tab stop **before** the list and the add row is a tab stop **after** it, so
+  the rail's tab stops are the button, the list and the add row — three, whatever the number
+  of installations.
+
+**Two things the canvas did not decide, and what this design does with each.**
+
+1. **No alert badge.** The canvas draws the state word and its glyph in **every** row, so a
+   `silent` installation — the rail's own attention state — raises no separate badge when it
+   is not the selected row, and neither would a fourth word if the rail ever gains one (a
+   `halted` installation, say): a badge would be a second mark for a fact already written in
+   the row, and a count of them would be a number nobody asked the console for. A later
+   design that wants one adds it as a mark on the row rather than as a second word.
+2. **The shortcut keys and the platform.** They are Command + digit on macOS and Control +
+   digit elsewhere, as the bullet above states. macOS reserves neither form inside an
+   application window, and **the console has no other keyboard shortcut to collide with**:
+   the entry has no keydown handling at all today (§2.1), so these are the console's first
+   keyboard shortcuts and there is no binding for them to collide with. A later shortcut
+   that wants one of these takes it from here rather than overriding it quietly.
 
 ### 4.2 Narrow windows
 
@@ -1126,6 +1318,18 @@ and is lost the moment a query is written in `px`:
 | ≤ 48.75em (780 px) | the nav wraps to two rows, the installation line drops to project · mode, and any three-column figure group becomes two |
 | ≤ 35em (560 px) | the ledger, the caps panel and the panels' source lines stack; **no figure is ever dropped or truncated** — what is dropped is a column, and a dropped column is one whose value is repeated in a `title` |
 
+**The rail is 216 px of every width above, and the three figures are the window's.** The
+queries measure the viewport, so each one fires with the content column **216 px narrower
+than the number it names** — 1000 px of window is 784 px of column while the rail is
+expanded. The figures are kept rather than re-cut: they were chosen as window widths an
+operator resizes to, the column's own width is not what a media query can see, and [§4.1](#41-the-windows-structure)
+is where the rail's width is stated. **What the layers may not do is assume the column they
+used to get**: a layer that used to have 1000 px has 784, so a table that drops a column at
+the first breakpoint is dropping it from a column a fifth narrower than the one the choice
+was made against, and Task 6.3 — the task that draws the rail — re-reads the three figures
+against the column it leaves rather than against the window. Collapsing the rail returns the
+216 px, which is why the collapse control is a control and not a breakpoint.
+
 **The rule that outranks the breakpoints: a figure is never hidden to make a layout fit.**
 A dense console that hides a cap on a narrow window is the console lying about spend,
 which §6.1 rule 1 forbids more strongly than any layout does.
@@ -1139,16 +1343,30 @@ which §6.1 rule 1 forbids more strongly than any layout does.
   sets — which is exactly the requirement for a focus indicator.
 - **`:focus-visible` and never `:focus`** — a mouse click must not leave a ring on a nav
   button, and a keyboard user must never lose one.
-- **The nav is the one place the console needs a roving tabindex, and it does not have
-  one.** Today `entry.ts` creates one `button.console-view` per view with no keyboard
-  handling at all, so Tab walks all three buttons and neither arrow keys nor
-  Home/End move between them. Task 6.5 adds the WAI-ARIA tablist behaviour in ~15 lines:
-  `role="tablist"` on the nav, `role="tab"` on each button, `aria-current` (already there)
-  plus `aria-selected`, **roving `tabindex`** (the current view is `0`, the others `-1`),
-  and Arrow/Home/End handling that calls the existing `show(id)`. **This is a renderer
-  change and it is not a style change** — no attribute it writes is a style, so the CSP
-  and `ElementLike` are untouched. It is in the styling plan because a keyboard-less nav is
-  a layout defect the styling work is where you notice.
+- **The console needs a roving tabindex in two places, and it has one in neither.** Today
+  `entry.ts` creates one `button.console-view` per view with no keyboard handling at all, so
+  Tab walks all three buttons and neither arrow keys nor Home/End move between them. Task
+  6.5 adds the WAI-ARIA tablist behaviour in ~15 lines: `role="tablist"` on the nav,
+  `role="tab"` on each button, `aria-current` (already there) plus `aria-selected`,
+  **roving `tabindex`** (the current view is `0`, the others `-1`), and Arrow/Home/End
+  handling that calls the existing `show(id)`. **And the rail's list is the second** — §4.1
+  gives it the same treatment over `div.console-rail-list` and its `role="tab"` rows, one
+  tab stop for the whole list rather than one per installation, with **Enter** as the key
+  that selects (the nav's `show(id)` **is** its selection, so a nav button needs no second
+  key and the rail's rows do: the arrows move focus and Enter chooses). **Both are renderer
+  changes and neither is a style change** — no attribute either writes is a style, so the
+  CSP and `ElementLike` are untouched. They are in the styling plan because a keyboard-less
+  tablist is a layout defect, and the styling work is where you notice it.
+- **The focus order is the DOM order, and the rail is first.** A tab through the chrome
+  goes: the rail's collapse control, the rail's list (one stop, however many installations),
+  the rail's add row — then the view nav, then the panel's own controls, and the panel's
+  contents in the order the screen draws them. That is the layout's promise and not a
+  preference: the rail is appended before the installation line (§4.1), so the tab order a
+  reader gets is the order they see, left to right and top to bottom. **A rail drawn on the left
+  and appended last would put the whole chrome ahead of it**, which is
+  the WCAG 2.4.3 failure this ordering exists to avoid — and it is also why the shortcut
+  keys exist: `Ctrl`/`Cmd` + digit reaches the first three rows the rail draws (§4.1)
+  without walking the tab order at all.
 - **A skipped-by-default DOM stays skipped**: the console has no skip link and does not
   need one (there is no repeated block of links before the content), and it must not gain
   a link that would need the allow-list's `openExternal` to do nothing.
@@ -1165,8 +1383,8 @@ Windows High Contrast and `forced-colors: active` discard author colours. Two ru
 2. One `@media (forced-colors: active)` block per stylesheet, each in the task that writes
    the rules it defends: `base.css` carries the chrome's — let the system paint its
    backgrounds by setting `background: Canvas` / `color: CanvasText` on the chrome, map the
-   current view to `Highlight`/`HighlightText`, and re-enable the border the system
-   collapses. `screens.css` carries the rows' and badges' — `Canvas`/`CanvasText` on the row
+   current view **and the rail's selected row** to `Highlight`/`HighlightText`, and re-enable
+   the border the system collapses — the rail's accent left border is exactly such a border. `screens.css` carries the rows' and badges' — `Canvas`/`CanvasText` on the row
    surfaces, `LinkText`/`GrayText` where a fill was carrying a meaning, and
    `border: 1px solid CanvasText` on a panel, because a hairlines-only table becomes
    structureless without it. Neither block names a colour literal; both read the tokens.
@@ -1493,7 +1711,9 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
 
 **It lands in halves, each with the rules it tests**, because a case written for a
 stylesheet that does not exist yet is a case that fails: the chrome's half — the current
-view still marked, the chrome's boundary still visible — is [Task 6.3](#73-task-63--the-layout)'s,
+view still marked, the chrome's boundary still visible, **and the rail's rows with them**,
+since §4.4's rule 1 is what the rail's three state words are for and a `silent` row's word
+and glyph have to survive the same screen — is [Task 6.3](#73-task-63--the-layout)'s,
 in `test/e2e/entry.spec.ts`, which is the spec that already drives the dashboard the
 chrome is drawn into; the per-screen half — the state words and the row boundary, in each
 screen's own spec — is [Task 6.4](#74-task-64--the-screens)'s. This is also why §4.4's
@@ -1503,7 +1723,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with eleven tests:
+`docs_budget_token_channel_test.go`, with thirteen tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -1553,7 +1773,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    or one whose capitalisation a sentence changes (`matchMedia` for `matchmedia`), is the
    same phrase to the test as it is to a reader;
 
-**Items 5 to 9 — five of the eleven — read §3.4's numbers rather than its prose**, which is the
+**Items 5 to 9 — five of the thirteen — read §3.4's numbers rather than its prose**, which is the
 half the review of the first revision asked for. They recompute WCAG 2.1's relative luminance
 (`(L1+0.05)/(L2+0.05)`) and circular hue distance
 (`min(|Δh|, 360°−|Δh|)`) from the literal values in §3.2 and §3.3, in four lines of Go each,
@@ -1594,8 +1814,8 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    that branch; the synthetic table here is what keeps the branch itself tested rather than
    dead code. It also pins both thresholds as inclusive, which is how §3.4 writes them ("at
    least 50°", "at least 3:1").
-10. a **phase-ordering test**, the tenth and the only case of the eleven that is neither about
-   this document's shape nor about its numbers — it reads
+10. a **phase-ordering test**, the tenth, the one case of the thirteen that is about the two
+   documents' agreement on the phase's order rather than about either alone — it reads
    [§7](#7-the-build-plan-phase-6) and the plan together: it cuts the plan's
    Phase 6 at its six task headings and §7 at its seven, and fails when a task's `**Files**`
    or `**Tests**` clause names a **later** task — the shape both of this revision's ordering
@@ -1613,7 +1833,7 @@ deliberately not shared with the console's own token test: that one is TypeScrip
 11. a **counts test** over this section and §7.7, which is what keeps the numbers above from
    rotting: it numbers the ordered list here and requires it to run 1 to N with no gap and N
    to be the count this section's opening line prints in words; it reads the group sentence
-   ("Items 5 to 9 — five of the eleven") against the list it names, in every number the
+   ("Items 5 to 9 — five of the thirteen") against the list it names, in every number the
    sentence prints;
    it counts the rows of §7.7's red-step table and the clauses of its two mutation lists
    against the words above them; and it counts this document's `## ` headings against the
@@ -1623,6 +1843,28 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    the evidence: this section introduced its §3.4 group as "five that read §3.4's numbers"
    over a list numbered 5 to 10, so a reader counting the items after the sentence counted
    six.
+12. a **rail test** over §4.1's rail block, the twelfth: it requires the block to say the rail
+   is a **left vertical rail**, to name `aside.console-rail`, **both its widths** — the
+   216 px expanded one and the 56 px collapsed one, each its own required string, so dropping
+   either fails by name — `div.console-rail-list` as the tablist, the hint "Switch with the
+   shortcut keys 1 2 3", **Command-1** and **Control-1**, the words READ ONLY and "+ Add
+   installation", `role="tablist"`, a **roving `tabindex`**, Enter selects, and **Home** and
+   **End**, each asserted separately because the section names both keys and a case that
+   required only "Home" would pass over a block that had dropped End; it reads the three
+   state words off the table the block draws them in, **one row each**, so `running`'s row
+   carries its dot and `--ok`, `silent`'s its triangle and `--warn`, and `idle`'s its open
+   circle and `--text-muted` — a glyph moved to the wrong word, or a word given a tone §3.2
+   does not have, fails by name; it counts the tree's classed elements and its distinct
+   classes and requires §4.1's sentence and §2.1's row to state the same two numbers, so the
+   count cannot rot silently; and it requires the block to say the rail draws the rows the
+   dashboard can read rather than a row per stored installation. It is the case that keeps
+   the canvas's one structural addition from being remembered rather than written down.
+13. a **rail-ownership test** over the plan, the thirteenth: it reads Task 6.3's `**Scope**`
+   and `**Files**` and Task 6.5's `**Scope**` and requires each to name what that task owns —
+   the rail's structure, and the entry that draws its elements, in 6.3; the rail's shortcut
+   keys in 6.5 — because a design that describes a region and a plan whose tasks do not name
+   it is a region nobody builds. It reads the plan as text for the same boundary reason the
+   rest of this file does.
 
 **The citation test stats a file; these five read the file**, which is the difference
 between a citation that exists and a citation that is true. Neither substitutes for the
@@ -1668,8 +1910,12 @@ which is the mutation this change is proved against.
 **Order, and why it is this one.** 6.1 (the tokens) is first because everything reads it.
 6.2 (the wiring) is second because until it lands **nothing on screen changes at all** —
 the CSS files are inert without a `<link>`. 6.3 and 6.4 (layout, then the screens) are
-then ordinary CSS PRs that a reviewer can read as a stylesheet. 6.5 (the switch and the
-keyboard) is the only task that touches the entry. 6.6 (the frames) is last and owner-run.
+then ordinary CSS PRs that a reviewer can read as a stylesheet. **Two tasks touch
+`console/src/renderer/entry.ts`, and they are the two ends of the chrome**: 6.3 appends the
+rail's elements (§4.1) and 6.5 (the switch and the keyboard) is the one that adds the
+attributes and the keys — the rail is drawn by 6.3 and takes the keyboard in 6.5, so neither
+PR carries a stylesheet written against an element nothing draws, and neither carries an
+element with no keys. 6.6 (the frames) is last and owner-run.
 
 ### 7.1 Task 6.1 — the tokens
 
@@ -1721,25 +1967,46 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 
 ### 7.3 Task 6.3 — the layout
 
-- **Scope:** `theme/base.css` — the reset, the document, the three bands of §4.1, the nav's
-  tab-list styling, the focus ring, the responsive layers of §4.2, and the **chrome's**
-  `@media (forced-colors: active)` block of §4.4.
-- **Files:** `theme/base.css`; `THEME_STYLESHEETS` in the bundler, which gains
+- **Scope:** `theme/base.css` — the reset, the document as the two-column grid of §4.1 and
+  **the installation rail** and its rules: the rail's fixed 216 px expanded width and its
+  56 px collapsed width, its header row and
+  its collapse control, its rows with their name, project, state glyph and word and spend
+  spans, its selected row's 3 px accent border, its foot row and its hint — the three bands
+  of §4.1, the nav's tab-list styling, the focus ring, the responsive layers of §4.2, and the
+  **chrome's** `@media (forced-colors: active)` block of §4.4. **The rail's elements are
+  drawn by `entry.ts`, and this task is what draws them**, because the rules that select
+  them are this task's and a hook nothing emits is not a hook — the same rule that puts
+  `degraded-num` in Task 6.4's Files. The rail's **keys** are not here: they are Task 6.5's,
+  which is already the task that gives the nav its own.
+- **Files:** `theme/base.css`; `src/renderer/entry.ts` (the rail's elements);
+  `THEME_STYLESHEETS` in the bundler, which gains
   `'base.css'` in this commit — the list is the theme directory's whole contents and the
   bundler refuses a listed file that is missing, so the file and its entry move together
-  (§5.2); `README.md`; `test/e2e/entry.spec.ts` (the forced-colors smoke's chrome half).
+  (§5.2); `README.md`; `test/e2e/entry.spec.ts` (the forced-colors smoke's chrome half, and
+  the body-children assertion the rail moves).
 - **Tests:** the forced-colors smoke's chrome half (§6.4) — the current view still marked,
-  and the chrome's boundary still visible, both under `emulateMedia({ forcedColors:
-  'active' })` — written first, which is this task's red step.
+  the chrome's boundary still visible and the rail's rows with them, all under
+  `emulateMedia({ forcedColors: 'active' })` — written first, which is this task's red step;
+  a case that the rail draws **one row per installation the dashboard can read** — the
+  active installation's, from `installation.current` — with its state word and its glyph,
+  **and draws no row for an installation it cannot read**, since the dashboard's surface has
+  no list read and this task adds none (§4.1, §11); and **the §2-inventory selector scan over
+  `base.css`**, which is this task's and
+  not §7.4's alone: the rail's hooks are the chrome's and §2.1 lists them, so the list the
+  scan checks against is the inventory's tables rather than the screens' class literals,
+  which cannot see a rule written against a hook the entry draws.
 - **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
   test:e2e -- entry`; the
   e2e specs that read the chrome's shape (`entry.spec.ts`'s
-  `['console-installation', 'console-views', 'console-panel']`) still pass. The four golden
+  `['console-rail', 'console-installation', 'console-views', 'console-panel']`) still pass. The four golden
   tests are skipped in this task and in the two after it (`FUGARO_CONSOLE_GOLDENS=skip`,
   which the staged console-tests workflow already sets): a layout change is a picture the
   baselines do not have, and re-recording them before the last stylesheet lands is what
   [Task 6.6](#76-task-66--the-golden-frames-re-recorded) exists to stop.
-- **Reviewer tier:** ordinary.
+- **Reviewer tier:** ordinary — but it is one of the two tasks that touch the entry
+  (§7.5 adds the attributes and the keys and this one draws the rail's elements), so it is
+  reviewed against §5.5's "no style, no loosening" rule explicitly: the rail's elements are
+  created with classes and attributes, and the styling is `base.css`'s.
 
 ### 7.4 Task 6.4 — the screens
 
@@ -1759,8 +2026,10 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 - **Tests:** the forced-colors smoke per screen (§6.4) — every state word still in the DOM
   and the row boundary still visible; a case that
   `screens.css` selects only hooks the [§2](#2-screen-inventory) inventory names — a scan
-  of the stylesheet's selectors checked against a list derived from the screens' own class
-  literals, so a rule that styles a class nothing emits fails; the
+  of the stylesheet's selectors checked against a list derived from the inventory's tables,
+  the screens' own class literals **and the chrome's hooks of §2.1**, since the rail's
+  **twelve** hooks — §2.1's twelve, on its thirteen elements — are the entry's and not a
+  screen's, so a rule that styles a class nothing emits fails; the
   `--border`-is-decorative scan.
 - **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
   test:e2e`, with the goldens skipped as in Task 6.3.
@@ -1777,7 +2046,11 @@ window background and the keyboard**.
 - **Scope:** `CONSOLE_THEME` stays the literal `'dark'` it is today — no `themeChoice()`,
   no `matchMedia` read, no `change` subscription and no `nativeTheme` query comes with it
   (§3.6); `consoleWindowOptions` gains `backgroundColor`, **one literal**, `#0A0E16`,
-  against the one `--ground` (§4.1); the nav's tablist behaviour (§4.3).
+  against the one `--ground` (§4.1); the nav's tablist behaviour **and the rail's** (§4.3) —
+  the rail's list gets the same roving `tabindex`, Arrow/Home/End between its rows and
+  **Enter to select**, together with the **shortcut keys** that select by position (§4.1).
+  The rail's keys are new to this task and belong here rather than in Task 6.3: the rail is
+  the canvas's region and this is the task that gives the console its keyboard.
   *The scope as designed, before the ruling:* `CONSOLE_THEME` becomes the answer of a
   `themeChoice()` that reads `matchMedia('(prefers-color-scheme: dark)')` and subscribes to
   `change`; the entry stamps `data-theme` on the mount it draws the chrome into; the
@@ -1809,8 +2082,10 @@ window background and the keyboard**.
 - **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
   test:e2e` — skipped here too, since this task changes what the window paints behind the
   first frame.
-- **Reviewer tier:** ordinary — but it is the one task that touches the entry, so it is
-  reviewed against §5.5's "no style, no loosening" rule explicitly.
+- **Reviewer tier:** ordinary — but it is one of the two tasks that touch the entry
+  ([§7.3](#73-task-63--the-layout) appends the rail's elements and this one adds the
+  attributes and the keys), so it is reviewed against §5.5's "no style, no loosening" rule
+  explicitly.
 
 ### 7.6 Task 6.6 — the golden frames, re-recorded
 
@@ -1846,11 +2121,20 @@ matter most, and the mutation each is proved against:
 | the forced-colors smoke (6.3's chrome half, 6.4's per screen) | the `@media (forced-colors: active)` block deleted from the stylesheet under it — the boundary collapses and the case fails |
 | the golden specs' `paintedBackground` assertion (6.6) | the `<link>` removed from `index.html` — nothing paints the ground and both runs read the compositor's `rgba(0, 0, 0, 0)`, so the assertion fails. *Under the two-set design the same mutation failed because the two schemes then painted the same colour, which one set cannot show:* |
 
-**And the four this document's own docs test was proved against, each run for real and
+**And the five this document's own docs test was proved against, each run for real and
 reverted** ([§6.5](#65-the-docs-test)): the status line replaced with `Status: draft.`; a
 cited path removed from the text, and another moved on disk; an in-page anchor left as the
 broken slug it was written as; Phase 6's heading stripped of `UNAPPROVED`, one of its six
-question markers dropped, and one of its task headings renamed. The seventh is the plan's
+question markers dropped, and one of its task headings renamed; and the rail's two glyphs
+swapped between `running` and `silent` in §4.1's table, or its **216 px** expanded width — or
+its **56 px** collapsed one — dropped from the block beside it, which the rail test catches
+on the row the glyph moved to and by name, once per width — as does **§7's ordering sentence
+put back to a wording that makes 6.5 the sole owner of the entry**, which the same case
+refuses wherever either document carries that claim — the guard is a pattern over the two
+documents rather than one fixed sentence, so it was run against §7's sentence, §7.5's
+original phrasing and the plan's `J4` row, three wordings of the same claim, and the third is
+the one this round found still standing.
+The seventh is the plan's
 own: `6.2` removed from Global Constraints rule 9's list, which
 `TestPlanRule9ListsEveryFlaggedHeading` catches. **And the ordering test (§6.5's tenth)
 carries eight of its own**, one per case, planted and reverted: the four-name
@@ -2002,6 +2286,14 @@ regions, the states and the palette below are the same ones §2 and §3 specify,
 canvas that invents a screen, a region, a state or a colour is a canvas that disagrees with
 the code.
 
+**The canvas has since been drawn and approved.** The owner approved it on 2026-10-19: the
+four screens — Live, Spend, Projects and Run detail — in the one value set that ships, the
+dark one, with the boundary screens of frame 5 drawn in the same set. Its **one structural
+addition to this design is the installation rail** ([§4.1](#41-the-windows-structure)),
+which this brief did not ask for and the owner accepted: the region's structure, its tokens,
+its state words, its keys, the collapsed state and the read-only rule it keeps are specified
+in §4.1, and a canvas drawn again from this brief draws the rail with the rest of the frame.
+
 **The tone, in one line:** *dense, calm, operator-grade — an instrument, not a marketing
 page.* The console is read at a glance, many times an hour, by the person who owns the
 bill. Nothing is decorative, nothing is hidden, and no figure is ever dressed up.
@@ -2040,7 +2332,8 @@ no task owns.*
 **The palette to draw in:** §3.2 — the dark set, the one that ships; §3.3 is the record of
 the deferred light set and a canvas is not drawn from it (the owner's Q1 ruling of
 2026-10-19) — with the semantic roles of
-[§2.9](#29-every-state-variant-in-one-table). `--ok` is for measured-and-inside-cap;
+[§2.9](#29-every-state-variant-in-one-table). `--ok` is for measured-and-inside-cap and for
+the installation rail's `running` row (§4.1);
 `--warn` for attention; `--error` for failed/lost; `--halted` for **killed**, a deliberate
 stop and not a failure — it must not read as an error; `--stale` for last-known values.
 **Never colour alone**: every state badge carries its word (§3.5).
@@ -2057,6 +2350,14 @@ draw a zero.
 
 - **It does not change the CSP** (§5.5), the protocol handler's refusals, the preload, the
   IPC allow-list or the spawn contract.
+- **It does not add a read to the dashboard's bridge, and the rail is drawn without one.**
+  The installation rail the canvas draws needs a bounded, schema-checked list read on the
+  dashboard's surface to fill a row per stored installation ([§4.1](#41-the-windows-structure));
+  the dashboard has none today — `installation.current` is its one installations read, it
+  takes no argument and names no id, and the picker's list is on the picker's own channels —
+  and this document **does not add it**. No Phase 6 task owns `src/preload/` or the IPC
+  allow-list, and the phase draws the rows the dashboard can read. **A multi-row rail is a
+  surface decision for the owner, and it is not taken here.**
 - **It allocates no D-number and no C-number** (§8); the six questions are the owner's and
   are unnumbered on purpose.
 - **It does not approve Phase 6** — that was the first revision's line, and the owner's

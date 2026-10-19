@@ -1466,7 +1466,7 @@ func TestDocsConsoleStylingCountsMatch(t *testing.T) {
 		{
 			sentence: "this document's own docs test was proved against",
 			countRE:  `\*\*And the (\w+) this document's own docs test was proved against`,
-			start:    "**And the four this document's own docs test was proved against",
+			start:    "**And the five this document's own docs test was proved against",
 			end:      "The seventh is the plan's",
 		},
 		{
@@ -2182,5 +2182,358 @@ func TestDocsConsoleStylingAccentOnALightGround(t *testing.T) {
 	}
 	if ink := light["--accent-ink"]; ink != "#085A82" {
 		t.Errorf("%s: the light set's --accent-ink is %q, want #085A82, the tone §3.3 names for accent text on a light ground", path, ink)
+	}
+}
+
+// TestDocsConsoleStylingRailIsSpecified:
+// the owner approved the Claude Design canvas on 2026-10-19, and the rail is the
+// one structural addition it makes to this document. A rail is a region a
+// stylesheet is written against *and* a keyboard drives, so §4.1 has to state
+// the things an implementer writes it from — that it is a left vertical rail,
+// its width, the three state words with the glyph each carries, the shortcut
+// keys that select by position, and the read-only rule the canvas keeps — rather
+// than leaving the canvas's one drawing to a reader's memory. The three words
+// and their glyphs are read off the table §4.1 draws them in, row by row, so a
+// glyph moved to the wrong word is a failing case rather than a plausible table.
+//
+// Its red state is the rail block's absence from §4.1, which is how it was
+// written, and the mutations it is proved against are named in §7.7.
+func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
+	const path = "docs/design/console-styling.md"
+	doc := readDoc(t, path)
+	const railMarker = "**The installation rail — the canvas's one structural addition.**"
+	rail := mdBetween(t, path, doc, railMarker, "### 4.2 Narrow windows")
+	flat := mdFlat(rail)
+
+	for _, want := range []struct{ has, because string }{
+		{"a **left vertical rail**", "the rail's side is half of what it is — the canvas draws it on the left, as vertical tabs — and a region described without its side is one an implementer places by guess"},
+		{"`aside.console-rail`", "the rail is one element the entry appends, and its class is the hook a rule selects"},
+		{"216 px", "the width is the canvas's one fixed number; a rail whose width is unstated is a rail whose rows re-wrap at whatever font the machine has"},
+		{"56 px", "the collapsed rail's width is required by the same block, and the canvas draws the icons-only state without its arithmetic: a width left to the implementer is a rail whose glyph sits at a different size in the two states"},
+		{"`div.console-rail-list`", "the list is the rail's tablist, and it is a different element from the rail: a header row and a foot row inside a tablist are children a tablist may not have"},
+		{"Switch with the shortcut keys 1 2 3", "the hint is drawn text, so it is a string an implementer copies rather than one they write"},
+		{"Command-1", "the shortcut's macOS form is a fact about the platform, and a shortcut described as \"the shortcut keys\" alone is one implemented as the wrong modifier"},
+		{"Control-1", "and its form elsewhere is the other half of the same fact"},
+		{"READ ONLY", "the canvas adds a region to a read-only console, and a rail that selects is the place a write could quietly arrive"},
+		{"+ Add installation", "the foot row's label is drawn text, and it is the row that opens the add-installation flow the console already has"},
+		{"role=\"tablist\"", "the rail is a tablist in its own right, which is what makes the arrow keys and a roving tabindex its behaviour rather than the nav's"},
+		{"roving `tabindex`", "a tablist that tabs through every row is the defect this section exists to prevent"},
+		{"Enter selects", "the arrow keys move focus and Enter is what chooses, which is the manual-activation form of the pattern"},
+		{"**Home** and **End**", "Home and End are part of the tablist's pattern and are the two keys a list of twelve rows is actually navigated with — pinned as the one phrase, so a block that drops either key fails rather than passing on the other"},
+	} {
+		if !strings.Contains(flat, want.has) {
+			t.Errorf("%s: §4.1's rail block does not say %q; %s", path, want.has, want.because)
+		}
+	}
+
+	// The three state words, each read off its own row of the table §4.1 draws
+	// them in, so the word, the glyph and the tone have to be one row's. The
+	// glyph is what §3.5's "never colour alone" rule leans on here: the word is
+	// drawn beside it, and the collapsed rail keeps the glyph and the row's
+	// accessible name.
+	for _, want := range []struct{ word, glyph, token, because string }{
+		{"`running`", "●", "`--ok`", "the dot is the canvas's mark for the installation the console is reading now"},
+		{"`silent`", "▲", "`--warn`", "the triangle is the canvas's mark for the installation whose feed has gone quiet, and a silent row drawn as a dot is the one state an operator must not miss"},
+		{"`idle`", "○", "`--text-muted`", "the open circle is the canvas's mark for a stored installation nothing is being read from"},
+	} {
+		row := mdRow(t, path, rail, "| "+want.word+" |")
+		for _, cell := range []struct{ has, because string }{
+			{want.glyph, want.because},
+			{want.token, "every glyph in this table is drawn in a tone the palette already has; a row that names none is a rule written from a colour §3.2 does not have"},
+		} {
+			if !strings.Contains(row, cell.has) {
+				t.Errorf("%s: §4.1's rail table draws %s without %s on its own row; %s", path, want.word, cell.has, cell.because)
+			}
+		}
+	}
+
+	// The rail is a child of the body, so every count of the body's children in
+	// the document is a count this section changes. §2.1 states the shape the e2e
+	// spec asserts and §4.1 states how many the entry appends; a document that
+	// says three in one place and five in another is a document an implementer
+	// writes the assertion from by choosing a section.
+	chrome := mdFlat(mdBetween(t, path, doc, "### 2.1 ", "### 2.2 "))
+	for _, want := range []struct{ has, because string }{
+		{"'console-rail', 'console-installation', 'console-views', 'console-panel'", "§2.1 quotes the body-children assertion, and the rail is the fourth shape in it: a spec left at three names fails against the entry Task 6.3 writes"},
+		{"`aside.console-rail`", "§2's inventory is the licence for a selector, so the rail's own element is a row of §2.1's table and not a hook that lives only in §4.1's tree"},
+		{"`div.console-rail-list`", "and its list with it, which is the element a rule styles and the tablist the keyboard task gives its keys"},
+		{"`button.console-rail-row`", "and the row, which is where the state word, the name, the project and the spend are drawn"},
+		{"`span.console-rail-state`", "and the span that carries the word and the glyph §3.5's never-colour-alone rule leans on"},
+	} {
+		if !strings.Contains(chrome, want.has) {
+			t.Errorf("%s: §2.1 does not name %s; %s", path, want.has, want.because)
+		}
+	}
+	if strings.Contains(chrome, "the body's three children") {
+		t.Errorf("%s: §2.1 still says the entry draws the body's three children; the rail is the fourth, and §4.1 says the entry appends up to five", path)
+	}
+
+	// The tree §4.1 draws is a count: thirteen classed elements, twelve distinct
+	// classes (the foot row and its button share `console-rail-add`), and §2.1
+	// lists the same hooks. The document said "six parts" of the same tree while
+	// §2.1 said thirteen hooks, and nothing counted either — so both sentences are
+	// read against the fence they describe here, and a tree that gains or loses an
+	// element has to move both numbers with it.
+	var tree string
+	if i := strings.Index(rail, "```"); i >= 0 {
+		if j := strings.Index(rail[i+3:], "```"); j >= 0 {
+			tree = rail[i+3 : i+3+j]
+		}
+	}
+	if tree == "" {
+		t.Fatalf("%s: §4.1's rail block has no fenced tree; that fence is what the two counts below are read from", path)
+	}
+	classRE := regexp.MustCompile(`\.([a-z][a-z0-9-]+)`)
+	elements, classes := 0, map[string]bool{}
+	for _, line := range strings.Split(tree, "\n") {
+		found := classRE.FindAllStringSubmatch(line, -1)
+		if len(found) == 0 {
+			continue
+		}
+		elements++
+		for _, m := range found {
+			classes[m[1]] = true
+		}
+	}
+	treeFields := mdFlat(tree)
+	elementsWord, elementsOK := mdNumberWord(elements)
+	classesWord, classesOK := mdNumberWord(len(classes))
+	if !elementsOK || !classesOK {
+		t.Fatalf("%s: §4.1's rail tree has %d classed elements and %d classes, which this test cannot spell", path, elements, len(classes))
+	}
+	structure := mdFlat(mdBetween(t, path, doc, "### 4.1 The window's structure", "### 4.2 Narrow windows"))
+	whole := structure + " " + chrome
+	for _, want := range []struct{ has, because string }{
+		{"**" + elementsWord + " classed elements**", "§4.1 states how many elements its tree has, and a reader counts them against the fence: a count that names no reading is a count that rots"},
+		{"**" + classesWord + " classes**", "and how many classes those elements carry, which is the number of hooks a stylesheet selects"},
+		{"**" + classesWord + " hooks on " + elementsWord + " elements**", "§2.1's row states the same two numbers, because §2 is the list a rule is written against and a row that disagrees with §4.1's tree is a licence for a hook that is not there"},
+	} {
+		needle := want.has
+		if !strings.Contains(whole, needle) && !strings.Contains(strings.ToLower(whole), strings.ToLower(needle)) {
+			t.Errorf("%s: the rail's tree and its inventory do not agree — %q is in neither §4.1 nor §2.1; %s", path, want.has, want.because)
+		}
+	}
+	if !strings.Contains(treeFields, "one tab each") {
+		t.Errorf("%s: §4.1's tree no longer draws one tab per row; the rows are the tablist's tabs, and the fence is where the shape is read from", path)
+	}
+
+	// The rail's rows are the installations this console's architecture can read.
+	// The picker's list is on the picker's channels, gated to the picker's own
+	// document, and the dashboard's one installations read takes no argument and
+	// names no id — so a design that promises a row per stored installation
+	// promises a read no task in the phase owns, and one that hedges both ways
+	// leaves the implementer to pick. §4.1 states one value, and the plan's test
+	// clause states the same one.
+	planDoc := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	planPath := "docs/plans/2026-10-15-desktop-console.md"
+	if !strings.Contains(structure, "one row per installation the dashboard can read") {
+		t.Errorf("%s: §4.1 does not say the rail draws one row per installation the dashboard can read; with no list read on the dashboard's surface those are the rows it has, and the sentence is what Task 6.3's case is written from", path)
+	}
+	if strings.Contains(structure, "or draws the row it *can* read") {
+		t.Errorf("%s: §4.1 still offers the rail task a choice between landing a new read and drawing the row it can read; the two branches disagree about §11 and about Task 6.3's test, so the block has to state one of them", path)
+	}
+	for _, d := range []struct{ path, text string }{{path, doc}, {planPath, planDoc}} {
+		if strings.Contains(mdFlat(d.text), "one row per stored installation") {
+			t.Errorf("%s: the document still requires one row per stored installation; the dashboard cannot read the stored list — `installation.current` takes no argument, and the picker's channels are gated to the picker's own document — so the case has to be written against the installation the console can read", d.path)
+		}
+	}
+	if !strings.Contains(mdFlat(planDoc), "one row per installation the dashboard can read") {
+		t.Errorf("%s: Task 6.3's **Tests** clause does not state the row the rail draws; a case written from §4.1 and a clause written against the stored list are two different tasks", planPath)
+	}
+
+	for _, want := range []struct{ has, because string }{
+		{"up to **five** children", "§4.1 is where the count is stated, and the banner, the rail and the three bands are five"},
+		{"the other four children", "in refused mode the banner is the whole document, so the four children §4.1 counts are the ones never appended — a sentence that still says three leaves the rail in the refused document, where the canvas does not draw it"},
+	} {
+		if !strings.Contains(structure, want.has) {
+			t.Errorf("%s: §4.1 does not say %q; %s", path, want.has, want.because)
+		}
+	}
+	// §4.2's three figures are viewport widths written in `em` against the root
+	// size, and the rail is 216 px of each. A document that calls them the
+	// content column's is a document whose layers are read as firing at the
+	// column width they no longer describe.
+	if strings.Contains(structure, "breakpoints are the *content column's*") {
+		t.Errorf("%s: §4.1 calls §4.2's breakpoints the content column's; they are the window's, and with a 216 px rail each query fires with the column that much narrower", path)
+	}
+	narrow := mdFlat(mdBetween(t, path, doc, "### 4.2 ", "### 4.3 "))
+	for _, want := range []struct{ has, because string }{
+		{"216 px", "§4.2 is where the rail's width is subtracted from the widths its table names: a section that never mentions it leaves the three figures reading as content widths"},
+		{"narrower than the number it names", "and where the subtraction is stated, so the implementer writes the media queries knowing which column they describe"},
+	} {
+		if !strings.Contains(narrow, want.has) {
+			t.Errorf("%s: §4.2 does not say %q; %s", path, want.has, want.because)
+		}
+	}
+
+	// `--ok` was bound to one reading before the rail, and the rail's running row
+	// is a second. The tone's role cell and §3.5's rule are the two places the
+	// binding is stated, so a rail drawn in a tone whose role does not include it
+	// is a rule the document cannot justify.
+	okRow := mdRow(t, path, mdBetween(t, path, doc, "### 3.2 ", "### 3.3 "), "| `--ok` |")
+	if !strings.Contains(okRow, "the rail's `running` row") {
+		t.Errorf("%s: §3.2's `--ok` role cell does not carry the rail's `running` row; the rail draws that state in `--ok`, and a state colour whose stated role it does not have is a colour used decoratively, which §3.5 rule 4 forbids", path)
+	}
+	state := mdFlat(mdBetween(t, path, doc, "### 3.5 ", "### 3.6 "))
+	if !strings.Contains(state, "and for the rail's `running` row") {
+		t.Errorf("%s: §3.5's rule 4 still binds `--ok` to measured-and-inside-cap alone; the rail's running row is the second reading, and the rule is what the implementer has to answer to", path)
+	}
+
+	// And the task that touches the entry: §7's ordering paragraph and §7.5's
+	// reviewer tier both said 6.5 was the only one, and 6.3 draws the rail's
+	// elements. The sentence is the ordering claim a reviewer reads first, so it
+	// is pinned by name here rather than left to prose.
+	order := mdFlat(mdBetween(t, path, doc, "**Order, and why it is this one.**", "### 7.1 Task 6.1"))
+	if !strings.Contains(order, "6.3 appends the rail's elements") || !strings.Contains(order, "6.5") {
+		t.Errorf("%s: §7's ordering paragraph does not name both tasks that touch the entry (6.3, which appends the rail's elements, and 6.5, which adds the attributes and the keys); the paragraph said 6.5 was the only one, and §7.3 puts entry.ts in 6.3's Files", path)
+	}
+	// A pattern rather than one sentence: §7.5's original wording is not §7's,
+	// and a guard on either fixed string passes over the other — which is what
+	// §7.7 claims cannot happen. Both documents are read, because the claim was
+	// written in both (the plan's `J4` row carried a third wording).
+	exclusive := regexp.MustCompile(`\b(?:only|sole|one)\s+tasks?\s+(?:that\s+|to\s+)?touch(?:es)?\s+(?:the\s+)?(?:renderer\s+)?entry\b`)
+	for _, d := range []struct{ path, text string }{{path, doc}, {planPath, planDoc}} {
+		if m := exclusive.FindString(mdFlat(d.text)); m != "" {
+			t.Errorf("%s: the document still calls one task the sole owner of the entry (%q); two do — the rail's elements are Task 6.3's and the attributes and keys are Task 6.5's", d.path, m)
+		}
+	}
+
+	// A hook is a class, and the rail has twelve of them on thirteen elements.
+	// The clauses that derive the §2-inventory selector scan are where the list
+	// the scan checks against is defined, so a clause that sends the scan after
+	// "thirteen hooks" licenses a rule against a class the entry never emits —
+	// the thirteen is the *element* count above, and §2.1 states twelve hooks.
+	// All three clauses said thirteen, which is the count this reads back.
+	planTasks := mdTaskSections(t, planPath, planDoc,
+		"### Task 6.1: The token layer",
+		"### Task 6.2: The wiring",
+		"### Task 6.3: The layout",
+		"### Task 6.4: The screens",
+		"### Task 6.5: The theme switch",
+		"### Task 6.6: The golden frames",
+		"## Cross-task dependencies")
+	// The emphasis markers are read through rather than around: the clause bolds
+	// the count, so a guard on the bare phrase reads straight past the wording
+	// the three clauses actually carried ("**thirteen** hooks").
+	thirteenHooks := regexp.MustCompile(`\bthirteen\**\s+hooks\b`)
+	for _, d := range []struct{ path, text string }{{path, doc}, {planPath, planDoc}} {
+		if m := thirteenHooks.FindString(mdFlat(d.text)); m != "" {
+			t.Errorf("%s: the document sends the selector scan after %q; the tree's thirteen are elements and the hooks are twelve (§2.1, and the count read off the fence above), so a scan written against thirteen styles a class nothing emits", d.path, m)
+		}
+	}
+	for _, d := range []struct{ path, label, section string }{
+		{path, "§7.4's **Tests**", mdBetween(t, path, doc, "### 7.4 ", "### 7.5 ")},
+		{planPath, "Task 6.3's **Tests**", planTasks[2]},
+		{planPath, "Task 6.4's **Tests**", planTasks[3]},
+	} {
+		clause, ok := mdClause(t, d.path, d.section, "Tests")
+		if !ok {
+			t.Fatalf("%s: %s has no **Tests** clause; the scan's list is derived there", d.path, d.label)
+		}
+		if flat := mdFlat(clause); !strings.Contains(flat, "twelve") {
+			t.Errorf("%s: %s does not state the rail's twelve hooks; the clause is where the scan's list is derived, and a clause that names no count is the sentence that said thirteen", d.path, d.label)
+		}
+	}
+
+	// And the same two facts decide what the row's fields are read from, because
+	// one read cannot supply four fields: `ActiveInstallation` carries a project
+	// and no display name and no spend, and the rail's state word is the rail's
+	// own. A sentence that says one read answers all four is a sentence Task 6.3
+	// is written from, and it cannot be implemented.
+	if !strings.Contains(structure, "no one read answers all four") {
+		t.Errorf("%s: §4.1 does not say that no one read answers the row's four fields; it claimed the dashboard's one installations read answered all four, and `ActiveInstallation` carries neither a spend nor a rail state word", path)
+	}
+	for _, want := range []struct{ has, because string }{
+		{"`budget.show`", "§4.1 does not name the read behind the row's spend; the console's budget read is where those dollars come from, and a field with no read behind it is a field Task 6.3 invents"},
+		{"no display name", "§4.1 draws a name and a project over a payload that keeps one label; the sentence has to say which one the row draws them from"},
+	} {
+		if !strings.Contains(structure, want.has) {
+			t.Errorf("%s: %s", path, want.because)
+		}
+	}
+	for _, d := range []struct{ path, text string }{{path, doc}, {planPath, planDoc}} {
+		if strings.Contains(mdFlat(d.text), "installations read answers all four") {
+			t.Errorf("%s: the document still says the dashboard's one installations read answers all four of the row's fields; that payload carries a project and no spend and no state word, so two of the four have no read in this design", d.path)
+		}
+	}
+
+	// Two tasks touch the entry, so both carry the same reviewer note: 6.3 draws
+	// the rail's elements into `entry.ts`, which is where a `.style` write or a
+	// CSP loosening would have to appear, and §7.5 already says so of itself.
+	// §7.3's tier said a bare "ordinary", and so did the plan's Task 6.3.
+	for _, d := range []struct{ path, label, section string }{
+		{path, "§7.3", mdBetween(t, path, doc, "### 7.3 ", "### 7.4 ")},
+		{planPath, "Task 6.3", planTasks[2]},
+	} {
+		if tier := mdReviewerTier(t, d.path, d.section); !strings.Contains(tier, "§5.5") {
+			t.Errorf("%s: %s's **Reviewer tier** does not name §5.5; it is one of the two tasks that touch the entry, and the rule that no style is written and the CSP is not loosened is what a reviewer of that file has to check", d.path, d.label)
+		}
+	}
+}
+
+// mdReviewerTier reads a task's **Reviewer tier** line. It is not one of the
+// clauses mdClause knows — the tier is not a Scope, Files, Tests, Command,
+// Verification, Depends on or Commit — and it is the sentence that decides what
+// scrutiny a diff gets, so the tasks that touch the entry are read back here.
+var mdReviewerTierRE = regexp.MustCompile(`^(?:- )?\*\*Reviewer tier:\*\*(.*)$`)
+
+func mdReviewerTier(t *testing.T, path, section string) string {
+	t.Helper()
+	lines := strings.Split(section, "\n")
+	for i, line := range lines {
+		m := mdReviewerTierRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		// The note is a paragraph: the design's item indents its continuation
+		// lines, the plan's run at column zero, and a blank line ends both.
+		paragraph := []string{m[1]}
+		for _, next := range lines[i+1:] {
+			if strings.TrimSpace(next) == "" {
+				break
+			}
+			paragraph = append(paragraph, next)
+		}
+		return mdFlat(strings.Join(paragraph, " "))
+	}
+	t.Fatalf("%s: this task has no **Reviewer tier** line; every task in this phase states the scrutiny its diff gets", path)
+	return ""
+}
+
+// TestDocsConsoleStylingRailIsInThePlan:
+// the rail is a change to two tasks of phase 6 and not to the design alone: its
+// structure and the stylesheet's rules for it are Task 6.3's, and its keyboard —
+// the tablist behaviour and the shortcut keys — is Task 6.5's, which is already
+// the task that gives the nav its keys. A design that describes a region and a
+// plan whose tasks do not name it is a region nobody builds, so the two scope
+// paragraphs are read here.
+//
+// This case reads the plan as text for the same boundary reason the rest of this
+// file does, and it names the tasks by their clauses rather than by their
+// content: the plan is where a task's scope is stated.
+func TestDocsConsoleStylingRailIsInThePlan(t *testing.T) {
+	const planPath = "docs/plans/2026-10-15-desktop-console.md"
+	plan := readDoc(t, planPath)
+	tasks := mdTaskSections(t, planPath, plan,
+		"### Task 6.1: The token layer",
+		"### Task 6.2: The wiring",
+		"### Task 6.3: The layout",
+		"### Task 6.4: The screens",
+		"### Task 6.5: The theme switch",
+		"### Task 6.6: The golden frames",
+		"## Cross-task dependencies")
+
+	for _, want := range []struct{ task, label, has, because string }{
+		{"6.3", "Scope", "installation rail", "the rail's structure and its rules are the layout task's, and a task that does not name the region is a task whose stylesheet is written against a tree nobody draws"},
+		{"6.3", "Files", "src/renderer/entry.ts", "the rail's elements are the entry's — the same rule that puts `degraded-num` in Task 6.4's Files: the hook and the rule that selects it land in one commit"},
+		{"6.5", "Scope", "shortcut keys", "the rail is a tablist, so its keys are the keyboard task's; a design that leaves the keys unassigned is a rail an operator can only click"},
+	} {
+		clause, ok := mdClause(t, planPath, tasks[taskIndex(t, want.task)], want.label)
+		if !ok {
+			t.Fatalf("%s: Task %s has no **%s** clause; this case is about what that clause says", planPath, want.task, want.label)
+		}
+		if !strings.Contains(mdFlat(clause), want.has) {
+			t.Errorf("%s: Task %s's **%s** does not name %q; %s", planPath, want.task, want.label, want.has, want.because)
+		}
 	}
 }
