@@ -71,6 +71,24 @@ func TestManagedCreationRefusesAForeignStateBucket(t *testing.T) {
 					t.Errorf("the refusal does not name %q:\n%s", want, s)
 				}
 			}
+			// And the advice has to be sound. The bucket comes from
+			// --state-bucket or from terraform.state_bucket, so the fix is to
+			// stop recording it in either place — and NOT "create the project
+			// unmanaged and flag it later": an unmanaged creation resolves
+			// terraform.state_bucket from this same config, so it would land
+			// the state in the same bucket, and `fugaro managed flag` refuses
+			// that project for exactly this reason
+			// (TestManagedFlagNeedsTheDerivedStateBucket). Advice that sends an
+			// operator round that way costs a created project and arrives at
+			// the same refusal.
+			if !strings.Contains(s, "terraform.state_bucket") {
+				t.Errorf("the refusal does not name the config field that holds the value:\n%s", s)
+			}
+			for _, advice := range []string{"flag it later", "--gcp-project"} {
+				if strings.Contains(s, advice) {
+					t.Errorf("the refusal recommends %q, which leads to the same state:\n%s", advice, s)
+				}
+			}
 			// And it fires before anything is created: no project, no
 			// Firebase, no billing link, no creation fact. A check that ran
 			// after the project stage would leave a managed project that the

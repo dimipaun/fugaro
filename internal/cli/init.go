@@ -1196,17 +1196,23 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 // The refusal covers both spellings of the same decision — --state-bucket on
 // the command line and terraform.state_bucket in the project's config — because
 // it reads the resolved spec, which is the value the creation would actually
-// use. It is the rule the neighbouring managed paths already keep: `fugaro
-// managed flag` refuses a project whose runs bucket is not the derived name,
-// and `fugaro restore` refuses to restore into a state bucket that is not this
-// project's own.
+// use, and it says so: the fix is where the value comes from, and not
+// "create the project unmanaged instead". An unmanaged creation resolves
+// terraform.state_bucket from the same config, so its state would sit in the
+// same bucket, and the managed flag of it is refused for it (managedFlag's own
+// check, added with this one) — a run told to take the long way round would
+// arrive at the same refusal one command later, with a project created in the
+// meantime. It is the rule the neighbouring managed paths keep: `fugaro managed
+// flag` refuses a project whose runs bucket or whose state bucket is not the
+// derived name, and `fugaro restore` refuses to restore into a state bucket
+// that is not this project's own.
 func checkManagedStateBucket(spec infra.InstallationSpec) error {
 	want := managedmode.InstallationsStateBucket(spec.Project)
 	if spec.StateBucket == want {
 		return nil
 	}
-	return userErr("a managed project's Terraform state must live in gs://%s, and this creation would put it in gs://%s: the managed apply reads the installation's state out of that bucket by its derived name — the name is a function of the GCP project and is never taken from a flag or from the project's config — so state kept anywhere else reads as state that could not be read at all, and every managed apply of %s would fall back to the typed confirmation the project was created to be free of. Drop --state-bucket (and terraform.state_bucket in the project config), or create the project unmanaged and flag it later: fugaro init --create-project --gcp-project %s",
-		want, spec.StateBucket, spec.FugaroProject, spec.Project)
+	return userErr("a managed project's Terraform state must live in gs://%s, and this creation would put it in gs://%s: the managed apply reads the installation's state out of that bucket by its derived name — the name is a function of the GCP project and is never taken from a flag or from the project's config — so state kept anywhere else reads as state that could not be read at all, and every managed apply of %s would fall back to the typed confirmation the project was created to be free of. Fix it where the value comes from: drop --state-bucket, and terraform.state_bucket from the project config, which is what a creation that passes no flag resolves (fugaro managed flag refuses a project whose config records another bucket, for the same reason)",
+		want, spec.StateBucket, spec.FugaroProject)
 }
 
 // initErr maps an error of infra: a *infra.UserError (a refusal, an
