@@ -249,7 +249,10 @@ run "propose refuses a field it does not read" \
   "      if (!PROPOSE_FIELDS.includes(key)) return refuse(INPUT_CODES.BAD_TEXT, key);" \
   "      if (false) return refuse(INPUT_CODES.BAD_TEXT, key);"
 
-# 7. D162: a launch passes through, and it passes through the same client.
+# 7. The wake-word guard, and D162: a launch passes through the same client.
+run "a wake word P6.2's machine cannot confirm with is refused where the app is wired" \
+  "    throw new TypeError('createTypedInput: no configured wake word can confirm');" \
+  "    void isConfirmPhrase;"
 run "a launch goes straight through to the agent (D162)" \
   "    if (stepped.outcome === CONFIRM_OUTCOME.PASS_THROUGH) {
       // D162: a launch goes straight through, and the caps are what bound it.
@@ -333,10 +336,22 @@ run "a row that is not a summary is dropped rather than drawn blank" \
 run "a read-back is drawn under the typed cue" \
   "          el(Text, { key: 'cue', type: SCREEN.CUE }, TYPE_CUE)," "" \
   mobile/src/text/screen.js "$SCREEN_SUITE"
-run "the unsent text is shown (D167's first half)" \
-  "    unsent.forEach((one) => {
-      children.push(el(Text, { key: \`unsent:\${one.id}\`, type: SCREEN.UNSENT }, one.text));
-    });" "" \
+run "the UNSENT text is shown (D167's first half)" \
+  "      if (typeof one.text !== 'string' || one.text === '') return;" "" \
+  mobile/src/text/screen.js "$SCREEN_SUITE"
+run "a message the database already has is NOT shown as unsent (D167a)" \
+  "      if (one.landed === true) return;" "" \
+  mobile/src/text/screen.js "$SCREEN_SUITE"
+run "a malformed prompt entry is dropped, not a render crash" \
+  "    if (prompt === null || typeof prompt !== 'object') return false;" \
+  "    if (prompt === null) return false;" \
+  mobile/src/text/screen.js "$SCREEN_SUITE"
+run "an entry with no usable prompt id is dropped too" \
+  "    return typeof prompt.id === 'string' && prompt.id !== '';" "    return true;" \
+  mobile/src/text/screen.js "$SCREEN_SUITE"
+run "a malformed installation is skipped rather than crashing the screen" \
+  "      if (one === null || typeof one !== 'object') return;
+      children.push(section(one));" "      children.push(section(one));" \
   mobile/src/text/screen.js "$SCREEN_SUITE"
 run "the draft and its handler are the caller's, passed straight through" \
   "        value: typeof props.draft === 'string' ? props.draft : ''," \

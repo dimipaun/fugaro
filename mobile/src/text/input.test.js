@@ -256,6 +256,44 @@ test('a clock that stops being a time is a refusal, not a crash', async () => {
   assert.equal((await h.input.propose({ text: 'x', verb: 'launch' })).code, INPUT_CODES.BAD_CLOCK);
 });
 
+test('a wake word P6.2\'s machine does not recognise beside "confirm" is a wiring failure', async () => {
+  const h = await harness();
+  const base = { mailbox: h.client, now: () => T0, newId: () => 'x-1' };
+  // `isConfirmPhrase` routes with the router's DEFAULT aliases, so a screen
+  // whose wake word is not one of them could route "Hey, confirm" as the
+  // command and have the machine refuse it `not-a-confirmation`: every command
+  // but the one that authorises an action. Fail-closed, and refused where the
+  // app is wired rather than discovered mid-action.
+  assert.throws(
+    () => createTypedInput({ ...base, router: { aliases: ['Hey'] } }),
+    /no configured wake word can confirm/,
+  );
+  assert.throws(
+    () => createTypedInput({ ...base, router: { aliases: [] } }),
+    /no configured wake word can confirm/,
+  );
+  assert.throws(
+    () => createTypedInput({ ...base, router: { aliases: 'Fugaro' } }),
+    /no configured wake word can confirm/,
+  );
+  // The machine's own wake words are the ones that work, singly or beside a
+  // configured one, and "Figaro, confirm" is P6.2's own example of the phrase.
+  for (const aliases of [['Fugaro'], ['fugaro'], ['Figaro'], ['Hey', 'Fugaro']]) {
+    const built = createTypedInput({ ...base, router: { aliases } });
+    assert.equal(built.ok, true, aliases.join('/'));
+  }
+  let minted = 0;
+  const figaro = createTypedInput({
+    mailbox: h.client,
+    now: () => T0,
+    newId: () => `f-${++minted}`,
+    router: { aliases: ['Figaro'] },
+  });
+  await figaro.propose({ text: 'cancel run 42', verb: 'cancel', target: RUN_TARGET });
+  const answer = await figaro.submit('Figaro, confirm');
+  assert.equal(answer.outcome, INPUT_OUTCOME.CONFIRMED, 'the configured wake word confirms');
+});
+
 test('a context field this module does not read is refused, not ignored', async () => {
   const h = await harness();
   // A misspelled `target` on a confirmation would be a confirmation against
@@ -426,6 +464,29 @@ test('two read-backs outstanding are the machine\'s ambiguity, not a guess betwe
   assert.equal(answer.ok, false);
   assert.equal(answer.code, 'ambiguous-pending', 'P6.2\'s code: nothing is authorised');
   assert.equal(h.inbox().length, 0);
+});
+
+test('the phrase with no actionId confirms the one live read-back the screen is drawing', async () => {
+  // The flow the screen actually implies: `awaiting()` (or `propose`'s own
+  // answer) gives the app the read-back it draws, and the owner then types the
+  // phrase. The app need not hold the id to hand it back -- one read-back
+  // waiting has exactly one thing the phrase could mean -- so the id and the
+  // target come from the machine's own listing.
+  const h = await harness();
+  const proposed = await h.input.propose({ text: 'cancel run 42', verb: 'cancel', target: RUN_TARGET });
+  const live = await h.input.awaiting();
+  assert.equal(live.actions.length, 1);
+  assert.equal(live.actions[0].actionId, proposed.actionId);
+
+  const answer = await h.input.submit('Fugaro, confirm');
+  assert.equal(answer.ok, true);
+  assert.equal(answer.outcome, INPUT_OUTCOME.CONFIRMED);
+  assert.equal(answer.actionId, proposed.actionId, 'the id is the live read-back\'s own');
+  assert.deepEqual(answer.record.target, { run: 'run-42' }, 'and so is the target it re-states');
+  assert.equal(answer.delivered, false);
+  assert.equal(h.inbox().length, 0);
+  // Spent: a second bare phrase has nothing left to authorise.
+  assert.equal((await h.input.submit('Fugaro, confirm')).code, CONFIRM_REFUSAL.NO_PENDING_ACTION);
 });
 
 test('awaiting() reports what the typed phrase would confirm, in the machine\'s words', async () => {

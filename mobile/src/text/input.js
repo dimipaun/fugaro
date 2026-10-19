@@ -75,12 +75,13 @@
 // credential: `now` and `newId` are injected, exactly as they are into
 // `createMailboxClient`, and the tests run with no device and no project.
 
-import { COMMAND, ROUTE, routeUtterance } from '../../../shared/command/index.js';
+import { COMMAND, ROUTE, WAKE_ALIASES, routeUtterance } from '../../../shared/command/index.js';
 import {
   DESTRUCTIVE_VERBS,
   OUTCOME as CONFIRM_OUTCOME,
   REFUSAL as CONFIRM_REFUSAL,
   initialState,
+  isConfirmPhrase,
   pending as confirmPending,
   step,
 } from '../../../shared/confirm/index.js';
@@ -202,6 +203,30 @@ export function createTypedInput(options = {}) {
     if (!CONFIRM_FIELDS.includes(key)) {
       throw new TypeError(`createTypedInput: confirm carries no ${key}`);
     }
+  }
+
+  // **A wake word that can never confirm is refused here.** P6.2's machine
+  // decides whether a typed utterance IS the fixed phrase by routing it with
+  // the router's **default** aliases (`isConfirmPhrase`: "It is P6.1's answer,
+  // not a second grammar"), while this screen routes with the caller's. So a
+  // screen configured with a wake word the machine does not know -- say
+  // `aliases: ['Hey']` -- routes "Hey, confirm" as P6.1's `confirm` command and
+  // then has the machine refuse it `not-a-confirmation`: the owner's own wake
+  // word could be used for every command except the one that authorises an
+  // action, and they would learn it only by having a confirmation rejected.
+  //
+  // The behaviour is fail-closed either way -- nothing is authorised, and the
+  // refusal is the machine's own -- so this is not a hole. It is a
+  // configuration whose consequence the caller cannot see, which is exactly
+  // what a wiring failure is for: at least one configured wake word must be one
+  // the machine recognises beside `confirm`, or this is refused where the app
+  // is being wired rather than discovered by a person mid-action.
+  const aliases = router.aliases === undefined ? WAKE_ALIASES : router.aliases;
+  if (
+    !Array.isArray(aliases) ||
+    !aliases.some((one) => typeof one === 'string' && isConfirmPhrase(`${one}, confirm`))
+  ) {
+    throw new TypeError('createTypedInput: no configured wake word can confirm');
   }
 
   const start = now();

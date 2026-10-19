@@ -279,7 +279,7 @@ test('a read-back is drawn with the TYPED cue, never P6.2\'s spoken one', () => 
   assert.equal(stringsOf(screen, SCREEN.CONFIRMATION).length, 0);
 });
 
-test('the unsent text is shown, so a user can see what has not reached the agent', () => {
+test('the UNSENT text is shown, and a message the database already has is not', () => {
   const screen = makeScreen();
   const shown = render(screen, {
     unsent: [
@@ -287,8 +287,60 @@ test('the unsent text is shown, so a user can see what has not reached the agent
       { id: 'm-2', at: 1_700_000_001_000, text: 'and the changelog', landed: true },
     ],
   });
-  assert.equal(shown.includes('ship the notes'), true);
-  assert.equal(shown.includes('and the changelog'), true);
+  // D167(a) and P3.6's `pending()` are about the text the database has NOT
+  // received: drawing a landed message the same way would invite the owner to
+  // retype a sentence the consumer is already acting on.
+  assert.deepEqual(stringsOf(screen, SCREEN.UNSENT, {
+    unsent: [
+      { id: 'm-1', at: 1_700_000_000_000, text: 'ship the notes', landed: false },
+      { id: 'm-2', at: 1_700_000_001_000, text: 'and the changelog', landed: true },
+    ],
+  }), ['ship the notes']);
+  assert.equal(shown.includes('and the changelog'), false);
+});
+
+test('a malformed unsent entry is dropped rather than drawn as a blank row', () => {
+  const screen = makeScreen();
+  const strings = stringsOf(screen, SCREEN.UNSENT, {
+    unsent: [null, {}, { id: 'm-1', text: '' }, { id: 'm-2', text: 'real', landed: false }, 'a string'],
+  });
+  assert.deepEqual(strings, ['real']);
+});
+
+// ---------------------------------------------------------------------------
+// A malformed entry is a row this screen refuses to draw, not a render crash.
+// ---------------------------------------------------------------------------
+
+test('a malformed prompt entry is dropped rather than crashing the screen', () => {
+  const screen = makeScreen();
+  // The fallback screen crashing is worse than any blank row: it is the screen
+  // that exists for when the voice path is not working.
+  for (const pending of [[null], [{}], [{ prompt: null }], [{ prompt: {} }], [{ prompt: { id: '' } }], 'x']) {
+    const props = { installations: [{ account: 'a', pending, summaries: [] }] };
+    assert.doesNotThrow(() => render(screen, props));
+    assert.deepEqual(stringsOf(screen, SCREEN.PROMPT, props), []);
+    // The section is still drawn, and says nothing is waiting.
+    assert.equal(render(screen, props).includes('a'), true);
+    assert.equal(render(screen, props).includes(NO_PROMPTS), true);
+  }
+  // And a malformed installation is skipped rather than crashing.
+  assert.doesNotThrow(() => render(screen, { installations: [null, 'x', LAPTOP] }));
+  assert.equal(render(screen, { installations: [null, 'x', LAPTOP] }).includes('Deploy to staging?'), true);
+});
+
+test('a prompt with a sentence is drawn by its sentence, and one without by its id', () => {
+  const screen = makeScreen();
+  const props = {
+    installations: [
+      {
+        account: 'a',
+        pending: [waiting('p-1', 'Deploy to staging?'), { prompt: { id: 'p-2' }, destructive: true }],
+        summaries: [],
+      },
+    ],
+  };
+  assert.deepEqual(stringsOf(screen, SCREEN.PROMPT, props), ['Deploy to staging?', 'p-2']);
+  assert.deepEqual(stringsOf(screen, SCREEN.DESTRUCTIVE, props), [DESTRUCTIVE_WORD]);
 });
 
 test('a notice is one line, and no notice is no line', () => {

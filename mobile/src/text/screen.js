@@ -25,11 +25,20 @@
 //
 // **What a section shows.** The installation's id (D114's label: the thing the
 // owner typed so they can tell two apart, and the same string the shell
-// already shows), the questions waiting with their reminder stage, and the
+// already shows), the questions waiting as P6.5's listing gives them, and the
 // recent summaries the app has -- the consumer's short lines about what the
 // agent has done. A prompt's `destructive` flag is drawn as its own word rather
 // than left to the sentence, because the whole point of the flag (P6.5) is that
 // a destructive question must not be answered by accident.
+//
+// The listing entry's `stage` (P6.5's reminder escalation: never announced, an
+// hour, a day) is **read by nothing here**, and this file says so rather than
+// leaving the sentence above to imply it. Drawing a reminder stage is a
+// decision about how a phone shows "you have been asked this for a day", and
+// it is P6.12's spoken prompt and D170's overview that own how a reminder is
+// presented; a word invented here would be one more spelling of a state this
+// screen does not own. What the section does with the entry is: draw its
+// sentence, and mark it when it is destructive.
 //
 // **What is not here.** No answer buttons: a typed answer goes through the
 // caller's queue (`shared/prompts`' `answer`) and this screen is handed the
@@ -121,7 +130,34 @@ export function recentSummaries(summaries, limit = RECENT_SUMMARY_LIMIT) {
   return Object.freeze(ordered.slice(0, limit));
 }
 
-/** One prompt, as the screen says it: P6.5's listing entry's own sentence. */
+/**
+ * The entries the section will draw, and nothing else.
+ *
+ * A P6.5 listing entry is `{ prompt, destructive, safe, announcedAt, stage,
+ * due }` with the prompt itself P6.3's message, so one is drawn only when it
+ * has a `prompt` object carrying a non-empty string id. That is the same rule
+ * `recentSummaries` applies to summaries and it is here for the same reason: a
+ * malformed entry is a value this screen refuses to draw, and one that reached
+ * the tree unguarded would be a **render crash** (`null.prompt`) rather than a
+ * blank row -- a crash on the screen whose whole job is to be the fallback when
+ * the voice path is not working.
+ *
+ * The same `filter` in `promptLine`'s place means an entry the caller passed
+ * with a text but no usable prompt cannot invent one: what is drawn is the
+ * prompt's own sentence, and it is the entry's own id that is drawn only when
+ * the sentence is missing, never a value the screen composed.
+ */
+function drawablePrompts(list) {
+  if (!Array.isArray(list)) return Object.freeze([]);
+  return list.filter((one) => {
+    if (one === null || typeof one !== 'object') return false;
+    const prompt = one.prompt;
+    if (prompt === null || typeof prompt !== 'object') return false;
+    return typeof prompt.id === 'string' && prompt.id !== '';
+  });
+}
+
+/** One drawable prompt, as the screen says it: its own sentence, or its id. */
 function promptLine(entry) {
   const prompt = entry.prompt;
   return typeof prompt.text === 'string' && prompt.text !== '' ? prompt.text : prompt.id;
@@ -173,7 +209,7 @@ export function createTextScreen({ React, View, Text, TextInput }) {
   /** One installation's section: its name, its questions, its recent lines. */
   function section(entry) {
     const account = entry.account;
-    const pending = Array.isArray(entry.pending) ? entry.pending : [];
+    const pending = drawablePrompts(entry.pending);
     const summaries = recentSummaries(entry.summaries);
     const children = [el(Text, { key: `${account}:name`, type: SCREEN.INSTALLATION_NAME }, account)];
 
@@ -209,12 +245,27 @@ export function createTextScreen({ React, View, Text, TextInput }) {
     const unsent = Array.isArray(props.unsent) ? props.unsent : [];
     const children = [el(Text, { key: 'title', type: SCREEN.TITLE }, TEXT_TITLE)];
 
-    installations.forEach((one) => children.push(section(one)));
+    installations.forEach((one) => {
+      if (one === null || typeof one !== 'object') return;
+      children.push(section(one));
+    });
 
-    // The unsent text is the user's own and has not reached the agent: it is
+    // The unsent text is the user's own and has NOT reached the agent: it is
     // shown above the keyboard, in the order the client holds it.
-    unsent.forEach((one) => {
-      children.push(el(Text, { key: `unsent:${one.id}`, type: SCREEN.UNSENT }, one.text));
+    //
+    // `landed: true` is **not** drawn here, and that is the point of the flag.
+    // D167(a) and P3.6's own `pending()` reserve "the unsent text the owner is
+    // shown" for a message the database has NOT received; a landed one has been
+    // received, and a screen that drew it the same way would invite the owner
+    // to retype a sentence the consumer is already acting on -- a duplicate
+    // command from a screen whose failure mode is meant to be the safe one.
+    unsent.forEach((one, index) => {
+      if (one === null || typeof one !== 'object') return;
+      if (one.landed === true) return;
+      if (typeof one.text !== 'string' || one.text === '') return;
+      children.push(
+        el(Text, { key: `unsent:${typeof one.id === 'string' ? one.id : index}`, type: SCREEN.UNSENT }, one.text),
+      );
     });
 
     const confirmation = props.confirmation;
