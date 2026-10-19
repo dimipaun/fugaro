@@ -27,9 +27,12 @@
 //     **The owner's Q1 ruling of 2026-10-19 settled that question the other
 //     way**: the console ships one value set, dark, so `CONSOLE_THEME` keeps the
 //     literal it has and nothing here reads a preference at all -- the case that
-//     holds this is in `test/unit/entry-wiring.test.ts`, and it fails by name on
-//     a media query, a `nativeTheme` query or a `data-theme` write arriving
-//     without a ruling that ships a second set with them.
+//     holds this is in `test/unit/entry-wiring.test.ts`, and it scans every
+//     renderer source for a media query, a `nativeTheme` query or a
+//     `themeChoice()` arriving without a ruling that ships a second set with
+//     them. (`data-theme` is *not* in that scan: the screens have stamped the
+//     theme they were drawn with on their own roots since they were written, and
+//     that attribute is the drawing's record rather than a read of the machine.)
 //   - **The keyboard is this file's, and it is the console's first.** Two
 //     tablists get the WAI-ARIA behaviour -- the view navigation and the
 //     installation rail's list (design section 4.3) -- and the rail's rows are
