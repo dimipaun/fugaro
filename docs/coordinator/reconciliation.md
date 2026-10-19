@@ -604,7 +604,8 @@ option, and the plan that follows is a separate document with its own gate. A re
 one of these answers described elsewhere as an approved plan, or as a D-number, should treat
 that as an error in the other document.
 
-Three things the answers do not settle, said here so they are not lost:
+Two things the answers do not settle, and one thing they do not change, said here so they are
+not lost:
 
 - **U2 stays an owner check.** Q3's answer (A) reuses the existing App and asks it for
   `pull_requests: read`; whether the App has actually been granted that on GitHub is

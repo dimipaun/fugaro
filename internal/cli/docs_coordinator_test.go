@@ -390,7 +390,12 @@ func TestDocsCoordinatorTakesNoDecisionNumber(t *testing.T) {
 // The path character class carries `*` for the two globs the document names
 // (`internal/cli/docs_*_test.go`, `docs/design/credentials-service*.md`); both
 // are audited exceptions below, not files.
-var coordinatorCitationRE = regexp.MustCompile("`([A-Za-z0-9_.][A-Za-z0-9_./*-]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf)\\b)(?::[0-9]+(?:[-,+][0-9]*)*)?[^`]*`")
+//
+// The line spec is captured as a second group, because the path resolving is
+// only half of what a `path:line` citation claims: the check below reads the
+// file and holds the number to it, for every occurrence and not only the first
+// one per path.
+var coordinatorCitationRE = regexp.MustCompile("`([A-Za-z0-9_.][A-Za-z0-9_./*-]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf)\\b)(:[0-9]+(?:[-,+][0-9]*)*)?[^`]*`")
 
 // coordinatorPathCensusRE is the independent count of how many path-looking
 // tokens the document holds, and it is deliberately dumber than the citation
@@ -453,15 +458,20 @@ func TestDocsCoordinatorCitationsExist(t *testing.T) {
 	cites := 0
 	for _, m := range matches {
 		path := m[1]
-		if seen[path] {
-			continue
-		}
+		// The line numbers are checked for EVERY occurrence, before the
+		// per-path dedup below: one file is cited at several lines, and
+		// checking only the first occurrence would leave the rest unread --
+		// which is how a citation can name a line past the end of a file and
+		// still be reported as checked.
+		first := !seen[path]
 		seen[path] = true
 		// The exceptions are checked first, so that one naming a bare filename
 		// (`CLAUDE.md`) is not swallowed by the path test below.
 		if reason, ok := coordinatorCitationExceptions[path]; ok {
-			used[path] = true
-			t.Logf("%s cites %q, which is not a file here: %s", coordinatorReconciled, path, reason)
+			if first {
+				used[path] = true
+				t.Logf("%s cites %q, which is not a file here: %s", coordinatorReconciled, path, reason)
+			}
 			continue
 		}
 		// A citation is a path, or one of the repository's own root documents.
@@ -470,10 +480,20 @@ func TestDocsCoordinatorCitationsExist(t *testing.T) {
 		if !strings.Contains(path, "/") && !coordinatorRootFiles[path] {
 			continue
 		}
-		cites++
-		if _, ok := coordinatorResolveCitation(path); !ok {
-			t.Errorf("%s cites %q, which does not exist (tried %s): a reconciliation whose citations have moved is a reconciliation nobody can check",
-				coordinatorReconciled, path, strings.Join(coordinatorTriedCitations(path), ", "))
+		file, ok := coordinatorResolveCitation(path)
+		if !ok {
+			if first {
+				cites++
+				t.Errorf("%s cites %q, which does not exist (tried %s): a reconciliation whose citations have moved is a reconciliation nobody can check",
+					coordinatorReconciled, path, strings.Join(coordinatorTriedCitations(path), ", "))
+			}
+			continue
+		}
+		if first {
+			cites++
+		}
+		if spec := m[2]; spec != "" {
+			coordinatorCheckCitedLines(t, path, file, spec)
 		}
 	}
 	// An exception nobody uses is a hole in this check that no one is watching.
@@ -501,6 +521,46 @@ func coordinatorResolveCitation(path string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// coordinatorFileLines reads a repository file and returns its lines. The
+// trailing newline every Go file ends with is not a line of it: splitting
+// without trimming counts one more than the file has, which makes a citation
+// to that phantom last line resolve to nothing and still pass -- the same
+// "sees less than it claims" shape this file is written against.
+func coordinatorFileLines(t *testing.T, file string) []string {
+	t.Helper()
+	body, err := os.ReadFile("../../" + filepath.FromSlash(file))
+	if err != nil {
+		t.Errorf("%s could not be read, so the citations into it are unchecked: %v", file, err)
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(string(body), "\n"), "\n")
+}
+
+// coordinatorCheckCitedLines checks the line numbers inside a full
+// `path:line` citation -- the shape the document uses most, and the one whose
+// path was checked while its line never was. The path existing is not the
+// claim such a citation makes: `internal/budget/model.go:151,164` says those
+// two lines are the ones meant, and a line past the end of the file is a
+// citation no reader can follow. It is the same failure the bare-reference
+// check below catches, in the other half of the document's citations, and
+// finding #26 records a cited line range that was already wrong once.
+//
+// An open-ended line (`:326+`) is checked for the line it names and no more,
+// which is all the `+` claims.
+func coordinatorCheckCitedLines(t *testing.T, path, file, spec string) {
+	t.Helper()
+	lines := coordinatorFileLines(t, file)
+	if lines == nil {
+		return
+	}
+	for _, n := range coordinatorLineNumbers(strings.TrimPrefix(spec, ":")) {
+		if n < 1 || n > len(lines) {
+			t.Errorf("%s cites %q at %q, but %s holds %d lines: line %d is past the end of the file, so the citation names a line that is not there",
+				coordinatorReconciled, path, spec, file, len(lines), n)
+		}
+	}
 }
 
 // coordinatorTriedCitations names every spelling coordinatorResolveCitation
@@ -622,18 +682,10 @@ func TestDocsCoordinatorRelativeCitationsResolve(t *testing.T) {
 				coordinatorReconciled, line, ref, spec)
 			continue
 		}
-		body, err := os.ReadFile("../../" + filepath.FromSlash(file))
-		if err != nil {
-			t.Errorf("%s:%d cites %q against %q, which could not be read: %v", coordinatorReconciled, line, ref, file, err)
+		lines := coordinatorFileLines(t, file)
+		if lines == nil {
 			continue
 		}
-		// The trailing newline every Go file ends with is not a line of it.
-		// Splitting without trimming counts one line more than the file has,
-		// which makes a reference to that phantom last line resolve to
-		// nothing and still pass the check below -- the same "sees less than
-		// it claims" shape this file is written against, and the reason the
-		// file sizes in the mutation record above are the ones `wc -l` gives.
-		lines := strings.Split(strings.TrimSuffix(string(body), "\n"), "\n")
 		checked++
 		nums := coordinatorLineNumbers(spec)
 		lo, hi, past := nums[0], nums[0], false
@@ -770,10 +822,14 @@ func TestDocsCoordinatorQuestionsAreNumberedAndOptioned(t *testing.T) {
 // twenty-four, because two earlier bullets had been replaced by unrelated new
 // pins instead of kept.
 //
-// The count is a single digit ("-- 24,") so this test can read it without a
+// The count is a single digit ("-- <N>,") so this test can read it without a
 // word-to-number table, and so there is nothing for a second copy of it to
 // disagree with: a word beside a digit would let the two drift apart with
-// neither looking wrong, which is the shape of the mistake here.
+// neither looking wrong, which is the shape of the mistake here. Nothing in
+// this test quotes the number either -- the form below is built from the same
+// constant the parse uses -- because a number written twice in this file is a
+// number that can drift, and this file's whole subject is checks that quietly
+// stop being true.
 func TestDocsCoordinatorMutationRecordIsCounted(t *testing.T) {
 	src, err := os.ReadFile("docs_coordinator_test.go")
 	if err != nil {
@@ -796,10 +852,10 @@ func TestDocsCoordinatorMutationRecordIsCounted(t *testing.T) {
 	}
 	record := text[start : start+end]
 
-	declaredRE := regexp.MustCompile(`^// Mutation \(verified, run and restored\) -- ([0-9]+),`)
+	declaredRE := regexp.MustCompile(`^` + regexp.QuoteMeta(open) + `([0-9]+),`)
 	m := declaredRE.FindStringSubmatch(record)
 	if m == nil {
-		t.Fatalf("the mutation record's opening line must state its count as a digit, in the form %q, so this test can read it", "Mutation (verified, run and restored) -- 24, ...")
+		t.Fatalf("the mutation record's opening line must state its count as a digit, in the form %q, so this test can read it", open+"<N>,")
 	}
 	declared, err := strconv.Atoi(m[1])
 	if err != nil {
