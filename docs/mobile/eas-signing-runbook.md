@@ -117,7 +117,7 @@ guard block **is** the precondition: run it, from the checkout you intend to
 build from, and re-run it **before every step** of the check. It stops unless
 `eas` is on your `PATH`, unless **`node`** is on your `PATH` — the guard reads
 the store identity by running `mobile/app.config.js` through it, and the
-register says why that test is there: a missing interpreter is *"a
+register says why that test is there: a missing interpreter is *"a Python
 FileNotFoundError -- a traceback, not the sentence this guard promises"* —
 unless it is inside a git checkout, unless `mobile/app.json`,
 `mobile/eas.json` **and `mobile/app.config.js`** are all present, unless `HEAD`

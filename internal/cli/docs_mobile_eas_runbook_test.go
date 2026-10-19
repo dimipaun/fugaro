@@ -57,7 +57,7 @@ package cli
 // test says so in a skip rather than passing quietly. The other three read only
 // the page, and run here.)
 //
-// Three tests hold what the page says about the *repository* to the repository:
+// Four tests hold what the page says about the *repository* to the repository:
 // TestDocsMobileEasRunbookNamesEveryProtectedEnvironment derives the protected
 // environments -- and the job each one is declared in -- from the workflow files
 // themselves, so the page's citations are by content and not by line number;
@@ -132,8 +132,10 @@ package cli
 //	| §14's heading put back to "Recorded tensions, not resolved here" (the two it records are settled now, and the heading says so) | TestDocsMobileEasRunbookRecordsTheBundleIdentityTension |
 //	| §14's contents link put back to the old heading's anchor | TestDocsMobileEasRunbookRecordsTheBundleIdentityTension |
 //	| "the owner rules" dropped from §14's opening | TestDocsMobileEasRunbookRecordsTheBundleIdentityTension |
-//	| the register's note about the missing interpreter dropped from §3 | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
-//	| "traceback" planted in the store-identity paragraph (§3), with the register's note left where it is | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
+//	| the register's note about the missing interpreter dropped from §3 | TestDocsMobileEasRunbookQuotesTheRegistersInterpreterNote |
+//	| that quotation elided inside the quotation marks ("a Python FileNotFoundError" cut to "a FileNotFoundError") | TestDocsMobileEasRunbookQuotesTheRegistersInterpreterNote |
+//	| the same sentence reworded in the *register* instead | TestDocsMobileEasRunbookQuotesTheRegistersInterpreterNote |
+//	| "traceback" planted as the page's own prose in §3's store-identity paragraph (outside every quotation) | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
 //	| §14's Tension 2 quotation of the guard's mobile/eas.json stop reworded, with the register's Check 89 in the tree | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
 //	| §14's Tension 1 quotation of the store-identity stop reworded, with the register's Check 89 in the tree | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
 //	| §14's Tension 1 quotation of the store-identity stop dropped entirely, with the register's Check 89 in the tree | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
@@ -593,20 +595,31 @@ func check89Stops(text string) []string {
 	}
 }
 
-// check89RegisterStops reads Check 89's own stop messages out of
-// docs/gcp-live-checklist.md -- the register the runbook quotes and defers to.
+// check89RegisterSection reads Check 89's own section out of
+// docs/gcp-live-checklist.md -- the register the runbook quotes and defers to --
+// with its whitespace normalised and its `#` comment markers dropped.
 //
-// The pin used to hold the two sentences as literals in this file, copied from
-// main by hand, because P4.2a's text (PR #580) is not in this branch's tree.
-// A literal cannot notice the register changing its mind, so the sentences are
-// read from the register itself now: a stop reworded there fails the page here.
+// The markers have to go for the *prose* to be readable as sentences: the
+// block's comments wrap every ~78 columns, so a sentence about a missing
+// interpreter is written
 //
-// This tree's register does not carry Check 89 -- the branch merged main before
-// #580 landed -- and there is no register here to compare against, so the test
-// skips with that reason rather than passing quietly. It says so in its output:
-// a skip is visible, which is the difference between this and swallowing the
-// file. The moment the branch carries the section, the same test compares.
-func check89RegisterStops(t *testing.T) []string {
+//	# missing interpreter is a Python FileNotFoundError -- a traceback, not the
+//	# sentence this guard promises.
+//
+// and only after `# ` is removed does that read as the one sentence it is. No
+// stop message contains the marker, so the comparison of stop messages below is
+// unaffected by removing it.
+//
+// The pin used to hold the register's sentences as literals in this file, copied
+// from main by hand, because P4.2a's text (PR #580) is not in this branch's tree.
+// A literal cannot notice the register changing its mind, so everything the page
+// quotes is read from the register itself now: a sentence reworded there fails
+// the page here.
+//
+// A tree whose register has no Check 89 has nothing to compare against, so this
+// skips with that reason rather than passing quietly: a skip is visible, which
+// is the difference between this and swallowing the file.
+func check89RegisterSection(t *testing.T) string {
 	t.Helper()
 	const (
 		section = "## Check 89"
@@ -615,20 +628,55 @@ func check89RegisterStops(t *testing.T) []string {
 	doc := readDoc(t, path)
 	start := strings.Index(doc, section)
 	if start < 0 {
-		t.Skipf("%s has no %q section in this tree: P4.2a's text lands with PR #580, which main carries and this branch merged before, so there is no register here to hold the page's quotations to -- this test compares them as soon as the section is in the tree", path, section)
+		t.Skipf("%s has no %q section in this tree: P4.2a's text lands with PR #580, so a tree that merged main before it has no register here to hold the page's quotations to -- this test compares them as soon as the section is in the tree", path, section)
 	}
 	rest := doc[start+len(section):]
 	if end := strings.Index(rest, "\n## "); end >= 0 {
 		rest = rest[:end]
 	}
+	return strings.ReplaceAll(strings.Join(strings.Fields(rest), " "), "# ", "")
+}
+
+// check89RegisterStops reads Check 89's own stop messages out of the section
+// above: the page quotes them, and it may not quote something the register does
+// not say.
+func check89RegisterStops(t *testing.T) []string {
+	t.Helper()
+	section := check89RegisterSection(t)
 	// The guard's file tests and its python line are the stops a reader meets
 	// before any step runs; a section with fewer than the two the page quotes is
 	// the section moved, not a check that stops less often.
-	stops := check89Stops(rest)
+	stops := check89Stops(section)
 	if len(stops) < 2 {
-		t.Fatalf("%s's %q section yields %d stop messages, want at least the guard's file tests and its python line: the section or the marker has moved, and this test now reads a different part of the register", path, section, len(stops))
+		t.Fatalf("%s's %q section yields %d stop messages, want at least the guard's file tests and its python line: the section or the marker has moved, and this test now reads a different part of the register", "docs/gcp-live-checklist.md", "## Check 89", len(stops))
 	}
 	return stops
+}
+
+// check89RegisterInterpreterNote is the register's own sentence about why the
+// guard tests for `node` at all: the block's comment says a missing interpreter
+// would be a *Python* FileNotFoundError -- a traceback, not the sentence the
+// guard promises -- which is what the guard's `node` test exists to turn into
+// its own stop.
+//
+// The sentence is read here rather than written down, so the page's quotation of
+// it is held to the register like every other quotation on the page. The elision
+// this catches is the one a paraphrase leaves behind: a quotation that begins
+// inside the sentence ("a FileNotFoundError", dropping the "Python") reads as
+// verbatim and is not.
+func check89RegisterInterpreterNote(t *testing.T) string {
+	t.Helper()
+	section := check89RegisterSection(t)
+	const start, end = "missing interpreter is ", "this guard promises"
+	i := strings.Index(section, start)
+	if i < 0 {
+		t.Fatalf("the register's Check 89 section no longer says %q: the guard's reason for testing for `node` is a sentence of the register's, and the page quotes it", start)
+	}
+	j := strings.Index(section[i:], end)
+	if j < 0 {
+		t.Fatalf("the register's Check 89 section names a missing interpreter but never reaches %q: the sentence the page quotes has been reworded or dropped", end)
+	}
+	return section[i+len(start) : i+j+len(end)]
 }
 
 // firstCheck89Stop is the register's own sentence among stops that names marker
@@ -726,23 +774,19 @@ func TestDocsMobileEasRunbookPointsAtTheCheckItQuotes(t *testing.T) {
 // bug in P4.2a's guard where there is a stop, and the stop's message is the
 // thing to record.
 //
-// The word "traceback" is refused wherever the page is not quoting the
-// register's own note about the *missing interpreter* -- the comment above the
-// guard's `node` test, which says a missing interpreter would be "a traceback,
-// not the sentence this guard promises", and which is why that test is there at
-// all. That note is about a stop the guard *prevents*, not about one it takes,
-// and §3 quotes it verbatim; so the ban is on the crash claim, not on the word:
-// the quotation is subtracted from the page and the bare word refused in what is
-// left. A page that used it of the store-identity line -- the sentence this test
-// exists for -- still fails, and so does one that dropped the register's note
-// for the word alone.
+// The word "traceback" is refused wherever it is the page's own prose. The one
+// place the page may use it is inside a quotation, because the register uses it
+// itself -- in its note about the *missing interpreter*, which is why the guard
+// tests for `node` at all -- so quoted spans are subtracted from the page and
+// the word refused in what is left. That the quotation is the register's, whole,
+// is held by TestDocsMobileEasRunbookQuotesTheRegistersInterpreterNote, which
+// reads the sentence out of the register; a page that dropped the quotation and
+// used the word in prose fails here, and a page that elided it inside the
+// quotation marks fails there.
 func TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError(t *testing.T) {
-	const interpreterNote = "a FileNotFoundError -- a traceback, not the sentence this guard promises"
+	const quoted = `"[^"]*"`
 	doc := runbook(t)
-	if !strings.Contains(doc, interpreterNote) {
-		t.Errorf("%s no longer quotes the register's own note about the missing interpreter (%q): §3 says why the guard tests for `node`, and the reason is that note", mobileEasRunbook, interpreterNote)
-	}
-	rest := strings.ReplaceAll(doc, interpreterNote, "")
+	prose := regexp.MustCompile(quoted).ReplaceAllString(doc, "")
 	for _, banned := range []string{
 		"KeyError",
 		"traceback",
@@ -750,9 +794,29 @@ func TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError(t *testing.T) {
 		`d["android"]["package"]`,
 		"dies with a traceback",
 	} {
-		if strings.Contains(rest, banned) {
-			t.Errorf("%s says %q: Check 89's guard reads the two identity fields with .get() and stops with its own message, so there is no crash to describe", mobileEasRunbook, banned)
+		if strings.Contains(prose, banned) {
+			t.Errorf("%s says %q outside any quotation: Check 89's guard reads the two identity fields with .get() and stops with its own message, so there is no crash to describe", mobileEasRunbook, banned)
 		}
+	}
+}
+
+// TestDocsMobileEasRunbookQuotesTheRegistersInterpreterNote holds §3's one
+// quotation of the register's *prose* -- as opposed to its stop messages, which
+// TestDocsMobileEasRunbookQuotesCheck89sGuardStops compares -- to the register,
+// word for word. The sentence is the block's reason for testing for `node`: a
+// missing interpreter would be a Python FileNotFoundError, a traceback rather
+// than a stop, so the guard refuses to run without one.
+//
+// It is read out of docs/gcp-live-checklist.md rather than written down here,
+// because a copy written down here is compared with the page and not with the
+// register: the page quoted it as "a FileNotFoundError -- a traceback, ...",
+// eliding the "Python " inside the quotation marks, and a test that held the
+// page to a copy of the page's own wording could not see it.
+func TestDocsMobileEasRunbookQuotesTheRegistersInterpreterNote(t *testing.T) {
+	note := check89RegisterInterpreterNote(t)
+	doc := runbook(t)
+	if !strings.Contains(doc, note) {
+		t.Errorf("%s does not quote the register's sentence about the missing interpreter, %q, word for word: §3 says why the guard tests for `node`, and a quotation that begins inside the sentence is a paraphrase wearing quotation marks", mobileEasRunbook, note)
 	}
 }
 
@@ -844,7 +908,7 @@ func TestDocsMobileEasRunbookMatchesTheEasFilesItDescribes(t *testing.T) {
 	// The three profile names, and only them: §8's table is one row each, and a
 	// profile added to the file is a row the page is missing.
 	if len(eas.Build) != 3 {
-		t.Errorf("%s has %d build profiles (%v), want the three §8 describes", easJSON, len(eas.Build), sortedKeys(eas.Build))
+		t.Errorf("%s has %d build profiles (%v), want the three §8 describes", easJSON, len(eas.Build), noteKeys(eas.Build))
 	}
 	for _, name := range []string{"development", "preview", "internal"} {
 		profile, ok := eas.Build[name]
@@ -899,7 +963,7 @@ func TestDocsMobileEasRunbookMatchesTheEasFilesItDescribes(t *testing.T) {
 	// The submit side: one submit profile, on the internal track, with the iOS
 	// entry present and naming nothing (EAS prompts for the app at submit time).
 	if len(eas.Submit) != 1 {
-		t.Errorf("%s has %d submit profiles (%v): §8 says `internal` is the one, and `preview` has no submit section at all", easJSON, len(eas.Submit), sortedKeys(eas.Submit))
+		t.Errorf("%s has %d submit profiles (%v): §8 says `internal` is the one, and `preview` has no submit section at all", easJSON, len(eas.Submit), noteKeys(eas.Submit))
 	}
 	submit, ok := eas.Submit["internal"]
 	if !ok {
@@ -935,10 +999,10 @@ func TestDocsMobileEasRunbookMatchesTheEasFilesItDescribes(t *testing.T) {
 	}
 }
 
-// sortedKeys renders a map's keys sorted, for an error message about a file this
-// test read: the reader of a failure should not have to open the file to learn
-// what was in it.
-func sortedKeys[V any](m map[string]V) []string {
+// noteKeys renders a profile or submit map's keys sorted, for an error message
+// about a file this test read: the reader of a failure should not have to open
+// the file to learn what was in it.
+func noteKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
