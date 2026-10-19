@@ -742,7 +742,15 @@ chosen by a bake-off measured on the oldest supported device, **owner-run check
    asserted as **the store's write log**, before and after. **Only `offline`
    refuses**: a `stale` orchestrator is one the phone can still talk to (the
    mailbox is not the heartbeat), and `clock-differs` is not a state P1.4 has
-   yet.
+   yet. Two things about that refusal are the review's rather than the plan's,
+   and both are rules that only hold where they are used: the snapshot's
+   `refused` is **the last refusal, cleared by the message that is accepted
+   after it** (a status line that went on saying `offline` over a message that
+   had just left the phone would be showing a state the phone is not in), and
+   the presence is adopted through **one guard on both paths** -- `poll` calls
+   the same `setPresence` a caller does, so "a state outside P1.4's four is
+   refused rather than stored" is not a rule enforced only where the app does
+   not go.
 4. **The digest's highest severity is the only thing that interrupts when the
    switch is on.** `highest` is P1.3's `digest.severity` -- the most severe item
    the document carries -- and an update whose severity is not it waits. The
@@ -869,6 +877,9 @@ the two apart -- so it is written down here rather than claimed as a kill.
 | `only offline refuses: stale is still an orchestrator` | `stale is not offline: a heartbeat three intervals old still accepts a message` |
 | `the message is judged before the presence is` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` |
 | `an empty message is refused as an empty message` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` |
+| `an accepted message clears the refusal it followed` | `the refusal a screen shows is the last one, and the message that is accepted clears it` |
+| `the poll's presence goes through the same guard a caller's does` | `the poll's presence goes through that same guard, which is the path the app takes` |
+| `a presence outside P1.4's four is refused rather than stored` | `P1.4's answer is adopted through one guard, whether a caller or the poll brings it` and `the poll's presence goes through that same guard, which is the path the app takes` and `an update that is not an update, and a switch that is not a switch, are refusals with a code` |
 | `a lease another consumer holds is surfaced` | `the plan, sentence three: a lease held by another consumer is surfaced rather than ignored` and `a lease the other consumer has let go of is the phone's to take, and it is taken` and `the lease does not gate the app: the phone sends while another consumer holds it` |
 | `the state P1.2 hands back is adopted, refused or not` | `a lease the other consumer has let go of is the phone's to take, and it is taken` |
 | `a release is never a takeover` | `the plan, sentence three: a lease held by another consumer is surfaced rather than ignored` |

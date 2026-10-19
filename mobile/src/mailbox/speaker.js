@@ -8,14 +8,17 @@
 // interfaces are **P3.4** (`mobile/src/audio/`, PR #592), which P3.6 was
 // written without: the audio module had no directory in the tree then, and this
 // task may not depend on code that is not on `main`. **P3.4 has since merged
-// with this change** -- `mobile/src/audio/` is the tree's now -- and this client
-// is still handed this module's own port rather than P3.4's, because wiring the
-// two together is a task nobody has taken. So what P3.6 defines here is the
+// with this change** -- `mobile/src/audio/` is the tree's now -- and **P3.5 has
+// since wired the two together**: `src/voice/speaker.js`'s
+// `createPipelineSpeaker({ pipeline })` is the adapter a built app hands this
+// client, so this port is what P3.4's text-to-speech interface answers through.
+// The port stays this module's own all the same -- the client is handed one
+// object and never learns what is behind it, and merging the two into one would
+// be a second way to speak. So what P3.6 defines here is the
 // smallest seam the client's rule needs -- one async call that takes text and
 // answers whether it was spoken -- and nothing about voices, queues, barge-in,
 // latency or the platform's own players. Those are P3.4's (the interfaces) and
-// P3.5's (the screen, and the interrupt switch), and this port is what P3.4's
-// text-to-speech interface implements once the two are wired.
+// P3.5's (the screen, the interrupt switch, and the wiring).
 //
 // The seam is deliberately narrower than an audio API on purpose: the client
 // makes exactly one audio decision (do not ack what was not spoken), and a
