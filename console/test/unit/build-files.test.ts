@@ -64,9 +64,18 @@ const documents = filesNamed('src/renderer', '.html').map((name) => `src/rendere
 const preloads = filesNamed('src/preload', '.ts').map((name) => `dist/preload/${name.slice(0, -3)}.js`)
 
 /** compiled is the whole build output the main process and the renderer run
- * from, and the bundler's two entries are what a document actually loads. */
+ * from, and the bundler's three outputs are what the documents actually load:
+ * the dashboard's entry, the picker's entry, and -- since Task 6.2 -- the
+ * stylesheet every document links. The stylesheet is the one this list catches
+ * by name, and that is the whole point of naming it here: a `build.files` that
+ * carried the two bundles and not `console.css` would package an app that opens
+ * a window with no style in it, which is the failure this test exists for. */
 const compiled = compiledModules()
-const bundlerOutputs = ['dist/bundle/console.js', 'dist/bundle/installations.js']
+const bundlerOutputs = [
+  'dist/bundle/console.css',
+  'dist/bundle/console.js',
+  'dist/bundle/installations.js',
+]
 
 /** NEVER_SHIPPED are the two compiled files Task 4.1 keeps out of the package by
  * name: the packing hook (it needs a devDependency) and the fixture loader. */

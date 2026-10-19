@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { bundleRenderer, consoleBundles } from '../../tools/bundle-renderer/index'
+import { bundleRenderer, bundleStylesheet, consoleBundles, consoleStylesheet } from '../../tools/bundle-renderer/index'
 
 /** CONSOLE_ROOT is the console package, from this file's location. */
 export const CONSOLE_ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -58,8 +58,11 @@ const WAIT_LIMIT_MS = 120_000
 
 /** OUTPUTS are the files a build produces, as this suite reads them: the entry
  * points Electron loads (with the picker's preload and entry, Task 3.4b) and
- * the five served files. */
+ * the six served files -- the stylesheet among them since Task 6.2, because a
+ * `console.css` that is missing or stale is exactly what the stylesheet cases
+ * in `bundle.test.ts` read. */
 const OUTPUTS: readonly string[] = Object.freeze([
+  join(DIST, 'bundle', 'console.css'),
   join(DIST, 'bundle', 'console.js'),
   join(DIST, 'bundle', 'index.html'),
   join(DIST, 'bundle', 'installations.html'),
@@ -72,13 +75,24 @@ const OUTPUTS: readonly string[] = Object.freeze([
   join(DIST, 'renderer', 'installations.js'),
 ])
 
-/** sourced is every `.ts` file under a directory, recursively. */
+/** sourced is every `.ts`, `.html` and `.css` file under a directory,
+ * recursively. The `.css` half is the theme's: `dist/bundle/console.css` is
+ * concatenated from `src/renderer/theme/*.css` (Task 6.2), so an edited
+ * stylesheet is a stale build exactly as an edited module is -- and a staleness
+ * check that missed it would let the concatenation cases pass against the
+ * previous build's bytes. */
 function sourced(directory: string): readonly string[] {
   const out: string[] = []
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) out.push(...sourced(path))
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.html')) out.push(path)
+    else if (
+      entry.name.endsWith('.ts') ||
+      entry.name.endsWith('.html') ||
+      entry.name.endsWith('.css')
+    ) {
+      out.push(path)
+    }
   }
   return out
 }
@@ -114,13 +128,15 @@ function isStale(): boolean {
   return false
 }
 
-/** build runs the two steps `npm run build` runs. */
+/** build runs the steps `npm run build` runs, in its order: the compiler, then
+ * the bundler that writes the stylesheet and the two bundles. */
 function build(): void {
   execFileSync(
     process.execPath,
     [join(CONSOLE_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.build.json'],
     { cwd: CONSOLE_ROOT, stdio: 'pipe' },
   )
+  bundleStylesheet(consoleStylesheet(CONSOLE_ROOT))
   for (const bundle of consoleBundles(CONSOLE_ROOT)) bundleRenderer(bundle)
 }
 
