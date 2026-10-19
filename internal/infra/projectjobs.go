@@ -88,8 +88,26 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	if err := projectpolicy.CheckProfiles(profiles, accounts); err != nil {
 		return nil, userErr("%v", err)
 	}
-	// Every project job is a github one in this phase (the bitbucket refusal
-	// below is why), so the App's ID is resolved once, for all of them: the
+	// Bitbucket stays on the per-repository path in phase 3: the owner ruled
+	// on 2026-10-15 (probe U1) that a Bitbucket credential cannot be scoped to
+	// one project's repositories, so a job every repository of a profile
+	// shares must never hold one (plan Task 3.0 step 2, D5 amended). The
+	// policy may still name such a profile; no job is deployed for it.
+	//
+	// It is refused here, before the App's ID is read, rather than inside the
+	// loop below, because the two refusals are both true of a config that
+	// declares only Bitbucket profiles and records no App ID — and only this
+	// one is the reason no job can be deployed. Read the other way round, such
+	// a config is told its job profiles have no GitHub App ID and sent to
+	// onboard a github repository (the 2026-10-19 review): the message an
+	// operator acts on would name a cause they do not have.
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		if lc.Profiles[name].Provider == "bitbucket" {
+			return nil, userErr("profiles.%s.provider: a shared job never serves bitbucket in phase 3: a Bitbucket credential cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15), so Bitbucket repositories stay on their per-repository jobs. Remove the profile or make it a github one", name)
+		}
+	}
+	// Every project job is a github one in this phase (the refusal above is
+	// why), so the App's ID is resolved once, for all of them: the
 	// project has one App (design §4.5), and a job that carries it must carry
 	// the same one as its neighbours.
 	appID, err := projectJobGitHubAppID(lc)
@@ -99,15 +117,6 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	out := make(map[string]ProjectJob, len(lc.Profiles))
 	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 		pr := lc.Profiles[name]
-		// Bitbucket stays on the per-repository path in phase 3: the owner
-		// ruled on 2026-10-15 (probe U1) that a Bitbucket credential cannot
-		// be scoped to one project's repositories, so a job every repository
-		// of a profile shares must never hold one (plan Task 3.0 step 2, D5
-		// amended). The policy may still name such a profile; no job is
-		// deployed for it.
-		if pr.Provider == "bitbucket" {
-			return nil, userErr("profiles.%s.provider: a shared job never serves bitbucket in phase 3: a Bitbucket credential cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15), so Bitbucket repositories stay on their per-repository jobs. Remove the profile or make it a github one", name)
-		}
 		timeout, err := config.ParseDuration(pr.TimeoutClass)
 		if err != nil {
 			// CheckProfiles holds the spelling; this cannot happen, and a

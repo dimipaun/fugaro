@@ -477,17 +477,28 @@ profiles:
 // never serves Bitbucket and never mounts the Bitbucket token, whatever
 // provider the profile names.
 func TestProjectJobsRefuseBitbucket(t *testing.T) {
+	// withApp is every case that records one: the Bitbucket refusal is made
+	// whatever the App's ID is, and the last case records none at all — m4's
+	// own repository is a Bitbucket one — so that the profile, not a missing
+	// App ID, is what the operator is told about (the 2026-10-19 review: the
+	// App-ID read used to run first, and the two refusals are both true for
+	// such a config while only one of them is the reason no job can be
+	// deployed).
+	withApp := func(rest string) string { return m4LocalConfig + projectJobRepoLC + m5Additions + rest }
 	for _, c := range []struct{ name, lc, want string }{
-		{"a Bitbucket profile", `profiles:
+		{"a Bitbucket profile", withApp(`profiles:
   standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
-`, "profiles.standard.provider: a shared job never serves bitbucket"},
-		{"the Bitbucket token on a GitHub profile", `project_secrets:
+`), "profiles.standard.provider: a shared job never serves bitbucket"},
+		{"the Bitbucket token on a GitHub profile", withApp(`project_secrets:
   bitbucket-token: { allow_data_to: [acme/sandbox] }
 profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [bitbucket-token] }
-`, "profiles.standard.secrets[0]: \"bitbucket-token\" is the Bitbucket credential"},
+`), "profiles.standard.secrets[0]: \"bitbucket-token\" is the Bitbucket credential"},
+		{"a Bitbucket profile, and no App ID recorded anywhere", m4LocalConfig + m5Additions + `profiles:
+  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
+`, "profiles.standard.provider: a shared job never serves bitbucket"},
 	} {
-		_, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.lc), "fugaro-runs-proj-1234", false)
+		_, err := ProjectJobs(parseLC(t, c.lc), "fugaro-runs-proj-1234", false)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want one naming %q", c.name, err, c.want)
 		}
