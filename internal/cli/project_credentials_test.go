@@ -37,6 +37,18 @@ const oneAccountYAML = "claude_accounts:\n" +
 	"profiles:\n" +
 	"  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, claude_accounts: [ops], allow_repos: [\"github/acme/app\"] }\n"
 
+// swappedAccountYAML is the same project with the accounts exchanged: ops is
+// moved to acme/other (and named by no profile any more, so it is in no child's
+// admission list) and spare serves acme/app. It is the config that makes the
+// app's child change hands — one account admits the repository before it, a
+// different one after — which is the case the narrowing phase used to report as
+// a removal.
+const swappedAccountYAML = "claude_accounts:\n" +
+	"  ops: { allow_data_to: [acme/other] }\n" +
+	"  spare: { allow_data_to: [acme/app] }\n" +
+	"profiles:\n" +
+	"  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, claude_accounts: [spare], allow_repos: [\"github/acme/app\"] }\n"
+
 // TestPolicyAdmissionsPublishedNamesOnly: O4's publishing half, end to end.
 // Each repository some account admits gets a node of its own under
 // config/policy/repos/$slug — keyed by the slug the repository's own run token
@@ -99,9 +111,19 @@ func TestPolicyAdmissionsPublishedNamesOnly(t *testing.T) {
 
 // TestPolicyAdmissionsFollowTheConfig: a publish is the whole of what the
 // admissions are, in both directions. Publishing the same config twice changes
-// nothing, and an account list that loses its last account leaves no child
-// behind — a stale child is an admission the service still reads (C1.11), so a
-// publish that left one would be a revoked token still being handed out.
+// nothing, an account list that loses its last account leaves no child behind —
+// a stale child is an admission the service still reads (C1.11), so a publish
+// that left one would be a revoked token still being handed out — and a child
+// that changes hands admits the account the config now names.
+//
+// The third case is the review finding on this change: a repository whose child
+// admits ops and is then served by spare. The narrowing phase runs first and
+// finds nothing to keep — it cannot leave ops admitted while the shared node no
+// longer admits it, and a written empty list is a document DecodeRepo refuses —
+// so the child goes there and the widening phase writes it again. That is not a
+// removal, and the publish used to say it was: the operator read "removed (no
+// account admits this repository)" and, on the very next line, "admits <slug>:
+// spare". The first line was untrue.
 func TestPolicyAdmissionsFollowTheConfig(t *testing.T) {
 	f := newProjectFixture(t, accountAdmissionsYAML)
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
@@ -129,6 +151,35 @@ func TestPolicyAdmissionsFollowTheConfig(t *testing.T) {
 	}
 	if !strings.Contains(out, "removed") {
 		t.Errorf("the publish does not say the admission was removed:\n%s", out)
+	}
+
+	// And the swap: the child admits ops, and the config moves ops elsewhere and
+	// admits spare, so the repository changes hands rather than losing its
+	// admission.
+	f = newProjectFixture(t, oneAccountYAML)
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("publish: %v\n%s", err, out)
+	}
+	if got, _ := json.Marshal(f.db.Value(projectpolicy.PathRepo(slug))); string(got) != `{"credentials":{"accounts":["ops"]}}` {
+		t.Fatalf("the fixture did not publish the admission this case is about: %s", got)
+	}
+	rewriteProjectExtra(t, f, oneAccountYAML, swappedAccountYAML)
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("publish: %v\n%s", err, out)
+	}
+	if got, _ := json.Marshal(f.db.Value(projectpolicy.PathRepo(slug))); string(got) != `{"credentials":{"accounts":["spare"]}}` {
+		t.Errorf("after the swap the child is %s, want the account the config now admits", got)
+	}
+	if strings.Contains(out, "removed") {
+		t.Errorf("the publish says the repository's admission was removed and admits one on the next line:\n%s", out)
+	}
+	// What truly happens, said: the account that no longer admits the repository
+	// is named, and the one that does is admitted.
+	for _, want := range []string{"ops no longer admits this repository", "admits " + slug + ": spare"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the publish does not say %q:\n%s", want, out)
+		}
 	}
 }
 

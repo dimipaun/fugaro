@@ -2470,6 +2470,57 @@ func TestProjectPolicyPublishRefusesToDropARoutingBlock(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishKeepsACascadeTheConfigDoesNotWrite: the refusal above
+// is about a route going away, and the cascade is not a route. via: cascade
+// changes which credential carries a Claude call and never where the call goes
+// (projectpolicy.RouteCascade: O3, D150) — while tier C for Claude is off, a
+// cascaded call still goes to Anthropic under the ID the pin already names — so
+// a config that says nothing about routing is not asking for anything a
+// cascaded node would stop doing. The publish therefore goes through and the
+// node keeps its cascade, exactly as it keeps an inert via: direct, and
+// --remove-routing is still how the block itself is dropped on purpose.
+//
+// This is the review finding on this change: the predicate that decides whether
+// the node routes read "a via other than direct", which made the cascade look
+// like a route that goes away, and the refusal it produced gave a reason that is
+// false of the cascade.
+func TestProjectPolicyPublishKeepsACascadeTheConfigDoesNotWrite(t *testing.T) {
+	f := newProjectFixtureWith(t, projectProvidersYAML, "routing:\n  claude:\n    via: cascade\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	pol := publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
+		t.Fatalf("the fixture did not publish the cascade this case is about: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+
+	// The operator's config loses the switch. The cascade is not a route, so
+	// there is nothing here to account for.
+	rewriteRoutingBlock(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a node whose only switch is the cascade: %v", err)
+	}
+	if strings.Contains(out, "cannot account for") {
+		t.Errorf("the publish says it cannot account for a cascade it does not touch:\n%s", out)
+	}
+	// The block is kept as it is, so the diff has nothing to say about it. (The
+	// warning below does name routing.claude, and must: it is the sentence that
+	// tells the operator what a member older readers refuse costs them.)
+	for _, marker := range []string{"+ routing.claude", "~ routing.claude", "- routing.claude"} {
+		if strings.Contains(out, marker) {
+			t.Errorf("a publish with no switch in the config printed a routing change %q:\n%s", marker, out)
+		}
+	}
+	if !strings.Contains(out, "routing.claude.via: cascade, which a Fugaro older than") {
+		t.Errorf("the publish does not warn about the cascade it kept:\n%s", out)
+	}
+	pol = publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
+		t.Errorf("the publish turned the cascade off: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+}
+
 // rewriteRoutingBlock rewrites the fixture's project config with its routing:
 // block (from its key to the first line that is not indented under it) replaced
 // by block; "" drops it. The block the fixture wrote is the last thing in the

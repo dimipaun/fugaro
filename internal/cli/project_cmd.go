@@ -726,12 +726,34 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 }
 
 // nodeRoutesClaude reports whether the node being replaced carries a routing
-// block that sends Claude calls somewhere: a via other than direct (D1b). An
+// block that sends Claude calls somewhere: a via that is a route — openrouter,
+// or auto, which is openrouter when the run holds no Anthropic key (D1b). An
 // absent block, and via: direct, route nothing and are safe to carry over or
 // leave behind.
+//
+// via: cascade is not one of them, and reading it as one was the review finding
+// on this change: the refusal this predicate feeds says the publish "would turn
+// that route off, and a route that goes away is a Claude call that stops being
+// sent where it was put", and that sentence is false of the cascade. The
+// cascade decides which credential carries a call and never which route one
+// takes (projectpolicy.RouteCascade: O3, D150) — while tier C for Claude is off,
+// every cascaded call still goes to Anthropic under the ID the pin already
+// names — so a config silent about routing leaves a cascaded node doing exactly
+// what it did. Keeping the block is then the treatment via: direct gets
+// (keepRouting), and --remove-routing remains the way to drop the block itself
+// on purpose. The kept cascade is not hidden by this: skewWarning reports it,
+// and an older reader that does not know the value still refuses the node,
+// which is what that warning is for.
 func nodeRoutesClaude(p *projectpolicy.Policy) bool {
-	return p != nil && p.Routing != nil && p.Routing.Claude != nil &&
-		p.Routing.Claude.ViaValue() != projectpolicy.RouteDirect
+	if p == nil || p.Routing == nil || p.Routing.Claude == nil {
+		return false
+	}
+	switch p.Routing.Claude.ViaValue() {
+	case projectpolicy.RouteOpenRouter, projectpolicy.RouteAuto:
+		return true
+	default:
+		return false
+	}
 }
 
 // policyProviders is the policy's providers block, built from the operator's
@@ -1229,9 +1251,24 @@ func tightenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config
 			continue
 		}
 		if len(keep) == 0 {
+			// Nothing the child admits survives, so it goes — a written empty
+			// list is a document DecodeRepo refuses, and leaving the child as it
+			// is would leave an admission the shared node no longer covers.
+			// Two different facts wear that same shape, and the line has to say
+			// which one it is (the review finding on this change): the
+			// repository is admitted by no account at all any more, or it has
+			// changed hands — the accounts that used to serve it do not any
+			// more, and the widening phase writes the ones the config admits
+			// below, once the shared node carries them. Reporting the swap as a
+			// removal put "no account admits this repository" over the very
+			// next line's "admits <slug>: spare", and the first line was untrue.
 			updates[key] = nil
 			now[key] = nil
-			lines = append(lines, fmt.Sprintf("  admits %s: removed (no account admits this repository)", key))
+			if len(desired[key]) == 0 {
+				lines = append(lines, fmt.Sprintf("  admits %s: removed (no account admits this repository)", key))
+			} else {
+				lines = append(lines, fmt.Sprintf("  admits %s: %s no longer admits this repository (the child is written again below)", key, strings.Join(admitted, ", ")))
+			}
 			continue
 		}
 		updates[key] = projectpolicy.RepoPolicy{Credentials: &projectpolicy.RepoCredentials{Accounts: keep}}
