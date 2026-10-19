@@ -28,7 +28,10 @@ resource "google_service_account_iam_member" "operator" {
 # 2026-10-15) and another run's launch.json/result.json (task 3.4). Every
 # project job gets this same condition whatever its profile, so a profile
 # separates secrets, not bucket objects: the mitigation D4 named (separate
-# profiles) does not hold for the bucket and is open for the owner to re-rule.
+# profiles) does not hold for the bucket, and the owner ruled the question on
+# 2026-10-17 — the installation-wide reach is ACCEPTED, on the terms
+# SECURITY.md states. A profile segment in the object layout is a later
+# breaking change, not phase 3's.
 #
 # The condition is the input byte for byte: one that differs is a different
 # binding, and the review screen (internal/infra/tf) accepts it only for an
@@ -42,6 +45,34 @@ resource "google_storage_bucket_iam_member" "job" {
   condition {
     title      = var.job.bucket_condition.title
     expression = var.job.bucket_condition.expression
+  }
+}
+
+# The runs bucket's budget token objects, the whole of tokens/, read-only
+# (gcp.ProjectTokenBucketCondition, plan task 3.2 step 2; budget-token-channel
+# §7.2). The widened objectUser grant above is on runs/, cache/ and locks/ and
+# never covers tokens/; this one is objectViewer, so the account can read a
+# queued run's sealed token and can neither delete nor replace it, and what it
+# reads is ciphertext — sealed under a key only the execution its launch minted
+# it for receives — so the reach is over bytes, not over tokens. The widening
+# is the same one D4 documents for the other three prefixes, for the same
+# reason: one job serves every repository admitted to its profile, so its token
+# read cannot name one repository's prefix.
+resource "google_storage_bucket_iam_member" "job_tokens" {
+  bucket = var.runs_bucket
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.job.member
+
+  condition {
+    title      = var.job.token_condition.title
+    expression = var.job.token_condition.expression
+  }
+
+  lifecycle {
+    precondition {
+      condition     = startswith(var.job.token_condition.expression, "resource.name.startsWith(\"projects/_/buckets/${var.runs_bucket}/objects/tokens/") && !strcontains(var.job.token_condition.expression, "||")
+      error_message = "job.token_condition must name tokens/ of this runs bucket, in one clause (gcp.ProjectTokenBucketCondition)."
+    }
   }
 }
 

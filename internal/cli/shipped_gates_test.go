@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // closeShippedGates puts managedDeployerOpen and batchProvisionOpen back to
@@ -36,25 +38,79 @@ func runGated(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
-// While managedDeployerShipped is false (0.8.6), every command that would
-// create a managed project or act as its deployer refuses with the one
-// message, as a user error, before anything else: the message is the first
-// refusal of each, so no other check (and no cloud call, which every one of
-// them needs a project config, credentials or a terminal for) ran before it.
+// managedGateCases is every managed entry point and the arguments that reach
+// it: TestManagedEntryPointsRefuseWhileNotShipped runs each one with the gate
+// closed, and TestManagedEntryPointsAreAllGated derives the list a release must
+// cover from the command tree, so a managed command added later without an
+// entry here fails rather than shipping ungated.
+var managedGateCases = map[string][]string{
+	"init --create-project --managed": {"init", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"},
+	"init --managed":                  {"init", "--managed"},
+	"managed apply":                   {"managed", "apply", "infra"},
+	"managed flag":                    {"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"},
+	"restore":                         {"restore", "fugaro-newproj-1234", "infra"},
+}
+
+// While managedDeployerShipped is false (0.8.6 onward: 0.9.0 still ships with
+// the scoped role gated off, and the redesign is planned for 0.9.5), every
+// command that would create a managed project, mark one managed or act as its
+// deployer refuses with the one message, as a user error, before anything
+// else: the message is the first refusal of each, so no other check (and no
+// cloud call, which every one of them needs a project config, credentials or a
+// terminal for) ran before it.
 func TestManagedEntryPointsRefuseWhileNotShipped(t *testing.T) {
 	closeShippedGates(t)
-	for name, args := range map[string][]string{
-		"init --create-project --managed": {"init", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"},
-		"init --managed":                  {"init", "--managed"},
-		"managed apply":                   {"managed", "apply", "infra"},
-		"restore":                         {"restore", "fugaro-newproj-1234", "infra"},
-	} {
+	for name, args := range managedGateCases {
 		t.Run(name, func(t *testing.T) {
 			out, err := runGated(t, args...)
 			if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), managedDisabled) {
 				t.Fatalf("fugaro %s: exit %d (%v), want the user error %q\n%s", strings.Join(args, " "), ExitCode(err), err, managedDisabled, out)
 			}
 		})
+	}
+}
+
+// The managed entry points, read from the command tree rather than listed by
+// hand: every runnable command under `fugaro managed`, every command that
+// defines a --managed flag (with --create-project as well, where the command
+// has it), and restore, which creates a managed project. Each must have a case
+// in managedGateCases, and a case that names no such entry point is stale.
+func TestManagedEntryPointsAreAllGated(t *testing.T) {
+	want := map[string]bool{"restore": true}
+	var walk func(c *cobra.Command, path []string)
+	walk = func(c *cobra.Command, path []string) {
+		for _, sub := range c.Commands() {
+			p := append(append([]string{}, path...), sub.Name())
+			if len(p) >= 2 && p[0] == "managed" && sub.Runnable() {
+				want[strings.Join(p, " ")] = true
+			}
+			if sub.Flags().Lookup("managed") != nil {
+				name := strings.Join(p, " ")
+				want[name+" --managed"] = true
+				if sub.Flags().Lookup("create-project") != nil {
+					want[name+" --create-project --managed"] = true
+				}
+			}
+			walk(sub, p)
+		}
+	}
+	root := NewRootCmd()
+	walk(root, nil)
+	if !want["managed apply"] || !want["init --managed"] {
+		t.Fatalf("the walk did not find the known entry points: %v", want)
+	}
+	if c, _, err := root.Find([]string{"restore"}); err != nil || c.Name() != "restore" {
+		t.Fatalf("no restore command: %v", err)
+	}
+	for name := range want {
+		if _, ok := managedGateCases[name]; !ok {
+			t.Errorf("managed entry point %q has no case in managedGateCases: add one, and make it call refuseManagedNotShipped first", name)
+		}
+	}
+	for name := range managedGateCases {
+		if !want[name] {
+			t.Errorf("managedGateCases names %q, which the command tree does not have as a managed entry point", name)
+		}
 	}
 }
 
@@ -84,7 +140,7 @@ func TestShippedGateMessages(t *testing.T) {
 			t.Errorf("managedDisabled does not say %q", want)
 		}
 	}
-	for _, want := range []string{"--provision-batch is disabled in this release", "batch.jobs.cancel", "0.9.0"} {
+	for _, want := range []string{"--provision-batch is disabled in this release", "batch.jobs.cancel", "a later release"} {
 		if !strings.Contains(batchProvisionDisabled, want) {
 			t.Errorf("batchProvisionDisabled does not say %q", want)
 		}
@@ -145,8 +201,8 @@ func TestDoctorSaysManagedDeployerIsDisabled(t *testing.T) {
 	if c.Severity != "info" {
 		t.Errorf("severity %q, want info", c.Severity)
 	}
-	if !strings.Contains(c.Problem, "disabled in this release") || !strings.Contains(c.Problem, "0.9.0") {
-		t.Errorf("the line does not say the scoped role is disabled in this release and returns in 0.9.0: %q", c.Problem)
+	if !strings.Contains(c.Problem, "disabled in this release") || !strings.Contains(c.Problem, "0.9.5") {
+		t.Errorf("the line does not say the scoped role is disabled in this release and returns in 0.9.5: %q", c.Problem)
 	}
 	if checksFail([]doctorCheck{*c}, true) {
 		t.Error("the managed-deployer line fails doctor --strict")

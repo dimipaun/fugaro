@@ -384,6 +384,24 @@ type Managed struct {
 	// step's plan and not about the project: a verdict for another plan, or a
 	// refusal, or a gate that was never run, is false.
 	Admitted bool
+	// Fallback is whether the whole-project inventory (managed.Inventory,
+	// design D59, wired in by the plan's Task 4.5) decided that this run keeps
+	// its confirmations: a resource the installation's own state does not
+	// account for, or a read that could not be made at all. It is the THIRD
+	// fact of the managed case, and it is a field here rather than a caller's
+	// decision for the reason this type exists: D59's fallback is exactly "the
+	// confirmations this project's plan would otherwise not need", and the
+	// removal of the coding agent's refusal IS that confirmation. So a
+	// fallback suppresses Removes and nothing else — the plan may still be
+	// applied, by a person who is asked, and never unattended beside a project
+	// nobody looked at.
+	//
+	// The zero value is "no fallback", which keeps every caller that does not
+	// know about the inventory exactly where it was; the caller that knows is
+	// the managed apply, and it passes a value that falls back when the read
+	// was not made (managed.InventoryCheck's own contract), so a caller that
+	// forgets to thread the read through falls back rather than proceeds.
+	Fallback bool
 }
 
 // Covers reports whether the gate covers a step of the class. The gate judges
@@ -396,18 +414,23 @@ type Managed struct {
 func (m Managed) Covers(class ConfirmClass) bool { return class == YesOrTyped }
 
 // Removes reports whether the managed case removes the coding-agent refusal
-// for a step of the class: all three conditions of D55's answer, held at once.
-// Any other combination keeps today's AgentRefusal exactly.
+// for a step of the class: every condition, held at once — the project is
+// managed, the gate admitted this step's plan, the class is one the gate
+// judges, and the whole-project inventory did not fall back. Any other
+// combination keeps today's AgentRefusal exactly, which is the direction D59
+// and D55 both end in: the confirmation a coding agent's session cannot give
+// is kept wherever the inventory could not clear the project.
 func (m Managed) Removes(class ConfirmClass) bool {
-	return m.Managed && m.Admitted && m.Covers(class)
+	return m.Managed && m.Admitted && m.Covers(class) && !m.Fallback
 }
 
 // CanConfirmManaged is the whole of the confirmation rule: CanConfirm is this
 // function with a zero Managed, and the managed case is the branch below
 // rather than a rule of its own. A step of a class the gate covers, in a
-// project the marker read says is managed, whose plan the gate admitted,
-// proceeds under a coding agent's marker — and every other combination
-// refuses, which is the direction the mistake has to fall in.
+// project the marker read says is managed, whose plan the gate admitted, whose
+// whole-project inventory did not fall back — proceeds under a coding agent's
+// marker, and every other combination refuses, which is the direction the
+// mistake has to fall in.
 //
 // Everything else is unchanged, and that is the property the tests hold: for
 // every Conditions, a zero Managed decides what CanConfirm decided before the

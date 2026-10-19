@@ -20,7 +20,10 @@
  * from the skills rather than imagined (item 3's acceptance: "the agent's lines show the real
  * shape of the skills' behaviour"). Every one of those lines — the request and the agent's two
  * sentences — is held here at build time to the document it cites, and again from outside by
- * `website/test/home.mjs`.
+ * `website/test/home.mjs`. **The request is read from `src/lib/agent-request.mjs`**, where the
+ * hero's prompt line reads it too (the owner's feedback of 2026-10-19): the two are one
+ * sentence, and the module is the one place it is written and the one place it is held to the
+ * spec.
  *
  * **Why the launch is a status line and not the skill's command.** This figure used to print
  * the invocation the `parallelism` skill's code block documents
@@ -55,6 +58,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { REPO_ROOT } from '../content.ts'
+import { REQUEST } from '../lib/agent-request.mjs'
 import { copyControlHTML } from '../lib/copy-control.mjs'
 
 // The documents a line of the chat may be quoted from. The spec, because the request is its
@@ -93,7 +97,11 @@ const TURNS = [
   {
     who: 'You',
     turn: 'you',
-    line: 'Fan out these three bug fixes.',
+    // The request, read from `src/lib/agent-request.mjs`: the hero's prompt line is the same
+    // sentence (the owner's feedback of 2026-10-19), and the module is where it is held to
+    // the spec it is quoted from — so the two renderings of it cannot drift apart, and this
+    // turn is the second place the site shows it rather than a second copy of it.
+    line: REQUEST,
     source: SPEC,
   },
   {

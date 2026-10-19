@@ -80,7 +80,7 @@ The owner accepted every recommendation of D180 to D192, as written in `reconcil
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
-- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog).
+- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog) — amended 2026-10-19: the privacy statement's own ceiling is derived from its own count, and every other page stays at 250.
 - **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
 - **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
 
@@ -224,81 +224,122 @@ here goes stale the way the byte budgets did before D192.
   rotation the check cannot read is refused rather than assumed.
 - **The byte budgets are re-derived over the merged build (D192).** Every item here changes
   what the artifact weighs — the terminal's transcript goes, the chat comes, `site.js` loses
-  117 bytes, the flow's stylesheet changes — and then `main` came back into the branch, with
+  bytes, the flow's stylesheet changes — and then `main` came back into the branch, with
   the menu's hover-open and the six corrections that day and the next made to it, which moved
-  the same script again. So the figures below are derived once, over the build the merge
-  produces, which is the only account of them that is true of the site that ships:
-  **JavaScript per page 149,580** (three times 49,860; `public/scripts/site.js` 39,888 bytes),
-  **page weight per page 1,000,974** (three times 333,658; the docs hub 266,926 bytes) and
-  **whole site 3,667,206** (three times 1,222,402; the gates' own build of the site, 977,921
-  bytes across 23 files, the `fugaro watch` assets below included). The fix
+  the same script again. So the figures were derived once, over the build the merge produces,
+  which is the only account of them that is true of the site that ships. **The three figures
+  themselves are written in `website/README.md`** ("The gates"), each with the rule it is
+  derived by, and `website/test/budget.mjs` reads them from there and holds each to the build
+  it makes itself; **this document states none of its own**, and that is the correction of
+  2026-10-19 — a figure copied into a document here drifted the last time the build moved,
+  because nothing reads it there. What follows is the **record of the rounds that moved the
+  figures**, with each round's own deltas, re-derived in the commit that shipped the bytes
+  (D192), rather than a statement of what the site weighs now. The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
-  rather than its URL — and the round after *that* re-derived the site figure once more, 54
-  bytes lower: the install section's own top padding came off, because the flow above it
+  rather than its URL — and the round after *that* re-derived the site figure once more, again
+  lower: the install section's own top padding came off, because the flow above it
   already carries the gap between the two blocks (the fifth round below). The page weight did
   not move with it — the heaviest page is the docs hub, and that page renders neither the flow
   nor the install section — and the JavaScript is untouched. And the round that followed the
-  fifth moved both figures the other way, 440 bytes onto the site and 44 onto the page weight,
-  by moving the two declarations that make a command wrap onto `base.css`'s
-  `.command-block > pre`, which every page inlines: the copy control shares the command's row
-  now, so the rule belongs to every command block on the site rather than to the homepage's
-  install class alone (the fifth round below). It is the
+  fifth moved both figures the other way, by moving the two declarations that make a command
+  wrap onto `base.css`'s `.command-block > pre`, which every page inlines: the copy control
+  shares the command's row now, so the rule belongs to every command block on the site rather
+  than to the homepage's install class alone (the fifth round below). It is the
   sixth re-derivation on this branch's side — the second fix round moved the homepage's order,
   the flow's treatment, the chat's launch line, the install command's wrapping and the chat's
-  turns out of the measure's cap; the third's four commits moved the site figure to 814,455,
-  815,116 and 815,212 bytes and the page figure with it; and the fourth's fix for the
-  two-by-two's wrap arrow moved it 626 bytes on the two pages that draw the flow — and each was
-  re-derived in the commit that shipped the bytes. **And this round is the screenshot landing**,
-  which is the sixth: the site figure alone moves, 1,056,379 to 1,224,123 tight and 3,169,137
-  to 3,672,369 stated, because PR #622's two `public/images/` assets (the 130,533-byte capture
-  and its 3,363-byte transcription) were already in every build of the site and unplaced, and
-  the `<img>` that puts the picture on the homepage adds 299 bytes of its markup. The page
-  weight does not move — the picture is on the homepage, and the ceiling is derived from the
-  docs hub, which renders neither the chat nor the screenshot — and nor does the JavaScript.
-  **And the last round is this branch's own two changes from the owner's brief of 2026-10-19**,
-  measured against that build file by file: the menu's drawer out (item 1) leaves each of the
-  eleven pages **278 bytes lighter**, the base stylesheet every one of them inlines being that
-  much shorter, and takes **181 bytes off the script**; the review round that followed put the
-  script's own comments back in step with the menu, which is **290 bytes back onto it**. So the
-  script is 39,779 → 39,888 and the site figure 979,298 → 976,349 — the eleven pages' 3,058
-  and the script's 109 — while the page weight moves with both, 267,095 → **266,926**: the docs
-  hub inlines the stylesheet (−278) and fetches the script (+109). The console's link of item 6
-  rendered nothing in that round, its flag being off. **And the round after it is the console's
-  release** (W3.1), which turned `features.console_downloads` on and moved the site figure
-  alone, 976,349 → **977,921**, by 1,572 bytes: the console page's downloads section — each
+  turns out of the measure's cap; the third's four commits moved the site figure and the page
+  figure with it; and the fourth's fix for the two-by-two's wrap arrow moved it again on the two
+  pages that draw the flow — and each was re-derived in the commit that shipped the bytes. **And
+  this round is the screenshot landing**, which is the sixth: the site figure alone moves,
+  because PR #622's two `public/images/` assets (the capture and its transcription) were already
+  in every build of the site and unplaced, and the `<img>` that puts the picture on the homepage
+  adds its markup. The page weight does not move — the picture is on the homepage, and the
+  ceiling is derived from the docs hub, which renders neither the chat nor the screenshot — and
+  nor does the JavaScript. **And the last round is this branch's own two changes from the
+  owner's brief of 2026-10-19**, measured against that build file by file: the menu's drawer out
+  (item 1) leaves each of the eleven pages lighter, the base stylesheet every one of them inlines
+  being that much shorter, and takes bytes off the script; the review round that followed put the
+  script's own comments back in step with the menu, which is bytes back onto it. The page weight
+  moves with both: the docs hub inlines the stylesheet and fetches the script. The console's link
+  of item 6 rendered nothing in that round, its flag being off. **And the round after it is the
+  console's release** (W3.1), which turned `features.console_downloads` on and moved the site
+  figure alone: the console page's downloads section — each
   artifact's published name as a link, the release's own SHA-256 beside it, and the command
   that checks a download against the release's sums file — Getting Started's console option
   and the hero's link to the console. The page weight and the script stay where they were: the
-  heaviest page is the docs hub, which renders none of the three. **The figures above are the
-  build this branch ships.**
-  The
-  figures live in `website/README.md` and nowhere else, and
-  `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
-  a derivation that names another build fails, which is what stops the page and the site
-  figures drifting down as pages grow (they had — page weight and whole site still named the
-  build of 2026-10-18 after four parts added bytes to it).
+  heaviest page is the docs hub, which renders none of the three. **And a later round is the
+  console's screenshot slider** (the owner's feedback of 2026-10-19: a slider at the top of the
+  console page, data-driven from `website/data/console-screens.yaml` and shipping empty until
+  the owner takes the pictures), which moved the site figure alone once more, by the
+  component's stylesheet: Astro inlines it into the console page that imports it, whether or
+  not the slider renders, so the bytes are in the build while the list is empty and while it is
+  not. The page weight and the script stay where they were: the console page is not the
+  heaviest page, and the slider ships no script at all.
+  **And the round after *that* is the run's own timeline** (the owner's feedback of
+  2026-10-19): the site figure alone moves once more, by the rail, the connector, the rule that
+  stops it at the last step and the markup that places them, on the one page that renders a
+  run — the page weight and the script stay where they were, the heaviest page being the docs
+  hub, which renders no step.
+  **And the round after *that* is the caps-and-costs rework** (the owner's brief of
+  2026-10-19, the page's own item): the site figure alone moves, on that one page — the table of
+  what a job costs and its provenance note, rendered from `website/data/typical-costs.yaml`,
+  against the per-command scope sentences the page no longer carries and the disclosure the
+  commands sit behind — and then the review of that rework, the scroll box the table's nowrap
+  columns need on a phone and the page's own rule for its lead. The page weight and the script
+  stay where they were, the heaviest page being the docs hub.
+  **And the round after it is the 2026-10-19 changelog brief** (its own section below), which moved the site figure alone:
+  every release now renders its product summary and wraps the release file's own Highlights in
+  a `<details>` block — a summary and a notes label per release onto `/changelog/` — while the
+  "not yet released" labels the tag rule drew in the gates' build and the retired "newest
+  releases" block are gone. The page weight and the script stay where they were: the changelog
+  page is not the heaviest page, and nothing outside it changed.
+  **The rounds after it are the homepage's** (the owner's feedback of 2026-10-19), each of which
+  moved the site figure alone. **The prompt line**: the request the hero renders under the
+  headline, the `>` mark in front of it and the two rules that draw it as the chat's own bubble —
+  the three files it changed all render on that one page, so the page weight and the script stay
+  where they were. **The benefits**: the section, its four names and four lines and the rules
+  that draw the grid, all of them on the homepage; the page weight and the script stay where
+  they were, and the words the section costs that page are what moved D188's word ceiling from
+  250 to 300, in the same commit (the reading below). **The pull request's caption**: the
+  caption's line and the `data-source` it cites with it —
+  `docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)` where the step used to cite
+  `README.md#How it works` — on the two pages that render the flow, the homepage and How It
+  Works; the page weight and the script stay where they were, the docs hub rendering no flow.
+  The caption is two words shorter than the one it replaced, so the homepage measures 294 words
+  where the benefits left it at 296 (the reading below). **The review of round 6**: the
+  benefits' gutter and the room below it are declared in `Benefits.astro` now, the file that
+  renders the section, where the page's rule named the class and never reached the element —
+  Astro scopes a page's selector to the elements the page renders, and the section is rendered
+  by a component. The page weight and the script stay where they were.
+  **The figures themselves are the ones `website/README.md` writes, and they are written
+  there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
+  the build it can measure, and a derivation that names another build fails, which is what
+  stops the page and the site figures drifting down as pages grow (they had — page weight and
+  whole site still named the build of 2026-10-18 after four parts added bytes to it).
   **Which build that is, is the 2026-10-19 correction**: the figures are derived over the
   gates' own build of the site — a copy of the repository in a temp directory, built with the
   site's Astro by `test/lib/build.mjs`'s `buildCopy`, which carries no `.git` — and not over
-  `website/dist`, which is the checkout's own build. The reason is that one page of the site
-  reads the checkout's git state: the changelog renders each release file's "not yet released"
-  state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **977,921 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **976,406 with the tags this repository's clone carries**,
-  the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
-  refused by the other, which is what happened: the gate could not measure the build `main`'s
-  README named, and `website-preview` could not deploy. A derivation is likewise not held to
+  `website/dist`, which is the checkout's own build. The reason was that one page of the site
+  read the checkout's git state: the changelog rendered each release file's "not yet released"
+  state where `git tag --list` found no tag (`src/lib/changelog.mjs`), so the same commit built
+  to two site figures a changelog page's own bytes apart — the larger in a checkout with no
+  tags, `website-preview.yml`'s default checkout and so the deployed site, and the smaller with
+  the tags this repository's clone carries. A figure derived from one was refused by the other,
+  which is what happened: the gate could not measure the build `main`'s README named, and
+  `website-preview` could not deploy. **That dependence is gone** (the changelog brief below:
+  which releases are published is the plugin's own version, not a tag), so `website/README.md`
+  writes the two shapes as one figure and `website/test/budget.mjs` refuses the pair if they
+  part again; the derivation stays where it is all the same — a copy built by the gates is the
+  build they can measure in every environment. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
   the artifact gates over a copy with the console's flag flipped off — the state the checkout
-  built until the console's release turned it on — and that copy is a different build — **1,572
-  bytes smaller at the site figure** than the gates' own, 976,349 against 977,921, measured (the
-  console page's downloads 1,100, Getting Started's option 386 and the homepage's call to
-  action 86), and the page weight where it was — rather than another copy of this one.
-  **The direction is the one the flag's own round gave it, read the other way:** turning the
-  flag on added those 1,572 bytes, so the copy that turns it back off is the smaller build
-  (2026-10-19).
+  built until the console's release turned it on — and that copy is a different build rather
+  than another copy of this one: turning the flag on added the console option's markup to the
+  pages that render it (the console page's downloads section, Getting Started's option and the
+  homepage's call to action), so the copy that turns it back off is the smaller build, with the
+  page weight where it was (2026-10-19).
 - **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
   acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
   `fugaro run` transcript the homepage carried (`Terminal.astro`, D184) is removed from it —
@@ -442,8 +483,9 @@ here goes stale the way the byte budgets did before D192.
   cannot place against the card are refused rather than guessed. Four cases plant their
   defects: the grid left in its own row-major order, which is the defect itself; a wrap arrow
   drawn on the far side of its step; an arrow centred over its own card; and a placement
-  written with a `span`. The whole-site budget moved 626 bytes with the fix, re-derived in the
-  same commit (D192). This round was a reading of the stylesheet and of the gate, not a look at
+  written with a `span`. The whole-site budget moved with the fix, re-derived in the same
+  commit (D192), which is where the figure is. This round was a reading of the stylesheet and of
+  the gate, not a look at
   the page — the same limit as the round above.
 - **The fifth round is the second visual review's, and it is the one that reordered the page.**
   The reviewer built the site and looked at it at three widths and found the homepage "not an
@@ -543,12 +585,15 @@ version. `website/public/images/fugaro-watch.txt` is a hand transcription of wha
 line per terminal line, for alt text and as a text fallback (column spacing is approximate).
 
 The only processing is a lossless-to-near-lossless size reduction: the PNG was quantised to 48 colours
-without dithering and stripped of metadata (ImageMagick), from 510,664 bytes to 130,533 bytes. The text
-stays sharp and the green and yellow words keep their colours. No row or text was cropped or edited.
+without dithering and stripped of metadata (ImageMagick), which is what took it down to the size
+the page ships. The text stays sharp and the green and yellow words keep their colours. No row or
+text was cropped or edited.
 
-Size: 130,533 bytes, inside the enforced byte budgets (`website/README.md`, re-derived over the gates'
-own build in the commit that placed it: 1,000,974 per page and 3,661,311 for the site, this
-branch's build — the two assets and the `<img>` moved the site figure and nothing else, above).
+Size: 130,533 bytes, inside the enforced byte budgets: the three ceilings and the rule each is
+derived by are written in `website/README.md`, and `website/test/budget.mjs` is the case that
+reads them from there and holds them to the build it makes itself — no figure of them is copied
+here, for the reason the byte-budget bullet above gives. Placing the two assets and the `<img>`
+moved the site figure and nothing else (above).
 
 **It is on the homepage now** (`website/src/components/AgentChat.astro`): the slot
 `[data-slot="watch-screenshot"]` under the chat holds it, so the block that was empty until the asset
@@ -620,10 +665,10 @@ goes stale the way the byte budgets did before D192.
   at `/console/` rather than at a release asset because the console page is where the
   downloads are *and* where the console is explained, and a reader who does not know what the
   console is needs the second thing first.
-- **What the two changes cost, and what they do not.** The menu's removal takes 278 bytes off
-  the base stylesheet every page inlines and 181 off `site.js` — so 459 off the page figure
-  and 3,239 off the site's — and those three figures are re-derived in the commit that ships
-  them (D192, above). **The console's link moves no byte figure and no word ceiling**: while
+- **What the two changes cost, and what they do not.** The menu's removal takes bytes off the
+  base stylesheet every page inlines and off `site.js`, so both the page figure and the site
+  figure moved with it, and each is re-derived in the commit that ships them (D192, above).
+  **The console's link moves no byte figure and no word ceiling**: while
   the flag is false it renders nothing, so the build the figures are derived from is the same
   build; and the flag-on state it produces is held by the budget gate run over that build
   (`console-option.mjs`'s `FUGARO_GATES_DIST` run), which is where the homepage's two extra
@@ -635,9 +680,9 @@ goes stale the way the byte budgets did before D192.
   review of this branch is right that comments are the specification here, so they were
   rewritten to describe the three `<details>` groups. Comments ship: the file the browser
   fetches is **290 bytes larger**, and all three figures moved with it, over the same gates'
-  build — the script 39,779 → 39,888 once the round before it had taken 181 off, the docs hub
-  267,095 → 266,926 and the site 979,298 → 976,349, the two rounds' movements together (the
-  figures the merge brought in were `main`'s, and these are this branch's build's). Nothing
+  build — the script, the docs hub and the site, each by the two rounds' movements together (the
+  figures the merge brought in were `main`'s, and these are this branch's build's; the numbers
+  are `website/README.md`'s and `website/test/budget.mjs`'s, not this document's). Nothing
   else in the artifact moved: the console's link is behind a flag this build has off, and no
   stylesheet changed.
 - **The gates, and their proofs.** `website/test/base-styles.mjs`'s two nav gates are
@@ -664,3 +709,218 @@ goes stale the way the byte budgets did before D192.
   83.5 and 59.3 px wide beside the 47 px mark. That is a measurement of the built artifact,
   not a look at it: **whether the page then looks right is the owner's check (70a–70c, D190)**,
   and no screenshot is committed here — this run cannot see one either.
+
+## The owner's 2026-10-19 feedback on How It Works: the run is one vertical timeline
+
+- **"It is a bit better, but not quite there. The run, step by step section does not look
+  good."** The section had the right content and the wrong shape. `RunDetail.astro`'s five
+  steps were a `repeat(auto-fit, minmax(18rem, 1fr))` grid: at 1280 px the five read three
+  blocks beside two with a hole where a sixth would go, at 768 px two-by-two, and no mark
+  joined one step to the next — five short paragraphs, which is a list of facts rather than a
+  run. Item 4 asked for the detail of the picture above it; a grid of boxes under a picture of
+  a sequence shows the reader the sequence nowhere.
+- **The run is now one column at every width, with the steps joined.** Each step is a list
+  item of two grid columns: a numbered marker in a fixed rail on the left, and the step's name
+  and its one quoted line in the column beside it. The line between two steps is the step's
+  own `::before` — `top` at the marker's height, `bottom` at the step's edge — so the segment a
+  reader sees between two markers is exactly the step's own bottom padding, and the last step
+  draws none, because `:not(:last-child)` is what turns the connector on. There is no
+  breakpoint: the timeline is the same shape at 360 px as at 1280, which is what a sequence
+  reads as. The marker is the accent's outline and the connector is `--border`, so the section
+  stays quieter than the picture it details.
+- **Every step is still README.md's own words, in the section's own order** (Global Constraint
+  6, D102): the build-time quotation check is untouched, and the only line reworded is step 3's,
+  which now runs to the end of its sentence so that the review and fix rounds the run repeats
+  are on the page — still a contiguous substring of the section, still searched forward from
+  the step before it. `test/home.mjs`'s built-page check reads the same five headings and lines
+  out of the page, and it no longer strips a leading number back off a heading: the number is
+  the heading's sibling now, and the fixture case for a heading that swallowed it proves the
+  refusal fires.
+- **The shape is a gate, and each claim has a fixture.** `test/base-styles.mjs` gains
+  `runTimelineFailures`, which reads the built stylesheet for three things: one column in force
+  at **360, 768 and 1280 px** — every `repeat(…)` is refused, counted or not, because a definite
+  `repeat(5, 1fr)` hides its tracks in parentheses a top-level split cannot see into and so read
+  as one column; a connector on `.run-step`'s `::before` that exists and lands on the rail —
+  `content`, `position: absolute` on the line, `position: relative` on the step it is measured
+  from, a `left` that resolves to half the marker's own width, a `background` that is declared
+  and is a token, a width no wider than `--border-width`, a condition on the step not being the
+  last, and both a `top` and a `bottom`; and no `width`, `min-width` or `white-space: nowrap` in
+  the section wider than a phone's content box — **328 px**, derived as 360 minus `main`'s own
+  inline padding at that width, read from `base.css` rather than assumed. Sixteen fixtures plant
+  each defect and read the refusal back — including the unreadable-width case, which is refused
+  by two readers of one declaration and is therefore asserted line by line rather than as a set —
+  and the check was proved red by hand against the old stylesheet, which it refuses four times
+  over.
+- **The heading sits in the run's own rhythm.** `.run-detail-title`'s margin under it moved with
+  the section, `--space-md` (24 px) → `--space-lg` (32 px) — the gap that separates two steps —
+  so the title, the five markers and the note read down one column at one spacing, where the
+  wider gap used to open a row of boxes. It is written down in the component rather than gated:
+  a gap between 24 and 32 px is a preference, and every claim `runTimelineFailures` reads is a
+  defect a reader would see.
+- **The widths were read, not looked at.** The built HTML and CSS were examined at 360, 768
+  and 1280 px for the causes of horizontal overflow — a fixed width, a `nowrap`, an absolutely
+  positioned element outside the rail — and there are none: the grid's track is
+  `minmax(0, 1fr)`, the rail is 32 px, and the name and the line both carry
+  `overflow-wrap: anywhere`. That is arithmetic over the artifact. **Whether it now looks good
+  is the owner's check (70a–70c, D190)**, and no screenshot is committed — this run cannot see
+  one either.
+- **The byte budget is re-derived in the commit that moves it (D192).** The site figure alone
+  moved: the rail, the connector, the rule that
+  stops it at the last step and the markup that places them, on the one page that renders a
+  run. The page weight and the script did not
+  move: the heaviest page is still the docs hub, which renders no step. The three numbers are
+  `website/README.md`'s, re-derived there in this round's commit, and `website/test/budget.mjs`
+  holds each to the gates' own build — this document states the rule and not the bytes.
+
+## The 2026-10-19 home-page feedback: the prompt line, the benefits, the caption
+
+The owner's **feedback of 2026-10-19** is a second message the same day, and it is not the
+brief above: "Home page: sucks. We need a terser way of saying that you use it transparently
+through your agent. Maybe just the `> Fan out these three bug fixes.` Also, we need a section
+with Benefits or somesuch as we have in the README, no?" Plus one correction the message
+names in passing — the diagram's fourth caption claimed more than the repository says. Every
+reading it does not spell out is recorded here, as the brief's readings are above. The
+feedback's own item numbers are not used anywhere in this tree: the brief of the same day has
+an item 1 (the phone's menu) and an item 6 (the console's link), and citing the home page's
+work by a number from the other message is how two documents get confused for one. The three
+changes are cited as the feedback's own.
+
+- **The prompt line is the request, and it is one string.** The hero renders
+  `> Fan out these three bug fixes.` directly under the headline, drawn as the chat's own
+  bubble, and the chat's first turn speaks the same sentence. Both read
+  `src/lib/agent-request.mjs`, which holds the line to the changes spec of 2026-10-18, item 3
+  (the spec's own example of a request) at build time. Two literals would be two lines to keep
+  in step, and the day they drifted the page would show the reader asking for one thing and
+  being answered about another; `website/test/home.mjs` holds the two rendered lines to each
+  other and to the document from outside the build. **Nothing under the line explains it**: the
+  brief asks for the request "as the centrepiece", and the explanation of what it means is the
+  figure below, which shows the sentence being answered.
+- **The benefits are the README's four reasons, and the page may not drop one.**
+  `src/components/Benefits.astro` renders `README.md`'s `## Why Fugaro` — the four names it
+  gives its reasons, with the numbers off, and for each one a sentence out of the paragraph
+  that reason is argued in. Each line is held to **its own reason's paragraph** rather than to
+  the section, so a line that moved from the reason above it to the one below stops the build
+  instead of selling the reader the wrong sentence under the wrong name; and the build stops
+  if the page renders fewer reasons than the README argues, so a claim the README makes cannot
+  quietly leave the page. `website/test/home.mjs` makes both checks against the built page.
+  The four are the claims this repository's own documents carry: the container is in the
+  reader's project (`README.md#How it works`, `docs/design/v1.md`), one job execution per task
+  (the same), the project layer holds the policy (`docs/project-layer.md`), and the base image
+  and the per-role model are the tools' own (`docs/base-image.md`, `docs/multi-model.md`).
+  No fifth reason was added and none was cut.
+- **D188's word ceiling moves from 250 to 300, and that is the reading rather than a
+  loosening.** The benefits are a fourth block the owner's feedback requires on the one page
+  that already carried the three the briefs before it require — the promise, the chat (changes
+  spec item 3) and the flow (item 4) — and the four together measured **296 words** when the
+  section landed, so the homepage was over the number D188 set. `website/README.md` states the
+  rule for exactly this:
+  "a task that needs more raises the number here, in the commit that needs it". The number is
+  therefore the smallest round ceiling above the page that carries every block its briefs
+  require, and it stays a ceiling: the highest page that gained nothing from this feedback is
+  Getting Started at 250 words, and a page that wants the extra fifty has to carry a block its
+  own brief requires for them. The lead ceiling is untouched: the homepage's lead is 23 words
+  (the request, the promise and the two links) against 40, and it grew by the request line the
+  feedback puts there. The caption below takes two words back off that page — it measures **294**
+  words with everything the feedback asks for in place, which is the number `website/README.md`
+  derives the ceiling from.
+- **The diagram's fourth caption said more than the repository says.** It read "each commit is
+  pushed within about a minute while the agent works", which is not what a reader of the picture
+  takes it to mean: what opens the pull request is the run's **first checkpoint push** — within
+  about a minute of the run's first commit — and what a reader gets then is a **draft, marked
+  not verified**, while the run goes on pushing checkpoints as it works
+  (`docs/git-providers.md#Early draft PRs (git.pr.early_draft)` and
+  `#Checkpoint pushes (git.pr.checkpoints)`; `docs/gcp-setup.md` says the same). The caption is
+  now **"the first checkpoint opens the draft PR, marked not verified"**, cited to
+  `docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)`, and the step cites a section
+  of a document other than README.md for the first time — which is why the flow's captions are
+  held per-section rather than to README.md as one file, and why `home.mjs`'s ordering case is
+  now built out of two of README.md's own `## How it works` lines: each step of the shipped flow
+  cites a section of its own, and the rule that a section's lines come in the section's order
+  has to keep holding for the day two steps share one again. **What the caption cannot carry
+  is the rest of the fact** — that the push comes within about a minute of the run's first
+  commit, which is the section above it in the same document and `docs/gcp-setup.md`'s
+  sentence, and that the run goes on pushing checkpoints as it works, which is another sentence
+  of the section the caption cites. A caption is one contiguous quotation of a repository
+  document, and one stitched from two sentences' halves is a sentence the repository never
+  wrote; the flow's step is the pull request, so the caption says what opens and what state it
+  opens in, and the rest is the section it cites. It is recorded here rather than left to the
+  reader of the picture.
+- **The measurements, and the check that is still the owner's.** Nothing here was rendered: no
+  browser was driven for this round, and no screenshot is committed — this run cannot see one.
+  What the gates read is the artifact and the stylesheet: the homepage's words and its lead's
+  against the ceilings (`budget.mjs`), the section as a named landmark with its heading and its
+  `h3`s read out of the built page (`a11y.mjs`), and the homepage's bytes re-derived from the
+  gates' own build (D192). **Its vertical padding is read out of the built CSS at the three
+  widths the rhythm gate uses, so the block pads the gap above it once and not twice
+  (`base-styles.mjs`)** — and that is true of the shipped artifact as of the fix below, which is
+  also what the review of round 6 found wrong with the reading this paragraph carried: it gave
+  the section's heading an ordinal in the page's outline and cited a padding the artifact did
+  not have, and neither of those is a thing to write down here, because both are things the
+  gates read off the built page. The fix is where the rule lives: the rule that pads the section
+  is the one `Benefits.astro` declares, the file that renders it, where the page's own
+  `.home-benefits` rule named the class and carried the page's scope, so it never matched the
+  element at all (Astro scopes a page's rule to the elements the page renders). `base-styles.mjs`
+  reads a selector against the `data-astro-cid-…` the element carries and refuses a block the
+  stylesheet names and no rule reaches, so a dead rule cannot be read as a block's padding
+  again. **Whether the page then looks right is the owner's check (70a–70c, D190)** — the
+  two-column grid, the rule above each benefit and the prompt line's bubble are the parts of
+  this round a gate can only say is present.
+
+## The 2026-10-19 changelog brief: the released state, and the summaries
+
+The same day's owner feedback about `/changelog/`: *"Changelog: why do I see not yet released?
+Also, the summaries under each release should be more high level, product features that end
+users understand."* Two changes follow from it, and every reading the feedback does not spell
+out is recorded here.
+
+- **A release is published when the plugin's version has reached it.** The page decided that
+  from `git tag --list`, and the deploy build checks out without tags — so the deployed page
+  printed the "not yet released" marker under **every** release. The rule is now a file in this
+  repository: a release file is published when its version is at or below the version in
+  `plugin/.claude-plugin/plugin.json`. The version bump lands on `main` before the tag does, so
+  on `main` the manifest names the newest released version and everything up to it reads as
+  released, while a release file written ahead of its bump keeps the marker — which is what the
+  marker is for. The generator no longer reads the checkout's git state at all, so a shallow
+  clone, a full clone and the deploy build render the same page; that is also what took the
+  git-state builds out of the byte figures (above).
+- **Each release opens with a product summary, and the release file's Highlights are one click
+  away.** The summaries used to be the release files' own first Highlights bullet — the
+  operator-facing line, written for whoever runs Fugaro. The summary is now written for a
+  reader who uses Fugaro: one to three sentences naming what the release gives them, covering
+  every file under `docs/releases/`, from what that file and its release say and nothing else.
+  **The release files are not edited** — they stay the operator's document — and their
+  Highlights are rendered as they are inside a `<details>` block labelled `Highlights`, which
+  opens with no script (D183).
+- **The summaries are a file the site renders, not copy on the page.** D189 put `/changelog/`'s
+  summary in the release files themselves, so that the page went on rendering facts and nothing
+  else; the brief asks for words that are not the release files' — a product summary of a
+  release whose file is written for its operator — and **Global Constraint 6** ("a page never
+  restates a document; it renders it or links it") is what that has to be read against. So the
+  summary is `website/data/release-summaries.yaml`: one line per release, keyed by its tag,
+  read and validated through the content pipeline (`src/content.ts`'s `loadReleaseSummaries`,
+  W1.3) and rendered by `src/components/Changelog.astro`. The page still writes no prose of its
+  own — what it renders is two files' text — and a release file with no entry in the data file
+  **stops the build, naming the file**, rather than rendering an entry with nothing under its
+  heading. `/changelog/` is exempt from D188's whole-page word ceiling (it renders a document of
+  this repository), so the summaries add no ceiling to move; the byte figures moved with them,
+  and are re-derived in the commit that ships them (D192).
+- **The "newest releases" block goes, and that is a reading of the brief rather than a loss.**
+  D189's `/changelog/` summary was "the first Highlights line of the newest few releases" above
+  the list, which is a gist of the newest releases and not of each one. The brief asks for a
+  summary under **each** release, which is what the block was approximating, so keeping both
+  would put the same words on the page twice. The list is unchanged: every release file, newest
+  first, each linked to its GitHub release, no date (D100).
+- **What the gates hold.** `website/test/changelog.mjs` reads the published state from the
+  plugin's version over fixture directories that are not git repositories at all — a tag cannot
+  be the reason for any answer it asserts — and refuses a manifest it cannot read as JSON, a
+  version that is not `x.y.z`, and a version naming no release file.
+  `website/test/changelog-page.mjs` holds the page to both sources: one summary per release in
+  the list's own order, the text the data file carries for that tag, no empty entry and no entry
+  outliving its release file, no internal id or repository path in a summary's words, every
+  release file's lines still rendered (the notes are collapsed, not dropped), and the marker
+  printed for exactly the release files above the version the copy's manifest carries. Both
+  builds run in a copy of the repository with no `.git`, which is the environment that used to
+  make every release read as unpublished.
+- **What is still the owner's check.** Whether the summaries read as product news and whether
+  `/changelog/` looks right is the owner's own reading of the page (70a–70c, D190): this run
+  cannot see a rendered page, and no screenshot is committed here.

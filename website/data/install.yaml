@@ -1,5 +1,11 @@
 # website/data/install.yaml -- the one install source the site renders.
 #
+# The paths below are in the order the page renders them, and the **first one is the quick
+# path**: `website/src/pages/getting-started.astro` shows it above the fold, with its own
+# command and copy control, and renders the rest further down in its Details section. So the
+# order is a fact about the page rather than a list, and a path moved to the top is the path
+# a reader runs first (a path with no command there fails the fold's own gate).
+#
 # Read as bytes by internal/cli/docs_website_install_test.go, which pins:
 # every command below to the file its `source:` names (README.md's
 # "## Getting started" or docs/release.md), verbatim; `build` to
@@ -54,22 +60,21 @@ paths:
         brew install dimipaun/tap/fugaro
 
   - id: archive
-    name: The release archive
+    name: Archive
     source: README.md
     platforms: [darwin, linux]
     release_page: https://github.com/dimipaun/fugaro/releases
     name_template: "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     extension: tar.gz
     note: >-
-      Download an archive for macOS or Linux (amd64 or arm64) and verify it
-      with cosign.
+      A tarball for macOS or Linux, amd64 or arm64.
 
   - id: cosign
-    name: Verify a release with cosign
+    name: Cosign
     source: docs/release.md
     platforms: [darwin, linux]
     note: >-
-      Check the archive against the release's checksums and signature bundle.
+      Check the archive against the release's checksums.
     commands:
       - |-
         V=X.Y.Z
@@ -98,14 +103,11 @@ paths:
         go install github.com/dimipaun/fugaro/cmd/fugaro@latest
 
   - id: plugin
-    name: The Fugaro plugin
+    name: Plugin
     source: README.md
     platforms: [darwin, linux]
     note: >-
-      fugaro init wires the plugin into the checkout's .claude/settings.json
-      and /fugaro:setup writes fugaro.yaml; a teammate who opens the folder
-      and trusts it gets the plugin too, and fugaro upgrade --local repairs it
-      when the skills are not listed.
+      The agent's skills; fugaro init wires them into the checkout.
     commands:
       - |-
         fugaro init

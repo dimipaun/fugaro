@@ -558,12 +558,20 @@ func TestDocsCheck82PrintVarsKeys(t *testing.T) {
 
 // TestDocsCheck89GuardMatchesWhatExists: check 89's guard is written to
 // hard-stop on a checkout without the app, and it stopped on `mobile/app.json`
-// because P3.1 had not landed when the check was written. It has: the file is
-// in this checkout, so the guard stops on `mobile/eas.json` (P4.4 makes it)
-// and on an app.json that does not carry the store identity yet -- the ids a
-// store build cannot be submitted without. The old guard read
+// because P3.1 had not landed when the check was written. Both files have
+// landed -- P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and
+// `mobile/app.config.js` are all in this checkout, so the guard's file tests
+// pass and what it stops on today is the store identity itself: an app.json
+// that does not carry it, and the two variables that are not in the shell yet
+// -- the ids a store build cannot be submitted without. The old guard read
 // `d["ios"]["bundleIdentifier"]` and would have died with a Python traceback
 // instead of saying so.
+//
+// Two more ways to die with a traceback are pinned here for the same reason,
+// because the guard's contract is a sentence and not a stack: it reads the
+// identity by running `app.config.js` through `node`, so it tests for the
+// interpreter (its preamble names it) the way it tests for `eas`; and it parses
+// what node printed, so stdout that is not the config is a stop with a reason.
 func TestDocsCheck89GuardMatchesWhatExists(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -590,7 +598,7 @@ func TestDocsCheck89GuardMatchesWhatExists(t *testing.T) {
 		}
 	}
 	if !strings.Contains(guard, "mobile/eas.json") {
-		t.Errorf("## Check 89: the guard does not stop on mobile/eas.json, which is what is absent today (P4.4 writes it): the guard has to name the file whose absence is the honest current state")
+		t.Errorf("## Check 89: the guard does not test for mobile/eas.json, the file the build and submit profiles are read from (P4.4's, and in this checkout): without the test, a checkout that predates it would build against no profiles at all, and the stop would come from eas-cli's own error rather than from this guard")
 	}
 	if strings.Contains(guard, `d["ios"]["bundleIdentifier"]`) {
 		t.Errorf("## Check 89: the guard reads ios.bundleIdentifier straight out of app.json, and the file has no such key yet: the guard dies with a Python traceback instead of stopping with the reason a store build cannot be submitted")
@@ -598,6 +606,31 @@ func TestDocsCheck89GuardMatchesWhatExists(t *testing.T) {
 	for _, want := range []string{"bundleIdentifier", "android", "sys.exit("} {
 		if !strings.Contains(guard, want) {
 			t.Errorf("## Check 89: the guard does not read/carry %q: it must name the store identity it needs and stop with a sentence when the app does not have it", want)
+		}
+	}
+
+	// The guard runs the app's dynamic config through `node`, and the preamble
+	// says so ("It needs `node` on `PATH` for that last read"): so it has to
+	// test for the interpreter the way it tests for `eas`, or a shell without
+	// node gets a Python FileNotFoundError -- a traceback out of the block whose
+	// whole job is to stop with a sentence. It is the same defect as the
+	// `d["ios"]["bundleIdentifier"]` read above, one layer out. Mutation: drop
+	// the `command -v node` line and this fails.
+	if !strings.Contains(section, "It needs `node` on `PATH`") {
+		t.Errorf("## Check 89: the preamble no longer names `node` as a requirement, so this test's marker for it is stale: the guard reads the store identity with node, and the preamble is where the owner is told")
+	}
+	if !strings.Contains(guard, "command -v node") {
+		t.Errorf("## Check 89: the guard tests that `eas` is on PATH but not `node`, although its own preamble says it needs both: with node missing, the `subprocess.run([\"node\", ...])` read of the store identity raises FileNotFoundError and the block ends in a Python traceback instead of the sentence it promises")
+	}
+
+	// ... and what node printed is parsed with a guard on it: a node that put a
+	// warning line on stdout, printed an empty document, or printed `null` is a
+	// stop with a sentence rather than an uncaught JSONDecodeError or an
+	// AttributeError out of `e.get(...)`. Mutation: drop the `try`/`except
+	// ValueError` (or the `isinstance` check) and this fails.
+	for _, want := range []string{"except ValueError", `if not isinstance(e, dict):`, `isinstance(e.get("ios"), dict)`} {
+		if !strings.Contains(guard, want) {
+			t.Errorf("## Check 89: the guard parses node's stdout with no %q: whatever node printed that is not the config (a warning line, an empty document, `null`) reaches the owner as a Python traceback instead of the sentence this guard promises", want)
 		}
 	}
 
@@ -989,7 +1022,7 @@ func TestDocsCheck81RestoreUsesTheFirebaseProject(t *testing.T) {
 	// uids). The call this repository makes is internal/budget's
 	// AuthAdmin.DeleteUsers: accounts:batchDelete, a Bearer credential, and
 	// `{"localIds": [...], "force": true}`.
-	if strings.Contains(codeLines(restore), "?key=$KEY") {
+	if strings.Contains(mobileBlockCommandLines(restore), "?key=$KEY") {
 		t.Errorf("## Check 81: the Restore authenticates an Identity Toolkit admin call with the web API key (`?key=$KEY`): the key signs the client endpoints only, so this answers 401, the two accounts stay behind and the Restore's FACT line is false -- the call needs the owner's own credential as a Bearer token")
 	}
 	if !strings.Contains(restore, `-H "Authorization: Bearer $AT"`) {
@@ -2419,10 +2452,10 @@ func deployDatabaseBody(t *testing.T) string {
 	return body
 }
 
-// codeLines returns a block's command lines without its comments: a comment
+// mobileBlockCommandLines returns a block's command lines without its comments: a comment
 // inside a block quotes the broken form to warn about it (`?key=$KEY here
 // answers 401`), and a claim about what the block does is about its commands.
-func codeLines(block string) string {
+func mobileBlockCommandLines(block string) string {
 	var out []string
 	for _, line := range strings.Split(block, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {

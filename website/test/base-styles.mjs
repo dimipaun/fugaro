@@ -28,6 +28,15 @@
 // counts elements: `home.mjs` counts the flow's three arrows and `copy.mjs` clicks the
 // control, and neither of them says which way the one points or where the other is drawn.
 //
+// **And the run under the picture is one vertical timeline** (the owner's feedback of
+// 2026-10-19: "The run, step by step section does not look good"). Five steps laid out as a
+// `repeat(auto-fit, minmax(18rem, 1fr))` grid read three beside two with a hole in the last
+// row on a desktop and two-by-two on a tablet, with nothing joining one step to the next — a
+// list of facts rather than a run. `runTimelineFailures` reads the shape the timeline claims:
+// one column in force at 360, 768 and 1280 px, a connector on the steps that have one below
+// them and none on the last, and no width or `nowrap` in the section wider than the phone's
+// content box, which is the overflow a browser would show at 360 px.
+//
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file.
 // No browser, no network: the checks are over the HTML and CSS a browser would receive.
 
@@ -264,6 +273,28 @@ function plant(from, to, which = 'first') {
   return css.replace(from, to)
 }
 
+/**
+ * Today's stylesheet with **one named rule** rewritten — `selector` is a fragment of the rule's
+ * selector, `edit` gets the rule's own text and has to change it. The fixture for a case about
+ * one of several rules that declare the same thing, or about the selector itself: the
+ * homepage's top-level blocks each write `padding:0 var(--space-md) var(--space-3xl)` — the same
+ * declaration, in the rule of the file that renders each one — so a case about the benefits'
+ * padding has nothing to tell it apart from the install's (`plant` takes the first or the last
+ * occurrence of a fragment, and *which* rule that is depends on the order Astro emits the
+ * components in, which is not something a case should rest on).
+ */
+function plantRule(selector, edit) {
+  const css = TODAY()
+  const at = css.indexOf(selector)
+  assert.ok(at !== -1, `this fixture rewrites the rule whose selector carries ${JSON.stringify(selector)}, and the built stylesheet no longer carries it`)
+  const end = css.indexOf('}', at)
+  assert.ok(end !== -1, `the rule whose selector carries ${JSON.stringify(selector)} has no body in the built stylesheet`)
+  const rule = css.slice(at, end + 1)
+  const rewritten = edit(rule)
+  assert.notEqual(rewritten, rule, `this fixture rewrites the rule whose selector carries ${JSON.stringify(selector)}, and the edit changed nothing`)
+  return css.slice(0, at) + rewritten + css.slice(end + 1)
+}
+
 test('the layout rule passes on the built stylesheet, so each refusal below is the one edit it names', () => {
   assert.deepEqual(navLayoutFailures(TODAY()), [])
 })
@@ -453,7 +484,12 @@ function appliesAt(width) {
   }
 }
 
-/** A CSS length as pixels: a token, a `rem`/`px` length, or `calc(var(--x) * n)`. */
+/**
+ * A CSS length as pixels: a token, a `rem`/`px` length, or a `calc(var(--x) * n)` — and a
+ * `calc(var(--x) / n)`, which is how a length that is half of a token is written (the run's
+ * connector is placed at half the marker's width, `left: calc(var(--space-lg) / 2)`), so that a
+ * value the stylesheet writes in the reading's own vocabulary is one the reading can measure.
+ */
 function toPx(value, tokens) {
   if (value === undefined) return NaN
   // A bare zero is zero pixels, and it is the one length CSS lets a rule write without a unit:
@@ -464,6 +500,8 @@ function toPx(value, tokens) {
   if (variable) return tokens.get(variable[1]) ?? NaN
   const calc = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\*\s*([\d.]+)\s*\)$/.exec(value)
   if (calc) return (tokens.get(calc[1]) ?? NaN) * Number(calc[2])
+  const divide = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\/\s*([\d.]+)\s*\)$/.exec(value)
+  if (divide) return (tokens.get(divide[1]) ?? NaN) / Number(divide[2])
   const rem = /^([\d.]+)rem$/.exec(value)
   if (rem) return Number(rem[1]) * 16
   const px = /^([\d.]+)px$/.exec(value)
@@ -1493,6 +1531,348 @@ test('every run-detail refusal fires on the defect it names', () => {
   }
 })
 
+// ---- How It Works: the run is one vertical timeline (owner's feedback, 2026-10-19) --------
+//
+// The owner read the detail under the picture on 2026-10-19: "The run, step by step section
+// does not look good". What it was: the five steps were a `repeat(auto-fit, minmax(18rem,
+// 1fr))` grid, so a desktop read three blocks beside two with a hole in the last row, a tablet
+// read them two-by-two, and nothing in the section joined one step to the next — five short
+// paragraphs in boxes, which is a list of facts rather than a run. What replaces it: one
+// column at every width, each step a numbered marker on a rail with a one-pixel line drawn
+// from it down to the marker below, and the step's name and its line in the column beside it.
+//
+// Three claims of that shape are read here, because each is a defect a reader would see rather
+// than a preference:
+//
+//   - **the steps are one column, at every width.** A sequence that puts one of its steps
+//     beside another reads as a choice between them, and the run has an order: the grid the
+//     owner measured is refused at the widths a reader is most likely to meet (a 360 px phone,
+//     a 768 px tablet, the 1280 px desktop the page's own column maxes out at), and so is
+//     every `repeat(…)` — see `runLayoutAt`, which is where the definite repeat that used to
+//     read as one track is dealt with.
+//   - **the line joins the steps and stops at the last one.** The links in the chain are what
+//     make five blocks one run, so a stylesheet with no line is refused; so is a line that is
+//     not thin (the owner asked for a thin connecting line, and a 4 px rule is a rail); and so
+//     is one drawn by every step, which would hang off the end of the run with no step below
+//     it to point at.
+//   - **nothing in the section is wider than a phone.** `width`, `min-width` and
+//     `white-space: nowrap` are the three declarations that give a phone a sideways scroll
+//     when they are wrong: a box as wide as a desktop column, or a line that cannot break, is
+//     content the page cannot fit. Both are read against the phone's **content box**, which is
+//     360 px less `main`'s own inline padding — read out of the same stylesheet rather than
+//     typed, so the arithmetic cannot drift from the gutter the page is drawn with.
+
+/** The widths the run's shape is read at: a phone, a tablet, and the width the page stops growing at. */
+export const TIMELINE_WIDTHS = [360, 768, 1280]
+
+/** The phone whose content box nothing in the section may exceed. */
+const PHONE = 360
+
+/**
+ * The run's own layout at one width, as a description of it, or `null` when the steps are in
+ * one column. A grid whose track list is one track is the timeline; a row-direction flex, a
+ * grid with more than one track and anything written with a `repeat(…)` are each a run laid
+ * out across the page.
+ *
+ * **Every `repeat` is refused, counted or not** — the same reading the chat's own one-column
+ * case takes (`chatConversationFailures`). Two of them cannot be counted at all: an
+ * `auto-fit`/`auto-fill` repeat fits as many tracks as the width allows, which is a fact about
+ * the viewport rather than about the declaration. And a definite one hides its tracks in
+ * parentheses that `splitTop` deliberately does not split — `repeat(5, 1fr)` is the five steps
+ * in one row, and the top-level split read it as **one track**, so the grid the owner measured
+ * walked back in through the shape this reading was written for. The refusal names the
+ * declaration rather than a count, because a count is what it got wrong.
+ */
+function runLayoutAt(declaredAt, width) {
+  const display = declaredAt('run-steps', 'display', width)
+  const columns = declaredAt('run-steps', 'grid-template-columns', width)
+  const direction = declaredAt('run-steps', 'flex-direction', width)
+  if (display === 'flex' && (direction === undefined || direction === 'row')) return 'a row, one column per step'
+  if (columns === undefined) return null
+  if (/repeat\(/.test(columns)) return `a grid declared \`${columns}\``
+  const tracks = splitTop(columns, ' ').length
+  return tracks > 1 ? `a grid of ${tracks} columns` : null
+}
+
+/** Every way the run's timeline is not the shape the owner's feedback asked for, as the lines a reader gets. */
+export function runTimelineFailures(css) {
+  const out = []
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const named = (klass) => new RegExp(`\\.${klass}(?![\\w-])`)
+  const declaredAt = (klass, property, width) =>
+    rules
+      .filter((r) => named(klass).test(r.selector) && appliesAt(width)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+  // The `main` rule itself, which is an element rather than a class: `main:has(> .hero)` is a
+  // different rule on a different page and is not this page's container.
+  const mainPadding = rules
+    .filter((r) => r.selector === 'main' && appliesAt(PHONE)(r))
+    .map((r) => declarations(r).padding)
+    .filter((value) => value !== undefined)
+    .pop()
+
+  // The phone's content box: the viewport less the gutter `main` gives the page at it. A
+  // `main` this stylesheet does not describe is one nothing here can measure, and the reading
+  // says so rather than comparing against a number it invented.
+  const gutter = toPx(inlineToken(mainPadding ?? ''), tokens)
+  const phoneBox = PHONE - 2 * gutter
+  if (Number.isNaN(gutter) || phoneBox <= 0) {
+    out.push(
+      `\`main\`'s inline padding cannot be read from the built stylesheet at ${PHONE} px, so the box this check holds the run's own widths to is unknown: nothing in the section can be shown to fit a phone without it (owner's feedback, 2026-10-19)`,
+    )
+  }
+
+  for (const width of TIMELINE_WIDTHS) {
+    const layout = runLayoutAt(declaredAt, width)
+    if (layout !== null) {
+      out.push(
+        `at ${width} px the run's five steps are laid out as ${layout}, and the run is one vertical timeline: a step beside another step reads as an alternative to it, and the run has an order (owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+
+  // The line between two steps. It is the step's own `::before`, and every declaration that
+  // makes it exist, takes it out of the flow and lands it on the rail is read — because each of
+  // them alone is enough to leave the rule reading correctly and the line invisible or in the
+  // wrong place: a pseudo-element with no `content` is not generated at all, a connector left
+  // in the flow is a one-pixel box in the step's own grid cell rather than a line down the
+  // rail, the step's own `position: relative` is what the connector's offsets are measured
+  // against, a line with no `left` sits at the step's edge, and a line with no `background` is
+  // painted in nothing. The geometry is read too: no `top` or no `bottom` is a line drawn from
+  // nowhere to nowhere rather than the segment between two markers.
+  const connectors = rules.filter((r) => named('run-step').test(r.selector) && /::?before/.test(r.selector))
+  if (connectors.length === 0) {
+    out.push(
+      "the run's steps carry no line between them (no `.run-step` `::before` draws one), and the line is what makes five steps one run: without it the section is five paragraphs a reader has to join up themselves (owner's feedback, 2026-10-19)",
+    )
+  }
+  // The rail's own width, read from the marker the line is drawn through: the step's number is
+  // one square and the line's `left` is half of it. Read at the phone's width, which is where
+  // the run's shape is read (`runLayoutAt`): the timeline has no breakpoint, so the marker is
+  // one width.
+  const markerWidth = toPx(declaredAt('run-step-number', 'width', PHONE), tokens)
+  // The step's own `position`, from the rules that style the step and not its pseudo-element.
+  const stepPosition = rules
+    .filter((r) => named('run-step').test(r.selector) && !/::?before/.test(r.selector) && appliesAt(PHONE)(r))
+    .map((r) => declarations(r).position)
+    .filter((value) => value !== undefined)
+    .pop()
+  if (connectors.length > 0 && stepPosition !== 'relative') {
+    out.push(
+      `\`.run-step\` is \`position: ${stepPosition ?? '(nothing declared)'}\`, and the connector's offsets are measured from the step it belongs to: without a positioned step the line is placed against whatever ancestor is positioned, which is not the step the line joins (owner's feedback, 2026-10-19)`,
+    )
+  }
+  for (const rule of connectors) {
+    const decls = declarations(rule)
+    if (decls.content === undefined || decls.content === 'none' || decls.content === 'normal') {
+      out.push(
+        `the run's line is \`content: ${decls.content ?? '(nothing declared)'}\`, and a pseudo-element with no content is not generated: the rule is here and the line is not (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.position !== 'absolute') {
+      out.push(
+        `the run's line is \`position: ${decls.position ?? '(nothing declared)'}\`, and a connector left in the flow is a one-pixel box in the step's own grid cell: the line is drawn down the rail by taking it out of the flow (owner's feedback, 2026-10-19)`,
+      )
+    }
+    const left = toPx(decls.left, tokens)
+    if (Number.isNaN(left)) {
+      out.push(
+        `the run's line is \`left: ${decls.left ?? '(nothing declared)'}\`, which this check cannot turn into pixels, and a place it cannot read is a place nothing checked — \`NaN\` passes the comparison below (owner's feedback, 2026-10-19)`,
+      )
+    } else if (Number.isNaN(markerWidth)) {
+      out.push(
+        `the step's number declares \`width: ${declaredAt('run-step-number', 'width', PHONE) ?? '(nothing)'}\`, which this check cannot read, and the marker is the rail the line is measured against: where the line has to land is unknown (owner's feedback, 2026-10-19)`,
+      )
+    } else if (Math.abs(left - markerWidth / 2) > tokens.get('border-width') / 2) {
+      out.push(
+        `the run's line starts ${Math.round(left)} px from the step's edge, and the marker's centre is ${Math.round(markerWidth / 2)} px from it (the step's number is ${Math.round(markerWidth)} px wide): a line that misses the marker is drawn beside the run rather than through it (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (!/:not\(:(last-child|last-of-type)\)/.test(rule.selector)) {
+      out.push(
+        `the run's line is drawn by \`${rule.selector}\` on every step including the last, and a line with no step below it is the run continuing past its own end: the connector belongs to the step that has a next one (owner's feedback, 2026-10-19)`,
+      )
+    }
+    const thin = toPx(decls.width, tokens)
+    if (Number.isNaN(thin)) {
+      out.push(
+        `the run's line is \`width: ${decls.width ?? '(nothing declared)'}\`, which this check cannot turn into pixels, and a width it cannot read is one nothing checked (\`NaN\` passes the comparison below) — write the line's width in a shape \`website/test/base-styles.mjs\` reads (owner's feedback, 2026-10-19)`,
+      )
+    } else if (thin > tokens.get('border-width')) {
+      out.push(
+        `the run's line is ${Math.round(thin)} px wide and the run's line is thin: \`--border-width\` is ${tokens.get('border-width')} px, and the connector joins the steps rather than framing them (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.top === undefined || decls.bottom === undefined) {
+      out.push(
+        `the run's line declares \`top: ${decls.top ?? '(nothing)'}\` and \`bottom: ${decls.bottom ?? '(nothing)'}\`, and a segment between two steps is one that starts at the marker above it and ends at the step's own edge: a line placed anywhere else is drawn across a step or off the end of the run (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.background === undefined) {
+      out.push(
+        "the run's line declares no `background`, and an unpainted box is a line no reader sees: the connector is drawn in `var(--border)`, the site's separator (owner's feedback, 2026-10-19)",
+      )
+    } else if (!/^var\(--[a-z0-9-]+\)$/.test(decls.background.trim())) {
+      out.push(
+        `the run's line is drawn in \`background: ${decls.background}\`, and every colour on the site is a palette token (\`var(--…)\`): a literal is a colour no palette moves (W1.2, owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+
+  // What a phone cannot fit: a fixed width, a floor under one, or a line that cannot break.
+  for (const rule of rules) {
+    if (!/\.run-(detail|steps|step|note)\b/.test(rule.selector)) continue
+    const decls = declarations(rule)
+    for (const property of ['width', 'min-width']) {
+      if (decls[property] === undefined) continue
+      const px = toPx(decls[property], tokens)
+      if (Number.isNaN(px)) {
+        out.push(
+          `\`${rule.selector}\` is \`${property}: ${decls[property]}\`, which this check cannot turn into pixels, and a width it cannot read is one nothing checked — \`NaN\` passes the comparison below (owner's feedback, 2026-10-19)`,
+        )
+      } else if (px > phoneBox) {
+        out.push(
+          `\`${rule.selector}\` is \`${property}: ${decls[property]}\` — ${Math.round(px)} px, and a ${PHONE} px phone's content box is ${Math.round(phoneBox)} px (\`main\`'s gutter is ${Math.round(gutter)} px a side): a box wider than the phone is a page the phone scrolls sideways (owner's feedback, 2026-10-19)`,
+        )
+      }
+    }
+    if (decls['white-space'] === 'nowrap') {
+      out.push(
+        `\`${rule.selector}\` sets \`white-space: nowrap\`, and a step's text that cannot break is text that runs past the page on a phone: every line of the run wraps (owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+  return out
+}
+
+test('the run under the picture is one vertical timeline a phone can read', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('run-steps')) continue
+    checked += 1
+    failures.push(...runTimelineFailures(pageCss(html)).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the run, and item 4 puts the detail of the picture on How It Works')
+  assert.deepEqual(failures, [], `the run is not one vertical timeline:\n  ${failures.join('\n  ')}`)
+})
+
+test('every timeline refusal fires on the defect it names', () => {
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  const css = pageCss(page)
+  /** The How It Works stylesheet with one fragment replaced, as the run-detail cases above. */
+  const change = (from, to) => {
+    assert.ok(css.includes(from), `this fixture replaces ${JSON.stringify(from)}, and How It Works' stylesheet no longer carries it`)
+    return css.replace(from, to)
+  }
+  const cases = [
+    // The defect the owner measured: the five steps as a grid of their own, which is three
+    // columns beside a hole in the last row on a desktop and two-by-two on a tablet.
+    [
+      'the five steps as a grid of their own',
+      change('grid-template-columns:minmax(0,1fr)', 'grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))'),
+      /a grid declared `repeat\(auto-fit/,
+    ],
+    // The same grid written as a repeat of five, which is the shape `splitTop` cannot see into:
+    // its five tracks are inside parentheses, so the top-level split read the whole declaration
+    // as one track and the five steps in one row passed a check whose claim is that they are
+    // one column.
+    [
+      'the five steps as one repeat of five',
+      change('grid-template-columns:minmax(0,1fr)', 'grid-template-columns:repeat(5,1fr)'),
+      /a grid declared/,
+    ],
+    // The picture without the line: five blocks a reader joins up themselves.
+    ['the steps with no line between them', css.replace(/\.run-step\[[^\]]+\]:not\(:last-child\):before\{[^}]*\}/, ''), /carry no line between them/],
+    // A line that is never generated: a pseudo-element's `content` is what makes the box exist.
+    ['a line with no content', change('content:"";top:var(--space-lg)', 'top:var(--space-lg)'), /is `content: \(nothing declared\)`/],
+    // A line left in the flow: one pixel in the step's own cell rather than a line on the rail.
+    ['a line left in the flow', change('background:var(--border);position:absolute}', 'background:var(--border)}'), /a connector left in the flow/],
+    // A step nothing is positioned against: the connector's offsets then land somewhere else.
+    ['a step with no positioned context', change(';display:grid;position:relative}', ';display:grid}'), /without a positioned step/],
+    // A line drawn at the step's edge rather than through the marker in the rail.
+    ['a line beside the rail', change('left:calc(var(--space-lg) / 2)', 'left:0'), /misses the marker/],
+    // A line with no paint: the rule is here and a reader sees nothing.
+    ['a line with no paint', change('background:var(--border);position:absolute}', 'position:absolute}'), /declares no `background`/],
+    // A line painted in a colour no palette moves: the one declaration on the connector that is
+    // not geometry, and the reason the colour rule is read at all.
+    ['a line drawn in a literal', change('background:var(--border)', 'background:#fff'), /is drawn in `background: #fff`/],
+    // A place on the rail the check cannot measure: `NaN` would pass every comparison below it,
+    // so an unreadable `left` is refused rather than assumed to be somewhere.
+    ['a line placed in a shape nothing reads', change('left:calc(var(--space-lg) / 2)', 'left:half'), /cannot turn into pixels/],
+    // A rail with no width to land on: the marker's own box is what the line's `left` is half
+    // of, and without it where the line has to land is unknown.
+    [
+      'a rail with no declared width',
+      change('width:var(--space-lg);height:var(--space-lg)', 'height:var(--space-lg)'),
+      /the step's number declares `width: \(nothing\)`/,
+    ],
+    // The line drawn by every step, which hangs off the end of the run.
+    [
+      'a line drawn by the last step too',
+      change(':not(:last-child):before', ':before'),
+      /on every step including the last/,
+    ],
+    // A rail rather than a line: the owner asked for a thin connecting line.
+    ['a four-pixel line', change('width:var(--border-width);margin-left:', 'width:calc(var(--border-width) * 4);margin-left:'), /wide and the run's line is thin/],
+    // A line placed by nothing: no `top` or `bottom` is a line drawn across whatever it lands on.
+    ['a line with no extent', change('content:"";top:var(--space-lg);bottom:0;', 'content:"";'), /declares `top: \(nothing\)` and `bottom: \(nothing\)`/],
+    // The one text run in the section that cannot break: a phone has to scroll sideways for it.
+    [
+      'a line of the run that cannot break',
+      change(
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;white-space:nowrap;margin:0}',
+      ),
+      /white-space: nowrap/,
+    ],
+    // And a box as wide as a desktop column, on a page whose gutter leaves a phone 328 px.
+    [
+      'a step as wide as a desktop column',
+      change(
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+        'width:40rem;color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+      ),
+      /a 360 px phone's content box is 328 px/,
+    ],
+  ]
+  for (const [what, stylesheet, expected] of cases) {
+    const lines = runTimelineFailures(stylesheet)
+    // Deduplicated: a layout defect is a defect at each width it is read at, and the three
+    // widths say the same thing about the same declaration. What no case may do is say
+    // something *else* beyond the refusal it names, which is what the set holds.
+    assert.deepEqual(
+      [...new Set(lines.map((line) => (expected.test(line) ? 'fired' : line)))],
+      ['fired'],
+      `${what}: the refusal did not fire, and this is what it said instead`,
+    )
+  }
+
+  // The connector's own width, which cannot go in the list above: an unreadable width is
+  // refused by **two** readers of the same declaration — the connector's own and the phone's,
+  // which reads every `width` in the section — so the set-shaped assertion in the loop cannot
+  // tell "both refused it" from "one of them did", and the line this case is about is the one
+  // that has to be named. Read by name, both: the connector's guard is `thin > …`'s other half,
+  // and `NaN` passes that comparison.
+  const unreadableWidth = runTimelineFailures(change('width:var(--border-width);margin-left:', 'width:thin;margin-left:'))
+  assert.equal(
+    unreadableWidth.filter((line) => /the run's line is `width: thin`, which this check cannot turn into pixels/.test(line)).length,
+    1,
+    'a connector width this check cannot measure passes: the rule is read, its width is `NaN`, and `NaN` is smaller than every ceiling the check compares it to',
+  )
+  assert.deepEqual(
+    unreadableWidth.filter((line) => /is `width: thin`, which this check cannot turn into pixels/.test(line) && !/the run's line is/.test(line)).length,
+    1,
+    'the phone-side reading of the same unreadable width did not fire: the two are one edit apart and only one of them is the connector\'s',
+  )
+
+  // The control: the page as it is built passes every one of them.
+  assert.deepEqual(runTimelineFailures(css), [], 'the built run does not pass the shape its own cases are drawn from')
+})
+
 // ---- the homepage's vertical rhythm: one gap, not two (review round 5) ---------------------
 //
 // The homepage's top-level blocks carry their own gutter and the room below themselves — the
@@ -1504,6 +1884,17 @@ test('every run-detail refusal fires on the defect it names', () => {
 // band between the flow's last card and the "Install" heading was 7 rem + 2 rem = 144 px of
 // blank page — the widest gap on the page, and twice the rhythm every other pair of blocks
 // keeps. Whichever of the two blocks owns a gap, only one of them may pad it.
+//
+// **A rule is read against the element it claims to style, scope attribute and all** (review
+// round 6). Astro gives every element a `data-astro-cid-…` for the component that rendered it
+// and appends the page's own to the selectors the page's `<style>` declares, so a page's rule
+// reaches the elements the page renders and no other. `.home-benefits` was declared on the
+// homepage and rendered by `Benefits.astro`: the rule was dead, the section kept no gutter and
+// no room below it, and this reading — which matched a rule to a block by class name — took the
+// dead rule's `padding` for the block's and passed at all three widths. So a selector that
+// names a scope the element does not carry is not in force, and a block the stylesheet names
+// and no rule reaches is a refusal of its own, because the pair reading below can only see a
+// block that declares a padding *somewhere*.
 //
 // It is read from the built page rather than from the sources: the top-level blocks of the
 // homepage's `main`, in document order, and each one's own `padding` out of the cascade.
@@ -1524,8 +1915,10 @@ export const RHYTHM_WIDTHS = [80 * 16, 48 * 16, 375]
 
 /**
  * Every pair of the homepage's top-level blocks that both pad the gap between them, as the
- * sentences a reader of the failure gets. A page with no `main`, or with one block, has no
- * pair to read and is not a failure here.
+ * sentences a reader of the failure gets — and, before the pairs, every top-level block the
+ * stylesheet names and no rule can reach (the round-6 reading: a block whose rule is scoped to
+ * something the element is not). A page with no `main`, or with one block, has no pair to read
+ * and is not a failure here.
  */
 export function homeRhythmFailures(css, html) {
   const out = []
@@ -1535,6 +1928,32 @@ export function homeRhythmFailures(css, html) {
   const blocks = [...walk(main)].filter((el) => el.parent === main)
   const rules = allRules(css)
   const tokens = lengthTokens(css)
+
+  /**
+   * The scope attributes an element carries: Astro writes one `data-astro-cid-…` per component
+   * that rendered it, and appends the page's own to every compound selector the page's `<style>`
+   * declares. So a selector that names a scope the element does not carry **cannot match the
+   * element**, however its class name reads — and that is the shape the review of round 6 found:
+   * `.home-benefits` was declared on the homepage and rendered by `Benefits.astro`, and a
+   * reading that matched on the class alone took the dead rule's padding for the section's.
+   */
+  const scopesOf = (el) => new Set([...el.attrs.keys()].filter((name) => name.startsWith('data-astro-cid-')))
+
+  /** True when one selector — not a list of them — can match an element carrying `scopes`: every
+   *  `[data-astro-cid-…]` it names is one of the element's. A selector with none is unscoped
+   *  (`base.css`, and the rules these cases plant) and matches anything. */
+  const reaches = (selector, scopes) =>
+    [...selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].every(([, scope]) => scopes.has(scope))
+
+  /** True when a rule names one of `classes` in a selector that can reach an element carrying
+   *  `scopes`. A selector list is read one selector at a time: it matches if *any* of them does. */
+  const names = (rule, classes, scopes) =>
+    rule.selector
+      .split(',')
+      .some(
+        (part) =>
+          classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(part)) && reaches(part, scopes),
+      )
 
   /**
    * A block's own vertical padding, out of the declarations in force at `width` on any of its
@@ -1553,9 +1972,8 @@ export function homeRhythmFailures(css, html) {
    */
   const vertical = (block, width) => {
     const classes = classesOf(block)
-    const inForce = rules.filter(
-      (r) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector)) && appliesAt(width)(r),
-    )
+    const scopes = scopesOf(block)
+    const inForce = rules.filter((r) => names(r, classes, scopes) && appliesAt(width)(r))
     let top
     let bottom
     for (const rule of inForce) {
@@ -1584,6 +2002,37 @@ export function homeRhythmFailures(css, html) {
 
   /** The name a block is reported by: its classes, as a reader finds them in the markup. */
   const nameOf = (block) => classesOf(block).map((klass) => `.${klass}`).join('') || block.name
+
+  /**
+   * **A block the stylesheet names and no rule reaches**, which is a failure of its own whatever
+   * the pairs below read (review round 6). The pair reading can only see a block that declares a
+   * vertical padding somewhere, and a block whose padding sits in a rule that cannot match it
+   * declares nothing at all — `vertical` returns `null`, and `null` on either side of a pair
+   * skips that pair **in silence**. That is how every gate passed over a section that padded
+   * nothing on any width: the class was named by `index.astro`'s rule, the `<section>` carried
+   * `Benefits.astro`'s scope, and a block the page means to style reads exactly like a block
+   * that has no padding to give. The refusal names the rule, the scope it is written for and the
+   * scope the element carries, because the two are one line apart in a source file and the fix
+   * is to move the rule, not to change the class.
+   */
+  for (const block of blocks) {
+    const classes = classesOf(block)
+    if (classes.length === 0) continue
+    const scopes = scopesOf(block)
+    const namedBy = rules.filter((r) =>
+      r.selector.split(',').some((part) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(part))),
+    )
+    if (namedBy.length === 0 || namedBy.some((r) => names(r, classes, scopes))) continue
+    const selectors = [...new Set(namedBy.map((r) => r.selector))]
+    const wanted = [
+      ...new Set(
+        selectors.flatMap((selector) => [...selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].map(([, scope]) => scope)),
+      ),
+    ]
+    out.push(
+      `the homepage's ${nameOf(block)} is named by the stylesheet (\`${selectors.join('`, `')}\`) and no selector of ${namedBy.length === 1 ? 'that rule' : 'those rules'} can reach the element: the element carries ${scopes.size ? [...scopes].join(', ') : 'no scope attribute'} where the rule is scoped to ${wanted.join(', ') || 'no scope at all'}. A rule the element cannot be matched by is a rule the block never gets, so the block keeps no gutter and no room below it — and the pair reading above skips it in silence, because a block with no padding of its own reads like a block that has no padding to give (review round 6: a page's scoped rule reaches the elements the page renders, and this block is rendered by a component that carries its own scope)`,
+    )
+  }
 
   for (let i = 1; i < blocks.length; i += 1) {
     const above = blocks[i - 1]
@@ -1624,25 +2073,37 @@ test('the homepage’s blocks pad the gap between them once, and not twice', () 
 test('the rhythm refusal fires on the doubled gap, and the pairs that keep the rhythm pass', () => {
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const cases = [
-    // The defect as it shipped: the install section's own `--space-lg` on top of the flow's
-    // `--space-3xl` under it — the 144 px band the review measured between the last card and
-    // the "Install" heading. `'first'`: `HomeInstall.astro`'s rule is emitted before
-    // `index.astro`'s in the built page, so the install's padding is the earlier occurrence and
-    // the figures' the later one.
+    // The defect as it shipped: the install section's own `--space-lg` on top of the room the
+    // block above it already carries — the 144 px band the review of round 5 measured between
+    // the last block and the "Install" heading, which was the flow's last card then and is the
+    // benefits section now. The plant names the rule rather than the declaration, because all
+    // three blocks write `padding:0 var(--space-md) var(--space-3xl)` (the benefits' rule first
+    // in the built page, the install's second and the page's last) and a case about the
+    // install's declaration is a case about the rule the install's file declares it in.
     [
       'an install section padding the gap the flow above it already pads',
-      plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)'),
-      [/the gap between them is 144 px/],
+      plantRule('.home-install[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/\.home-benefits ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
     ],
-    // And the same edit on the page's own rule for the two figures, which is one rule for both
-    // of them: the chat's top padding over the hero's bottom one, and the flow's over the
-    // chat's — two pairs padded twice by the one declaration, and both refused. It is the same
-    // rule at every width, so it is refused at each of the three — which is what the count
-    // below holds this case and the one above to.
+    // And the same edit on the page's own rule, which is one rule for the two blocks the page
+    // places and no longer names the benefits: the chat's top padding over the hero's bottom
+    // one, and the flow's over the chat's — two pairs padded twice by the one declaration, and
+    // both refused at each of the three widths, which is what the count below holds. **The
+    // benefits are not in this rule, and that is the point of the round-6 fix**: the block is
+    // rendered by `Benefits.astro`, the page's scope does not reach it, and the rule that pads
+    // it is the component's own — which is the next case.
     [
       'the figures padding the gaps the blocks above them already pad',
-      plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)', 'last'),
-      [/the gap between them is 64 px/, /the gap between them is 144 px/],
+      plantRule('.home-chat[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/the gap between them is 64 px/, /\.home-chat ends with 112 px under it and \.home-flow opens with 32 px over it, so the gap between them is 144 px/],
+    ],
+    // The benefits' own rule, in the component that renders the section — the rule the round-6
+    // review found missing (the padding was declared on the page, where it reached nothing). The
+    // gap it pads is the one above it, and one plant refuses the one pair.
+    [
+      'a benefits section padding the gap the flow above it already pads',
+      plantRule('.home-benefits[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/\.home-flow ends with 112 px under it and \.home-benefits opens with 32 px over it, so the gap between them is 144 px/],
     ],
     // **The case the three widths are for.** The same doubled gap, written inside a rule that is
     // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
@@ -1690,6 +2151,42 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
   // And the page as it ships: the pairs above, with the gap padded once, are not refused — so
   // the two cases are the edit and not the check.
   assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships pads one of its gaps twice')
+})
+
+test('the rhythm reading refuses a block whose rule cannot reach it', () => {
+  const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const pageScope = html.match(/class="home-chat" data-astro-cid-(\w+)/)?.[1]
+  assert.ok(pageScope, 'the built homepage no longer carries the page’s scope on `.home-chat`, and this case re-scopes a rule to it')
+
+  // **The defect of round 6, as it shipped**: `.home-benefits` declared in the page's `<style>`
+  // and the `<section>` rendered by `Benefits.astro`, so the rule carried the page's scope
+  // (`[data-astro-cid-lcdefpme]`), the element carried the component's, and the rule reached
+  // neither. The plant is that file's own edit, made to the rule that now belongs to the
+  // component: the selector's scope attribute swapped for the page's.
+  const rescoped = plantRule('.home-benefits[data-astro-cid-', (rule) =>
+    rule.replace(/\[data-astro-cid-\w+\]/, `[data-astro-cid-${pageScope}]`),
+  )
+  // And the other half of the same defect, from the element's side: the section with the scope
+  // attribute its component gives it removed, which is a rule that names a scope nothing on the
+  // element carries. Either way the block is one the stylesheet names and no rule reaches.
+  const unscoped = html.replace(/<section class="home-benefits"([^>]*)>/, (tag, rest) => `<section class="home-benefits"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
+  assert.notEqual(unscoped, html, 'the built homepage’s benefits section no longer carries a scope attribute, and this case takes one off')
+
+  const cases = [
+    ['a rule scoped to the page rather than to the component that renders the block', rescoped, html, /scoped to data-astro-cid-/],
+    ['a block whose scope attribute is gone', TODAY(), unscoped, /the element carries no scope attribute/],
+  ]
+  for (const [what, css, page, expected] of cases) {
+    const failures = homeRhythmFailures(css, page)
+    assert.equal(failures.length, 1, `${what}: the reading refused ${failures.length} thing(s) where this case plants one:\n  ${failures.join('\n  ') || '(nothing)'}`)
+    assert.match(failures[0], /^the homepage's \.home-benefits is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
+    assert.match(failures[0], expected, `${what}: the refusal does not name the scopes it read:\n  ${failures[0]}`)
+  }
+
+  // And the two halves restore the reading: the defect is the scope mismatch and not the class,
+  // so a rule that names the class *and* carries the element's scope is in force — the shipped
+  // page passing is what the test above asserts.
+  assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships carries a block its rules cannot reach')
 })
 
 // ---- the chat is one card, one conversation (review round 3, item 3a) ----------------------

@@ -300,7 +300,8 @@ sub-lettering convention for one line of work's several live steps (43a–43f,
 phones home) are written below by Task W2.2; **69c** (the published ranges are
 real) is Task W2.3's and is written in the level after W2.2's, so it is not in
 this file yet and its absence is not a gap in the numbering. The number was free
-when W2.2 merged: the highest written `## Check N` section here was **58**, and
+when W2.2 merged (`4b6a45d`, #535): the highest written `## Check N` section in
+the file that commit merged into, read at `4b6a45d^`, was **58**, and
 59 (as 59a/59b), 60, 61, 62–63, 64–66 and 67–68 are reserved by the console,
 budget-token-channel, project-centric, console-v2, voice and managed-projects
 lines, each recorded above. **The website work holds 69 and up, and the mobile
@@ -310,15 +311,20 @@ and a reserved number is never reused or renumbered.
 
 **Check 70 is the website redesign's, proposed as 70a–70c**
 (`docs/website/redesign/implementation-plan.md` §4 and §8, written by its parts P3,
-P5 and P6), in the same sub-lettering convention. **70a** (the mobile header on one
-row, the three group labels by keyboard) is written below by **P3** and **70c** (the copy
-control in a real browser, with a real clipboard) by **P6**; **70b** (the gist above
-the fold) is **P5**'s and is not in this file yet, so its absence is not a gap in
-the numbering — the shape 69a–69c arrived in. The number was free when P3 and P6
-merged: the highest written `## Check N` section here was **69b**, the website work
-holds 69 and up, and no document in the tree wrote `70` (the redesign plan checked
-that on 2026-10-18). The redesign's §8 proposes this block for the owner to confirm
-with `D180`–`D192` in `docs/website/redesign/reconciliation.md` §9, and the parts
+P5 and P6), in the same sub-lettering convention. All three are written below:
+**70a** (the mobile header on one row, the three group labels by keyboard) by **P3**, **70b**
+(the gist above the fold) by **P5** — merged in #603, and written here after 70a and
+70c because that is the order the parts landed, not the order of the numbers — and
+**70c** (the copy control in a real browser, with a real clipboard) by **P6** — so the
+block this paragraph proposes is complete, where the one Check 69 arrived in is not
+(69c is still Task W2.3's, as the paragraph above says). The number was free when P3 and
+P6 merged (`b9c349a`, #575): the highest written `## Check N` section in the file that
+commit merged into, read at `b9c349a^`, was **69b**, and the website work holds 69 and up.
+That commit writes 70a and 70c, so the file ends at `70c` there — and it still ends at
+`70c` at P5's merge (`24ef3aef`, #603), which is why 70b, P5's check, is the one written
+last. No document in the tree wrote `70` when the redesign plan proposed this block
+(checked 2026-10-18). The redesign's §8 proposes this block for the owner to
+confirm with `D180`–`D192` in `docs/website/redesign/reconciliation.md` §9, and the parts
 write their checks rather than waiting on the confirmation because a live check is
 what the owner runs: if the owner allocates differently, these sections renumber
 and the citations follow the allocation, never the other way round.
@@ -495,13 +501,15 @@ probe account carries predefined grants only).
 | 52 | The UNVERIFIED questions phase 3 depends on, written and answered **before any phase 3 code** (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access`; **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names); and **U1**, which is **no longer a probe** — the owner ruled on 2026-10-15 that a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket credentials stay per repository and phase 3's shared jobs are GitHub's, with D5 amended to record the ruling (plan Task 0.5) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and **no Bitbucket credential, project or repository is created, read or written at all** (U1 is answered by ruling, not by a probe), never anything under `edgeappinc`. | A few `gcloud` reads, **three** override executions on the sandbox job (the secret-reference call in (a), the plain-literal comparison in (c), and the length-only run when the container's command is a shell — (b) is a template-level `--update-secrets` update, and the bare `gcloud run jobs execute` carries no override at all, so neither is one of the three), the check's own probe service account `fugaro-chk52-probe` and its two throwaway secrets (`fugaro-probe-in`, inside the condition's prefix, and `fugaro-other-probe`, outside it), and **nothing on the Bitbucket side**. **USER-RUN, NOT RUN.** |
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
+| 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no player for the video, which does not exist (`features.video` is false), and every console download it offers resolving to an asset of the release its own facts name (`features.console_downloads` is true since the `console-v0.8.7` release) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; the greps for a player printing nothing; and every console download URL the pages carry answering 200 (or a redirect to the release's own storage) with the checksum the page printed beside it. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
 | 70a | The mobile header fits one row, and the three group labels are the phone's menu (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182 and the amendment of 2026-10-19, RF3): at **390 × 844** — and at 375, 320 and 391 — the header is **one row** of about 77 px, with the wordmark's mark kept and its text out of the row below the breakpoint, nothing wrapped under them and no sideways scroll; the three labels are the whole menu there (**Product**, **Reference**, **Project**, each at least 44 px tall, **no `Menu` control on the page**), each opens its own panel **by tap and by keyboard**, Escape and a click outside close it, the focus goes back to the label that opened it, the three are exclusive, the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at each width is one row's (about 77 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than the viewport, the wordmark's text is out of the row below its breakpoint and the mark is in it, the three labels are on the one row and each is at least 44 px tall, a label is focusable and opens its panel, Escape closes it and returns the focus, opening a second label closes the first, every link in the three groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the three group labels are **drawn** in the header's one row as the three dropdowns D182 asks for, with no `Menu` control and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
+| 70b | The gist is above the fold (website redesign plan `docs/website/redesign/implementation-plan.md` §3 and §8, part P5; D187, D188, RF23, RF5): on the built or deployed site **every page states its main point above the fold** — the `h1`'s bottom and the lead's bottom inside the first screen at **390 × 844** — the homepage's **first screen** holds the promise and its call to action and **no command** — the page's first command (the chat's `fugaro watch` block, below it) carrying its copy control **beside it in the command's own row**, Getting Started's **first command block** is fully visible at **390 × 844 and 1280 × 900**, the consent banner neither pushes the commands below the fold nor covers the first command on a first visit, the word ceilings hold (a page's lead at most **40 words**; the **privacy statement** within its own derived ceiling; and every other page at most **250 words** except `/docs/`, `/security/` and `/changelog/`), and no page carries the provenance phrases the build refuses | See "Check 70b" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | Per page, the `h1`'s and the lead's bottom under 844 at 390 × 844; the homepage's first screen's blocks in order and the page's first command (the chat's `fugaro watch` block) with its control in the command's own row; Getting Started's first command block inside the first screen at both widths; the banner's rectangle and what it covers, with the first command clear of it; every page's lead and page word counts inside the ceilings `website/README.md` states — the privacy statement's own count against the ceiling derived from it — read from the site's own gate; and none of the gate's provenance phrases on any page. **USER-RUN, NOT RUN.** |
 | 70c | Every copy control copies its own command (redesign plan §3, part P6; D183, RF13): on the built or deployed site **each kind of control** — the hero's install blocks, Getting Started's code blocks, the docs hub's rendered reference, the caps guide's usage lines and the terminal's own line — puts **that command** on a real clipboard, **by mouse and by keyboard**, the "Copied" state is announced politely and clears itself, and **nothing is shown with JavaScript off** | See "Check 70c" below; run by you, in a browser, against the **built artifact** or the deployed site — read-only, no cloud project touched, and **No agent runs any step of it** | Each control's clipboard content equals the command it sits on and nothing else — no `$` prompt, no caret, no neighbouring line, no page furniture — the copied state appears, is announced and clears, the keyboard reaches every control and the focus ring is visible on it, and with JavaScript disabled every command is still on the page with **no button rendered at all**. **USER-RUN, NOT RUN.** |
 | 81 | The deployed rules' fence (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 and P4.2 **run** it): the live half of P2.2's and P6.4's denial cases for the **signed-in user** — an account whose own uid has a device node (`config/admin/devices/<uid>`, D166, which **you** write over IAM because `fugaro pair` is P6.6 and is not built) and a token whose `mu` claim is its own uid makes **exactly two writes** (one message into its own `inbox/$msg`, carrying the `mac` and `kind` generation 3 requires; the `acked: true` once, on a message already in its own `outbox/$msg`) and reads **nothing beyond** the nodes D112's user-claim read grant sits at (`config/caps/{global,defaults,repos/$slug}`, `config/kill/{global,repos/$slug}`, `spend/$day/{global,repos/$slug,runs/$slug/$run}`, plus its own `outbox` and `heartbeat` — the grant sits on those nodes and cascades down only, so `spend/$day` and each of their parents is **not** readable); everything else is refused — another account's mailbox, a read of its own inbox, the outbox message and the heartbeat (the consumer's writes, **check 80's** half), a message with no `mac`, a second, `false` or parent-less ack, the parents of the granted nodes, the device allowlist (its own node included, which no client token may read), both pairing nodes, and every family the grant does not name (`config/limits/policyRules`, `config/mode`, `config/policy/**`, `agents/**`, `outcomes/**`, `runs/**`, `fugaro/**`) — an account with **no** device node is refused everything, its own mailbox included, and a token whose `mu` names another uid is admitted nowhere | See "Check 81" below; **you** run it, on installation `fugaro` (never `belong`), in project `fugaro-dev`, with two accounts you add by hand (D114) and custom tokens you mint yourself; every step re-runs the one guarded setup block, which reads the backend out of the project's own config (printing the project ids it found, never the key), and five nodes are seeded with your own IAM credentials (which bypass the rules and prove nothing about them): the three mailbox nodes it reads and acks, and the two device nodes. **No agent runs any step of it** | Four minted custom tokens exchanged for ID tokens (two in step 1, step 7's mismatch token and the residual's, which needs a second signer), five seeded nodes, and a set of reads and writes each of which must answer a permission denial; the tokens and the web API key are credentials and never appear in a `FACT` line or a pull request. **USER-RUN, NOT RUN.** |
 | 82 | The rules deploy and the marker (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 **runs** it): `fugaro init --firebase` puts this release's generated rules document on the database and records the generation the emulator cases and check 81's denial cases are written against — the two act lines in the order the plan prints them — `rules: deploys the security rules (<N> bytes, generated)` when the deployed document differs, and then, as the plan's **last** write, the marker line `config/limits/policyRules: records the rules generation (config/limits/policyRules = 3)` — followed by a second run that writes nothing (`The database already has the rules, mark, project name and mode.`), and by the marker node itself read back holding this release's `projectpolicy.RulesVersion` (3) over a document that `infra.SameJSON` calls `rules.Generate()`'s own output — the same JSON document, formatting ignored; the generated document is 54289 bytes — and that carries the `mailbox` subtree, the device allowlist and the pairing nodes; an installation still on an older generation (1 or 2) is moved to generation 3 by exactly this run, with `fugaro doctor`'s `policy-rules-skew` line as the before-state — and, if its accounts have no device node, every app read refused until they do (check 81 step 1 writes them by hand) | See "Check 82" below; **you** run it, on installation `fugaro` (never `belong`), `fugaro-dev`, at your own terminal, and **you** type the confirmation (a coding agent's session cannot). **No agent applies rules** | One rules deploy of about 53 KB and at most the marker write beside it, under the database step's own confirmation; the marker-above-this-binary refusal is **read, not provoked** (no hand-written marker on the dogfood installation). **USER-RUN, NOT RUN.** |
-| 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself, without `mobile/eas.json` (P4.4's, absent today) and without an `app.json` carrying the store identity. No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` is in the tree, so the stop is `mobile/eas.json`, which P4.4 makes, and an `app.json` that does not yet carry the store identity | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
+| 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the submit track is read before anything is built — step 1's `jq` reads `submit.internal.android.track`, and a profile naming a public track is a stop you take there ("edit it and re-run"), not something the guard reads: the guard hard-stops on the build itself — without `mobile/eas.json` or `mobile/app.config.js` in the checkout (P4.4's), and without the store identity, which it resolves through `app.config.js` out of the two variables you export (the identity is **not** in `app.json` and never will be: the committed config carries no release identity, P3.1's boundary test, and the identity is yours). No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and `mobile/app.config.js` are in the tree, so the file tests pass and the stop is the store identity itself — the two variables must be in your shell (or in the EAS project's environment the profile names, for the build job), and until they are, the guard stops before a build that could not reach any track | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -3979,6 +3987,212 @@ The loop prints **which commits it reverted and which were already reverted** (`
 
 **Paste back:** every `FACT` line above — the job's image reference and the digest it resolves to, **before and after** the build, and the job they belong to, `task.json`'s inputs against `sha256sum`, the `render` record and the counters, both halves of the probe's verdict, the recorded and the object's own content type, the retrieved files' hashes and the upload's wall clock **at both sizes** (step 6's set, and step 6b's near-cap pair with `finalize_reserve_s` beside it), and 7a, 7b and 7c's reason lines — **and never a secret value or the contents of an attached file**. Until this check runs, `docs/design/artifact-runs.md` §12's **U3, U5 and U6** stay open, and **U2's mise half stays open however this check turns out** — only its `image.apt` half is settled here — and that is the honest state of the design's claims rather than a fault list. Never run any step of this check against `belong`; no agent runs any step of it — every command is yours.
 
+## Check 60: the sealed budget token — a run's token is worthless without its own execution's key (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
+
+The budget token's seal ([design/budget-token-channel.md](design/budget-token-channel.md) §7, both halves built for 0.9.0): the launcher seals the run's Firebase custom token under a key drawn for that one launch and writes it to `tokens/<slug>/<run>/budget-token`; the key travels as the value of the execution's `FUGARO_BUDGET_TOKEN` override; the run reads the object read-only, unseals it, and refuses everything else. The unit tests hold the AAD and every refusal row of §7.4; this check records what only a live installation can show: that a sealed run works end to end, what the object and the override actually expose, what the audit log carries, and that the grants are the ones the plan says. **No agent runs any step of this check**; you run every command. **Never `belong`**: nothing here creates, changes or deletes anything there.
+
+**Before you start.** The installation must have been applied with this release's `fugaro init` (the `tokens/` grants and the widened launcher condition — step 8 reads them), and the sandbox repository's job image must be at `sealSince` (0.9.0) or later, or a development image built from this branch (its build record then says `sealed_budget_token`, and the launch passes with no seal warning; a development job image whose record does not say it is refused if built before 2026-10-17T17:45:33Z and otherwise launches with only a warning — record which you got) — a launch that mints against an older image is refused by the launcher (`sealGate`), which is itself worth a FACT if you meet it. A `checkout: clone` workflow has no job image to judge, so there the gate reads the installation's own `base_images.base` (`sealGate`'s `checkCloneImageSince`): a release ref below 0.9.0 is refused, and a ref that is not a release only warns. Check 52 step 3 (U2) is the probe this check's step 3 repeats on the deployed shape; it has not run either.
+
+**Method.** Every block runs in `bash`. Keep the step variables in `$CHK60/vars.env` and re-run the guard block at the start of every step: the block reads that file back, so a later shell keeps `SLUG`, `RUN2`, `RUN9` and `SANDBOX_JOB`, which is what makes the steps runnable in any order of shells — and what lets step 1 and step 2 run before step 3 has learnt the job. **Starting over:** if `/tmp/chk60` is left from an earlier attempt, its `vars.env` is read back as this attempt's, so every step would work on the earlier attempt's run and the baseline would be its policy file — delete the directory first (`rm -rf /tmp/chk60`) and start the check again at step 1, which makes it again (and if the earlier attempt had already changed the bucket, run Restore first).
+
+### 1. Setup and guard
+
+**Check 43's guard block, with this check's number in the three stop messages and its own variables.** The three stops are verbatim (Check 43's "Why the guard is one block, and why it is re-run", "Paste the block into a file, not straight into an interactive zsh" and "Every `fugaro` command that takes `--project` gets `--project fugaro`" paragraphs apply here word for word), and the only variables it sets are this check's:
+
+```bash
+# === Check 60: setup + guard. RE-RUN THE WHOLE BLOCK at the start of every
+# step: it is idempotent, and nothing below the three hard stops runs. ===
+P=fugaro-dev                 # HARD-CODED, never `gcloud config get-value project`
+L=us-east5                   # the installation's region
+[ "$P" = fugaro-dev ] && [ -n "$L" ] \
+  || { echo "Check 60 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 60 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 60 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+# The step's variables. SANDBOX_BUCKET is the runs bucket the local config
+# names — the read-only list below prints the candidates — and every use of it
+# is ${SANDBOX_BUCKET:?}-guarded. SANDBOX_JOB is NOT filled in here: it is
+# learnt in step 3, off the run's own launch record, because the job the steps
+# execute is not always the repository's own (a clone workflow of a project
+# that has published the profile it selects launches on the shared project
+# job). Steps 1 and 2 therefore run without it, and every step that names it
+# re-runs this block, which reads it back out of vars.env.
+SANDBOX_BUCKET=${SANDBOX_BUCKET:?the runs bucket the local config names}
+CHK60=/tmp/chk60; mkdir -p "$CHK60"; chmod 700 "$CHK60"
+[ -f "$CHK60/vars.env" ] && . "$CHK60/vars.env"   # step 2's RUN2/SLUG, step 3's SANDBOX_JOB
+SANDBOX_JOB=${SANDBOX_JOB:-}   # empty until step 3 writes it; every use is ${SANDBOX_JOB:?}-guarded
+```
+
+```bash
+# Read-only: the bucket above, and the job names step 3 reads its job out of.
+gcloud run jobs list --project="${P:?}" --region="${L:?}" --format='value(name)'
+gcloud storage buckets list --project="${P:?}" --format='value(name)'
+```
+
+**Baseline, once, before anything changes** (Restore diffs against it; never overwrite it):
+
+```bash
+[ -e "$CHK60/bucket-policy.before.json" ] || \
+  gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:?}" --format=json > "$CHK60/bucket-policy.before.json"
+```
+
+### 2. A sealed token works (design check step 1)
+
+```bash
+fugaro run --project fugaro --json "Check 60 step 2: add a line to CHECK60.md" | tee "$CHK60/run2.json"
+RUN2=$(jq -r .run_id "$CHK60/run2.json"); SLUG=$(jq -r '.run|split("/")[0]' "$CHK60/run2.json")
+echo "RUN2=${RUN2:?} SLUG=${SLUG:?}" >> "$CHK60/vars.env"
+fugaro logs --project fugaro --follow "${SLUG:?}/${RUN2:?}" > "$CHK60/run2.log"
+```
+
+FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro` for the one run), and that `run2.log` and the run's `result.json` carry no budget token and no key (`grep -c` for `eyJ` and for the marker's value: both `0`; the key is not printed anywhere for you to grep, which is the point — record the count of `FUGARO_BUDGET_TOKEN=` in the log, which must be `0` too).
+
+### 3. The object is worthless without the key, and where the key is (design steps 2 and 3)
+
+**Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a `checkout: clone` workflow of a project whose published policy defines the profile it selects launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the clone path only, and only once the project has published that profile), and a baked workflow, or a project that has published none, keeps the repository's own job. Read it off the run's own launch record — this step is where it is learnt, so steps 1 and 2 do not have it and every step from here re-runs the setup block, which reads it back out of `vars.env` — and use that job in every step below that names it (3 to 7, and 9 — step 4's audit-log filter carries it too, and a filter left on the repository's own job would return nothing and record a false FACT). Every use is `${SANDBOX_JOB:?}`-guarded, so an empty one stops there rather than reaching `gcloud`:
+
+```bash
+# -er, not -r, AND the non-zero exit is consumed: a launch record with no .job
+# prints the word `null` — under -r it also exits 0, and under -e it exits 1 but
+# still prints `null`, which `$(...)` captures whatever the status is — and
+# `null` is a non-empty name the guard below would accept, so the step would go
+# on to describe a job called null. The `||` is what makes the read fail: it
+# stops the step before anything is described or recorded.
+SANDBOX_JOB=$(gcloud storage cat "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/launch.json" --project="${P:?}" | jq -er .job) \
+  || { echo "Check 60 stopped: ${SLUG:?}/${RUN2:?}'s launch record carries no .job (jq -e exited non-zero), so step 2's run is not one this check can read: re-read step 2, or start over at step 1" >&2; exit 1; }
+echo "SANDBOX_JOB=${SANDBOX_JOB:?}" >> "$CHK60/vars.env"
+```
+
+Step 8 records the `tokens/` grant of whichever job this is; the two kinds have different shapes — the repository's own job reads exactly `tokens/<its slug>/`, the shared project job the whole `tokens/` (design `docs/design/budget-token-channel.md`, the **Slice B is built** paragraph, and the FACT in step 8 below).
+
+```bash
+O="gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token"
+gcloud storage cat "$O" --project="${P:?}" > "$CHK60/object.bin"
+wc -c < "$CHK60/object.bin"; head -c 1 "$CHK60/object.bin" | od -An -tx1    # the version byte, 01
+grep -c 'eyJ' "$CHK60/object.bin"; grep -c "${SLUG:?}" "$CHK60/object.bin"   # both 0: no JWT, no claim in the clear
+gcloud storage ls "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}" 2>&1 | tail -1   # nothing under runs/
+# The job's own environment: no key there (the key is an execution override).
+gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json \
+  | jq '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN")] | length'
+# The execution's record (v1 path): what it shows of the override, recorded, not
+# asserted. -er with its exit consumed, for the reason above: a row carrying no
+# execution prints `null`, and describe below would look up an execution named
+# null. A row with no execution is itself what U2 records, so read the row by
+# hand before going on.
+EXE=$(fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro --json | jq -er .row.execution) \
+  || { echo "Check 60 stopped: ${SLUG:?}/${RUN2:?}'s diagnose row carries no execution (jq -e exited non-zero): read the row by hand and record what U2 finds there" >&2; exit 1; }
+gcloud run jobs executions describe "${EXE##*/}" --project="${P:?}" --region="${L:?}" --format=json \
+  | jq '[.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN") | (.value|length)]'
+```
+
+On an installation that runs the compute backend, read every Fugaro Batch job's variables too. **No installation of this release can:** `backend: cloud-batch` is refused by config validation (`not enabled yet`, `internal/localcfg`), and the launcher's Batch wiring is not built, so the block below is a record for the release that enables it. What it checks then is the **Batch backend's own refusal** — a launch carrying the marker (`LaunchSpec.SecretEnv`) is refused before anything is created (`backend.ErrRejected`, and the refusal never quotes the value), so no Fugaro Batch job may carry `FUGARO_BUDGET_TOKEN`.
+
+```bash
+for j in $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name)' --filter='name~/jobs/fugaro-'); do
+  gcloud batch jobs describe "$j" --project="${P:?}" --location="${L:?}" --format=json \
+    | jq '[.taskGroups[].taskSpec.environment.variables // {} | has("FUGARO_BUDGET_TOKEN")] | any'
+done
+```
+
+FACT: the object's size and first byte (`01`); the two `grep -c` counts (`0`, `0`); that nothing is under `runs/`; the job's env count of `FUGARO_BUDGET_TOKEN` (`0`); and **U2 as found**: whether the execution record shows the override at all, and if so the **length** of its value (43 is the key) — never the value; and, on an installation that runs the compute backend (none of this release does), that no Fugaro Batch job's variables carry `FUGARO_BUDGET_TOKEN` (every line `false` — with no such job the loop prints nothing, which is not this FACT). This FACT, not the design, is what §3.1's and §7.1's audience sentences are then worded from.
+
+### 4. What the audit log carries (design step 4)
+
+```bash
+gcloud logging read --project="${P:?}" --freshness=2h --format=json \
+  'protoPayload.methodName:"Jobs.RunJob" AND resource.labels.job_name="'"${SANDBOX_JOB:?}"'"' \
+  | jq '[.[] | {at: .timestamp, carries_env: (tostring|test("FUGARO_BUDGET_TOKEN")), env_value_len: ([.. | objects | select(.name?=="FUGARO_BUDGET_TOKEN") | .value? // "" | length])}]'
+```
+
+FACT: whether the RunJob entry for `RUN2`'s launch carries the marker's name, and the length of its value (43 = the key verbatim, 0 or absent = redacted or not logged). Record who can read that entry (the project's log readers). Do not paste the value.
+
+### 5. A wrong key refuses (design step 5)
+
+A second execution of the same run with a key you draw now (a sandbox-only override). Its object is step 2's, sealed under step 2's key, so it must not open.
+
+The key is 32 random bytes as one unpadded base64url string — the form the launcher's marker carries (`BackendFromEnv`; 43 characters) — drawn here and never written down. It is `openssl` and not `basenc`: `basenc` is GNU coreutils and stock macOS has none, while `openssl rand` is what draws the bytes anyway, so `openssl base64 -A` (one line, no wrap) with the alphabet mapped is the same encoding on both. The two `KEY=` lines below are the same pipeline, for the same reason.
+
+```bash
+WRONG=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')   # a fresh 43-character key, never written down
+gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN2:?},FUGARO_BUDGET_TOKEN=${WRONG:?}" ; unset WRONG
+```
+
+FACT: the execution's exit (non-zero) and the refusal it logged (`fugaro logs` for the run; the run's `result.json` may now say the duplicate execution or the unseal refusal — record which, and that neither line contains the key).
+
+### 6. A plaintext object refuses (design step 6)
+
+```bash
+printf 'not a sealed token' > "$CHK60/plain.txt"
+gcloud storage cp "$CHK60/plain.txt" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token.plain-probe" --project="${P:?}"
+gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" "$CHK60/object.keep" --project="${P:?}"
+gcloud storage cp "$CHK60/plain.txt" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}"
+KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN2:?},FUGARO_BUDGET_TOKEN=${KEY:?}" ; unset KEY
+gcloud storage cp "$CHK60/object.keep" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}"   # put it back
+gcloud storage rm "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token.plain-probe" --project="${P:?}"
+```
+
+FACT: the run refused, and its reason names a plaintext / not-sealed object, never reading it.
+
+### 7. A peer cannot delete a queued token (design step 7)
+
+As the sandbox job's own service account (impersonation — you must hold `roles/iam.serviceAccountTokenCreator` on it in the sandbox; grant it for this step and remove it in Restore if you do not already):
+
+```bash
+JOB_SA=$(gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format='value(spec.template.spec.template.spec.serviceAccountName)')
+gcloud storage rm "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}" --impersonate-service-account="${JOB_SA:?}" 2>&1 | tail -2
+gcloud storage cat "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}" --impersonate-service-account="${JOB_SA:?}" | wc -c
+```
+
+FACT: the delete is refused (403), and the read succeeds with the same size as step 3. Record what it does **not** prove: the peer can still read the bytes; the seal is why that read is worth nothing.
+
+### 8. The grants the move changed, and the ones it did not (design step 8)
+
+**This is the one step that is installation-wide rather than per-job**: it reads the bucket's whole policy — the launchers' binding, and the `tokens/` grant of every job of the project, not only `SANDBOX_JOB`'s. Steps 3 to 7 and 9 are per-job: each names one job (`SANDBOX_JOB`, the one step 3 learnt) and its FACT is about that job's own grant, override, audit entry or refusal. Steps 1 and 2 are per-run: step 2's run is what everything below reads.
+
+```bash
+gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:?}" --format=json > "$CHK60/bucket-policy.after.json"
+jq -r '.bindings[] | select(.condition) | [.role, .condition.title, .condition.expression] | @tsv' "$CHK60/bucket-policy.after.json"
+```
+
+FACT: the launchers' binding is `roles/storage.objectUser`, title `fugaro-launchers-runs-tokens`, expression exactly `gcp.LauncherBucketCondition`'s (`runs/` **or** `tokens/` of this bucket, nothing else); step 3's job account holds `roles/storage.objectViewer` on `tokens/`, in the shape its kind has — the repository's own job: title `fugaro-tokens-<account id>` on exactly `tokens/<its slug>/` (`gcp.TokenBucketCondition`); the shared project job: title `fugaro-project-tokens-<account id>` on the whole `tokens/` (`gcp.ProjectTokenBucketCondition`, `internal/backend/gcp/names.go`) — read-only, with no create, delete or update; and its `objectUser` condition on `runs/`, `cache/`, `locks/` is byte-identical to `bucket-policy.before.json`'s (the `apply` replaced the launchers' binding, so it is **not** unchanged — record the old and the new).
+
+### 9. A sideways replay refuses, and what that does and does not prove (design step 9)
+
+```bash
+fugaro run --project fugaro --json "Check 60 step 9: a second run" | tee "$CHK60/run9.json"
+RUN9=$(jq -r .run_id "$CHK60/run9.json"); echo "RUN9=${RUN9:?}" >> "$CHK60/vars.env"
+# After RUN9 has finished, copy RUN2's sealed object over RUN9's (operator credentials:
+# after the move only operators and launchers can write tokens/), and re-execute RUN9
+# with a fresh key; then put RUN9's object back.
+gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" "$CHK60/run9.keep" --project="${P:?}"
+gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" --project="${P:?}"
+KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN9:?},FUGARO_BUDGET_TOKEN=${KEY:?}" ; unset KEY
+gcloud storage cp "$CHK60/run9.keep" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" --project="${P:?}"
+```
+
+FACT: the second execution refused at the unseal. **This proves the per-launch key, not the AAD**: the copy is sealed under another launch's key and another name, and GCM's one tag check cannot say which failed; the AAD's own property is held by `internal/budget/token`'s unit test (`seal_aad_test.go`). Record that limit beside the FACT.
+
+### Restore
+
+```bash
+# Only what this check created or changed: the probe file (removed in step 6),
+# the objects put back in steps 6 and 9, the impersonation grant of step 7 if
+# you added it, and the scratch dir. The two runs' branches/PRs: close them.
+gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:?}" --format=json > "$CHK60/bucket-policy.restore.json"
+diff <(jq -S .bindings "$CHK60/bucket-policy.after.json") <(jq -S .bindings "$CHK60/bucket-policy.restore.json") && echo "bucket policy: as step 8 recorded it"
+gcloud storage ls "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/**" --project="${P:?}" | grep -c 'plain-probe'   # 0
+rm -rf "${CHK60:?}"
+```
+
+The token objects themselves are left for the bucket's one-day lifecycle rule (`tokens/`, suffix `/budget-token`), which is what removes every taken token now that the run no longer deletes it; record the next day that they are gone.
+
+**Paste back:** every FACT line above — sizes, counts, lengths, titles and expressions — **never a token, a key or the object's bytes**.
 ## Check 69a: the site is live and honest — the canonical domain, the deployed artifact, and the page a stranger lands on (the site's own Firebase project only, never an installation's; run by you; NOT RUN)
 
 **NOT RUN.** Written by the website plan's Task W2.2 together with Check 69b; the third live check of the same line of work, **69c** (the published ranges are real), is Task W2.3's and lands in the level after this one. Nothing here can run before the site is deployed to its own Firebase project and the domain is attached — the owner's steps, which no agent takes (D92): registering the domain, adding the custom domain to the project and writing the DNS records at the registrar. **The site has one domain and nothing redirects**: W2.2 wrote a second one and the owner ruled on 2026-10-17 that no second domain is theirs, so this check observes the canonical origin and no other host (the amendment under plan Task W2.2).
@@ -4123,6 +4337,17 @@ the site has renamed is a check nobody can follow. It was written by the review 
 which found exactly that: this section still described the `Menu` drawer the brief had taken
 out (item 1), and a live check's instructions have to be about the site that exists.
 
+**As of main's commit `7731386f`** — the commit this branch merged (`0e555767`'s second parent,
+main's tip at that merge, and the commit the three-group-label rewrite above is: #656) — the header
+this section describes is the header main builds there. The commit is a **reading**, not a claim, and
+it is the reading to repeat: every name below — the `.site-…` classes, the paths, the `…Failures`
+refusals, and the widths and queries the Method's own greps read out of the stylesheet and the layout
+— is derived from this text and held to the tree at test time (and, where the name is a class on a
+built page, to the build: `website/test/checklist.mjs` for this section's names,
+`website/test/base-styles.mjs` and `website/test/nav-hover.mjs` for the structure behind them), so a header that has moved on since is a
+later reading of this check rather than a failure of it, and a step that no longer matches the header
+is this section's to correct.
+
 **The touch side of step 6 is part of the acceptance, not an aside.** The script is bound
 only where `matchMedia` reports
 `(hover: hover) and (pointer: fine)`, and the stylesheet scopes the menu's `:hover` rules
@@ -4155,6 +4380,13 @@ grep -o '@media (hover:hover) and (pointer:fine)' website/dist/index.html | head
 # The groups and links the menu shows, read out of the layout rather than typed: the names
 # steps 3 and 5 look for, and the nine links step 3 has to reach.
 sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
+# The one-row header's height, out of the stylesheet and the markup rather than typed: the
+# label's own 44 px target, the header's padding-block and its border, and the mark's declared
+# width are the numbers step 1's "about 77 px" is made of, and step 1 measures the row against
+# them rather than against a number this section remembers.
+grep -n "min-height: 44px" website/src/styles/base.css
+grep -n "space-sm\|border-width" website/src/styles/tokens.css
+grep -n 'width="47"' website/src/layouts/Base.astro
 ```
 
 1. **At 390 × 844, the header is one row, and the wordmark is the mark alone.** Set the
@@ -4167,7 +4399,10 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    `display: none`: the link keeps its accessible name), and above it the text is drawn beside
    the mark. **FACT:** the header's height in pixels, the document's scroll width, and whether
    the wordmark's text is in the row or out of it. RF3 measured **177 px** of three wrapped nav
-   rows on the page before P3; one row with the labels at their 44 px target is about **77 px**.
+   rows on the page before P3; one row is the label's own **44 px** target (`min-height` on the
+   summary, read in the block above) plus the header's `padding-block` (`var(--space-sm)`, 16 px,
+   top and bottom) and its `--border-width` bottom border, so a one-row header measures **77 px**
+   and a number well over it is a row that has grown.
    A scroll width greater than 390 is a sideways scrollbar on a phone, which is the same defect
    seen from the other side. **Repeat at 375 and at 320** — the brief's own width and the
    narrowest phone worth supporting — and then at **391**, just above the wordmark's breakpoint,
@@ -4176,8 +4411,12 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    **The three labels are the whole menu at this width, and each fits.** Read them:
    `document.querySelectorAll('.site-nav-group > details > summary')` — three, labelled
    **Product**, **Reference** and **Project**, each at least **44 px** tall, all three on the
-   header's one row beside the mark, and **no `Menu` control anywhere on the page**. At 375 px
-   the three labels measured **65**, **83.5** and **59.3 px** wide beside the 47 px mark.
+   header's one row beside the mark, and **no `Menu` control anywhere on the page**. The mark
+   beside them is the layout's own image, `width="47"` by `height="32"` in `Base.astro` (read in
+   the block above), so what the three labels have to fit in at 375 px is 375 px less the mark
+   and the header's own gaps — which is why the three labels' widths at that width are numbers
+   this step **reads** and pastes back rather than numbers this section remembers, and why a
+   label that has pushed the row into a second line or off the right edge is the failure.
    **FACT:** the three labels' widths and heights, and that no `Menu` control is on the page.
 
 2. **A label opens its own panel when the keyboard reaches it, and only one is open at a time.**
@@ -4389,6 +4628,301 @@ structure is not a
 rendered row, and `website/test/nav-hover.mjs`'s stub DOM is not a pointer — and the row above
 stays **NOT RUN**.
 
+## Check 70b: the gist above the fold — every page's point, and Getting Started's commands (the built artifact or the live site, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by **part P5** of the website redesign
+(`docs/website/redesign/implementation-plan.md` §3 and §8, decision D187, reconciliation finding
+RF23), and written here rather than left to the redesign's own plan because this is the file the
+owner runs live checks out of. It is the half of P5 no hermetic test can take. Two gates hold the
+halves the claim rests on — `website/test/fold.mjs` the **ordering** (the homepage's lead region is
+the promise and its call to action and nothing else, Getting Started's install section opens with
+its commands, Getting Started's three bands — the install, then the steps a real installation
+takes, then the details — are the page's sections in the order a reader reads them, and every page
+that prints a command prints it under a heading) and
+`website/test/budget.mjs` the **word ceilings** (D188: 40 words in a page's lead, 250 per page
+except the three reference pages) — and
+neither of them can see a viewport, which is exactly D187's question. The fold is a position on a
+screen, and this repository's gates are deliberately browser-free, so D187 answered it with the
+ceiling **plus this one owner-run check** rather than with the repository's first browser-driven
+test: the first screen is measured here, by you, and by nothing else. **As of main's commit
+`7731386f`** — the commit this branch merged (`0e555767`'s second parent, main's tip at that
+merge, and itself #656's commit) — the page it describes is the site main builds there, with the
+redesigned home page (#623), the hover menus (#628), the chat's `fugaro watch` screenshot (#655)
+and the three-label header (#656) all in it. The commit is a **reading**, not a claim, and it is
+the reading to repeat: every name below — the files, the identifiers, the keys the measurement
+script reads and the lines of this section's own Method — is derived from this text and held to
+the tree at test time (`internal/cli`'s website pins), so a page that has changed since is a
+later reading of this check rather than a failure of it, and a step that no longer matches the
+page is this section's to correct.
+
+**What RF23 measured, and what P5 changed.** RF23 is the finding this check answers: "above the
+fold" and "very few words" were, before the redesign, unwritten and unmeasured — no gate measured
+words or viewport position, `budget.mjs` measured bytes and `a11y.mjs` structure, and both read the
+built HTML and CSS with no browser. Measured at 390 × 844, the homepage's `h1` ended at **893 px**
+— the site's own headline one line below the fold on the phone it is being read on — and every
+other route's `h1` was inside the first screen (home 893, security 825, faq and console 283,
+privacy 308; `docs/website/redesign/reconciliation.md` §6). Getting Started's first screen was
+RF5's internal paragraph — the sentence about `install.yaml` and the Go test that holds it —
+rather than its first command. P5 rebuilt the hero so the tagline and the one-line promise fit a
+390 × 844 first screen, and moved Getting Started's install section to open with the paths
+themselves. **The homepage's first screen has changed once more since P5**, and this section
+follows the page rather than the part that wrote it: the owner's changes spec of 2026-10-18
+(item 3, which takes the run command out of the hero example and shows the real workflow, and item 4,
+the one bold diagram, both shipped by #623) took the commands out of the hero and made the page the promise and
+its call to action, then the chat, then the diagram, then the install paths. So the homepage's
+first screen is the promise and the two links under it and no command, the page's first command
+is the chat's `fugaro watch` block, and the command-above-the-fold claim this check's step 2
+used to carry for the homepage is now Getting Started's alone (step 3). **And the chat's block
+has grown a picture since**: #655 put the owner's real `fugaro watch` capture into it, between
+the "Watch it run" heading and the command, so the page's first command now sits under the
+screenshot and step 2 reads that order — heading, screenshot, command — as the block it is. **The numbers above are the owner's record of the page before the
+redesign** (`docs/website/redesign/reconciliation.md` §6, the capture set described by
+`docs/website/redesign/current/README.md`): they are not measurements of the page as it is now, and
+every number this check passes or fails on is one it takes itself.
+
+**Method.** One browser, one built site, two widths, no account and no cloud project. Either serve
+the artifact locally or read the deployed site; both are read-only:
+
+```bash
+# What this check needs, read out of the tree rather than remembered. It refuses to start on a
+# build that is not there, so a pass below is a pass about a page that exists.
+[ -f website/dist/index.html ] || { echo "Check 70b stopped: website/dist/ is not built — run (cd website && npm run check) or scripts/deploy-website.sh --dry-run first" >&2; exit 1; }
+(cd website/dist && python3 -m http.server 8080) &     # the built artifact, on localhost:8080
+# ...or, for the deployed site instead, read the canonical origin out of the site's own facts:
+sed -n 's/^canonical_url: *//p' website/data/site.yaml
+# The pages the fold is claimed for: the artifact's own list, rather than one typed here that can
+# go stale the day a route is added.
+find website/dist -name index.html | sort
+# The three numbers this check reads, and the two viewports it reads them at, out of the
+# measurement script rather than typed here: the `h1`'s bottom, the lead paragraph's bottom and
+# the first command's bottom, at 390 × 844 and 1280 × 900.
+grep -oE 'h1Bottom|leadBottom|firstCommandBottom' docs/website/redesign/capture-screenshots.mjs | sort -u
+grep -oE 'width: [0-9]+, height: [0-9]+' docs/website/redesign/capture-screenshots.mjs
+# The word ceilings, out of the site's own gate rather than typed here: the numbers live in the
+# README `website/test/budget.mjs` reads them from, and `budget.mjs` is what enforces them. The
+# exempt pages are one list in one file, imported by both gates that use it (`budget.mjs` for the
+# ceiling, `wording.mjs` for the retired word), so the line reads the list where it is written.
+grep -oE '\*\*Words[^*]*\*\* [0-9]+ words' website/README.md
+grep -n 'DOCUMENT_PAGES' website/test/lib/exempt.mjs
+# The provenance phrases the build refuses (D186), out of the gate's own list: the phrases step 6
+# searches every page for.
+sed -n '/^export const PHRASES = \[/,/^\]/p' website/test/meta.mjs
+# The homepage's blocks in the order the page renders them, out of the page's own source rather
+# than remembered: the hero, then the chat, then the diagram, then the install paths (#623 moved
+# the commands out of the hero and into the page's last section).
+grep -n "Hero\|home-chat\|home-flow\|HomeInstall" website/src/pages/index.astro
+# The install paths the homepage renders, and the markup each command is in: the two paths the
+# component names, and the class its command blocks carry.
+grep -n "HOME_PATHS\|home-install-command" website/src/components/HomeInstall.astro
+# The page's first command, out of the component that renders it: the chat's `fugaro watch`
+# block, which is the first `pre` in `main` now that the install paths are the page's last
+# section.
+grep -n "chat-watch-command\|WATCH = " website/src/components/AgentChat.astro
+# The screenshot the chat's block now carries above that command (#655), out of the component
+# that renders it rather than remembered: the slot the picture goes in, the file the picture is,
+# and the hook the site's own gate reads it by — which is what step 2's "heading, screenshot,
+# command" is read against.
+grep -n "chat-shot\|fugaro-watch\|watch-screenshot" website/src/components/AgentChat.astro
+# The two links under the promise, and the flag that decides whether a third one is rendered:
+# the console's link is what `features.console_downloads` renders, and while it is false the
+# hero's row is the two links step 2 reads.
+grep -n "hero-actions\|hero-cta\|consoleExists" website/src/components/Hero.astro
+grep -n "console_downloads" website/data/site.yaml
+# The gate that already refuses a hero disagreeing with that flag, read out of the test rather
+# than remembered: step 2 says the row is the site's flag's doing, and this is the case that
+# holds it.
+grep -n "hero-actions" website/test/home.mjs
+# The row a command block is laid out in, out of the stylesheet that declares it: the control and
+# the command share one row rather than the control sitting above it, which is what step 2 reads
+# the command's and the control's rectangles for.
+grep -n "flex-direction: row-reverse" -B4 -A2 website/src/styles/base.css
+# The banner that is over the page on a first visit, and where it sits: the consent banner, fixed
+# at the foot of the window, which is what step 4 measures.
+grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
+```
+
+1. **At 390 × 844, every page's point is above the fold.** Set the viewport to **390 × 844** (the
+   phone the site is read on, and the size RF23 measured), hard-reload, and for every page the
+   artifact lists read the `h1`'s bottom and the lead paragraph's bottom — the two numbers the
+   capture script takes as `h1Bottom` and `leadBottom`, both measured from the top of the
+   document. The fold is the viewport's height: **844** at this width, and **900** at the desktop
+   shot's. The `h1` alone is not the claim: a page whose heading fits and whose lead does not has
+   a title above the fold and no gist, which is why the lead's bottom is the second number. RF23
+   measured the homepage's `h1` at 893 px at this width — one line below the fold — and every
+   other route's inside the first screen. In the console, the two numbers are read the way the
+   script reads them — the script's own selectors, so this reads the element the script reads
+   and not a look-alike:
+
+   ```js
+   const bottom = (el) => el && Math.round(el.getBoundingClientRect().bottom + window.scrollY)
+   bottom(document.querySelector('h1'))        // h1Bottom — the document's first `h1`
+   bottom(document.querySelector('main p'))    // leadBottom — `main`'s first paragraph
+   ```
+
+   **FACT:** per route, `h1Bottom` and `leadBottom` in pixels, and whether each is under 844.
+
+2. **The homepage's first screen is the promise and its call to action, and the page under it is
+   the page the design asks for.** The homepage's argument is its order, and the order is read out
+   of the page's own source rather than remembered: `website/src/pages/index.astro` renders the
+   hero, then the chat, then the diagram, then the install paths — `Hero.astro`,
+   `AgentChat.astro`, `ArchitectureDiagram.astro`, `HomeInstall.astro` — and since #623 the
+   install paths are the page's **last** section, the commands having moved out of the hero. So
+   at 390 × 844 the first screen holds the headline (`Lambdas for coding agents`, README's own
+   line) and the lead of step 1, then the **two** links under them, and **no command**: what this
+   step reads is that no command block has climbed back into the first screen. **Two links and not
+   three**, because the site's own flag is what renders the console's: `website/data/site.yaml`
+   carries `features.console_downloads: false`, so `Hero.astro` renders nothing about the console
+   — no link, no sentence, no placeholder — and the row is "Get started" and "How it works". This
+   check describes the site **without** a console link for that reason, and the site's own gate
+   holds the row to the flag (`website/test/home.mjs` refuses a hero whose call to action is not
+   exactly the two links while the flag is false); a hero with three links is a site whose flag
+   has been flipped, which is a later reading of this step rather than a failure of it. The
+   page's first command is the chat's `fugaro watch` block — `AgentChat.astro`'s `.chat-watch`,
+   under its "Watch it run" heading, and the first `pre` in `main` now that the install paths come
+   last — and **the block is three things in that order**: the heading, the owner's real
+   `fugaro watch` screenshot above the command (`div.chat-shot`'s `img`,
+   `public/images/fugaro-watch.png`, #655, the slot `website/test/home.mjs` reads), and then the
+   command. So the first command sits **under the picture**, and the picture's own height is
+   between the heading and it: read the screenshot's rectangle too, because a picture that grew
+   is a first command pushed down. `firstCommandBottom` for `/` is that block's bottom: the
+   script's key,
+   `document.querySelector('main pre')`'s bottom, measured from the top of the document. Beside
+   it read the copy control's own rectangle: the control is `website/src/lib/copy-control.mjs`'s
+   markup, `.command-controls` inside the same `.command-block`, and the block lays the two out in
+   **one row** — `website/src/styles/base.css`: `display: flex; flex-direction: row-reverse;
+   align-items: flex-start` — with the control the row's first item reversed to the right end and
+   the command wrapping in the width that is left. What the second rectangle is read for is the
+   arrangement that has left the row: a control rendered **below** its command — the case the
+   Fails-when block below names — where the command is visible and the button is not, and which
+   no reading of the command's own rectangle can see. **FACT:** the first screen's blocks in
+   order and whether any of them is a command block; the hero's links as rendered and how many
+   they are, against `features.console_downloads`; the chat's block's three parts in order, with
+   the screenshot's own height and whether it is above the command; the page's first command as
+   rendered, the block it is in, its bottom in pixels and whether it is above or below 844; and
+   the control's top and bottom beside the command's.
+
+3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
+   1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
+   block's bottom is under the viewport's height on each. The block is the whole of it — the
+   command and the control beside it — and the section's heading sits above it and the `From …`
+   line sits below it: the command is the first thing under the path's name, and the citation
+   that names the file it came from follows the block it cites, so a block whose bottom is inside
+   the first screen is a block a reader meets without scrolling. RF5 measured this page's first
+   screen as the internal paragraph, with the commands after it; P5's change is the ordering, and
+   this step is where the position of the result is read. **FACT:** the command, its bottom at
+   both widths, and whether the whole block is above the fold at each.
+
+4. **The consent banner is over the page, and it covers nothing this check claims.** The banner is
+   `position: fixed` at the foot of the window (read where it sits out of
+   `website/src/components/ConsentBanner.astro`, in the block above), so it is over the first
+   screen rather than in the page's flow: it cannot push the commands below the fold, and it does
+   cover whatever is at the bottom of the viewport. It is rendered whenever `site.yaml` says
+   analytics are on, and they are on, so it is there on **every first visit** — which is the visit
+   this check is about. In a fresh profile, with no stored decision, at the top of the page,
+   measure the banner's own rectangle and the first command's, at 390 × 844 and at 1280 × 900. A
+   command under the banner is not a command above the fold, and the fix for it is spacing or the
+   banner's own height rather than a fold moved for it. **FACT:** per size, the banner's height
+   and its top edge, the first command's bottom, what the banner's rectangle covers — the command,
+   its control, or neither — and the scroll position the page was at when it was measured.
+
+5. **The word ceilings hold, read from the site's own gate.** D188's two numbers are the gate's:
+   `website/test/budget.mjs` reads them out of `website/README.md`, and they are a page's **lead
+   at most 40 words** — the visible text of `main` between the `h1` and the first `h2` — and a
+   **page at most 250 words**, except `/docs/`, `/security/` and `/changelog/`, which each render
+   a document of this repository rather than a page of the site. **The 250 is no longer the whole
+   of the page ceiling** (the owner's request of 2026-10-19): the privacy statement is the
+   privacy policy the App Store and Play listings link, so it is not held to the site's pitch
+   ceiling — the README's number for it is that page's own count plus 25 %, derived by
+   `budget.mjs`'s `wordsCeilingFailures` (read the two figures out of the README itself rather
+   than from this section: they move with the page), and the same function refuses any
+   **other** page over 250, which is the half of the rule that keeps the raise from being the
+   site's. Read the numbers out of the README the gate reads (the block above) rather than from
+   this section, and count the words the way the gate counts them: every word a reader sees inside `main`, command blocks and code spans
+   included, an image's `alt` standing in for the image, and a `hidden` subtree not counted at
+   all. In the console, a first reading of the same two counts is:
+
+   ```js
+   const m = document.querySelector('main'), h1 = m.querySelector('h1'), h2 = m.querySelector('h2')
+   const words = (s) => s.trim().split(/\s+/).filter(Boolean).length
+   words(m.innerText)                          // the page's words (the README's number: 250 on every page but the privacy statement and the three exempt ones)
+   const between = () => { const r = document.createRange(); r.setStartAfter(h1); r.setEndBefore(h2); return r.toString() }
+   h2 && (h1.compareDocumentPosition(h2) & Node.DOCUMENT_POSITION_FOLLOWING) ? words(between()) : 0   // the lead's words (40)
+   ```
+
+   The gate is the authority and not this snippet — `budget.mjs` also counts an image's `alt`,
+   which `innerText` does not — and it is `(cd website && npm run check)`, whose `budget.mjs` cases
+   are the ceilings' own. RF23 measured the pages before the redesign — getting-started 431
+   words, caps-and-costs 487, faq 493, community 268, privacy 277, every one of them over the page
+   ceiling, and the three exempt pages at 18,282, 6,240 and 6,191 — which is the size of the
+   change the ceiling was set to make. **FACT:** per page, the lead's word count and the page's
+   word count against the two numbers the README carries, the privacy statement's own count
+   against the derived ceiling, and the pages the exemption list names.
+
+6. **No page carries the provenance text the build refuses.** D186's rule is that a page says what
+   it is for and never why its own text exists, and the gate holds an explicit list of phrases —
+   `website/test/meta.mjs`'s `PHRASES`, read out in the block above. Search each page the artifact
+   lists for every phrase over the page's rendered text and its `<title>`, with whitespace
+   flattened and case ignored, because a phrase split across two lines of a source file, or
+   capitalized at the start of a sentence, is the same phrase to a reader. RF5's paragraph on
+   Getting Started — "Every command on this page is rendered from `website/data/install.yaml` …
+   Nothing here is typed into this page." — is the sentence P4 removed, and this step is what
+   would catch it coming back, on that page or on any other. **FACT:** per phrase, the pages that
+   carry it: none.
+
+**Passes when:** every page the artifact lists states its point inside a 390 × 844 first screen —
+the `h1`'s bottom and the lead's bottom both under 844 — the homepage's first screen holds the
+promise and its call to action and **no command**, the call to action is the **two** links the
+site's own flag renders (the console's link is absent while `features.console_downloads` is
+false), the chat's block is its heading, the owner's `fugaro watch` screenshot and then the
+command, and its first command (the chat's `fugaro watch`
+block) carries its copy control in the command's own row wherever it sits, Getting Started's
+first command block is above the
+fold at 390 × 844 **and** at 1280 × 900, the consent banner covers neither the first command nor
+its control on a first visit at either size, every page's lead is within 40 words, the privacy
+statement is within its own derived ceiling and every other page but `/docs/`, `/security/` and
+`/changelog/` within 250, and no page carries a phrase on D186's list.
+
+**Fails when:** a page's lead — or its `h1` — ends below 844 at 390 × 844; a command block is in
+the homepage's first screen, where the design puts the promise and its call to action; the
+homepage's copy control has left its command's row, or is outside the first screen the command is
+in; a **third** link under the promise — the console's — on a site whose `website/data/site.yaml`
+still says `features.console_downloads: false` (a hero that disagrees with the site's own flag, so
+either the flag has been flipped and this reading is stale or the link was written into the hero
+rather than rendered from the flag); the chat's block missing its screenshot, or carrying it
+**below** the command, so the first command is not under the picture this step reads; Getting
+Started's first command block is below the fold at either width; the consent banner
+covers the first command or its control on a first visit; a page is over a ceiling the README
+states — including the privacy statement over its own derived one, or any other page over 250 —
+or a page that is not one of the three exempt ones is measured as exempt; or a page carries a
+provenance phrase. What failing looks like: a hero that grows a second paragraph under
+the promise, so the lead is 41 words and its bottom is below the fold (the shape `fold.mjs`
+refuses in the built artifact and this check is the position of); a command block moved back up
+into the homepage's first screen, which is the arrangement #623 moved out of it; a first command
+in the install section that is the *second* path's, because `HOME_PATHS`' order moved and nobody
+re-read the page; a copy control that has left the command's row, rendered below its command
+rather than beside it, so the command is visible and the button is not; a banner whose text grew a
+line, so its top edge came up over the first command's bottom. The **ordering** half of the first
+of those — the lead region's shape — is already refused by `website/test/fold.mjs` and its
+**word** half by `budget.mjs`, so a failure here that the build did not catch is a **rendered**
+fact — a position, a height, an overlap — and the fix belongs in `website/src/pages/*.astro`,
+`Hero.astro`, `HomeInstall.astro` or `base.css`'s spacing, with the case that would have caught it
+added to the gate that can see it.
+
+**Paste back:** per page at 390 × 844, the `h1`'s bottom and the lead's bottom, and whether each is
+above the fold; the homepage's first screen's blocks in order, the hero's links as rendered and how
+many they are, the chat's block's three parts in order with the screenshot's height, and the page's
+first command as
+rendered with the block it is in, its bottom and its control's rectangle;
+Getting Started's first command block's bottom at both widths; the consent banner's height and top
+edge on a first visit at both widths, and what it covers; per page, the lead's and the page's word
+counts against the README's two numbers; and the provenance phrases found, if any — with the
+browser and its version, because the fold is the browser's layout, and a device with a different
+font scale or a browser UI that changes the visual viewport can and will differ
+(`docs/website/redesign/reconciliation.md` §7, RU5). **No step here changes anything and no agent
+runs any step of it.** Until this check runs, the **rendered** fold is **UNVERIFIED** — a word
+ceiling is not a first screen and an ordering is not a position — and the row above stays
+**NOT RUN**.
+
 ## Check 70c: every copy control copies its own command, by mouse and by keyboard (the built artifact or the live site; run by you; NOT RUN)
 
 **NOT RUN.** Written by **part P6** of the website redesign
@@ -4396,7 +4930,12 @@ stays **NOT RUN**.
 RF13). It is the half of P6 no hermetic test can take: `website/test/copy.mjs` holds the
 markup — every block carries its control, the button is `hidden` in the markup, the status
 line is a polite live region — and a real clipboard is what a browser has and `node --test`
-does not.
+does not. **As of main's commit `7731386f`** — the commit this branch merged (`0e555767`'s
+second parent, main's tip at that merge): the blocks this check lists are the ones main builds
+there. The commit is a **reading**, not a claim, and it is the reading to repeat: the pages and
+the counts below are read out of the artifact by this section's own greps and held to the tree at
+test time (`internal/cli`'s website pins), so a page that has gained or lost a command block since
+is a later reading of this check rather than a failure of it.
 
 **Method.** One browser, one built site, a real clipboard. Serve the artifact locally or read
 the deployed site, both read-only. The controls are the ones the tree's own markup writes, so
@@ -4412,17 +4951,32 @@ grep -rl 'data-copy' website/dist --include='*.html' | sort
 grep -ro 'data-copy-button' website/dist --include='*.html' | cut -d: -f1 | sort | uniq -c
 # The script that reveals and drives them — the only script the site ships (D183).
 ls -l website/dist/scripts/site.js
+# The status line step 3 listens for and the button step 4 looks for, out of the two files that
+# write them rather than remembered: the script's own message and the markup's own `hidden`
+# button (the artifact's copy is minified, so this reads the sources the build is made of).
+grep -n "data-copy-status\|Copied" website/public/scripts/site.js
+grep -n "data-copy-button\|hidden" website/src/lib/copy-control.mjs
+# The command the multi-line case is about, out of the facts file rather than remembered: the
+# cosign path Getting Started's own option renders, whose invocation runs across four lines.
+grep -n "cosign verify-blob" website/data/install.yaml
 ```
 
 1. **Each kind of control, by mouse.** On the built or deployed site, click the copy control
-   on: the hero's install blocks (home), a code block on Getting Started, a block of the
-   rendered CLI reference on the docs hub, a usage line on the caps guide, and the terminal's
-   own line on the home page. After each click, paste into a text editor and read it back.
+   on: the homepage's install blocks (`HomeInstall.astro`'s, the page's last section since
+   #623), a code block on Getting Started, a block of the rendered CLI reference on the docs
+   hub, a usage line on the caps guide, and the chat's `fugaro watch` line on the home page.
+   After each click, paste into a text editor and read it back.
+   **The caps guide's usage lines sit behind one disclosure** since the owner's brief of
+   2026-10-19: the page leads with what a job costs, and the commands are the detail under the
+   **Set the caps** summary. Open it before this step — a closed `details` prints its commands
+   in the DOM but not on the screen — and step 4 is unchanged, since a reader needs no script
+   to open it.
    **FACT:** for each control, what the clipboard held. The content has to be **that command
    and nothing else** — no `$` prompt, no blinking caret, no line of output beside it, no page
-   furniture. The terminal is the case that makes this check worth running: its window holds
-   the command **and** the four documented steps after it, and the control must put the
-   invocation alone on the clipboard.
+   furniture. The block whose command runs to several lines is the case that makes this check
+   worth running: Getting Started's cosign path prints `cosign verify-blob` across four
+   lines (`website/data/install.yaml`), and the control must put the invocation alone on the
+   clipboard.
 
 2. **By keyboard, with a visible focus ring.** Tab to each of those controls, confirm the
    focus ring is visible on the button, and press Enter (and Space on one of them). **FACT:**
@@ -4928,32 +5482,73 @@ wc -c < internal/budget/rules/testdata/rules.golden.json 2>/dev/null || true    
 
 The app is **its own artifact at `mobile/`, outside the Go module** (plan C2), versioned with the CLI's tag but released on the stores' cadence (C6). This check is the plan's row 89 and P4.4's verification: a build of the app **signed with your distribution credentials**, reaching **the store's internal track and nothing else** (C8 — a public release is not reversible and the spec does not ask for one). **No agent runs `eas build` or `eas submit`, and none touches a signing key or a store credential** (D120, Global Constraint 9): every step below is yours, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project. A coding agent's session must not be given an Expo token, an App Store Connect API key or a Play service-account key for it, and nothing in this repository holds one.
 
-**The app exists; its store identity does not, and that is what stops the check.** P3.1's `mobile/` is in the tree (`app.json`, the skeleton, the account store), so the guard block below gets past the app itself — and **hard-stops on `mobile/eas.json`**, which P4.4 writes with the EAS project's build and submit profiles, and on an `app.json` that does not yet carry `ios.bundleIdentifier` and `android.package` (the store identity, also P4.4's: a store build cannot be submitted without them, and today's `app.json` has neither). That is the honest state today, not a failure: the check is in the register (P4.2a) and P4.4 runs it. **Until then the row stays NOT RUN and the app's live behaviour is unverified** (the plan's open item 5).
+**What the app carries, and what stops the check now.** P3.1's `mobile/` (`app.json`, the skeleton, the account store) and P4.4's `mobile/eas.json` and `mobile/app.config.js` are all in the tree, so the guard's file tests pass — and **the store identity is what it stops on**: `ios.bundleIdentifier` and `android.package` are **not** in `app.json` and never will be (P3.1's boundary test asserts the committed config carries no release identity, and the identity is the owner's — the app's release path is its own, D125, which is why this check is owner-run at all). It reaches a build from two environment variables through `mobile/app.config.js`, the dynamic config the build is made from, so **the guard resolves that file** and stops until you have exported the two variables in your shell — the same two the local `eas-cli` phase needs (see `mobile/README.md`, "Building for internal testing"). That is the honest stopping point today, not a failure: the check is in the register (P4.2a) and P4.4 runs it. **Until then the row stays NOT RUN and the app's live behaviour is unverified** (the plan's open item 5).
 
-**Guard block — re-run this before every step.** It refuses to start unless there is an app to build, the checkout is the commit a tag names, and the working tree is clean — a store build records the commit it was made from, and a build from a dirty tree is not the artifact this release is.
+**Guard block — re-run this before every step.** It refuses to start unless there is an app to build, the checkout is the commit a tag names, the working tree is clean, and the store identity resolves through the app's own `app.config.js` — a store build records the commit it was made from, a build from a dirty tree is not the artifact this release is, and a build with no identity cannot reach a track. It needs `node` on `PATH` for that last read (the `eas-cli` you installed with npm brought it) and a Python 3; it prints the identity it resolved, which is public and reaches the built app.
 
 ```bash
 # === Check 89: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
 set -u
 command -v eas >/dev/null || { echo "Check 89 stopped: no eas on PATH (npm i -g eas-cli, then 'eas login' as yourself)" >&2; exit 1; }
+# node as well, and for the same reason the block tests for eas first: the
+# store identity is read by running mobile/app.config.js through node, and a
+# missing interpreter is a Python FileNotFoundError -- a traceback, not the
+# sentence this guard promises. The eas-cli you installed with npm brought it.
+command -v node >/dev/null || { echo "Check 89 stopped: no node on PATH, and the guard reads the store identity by resolving mobile/app.config.js with it (the eas-cli you installed with npm brought it)" >&2; exit 1; }
 # The repository root, resolved first so this block is re-runnable from
 # anywhere in the checkout: a second run from inside mobile/ must not fail its
 # own file tests (every path below is read from the root).
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "Check 89 stopped: not inside a git checkout; the app is built from the commit a tag names" >&2; exit 1; }
 [ -f "$ROOT/mobile/app.json" ] || { echo "Check 89 stopped: there is no mobile/app.json in this checkout, so there is no app to build (P3.1's; a checkout older than it has nothing to build)" >&2; exit 1; }
-[ -f "$ROOT/mobile/eas.json" ] || { echo "Check 89 stopped: there is no mobile/eas.json in this checkout, so there is no build or submit profile to read (P4.4 makes it; this check reads it, it does not create it) — this is the stop a checkout of today hits" >&2; exit 1; }
+[ -f "$ROOT/mobile/eas.json" ] || { echo "Check 89 stopped: there is no mobile/eas.json in this checkout, so there is no build or submit profile to read (P4.4 makes it; this check reads it, it does not create it)" >&2; exit 1; }
+[ -f "$ROOT/mobile/app.config.js" ] || { echo "Check 89 stopped: there is no mobile/app.config.js in this checkout, so the store identity cannot be resolved the way a build resolves it (P4.4's; the identity is not in app.json, and this check reads it through this file)" >&2; exit 1; }
 cd "$ROOT/mobile" || { echo "Check 89 stopped: cannot enter $ROOT/mobile" >&2; exit 1; }
 TAG=$(git describe --tags --exact-match 2>/dev/null || true)
 [ -n "$TAG" ] || { echo "Check 89 stopped: HEAD is not a tag; the app is versioned from the release's tag (C6)" >&2; exit 1; }
 SHA=$(git rev-parse HEAD)
 git status --porcelain | grep -q . && { echo "Check 89 stopped: the working tree is dirty; a store build must be made from the tagged commit" >&2; exit 1; }
 APP=$(python3 - <<'PY'
-import json, sys
-e = json.load(open("app.json"))["expo"]
-bid = (e.get("ios") or {}).get("bundleIdentifier")
-pkg = (e.get("android") or {}).get("package")
+import json, os, subprocess, sys
+# The store identity is NOT in app.json -- P3.1's boundary test keeps a release
+# identity out of the committed config, and the identity is the owner's (D125
+# gives the app its own release path, whose identities and store credentials are
+# the owner's). It reaches a build from two environment variables through
+# mobile/app.config.js, so this guard resolves **that file** -- the config a
+# build is actually made from -- rather than reading a key app.json does not
+# have, and it does not repeat the identity's pattern here: the shape is
+# app.config.js's rule, and a value it refuses stops this guard with that file's
+# own reason.
+for v in ("FUGARO_IOS_BUNDLE_ID", "FUGARO_ANDROID_PACKAGE"):
+    if not os.environ.get(v):
+        sys.exit("Check 89 stopped: %s is not set in this shell, and a store build cannot be made or submitted without it. Export both identities for this check (each is the public reverse-DNS name the app is released under -- the same name for both stores; it is not committed to this repository), or set them in the EAS project's environment the profile names for the build job, and re-run this block" % v)
+resolve = (
+    "import cfg from './app.config.js'; import fs from 'node:fs';"
+    "const config = JSON.parse(fs.readFileSync('app.json', 'utf8')).expo;"
+    "process.stdout.write(JSON.stringify(cfg({ config })));"
+)
+r = subprocess.run(["node", "--input-type=module", "-e", resolve], capture_output=True, text=True)
+if r.returncode != 0:
+    # node's stderr is the thrown error's stack, so the reason is the first
+    # "Error:" line ("Error: FUGARO_...") and not the last line, which is the
+    # interpreter's version.
+    lines = [l for l in r.stderr.splitlines() if l.strip()]
+    reason = next((l for l in lines if l.startswith("Error:")), lines[0] if lines else "no message from node")
+    sys.exit("Check 89 stopped: mobile/app.config.js refused the store identity this shell holds, and a build would be refused the same way -- " + reason)
+# A node that printed something which is not the config (a warning line on
+# stdout, an empty document, a `null`) is a stop with a sentence, not a
+# JSONDecodeError traceback: the guard's whole job is to say why it stopped.
+try:
+    e = json.loads(r.stdout)
+except ValueError:
+    sys.exit("Check 89 stopped: mobile/app.config.js printed something that is not a JSON config, so the store identity could not be read from it and a build made now could not reach any track (re-run `node --input-type=module -e ...` from mobile/ by hand if a tool printed a line of its own on stdout)")
+if not isinstance(e, dict):
+    sys.exit("Check 89 stopped: mobile/app.config.js printed a %s where the config should be, so there is no ios.bundleIdentifier or android.package to submit a build under" % type(e).__name__)
+ios = e.get("ios") if isinstance(e.get("ios"), dict) else {}
+android = e.get("android") if isinstance(e.get("android"), dict) else {}
+bid = ios.get("bundleIdentifier")
+pkg = android.get("package")
 if not bid or not pkg:
-    sys.exit("Check 89 stopped: mobile/app.json carries no ios.bundleIdentifier or android.package (the store identity P4.4 adds), so there is nothing to submit a build under — a build made now could not reach any track")
+    sys.exit("Check 89 stopped: the config resolved through app.config.js carries no ios.bundleIdentifier or android.package, so there is nothing to submit a build under — a build made now could not reach any track")
 print(e["version"], bid, pkg)
 PY
 ) || exit 1   # the store-identity stop has to be a real stop: sys.exit inside a
@@ -4964,7 +5559,7 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
 
 **No secret is read, printed or pasted by any step.** Every path below names a credential file at most (`serviceAccountKeyPath`, a provisioning profile); its **contents** are never read by this check and never appear in a `FACT` line — no signing key, no `.p12`/`.mobileprovision`, no App Store Connect API key, no Play service-account JSON, no password, no Expo token.
 
-1. **The EAS project and the profile the build uses.** *(Guard block, run by you.)* `eas whoami` and `eas project:info` (or `eas project:init` if P4.4 has not made the project yet) — the project is yours, under your Expo account, and nothing here is a secret (the project id and slug are public identifiers that reach the built app). Then read the profile **before** using it, and let the guard decide whether the profile is the internal one:
+1. **The EAS project and the profile the build uses.** *(Guard block, run by you.)* `eas whoami` and `eas project:info` (or `eas project:init` if the EAS project P4.4 names does not exist yet) — the project is yours, under your Expo account, and nothing here is a secret (the project id and slug are public identifiers that reach the built app). Then read the profile **before** using it, and let the guard decide whether the profile is the internal one:
 
    ```bash
    jq '.build.internal' eas.json                       # the profile this check builds with
@@ -4996,7 +5591,7 @@ echo "Check 89 ready: $TAG at $SHA — $APP"
    git -C .. log --oneline -1 -- mobile/eas.json
    gh secret list --repo dimipaun/fugaro 2>/dev/null || echo "no gh, or no access: skip this line and say so"
    ```
-   **FACT:** the two file lists — **nothing credential-shaped** (no `*.p12`, no `*.mobileprovision`, no `*.jks`/`*.keystore`, no key) and, of the JSON under `mobile/`, **only the app's own four files** (`app.json`, `package.json`, `package-lock.json`, and `eas.json` once P4.4 adds it: the `|| echo` lines are the empty lists, and a JSON that survives the second grep is the finding, e.g. a `google-play-service-account.json` or a `credentials.json` holding a key — the scan names types, it never opens a file) — and the secret names in CI — **the names only, never a value**. EAS needs no credential in this repository's CI for this check (nothing here builds the app in CI: P4.3's job is the shared package's tests, and it holds no store credential); if a secret whose name suggests a store or signing key exists, record it and its purpose — a store credential in CI is the finding this step exists to produce. **An agent never reads that secret's value**: this step lists names and stops there.
+   **FACT:** the two file lists — **nothing credential-shaped** (no `*.p12`, no `*.mobileprovision`, no `*.jks`/`*.keystore`, no key) and, of the JSON under `mobile/`, **only the app's own four files** (`app.json`, `package.json`, `package-lock.json`, and `eas.json`, which P4.4 added: the `|| echo` lines are the empty lists, and a JSON that survives the second grep is the finding, e.g. a `google-play-service-account.json` or a `credentials.json` holding a key — the scan names types, it never opens a file) — and the secret names in CI — **the names only, never a value**. EAS needs no credential in this repository's CI for this check (nothing here builds the app in CI: P4.3's job is the shared package's tests, and it holds no store credential); if a secret whose name suggests a store or signing key exists, record it and its purpose — a store credential in CI is the finding this step exists to produce. **An agent never reads that secret's value**: this step lists names and stops there.
 
 **Passes when:** step 1 finds the `internal` profile with `distribution: store` and `submit.internal.android.track` **`internal`**; step 2's builds finish, both signed with your distribution credentials, each recording the tagged commit `$SHA`; step 3's two submissions land on the internal testing tracks with no public release and no external group; step 4's install reports the release's version; and step 5 finds no credential-shaped file under `mobile/` and no store credential in CI.
 
