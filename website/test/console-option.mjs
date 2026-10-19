@@ -7,7 +7,7 @@
 // acceptance is exactly that: "from Getting Started a user can install either the CLI or the
 // console without leaving the page" — and, while `features.console_downloads` is false, that
 // the console option offers nothing to download at all. This checkout ships the flag TRUE (the
-// console's `console-v0.8.7` release turned it on), so the unreleased state is one the cases
+// console's `console-v0.9.0` release turned it on), so the unreleased state is one the cases
 // below build a copy of the repository into rather than the state `npm run check` builds.
 //
 // **The homepage's call to action is the other place the flag decides** (the owner's brief of

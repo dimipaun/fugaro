@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **972,415 bytes in a checkout with no tags** and to **972,415 bytes with the
+  commit builds to **972,634 bytes in a checkout with no tags** and to **972,634 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -418,6 +418,11 @@ added or removed without this sentence moving fails there:
     sentence starting the next. The space is written into the line now, **1 byte**, and the
     site figure is 972,414 → **972,415**. The page weight and the script did not move. The
     clone figure moved by the same bytes as each of the security page's rounds.
+  - **The console's own release moved to `console-v0.9.0`** (the owner's ruling of 2026-10-19,
+    below): `docs/releases/v0.9.0.md` names the console's own release now, and that line is part
+    of the changelog entry the page renders — the site figure is 972,415 → **972,634** (219
+    bytes), and the two checkout shapes move together as one figure. The page weight and the
+    script did not move: the heaviest page is the docs hub, which renders no changelog entry.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -444,7 +449,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,646,557 bytes. Three times 1,215,519 (every file in `dist/`, 972,415
+  - **Whole site:** 3,647,379 bytes. Three times 1,215,793 (every file in `dist/`, 972,634
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -858,6 +863,20 @@ bumped to the CLI tag the console was built from, and each entry's `sha256` set 
 release's own sums file records for its published name. The download list itself does not change —
 it already carries the release's published names — so no URL is typed anywhere and every button,
 label and URL follows from those.
+
+**A later console release moves two of those four again, and it has happened once:** on
+2026-10-19 the console's own release moved to `console-v0.9.0` (the owner's ruling that
+the site's console downloads follow the console's own release), so `release.version` and both
+`sha256` values moved with it and `data/console-sha256sums.txt` was replaced by the published
+`console-v0.9.0` asset, byte for byte. Nothing else about the section changed: the same two
+artifacts, the same signing and notarisation, and the same derived URLs.
+
+**The tag's prefix is checked in the build, not only in the gates.** `src/lib/console-downloads.mjs`
+reads `CONSOLE_TAG="<prefix>$VERSION"` out of `.github/workflows/console-release.yml` and refuses a
+`release.tag_prefix` the workflow does not compose (`website/test/console.mjs` plants the
+disagreement and requires the refusal). A prefix of the right *shape* that no run composes is a tag
+no release carries, and every button would 404 — the one failure the checksums, the documented names
+and `console/README.md` all agree with a build that made it.
 
 **It was not a one-line change, and four checks were written to say so** — each keeping the
 unreleased state true, and each refusing the flip until the commit that made it extended it. That

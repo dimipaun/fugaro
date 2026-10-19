@@ -28,7 +28,7 @@ package cli
 // with the console's release rather than the rule. While
 // website/data/site.yaml's features.console_downloads is false, the console is
 // unreleased and a versioned asset URL would 404 or point at an unsigned
-// artifact; W3.1 flipped that flag when `console-v0.8.7` was published, and
+// artifact; W3.1 flipped that flag when `console-v0.9.0` was published, and
 // every URL the site offers is now composed at build time from
 // website/content/downloads.json's release facts, so a URL written in a source
 // file is a second source that drifts (the owner's changes spec of 2026-10-18,
@@ -200,7 +200,7 @@ type websiteFactsAnalytics struct {
 // (findings 23-25 and 57, D95 and D107).
 type websiteFactsFeatures struct {
 	// ConsoleDownloads is true since the console's first release shipped
-	// (`console-v0.8.7`, 2026-10-19): its section renders the release's own
+	// (`console-v0.9.0`, 2026-10-19): its section renders the release's own
 	// downloads, and the pair of facts -- this flag and the data file's
 	// `available` -- is what the console-link rule and the release-facts check
 	// read (Global Constraint 9, D95, W3.1).
@@ -765,7 +765,7 @@ func TestNoGoFileEmbedsFromWebsite(t *testing.T) {
 // TestWebsiteLinksNoConsoleWhileTheFlagIsOff is Global Constraint 9 made
 // mechanical: the site never links an unsigned or unreleased artifact, and it
 // never keeps a second copy of a link it derives. The console is designed,
-// shipped (`console-v0.8.7`) and released through a flag, so the scan below
+// shipped (`console-v0.9.0`) and released through a flag, so the scan below
 // holds in BOTH states of that flag and the failure it prints says which state
 // it is refusing in:
 //
@@ -1089,7 +1089,7 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	}
 
 	// The console's downloads were pinned OFF here until W3.1, which flipped
-	// the flag with the console's first release (`console-v0.8.7`, published
+	// the flag with the console's first release (`console-v0.9.0`, published
 	// 2026-10-19). The pin that replaces it is not "the flag is on": it is
 	// that the flag and the data file agree, which is the invariant worth
 	// holding and the one the site's own build refuses to break (W1.6 step 2).
