@@ -142,27 +142,31 @@ added or removed without this sentence moving fails there:
   **The build the three numbers are derived from is the build the gates make themselves**, and
   that is the correction of 2026-10-19 (this section's figures are re-derived below it). It is
   *not* `website/dist`, which is what the derivation named until then: the site's own build
-  depends on the git state of the checkout the gates run in. The changelog renders each release
-  file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **977,921 bytes in a checkout with no
+  depended on the git state of the checkout the gates run in. The changelog rendered each
+  release file's **"not yet released"** state wherever `git tag --list` found no tag
+  (`src/lib/changelog.mjs`), so the same commit built to **977,921 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **976,406 bytes with the tags this repository's own clone carries**,
-  the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
-  of those two builds is refused by the other, which is what happened: the gate could not
-  measure the build the README named and `website-preview` could not deploy. So the derivation
-  is read over **the gates' own build of the site**: a copy of the repository in a temp
-  directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`, which
-  carries no `.git` at all and so gives every checkout the same three numbers. The site's own
-  `dist/` — whichever of the two shapes it takes — is held to the ceilings below like any other
-  artifact, and being the *smaller* of the two builds it passes.
+  deployed site is — and to a build 1,515 bytes smaller with the tags this repository's own
+  clone carries, the changelog page's own "not yet released" labels being the whole of the
+  difference. A figure derived from one of those two builds was refused by the other, which is
+  what happened: the gate could not measure the build the README named and `website-preview`
+  could not deploy. So the derivation is read over **the gates' own build of the site**: a copy
+  of the repository in a temp directory, built with the site's installed Astro by
+  `test/lib/build.mjs`'s `buildCopy`, which carries no `.git` at all and so gives every checkout
+  the same three numbers. The site's own `dist/` is held to the ceilings below like any other
+  artifact.
+
+  **No page of the site depends on the checkout's git state any more** (the owner's brief of
+  2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
+  version rather than from a tag, so the two checkout shapes above are one build now. The
+  derivation stays where it is all the same — a copy of the repository built by the gates is the
+  artifact the gates can measure in every environment, `dist/` or no `dist/`.
 
   **What each cause really moves**, measured on that build rather than argued:
 
-  - the **1,515 bytes** between the two shapes of the site build are the changelog page's own
-    "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 976,349 with the flag off to 977,921 with it on:
+    moves the **site figure up by 1,572 bytes**, from 980,303 with the flag off to 981,875 with it on:
     the console option's own markup on the three pages that render it — the console page's
     downloads section (each artifact's checksum beside its link, and the verification command)
     1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
@@ -249,6 +253,14 @@ added or removed without this sentence moving fails there:
     downloads section, Getting Started's console option and the hero's link to the console.
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
+  - **The changelog's own round** (the owner's brief of 2026-10-19) moved the site figure
+    977,921 → **981,875**, and its causes are the page's own: each release now carries its
+    product summary line and wraps the release file's own Highlights in a `<details>` block,
+    so fifteen summaries and fifteen notes labels arrive, and the page no longer prints the
+    fifteen "not yet released" labels the checkout with no tags used to draw (which releases
+    are published is the plugin's version now) or the "newest releases" block the summaries
+    replaced. The page weight and the script did not move: the changelog page is not the
+    heaviest page, and nothing outside it changed.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -276,9 +288,9 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,667,206 bytes. Three times 1,222,402 (every file in `dist/`, 977,921
-    bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
-    with no tags, 1,515 bytes above the one a full clone makes (above).
+  - **Whole site:** 3,682,032 bytes. Three times 1,227,344 (every file in `dist/`, 981,875
+    bytes across 23 files, plus 25 %) — the gates' own build of the site, the build of
+    2026-10-19 that carries the changelog's product summaries (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
@@ -496,10 +508,31 @@ Three things about those commands are worth stating rather than leaving to the t
 
 There is no changelog page file and no changelog JSON in this tree: `src/lib/changelog.mjs`
 reads `docs/releases/vX.Y.Z.md` **during the build** and the changelog page (W1.9) renders
-what it returns. Nothing is written to disk, so a Highlights file that lands on `main`
-before its tag exists leaves no stale copy behind — and no date is taken from a tag,
+what it returns, with each release's product summary read from `data/release-summaries.yaml`
+through the content pipeline beside it. Nothing is written to disk, so a file that lands on
+`main` before its release leaves no stale copy behind — and no date is taken from a tag,
 because a shallow checkout has no tags and the newest entry a reader sees has none yet
-(D100). `website/test/changelog.mjs` holds that.
+(D100).
+
+**Which releases are published is a file in this repository, not a property of the
+checkout** (the owner's brief of 2026-10-19: *"Changelog: why do I see not yet released?"*).
+A release file is published when its version is at or below the version in
+`plugin/.claude-plugin/plugin.json`. The bump lands on `main` before the tag does, so on
+`main` the manifest names the newest released version and everything up to it reads as
+released; a release file written ahead of its bump carries the "not yet released" marker, and
+it is the only thing on the page that says so. `git tag --list` was the rule until this
+change, and the deploy build checks out without tags, which printed the marker under every
+release.
+
+**The release files stay the operator's document.** Their Highlights bullets are written for
+whoever runs Fugaro, so they are rendered as they are, inside a `<details>` block that opens
+with no script (D183); the summary above them is the site's own line for that release, and a
+release file with no entry in `data/release-summaries.yaml` stops the build naming the file
+rather than rendering an entry with nothing under its heading. `website/test/changelog.mjs`
+holds the generator to the files, and `website/test/changelog-page.mjs` holds the page to
+both sources: every release file has a summary entry and none is empty, the page renders the
+entry a release's own summary carries, and the page writes no sentence that is neither a
+release file's nor a summary's.
 
 ## The console's downloads are derived, never written down
 
@@ -621,9 +654,10 @@ them there.
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
+  data/release-summaries.yaml      # each release's product summary, pinned by test/changelog-page.mjs
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
-  src/lib/changelog.mjs            # reads docs/releases/ at build time
+  src/lib/changelog.mjs            # reads docs/releases/ and the plugin's version at build time
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
   public/                          # icons, logo.png, site.webmanifest (scripts/gen-brand-icons.py)
   test/*.mjs                       # every one of them runs under `npm run check`
