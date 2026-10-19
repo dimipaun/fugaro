@@ -44,6 +44,7 @@ package cli
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -150,10 +151,22 @@ func TestWebsiteChecklistHasCheck70bSection(t *testing.T) {
 		"/docs/",
 		"/security/",
 		"/changelog/",
+		// The exemption list, from the file the ceilings' gate imports it from.
+		"website/test/lib/exempt.mjs",
+		"DOCUMENT_PAGES",
 		// The provenance phrases, from the gate that refuses them.
 		"website/test/meta.mjs",
 		// The ordering gate the position rests on.
 		"website/test/fold.mjs",
+		// The homepage's own blocks, in the order the page renders them, and the command the
+		// page's first `pre` belongs to.
+		"website/src/pages/index.astro",
+		"AgentChat.astro",
+		"ArchitectureDiagram.astro",
+		"HomeInstall.astro",
+		"HOME_PATHS",
+		"home-install-command",
+		"chat-watch",
 		// The banner that is over the first screen on a first visit.
 		"ConsentBanner.astro",
 		"position: fixed",
@@ -374,6 +387,142 @@ func TestWebsiteChecklistCheck70bReadsTheScriptsOwnSelectors(t *testing.T) {
 	// `main`, and the check may not quietly substitute one for the other.
 	if strings.Contains(flat, "document.querySelector('main h1')") {
 		t.Errorf("%s's section reads the h1 with document.querySelector('main h1'): the script reads the document's first `h1` (%s), and a check that measures a different element is not the script's measurement", path, scriptPath)
+	}
+}
+
+// TestWebsiteChecklistCheck70bNamesWhatTheTreeHas pins the identifiers the section's steps
+// name to the files that carry them. The section is prose about markup, so it can name a
+// class, a constant or a path that no longer exists and still read perfectly well -- which is
+// what happened to it: it read the homepage's first command out of `Hero.astro`'s
+// `HERO_PATHS` and `hero-install-command` for a round after #623 moved the install paths to
+// `HomeInstall.astro`'s `HOME_PATHS` and `.home-install-command` and left the hero with no
+// `<pre>` at all. Every name below is checked in the file that carries it, and the two the
+// page no longer has are refused, so a step cannot point an owner at markup that is gone.
+func TestWebsiteChecklistCheck70bNamesWhatTheTreeHas(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(docSection(t, path, doc, checklist70bHeading)), " ")
+
+	for _, m := range []struct{ name, file string }{
+		{"HOME_PATHS", "website/src/components/HomeInstall.astro"},
+		{"home-install-command", "website/src/components/HomeInstall.astro"},
+		{"chat-watch", "website/src/components/AgentChat.astro"},
+		{"chat-watch-command", "website/src/components/AgentChat.astro"},
+		{"HomeInstall", "website/src/pages/index.astro"},
+		{"ArchitectureDiagram", "website/src/pages/index.astro"},
+		{"DOCUMENT_PAGES", "website/test/lib/exempt.mjs"},
+		{"flex-direction: row-reverse", "website/src/styles/base.css"},
+	} {
+		if !strings.Contains(flat, m.name) {
+			t.Errorf("%s's section does not name %q: the step that reads the page has to say what it reads it out of", path, m.name)
+		}
+		if !strings.Contains(readDoc(t, m.file), m.name) {
+			t.Errorf("%s names %q, and %s no longer carries it: the section reads the page out of the tree, so a name the tree does not have is a step an owner cannot run", path, m.name, m.file)
+		}
+	}
+
+	// The hero's old names, refused: #623 moved the homepage's install paths out of the hero
+	// and into their own section, so a step that reads them there reads a page that is gone.
+	for _, stale := range []string{"HERO_PATHS", "hero-install-command"} {
+		if strings.Contains(flat, stale) {
+			t.Errorf("%s's section names %q, which no file in the tree carries: the homepage's install paths are HomeInstall.astro's HOME_PATHS and .home-install-command since #623", path, stale)
+		}
+	}
+}
+
+// methodLines returns the shell lines of the Method's own code block in a check's section.
+func methodLines(t *testing.T, heading, section string) []string {
+	t.Helper()
+	const open = "```bash\n"
+	i := strings.Index(section, open)
+	if i == -1 {
+		t.Fatalf("%s's Method has no ```bash block: the check reads its inputs out of the tree", heading)
+	}
+	rest := section[i+len(open):]
+	end := strings.Index(rest, "\n```")
+	if end == -1 {
+		t.Fatalf("%s's Method's ```bash block is never closed", heading)
+	}
+	return strings.Split(rest[:end], "\n")
+}
+
+// methodRead reads one Method line the way the shell would: a `grep` or a `sed` whose last
+// argument is a file the repository carries and whose quoted argument is the text it looks
+// for in that file. It reports ok=false for the lines that are not a read of a file in the
+// tree -- the guard, the server, a pipe, or a read of the built artifact under
+// `website/dist/`, which the check's own guard is what builds.
+func methodRead(line string) (file, pattern string, ok bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "grep ") && !strings.HasPrefix(line, "sed ") {
+		return "", "", false
+	}
+	fields := strings.Fields(line)
+	file = fields[len(fields)-1]
+	if !reMethodFile.MatchString(file) || strings.HasPrefix(file, "website/dist/") {
+		return "", "", false
+	}
+	m := reMethodQuoted.FindStringSubmatch(line)
+	if m == nil {
+		return "", "", false
+	}
+	return file, m[1] + m[2], true
+}
+
+var (
+	// reMethodFile is a path a Method line can read: one of the tree's own file kinds.
+	reMethodFile = regexp.MustCompile(`^[A-Za-z0-9_./-]+\.(mjs|astro|css|js|yaml|json|html|md)$`)
+	// reMethodQuoted is the first quoted run of a Method line, either quote style.
+	reMethodQuoted = regexp.MustCompile(`'([^']*)'|"([^"]*)"`)
+	// reMethodLiteral is a word inside a pattern: the part of a `grep` or `sed` expression
+	// that is text to look for rather than regular-expression syntax around it.
+	reMethodLiteral = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_.-]{2,}`)
+)
+
+// TestWebsiteChecklistCheck70bMethodReadsExist reads the section's Method the way a shell
+// would and holds every read in it to the file it names: the file is in the tree, and the
+// text the line looks for is in that file. This is the check the review asked for after
+// `PAGE_EXEMPT` -- an identifier `budget.mjs` has never had, the exemption set being
+// `DOCUMENT_PAGES` in `website/test/lib/exempt.mjs` -- was written into a Method that no test
+// read, so an owner running the block got an empty grep and a check that silently lost the
+// exemption list it was supposed to read.
+func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	lines := methodLines(t, checklist70bHeading, docSection(t, path, doc, checklist70bHeading))
+
+	var read []string
+	for _, line := range lines {
+		file, pattern, ok := methodRead(line)
+		if !ok {
+			continue
+		}
+		read = append(read, file)
+		body := readDoc(t, file)
+		for _, needle := range reMethodLiteral.FindAllString(pattern, -1) {
+			if !strings.Contains(body, needle) {
+				t.Errorf("%s's Method reads %q out of %s, which does not carry it: the line would print nothing, and the step below it would read a fact the owner was never shown", checklist70bHeading, needle, file)
+			}
+		}
+	}
+
+	// The files the Method's own claims rest on, each read by one of its lines: the site's
+	// facts, the measurement script, the README the ceilings live in, the exemption list and
+	// the two gates' own lists, and the page and components the steps look at.
+	got := strings.Join(read, "\n")
+	for _, want := range []string{
+		"website/data/site.yaml",
+		"docs/website/redesign/capture-screenshots.mjs",
+		"website/README.md",
+		"website/test/lib/exempt.mjs",
+		"website/test/meta.mjs",
+		"website/src/pages/index.astro",
+		"website/src/components/HomeInstall.astro",
+		"website/src/components/AgentChat.astro",
+		"website/src/components/ConsentBanner.astro",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s's Method never reads %s: the step that rests on it is reading the section's memory of the file instead of the file", checklist70bHeading, want)
+		}
 	}
 }
 

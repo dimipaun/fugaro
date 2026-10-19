@@ -65,6 +65,19 @@ import (
 // register's and the mobile plan's"; drop the §5.3 attribution or lowercase the
 // plan's quoted sentence; reword a quoted sentence in its source file; or
 // delete a quotation from §13 — each fails this test.
+
+// voiceSwitchSinceBaseline is the register's checks written since the baseline
+// a573870, as §13 of the design names them: the list both halves of the case
+// below read, and the list the two comments there state the length of.
+var voiceSwitchSinceBaseline = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c"}
+
+// voiceSwitchSinceBaselineCount is that list's length as the comments state it.
+// It is written out rather than derived from `len` on purpose: the drift it
+// pins is a comment that says one number over a list of another — which is what
+// happened, "the eight written since the baseline" over nine entries — and a
+// derived count would follow the list and hide it.
+const voiceSwitchSinceBaselineCount = 9
+
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
 	const checklistPath = "docs/gcp-live-checklist.md"
@@ -72,13 +85,20 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	checklist := readDoc(t, checklistPath)
 
 	// 1. The numbers the design names as written, each a summary row AND a
-	// `## Check` section — the eight written since the baseline a573870 (49,
+	// `## Check` section — the nine written since the baseline a573870 (49,
 	// 50, 52, 58, 69a, 69b, 70a, 70b, 70c), which is every number §13 names as
-	// written and so the whole list this half pins. Both halves, the way
-	// TestWebsiteChecklistHasCheck69aAnd69b pins 69a and 69b: a check that
-	// exists as a section but not as a row is one nobody reads first, and a row
-	// with no section is a command nobody can follow.
-	for _, n := range []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c"} {
+	// written and so the whole list this half pins. The list is
+	// `voiceSwitchSinceBaseline`, named once, because these comments state its
+	// length and the length is a fact about the list: they said "eight" over nine
+	// entries for a round, which is what the count this file declares is here to
+	// catch. Both
+	// halves, the way TestWebsiteChecklistHasCheck69aAnd69b pins 69a and 69b: a
+	// check that exists as a section but not as a row is one nobody reads first,
+	// and a row with no section is a command nobody can follow.
+	if len(voiceSwitchSinceBaseline) != voiceSwitchSinceBaselineCount {
+		t.Errorf("the register's checks written since the baseline a573870 are %d (%s), and this test's comments say %d: the count and the list are one fact, so the comments are what a tenth number changes", len(voiceSwitchSinceBaseline), strings.Join(voiceSwitchSinceBaseline, ", "), voiceSwitchSinceBaselineCount)
+	}
+	for _, n := range voiceSwitchSinceBaseline {
 		if !strings.Contains(checklist, "## Check "+n+":") {
 			t.Errorf("%s has no `## Check %s:` section, but %s §13 names %s as written; correct the design's reading or this test's list", checklistPath, n, designPath, n)
 		}
@@ -106,7 +126,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// 2–18 (11 also carries 11b), 19–23 and 26–38, 40–47, 49, 50, 52, 57, 58,
 	// 69a, 69b, 70a, 70b and 70c, so every one of those must have a row; and every
 	// number it says is written as a `## Check` section (19–47 with 39 living
-	// in the retire-image-mirror plan as 39a–39f, plus the eight written since
+	// in the retire-image-mirror plan as 39a–39f, plus the nine written since
 	// the baseline) must have one. Without this half the test pins only what
 	// the register must NOT have: deleting `| 57 |`, `| 11b |` or `## Check 19`
 	// left it green.
