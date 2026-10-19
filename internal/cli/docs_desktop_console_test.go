@@ -34,6 +34,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1976,6 +1977,38 @@ func TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
 // no secret in any step's environment (review of Task 4.2, round 2).
 const consoleReleaseSigningStep = "Sign, notarise and staple the console"
 
+// consoleReleaseVerifyStep is the release job's verification step, the only
+// step of the workflow that carries the Apple-network retry helper: it
+// validates the ticket on the bundle inside the mounted .dmg, the one inside
+// the extracted .zip, and the disk image itself. (The signing step's staples
+// and validations are the script's, and the helper there is the script's own
+// copy of the same text.)
+const consoleReleaseVerifyStep = "Verify the shipped artifacts, and record it"
+
+// consoleRetryHelperName is the one shell function that retries the
+// Apple-network calls (`xcrun stapler staple` and `xcrun stapler validate`),
+// defined once in console/scripts/notarize-and-staple.sh and, character for
+// character, once in the verification step. The October 2026 release run
+// (39163351646) failed at Apple's ticket-delivery lookup with NSURLErrorDomain
+// -1005, "The network connection was lost" -- a network failure, not a
+// rejection. Two of its five attempts reached Apple: the packer's own staple
+// inside `npm run package` (the fourth) and a `stapler validate` on the bundle
+// in the workflow (the fifth); the three earlier attempts never got that far
+// (setup errors, and one with no step started at all). So those calls get five
+// attempts with a growing pause, and everything else in the file still fails
+// at once.
+const consoleRetryHelperName = "retry_apple_network"
+
+// consoleNotarizeScriptPath is the script the signing step notarises, staples
+// and validates with: the packer's own notarise-and-staple is inside
+// `npm run package`, where its staple cannot be retried on its own, so the
+// workflow packs with `-c.mac.notarize=false` and does those three calls here.
+// The script is shell, not Go, so it is outside the Go/console boundary
+// (internal/cli/docs_console_boundary_test.go) -- but the test that reads it,
+// and every other test that names a console/ path, has to live in this file,
+// which is the boundary's one allow-listed entry.
+const consoleNotarizeScriptPath = "console/scripts/notarize-and-staple.sh"
+
 // consoleReleasePublishStep and consoleReleaseTagStep are the publish job's
 // release step and the release job's tag-shape step, which the behavioural
 // tests below run under bash with a faked `gh`.
@@ -2005,6 +2038,40 @@ func consoleRunLines(run string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// consoleRetryHelper is one step's Apple-network retry helper as text, from its
+// `retry_apple_network() {` line to the closing brace at the same indentation.
+// It fails the test when the step defines it twice (one definition per step,
+// called from the sites that need it) or not at all, and it returns the text
+// rather than a bool so the two definitions can be compared instead of
+// trusted.
+func consoleRetryHelper(t *testing.T, where, run string) string {
+	t.Helper()
+	head := consoleRetryHelperName + "() {"
+	lines := strings.Split(run, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) != head {
+			continue
+		}
+		if start >= 0 {
+			t.Fatalf("%s defines %s more than once: one definition per step, and the call sites name it", where, consoleRetryHelperName)
+		}
+		start = i
+	}
+	if start < 0 {
+		t.Fatalf("%s does not define %s: every Apple-network call there would fail on the first lost connection", where, consoleRetryHelperName)
+	}
+	indent := lines[start][:len(lines[start])-len(strings.TrimLeft(lines[start], " "))]
+	close := indent + "}"
+	for i := start + 1; i < len(lines); i++ {
+		if lines[i] == close {
+			return strings.Join(lines[start:i+1], "\n")
+		}
+	}
+	t.Fatalf("%s's %s has no closing %q: the rest of the step would be its body", where, consoleRetryHelperName, close)
+	return ""
 }
 
 // consoleLineIndex is the index of the first line of lines equal to want, or
@@ -2349,7 +2416,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 	warmIdx, warm := stepNamed("Download Electron and warm the packer's cache, with no secret present")
 	warmLines := consoleRunLines(warm.Run)
-	for _, want := range []string{"node node_modules/electron/install.js", `npm run package -- -c.mac.identity=null -c.extraMetadata.version="$VERSION"`, "rm -rf release"} {
+	for _, want := range []string{"node node_modules/electron/install.js", `npm run package -- -c.mac.identity=null -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, "rm -rf release"} {
 		if !slices.Contains(warmLines, want) {
 			t.Errorf("%s's warm-up step does not run %q", consoleReleaseWorkflowPath, want)
 		}
@@ -2366,10 +2433,16 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		t.Errorf("%s's order is gate %d, install %d, warm-up %d, signing %d: want the gate, then the install, then the downloads, and only then the step holding the secrets", consoleReleaseWorkflowPath, gateIdx, installIdx, warmIdx, signIdx)
 	}
 
-	// **The version is the tag's, on every pack.** console/package.json says
-	// 0.0.0; every `npm run package` stamps `-c.extraMetadata.version` from the
-	// tag step's output, through env (mutation: the stamp removed from either
-	// pack).
+	// **The version is the tag's, on every pack, and the packer never
+	// notarises.** console/package.json says 0.0.0; every `npm run package`
+	// stamps `-c.extraMetadata.version` from the tag step's output, through env
+	// (mutation: the stamp removed from either pack). And every one of them
+	// carries `-c.mac.notarize=false`, because electron-builder's own
+	// notarise-and-staple runs *inside* that command: with the switch absent it
+	// submits the bundle and staples it there, where a lost connection to
+	// Apple's ticket delivery fails the pack and the staple cannot be retried
+	// on its own -- the fourth attempt of the October 2026 release run, error
+	// 68 (mutation: the switch removed from any pack).
 	packs := 0
 	for _, step := range job.Steps {
 		for _, line := range consoleRunLines(step.Run) {
@@ -2380,21 +2453,25 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			if !strings.Contains(line, `-c.extraMetadata.version="$VERSION"`) {
 				t.Errorf("%s's step %q packs without the tag's version (%q): every release would say 0.0.0", consoleReleaseWorkflowPath, step.Name, line)
 			}
+			if !strings.Contains(line, "-c.mac.notarize=false") {
+				t.Errorf("%s's step %q packs with the packer's notarisation on (%q): electron-builder then submits and staples the bundle inside `npm run package`, where that staple is one call in the middle of the packer's process and cannot be retried on its own -- the failure the retry in %s exists for. Every pack here carries -c.mac.notarize=false, and only the owner's own `npm run package` (console/README.md, Task 4.1) leaves it on", consoleReleaseWorkflowPath, step.Name, line, consoleNotarizeScriptPath)
+			}
 			if step.Env["VERSION"] != "${{ steps.tag.outputs.version }}" {
 				t.Errorf("%s's step %q packs with VERSION = %q, want the tag step's output", consoleReleaseWorkflowPath, step.Name, step.Env["VERSION"])
 			}
 		}
 	}
-	if packs != 2 {
-		t.Errorf("%s packs %d times, want 2 (the unsigned warm-up and the signed pack)", consoleReleaseWorkflowPath, packs)
+	if packs != 3 {
+		t.Errorf("%s packs %d times, want 3 (the unsigned warm-up, the signed bundle-only pack and the pack of the .dmg and .zip from the stapled bundle)", consoleReleaseWorkflowPath, packs)
 	}
 
-	// The packer only through `npm run package`: never `npx`, never by name.
+	// The packer only through `npm run package` or its no-rebuild variant,
+	// `npm run package:targets`: never `npx`, never by name.
 	for _, j := range jobs {
 		for _, step := range j.job.Steps {
 			for _, line := range consoleRunLines(step.Run) {
 				if strings.Contains(line, "npx") || strings.Contains(line, "electron-builder") {
-					t.Errorf("%s's step %q runs %q: the packer is the lockfile's, through `npm run package`", consoleReleaseWorkflowPath, step.Name, line)
+					t.Errorf("%s's step %q runs %q: the packer is the lockfile's, through `npm run package` (or `npm run package:targets`, its `--prepackaged` variant), and never resolved outside the lockfile", consoleReleaseWorkflowPath, step.Name, line)
 				}
 			}
 		}
@@ -2457,7 +2534,9 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		`rm -f "$P12"`,
 		lines[max(writeKey, 0)],
 		`export APPLE_API_KEY="$KEY"`,
-		`xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait`,
+		// There is deliberately no `xcrun notarytool submit ... --key "$KEY"`
+		// entry here any more: the submission is the script's, and the signing
+		// step names no xcrun at all (the clause below).
 	}
 	for _, j := range jobs {
 		for _, step := range j.job.Steps {
@@ -2471,7 +2550,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 
 	// The team, on the certificate, before packing; the signature after.
 	teamBefore := at(`*"($APPLE_TEAM_ID)\""*) ;;`, false)
-	pack := at(`npm run package -- -c.extraMetadata.version="$VERSION"`, false)
+	pack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
 	if teamBefore < 0 || pack < 0 || teamBefore > pack {
 		t.Errorf("%s's signing step does not check the certificate's team before packing", consoleReleaseWorkflowPath)
 	}
@@ -2487,9 +2566,37 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		t.Errorf("%s's signing step packs before it has written the key file, handed on its path and unset the certificate", consoleReleaseWorkflowPath)
 	}
 	at(`APP="release/mac-universal/Fugaro Console.app"`, false)
-	staple := at(`if ! xcrun stapler validate "$APP"; then`, false)
-	if staple < 0 || staple+2 >= len(lines) || lines[staple+2] != "exit 1" {
-		t.Errorf("%s's signing step does not refuse an unstapled bundle", consoleReleaseWorkflowPath)
+
+	// **The bundle is notarised, stapled and validated by the script, and the
+	// .dmg and the .zip are then packed from the bundle that carries the
+	// ticket.** The first pack builds the .app alone (mutation: `--dir`
+	// dropped, so a target built from an unstapled bundle could reach the
+	// release); the script's call for the bundle comes next (mutation: the call
+	// removed, or replaced by the two `xcrun stapler` lines it exists to hold,
+	// which the both-directions clause below catches); the second pack builds
+	// the targets from the stapled bundle (mutation: `--prepackaged "$APP"`
+	// dropped).
+	//
+	// **And the second pack is the variant that does not rebuild.** `npm run
+	// package` is `npm run build && electron-builder …`; with `--prepackaged`
+	// the bundle is already built, so the compile would only be spent again --
+	// in the one step that holds the unlocked keychain and the exported `.p8`
+	// path. `npm run package:targets` is the same packer without the build
+	// (mutation: this line back to plain `npm run package --`, which the
+	// exact-line lookup below misses -- the first pack's line is not it).
+	bundlePack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
+	appScript := at(`scripts/notarize-and-staple.sh app "$APP"`, false)
+	targetsPack := at(`npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
+	if bundlePack < 0 || appScript < 0 || targetsPack < 0 || !(bundlePack < appScript && appScript < targetsPack) {
+		t.Errorf("%s's signing step does not build the bundle, notarise and staple it through %s, and only then pack the .dmg and the .zip from it (%d, %d, %d)", consoleReleaseWorkflowPath, consoleNotarizeScriptPath, bundlePack, appScript, targetsPack)
+	}
+	// The signing step makes no `xcrun` call of its own: every staple and
+	// validate is the script's, where the retry is, and the submission is the
+	// script's too (which checks Apple's status before stapling).
+	for _, line := range lines {
+		if strings.Contains(line, "xcrun") {
+			t.Errorf("%s's signing step runs %q itself: the notarisation, the staple and the validation are %s's, so that the retry is one implementation and the packer (which makes none of these calls) cannot staple where nothing can retry it", consoleReleaseWorkflowPath, line, consoleNotarizeScriptPath)
+		}
 	}
 	if strings.Contains(text, "mac-*") || strings.Contains(text, "mac-arm64") {
 		t.Errorf("%s globs or names a thin-arch output directory: the build is universal, release/mac-universal", consoleReleaseWorkflowPath)
@@ -2498,17 +2605,20 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if named < 0 || named+1 >= len(lines) || lines[named+1] != "*)" || named+3 >= len(lines) || lines[named+3] != "exit 1" {
 		t.Errorf("%s's signing step does not refuse artifacts whose names do not carry the tag's version", consoleReleaseWorkflowPath)
 	}
+	// The disk image's own round: signed, then submitted, stapled and validated
+	// by the same script, after the targets were packed (mutation: the script
+	// call for the .dmg removed, leaving a .dmg that is signed but never
+	// notarised).
 	signDMG := at(`codesign --sign "$identity" --keychain "$KEYCHAIN" --timestamp "$DMG"`, false)
-	submit := at(`xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait`, false)
-	stapleDMG := at(`xcrun stapler staple "$DMG"`, false)
-	if !(pack < signDMG && signDMG < submit && submit < stapleDMG) {
-		t.Errorf("%s's signing step does not pack, sign the .dmg, notarise it and staple it, in that order (%d, %d, %d, %d)", consoleReleaseWorkflowPath, pack, signDMG, submit, stapleDMG)
+	dmgScript := at(`scripts/notarize-and-staple.sh dmg "$DMG"`, false)
+	if !(targetsPack < signDMG && signDMG < dmgScript) {
+		t.Errorf("%s's signing step does not pack the .dmg, sign it, and then notarise and staple it through %s, in that order (%d, %d, %d)", consoleReleaseWorkflowPath, consoleNotarizeScriptPath, targetsPack, signDMG, dmgScript)
 	}
 
 	// **The record is about the shipped bytes**, and record() exits 1 on a
 	// failure; the record, the sums and both artifacts leave the job as one
 	// workflow artifact.
-	verifyIdx, verify := stepNamed("Verify the shipped artifacts, and record it")
+	verifyIdx, verify := stepNamed(consoleReleaseVerifyStep)
 	vlines := consoleRunLines(verify.Run)
 	if verify.Env["DMG"] != "${{ steps.signed.outputs.dmg }}" || verify.Env["ZIP"] != "${{ steps.signed.outputs.zip }}" {
 		t.Errorf("%s's verification step does not read the signed .dmg and .zip: %v", consoleReleaseWorkflowPath, verify.Env)
@@ -2524,13 +2634,13 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		`record codesign --verify --deep --strict --verbose=2 "$IN_DMG"`,
 		`record codesign -d --entitlements - "$IN_DMG"`,
 		`record spctl --assess --type execute --verbose=4 "$IN_DMG"`,
-		`record xcrun stapler validate "$IN_DMG"`,
+		`record retry_apple_network xcrun stapler validate "$IN_DMG"`,
 		`record ditto -x -k "$ZIP" "$UNZIP"`,
 		`record codesign --verify --deep --strict --verbose=2 "$IN_ZIP"`,
 		`record spctl --assess --type execute --verbose=4 "$IN_ZIP"`,
-		`record xcrun stapler validate "$IN_ZIP"`,
+		`record retry_apple_network xcrun stapler validate "$IN_ZIP"`,
 		`record codesign --verify --strict --verbose=2 "$DMG"`,
-		`record xcrun stapler validate "$DMG"`,
+		`record retry_apple_network xcrun stapler validate "$DMG"`,
 		`record spctl --assess --type open --context context:primary-signature -v "$DMG"`,
 		`cp "$DMG" "$ZIP" "$RECORD" "$SUMS" "$ASSETS/"`,
 	} {
@@ -2541,6 +2651,207 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if verifyIdx+1 >= len(job.Steps) || !strings.Contains(job.Steps[verifyIdx+1].Uses, "actions/upload-artifact@") ||
 		job.Steps[verifyIdx+1].With["name"] != "console-release-assets" || job.Steps[verifyIdx+1].With["if-no-files-found"] != "error" {
 		t.Errorf("%s does not upload the verified assets as the console-release-assets artifact right after verifying them", consoleReleaseWorkflowPath)
+	}
+
+	// **Every `xcrun stapler` call in the pipeline is retried, bounded -- and
+	// no other call is.** `xcrun stapler staple` and `xcrun stapler validate`
+	// reach Apple's ticket-delivery service over the network, and the October
+	// 2026 release run (39163351646) failed there with `NSURLErrorDomain
+	// Code=-1005 "The network connection was lost"` -- a lost connection, not a
+	// rejected notarisation, in two different processes: its fourth attempt in
+	// the packer's own staple inside `npm run package`, its fifth in a
+	// `stapler validate` on the bundle here.
+	// The first is why the packer's notarisation is off in this file and the
+	// script does the three calls; this clause and the script's own make sure
+	// the two that stay (the staples and validations here and in the
+	// verification step) are the only ones, and that both are retried. One
+	// helper, defined once in the script and character for character once in
+	// the verification step, retries them. **The other Apple-network calls are
+	// deliberately left alone**, and the clauses below hold that too: `xcrun
+	// notarytool submit --wait` is the submission (a rejection is final, its
+	// exit status and its "Accepted" status are both checked in the script, and
+	// it is never wrapped).
+	//
+	// The mutations this is proved against: removing the helper or its
+	// definition from either place (the definition clause), wrapping
+	// `codesign`, the `notarytool submit` or a check in it (the "nothing else"
+	// clause, which reads the script's lines as well as the steps'), adding a
+	// fresh un-retried `xcrun stapler validate` anywhere in the pipeline (the
+	// both-directions clause, which an allow-list alone does not catch),
+	// turning the packer's notarisation back on in any `npm run package` (the
+	// pack clause above), and lowering the attempt bound or the pauses (the
+	// bound clause, and TestDocsConsoleReleaseRetryHelperIsBounded, which runs
+	// the helper).
+	script := readDoc(t, consoleNotarizeScriptPath)
+	scriptLines := consoleRunLines(script)
+	scriptHelper := consoleRetryHelper(t, consoleNotarizeScriptPath, script)
+	verifyHelper := consoleRetryHelper(t, "the verification step", verify.Run)
+	// The script's definition sits at column 0 and the step's inside `run: |`,
+	// so "character for character" is over the definitions' own lines, trimmed:
+	// the body, the bound and the pauses are what must not drift.
+	unindent := func(helper string) string {
+		var out []string
+		for _, line := range strings.Split(helper, "\n") {
+			out = append(out, strings.TrimSpace(line))
+		}
+		return strings.Join(out, "\n")
+	}
+	if unindent(scriptHelper) != unindent(verifyHelper) {
+		t.Errorf("%s defines %s differently from the verification step: the two copies are one helper, character for character, or the bounded retry drifts apart", consoleNotarizeScriptPath, consoleRetryHelperName)
+	}
+	retryCalls := map[string][]string{
+		consoleNotarizeScriptPath: {
+			`if ! retry_apple_network xcrun stapler staple "$artifact"; then`,
+			`if ! retry_apple_network xcrun stapler validate "$artifact"; then`,
+		},
+		consoleReleaseVerifyStep: {
+			`record retry_apple_network xcrun stapler validate "$IN_DMG"`,
+			`record retry_apple_network xcrun stapler validate "$IN_ZIP"`,
+			`record retry_apple_network xcrun stapler validate "$DMG"`,
+		},
+	}
+	// The two places that may hold the helper, read the same way: the script's
+	// lines and every step's. The signing step may hold neither (its staple and
+	// validation are the script's).
+	sources := []struct {
+		where string
+		lines []string
+	}{{consoleNotarizeScriptPath, scriptLines}}
+	for _, j := range jobs {
+		for _, step := range j.job.Steps {
+			sources = append(sources, struct {
+				where string
+				lines []string
+			}{step.Name, consoleRunLines(step.Run)})
+		}
+	}
+	for _, src := range sources {
+		// Both directions. A line that names the helper is one of the calls
+		// above, and -- the half an allow-list alone misses -- **every line
+		// that calls `xcrun stapler` names it**: a fresh, un-retried
+		// `xcrun stapler validate` added here is a call that goes without the
+		// retry this change exists for, and would otherwise satisfy every
+		// other clause.
+		for _, line := range src.lines {
+			if strings.Contains(line, "xcrun stapler") && !strings.Contains(line, consoleRetryHelperName) {
+				t.Errorf("%s: %q calls `xcrun stapler` without the retry: every staple and every validation on the way to a release is retried, and one that is not is the lost-connection failure coming back", src.where, line)
+			}
+			if !strings.Contains(line, consoleRetryHelperName) {
+				continue
+			}
+			if line == consoleRetryHelperName+"() {" {
+				if _, ok := retryCalls[src.where]; !ok {
+					t.Errorf("%s defines %s: only %s and the verification step (%q) may, and a helper anywhere else is a retry nobody bounded", src.where, consoleRetryHelperName, consoleNotarizeScriptPath, consoleReleaseVerifyStep)
+				}
+				continue
+			}
+			if !slices.Contains(retryCalls[src.where], line) {
+				t.Errorf("%s retries %q: the helper wraps the `xcrun stapler` calls this pipeline makes (%s) and nothing else -- behind codesign, the notarytool submission and its status, the gate, the team check or the secret check it would retry something that has already decided", src.where, line, strings.Join(retryCalls[src.where], ", "))
+			}
+		}
+		for _, want := range retryCalls[src.where] {
+			if !slices.Contains(src.lines, want) {
+				t.Errorf("%s does not run %q: every `xcrun stapler` call it makes is retried", src.where, want)
+			}
+		}
+	}
+	// The script's own refusals, so a mutation of any of them is red here: the
+	// staple that never succeeds refuses with the message the signing step used
+	// to print, and so does the validation after it.
+	for _, c := range []struct {
+		call string
+	}{
+		{`if ! retry_apple_network xcrun stapler staple "$artifact"; then`},
+		{`if ! retry_apple_network xcrun stapler validate "$artifact"; then`},
+	} {
+		i := consoleLineIndex(scriptLines, c.call, false)
+		if i < 0 || i+2 >= len(scriptLines) || !strings.HasPrefix(scriptLines[i+1], `echo "::error::`) || scriptLines[i+2] != "exit 1" {
+			t.Errorf("%s's %s does not refuse a fifth failure after the message: an unstapled artifact must not reach the release", consoleNotarizeScriptPath, c.call)
+		}
+	}
+	// The submission: once, waited for, read as JSON, and refused unless Apple
+	// answered "Accepted" -- with no retry (mutation: the submit wrapped in the
+	// helper, or the status check removed so any answer stapled).
+	if !slices.ContainsFunc(scriptLines, func(line string) bool {
+		return strings.Contains(line, "xcrun notarytool submit") && strings.Contains(line, "--wait") &&
+			strings.Contains(line, "--output-format json") && !strings.Contains(line, consoleRetryHelperName)
+	}) {
+		t.Errorf("%s does not submit the artifact once with `xcrun notarytool submit ... --wait --output-format json` outside the retry", consoleNotarizeScriptPath)
+	}
+	if !strings.Contains(script, `"Accepted"`) || !strings.Contains(script, "not 'Accepted'") {
+		t.Errorf("%s does not refuse a notary answer that is not `Accepted`: a rejection is final and must not be stapled over", consoleNotarizeScriptPath)
+	}
+	// The submission's result is **the pair**: notarytool's own exit status AND
+	// the status in Apple's answer. Neither alone is the whole answer -- a
+	// non-zero exit can still leave a printed body behind, and a zero exit can
+	// print a status that is not "Accepted" -- so the refusal reads both
+	// (mutation: the exit-status half dropped, which
+	// TestDocsConsoleNotarizeAndStapleScript's "Accepted body over a non-zero
+	// exit" case catches as well, or the condition replaced by `if false;
+	// then`).
+	refuseStatus := consoleLineIndex(scriptLines, `if [ "$submit_status" -ne 0 ] || [ "$status" != "Accepted" ]; then`, false)
+	if refuseStatus < 0 || refuseStatus+2 >= len(scriptLines) || !strings.HasPrefix(scriptLines[refuseStatus+1], `echo "::error::`) || scriptLines[refuseStatus+2] != "exit 1" {
+		t.Errorf("%s does not exit 1 unless notarytool exited 0 and the status is `Accepted`: an Accepted-looking body over a non-zero exit is not an accepted submission, and a status that is not `Accepted` is a rejection -- either one refuses at once, with no staple", consoleNotarizeScriptPath)
+	}
+	// A bundle is submitted zipped by `ditto` (with --keepParent, so the .app
+	// survives the round trip); a disk image goes as itself.
+	// The no-rebuild variant exists in the manifest, and the script it is a
+	// variant *of* still builds: `package:targets` is the pinned local packer
+	// alone (mutation: a `npm run build` added to it, which would undo the
+	// point of the second pack), and Task 4.1's `package` keeps its build
+	// (mutation: the build removed from it, which would leave the owner's own
+	// command and this workflow's first pack with nothing to pack).
+	pkgBytes, err := os.ReadFile(filepath.Join("..", "..", "console", "package.json"))
+	if err != nil {
+		t.Fatalf("console/package.json is unreadable: %v", err)
+	}
+	var manifest struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(pkgBytes, &manifest); err != nil {
+		t.Fatalf("console/package.json is not JSON: %v", err)
+	}
+	if got := manifest.Scripts["package:targets"]; got != "electron-builder --mac --universal --publish never" {
+		t.Errorf("console/package.json's `package:targets` is %q, want the pinned local packer alone with no `npm run build`: the pack that runs with --prepackaged packs a bundle that is already built, in the step that holds the unlocked keychain and the exported .p8 path", got)
+	}
+	if !strings.Contains(manifest.Scripts["package"], "npm run build") {
+		t.Errorf("console/package.json's `package` is %q: Task 4.1's command -- and this workflow's first pack -- builds before it packs", manifest.Scripts["package"])
+	}
+	if !slices.Contains(scriptLines, `ditto -c -k --keepParent "$artifact" "$submission"`) {
+		t.Errorf("%s does not zip the bundle with `ditto -c -k --keepParent` before submitting it", consoleNotarizeScriptPath)
+	}
+	if !strings.Contains(script, `submission="$artifact"`) {
+		t.Errorf("%s does not submit a disk image as itself: notarytool takes a .dmg directly", consoleNotarizeScriptPath)
+	}
+	// The workflow invokes the script by the path a step running in console/
+	// resolves -- and the file is executable, or the runner cannot start it.
+	info, err := os.Stat(filepath.Join("..", "..", consoleNotarizeScriptPath))
+	if err != nil {
+		t.Fatalf("%s is missing: the signing step calls it and the retry lives in it (%v)", consoleNotarizeScriptPath, err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("%s is not executable (mode %v): the signing step runs it directly, so the runner would report a permission error instead of the work", consoleNotarizeScriptPath, info.Mode().Perm())
+	}
+	// The helper is bounded: five attempts, a growing pause between them, and
+	// each attempt's number and exit code printed.
+	for _, c := range []struct{ where, helper string }{
+		{consoleNotarizeScriptPath, scriptHelper},
+		{"verification", verifyHelper},
+	} {
+		for _, want := range []string{
+			`while [ "$attempt" -le 5 ]; do`,
+			`echo "apple-network attempt $attempt of 5: $* exited $status"`,
+			`if [ "$attempt" -eq 5 ]; then`,
+			`return "$status"`,
+			`1) sleep 15 ;;`,
+			`2) sleep 30 ;;`,
+			`3) sleep 60 ;;`,
+			`4) sleep 90 ;;`,
+		} {
+			if !strings.Contains(c.helper, want) {
+				t.Errorf("%s's %s step's %s lacks %q: five attempts, a growing pause, and each attempt's number and exit code printed", consoleReleaseWorkflowPath, c.where, consoleRetryHelperName, want)
+			}
+		}
 	}
 
 	// **The publish job**: downloads that artifact, re-checks every asset
@@ -2632,16 +2943,70 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 
 	// And while both files exist, they are the same file.
+	//
+	// This clause is the one that goes red when a staged change has not been
+	// copied in yet, and its failure is not a nuisance to be silenced: CI's
+	// `test` job is red on every push to main while it holds, and
+	// scripts/release-gate.sh requires a check run named `test`, so every tag
+	// is refused -- the CLI's releases included -- until the owner copies the
+	// staged file in. Stop the merge, do not delete the assertion.
 	if _, statErr := os.Stat(filepath.Join("..", "..", appliedConsoleReleasePath)); statErr == nil {
 		applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if string(applied) != text {
-			t.Errorf("%s differs from the staged %s", appliedConsoleReleasePath, consoleReleaseWorkflowPath)
+			t.Errorf("%s differs from the staged %s: the staged file has a change the owner has not copied in yet. Do not merge before running `cp %s %s` and committing it -- until then main's `test` job is red and scripts/release-gate.sh refuses every tag, the CLI's included (docs/pending-workflows/README.md, %q)",
+				appliedConsoleReleasePath, consoleReleaseWorkflowPath, consoleReleaseWorkflowPath, appliedConsoleReleasePath, "## `console-release.yml`")
 		}
 	} else if !os.IsNotExist(statErr) {
 		t.Fatal(statErr)
+	}
+}
+
+// TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn is the human half of the
+// byte-identity clause above. While the staged file differs from the applied
+// one, `docs/pending-workflows/README.md`'s `console-release.yml` section must
+// say so in the owner's own terms: that this is the state and not drift, that
+// the applied copy is the older text, and the one command that fixes it. The
+// failure of the byte-identity clause is a red test; this one is why a reader
+// of the staging directory -- the person who has to act -- is told, without
+// having to run the tests.
+//
+// The mutation that proves it: deleting the "Re-copy required" paragraph from
+// that section while the two files differ makes this red. Once the owner has
+// copied the file in, the two are identical and this test asserts nothing, as
+// it should.
+func TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn(t *testing.T) {
+	staged, err := os.ReadFile(filepath.Join("..", "..", consoleReleaseWorkflowPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
+	if os.IsNotExist(err) {
+		t.Skipf("%s does not exist yet: there is nothing to copy in, and nothing for the README to say", appliedConsoleReleasePath)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(staged) == string(applied) {
+		return
+	}
+	section := consoleReadmeSection(t, readDoc(t, "docs/pending-workflows/README.md"), "## `console-release.yml`")
+	for _, want := range []string{
+		// That the staged file has a change the applied copy does not.
+		"Re-copy required",
+		// That it is the applied copy which is behind, not the staged one.
+		"the applied copy is the older text",
+		// Why the reader is looking at a red test rather than at a silently
+		// drifted file, and where that test is.
+		"TestDocsConsoleReleaseWorkflowIsStagedAndPinned",
+		// And the one command that fixes it.
+		"cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-release.yml` section lacks %q, and the staged file differs from the applied %s: the owner is the one who has to copy it in, and this is where they read it", want, appliedConsoleReleasePath)
+		}
 	}
 }
 
@@ -2774,6 +3139,482 @@ func TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions(t *testing.T) {
 		if !ok || out != "version="+c.version+"\n" {
 			t.Errorf("tag %q: ok=%v output %q, want version=%s", c.tag, ok, out, c.version)
 		}
+	}
+}
+
+// TestDocsConsoleReleaseRetryHelperIsBounded runs the Apple-network retry
+// helper -- the text console/scripts/notarize-and-staple.sh carries, which the
+// verification step carries again -- under bash, with a fake `sleep` that
+// records the pause instead of taking it and a fake command that fails a set
+// number of times. The pins in TestDocsConsoleReleaseWorkflowIsStagedAndPinned
+// read the helper's text; this runs it.
+//
+// What it fixes: a command that succeeds first time is run once, with no
+// pause; a command that loses the connection twice is retried after 15 and 30
+// seconds and the caller goes on; a command that never gets there is run five
+// times with 15, 30, 60 and 90 seconds between them and **only then** returns
+// its exit code, so a ticket that is genuinely absent still refuses to
+// publish. The mutations that prove it: returning after the first failure
+// (`return "$status"` moved above the attempt bound) makes the second and third
+// cases red, dropping a `sleep` makes the pauses red, and printing no attempt
+// number makes every case red.
+func TestDocsConsoleReleaseRetryHelperIsBounded(t *testing.T) {
+	helper := consoleRetryHelper(t, consoleNotarizeScriptPath, readDoc(t, consoleNotarizeScriptPath))
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+
+	for _, c := range []struct {
+		name    string
+		fails   int
+		code    string
+		want    []string // in order, each on its own line
+		notWant []string
+	}{
+		{
+			name:  "succeeds first time: one attempt, no pause",
+			fails: 0,
+			code:  "68",
+			want: []string{
+				"apple-network attempt 1 of 5: flaky exited 0",
+				"helper ok",
+			},
+			notWant: []string{"attempt 2", "pause"},
+		},
+		{
+			name:  "the connection is lost twice: retried, then the caller goes on",
+			fails: 2,
+			code:  "68",
+			want: []string{
+				"apple-network attempt 1 of 5: flaky exited 68",
+				"pause 15",
+				"apple-network attempt 2 of 5: flaky exited 68",
+				"pause 30",
+				"apple-network attempt 3 of 5: flaky exited 0",
+				"helper ok",
+			},
+			notWant: []string{"attempt 4", "pause 60"},
+		},
+		{
+			name:  "never gets there: five attempts, then the caller refuses",
+			fails: 99,
+			code:  "68",
+			want: []string{
+				"apple-network attempt 1 of 5: flaky exited 68",
+				"pause 15",
+				"apple-network attempt 2 of 5: flaky exited 68",
+				"pause 30",
+				"apple-network attempt 3 of 5: flaky exited 68",
+				"pause 60",
+				"apple-network attempt 4 of 5: flaky exited 68",
+				"pause 90",
+				"apple-network attempt 5 of 5: flaky exited 68",
+				"helper failed 68",
+			},
+			notWant: []string{"attempt 6"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// `sleep` is not a bash builtin, so the helper's pauses go through
+			// this: it records what it was asked to wait for and returns at
+			// once, which is what keeps this test from taking three minutes.
+			sleep := "#!/usr/bin/env bash\necho \"pause $1\"\n"
+			// A command that fails the first $FLAKY_FAILS times with
+			// $FLAKY_CODE and then succeeds, so one test body covers "the
+			// network came back" and "it never did".
+			flaky := `#!/usr/bin/env bash
+n=$(cat "$FLAKY_COUNTER" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$FLAKY_COUNTER"
+if [ "$n" -le "$FLAKY_FAILS" ]; then
+  exit "$FLAKY_CODE"
+fi
+exit 0
+`
+			for name, body := range map[string]string{"sleep": sleep, "flaky": flaky} {
+				if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			script := "set -euo pipefail\n" + helper + `
+if retry_apple_network flaky; then
+  echo "helper ok"
+else
+  echo "helper failed $?"
+fi
+`
+			cmd := exec.Command(bash, "-e", "-c", script)
+			cmd.Dir = dir
+			cmd.Env = append([]string{
+				"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"FLAKY_COUNTER=" + filepath.Join(dir, "counter"),
+				"FLAKY_FAILS=" + strconv.Itoa(c.fails),
+				"FLAKY_CODE=" + c.code,
+			}, "HOME="+dir)
+			out, runErr := cmd.CombinedOutput()
+			if runErr != nil {
+				t.Fatalf("the helper's script failed to run (%v); output:\n%s", runErr, out)
+			}
+			lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+			at := 0
+			for _, want := range c.want {
+				next := consoleLineIndex(lines[at:], want, true)
+				if next < 0 {
+					t.Errorf("the helper's output does not carry %q after %d line(s); output:\n%s", want, at, out)
+					break
+				}
+				at += next + 1
+			}
+			for _, bad := range c.notWant {
+				if strings.Contains(string(out), bad) {
+					t.Errorf("the helper's output carries %q, which it must not; output:\n%s", bad, out)
+				}
+			}
+		})
+	}
+}
+
+// TestDocsConsoleNotarizeAndStapleScript runs console/scripts/notarize-and-
+// staple.sh -- the signing step's whole notarise/staple/validate path, and the
+// reason the packer's own notarisation is off -- under bash, with fake `xcrun`,
+// `ditto` and `sleep` on PATH. The pins above read the script's text; this runs
+// it, which is the only way to hold the three properties the change exists for:
+//
+//   - a `xcrun stapler` call that loses the connection recovers inside five
+//     attempts (15/30/60/90 seconds apart) and the script goes on;
+//   - a `xcrun stapler` call that never gets there is attempted five times and
+//     **then** refused, non-zero, with the "carries no stapled ticket" message,
+//     so a ticket that is genuinely absent still refuses to publish;
+//   - a submission whose status is not `Accepted` -- a rejection -- is refused
+//     at once, and so is an "Accepted" body over a non-zero `notarytool` exit:
+//     either way no `stapler` call is made at all, no pause is taken, and the
+//     script exits non-zero. **That is the "nothing else is retried" half**,
+//     and the fake `xcrun` proves it by logging every call it is given.
+//
+// The mutations this was written against: wrapping the submission in the
+// helper (case 5's "submit once" plus the "no pause" clause go red), accepting
+// any status (case 5 passes and the refusal clause of the pinned test goes
+// red), accepting the status and ignoring `notarytool`'s exit (case 6, which
+// is an "Accepted" body printed over a non-zero exit, and the pair clause of
+// the pinned test), returning after the first failure (case 2), and dropping
+// the fifth attempt (case 3).
+func TestDocsConsoleNotarizeAndStapleScript(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+
+	for _, c := range []struct {
+		name          string
+		kind          string
+		status        string
+		submitExit    string
+		stapleFails   int
+		validateFails int
+		noCredentials bool
+		ok            bool
+		want          []string // in order, each one line of the script's own output
+		wantOnOneLine []string // each "a|b": one line carrying all of a and b
+		wantCalls     []string // in order, each somewhere in the fake `xcrun`/`ditto` log
+		notWant       []string
+	}{
+		{
+			name:   "accepted, and both stapler calls succeed first time",
+			kind:   "app",
+			status: "Accepted",
+			ok:     true,
+			want: []string{
+				"notarised:",
+				"attempt 1 of 5: xcrun stapler staple",
+				"attempt 1 of 5: xcrun stapler validate",
+				"stapled and validated:",
+			},
+			wantOnOneLine: []string{
+				"attempt 1 of 5: xcrun stapler staple|exited 0",
+				"attempt 1 of 5: xcrun stapler validate|exited 0",
+			},
+			wantCalls: []string{"ditto -c -k --keepParent", "xcrun notarytool submit", "xcrun stapler staple", "xcrun stapler validate"},
+			notWant:   []string{"pause", "attempt 2", "::error::"},
+		},
+		{
+			name:        "the connection is lost twice at the staple: retried, then it goes on",
+			kind:        "app",
+			status:      "Accepted",
+			stapleFails: 2,
+			ok:          true,
+			want: []string{
+				"notarised:",
+				"attempt 1 of 5: xcrun stapler staple",
+				"pause 15",
+				"attempt 2 of 5: xcrun stapler staple",
+				"pause 30",
+				"attempt 3 of 5: xcrun stapler staple",
+				"attempt 1 of 5: xcrun stapler validate",
+				"stapled and validated:",
+			},
+			wantOnOneLine: []string{
+				"attempt 1 of 5: xcrun stapler staple|exited 68",
+				"attempt 3 of 5: xcrun stapler staple|exited 0",
+			},
+			notWant: []string{"pause 60", "attempt 4", "::error::"},
+		},
+		{
+			name:          "the connection never comes back at the validation: refused after five",
+			kind:          "app",
+			status:        "Accepted",
+			validateFails: 99,
+			ok:            false,
+			want: []string{
+				"attempt 1 of 5: xcrun stapler staple",
+				"attempt 1 of 5: xcrun stapler validate",
+				"pause 15",
+				"pause 30",
+				"pause 60",
+				"pause 90",
+				"attempt 5 of 5: xcrun stapler validate",
+				"carries no stapled ticket: refusing to publish artifacts that would carry it unstapled",
+			},
+			wantOnOneLine: []string{
+				"attempt 1 of 5: xcrun stapler staple|exited 0",
+				"attempt 1 of 5: xcrun stapler validate|exited 68",
+				"attempt 5 of 5: xcrun stapler validate|exited 68",
+			},
+			notWant: []string{"attempt 6", "stapled and validated:"},
+		},
+		{
+			name:        "the staple never gets there: five attempts, then the refusal",
+			kind:        "app",
+			status:      "Accepted",
+			stapleFails: 99,
+			ok:          false,
+			want: []string{
+				"attempt 1 of 5: xcrun stapler staple",
+				"pause 15",
+				"pause 30",
+				"pause 60",
+				"pause 90",
+				"attempt 5 of 5: xcrun stapler staple",
+				"carries no stapled ticket: refusing to publish artifacts that would carry it unstapled",
+			},
+			wantOnOneLine: []string{"attempt 5 of 5: xcrun stapler staple|exited 68"},
+			notWant:       []string{"attempt 6", "xcrun stapler validate", "stapled and validated:"},
+		},
+		{
+			name:       "a rejected submission reported with a clean exit: no staple, no retry",
+			kind:       "app",
+			status:     "Invalid",
+			submitExit: "0",
+			ok:         false,
+			want: []string{
+				// Apple's answer, printed, and the refusal read out of its
+				// status: notarytool exited 0, and the submission is still a
+				// rejection. (**This case exits 0 on purpose** -- the status
+				// half of the pair is what refuses here, and the case below is
+				// the exit-status half. A case that failed on both would pass
+				// with either half removed.)
+				`"status":"Invalid"`,
+				"not 'Accepted'",
+			},
+			// The submission happened exactly once.
+			wantCalls: []string{"xcrun notarytool submit"},
+			notWant:   []string{"stapler", "pause", "attempt 2", "stapled and validated:"},
+		},
+		{
+			name:       "an Accepted body over a non-zero notarytool exit: refused, not stapled",
+			kind:       "app",
+			status:     "Accepted",
+			submitExit: "1",
+			ok:         false,
+			want: []string{
+				// Apple's answer says Accepted, and notarytool's own exit says
+				// the run did not finish cleanly. Both are required to be good,
+				// so this refuses -- at once, with no staple, exactly like a
+				// rejection.
+				`"status":"Accepted"`,
+				"notarytool exited 1",
+			},
+			wantCalls: []string{"xcrun notarytool submit"},
+			notWant:   []string{"stapler", "pause", "attempt 2", "stapled and validated:"},
+		},
+		{
+			name:   "a disk image goes to the notary service as itself: no zip step",
+			kind:   "dmg",
+			status: "Accepted",
+			ok:     true,
+			want: []string{
+				"notarised:",
+				"stapled and validated:",
+			},
+			wantCalls: []string{"xcrun notarytool submit", "xcrun stapler staple", "xcrun stapler validate"},
+			notWant:   []string{"ditto", "::error::"},
+		},
+		{
+			name:          "a missing credential refuses before anything reaches Apple",
+			kind:          "app",
+			status:        "Accepted",
+			noCredentials: true,
+			ok:            false,
+			wantOnOneLine: []string{"APPLE_API_KEY|refusing to notarise"},
+			notWant:       []string{"xcrun", "ditto", "stapler"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			work := filepath.Join(dir, "work")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			artifact := filepath.Join(work, "Fugaro Console.app")
+			if c.kind == "dmg" {
+				artifact = filepath.Join(work, "Fugaro Console-1.2.3-universal.dmg")
+				if err := os.WriteFile(artifact, []byte("disk image"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.MkdirAll(artifact, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			// The fake `xcrun`: it logs every call it is given -- which is how
+			// "no stapler call was made" is asserted -- answers a submission
+			// with Apple's JSON shape, and fails `stapler staple` or `stapler
+			// validate` a set number of times with the exit status the real
+			// one uses when the connection is lost (68).
+			xcrun := `#!/usr/bin/env bash
+echo "xcrun $*" >> "$FAKE_LOG"
+case "$1" in
+  notarytool)
+    echo "{\"id\":\"2efe2717\",\"message\":\"Successfully uploaded file\",\"status\":\"$FAKE_STATUS\"}"
+    exit "${FAKE_SUBMIT_EXIT:-0}"
+    ;;
+  stapler)
+    n=$(cat "$FAKE_COUNTER.$2" 2>/dev/null || echo 0)
+    n=$((n + 1))
+    echo "$n" > "$FAKE_COUNTER.$2"
+    case "$2" in
+      staple) fails="${FAKE_STAPLE_FAILS:-0}" ;;
+      validate) fails="${FAKE_VALIDATE_FAILS:-0}" ;;
+      *) fails=0 ;;
+    esac
+    if [ "$n" -le "$fails" ]; then
+      echo "CloudKit: the network connection was lost" >&2
+      exit 68
+    fi
+    exit 0
+    ;;
+esac
+echo "fake xcrun: unexpected call: $*" >&2
+exit 3
+`
+			// `ditto` writes the archive it was asked for, so the submission
+			// path is a real file; `sleep` records the pause and returns, which
+			// is what keeps this test from taking minutes.
+			ditto := `#!/usr/bin/env bash
+echo "ditto $*" >> "$FAKE_LOG"
+for last in "$@"; do :; done
+: > "$last"
+`
+			sleep := `#!/usr/bin/env bash
+echo "pause $1"
+`
+			for name, body := range map[string]string{"xcrun": xcrun, "ditto": ditto, "sleep": sleep} {
+				if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// The script runs with the fake bin directory as its cwd, so it is
+			// named by its absolute path -- the same file the signing step
+			// runs, not a copy of it.
+			scriptPath, err := filepath.Abs(filepath.Join("..", "..", consoleNotarizeScriptPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bash, scriptPath, c.kind, artifact)
+			cmd.Dir = dir
+			env := []string{
+				"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"HOME=" + dir,
+				"TMPDIR=" + dir,
+				"FAKE_LOG=" + filepath.Join(dir, "calls.log"),
+				"FAKE_COUNTER=" + filepath.Join(dir, "counter"),
+				"FAKE_STATUS=" + c.status,
+				"FAKE_SUBMIT_EXIT=" + c.submitExit,
+				"FAKE_STAPLE_FAILS=" + strconv.Itoa(c.stapleFails),
+				"FAKE_VALIDATE_FAILS=" + strconv.Itoa(c.validateFails),
+			}
+			if !c.noCredentials {
+				env = append(env,
+					"APPLE_API_KEY="+filepath.Join(dir, "key.p8"),
+					"APPLE_API_KEY_ID=ABCDE12345",
+					"APPLE_API_ISSUER=00000000-0000-0000-0000-000000000000",
+				)
+			}
+			cmd.Env = env
+			out, runErr := cmd.CombinedOutput()
+			if (runErr == nil) != c.ok {
+				t.Errorf("the script's exit was %v, want ok=%v; output:\n%s", runErr, c.ok, out)
+			}
+			calls, err := os.ReadFile(filepath.Join(dir, "calls.log"))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			// The script's own lines and the calls it made are checked
+			// separately, each in order: the call log is where "no stapler
+			// call was made at all" and "the submission happened once" are
+			// read from.
+			inOrder := func(what, text string, want []string) {
+				t.Helper()
+				lines := strings.Split(text, "\n")
+				at := 0
+				for _, w := range want {
+					next := consoleLineIndex(lines[at:], w, true)
+					if next < 0 {
+						t.Errorf("the %s does not carry %q after %d line(s); output:\n%s\ncalls:\n%s", what, w, at, out, calls)
+						return
+					}
+					at += next + 1
+				}
+			}
+			inOrder("script's output", string(out), c.want)
+			inOrder("call log", string(calls), c.wantCalls)
+			for _, spec := range c.wantOnOneLine {
+				parts := strings.Split(spec, "|")
+				found := false
+				for _, line := range strings.Split(string(out), "\n") {
+					all := true
+					for _, part := range parts {
+						if !strings.Contains(line, part) {
+							all = false
+							break
+						}
+					}
+					if all {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("no line of the script's output carries all of %q -- each attempt's number AND its exit code are printed; output:\n%s", parts, out)
+				}
+			}
+			both := string(out) + string(calls)
+			for _, bad := range c.notWant {
+				if strings.Contains(both, bad) {
+					t.Errorf("the script's output or calls carry %q, which they must not; output:\n%s\ncalls:\n%s", bad, out, calls)
+				}
+			}
+		})
 	}
 }
 
@@ -3793,6 +4634,123 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 		id := m[1]
 		if !regexp.MustCompile(`(^|[^0-9.])` + regexp.QuoteMeta(id) + `([^0-9]|$)`).MatchString(rule) {
 			t.Errorf("Task %s's heading carries SECURITY-SENSITIVE but rule 9's list does not name it: the rule says the list is the headings", id)
+		}
+	}
+}
+
+// TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes: console/test/fixtures/
+// normal.ndjson is the shape of one real 0.8.6 `watch --json` document with
+// every value invented, so its shape is the one thing in it that must stay the
+// CLI's. Every document in it is decoded into the real watch.JSONDoc with
+// DisallowUnknownFields (an unknown key, or a value of the wrong JSON type,
+// fails), and then every level is walked against the struct: each key present
+// is a tag of that struct, in the struct's own order (the CLI marshals in field
+// order), and each tag without omitempty is present. Mutations: an unknown key
+// added to the fixture; a required key dropped; a key moved; a number made a
+// string.
+func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
+	lines := strings.Split(strings.TrimSpace(readDoc(t, "console/test/fixtures/normal.ndjson")), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("normal.ndjson holds %d lines, want a header and at least one record", len(lines))
+	}
+	var docs int
+	for i, line := range lines[1:] {
+		var rec struct {
+			Document json.RawMessage `json:"document"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("record %d: %v", i+1, err)
+		}
+		if rec.Document == nil {
+			continue
+		}
+		docs++
+		dec := json.NewDecoder(bytes.NewReader(rec.Document))
+		dec.DisallowUnknownFields()
+		var doc watch.JSONDoc
+		if err := dec.Decode(&doc); err != nil {
+			t.Fatalf("record %d does not decode into watch.JSONDoc: %v", i+1, err)
+		}
+		checkJSONShape(t, fmt.Sprintf("record %d", i+1), rec.Document, reflect.TypeOf(watch.JSONDoc{}))
+	}
+	if docs == 0 {
+		t.Fatal("normal.ndjson holds no document")
+	}
+}
+
+// orderedJSONKeys returns an object's keys in the order they were written.
+func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		t.Fatalf("not an object: %s", raw)
+	}
+	var keys []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, tok.(string))
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return keys
+}
+
+// checkJSONShape walks one JSON value against a struct type: keys in struct
+// order, required keys present, recursing into nested structs and slices.
+func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.Type) {
+	t.Helper()
+	for rt.Kind() == reflect.Ptr {
+		if string(raw) == "null" {
+			return
+		}
+		rt = rt.Elem()
+	}
+	switch rt.Kind() {
+	case reflect.Slice:
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			t.Errorf("%s: want an array: %v", where, err)
+			return
+		}
+		for i, item := range items {
+			checkJSONShape(t, fmt.Sprintf("%s[%d]", where, i), item, rt.Elem())
+		}
+	case reflect.Struct:
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &members); err != nil {
+			t.Errorf("%s: want an object: %v", where, err)
+			return
+		}
+		type field struct {
+			name     string
+			required bool
+			typ      reflect.Type
+		}
+		var fields []field
+		for i := 0; i < rt.NumField(); i++ {
+			name, opts, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+			fields = append(fields, field{name, !strings.Contains(opts, "omitempty"), rt.Field(i).Type})
+		}
+		var want []string
+		for _, f := range fields {
+			if _, ok := members[f.name]; ok {
+				want = append(want, f.name)
+			} else if f.required {
+				t.Errorf("%s: required key %q is missing (internal/watch/json.go has it without omitempty)", where, f.name)
+			}
+		}
+		if got := orderedJSONKeys(t, raw); !slices.Equal(got, want) {
+			t.Errorf("%s: keys %v, want the struct's order %v", where, got, want)
+		}
+		for _, f := range fields {
+			if v, ok := members[f.name]; ok {
+				checkJSONShape(t, where+"."+f.name, v, f.typ)
+			}
 		}
 	}
 }

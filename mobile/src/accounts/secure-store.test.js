@@ -236,3 +236,155 @@ test('there is no shared token store: every key belongs to exactly one account',
     (await store.get('phone', 'idToken')).secret.reveal(),
   );
 });
+
+// --- use: the one path to the material, added by P3.6 ----------------------
+//
+// P3.6's client signs an inbox message with D171's per-pairing key and verifies
+// the consumer's tags with it, and the only way to the material is `reveal()`,
+// which the boundary scan allows in `secret.js` and this file alone. These
+// tests are the ones that make `use` a safe third option rather than a third
+// reveal site: the material is an argument to a callback and cannot come back
+// out of it.
+
+test('use hands the material to the callback, and back only what it returned', async () => {
+  const { store } = makeStore();
+  await store.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);
+  const seen = [];
+  const result = await store.use('laptop', 'macKey', (material) => {
+    seen.push(material);
+    return 'the callback\'s own value';
+  });
+  assert.deepEqual(result, { ok: true, result: 'the callback\'s own value' });
+  assert.deepEqual(seen, [MAC_KEY], 'the callback was given the material');
+  // ... and the material is not in what came back.
+  assert.equal(JSON.stringify(result).includes(MAC_KEY), false);
+});
+
+test('an async callback is awaited, and its value is what comes back', async () => {
+  const { store } = makeStore();
+  await store.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);
+  const result = await store.use('laptop', 'macKey', async (material) => {
+    await Promise.resolve();
+    return material.length;
+  });
+  assert.deepEqual(result, { ok: true, result: MAC_KEY.length });
+});
+
+test('a callback that returns the material is refused as a leak', async () => {
+  // The fence. A caller that returned the key -- directly, in an array, under
+  // a key, nested -- is refused rather than handed a result it could print.
+  const { store } = makeStore();
+  await store.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);
+  for (const result of [
+    (material) => material,
+    (material) => `key: ${material}`,
+    (material) => [material],
+    (material) => ({ key: material }),
+    (material) => ({ a: { b: { c: material } } }),
+    (material) => ({ [material]: 'the key as a name' }),
+  ]) {
+    const refused = await store.use('laptop', 'macKey', result);
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, SECURE_STORE_CODES.LEAKED);
+    assert.equal(refused.field, 'fn');
+    assert.equal(JSON.stringify(refused).includes(MAC_KEY), false, 'the refusal carries no material');
+  }
+  // The control: values that do NOT carry the key come back, so the fence is
+  // not simply refusing everything.
+  const ok = await store.use('laptop', 'macKey', () => ({ digest: 'ab'.repeat(32), n: 1, list: ['x'] }));
+  assert.equal(ok.ok, true);
+});
+
+test('the fence catches the material coming out, not its characters coinciding', async () => {
+  // A substring test cannot tell "the callback handed the key back" from "the
+  // callback handed back a value that happens to contain the key's characters",
+  // and a SHORT key makes the second the common case: the value P3.6's client
+  // returns from `use` is the 64-hex tag it made with that key, and a
+  // two-character key is inside such a tag more often than not. Refusing that as
+  // a leak refuses the phone's every send over a coincidence.
+  const { store } = makeStore();
+  const SHORT = 'ab';
+  await store.put('laptop', 'macKey', secret('macKey', SHORT).secret);
+  const tag = '790f123b35ca84d80b4e7517b0940b1dd1f203dcf8abfebae5952599ac90b1b6';
+  assert.equal(tag.includes(SHORT), true, 'the coincidence this test is about');
+  assert.deepEqual(await store.use('laptop', 'macKey', () => tag), { ok: true, result: tag });
+  assert.deepEqual(await store.use('laptop', 'macKey', () => ({ tag, n: 1 })), {
+    ok: true,
+    result: { tag, n: 1 },
+  });
+  // ... and the leak a short key really can have is still refused: the material
+  // itself, in a string that is not a longer word around it, in a list, under a
+  // value, and as a name.
+  for (const result of [
+    (material) => material,
+    (material) => `key: ${material}`,
+    (material) => [material],
+    (material) => ({ key: material }),
+    (material) => ({ [material]: 'the key as a name' }),
+  ]) {
+    const refused = await store.use('laptop', 'macKey', result);
+    assert.equal(refused.code, SECURE_STORE_CODES.LEAKED, String(result));
+    assert.equal(JSON.stringify(refused).includes(SHORT), false, 'the refusal carries no material');
+  }
+  // The rule for a secret long enough to be searched for is untouched: material
+  // embedded in a longer value is still a leak, whatever is around it.
+  const { store: long } = makeStore();
+  await long.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);
+  for (const value of [`key: ${MAC_KEY}`, `x${MAC_KEY}y`, `${MAC_KEY}${MAC_KEY}`]) {
+    assert.equal((await long.use('laptop', 'macKey', () => value)).code, SECURE_STORE_CODES.LEAKED);
+  }
+});
+
+test('use refuses a callback that is not a function, and reaches one item', async () => {
+  const { store } = makeStore();
+  await store.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);
+  await store.put('laptop', 'idToken', secret('idToken', ID_TOKEN).secret);
+  for (const notFn of [undefined, null, 'fn', 42, {}]) {
+    const refused = await store.use('laptop', 'macKey', notFn);
+    assert.equal(refused.code, SECURE_STORE_CODES.NOT_A_CALLBACK, String(notFn));
+  }
+  assert.equal((await store.use('a.b', 'macKey', () => 1)).code, SECURE_STORE_CODES.BAD_ACCOUNT);
+  assert.equal((await store.use('laptop', 'password', () => 1)).code, SECURE_STORE_CODES.UNKNOWN_ITEM);
+  // The item asked for is the item handed over: a caller that asked for the
+  // token and was given the MAC key would sign with the wrong material.
+  const got = await store.use('laptop', 'idToken', (material) => material === ID_TOKEN);
+  assert.deepEqual(got, { ok: true, result: true });
+});
+
+test('use reports a missing item as absent, so an unpaired phone can be told apart', async () => {
+  // D111's pairing state is the presence of the item, and P3.6 turns this
+  // refusal into "no key": an unpaired account must not sign, and must not be
+  // able to write anything at all.
+  const { store } = makeStore();
+  const refused = await store.use('laptop', 'macKey', () => 'never called');
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, SECURE_STORE_CODES.ABSENT);
+});
+
+test('a callback that throws is a refusal, and what it threw is not carried', async () => {
+  const { store } = makeStore();
+  await store.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);
+  const refused = await store.use('laptop', 'macKey', () => {
+    throw new Error(`failed while using ${MAC_KEY}`);
+  });
+  assert.equal(refused.code, SECURE_STORE_CODES.CALLBACK_FAILED);
+  // The thrown message quoted the material; the refusal does not.
+  assert.equal(JSON.stringify(refused).includes(MAC_KEY), false);
+});
+
+test('use on an item the platform cannot read is that refusal, not a silent empty key', async () => {
+  // A locked phone: the read fails, and a caller must not sign with nothing.
+  const failing = {
+    async getItem() { throw new Error('locked'); },
+    async setItem() {},
+    async deleteItem() {},
+  };
+  const store = new SecretStore(failing);
+  const refused = await store.use('laptop', 'macKey', () => 'never called');
+  assert.equal(refused.code, SECURE_STORE_CODES.STORE_FAILED);
+  // ... and a value this module could not have written is `unreadable`.
+  const odd = new MemorySecureStore();
+  await odd.setItem(keyOf('laptop', 'macKey'), '   ');
+  const unreadable = await new SecretStore(odd).use('laptop', 'macKey', () => 'never called');
+  assert.equal(unreadable.code, SECURE_STORE_CODES.UNREADABLE);
+});

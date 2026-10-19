@@ -96,12 +96,15 @@ analytics:
   enabled: true
   measurement_id: "G-DZ4F35D3EH"
 
-# The features the site renders only when they exist. The console is designed
-# and not shipped (its release notes list it under "Not in this release"), so
-# its section renders as a placeholder with no link and no button, and the test
-# above refuses a download URL anywhere under website/ while this flag is false
-# (D95). The explainer video does not exist yet, so the hero carries no player,
-# no iframe, no poster and no play button (D107).
+# The features the site renders only when they exist. The console is built for
+# macOS and has not been published: console/ holds the application, the workflow
+# that signs, notarises and staples its .dmg and .zip is
+# .github/workflows/console-release.yml, and the release those assets would go
+# into -- console-vX.Y.Z, the console's own tag -- does not exist. So its section
+# renders as a placeholder with no link and no button, and the test above refuses
+# a download URL anywhere under website/ while this flag is false (D95). The
+# explainer video does not exist yet, so the hero carries no player, no iframe,
+# no poster and no play button (D107).
 #
 # Two tasks turn these on, and each of them edits the boundary test in the same
 # commit (§7's file-conflict note): W3.1 flips `console_downloads` with the
