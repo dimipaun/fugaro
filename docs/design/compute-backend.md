@@ -582,14 +582,21 @@ Manager secret, which is **C2**, rejected above (the shared per-(`profile`,
 `account`) VM account reads every peer's secret, and revocation is not
 fail-closed). So `jobDefinition` **refuses a launch carrying a secret entry**
 before the create, definitively (`ErrRejected`) and without quoting the value,
-and the refusal is a **documented limit**: **an installation that mints budget
-tokens runs its budget-on path on Cloud Run, and Batch runs no sealed budget
-run.** `docs/design/budget-token-channel.md`'s "The Batch backend refuses a
-sealed launch" is where the reasoning and the cost live, and Task 14 is the
+and the refusal is a **documented limit**: **Batch runs no sealed budget run,
+and an installation that mints budget tokens cannot launch any run on Batch.**
+`docs/design/budget-token-channel.md`'s "The Batch backend refuses a sealed
+launch" is where the reasoning and the cost live, and Task 14 is the
 task that wrote both down. **What this costs, and where an operator meets
-it**: a project on this backend whose `budget:` section mints cannot launch a
-budget-on run at all — the refusal is at `jobs.create`'s doorstep, not in
-`fugaro validate` — and such a project keeps its budget-on path on Cloud Run.
+it**: minting is the installation's, not a run's — `budgetMintOn`
+(`internal/cli/launch_budget.go`) mints for every launch of a configuration
+that names a budget database with budget mode on, or a published policy, a
+signer being required in both cases — and an installation
+has one backend, so such a project gets **every** launch refused, after the
+token was minted and dropped, and has to stay on `backend: cloud-run`. There is
+no per-run fallback: the refusal is at `jobs.create`'s doorstep, not in
+`fugaro validate`, and a `doctor`/`validate` check for the pair (a minting
+installation selecting `cloud-batch`) is a **Task 10 condition** rather than
+something this task builds.
 
 - The VM (Batch-created) runs as a service account; omit the field and it is
   the default Compute Engine service account, set it and it is the one named
@@ -4129,7 +4136,7 @@ reasoning lives; this table is the checklist.
 | C7 | Egress | No external IP; Cloud NAT | An ephemeral IP + deny-all ingress (simpler, cheaper per run, "no inbound" rests on a firewall list) |
 | C8 | Timeouts and cancel | Batch `maxRunDuration` + **`jobs.cancel`** (not `jobs.delete`, which erases the record a cancel must still be readable from), plus a queue deadline for a job stuck in `QUEUED`; tolerate a cancel that races a finished job | Fugaro's own watchdog (needed only on plain instances); `jobs.delete` as the cancel (cheapest, and it fails the conformance suite's cancel case — §1.4) |
 | C9 | Logs | `logsPolicy.destination=CLOUD_LOGGING`, and extend the installation's sink/exclusion to `batch.googleapis.com/Job` | Leave logs in `_Default` (`fugaro logs` finds nothing, every viewer reads them) |
-| C10 | Secrets | **`Environment.secretVariables`** — names in the job, values resolved by the VM as the job's service account; **a sealed launch (the budget token's seal key) is refused**, and that refusal is the owner's answer rather than a pending mechanism (§1.6) | Bake values into the job definition (anyone with `batch.jobs.get` reads them); a runner-side fetch is a fallback only for a secret name known only at run time (§1.6). **The seal's carrier is refused, not carried**: the key would become part of the job's definition (every conditioned launcher and the reaper read it), and the design's only other carrier is the rejected C2 — so Batch runs no sealed budget run and a minting installation's budget-on path stays on Cloud Run (§1.6) |
+| C10 | Secrets | **`Environment.secretVariables`** — names in the job, values resolved by the VM as the job's service account; **a sealed launch (the budget token's seal key) is refused**, and that refusal is the owner's answer rather than a pending mechanism (§1.6) | Bake values into the job definition (anyone with `batch.jobs.get` reads them); a runner-side fetch is a fallback only for a secret name known only at run time (§1.6). **The seal's carrier is refused, not carried**: the key would become part of the job's definition (a standing copy every conditioned launcher and the reaper read), and the design's only other carrier is the rejected C2 — so Batch runs no sealed budget run, and since minting is the installation's and it has one backend, an installation that mints budget tokens cannot launch any run on Batch (§1.6) |
 | C11 | `fugaro init` weight | One installation-level Batch stage, no per-repository resource | Per-repository VM setup (reintroduces the weight project-centric removes) |
 | C12 | The name seam | Generalise `Backend` (§2.5) | Encode a Batch job as a synthetic Cloud Run execution (lies in stored data) |
 | C13 | Naming | Reuse the Fugaro label set verbatim, plus a per-run label (§2.4) | Mark only the job and rely on the job-id prefix (fragile for a VM outliving its job) |

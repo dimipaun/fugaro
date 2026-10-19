@@ -111,16 +111,24 @@ never quoted). Batch's launcher wiring is not built, so no launch reaches this t
 **The owner's answer: Batch runs no sealed budget run, and the refusal is a documented limit**
 (2026-10-19, the compute backend plan's P1 — this document's question is closed rather than
 deferred). The refusal stays, because **the carriers it would take are worse than the limit**: the
-job's own `variables` widen the key's audience to every conditioned launcher and to the reaper, the
-set the seal exists to exclude — a job's variables are the job's definition, a standing copy, not
-the per-execution override this document prices — and `secretVariables` needs a per-run Secret
-Manager secret, which is the rejected C2. **What the limit costs, stated plainly**: an installation
-that mints budget tokens (a budget database, a published policy and a signer) **runs its budget-on
-path on Cloud Run**, where the key travels in the override, and not on Batch; a launch that carries
-the seal key is refused before `jobs.create` (`ErrRejected`, the value never quoted), and the
-refusal an operator sees says so — what was refused, that it is deliberate, and where the budget-on
-path runs instead. The runner is unaffected: it reads the key from its environment either way.
-Nothing else in this document changes, and no carrier is added here for Batch.
+job's own `variables` make the key **a standing copy in the job resource** — a job's variables are
+the job's definition, not the per-execution override this document prices — **and widen its audience
+to the reaper**, whose custom role carries `batch.jobs.get` (the launchers, this document says
+above, are already in the override's audience in kind, and §7 says what the seal does and does not
+remove: it is a capability, not a boundary), and `secretVariables` needs a per-run Secret Manager
+secret, which is the rejected C2. **What the limit costs, stated plainly**: **an installation that
+mints budget tokens cannot launch any run on Batch.** Minting is a property of the installation and
+not of a run — `internal/cli/launch_budget.go`'s `budgetMintOn` mints for **every** launch of a
+configuration that names a budget database with budget mode on, or a published policy (a signer is
+required in both cases) — and an installation has **one** backend
+(`localcfg.Config.Backend`, one value for the whole installation), so a minting installation that
+selects `cloud-batch` gets **every** launch refused, after its token was minted and dropped, and has
+to stay on `backend: cloud-run`, where the key travels in the override. There is no per-run fallback
+and no budget-off run on that backend: a launch that carries the seal key is refused before
+`jobs.create` (`ErrRejected`, the value never quoted), and the refusal an operator sees says so —
+what was refused, that it is deliberate, and what the installation has to do instead. The runner is
+unaffected: it reads the key from its environment either way. Nothing else in this document changes,
+and no carrier is added here for Batch.
 
 Every symbol below was read on `next` on 2026-10-15 and is cited by name rather than by line
 number, because the lines move.
