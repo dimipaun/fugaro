@@ -3099,13 +3099,14 @@ func TestCustomRolePermissionsAreAllowedByGoogle(t *testing.T) {
 	// Known-invalid entries not fixed by this change, keyed "file|permission".
 	// The compute module is not part of the installation root's apply: it is
 	// applied only by fugaro init --provision-batch, which refuses before any
-	// cloud call while internal/cli's batchProvisionShipped is false (0.8.6;
-	// the reaper is redesigned for 0.9.0). Which permission its reaper needs
+	// cloud call while internal/cli's batchProvisionShipped is false (0.8.6
+	// onward; the reaper is redesigned in a later release — the Cloud Batch
+	// backend is excluded from 0.9.0). Which permission its reaper needs
 	// to cancel a Batch job is that design call (Google lists
 	// batch.jobs.create/delete/get/list only). Remove the entry when the
 	// module is fixed: the test fails while it is stale.
 	knownInvalid := map[string]string{
-		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute module: --provision-batch refuses until 0.9.0 (batchProvisionShipped)",
+		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute module: --provision-batch refuses until the compute backend's release, which is not 0.9.0 (batchProvisionShipped)",
 	}
 	usedKnown := map[string]bool{}
 	allowed := loadPermissionSnapshot(t)

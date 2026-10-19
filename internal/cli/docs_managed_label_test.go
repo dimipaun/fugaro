@@ -29,11 +29,16 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 		// The writer a project that already exists has, which is not the
 		// creating run: the flag writes both marks in the same command.
 		"the flag writes both marks": "`fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC` for one that already exists",
-		// 0.8.5's managed path is not this one: 0.8.6 refuses every way into
-		// it, which is what makes a project marked then a project of another
-		// mode (owner's ruling, round-2 review).
-		"0.8.6 refuses the managed path": "in 0.8.6 managed mode is turned off outright",
-		"all three ways in refuse":       "`fugaro init --create-project --managed`, `fugaro managed apply` and `fugaro restore`",
+		// 0.8.5's managed path is not this one: the mode is off from 0.8.6 on
+		// and 0.9.0 still ships with it off, which is what makes a project
+		// marked then a project of another mode (owner's ruling, round-2
+		// review; the redesign moved to 0.9.5 by the owner's ruling of
+		// 2026-10-19).
+		"the managed path is off from 0.8.6 on": "managed mode is turned off from 0.8.6 on, and 0.9.0 still ships with it off",
+		// And the release the redesigned path does ship in, which is not
+		// 0.9.0: the owner's ruling of 2026-10-19 moved it to 0.9.5.
+		"the redesign ships in 0.9.5": "the owner's ruling of 2026-10-19 moved to **0.9.5**",
+		"all three ways in refuse":    "`fugaro init --create-project --managed`, `fugaro managed apply` and `fugaro restore`",
 		// A creation without --managed writes the label too, on purpose.
 		"a plain creation labels the project": "A plain `fugaro init --create-project` (no `--managed`) writes the label as well",
 		// And the backfill a project marked before the label needs, still
