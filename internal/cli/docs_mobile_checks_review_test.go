@@ -1385,6 +1385,129 @@ func TestDocsCheck82NamesTheTestsThatCoverTheRefusal(t *testing.T) {
 	}
 }
 
+// TestDocsRegisterPrefaceNamesEveryRunPhase: the paragraph above the register
+// table says which of the ten checks are still unwritten and which phases run
+// them, and it said "81 and 82 at P2.3, 89 at P4.4" -- one phase for check 81,
+// where the plan's own table (docs/mobile/implementation-plan.md, the row the
+// paragraph cites) says "run at P2.3 and P4.2", and the register row this same
+// diff adds says "P2.3 and P4.2 **run** it". The preface is the paragraph whose
+// job is to say what has and has not been run, so a phase it drops is a check
+// the owner does not run at the task that runs it.
+//
+// The phases are held to the plan's table rather than to a copy of the
+// sentence: the plan is what the paragraph cites, and it is where a phase
+// changes first.
+func TestDocsRegisterPrefaceNamesEveryRunPhase(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	var para string
+	for _, p := range paragraphsOf(doc) {
+		if strings.Contains(p, "All ten are owner-run and none has been run") {
+			para = p
+			break
+		}
+	}
+	if para == "" {
+		t.Fatalf("%s: no paragraph says all ten checks are owner-run and none has been run: this test reads the phases out of that sentence", path)
+	}
+	_, said, ok := strings.Cut(para, "none has been run**")
+	if !ok {
+		t.Fatalf("the register preface does not carry the sentence this test reads:\n%s", para)
+	}
+	said, _, ok = strings.Cut(said, "Until")
+	if !ok {
+		t.Fatalf("the register preface's sentence about the run phases no longer ends before \"Until\":\n%s", said)
+	}
+	said = strings.TrimSuffix(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(said), ":")), ".")
+	said = strings.Join(strings.Fields(said), " ") // the paragraph wraps; the sentence does not
+
+	got := map[string]string{}
+	for _, seg := range strings.Split(said, ",") {
+		n, phases, ok := strings.Cut(strings.TrimSpace(seg), " at ")
+		if !ok {
+			t.Fatalf("the register preface's sentence is %q, and the segment %q does not name a phase: the phases are what tells the owner when to run each check", said, strings.TrimSpace(seg))
+		}
+		n = strings.TrimSpace(n)
+		if strings.ContainsAny(n, " ") {
+			t.Errorf("the register preface names %q for a phase, and each phase has to name its check on its own: check 81 is run twice (P2.3 and P4.2), so a segment that groups two checks under one phase states one run for both -- and 82's is P2.3 alone", n)
+			continue
+		}
+		got[n] = strings.Join(strings.Fields(strings.ReplaceAll(strings.TrimSpace(phases), " and ", " ")), " ")
+	}
+	if len(got) == 0 {
+		t.Fatalf("the register preface's sentence names no phase: %q", said)
+	}
+
+	plan := readDoc(t, "docs/mobile/implementation-plan.md")
+	for _, n := range []string{"81", "82", "89"} {
+		row := ""
+		for _, line := range strings.Split(plan, "\n") {
+			if strings.HasPrefix(line, "| **"+n+"** |") {
+				row = line
+				break
+			}
+		}
+		if row == "" {
+			t.Fatalf("docs/mobile/implementation-plan.md has no row for check %s: the register preface's phases are read against that table", n)
+		}
+		_, run, ok := strings.Cut(row, "run at ")
+		if !ok {
+			t.Fatalf("the plan's row for check %s does not say when it is run:\n%s", n, row)
+		}
+		run, _, _ = strings.Cut(run, " |")
+		want := strings.Join(strings.Fields(strings.ReplaceAll(strings.TrimSpace(run), " and ", " ")), " ")
+		if got[n] != want {
+			t.Errorf("the register preface says check %s is run at %q, and the plan's row says %q:\n%s\nthe preface is the paragraph whose job is to say which checks are still unrun and at which task each is run, and the plan it cites is where a phase changes", n, got[n], want, strings.TrimSpace(row))
+		}
+	}
+}
+
+// TestDocsFactsAskingForAReadHaveTheRead: two of check 81's FACT lines ask the
+// owner to record a value that only a read produces -- step 3's "that
+// config/mode, config/limits/maxReserveMicros and fugaro/mark are unchanged",
+// read back with the operator's credentials, and step 5's "read the message
+// back ... that it now carries acked: true and its text is unchanged" -- while
+// both blocks were writes only. The owner cannot record a value the step never
+// printed, and steps 2 and 4 of the same check put the read-back in the block
+// next to the FACT line that asks for it.
+func TestDocsFactsAskingForAReadHaveTheRead(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	for _, c := range []struct {
+		step, from, to, marker string
+		reads                  []string
+	}{
+		{
+			step: "step 3", from: "3. **The fence's negative half", to: "4. **The user reads",
+			marker: "ID2=$(printf 'chk81-%s'",
+			reads:  []string{"config/mode.json", "config/limits/maxReserveMicros.json", "fugaro/mark.json"},
+		},
+		{
+			step: "step 5", from: "5. **The user's second write", to: "6. **The granted read nodes",
+			marker: "AT=$(gcloud auth print-access-token)",
+			reads:  []string{"outbox/$OUT.json"},
+		},
+	} {
+		step := stepText(t, section, c.from, c.to)
+		block := codeBlockAfter(t, step, c.marker)
+		for _, want := range c.reads {
+			found := false
+			for _, line := range strings.Split(block, "\n") {
+				if strings.Contains(line, "Authorization: Bearer $AT") && strings.Contains(line, want) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("check 81 %s: the FACT line asks the owner to record %s, and the step's block never reads it with the operator's credentials (no `curl ... -H \"Authorization: Bearer $AT\" ... %s` line): a FACT line that asks for a value no command produces is one the owner cannot record, and the step's own refusal writes cannot show it -- the nodes are `TOKEN`-only, so a `mu` token cannot read them either", c.step, want, want)
+			}
+		}
+	}
+}
+
 // TestDocsReadyLinesDoNotDenyWhatTheyPrint: every check that opens with a guard
 // echoes the values it read on its "ready" line, and check 81's printed the
 // Firebase project id while the same line said "DB, KEY, SA and FP are read and

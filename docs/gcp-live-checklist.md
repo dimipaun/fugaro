@@ -318,8 +318,8 @@ blocks, their per-step `FACT` lines and their restores. The numbers are the owne
 2026-10-16 ([docs/mobile/README.md](mobile/README.md), which records 80–89 as this work's and
 that the pull request that wrote it wrote no row or section — this one does, for these three
 only): **80 and 83–88 are still unwritten and belong to Task P4.2**, and nothing here is
-renumbered for them. **All ten are owner-run and none has been run**: 81 and 82 at P2.3, 89 at
-P4.4. Until they are run, every live claim of the mobile app is unverified and each of the three
+renumbered for them. **All ten are owner-run and none has been run**: 81 at P2.3 and P4.2, 82 at
+P2.3, 89 at P4.4. Until they are run, every live claim of the mobile app is unverified and each of the three
 rows stays **NOT RUN**.
 
 **Check 70 is the website redesign's, proposed as 70a–70c**
@@ -4419,7 +4419,7 @@ TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
    ```
    **FACT:** the response body (`{"id":...,"sender":...,"text":...,"at":...}`) and the status, 200. A write the rules refuse answers `Permission denied` with 401 (`internal/rtdb`'s `ErrPermission` is the 401 **or** 403 answer). **FACT:** the second PUT's status (401, write-once `!data.exists()`), each of the four wrong shapes' status (401) with the rule each one fails, and the operator's read of `mailbox/$ALICE/inbox.json`, which holds exactly the one message — no refused shape left a node. (The step 4 seeding reuses `$AT`, which is set here.)
 
-3. **The fence's negative half — what the user may not write.** *(Guard block, helpers, tokens.)* Each line must answer a permission denial; a 200 on any of them is a **failure** of this check, not a question:
+3. **The fence's negative half — what the user may not write.** *(Guard block, helpers, tokens, operator credentials for the read-back.)* Each line must answer a permission denial; a 200 on any of them is a **failure** of this check, not a question:
 
    ```bash
    ID2=$(printf 'chk81-%s' "$(date +%s)")
@@ -4436,8 +4436,12 @@ TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
    TOK -X PUT "https://$DB/config/mode.json?auth=$AL" -H 'Content-Type: application/json' -d '"enforce"'
    TOK -X PUT "https://$DB/config/limits/maxReserveMicros.json?auth=$AL" -H 'Content-Type: application/json' -d '1'
    TOK -X PUT "https://$DB/fugaro/mark.json?auth=$AL" -H 'Content-Type: application/json' -d '{}'
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted; the read-back below
+   curl -sS -H "Authorization: Bearer $AT" "https://$DB/config/mode.json"; echo
+   curl -sS -H "Authorization: Bearer $AT" "https://$DB/config/limits/maxReserveMicros.json"; echo
+   curl -sS -H "Authorization: Bearer $AT" "https://$DB/fugaro/mark.json"; echo
    ```
-   **FACT:** each status with its refused body (`Permission denied`), and — read back with the operator's credentials, since `config/mode` is `TOKEN`-only and a `mu` token cannot even read it — that `config/mode`, `config/limits/maxReserveMicros` and `fugaro/mark` are unchanged.
+   **FACT:** each status with its refused body (`Permission denied`), and — read back with the operator's credentials, since `config/mode` is `TOKEN`-only and a `mu` token cannot even read it — that `config/mode`, `config/limits/maxReserveMicros` and `fugaro/mark` are unchanged: the three bodies above, which hold the values the installation had before these eleven refusals.
 
 4. **The user reads its own outbox and heartbeat — and reads its own inbox no way at all.** *(Guard block, helpers, tokens, operator credentials for the seeding.)* The outbox and the heartbeat carry `".read": "MAILBOX"`; the inbox carries **no** read grant, and neither does `mailbox/$mb` itself. **The two nodes are seeded here by IAM**, which bypasses the rules — the consumer's own write of them is check 80's, and this seeding proves nothing about the rules:
 
@@ -4469,8 +4473,9 @@ TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
    TOK -X PUT "https://$DB/mailbox/$ALICE/outbox/$OUT2/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'false'  # 401: newData.val() == true, on a message with no ack yet
    TOK -X PUT "https://$DB/mailbox/$ALICE/outbox/chk81-absent/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'   # 401: data.parent().exists()
    TOK -X PUT "https://$DB/mailbox/$BOB/outbox/chk81-absent/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'     # 401: another mailbox
+   curl -sS -H "Authorization: Bearer $AT" "https://$DB/mailbox/$ALICE/outbox/$OUT.json"; echo   # the read-back: acked: true, text unchanged
    ```
-   **FACT:** the five `TOK` statuses and the refused bodies — counted by `TOK` line, the way step 4 counts its own six: the block's `curl` line is the IAM seeding and is not one of them. The third `TOK` line is refused by the **value** guard (`newData.val() == true`) and not by the write-once one: it is a **different** message from the acked one, seeded here through IAM, because a `false` written to the message the first `TOK` line already acked would be refused by `!data.exists()` and would prove nothing about the boolean — the case P2.2's `c2` tries on a fresh message. The fourth `TOK` line is the guard against an ack that would create its own parent: the message must already exist, which is why the seeding in step 4 is on the path. Read the message back with the operator's credentials and record that it now carries `acked: true` and its `text` is unchanged (an ack that replaced the message would be a different failure).
+   **FACT:** the five `TOK` statuses and the refused bodies — counted by `TOK` line, the way step 4 counts its own six: the block's two `curl` lines are the IAM seeding and the read-back, and neither is one of them. The third `TOK` line is refused by the **value** guard (`newData.val() == true`) and not by the write-once one: it is a **different** message from the acked one, seeded here through IAM, because a `false` written to the message the first `TOK` line already acked would be refused by `!data.exists()` and would prove nothing about the boolean — the case P2.2's `c2` tries on a fresh message. The fourth `TOK` line is the guard against an ack that would create its own parent: the message must already exist, which is why the seeding in step 4 is on the path. Read the message back with the operator's credentials and record that it now carries `acked: true` and its `text` is unchanged (an ack that replaced the message would be a different failure).
 
 6. **The granted read nodes, everything the grant does not name, and the parents of the granted nodes.** *(Guard block, helpers, tokens.)* This is `TestMailboxReadsAreTheGrantedSet` in the emulator, which is where these path lists come from. Two things make the reading non-obvious and both are in the first column's result: **an RTDB read grant sits at the location it is written on and cascades *down* only**, so the granted nodes and everything under them are readable and their **parents are not** — there is no `.read` at `spend/$day`, `config/caps` or `config/kill`, and a read of one of them is a **401**, not a 200; and **the grant is on the claim, not on the day or the slug**, so a day that is not today and a repository slug that does not exist are readable just the same (the app reads the day it is looking at). A read of an absent node is a 200 whose body is `null`, which is a pass, not a denial:
 
