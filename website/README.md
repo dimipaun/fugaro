@@ -164,13 +164,16 @@ added or removed without this sentence moving fails there:
   Each half moved these figures in its own commits and re-derived them there — the script's
   six corrections in `main`'s, the redesign's five fix rounds in this branch's — and they are
   re-derived once more here, because the merge is where the two halves first weigh together.
-  **The figures below are the merged build's** (2026-10-19), and they are the ones this
-  branch ships: the fix round after the merge moved the chat above the diagram, drew its
-  turns as alternating bubbles, took three of the four cyan edges off the flow's cards and
-  shortened the footer's link label, and every one of those was measured over the build in
-  the same commit that moved it. That is the same rule every time (D192), and it is also why
-  **the page and the site move with the script**: a script every page loads is a page's
-  weight as well as its JavaScript.
+  **The figures below are the build this branch ships** (2026-10-19), derived over the merged
+  tree: the fix round after the merge moved the chat above the diagram, drew its turns as
+  alternating bubbles, took three of the four cyan edges off the flow's cards and shortened
+  the footer's link label, and every one of those was measured over the build in the same
+  commit that moved it. The review of that round's changes then took the install section's own
+  top padding off — the flow above it already carries the gap between the two blocks — which
+  is the whole-site figure 54 bytes lower and the page weight where it was, the heaviest page
+  being the docs hub, which renders neither block. That is the same rule every time (D192),
+  and it is also why **the page and the site move with the script**: a script every page
+  loads is a page's weight as well as its JavaScript.
 
   - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
     `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
@@ -198,7 +201,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,001,442 bytes. Three times 333,814: the heaviest page, the
     docs hub, at 267,051 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,161,859 bytes. Three times 1,053,953 (every file in `dist/`, 843,162
+  - **Whole site:** 3,161,805 bytes. Three times 1,053,935 (every file in `dist/`, 843,148
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core

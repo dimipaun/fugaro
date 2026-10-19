@@ -59,9 +59,14 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,053,953 bytes. Every file in `dist/` on that build summed to 843,162
+//   - Whole site: 1,053,935 bytes. Every file in `dist/` on that build summed to 843,148
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
-//     × 1.25, rounded up.
+//     × 1.25, rounded up. The last fix round re-derived it 54 bytes under the merge's: the
+//     install section's own top padding came off, because the flow above it carries the gap
+//     between them, and that is a shorter `padding` in the stylesheet — the homepage's own CSS
+//     is inlined in its page, so the page that carries it and the site figure move together.
+//     The page weight above does not move with it: the heaviest page is the docs hub, which
+//     renders neither the flow nor the install section.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:

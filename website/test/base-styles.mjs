@@ -1304,6 +1304,132 @@ test('every run-detail refusal fires on the defect it names', () => {
   }
 })
 
+// ---- the homepage's vertical rhythm: one gap, not two (review round 5) ---------------------
+//
+// The homepage's top-level blocks carry their own gutter and the room below themselves — the
+// hero's `--space-lg`, the two figures' `--space-3xl`, the install section's tail — because
+// `main:has(> .hero)` drops `main`'s padding on this page and each block puts it back. That is
+// what makes the space between two blocks the **previous** block's bottom padding, and the
+// review of the built site measured what a second padding on the *next* block does to it: the
+// install section carried `--space-lg` of its own on top of the flow's `--space-3xl`, so the
+// band between the flow's last card and the "Install" heading was 7 rem + 2 rem = 144 px of
+// blank page — the widest gap on the page, and twice the rhythm every other pair of blocks
+// keeps. Whichever of the two blocks owns a gap, only one of them may pad it.
+//
+// It is read from the built page rather than from the sources: the top-level blocks of the
+// homepage's `main`, in document order, and each one's own `padding` out of the cascade at the
+// desktop width. Nothing here is about a *particular* pair — a page whose blocks all pad both
+// sides of their gaps is the same defect four times, and the refusal names the pair it found.
+
+/**
+ * Every pair of the homepage's top-level blocks that both pad the gap between them, as the
+ * sentences a reader of the failure gets. A page with no `main`, or with one block, has no
+ * pair to read and is not a failure here.
+ */
+export function homeRhythmFailures(css, html) {
+  const out = []
+  const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+  const main = [...walk(parse(html))].find((el) => el.name === 'main')
+  if (main === undefined) return out
+  const blocks = [...walk(main)].filter((el) => el.parent === main)
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+
+  /**
+   * A block's own vertical padding, out of the last rule in force at the desktop width that
+   * declares a `padding` on any of its classes: the block shorthand's first component is the
+   * top and its third the bottom (the second when the shorthand names two values, the first
+   * when it names one). `null` when no rule declares one — a block with no padding of its own
+   * is a block that cannot pad the gap.
+   */
+  const vertical = (block) => {
+    const classes = classesOf(block)
+    const declared = rules
+      .filter((r) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector)) && appliesAt(80 * 16)(r))
+      .map((r) => declarations(r)['padding'])
+      .filter((value) => value !== undefined)
+      .pop()
+    if (declared === undefined) return null
+    const parts = shorthandParts(declared)
+    const bottom = parts.length > 2 ? parts[2] : parts[1] ?? parts[0]
+    return { top: toPx(parts[0], tokens), bottom: toPx(bottom, tokens), declared }
+  }
+
+  /** The name a block is reported by: its classes, as a reader finds them in the markup. */
+  const nameOf = (block) => classesOf(block).map((klass) => `.${klass}`).join('') || block.name
+
+  for (let i = 1; i < blocks.length; i += 1) {
+    const above = blocks[i - 1]
+    const below = blocks[i]
+    const a = vertical(above)
+    const b = vertical(below)
+    if (a === null || b === null) continue
+    if (Number.isNaN(a.bottom) || Number.isNaN(b.top)) {
+      out.push(
+        `the homepage's ${nameOf(above)} and ${nameOf(below)} carry a padding the rhythm check cannot turn into pixels (${JSON.stringify(a.declared)} and ${JSON.stringify(b.declared)}), and the room between two blocks is read from those two numbers: teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (review round 5)`,
+      )
+      continue
+    }
+    if (a.bottom > 0 && b.top > 0) {
+      out.push(
+        `the homepage's ${nameOf(above)} ends with ${Math.round(a.bottom)} px under it and ${nameOf(below)} opens with ${Math.round(b.top)} px over it, so the gap between them is ${Math.round(a.bottom + b.top)} px — twice the rhythm the page's other blocks keep, because each of these two blocks pads the one gap (review round 5)`,
+      )
+    }
+  }
+
+  return out
+}
+
+test('the homepage’s blocks pad the gap between them once, and not twice', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('class="home-flow"')) continue
+    checked += 1
+    failures.push(...homeRhythmFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page renders the homepage’s blocks, so the rhythm of the page was measured nowhere')
+  assert.deepEqual(failures, [], `the homepage pads one gap twice:\n  ${failures.join('\n  ')}`)
+})
+
+test('the rhythm refusal fires on the doubled gap, and the pairs that keep the rhythm pass', () => {
+  const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const cases = [
+    // The defect as it shipped: the install section's own `--space-lg` on top of the flow's
+    // `--space-3xl` under it — the 144 px band the review measured between the last card and
+    // the "Install" heading. `'first'`: `HomeInstall.astro`'s rule is emitted before
+    // `index.astro`'s in the built page, so the install's padding is the earlier occurrence and
+    // the figures' the later one.
+    [
+      'an install section padding the gap the flow above it already pads',
+      plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)'),
+      [/the gap between them is 144 px/],
+    ],
+    // And the same edit on the page's own rule for the two figures, which is one rule for both
+    // of them: the chat's top padding over the hero's bottom one, and the flow's over the
+    // chat's — two pairs padded twice by the one declaration, and both refused.
+    [
+      'the figures padding the gaps the blocks above them already pad',
+      plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)', 'last'),
+      [/the gap between them is 64 px/, /the gap between them is 144 px/],
+    ],
+  ]
+  for (const [what, css, expected] of cases) {
+    const failures = homeRhythmFailures(css, html)
+    for (const pattern of expected) {
+      assert.ok(
+        failures.some((line) => pattern.test(line)),
+        `${what}: the refusal ${pattern} did not fire, and this is what the check said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
+      )
+    }
+    assert.equal(failures.length, expected.length, `${what}: the check refused ${failures.length} pair(s) where this case plants ${expected.length}:\n  ${failures.join('\n  ')}`)
+  }
+
+  // And the page as it ships: the pairs above, with the gap padded once, are not refused — so
+  // the two cases are the edit and not the check.
+  assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships pads one of its gaps twice')
+})
+
 // ---- the chat is one card, one conversation (review round 3, item 3a) ----------------------
 //
 // The chat was three cards across the page's column — one turn each, `auto-fit` with an 18 rem
@@ -1311,7 +1437,7 @@ test('every run-detail refusal fires on the defect it names', () => {
 // the reader's one short line floating in the middle of a card whose height the two long ones
 // set. What a conversation is instead is **one card with one column of lines**, the speaker at
 // the left of every line, at the width a line of prose is set at everywhere else on the site.
-// The three claims the arithmetic below holds are the three that make it that shape:
+// The four claims the arithmetic below holds are the ones that make it that shape:
 //
 //   1. **the list is one column** — a row of anything (`repeat(auto-fit, …)`, more than one
 //      track, a `display: flex` row) is the shape the review refused;

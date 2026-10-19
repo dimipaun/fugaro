@@ -156,12 +156,16 @@ here goes stale the way the byte budgets did before D192.
   Constraints 6 and 9). The three results are named as the batch's own pieces (`Pull
   request 1 of 3`), and the sentence above them is the `working` skill's own line about what
   a run ends with. Every other line a turn *speaks* is quoted the same way — the request from
-  item 3, the agent's two answers from `plugin/skills/parallelism/SKILL.md` and
-  `plugin/skills/working/SKILL.md`, and the launch from the invocation the `parallelism`
-  skill documents, with its own `<name>` and `<id>` placeholders — and the build holds each
-  line to its document, in that document's order. A copy of the repository staged for a test
-  build therefore carries `plugin/skills/`. (The caption is neither: it is the page's own
-  sentence, and the next reading is what it may say.)
+  item 3 and the agent's two answers from `plugin/skills/parallelism/SKILL.md` and
+  `plugin/skills/working/SKILL.md` — and the build holds each line to its document, in that
+  document's order. A copy of the repository staged for a test build therefore carries
+  `plugin/skills/`. **The launch is not one of those lines, and this reading used to say it
+  was**: it claimed "the launch from the invocation the `parallelism` skill documents, with
+  its own `<name>` and `<id>` placeholders", and what the page ships is the illustration's own
+  label, `Fugaro: launching 3 jobs` — a status line no skill prints, which is why the caption
+  may not call the figure's lines quotations and why `website/test/home.mjs` refuses a status
+  line that *is* a sentence of the document its turn cites. (The caption is neither: it is the
+  page's own sentence, and the next reading is what it may say.)
 - **The chat's caption says what the figure is, not where every line came from.** The caption
   claimed "every line is the repository's own words, from the skills the agent reads", and
   that is false about two of the things the figure prints: the request is **item 3's own
@@ -179,19 +183,26 @@ here goes stale the way the byte budgets did before D192.
   the false sentence was made of — on every built page and in the site's own sources, with a
   case that plants the caption back and proves the refusal, so the claim cannot return through
   a rewrite.
-- **Item 4's row starts at 64 rem, and a step name wraps.** The four cards share the row, so
-  a card is a quarter of the column less the arrows between them: at 48 rem — the breakpoint
-  the chrome switches at — a card's content box is about 100 px, which is narrower than the
-  word `Ephemeral` in the spec's own third step name, and the name was held on one line
-  beside a `flex: none` number, so the flow could not render its own labels at any width below
-  about 79 rem. The row now starts at 64 rem, the name wraps (it is a heading, not a label)
-  and the number sits above it inside the row. The arithmetic is not a reading of a
-  screenshot: `website/test/base-styles.mjs` computes the card's content box from the built
-  stylesheet and holds it against the longest word of the names the built page prints, at the
-  breakpoint and at the page's maximum width, so a name that outgrows its card or a row that
-  starts earlier fails there naming the width. Whether the picture then *looks* right at
-  1280 px is the owner's check (70a–70c), as D190 requires, and this line of work cannot see
-  it.
+- **Item 4's row was too narrow for the names it prints, and this round's answer to that was
+  superseded.** The four cards share the row, so a card is a quarter of the column less the
+  arrows between them: at 48 rem — the breakpoint the chrome switches at — a card's content
+  box is about 100 px, which is narrower than the word `Ephemeral` in the spec's own third
+  step name, and the name was held on one line beside a `flex: none` number, so the flow could
+  not render its own labels at any width below about 79 rem. **This round answered with a row
+  at 64 rem and a wrapping name, and the third fix round replaced both halves of that** (the
+  reading below): the row starts at **72 rem**, which is also where the page stops growing, so
+  it is drawn exactly where a card's content box is at its widest — 232 px against the longest
+  name's estimated 225 — and `Ephemeral cloud job` is on one line there, like the three names
+  beside it; the number still sits above the name inside the row, and below 72 rem the four
+  steps are a two-by-two, where a card is half the column and the name is free to wrap. The
+  arithmetic is not a reading of a screenshot: `website/test/base-styles.mjs` computes the
+  card's content box from the built stylesheet — the page's column, the four cards, the three
+  gaps and the card's own padding and border, every number read rather than typed — and
+  refuses a row where the longest name does not fit one line (with a margin on top of
+  `textWidth`'s per-character estimate), and one where even the longest word does not fit the
+  card, so a name that outgrows its card or a row that starts earlier fails there naming the
+  width. Whether the picture then *looks* right at 1280 px is the owner's check (70a–70c), as
+  D190 requires, and this line of work cannot see it.
 - **The arrows point the way the run travels, and the fix round is where the sign was set.**
   The arrow is drawn pointing down (the shaft is `M12 1 V 25`), a positive angle in CSS turns
   clockwise, so the row's `rotate(90deg)` pointed every arrow back at the step before it — the
@@ -208,11 +219,16 @@ here goes stale the way the byte budgets did before D192.
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
   **page weight per page 1,001,442** (three times 333,814; the docs hub 267,051 bytes) and
-  **whole site 3,161,859** (three times 1,053,953; 843,162 bytes across 21 files). The fix
+  **whole site 3,161,805** (three times 1,053,935; 843,148 bytes across 21 files). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
-  rather than its URL — and the figures above are that build's. It is the
+  rather than its URL — and the round after *that* re-derived the site figure once more, 54
+  bytes lower: the install section's own top padding came off, because the flow above it
+  already carries the gap between the two blocks (the fifth round below). The page weight did
+  not move with it — the heaviest page is the docs hub, and that page renders neither the flow
+  nor the install section — and the JavaScript is untouched. The figures above are the build
+  this branch ships. It is the
   sixth re-derivation on this branch's side — the second fix round moved the homepage's order,
   the flow's treatment, the chat's launch line, the install command's wrapping and the chat's
   turns out of the measure's cap; the third's four commits moved the site figure to 814,455,
@@ -320,6 +336,22 @@ here goes stale the way the byte budgets did before D192.
     "about 560 px", which is 35 rem, read exactly), 768, 1151 and 1152 (71.98 rem), and 1280.
     A layout rule inside a query with no viewport width in it is refused too, because that is
     a band at every width. Each of the five cases plants its defect and proves the refusal.
+  - **the row's cards are one height, and each name is on one line** — the two blockers the
+    review of this branch measured **at 1280 px**, where the four-across row is the layout in
+    force and the cards the paragraph above counts at 270 px are the 768 px two-by-two's.
+    `.flow-step` set `align-items: center`
+    inside the row, so a step's cross axis — its card — took the card's own content height and
+    the fourth card ended about 30 px above the third's: the row now stretches its steps, each
+    step stretches its card, and the card's content is packed from its top. And the row starts
+    at **72 rem** rather than the 64 rem the round before it chose — where the page stops
+    growing, and where `Ephemeral cloud job`, which wrapped onto two lines at 64 rem while the
+    three names beside it fitted on one, has a 232 px box against its estimated 225. That is
+    the correction the reading above points at, and below 72 rem the four steps are the
+    two-by-two, where the name is free to wrap again. `flowLayoutFailures` reads the card's
+    content box out of the built stylesheet, holds the longest name to one line at the row's
+    width and the longest word to the card, and refuses a row whose items are aligned to
+    anything but `stretch`; every one of those refusals has a case that plants the defect and
+    proves it fires.
   Nothing in this round was verified visually: this run cannot see an image, the rounds before
   it are what a browser measured, and whether the page now *looks* right is the owner's check
   (70a–70c), as D190 requires.
@@ -381,14 +413,45 @@ here goes stale the way the byte budgets did before D192.
   `[data-copy-source]` mark it no longer has. The comments that described the old order went
   with the order: `index.astro`, `Hero.astro`, `fold.mjs` — whose rule 1 is read off the first
   `h2`, now the chat's own title, and whose fixture is that shape — and `budget.mjs`'s lead
-  reading. The measurements this round was decided on are
+  reading. (Those three components called this the fourth round while the rest of the tree and
+  this record call it the fifth; they say the fifth now, and the round-4 citations that stay
+  are the wrap-arrow readings, which are that round's.)
+  **The review of this round's own changes added three findings, all of them the record
+  disagreeing with the artifact.** The reading of item 4's row above — "the row starts at
+  64 rem, and a step name wraps" — was the round-2 finding's first answer, superseded by the
+  third fix round without the record saying so: the row starts at **72 rem** and the longest
+  name is on one line there, and that reading now says so and names the round that changed it.
+  The same reading claimed the launch was "the invocation the `parallelism` skill documents,
+  with its own `<name>` and `<id>` placeholders"; what the page prints is the illustration's
+  own label, `Fugaro: launching 3 jobs`, and the launch is one of the two things on the figure
+  that are **not** quotations (beside the three `Pull request n of 3` labels) — which is what
+  `home.mjs`'s own header says now too, since it made the same claim and its cases refuse a
+  status line that is a sentence of the document its turn cites. And the second review's "big
+  gap before Install" was still there: the figures' wrappers end with `--space-3xl` of their
+  own and the install section opened with `--space-lg` on top of it, so the band between the
+  flow's last card and the "Install" heading was **144 px** of blank page — twice the rhythm
+  every other pair of blocks on the page keeps. Each block here carries the room below itself
+  (which is what `index.astro`'s own comment says), so the install section carries no top
+  padding now and the gap is **112 px**, the same as the chat-to-flow gap and the page's tail.
+  `website/test/base-styles.mjs`'s `homeRhythmFailures` reads the homepage's top-level blocks
+  and their paddings out of the built page and refuses any adjacent pair that both pad the gap
+  between them, with two cases planting the doubled padding — one on the install section and
+  one on the page's own rule for the two figures, which pads two pairs at once and is refused
+  twice — and a case asserting the page as it ships is not refused at all.
+  The measurements this round was decided on are
   from a headless Chromium over the built site at 1280, 768 and 375: the four cards of the row
   are one height (218 px) with every name on one line, every top-level block starts where the
-  one above it ends (no empty band, and the watch slot is `display: none` until PR #622's image
-  lands), nothing overflows horizontally, the reader's bubble is 288 px at the right of the card
+  one above it ends and the room between any two of them is the block above's own padding —
+  112 px of it, and never two paddings added together: before the fix above, the flow-to-install
+  gap was that 112 px plus the install section's own 32, which is the 144 px band the review
+  measured. The watch slot is `display: none` until PR #622's image lands, and nothing
+  overflows horizontally, the
+  reader's bubble is 288 px at the right of the card
   and the agent's 463–557 px at the left. Below 35 rem the bubbles fill the column — the
   reader's own line is nearly a phone's width — so the alternation is a thing a reader sees from
-  a tablet up. Page weight and the whole site moved with all of it — the chat's markup, the
-  flow's edges, the footer's label — and both are re-derived over this build in the same commit
-  (D192, above). Whether the page then *looks* right is the owner's check (70a–70c, D190), and
+  a tablet up. The whole site moved with all of it — the chat's markup, the flow's edges, the
+  footer's label, the install section's padding — and the site figure is re-derived over this
+  build in the commit that moved it (D192, above); the page weight did not move, because the
+  heaviest page renders neither the flow nor the install section. Whether the page then *looks*
+  right is the owner's check (70a–70c, D190), and
   no screenshot is committed here: this run cannot see one either.

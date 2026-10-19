@@ -8,7 +8,7 @@
 // four steps drawn, then the commands.
 //
 // **The chat is the first block under the promise and the diagram is the second** (review
-// round 4, which found the page's own picture of a run standing between a reader and the
+// round 5, which found the page's own picture of a run standing between a reader and the
 // thing they are being offered). What the page is selling is a conversation with the agent
 // the reader already has, so the illustration of that conversation is what they meet first;
 // the flow is what the agent does inside one of its turns, and it reads as the explanation
@@ -46,7 +46,12 @@ import HomeInstall from '../components/HomeInstall.astro'
 <style>
   /* The two figures sit on the same column as the hero and the install paths (W1.2's tokens;
      the spacing is the layout's, not a number of this page's own). `main:has(> .hero)` drops
-     `main`'s padding on this page, so each top-level block carries the gutter itself. */
+     `main`'s padding on this page, so each top-level block carries the gutter **and the room
+     below itself** — which is what makes the space between two blocks the block above's own
+     bottom padding, and why no block adds a top padding of its own on top of it (review round
+     5: the install section's `--space-lg` over the flow's `--space-3xl` was 144 px of blank
+     page between the last card and the "Install" heading, and `base-styles.mjs`'s
+     `homeRhythmFailures` now refuses a pair of blocks that both pad one gap). */
   .home-chat,
   .home-flow {
     max-width: var(--page-max);

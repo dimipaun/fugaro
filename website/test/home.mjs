@@ -14,13 +14,17 @@
 //      `website/data/install.yaml` carries for the paths it renders — never typed into the
 //      component (Global Constraint 6, W1.4 step 1).
 //   3. **The chat is the workflow, and every line its turns speak is a document's own**
-//      (changes spec item 3). The request is the spec's example, the agent's two lines are the
-//      `parallelism` and `working` skills' own sentences, and the launch is the invocation
-//      the `parallelism` skill documents — read from those files rather than imagined, since
-//      a chat is where a page invents what a product says. The three `Pull request n of 3`
-//      labels are the exception and are held as what they are: the illustration's own labels
-//      for work a run would report, which is why the caption may not call the figure's lines
-//      quotations. The hero offers one command to
+//      (changes spec item 3). The request is the spec's example and the agent's two lines are
+//      the `parallelism` and `working` skills' own sentences — read from those files rather
+//      than imagined, since a chat is where a page invents what a product says. Two things on
+//      the figure are not quotations, and they are held as what they are instead: the three
+//      `Pull request n of 3` labels, the illustration's own labels for work a run would
+//      report, and the status line under the agent's answer, the illustration's own label for
+//      the launch (`Fugaro: launching 3 jobs`), which no skill prints — the launch is what the
+//      agent did, and the line the reader is shown is the picture's, not a sentence quoted
+//      from `plugin/skills/parallelism/SKILL.md`. That is why the caption may not call the
+//      figure's lines quotations, and why the case below refuses a status line that *is* a
+//      sentence of the document its turn cites. The hero offers one command to
 //      copy besides the install paths, `fugaro watch`, and the old `fugaro run` example is
 //      asserted gone; the slot for the screenshot a separate task adds is asserted to be
 //      marked and empty, and the page to carry no picture but its wordmark.

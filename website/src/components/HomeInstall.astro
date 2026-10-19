@@ -81,11 +81,20 @@ const paths = HOME_PATHS.map((id) => {
 
 <style>
   /* Tokens only (W1.2), and no colour of this component's own: the accent is the diagram's
-     and the chat's, and this block is deliberately the quietest of the three. */
+     and the chat's, and this block is deliberately the quietest of the three.
+
+     **No top padding, because the block above already carries the gap** (review round 5).
+     Every top-level block on this page carries the gutter and the room below itself — the
+     hero's `--space-lg`, the two figures' `--space-3xl` — and the install paths are the last
+     of them, so a top padding here was a second gap stacked on the figure's: 7 rem plus this
+     2 rem was the 144 px band the review of the built site measured as empty page between the
+     flow's cards and the "Install" heading, the block above the heading being where the room
+     belonged. The bottom stays: it is the page's own tail, the same 7 rem between the last
+     line of prose and the footer. */
   .home-install {
     max-width: var(--page-max);
     margin: 0 auto;
-    padding: var(--space-lg) var(--space-md) var(--space-3xl);
+    padding: 0 var(--space-md) var(--space-3xl);
   }
 
   .home-install-title {
