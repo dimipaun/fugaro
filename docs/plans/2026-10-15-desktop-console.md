@@ -1127,10 +1127,13 @@ which it must be, since two of the names carry a space and the old whitespace-sp
 which is the authority for everything below.** Read that document first: it carries the
 evidence (the console ships no stylesheet, `index.html` is script-only, no `.css` exists
 under `console/`, `SERVED_FILES` has five entries and no stylesheet, the bundler copies
-`.html` only), the screen inventory every rule is written against (every class hook and
-every `data-*` attribute the six screens emit, and every state variant, read from the
-code), the light and dark token sets with every WCAG ratio computed, the layout, and the
-wiring in full. This phase is the plan's *ordering* of that design and nothing more.
+`.html` only), the screen inventory every rule is written against (the class hooks and
+`data-*` attributes a rule needs, and every state variant, read from the code — **the hooks
+a rule needs and not every attribute the screens emit**, which is the design's own rule:
+an emitted-but-unlisted hook is not a licence to select it, and a rule that wants one adds
+it to the inventory in the PR that wants it, design §2), the light and dark token sets with
+every WCAG ratio computed, the layout, and the wiring in full. This phase is the plan's
+*ordering* of that design and nothing more.
 
 **These six tasks are `UNAPPROVED`.** The OWNER APPROVAL GATE at the foot of this file
 stands: the styling design's six questions — **Q1** does a light theme ship and is the OS

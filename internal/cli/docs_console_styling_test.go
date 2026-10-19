@@ -487,6 +487,40 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 	if !strings.Contains(mdFlat(design), "This case is [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)'s and not Task 6.1's") {
 		t.Errorf("%s: §6.3 does not say the window-background case is Task 6.5's; a design that leaves the owner unnamed is a design a reader can implement in the wrong task", designPath)
 	}
+
+	// And §6.5 counts this file, so the count is checked against the file rather
+	// than trusted. The revision that fixed the ordering errors added the tenth
+	// test and left the section at "nine tests", which is the same defect in the
+	// other direction: a reader implementing the phase from the design writes
+	// what the design enumerates, and the ordering test was in neither the count
+	// nor the list.
+	self, err := os.ReadFile("docs_console_styling_test.go")
+	if err != nil {
+		t.Fatalf("reading this test file to count its cases: %v", err)
+	}
+	cases := len(regexp.MustCompile(`(?m)^func TestDocsConsoleStyling\w*\(`).FindAll(self, -1))
+	if cases == 0 {
+		t.Fatalf("no TestDocsConsoleStyling case found in this file, which cannot be right: this test is one")
+	}
+	word, ok := mdNumberWord(cases)
+	if !ok {
+		t.Skipf("this file declares %d cases, more than §6.5's prose counts in words; enlarge mdNumberWord", cases)
+	}
+	if !strings.Contains(mdFlat(design), "with "+word+" tests") {
+		t.Errorf("%s: §6.5 does not say this file has %s tests, and this file declares %d; the section's count and its enumerated list are what a reader implements the phase from, so a case that lands without a line there is a case nobody writes", designPath, word, cases)
+	}
+}
+
+// mdNumberWord spells a small count the way §6.5's prose does, so the comparison
+// is against the sentence rather than against a digit the document never prints.
+func mdNumberWord(n int) (string, bool) {
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven",
+		"eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+		"sixteen", "seventeen", "eighteen", "nineteen", "twenty"}
+	if n < 0 || n >= len(words) {
+		return "", false
+	}
+	return words[n], true
 }
 
 // taskIndex maps a task's name to its position among phase 6's six tasks, so a

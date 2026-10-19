@@ -136,10 +136,13 @@ follow, and both are the same rule read twice. A hook that is emitted and not li
 a hook §2 does not name, and §2 is the table it fails against. And a hook a rule genuinely
 wants — one the screens emit and this table has dropped — is added **here first**, in the PR
 that wants it, so the test's list and the stylesheet's selectors move together. The
-`data-*` attributes the screens emit beyond these are real (`data-hollow`, `data-peak`,
-`data-known`, `data-account` … most of them on the charts, where §4's rules read them), and
-the list is deliberately the subset a rule is written against rather than a second copy of
-the code.
+`data-*` attributes the screens emit beyond these are real — reading the renderer's
+`setAttribute` calls against this table leaves exactly two, **`data-hidden`** (every view
+the mode withholds) and **`data-skew`** (the compatibility handshake), both stamped by
+`console/src/shared/version.ts` — and the list is deliberately the subset a rule is written
+against rather than a second copy of the code. Those two are the examples the rule holds
+for: they are emitted, no rule needs them, and a rule that suddenly wants one adds it to
+this table first.
 
 Three facts hold across every screen and are stated once:
 
@@ -428,7 +431,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner), Run (`run-halt`) | a banner element with `data-killed="true"` / the word `KILLED by` / `HALTED` + who, when, why. **The attribute is on the banner, never on the block that holds it** — `div.live-total` and `div.spend-caps` carry none (§2.3, §2.4) |
+| killed / halted | Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner), Run (`run-halt`) | a banner element with `data-killed="true"` / the word `KILLED by` / `HALTED` + who, when, why. **The attribute is on the banner, and on Live's repository block itself** — `li.live-repo` carries `true`/`false` and the banner is appended into that same `li` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `div.live-total` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
 | silent / lost / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
@@ -1242,11 +1245,11 @@ different pictures, which is the same fact as this assertion passing.
 should reuse the arithmetic of rather than re-derive):
 
 - it **reads `theme/palette.css` for its colour numbers** — the literals the window paints,
-  not a copy of them. **Three of its cases read one further file each, and each of those
-  lands in the task that writes the file it reads** (the `--border` scan of `base.css` and
-  `screens.css` in Task 6.4, the window background against `src/main/window.ts` in Task 6.5),
-  so Task 6.1 writes this file with the palette cases alone and the other two arrive where
-  their subject matter does;
+  not a copy of them. **Two of its cases read a file other than `palette.css`, and each
+  lands in the task that writes what it reads** (the `--border` scan, which reads `base.css`
+  and `screens.css`, in Task 6.4; the window background, which reads the main process's
+  window module, in Task 6.5), so Task 6.1 writes this file with the palette cases alone and
+  the other two arrive where their subject matter does;
 - one case computes **every pair of §3.4** and asserts the ratio its role requires: 4.5:1
   for `--text`, `--text-muted`, `--accent-ink` and all five state colours on `--ground`,
   `--surface` and `--surface-alt`; 3:1 for `--accent` and `--border-strong` on each; 4.5:1
@@ -1257,10 +1260,10 @@ should reuse the arithmetic of rather than re-derive):
 - a case asserts `--border` is **only** used decoratively: no rule in `base.css` or
   `screens.css` uses `--border` where the property is `outline` or where the border marks
   a control (a scan of the CSS text, in the spirit of `screen-literals.test.ts`). **This
-  one case is Task 6.4's and not Task 6.1's**, because it is the only case in this file
-  that reads a file other than `palette.css` and the two files it reads are created by
-  Tasks 6.3 and 6.4 — see [§7.4](#74-task-64--the-screens). Task 6.1 writes the file and
-  its palette cases; Task 6.4 adds this case at the point where both stylesheets exist;
+  one case is Task 6.4's and not Task 6.1's**: it is the first of the file's two cases that
+  read something other than `palette.css`, and the two files it reads are created by Tasks
+  6.3 and 6.4 — see [§7.4](#74-task-64--the-screens). Task 6.1 writes the file and its
+  palette cases; Task 6.4 adds this case at the point where both stylesheets exist;
 - a case asserts **the main process's window background equals the ground of the theme it
   is about to paint** ([§4.1](#41-the-windows-structure)) — **both** literals, the dark one
   against the dark `--ground` and the light one against the light `--ground`, rather than
@@ -1269,9 +1272,9 @@ should reuse the arithmetic of rather than re-derive):
   and not Task 6.1's**, for the plainest of reasons: the two literals are a change to
   `console/src/main/window.ts`, and Task 6.5 is the task that makes it — `consoleWindowOptions`
   gains no `backgroundColor` before then, so a case asserting one in Task 6.1 would be a
-  case about a key that does not exist. It is the third case in this file that reads a file
-  other than `palette.css`, and like the second it lands in the task that puts that file's
-  content there;
+  case about a key that does not exist. It is the second of the file's two cases that read
+  something other than `palette.css`, and like the `--border` scan it lands in the task that
+  puts that file's content there;
 - **a red step, run for real and committed as a case**: the arithmetic is exercised against
   a deliberately failing fixture, in the shape `a11y.mjs` keeps but with a pair this file
   names, and the case asserts it reports
@@ -1307,7 +1310,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with nine tests:
+`docs_budget_token_channel_test.go`, with ten tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -1370,6 +1373,21 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    does take it; 9 is what keeps the branch itself tested rather than dead code. It also
    pins both thresholds as inclusive, which is how §3.4 writes them ("at least 50°", "at
    least 3:1").
+10. a **phase-ordering test**, which is the one case here that reads [§7](#7-the-build-plan-phase-6-unapproved)
+   and the plan together rather than this document's tables: it cuts the plan's Phase 6 at
+   its six task headings and §7 at its seven, and fails when a task's `**Files**` or
+   `**Tests**` clause names a **later** task — the shape both of this revision's ordering
+   errors took — when [§5.2](#52-how-the-bundler-emits-it)'s `THEME_STYLESHEETS` literal names a
+   file no task has created yet at the point the list lands, when Tasks 6.3 or 6.4 omit
+   their own file or their `THEME_STYLESHEETS` entry from `**Files**`, when Task 6.2 names
+   either later file, when Task 6.1 claims `backgroundColor` or Task 6.5 does not, and when
+   [§6.3](#63-contrast-as-unit-tests) stops saying the window-background case is Task 6.5's.
+   And it counts itself: §6.5's own opening line says how many tests this file holds, and the
+   case fails when that word and the file's `TestDocsConsoleStyling*` declarations disagree —
+   the defect this revision found in the other direction, when the tenth test landed and the
+   line stayed at nine. Each of its cases is mutation-proven, and the seven mutations are
+   named in [§7.7](#77-the-red-steps). It reads the plan as text for the same boundary reason
+   the rest of this file does.
 
 **The citation test stats a file; these five read the file**, which is the difference
 between a citation that exists and a citation that is true. Neither substitutes for the
@@ -1570,7 +1588,13 @@ cited path removed from the text, and another moved on disk; an in-page anchor l
 broken slug it was written as; Phase 6's heading stripped of `UNAPPROVED`, one of its six
 question markers dropped, and one of its task headings renamed. The seventh is the plan's
 own: `6.2` removed from Global Constraints rule 9's list, which
-`TestPlanRule9ListsEveryFlaggedHeading` catches.
+`TestPlanRule9ListsEveryFlaggedHeading` catches. **And the ordering test (§6.5's tenth)
+carries seven of its own**, one per case, planted and reverted: the four-name
+`THEME_STYLESHEETS` literal restored; `base.css` put back into Task 6.2's `**Files**`; the
+window-background case put back into Task 6.1's `**Tests**`; a later task named in Task
+6.3's `**Tests**`; `THEME_STYLESHEETS` removed from Task 6.3's `**Files**`; §6.3's
+"This case is [Task 6.5]'s and not Task 6.1's" removed; and §6.5's opening line put back to
+"nine tests" over a file that declares ten.
 
 ---
 
