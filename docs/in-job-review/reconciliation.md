@@ -14,6 +14,8 @@ The spec asks to **move review inside the cloud job**: a job runs the coding loo
 
 Read against the code, the loop it describes **already exists**, in one shape: a **recipe** (`internal/recipe`) runs `implement`, an optional `check` gate, an optional cheap `first_line` review loop, and one senior `review` loop with a round cap and bounce-back — all inside the Cloud Run job, all serially, with a fresh agent session per review and a `ship`/`changes` verdict. The spec's genuine additions are: a **review plan** (several named reviews, per-review model and effort, chosen per task), **parallel** execution of those reviews, **severity-based routing** inside the loop, a **structured verdict object** on the run record, **rebase/staleness** handling, a **round-level time-budget check**, and a **findings-outcome log**. Its §1 numbers (5 local review slots, 20–30 minutes each, Opus for security-sensitive work) match the owner's own stated process in [dogfooding.md](../dogfooding.md) and [credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md), not any code constant.
 
+This section describes **the spec**, not the plan. Where the owner's answers of 2026-10-19 change what a first slice would be — reviews run serially rather than in parallel (Q4), the follow-up merges rather than rebases (Q11), findings are persisted rather than an outcomes log built (Q8), and no Opus reviewer is reachable at all (Q9) — §4 and §5 say so.
+
 ## 1. Corrections to the brief this work was given
 
 These are corrections to the brief's own framing, stated first so the findings below can rely on them.
