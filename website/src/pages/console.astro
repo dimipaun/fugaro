@@ -44,13 +44,19 @@
  */
 import Base from '../layouts/Base.astro'
 import Downloads from '../components/Downloads.astro'
-import { SITE_ROOT, loadSite } from '../content.ts'
+import ScreenshotSlider from '../components/ScreenshotSlider.astro'
+import { SITE_ROOT, loadConsoleScreens, loadSite } from '../content.ts'
 import { loadConsoleDownloads } from '../lib/console-downloads.mjs'
 
 // The whole generated layer is checked first — every page renders through the base layout,
 // and this call is what a page does before it reads a fact of its own (W1.3 step 2).
 const site = loadSite()
 const facts = loadConsoleDownloads(SITE_ROOT, site.facts.features.consoleDownloads, site.facts.repository)
+
+// The screenshots, at the top of the page and above the downloads (owner feedback
+// 2026-10-19). The list is empty until the owner takes the pictures, and an empty list
+// renders no slider and no placeholder: the page below is the page a reader gets today.
+const { screens } = loadConsoleScreens()
 ---
 
 <Base title="Console" description={facts.what.text}>
@@ -58,9 +64,18 @@ const facts = loadConsoleDownloads(SITE_ROOT, site.facts.features.consoleDownloa
     <h1>{facts.name}</h1>
     <p>{facts.what.text}</p>
 
+    {/* What the console looks like, before what it costs to get it: the slider is the first
+        thing under the lead, and it renders nothing at all while the data file is empty. */}
+    <ScreenshotSlider screens={screens} />
+
     {/* The downloads themselves: rendered from `downloads.json`, and rendering no link and
         no button at all while the console is unreleased (W1.6 step 1). */}
-    <Downloads available={facts.available} note={facts.notReleased.text} downloads={facts.downloads} />
+    <Downloads
+      available={facts.available}
+      note={facts.notReleased.text}
+      released={facts.released}
+      downloads={facts.downloads}
+    />
 
     <section id="console-facts" aria-labelledby="console-facts-heading">
       <h2 id="console-facts-heading">Facts about the console</h2>

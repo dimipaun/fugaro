@@ -157,14 +157,11 @@ func newRunsStatsCmd() *cobra.Command {
 			"nothing. Two identities that differ only in what the sanitising drops -- an\n" +
 			"invisible character a paste left in one of them, say -- or only past the cap are\n" +
 			"one key and one row: the row is the key, not the person. A private view is not\n" +
-			"read off that key. It holds the runs whose launch recorded your identity itself\n" +
-			"(launch.json's launched_by), so someone whose identity merely sanitises to the\n" +
-			"same text is never counted in it and your own row can be smaller than that\n" +
-			"key's row in the full table. This is not quite what runs ls --mine lists: that\n" +
-			"filter reads the task's requested_by (the requester task.json names), while\n" +
-			"every figure here is the run's own record of its launch, so a run whose launch\n" +
-			"recorded no launcher and whose task names you is listed by runs ls --mine and\n" +
-			"is neither yours nor anyone's here -- it is the 'unknown' row.\n\n" +
+			"read off that key. It holds the runs whose launch recorded your identity itself --\n" +
+			"the identity fugaro run writes to launch.json at launch, not the requested_by that\n" +
+			"runs ls --mine compares -- so someone whose identity merely\n" +
+			"sanitises to the same text is never counted in it and your own row can be\n" +
+			"smaller than that key's row in the full table.\n\n" +
 			"A window can hold every run of every repository in the bucket, so the read is\n" +
 			"bounded: at most --max-runs records are read per call, newest first, and a window\n" +
 			"holding more says so in the output rather than publishing figures over a part of\n" +
@@ -217,9 +214,9 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 
 	// Who the caller is, and how the installation's own lists place them.
 	// Both are read the way the rest of the CLI reads them: lc.Me is the
-	// identity `fugaro run` writes into a launch and that `runs ls --mine`
-	// compares a task's requester against, and the
-	// lists are the ones fugaro doctor's bucket check reads (roles.go).
+	// identity `fugaro run` records at launch (launch.json's launched_by),
+	// and the lists are the ones fugaro doctor's bucket check reads
+	// (roles.go).
 	me, meErr := env.lc.Me(ctx)
 	// The identity is emitted the way every other identity in this document
 	// is: through IdentityOf, so it is one printable line, bounded, and the
@@ -255,19 +252,11 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 		return err
 	}
 	if view == userStatsViewOwn {
-		// Matched on the identity the run's own launch recorded --
-		// launch.json's launched_by, the requester the launch was made for
-		// (run.go) -- because every figure in this command is derived from the
-		// run's own records and nothing else (the file's header says so).
-		//
-		// That is deliberately not the same test runs ls --mine applies: ls
-		// filters the TASK's requested_by (runs.go), which runview reads out of
-		// task.json, and a task and its launch need not name the same person --
-		// a run whose launch.json recorded no launcher but whose task names the
-		// caller is listed by ls --mine and is not in this view (it is the
-		// 'unknown' row here). The two questions are different on purpose: ls
-		// answers "whose requests are these", and this command answers "whose
-		// launches are these".
+		// Matched on the identity the run's launch recorded: launch.json's
+		// launched_by, the identity `fugaro run` writes at launch. That is not
+		// runs ls --mine's comparison -- --mine reads task.json's requested_by
+		// -- and the two coincide for a normal launch while a backfilled
+		// launch.json can differ.
 		//
 		// Not on the row's key. A key is sanitised text two people can share --
 		// identities that differ only in characters the sanitising drops, or

@@ -316,10 +316,25 @@ func keyMaterial(s string) bool {
 //     on no other. That is the one-token-one-job-account property — a token
 //     readable by two jobs is an account two jobs share — and it is the half
 //     the tftest cannot show, because this is the plan of the whole module;
-//   - and every change is a create: the rollout adds the account's job and
-//     replaces nothing of what the installation already runs (D9), which is
-//     why no existing installation's plan moves (the other goldens are
-//     byte-identical, which the generator's empty diff shows).
+//   - and nothing the installation already runs is replaced. The rollout adds
+//     the account's job — its scenario is the new golden
+//     `installation-accounts.plan.json` — and six of the nine goldens that
+//     already existed moved (relative to 0.8.x; the three firebase ones are
+//     untouched), by additions and in-place updates only:
+//     `google_storage_bucket_iam_member.job_tokens`, a read-only
+//     `roles/storage.objectViewer` binding on the run's sealed budget token,
+//     added to every job account (each workflow's job account on its own
+//     `tokens/<slug>/` — `repo.plan.json`, `repo-adopt.plan.json`,
+//     `repo-scope-move.plan.json` — and each project job account on the whole
+//     `tokens/` prefix, in the three existing installation scenarios —
+//     `installation.plan.json`, `installation-adopt.plan.json`,
+//     `installation-managed.plan.json` — as in the new one); the runs bucket's
+//     one-day `/budget-token` cleanup rule now matching `tokens/` beside
+//     `runs/`; and each project job's environment gaining this release's
+//     variables, `FUGARO_GITHUB_APP_ID` and `FUGARO_SECRET_ENVS` (D9). Every
+//     one of those changes is an addition or an update in place: no resource is
+//     replaced or deleted, and the goldens are regenerated in the same change,
+//     so the generator's diff against them is empty.
 func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 	f := accountsGoldenFixture(t)
 	if len(f.ProjectSecrets) == 0 {

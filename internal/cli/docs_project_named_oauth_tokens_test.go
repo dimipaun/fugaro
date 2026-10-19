@@ -482,7 +482,10 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 		"brew upgrade dimipaun/tap/fugaro && fugaro upgrade",
 		"fugaro project policy publish --delete",
 		"fugaro image refresh",
-		"a project job runs the installation's base image, which can lag the CLI that published the policy",
+		// The shared jobs move last, per installation: image refresh never
+		// touches a project job (the review of PR #660).
+		"Move the shared jobs, **per installation**, on a machine where step 3 ran: `fugaro init --firebase <gcp-project>`",
+		"a project job runs the installation's base image, and only this re-apply of the installation moves it",
 		// And the one-line pointer in the optional pieces.
 		"**Named Claude accounts on a shared job (0.9.0):**",
 	} {

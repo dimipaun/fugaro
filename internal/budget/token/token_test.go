@@ -518,6 +518,18 @@ func TestObjectPresent(t *testing.T) {
 			t.Fatalf("a refused read = %v, want ErrForbidden", err)
 		}
 	})
+	// The job account's view of a missing object: no list permission, so GCS
+	// answers 403, not 404. The primitive reports that 403 as it is
+	// (ErrForbidden), never as absence and never as presence; what a 403
+	// means is the caller's question (the runner's refuseStrayToken).
+	t.Run("a missing object read without list permission is ErrForbidden", func(t *testing.T) {
+		g, b := bucket(t)
+		g.AnswerMissingAs403("runs", token.ObjectPrefix+"/")
+		present, err := token.ObjectPresent(ctx, b, c.Slug, c.Run)
+		if present || !errors.Is(err, blobx.ErrForbidden) {
+			t.Fatalf("ObjectPresent of a missing object, no list = %v, %v; want false, ErrForbidden", present, err)
+		}
+	})
 	// The read is a STRICT one: the same 403 answers the same way whether it
 	// is the presence check that meets it or the object's bytes are wanted.
 	// (The fake's own deny knob, DenyWrites, is a write-only refusal and must

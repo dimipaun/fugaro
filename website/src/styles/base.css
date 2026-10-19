@@ -88,24 +88,42 @@ a.skip-link:focus {
 }
 
 .site-header {
-  /* One row, always: the menu does not wrap under the wordmark, and the drawer hangs from
-   * this box's bottom edge (`position: relative` is what it hangs from) instead of adding a
-   * row to it (P3, RF3). */
+  /* One row, always: the menu does not wrap under the wordmark, and a group's list hangs from
+   * this box's bottom edge on a phone (`position: relative` is what it hangs from) instead of
+   * adding a row to it (P3, RF3). The gap between the wordmark and the menu is the phone's
+   * 8 px — the two are pushed to opposite ends by `justify-content` wherever there is room,
+   * so it is only a floor, and it is what the row measures against at 320 px — and the wide
+   * block below restores the 32 px the wide layout has room for.
+   *
+   * `z-index` is the header's layer, and it is the whole of why the menu is never covered:
+   * a positioned box with no `z-index` paints with every other such box in tree order, and
+   * the header is the first of them, so a page that draws a positioned block after it —
+   * the flow's steps, whose arrows need their `position: relative` — was painted over the
+   * open panel. The layer makes the header a stacking context and lifts it, and everything
+   * it holds, above every block a page draws (`tokens.css` names the scale; the value is
+   * read from it, and `website/test/stacking.mjs` refuses a page block a layer of its own). */
   position: relative;
+  z-index: var(--z-header);
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2xs) var(--space-lg);
+  gap: var(--space-2xs);
   padding-block: var(--space-sm);
   border-bottom: var(--border-width) solid var(--border);
   background: var(--ground);
 }
 
 .site-wordmark {
-  /* The logo (layouts/Base.astro) sits beside the name, centred on its line. */
+  /* The logo (layouts/Base.astro) sits beside the name, centred on its line. `min-width: 0` is
+   * a guard rather than a design: the row's one hard edge is the header's right side, and the
+   * wordmark is what gives way at it, so a device whose font is wider than the one the row was
+   * measured with truncates the name instead of pushing the menu past the viewport and giving
+   * the page a sideways scroll. At every width the layout is measured at, the whole word is
+   * drawn. */
   display: inline-flex;
   align-items: center;
+  min-width: 0;
   gap: var(--space-2xs);
   color: var(--text);
   font-size: var(--font-size-lg);
@@ -114,67 +132,65 @@ a.skip-link:focus {
   text-decoration: none;
 }
 
+/* The name inside the wordmark: it shrinks (the guard above) and says so with an ellipsis
+ * rather than spilling. Below the breakpoint under this rule it is not drawn at all. */
+.site-wordmark-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .site-wordmark:hover {
   color: var(--accent-on-dark);
 }
 
-/* The section nav (P3, D182): three groups of three, each a dropdown in the header's one row
- * on a wide viewport, and the whole menu behind one toggle on a narrow one. Both levels are
- * `<details>` — the markup is in `layouts/Base.astro`, with the note on why the panel is the
- * toggle's sibling rather than its child — so the menu opens and closes with JavaScript off.
- * `public/scripts/site.js` adds only what `<details>` does not do by itself: Escape and a
- * click outside close what is open; a group's submenu opens when the pointer arrives at it on a
- * device whose pointer hovers (the query block below) and closes a moment after the pointer
- * leaves; the keyboard's focus arriving at a trigger opens its group, so Tab reaches the links
- * inside one that is closed; the trigger's `aria-expanded` is kept in step with the group; and a
- * close that would strand the reader's focus hands it back to the trigger. The click is the
- * `<summary>`'s own in every mode and the script does not touch it — which is why the focus a
- * click or a tap brings opens nothing, and a tap on a touch laptop opens a group instead of
- * opening it and closing it again with the click that follows.
+/* The way home on a phone (the owner's brief of 2026-10-19, item 1): below about 380 px the
+ * three group labels and the wordmark share the header's row, and it is the wordmark's TEXT
+ * that gives way — the mark stays. 380 px is where the ruling puts the cut; the rule below is
+ * at 390 px because the row measures the way it is drawn here, and the labels keep a 4 px
+ * padding at the widths above this one: at 381 px the full row is a few pixels wider than the
+ * header's content box, and a few pixels is a sideways scroll.
  *
- * The header keeps one row at every width: it does not wrap, and the drawer hangs from its
+ * The text is hidden from the eye and not from a screen reader: `display: none` would take the
+ * word out of the link's accessible name, and the logo beside it is decoration with an empty
+ * `alt` (`layouts/Base.astro`), so the link would be left naming nothing. This is the standard
+ * "visually hidden" rule — one pixel, clipped, out of the flow — and it is why the link keeps
+ * its name at every width. */
+@media (max-width: 24.375rem) {
+  .site-wordmark-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* The section nav (P3, D182; the owner's brief of 2026-10-19, item 1): three groups of three,
+ * their three labels in the header's one row at every width. There is no toggle in front of
+ * the menu — the brief took the single "Menu" button away, so a phone reaches a section in one
+ * tap — and what each label opens is a panel of that group's links: a drawer across the
+ * header's width on a phone, a dropdown under the label on a wide viewport.
+ *
+ * Both levels are `<details>` — the markup is in `layouts/Base.astro` — so the menu opens and
+ * closes with JavaScript off. `public/scripts/site.js` adds only what `<details>` does not do
+ * by itself: Escape and a click outside close what is open; a group's submenu opens when the
+ * pointer arrives at it on a device whose pointer hovers (the query block below) and closes a
+ * moment after the pointer leaves; the keyboard's focus arriving at a trigger opens its group,
+ * so Tab reaches the links inside one that is closed; the trigger's `aria-expanded` is kept in
+ * step with the group; and a close that would strand the reader's focus hands it back to the
+ * trigger. The click is the `<summary>`'s own in every mode and the script does not touch it —
+ * which is why the focus a click or a tap brings opens nothing, and a tap on a touch laptop
+ * opens a group instead of opening it and closing it again with the click that follows.
+ *
+ * The header keeps one row at every width: it does not wrap, and a group's list hangs from its
  * bottom edge rather than becoming a second row inside it (the complaint RF3 measured: 177 px
  * of header, three nav rows, on a 390 px first screen). */
 .site-nav {
   display: flex;
   align-items: center;
-}
-
-/* The drawer's toggle, and the only part of the menu a narrow header shows until it is
- * opened. `display: inline-block` is what removes the disclosure triangle — the marker is
- * drawn by `display: list-item`, the summary's default — and the button is the affordance. */
-.site-nav-toggle {
-  display: inline-block;
-  padding: var(--space-3xs) var(--space-2xs);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.site-nav-toggle:focus-visible,
-.site-nav-drawer[open] > .site-nav-toggle {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-/* The panel: hidden until the toggle is open, and then an overlay under the header rather
- * than a block inside it, so opening the menu does not change the header's height. The switch
- * is the toggle's `open` attribute and the wire is the sibling combinator (P3). */
-.site-nav-panel {
-  display: none;
-  position: absolute;
-  top: 100%;
-  right: 0;
-  left: 0;
-  padding: var(--space-sm);
-  border-bottom: var(--border-width) solid var(--border);
-  background: var(--ground);
-}
-
-.site-nav-drawer[open] ~ .site-nav-panel {
-  display: block;
 }
 
 /* Both levels are lists of links, so both lose the bullet and the indent. */
@@ -185,15 +201,50 @@ a.skip-link:focus {
   list-style: none;
 }
 
+/* The three labels, side by side. The gap is the phone's 4 px and the wide block below opens
+ * it to 8 px: three words 4 px apart are three words apart, and at 320 px the row has none to
+ * spare. */
+.site-nav-groups {
+  display: flex;
+  gap: var(--space-3xs);
+}
+
 /* A group's label is its `<summary>` — the second level's control — styled as what it behaves
- * like, a link. */
+ * like, a link. `display: inline-flex` is what removes the disclosure triangle (the marker is
+ * drawn by `display: list-item`, the summary's default) and what lets the label centre itself
+ * in a box it does not have to be exactly as tall as: the label is a tap target on a phone and
+ * a hover target on a desktop, and it is at least 44 px tall — the target size the owner's
+ * brief of 2026-10-19 asks the menu to be measured against — on every device. `box-sizing`
+ * because nothing sets it globally (`main` and the header are the only boxes that do). */
 .site-nav-group > details > summary {
-  display: inline-block;
-  padding: var(--space-3xs) var(--space-2xs);
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: var(--space-3xs);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   cursor: pointer;
+}
+
+/* A group's list hangs from the header's bottom edge, across the header's full width: the
+ * phone's drawer. `position: absolute` is what keeps it out of the header's flow, so opening
+ * one never grows the header's one row and never pushes the page down under the reader. It is
+ * anchored to `.site-header` (`position: relative`) and not to its own group, because a drawer
+ * belongs to the header's width and not to a label's.
+ *
+ * Nothing here decides whether it is drawn: a closed `<details>` hides its children, and that
+ * is the whole of the mechanism at this width. The wide block below moves it under its label
+ * and stops it being full width. */
+.site-nav-group ul {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  padding: var(--space-sm);
+  border-bottom: var(--border-width) solid var(--border);
+  background: var(--ground);
 }
 
 .site-nav-group > details > summary:focus-visible {
@@ -214,24 +265,16 @@ a.skip-link:focus {
  * — still opens and closes the group by the click the `<summary>` already has.
  * `test/nav-hover.mjs` holds the two strings to each other, and refuses a width query in either.
  *
- * The block is the menu's every `:hover` rule, the drawer's own toggle included, because a
- * `:hover` that sticks after a tap is a mark on a control the reader has not opened: on a touch
- * screen there is no hover, so there is no hover state. Nothing else about the drawer or the
- * header's one row changes — the toggle is still a `<summary>`, the panel is still its sibling
- * and the row still does not wrap. */
+ * The block is the menu's every `:hover` rule, and there is no other, because a `:hover` that
+ * sticks after a tap is a mark on a control the reader has not opened: on a touch screen there
+ * is no hover, so there is no hover state. Nothing else about the labels or the header's one row changes — a label
+ * is still a `<summary>`, its list is still its own child and the row still does not wrap. */
 @media (hover: hover) and (pointer: fine) {
   .site-nav-group > details > summary:hover,
   .site-nav a:hover {
     color: var(--text);
     text-decoration: underline;
     text-underline-offset: 0.25em;
-  }
-
-  /* The drawer's toggle is drawn as a button, so its hover is its border and not an
-   * underline under the word inside it. */
-  .site-nav-toggle:hover {
-    border-color: var(--accent);
-    color: var(--text);
   }
 }
 
@@ -246,35 +289,24 @@ a.skip-link:focus {
   text-underline-offset: 0.35em;
 }
 
-/* The wide viewport: the same panel, in the header's row, as three dropdowns. The drawer's
- * toggle goes away — nothing needs opening — and the panel stops being an overlay. */
+/* The wide viewport: the same three labels, and each one's list becomes a dropdown under it
+ * rather than a drawer across the header. */
 @media (min-width: 48rem) {
-  .site-nav-drawer {
-    display: none;
-  }
-
-  /* `display: block` is not decoration here, it is the whole of the wide layout. The base
-   * rule above hides the panel, and the only thing that shows it again is the drawer's own
-   * `open` attribute — which cannot arrive up here, because this block is where the drawer
-   * itself is taken away. Without this declaration the menu is `display: none` on every
-   * viewport at or above the breakpoint: the wordmark, and no way to reach a section.
-   * `base-styles.mjs` asserts it, and keeps the fixture that fails when it is dropped. */
-  .site-nav-panel {
-    display: block;
-    position: static;
-    padding: 0;
-    border-bottom: 0;
+  .site-header {
+    /* The wide layout has room for the 32 px the base rule gave up. */
+    gap: var(--space-2xs) var(--space-lg);
   }
 
   .site-nav-groups {
-    display: flex;
     gap: var(--space-3xs) var(--space-2xs);
   }
 
-  /* A group's own dropdown, out of the header's flow for the same reason the drawer's panel
-   * is: the header is one row (`flex-wrap: nowrap`) and opening *Product* must not grow that
-   * row's cross size and push the page down under the reader. The group is the box the list
-   * hangs from, and the list is what makes the group a dropdown rather than a label.
+  .site-nav-group > details > summary {
+    padding-inline: var(--space-2xs);
+  }
+
+  /* The group becomes the box the list hangs from, and the list stops being the header's
+   * width and becomes the group's own.
    *
    * It hangs from the group's **right** edge rather than its left, because the menu sits at
    * the right of the header: between this breakpoint and the page's maximum width the
@@ -287,19 +319,22 @@ a.skip-link:focus {
   }
 
   .site-nav-group ul {
-    position: absolute;
-    top: 100%;
+    left: auto;
     right: 0;
     min-width: max-content;
     padding: var(--space-2xs);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-sm);
-    background: var(--ground);
   }
 }
 
+/* The links inside a group's list, in either shape the list takes. They are the menu's other
+ * tap targets, so they are at least 44 px tall for the same reason a label is. */
 .site-nav a {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 44px;
   padding: var(--space-3xs) var(--space-2xs);
   border-radius: var(--radius-sm);
   color: var(--text-muted);

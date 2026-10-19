@@ -143,9 +143,10 @@ type RunRow struct {
 	// launch: a person's address, or the identity an automated launch runs as
 	// (a service account, a CI runner). It comes from the same read as Job
 	// (MergeFacts), and like Job it is "" for a run the reader has no
-	// launch.json for and for one whose launch.json recorded no launcher —
-	// which is every run launched before the launcher was recorded, so an
-	// absent value means "not recorded", never "nobody".
+	// launch.json for and for one whose launch.json recorded no launcher --
+	// a launch the recovery path backfilled from result.json, a local run
+	// with no cloud execution, or the synthetic launch `fugaro logs` builds
+	// from a record. So an absent value means "not recorded", never "nobody".
 	//
 	// It is untrusted text a launcher wrote, sanitised by MergeFacts (clean)
 	// like every other bucket-derived string; the renderers only shorten it

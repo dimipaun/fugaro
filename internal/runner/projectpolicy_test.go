@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -421,41 +422,115 @@ func TestRunnerWithNoBackendAndAnUnreadableBucketStops(t *testing.T) {
 	}
 }
 
-// The other half of that refusal, and the one the bucket read can get wrong: a
-// budget-on run whose read of the token object is *refused* (403, which GCS
-// answers a job account with no grant on tokens/ — a job not re-applied since
-// the shared budget was turned on, the same re-apply that adds the grant) must
-// stop, exactly as one whose object is missing does. gocloud reports the
-// refusal as the same NotFound a missing object gets, so a presence check that
-// is not strict answers "no token object" and lets the run go on with no
-// session, no cap and no kill switch — the fail-open state refuseStrayToken
-// exists to close. The bucket here is a fake that answers the read with a 403,
-// and the object is there: the refusal, not the absence, is what stops the run.
-func TestRunnerWithARefusedTokenReadRefuses(t *testing.T) {
-	g := newGW(t, gwConfig(t, ""), "off", "")
+// noListBucket is the runs bucket as a job account sees it: its grant on
+// tokens/ is a conditioned objectViewer with no storage.objects.list, so GCS
+// answers its read of a missing token object with 403, not 404
+// (docs/design/bucket-iam.md §2.3, live check 7).
+func noListBucket(t *testing.T) (*gcpfake.GCS, *blobx.Bucket) {
+	t.Helper()
 	gcs := gcpfake.NewGCS(t)
 	gcs.AddBucket("runs", 1, nil)
-	g.deps.Bucket = gcs.Bucket(t, "runs")
-	key := token.ObjectKey(repoSlug, runID)
-	gcs.Put("runs", key, []byte("sealed")) // the launcher's object, which this job may not read
-	gcs.FailObjectGetsAfter("runs", key, 0)
-	g.deps.Spend = runner.Spend{Mode: "enforce"} // budget on
-	g.deps.Backend = runner.Backend{}            // and no backend in the job's environment
+	gcs.AnswerMissingAs403("runs", token.ObjectPrefix+"/")
+	return gcs, gcs.Bucket(t, "runs")
+}
+
+// budgetOnNoBackend is a budget-on run whose job carries no backend and no
+// marker: an installation without Firebase (M9a's static cap), or a job not
+// re-applied since the shared budget was turned on.
+func budgetOnNoBackend(t *testing.T, b *blobx.Bucket) *gw {
+	t.Helper()
+	g := newGW(t, gwConfig(t, ""), "enforce", "5") // budget on, M9a's static cap
+	g.deps.Bucket = b
+	g.deps.Backend = runner.Backend{} // no backend, no marker
+	return g
+}
+
+// The regression the 0.9.0 review found: a budget-on run on an installation
+// without Firebase has no token object, because no launcher minted one, and
+// the job account's read of that missing object answers 403 (no list
+// permission). That 403 is not evidence of a token: the run goes on with its
+// static cap, as it did before the presence check became strict.
+//
+// Mutation (run, restored): read ErrForbidden in refuseStrayToken as a refusal
+// again — this test fails with the "was refused" error and 0 agent calls.
+func TestRunnerWithNoBackendAndNoTokenObjectGoesOn(t *testing.T) {
+	_, b := noListBucket(t)
+	g := budgetOnNoBackend(t, b)
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatalf("a budget-on run with no backend and no token object must go on: %v", err)
+	}
+	if len(g.agent.calls) == 0 || rec.Halt != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("the agent never ran or the run did not succeed: calls = %d, rec = %+v", len(g.agent.calls), rec)
+	}
+}
+
+// A token object the job can read, with no backend and no marker in the job:
+// the launcher minted for this run and the job cannot use it. The run stops,
+// whatever the bucket answers for a missing object.
+//
+// Mutation (run, restored): return nil from refuseStrayToken when the object
+// is present — this test fails, the run goes on.
+func TestRunnerWithNoBackendAndAStrayTokenRefuses(t *testing.T) {
+	gcs, b := noListBucket(t)
+	gcs.Put("runs", token.ObjectKey(repoSlug, runID), []byte("sealed"))
+	g := budgetOnNoBackend(t, b)
 	rec, err := g.run(t, implement("feature"))
 	if err == nil {
-		t.Fatalf("a refused read of the token object must stop the run: rec = %+v", rec)
+		t.Fatalf("a stray token object must stop the run: rec = %+v", rec)
 	}
-	if !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), "tokens/") {
-		t.Fatalf("err = %v, want the refusal the refused read makes", err)
-	}
-	// The cure, as the marker's refusal names it: the re-apply that writes the
-	// tokens/ grant this read was refused for.
-	if !strings.Contains(err.Error(), "fugaro init --repo") {
-		t.Errorf("the refusal does not name the operator's cure: %v", err)
+	for _, want := range []string{"launched with a budget token", runner.RTDBURLEnv, "fugaro init --repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
 	}
 	if len(g.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 		t.Fatalf("the run went on: calls = %d, rec = %+v", len(g.agent.calls), rec)
 	}
+}
+
+// A present token object whose read is refused with a 403 — the job account
+// holds no grant on tokens/ — answers exactly what a missing object answers a
+// caller without list permission, so the bucket read cannot be the evidence
+// here (docs/design/budget-token-channel.md §4 principle 3: the marker is).
+// Every launcher that writes under tokens/ seals the object and hands its key
+// to the execution as the marker (internal/cli's mintBudgetToken and
+// sealMarker), so the real form of this state carries the marker, and that run
+// stops before the bucket is read: the first subtest. The second pins the
+// marker-less form, which no launcher produces, as indistinguishable from the
+// Firebase-less installation and therefore not a refusal.
+func TestRunnerWithARefusedTokenRead(t *testing.T) {
+	t.Run("with the marker the run stops before any read", func(t *testing.T) {
+		gcs, b := noListBucket(t)
+		key := token.ObjectKey(repoSlug, runID)
+		gcs.Put("runs", key, []byte("sealed"))
+		gcs.FailObjectGetsAfter("runs", key, 0)
+		g := budgetOnNoBackend(t, b)
+		g.deps.Backend = runner.Backend{TokenMarked: true, TokenKey: sealKeyFor(0x5a)}
+		rec, err := g.run(t, implement("feature"))
+		if err == nil {
+			t.Fatalf("a marked run with no backend must stop: rec = %+v", rec)
+		}
+		for _, want := range []string{runner.RTDBURLEnv, "fugaro init --repo"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
+		}
+		if len(g.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+			t.Fatalf("the run went on: calls = %d, rec = %+v", len(g.agent.calls), rec)
+		}
+	})
+	t.Run("without the marker a 403 is a missing object's answer", func(t *testing.T) {
+		gcs, b := noListBucket(t)
+		key := token.ObjectKey(repoSlug, runID)
+		gcs.Put("runs", key, []byte("sealed"))
+		gcs.FailObjectGetsAfter("runs", key, 0)
+		g := budgetOnNoBackend(t, b)
+		rec, err := g.run(t, implement("feature"), review("ship", 0))
+		if err != nil || len(g.agent.calls) == 0 || rec.Halt != nil {
+			t.Fatalf("a 403 with no marker reads as the Firebase-less installation: err = %v, calls = %d, rec = %+v", err, len(g.agent.calls), rec)
+		}
+	})
 }
 
 // The same refusal, at the placement it has to have: the marker is proof that

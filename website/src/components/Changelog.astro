@@ -2,31 +2,28 @@
 /**
  * website/src/components/Changelog.astro — the release entries (website plan, W1.9).
  *
- * One entry per release, newest first, each one rendered from the lines W0.6's
- * `src/lib/changelog.mjs` read out of `docs/releases/vX.Y.Z.md` at build time, preceded by
- * the summary block the redesign's P4 added (D189; RF24). The component writes nothing of
- * its own: the tag comes from the filename, the bullets and the sections are the file's own
- * lines, and the only words it adds are the summary block's heading and the "not yet
- * released" marker below. Every heading inside an entry is a `###` heading the file itself
- * carries — `### For operators`, `### Known limits` — printed as the heading element it is,
- * so a section the format allows is a section the page renders.
+ * One entry per release, newest first: the release's end-user summary, then the lines W0.6's
+ * `src/lib/changelog.mjs` read out of `docs/releases/vX.Y.Z.md` at build time, in a block the
+ * reader opens. The component writes no prose of its own: the tag comes from the filename,
+ * the summary from `website/data/release-summaries.yaml`, the lines and the sections are the
+ * file's own, and the only words it adds are the notes block's label and the "not yet
+ * released" marker. Every heading inside an entry is a `###` heading the file itself carries
+ * — `### For operators`, `### Known limits` — printed as the heading element it is, so a
+ * section the format allows is a section the page renders.
  *
  * Five decisions are worth stating rather than leaving in the code:
  *
- *   1. **No date, and no prose summary.** The release files carry neither a title nor a
- *      date, the site's build is network-free, and the newest entry has no tag to read one
- *      from, so each heading links to its GitHub release — which is where the date is
- *      stated (D100). The page adds no "what's new" prose: the sentence a reader reads is
- *      the file's, and `website/test/changelog-page.mjs` refuses one that is not.
- *   2. **The summary block is the files' lines too** (P4, D189). A reader who lands on a
- *      changelog of thirteen releases wants the gist first, and a summary written here
- *      would be the first sentence on this site that no file backs — so the block shows the
- *      **first Highlights line of the newest few releases**, taken from the entries below
- *      and rendered with the same `inline()`, and `website/test/changelog-page.mjs` pins
- *      each item to the first line of the file its tag names. The block is a gist and not a
- *      second changelog: `SUMMARY_RELEASES` releases, the full list below, and a release
- *      whose file carries no Highlights line stops the build rather than leaving a hole in
- *      the summary (the format requires 3 to 6 bullets, `docs/releases/README.md`).
+ *   1. **No date.** The release files carry no date, the site's build is network-free, and
+ *      the date a reader wants is the one the GitHub release states, so each heading links
+ *      to it (D100).
+ *   2. **The summary is the site's data, and the release file's operator detail is one click
+ *      away** (the owner's brief of 2026-10-19). A reader who lands on a changelog of fifteen
+ *      releases wants to know what each one gives them; the Highlights bullets below are
+ *      written for the operator who runs Fugaro, so they are kept, collapsed, rather than
+ *      shown first. The summary is a file in this repository — `website/data/`, read through
+ *      the content pipeline — so the page still writes nothing of its own, and a release with
+ *      no summary stops the build rather than rendering an entry with nothing under its
+ *      heading.
  *   3. **The file's own line structure is kept.** A line the file writes as a bullet
  *      becomes a list item and any other line becomes a paragraph of its own, so a note
  *      that is prose does not gain a bullet and a list does not lose one.
@@ -36,10 +33,15 @@
  *      no link, no image and no other construct — the generator hands the lines over as
  *      written — so this is the whole of the inline rendering, and it is applied to text
  *      that is escaped first.
- *   5. **A release with no tag is not a release that happened.** `released` is false where
- *      the checkout the build ran in has no such tag — which is every entry in a shallow
- *      checkout, and the newest entry everywhere, because a Highlights file is committed
- *      to `main` before its tag exists. The entry says so rather than reading as shipped.
+ *   5. **A release the plugin's version has not reached is not a release that happened.**
+ *      `released` is false for a release file written ahead of its version bump in
+ *      `plugin/.claude-plugin/plugin.json`. The entry says so rather than reading as
+ *      shipped, and the flag is a file in this repository rather than a tag of the checkout
+ *      the build runs in, which the deploy checkout does not carry (the owner's brief of
+ *      2026-10-19).
+ *
+ * The notes block is a `<details>`, so it opens and closes with no JavaScript: the site's
+ * pages are readable and usable with the one script off (D183).
  */
 
 /**
@@ -62,7 +64,7 @@ interface Entry {
   tag: string
   /** The tag without its `v`, which is the version the filename carries. */
   version: string
-  /** True only where the checkout the build ran in has this tag. */
+  /** True unless the release file is ahead of the plugin's own version. */
   released: boolean
   /** The file's lines before its first section heading, verbatim. */
   highlights: string[]
@@ -73,13 +75,18 @@ interface Entry {
 interface Props {
   entries: Entry[]
   /**
+   * Each release's end-user summary, keyed by its tag: `website/data/release-summaries.yaml`,
+   * read through the content pipeline (W1.3), so this component types no summary of its own.
+   */
+  summaries: { [tag: string]: string }
+  /**
    * The repository every entry links its GitHub release at: site.yaml's own fact (W0.2),
    * so the page builds the URL and never types it.
    */
   repository: string
 }
 
-const { entries, repository } = Astro.props
+const { entries, summaries, repository } = Astro.props
 
 /** One element of an entry's body, in the order the file writes it. */
 type Element = { kind: 'list'; items: string[] } | { kind: 'paragraph'; text: string } | { kind: 'heading'; text: string }
@@ -141,52 +148,22 @@ function body(entry: Entry): Element[] {
 }
 
 /**
- * How many releases the summary block above the list shows (P4, D189). A summary is a gist,
- * and the newest three releases are what a reader who has been away needs; the full list is
- * the next scroll, so nothing is hidden by the number. A repository with fewer releases than
- * this summarises all of them, which is the honest rendering of a short changelog.
+ * A release's summary, out of the site's own data. A release with no entry there stops the
+ * build: the summary is the line a reader reads first, and an entry with nothing under its
+ * heading is the hole this component exists to refuse.
  */
-const SUMMARY_RELEASES = 3
-
-/**
- * The summary block's items: the newest releases, each with the first line of its own
- * Highlights, read out of the entry the generator returned and never rewritten. The bullet
- * marker goes the way it goes in the list below — a list renders the marker for itself, and
- * a summary line is a line rather than a list of one. A file with no Highlights line stops
- * the build rather than leaving a hole in the block: `docs/releases/README.md` requires 3 to
- * 6 bullets, so a release file with none has nothing to summarise.
- */
-const summary = entries.slice(0, SUMMARY_RELEASES).map((entry) => {
-  const first = entry.highlights[0]
-  if (first === undefined) {
+function summaryOf(entry: Entry): string {
+  const summary = summaries[entry.tag]
+  if (summary === undefined) {
     throw new Error(
-      `docs/releases/${entry.tag}.md carries no Highlights line, and the changelog's summary block renders the newest releases' first one: docs/releases/README.md requires 3 to 6 bullets, so a release file with none has nothing to summarise (P4, D189).`,
+      `docs/releases/${entry.tag}.md has no entry in website/data/release-summaries.yaml, and the changelog renders that file's line under the release's heading (the owner's brief of 2026-10-19).`,
     )
   }
-  return { tag: entry.tag, line: /^[-*]\s+(.*)$/.exec(first)?.[1] ?? first }
-})
+  return summary
+}
 ---
 
 <div class="changelog">
-  {/* The summary block (P4, D189; RF24): the newest releases' first Highlights line, above
-      the full list. It is a block of the page's own — its heading names what it is, and
-      nothing in it says anything about a release that the release's file does not say. The
-      tag links to the entry below rather than to GitHub: the reader is already on this page,
-      and the entry is the thing the summary is a gist of. The item's own text is split into
-      two elements on purpose — a tag and a line, never one string — so the tag a reader
-      reads stays a tag and the line stays the file's line. */}
-  <section class="summary">
-    <h2 class="summary-heading">The newest releases</h2>
-    {summary.map((item) => (
-      <div class="summary-release" data-summary-release={item.tag}>
-        <p class="summary-tag">
-          <a href={`#${item.tag}`}>{item.tag}</a>
-        </p>
-        <p class="summary-line" set:html={inline(item.line)}></p>
-      </div>
-    ))}
-  </section>
-
   {entries.map((entry) => (
     <article class="release">
       {/* The tag is the entry's own heading and its anchor, and it links to the GitHub
@@ -195,23 +172,34 @@ const summary = entries.slice(0, SUMMARY_RELEASES).map((entry) => {
         <a href={`${repository}/releases/tag/${entry.tag}`} rel="noopener">{entry.tag}</a>
       </h2>
 
-      {/* Not a release that happened: the file is on main, its tag is not in the checkout
-          the build ran in (D100). */}
+      {/* Not a release that happened: the file is on main, and the plugin's version has not
+          reached it yet (the owner's brief of 2026-10-19). */}
       {!entry.released && <p class="release-status" data-status="not-yet-released">not yet released</p>}
 
-      {body(entry).map((element) =>
-        element.kind === 'list' ? (
-          <ul>
-            {element.items.map((item) => (
-              <li set:html={inline(item)}></li>
-            ))}
-          </ul>
-        ) : element.kind === 'heading' ? (
-          <h3>{element.text}</h3>
-        ) : (
-          <p set:html={inline(element.text)}></p>
-        ),
-      )}
+      {/* The summary a reader reads first: the site's own data, and the one line of the entry
+          that is not a line of the release file. The tag is carried as an attribute so the
+          page's own gate can hold each summary to its entry in the data file. */}
+      <p class="release-summary" data-release-summary={entry.tag}>{summaryOf(entry)}</p>
+
+      {/* The release file's own lines, for the operator who runs Fugaro: collapsed, so a
+          reader who wants the product news reads the summaries and nothing else, and the
+          detail is one click away. A `<details>` needs no script. */}
+      <details class="release-notes">
+        <summary>Highlights</summary>
+        {body(entry).map((element) =>
+          element.kind === 'list' ? (
+            <ul>
+              {element.items.map((item) => (
+                <li set:html={inline(item)}></li>
+              ))}
+            </ul>
+          ) : element.kind === 'heading' ? (
+            <h3>{element.text}</h3>
+          ) : (
+            <p set:html={inline(element.text)}></p>
+          ),
+        )}
+      </details>
     </article>
   ))}
 </div>
@@ -227,36 +215,9 @@ const summary = entries.slice(0, SUMMARY_RELEASES).map((entry) => {
     max-width: var(--measure);
   }
 
-  /* The summary block: the newest releases' first lines, set apart from the list below by a
-     border and the muted type of a gist rather than by a colour of its own. */
-  .summary {
-    border-bottom: var(--border-width) solid var(--border);
-    padding-block: var(--space-md) var(--space-lg);
-  }
-
-  .summary-heading {
-    margin: 0;
-    font-size: var(--font-size-base);
-    color: var(--text-muted);
-  }
-
-  .summary-release {
-    margin-block-start: var(--space-sm);
-  }
-
-  .summary-tag {
-    margin: 0;
-    font-size: var(--font-size-sm);
-    line-height: var(--leading-tight);
-  }
-
-  .summary-line {
-    margin: var(--space-3xs) 0 0;
-    line-height: var(--leading-normal);
-  }
-
   .release {
     padding-block: var(--space-lg);
+    border-bottom: var(--border-width) solid var(--border);
   }
 
   .release h2 {
@@ -276,12 +237,26 @@ const summary = entries.slice(0, SUMMARY_RELEASES).map((entry) => {
     font-size: var(--font-size-sm);
   }
 
-  .release ul {
+  .release-summary {
+    margin-block: var(--space-xs) 0;
+    line-height: var(--leading-normal);
+  }
+
+  .release-notes {
+    margin-block-start: var(--space-sm);
+  }
+
+  .release-notes summary {
+    font-size: var(--font-size-sm);
+    color: var(--text-muted);
+  }
+
+  .release-notes ul {
     padding-inline-start: var(--space-md);
   }
 
-  .release li,
-  .release p {
+  .release-notes li,
+  .release-notes p {
     line-height: var(--leading-normal);
   }
 </style>
