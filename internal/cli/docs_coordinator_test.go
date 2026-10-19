@@ -60,7 +60,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 52, one per way these documents can
+// Mutation (verified, run and restored) -- 58, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -192,6 +192,27 @@ package cli
 //	  call a held block unused (`**D55–D78** managed projects, unused`) ->
 //	  fails: the range rule rejects it, because the allocation's own documents
 //	  record D55–D78 as held.
+//	TestDocsCoordinatorFrequentCitationsAreAnchoredByContent
+//	  put a line number back on a citation into one of those trees
+//	  (`docs/design/v1.md:26`, the shape every one of these citations had) ->
+//	  fails, naming the path and the number: the check the number used to get
+//	  read the line's existence and never its sentence, so putting one back is
+//	  putting the silent failure back;
+//	  the same on a mobile document (`docs/mobile/spec.md:9`) -> fails;
+//	  change an anchor to a phrase its document does not carry
+//	  (`agent.models.coder|reviewer|referee` for the model keys) -> fails,
+//	  naming the document and the phrase: a citation by content is a claim that
+//	  the document carries the sentence, and that claim is the check;
+//	  paste a second copy of an anchored line into `docs/design/desktop-console.md`
+//	  -> fails, naming both lines: an anchor that names two lines is a citation
+//	  two readers would follow to different places;
+//	  cite a `docs/design/` document with no anchor behind it
+//	  (`docs/design/project-centric.md`) -> fails: the citation names a document
+//	  and no longer says where in it, which is the state the line numbers left
+//	  every one of these in;
+//	  delete the two `docs/mobile/spec.md` anchors -> fails on every citation of
+//	  that document, which is what makes the table complete rather than a
+//	  reading of the entries somebody remembered to write.
 //	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
 //	  delete Q9 -> fails on every question after it;
 //	  leave Q12 with one option -> fails;
@@ -209,6 +230,14 @@ package cli
 // pins the anchors replaced failed on exactly that change, all at once, which
 // is why they were replaced: a row inserted into somebody else's table is a
 // change this work cannot see and must not have to chase.
+//
+// The same change in the reconciliation's citations is not counted either, and
+// for the same reason: insert a paragraph above every anchor in
+// `docs/design/v1.md` and TestDocsCoordinatorFrequentCitationsAreAnchoredByContent
+// still passes. That is what those 21 line numbers could not do -- the
+// reconciliation already says so of one of them, in its own words at the Claude
+// price table, where it cites a function by symbol because "a line range here
+// was already wrong once".
 //
 // The numbers above are a reading of the document at the commit that last
 // edited this comment, not a constant, and they have gone stale every time the
