@@ -251,7 +251,12 @@ function bulletLines(heading: string): string[] {
 /** The summary: the document's own "In short" bullets, each rendered as HTML. */
 const summaryBullets = bulletLines(SUMMARY).map(inline)
 
-/** The reporting section's paragraphs, each rendered: the section is two of them today. */
+/**
+ * The reporting section's paragraphs, each rendered: the section is two of them today. An
+ * emptied section stops the build for the same reason the summary's does — the page would
+ * otherwise render a heading over nothing, and a reporter following it would find no
+ * instructions where the document promised them (D189).
+ */
 const reportingParagraphs = sectionLines(REPORTING)
   .join('\n')
   .split(/\n[ \t]*\n/)
@@ -259,6 +264,11 @@ const reportingParagraphs = sectionLines(REPORTING)
   .filter((paragraph) => paragraph !== '')
   .map(inline)
 
+if (reportingParagraphs.length === 0) {
+  throw new Error(
+    `${securityDocument.path}'s "## ${REPORTING}" section carries no paragraph, and this page renders that section as the document writes it: an emptied section is a heading over nothing, and the page has no fallback text of its own (D189).`,
+  )
+}
 ---
 
 <Base

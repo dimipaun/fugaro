@@ -72,6 +72,14 @@
 // case at the end of this file plants them). The regions are found by the marker attributes
 // the page's own markup carries (`data-security-page`, `data-security-summary`,
 // `data-security-reporting`, `data-security-policy`).
+//
+// Two of the cases need a **build** rather than a planted artifact, because the refusals they
+// hold are the page's and not the gate's: a document whose summary list grows a paragraph, and
+// a reporting section left with nothing under it. Both are made in a copy of the repository
+// with `test/lib/build.mjs`'s `buildCopy` — what `origins.mjs` and `console-option.mjs` use —
+// and both plants go into the copy's generated `website/content/security.md`, which is the file
+// the page reads, because `SECURITY.md` is the owner's and this gate does not edit it.
+
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -216,29 +224,54 @@ function sectionLines(document, heading) {
 }
 
 /**
- * The document's own bullets, each one line joined back together when the file wrapped it and
- * the markdown left as it is. The two readers below this one take it apart: the text without
- * its inline markup, and the links it carries.
+ * The document's lines under `## <heading>` as blocks, read the simple way: **one block per
+ * line that starts with `- ` (or `* `)**, with the lines that wrap it joined on, and **a line
+ * that follows a blank line a block of its own and not a wrap** (`bullet: false`).
+ *
+ * This reader is deliberately not the page's. `security.astro`'s `bulletLines()` merges a
+ * continuation only when it directly follows a bullet or another continuation, and this file
+ * used to mirror that rule exactly — a merge whose notion of "a wrapped bullet" was the same on
+ * both sides, so a document whose section carried a paragraph under its list was read
+ * identically by the page and by the gate, and the page rendered the paragraph inside the last
+ * bullet's `<li>` with every check still green (round 5, finding 1). The rule here is the shape
+ * a reader sees: a list, its wrapped lines, and anything under a blank line as what it is.
  */
-function bulletLinesOf(document, heading) {
-  const bullets = []
+function plainBlocks(document, heading) {
+  const blocks = []
+  let wrapping = false
   for (const line of sectionLines(document, heading)) {
     const bullet = /^\s*[-*][ \t]+(.*)$/.exec(line)
-    if (bullet !== null) bullets.push(bullet[1].trim())
-    else if (line.trim() !== '' && bullets.length > 0) bullets[bullets.length - 1] += ` ${line.trim()}`
+    if (bullet !== null) {
+      blocks.push({ bullet: true, text: bullet[1].trim() })
+      wrapping = true
+    } else if (line.trim() === '') {
+      wrapping = false
+    } else if (wrapping && blocks.length > 0) {
+      blocks[blocks.length - 1].text += ` ${line.trim()}`
+    } else {
+      blocks.push({ bullet: false, text: line.trim() })
+      wrapping = true
+    }
   }
-  return bullets
+  return blocks
+}
+
+/** The blocks of a section that are not bullets: what the page's list has no room for. */
+function strayBlocks(document, heading) {
+  return plainBlocks(document, heading).filter((block) => !block.bullet).map((block) => block.text)
 }
 
 /** The bullets of a section, as a reader reads them. */
 function bulletsOf(document, heading) {
-  return bulletLinesOf(document, heading).map(inlineText)
+  return plainBlocks(document, heading)
+    .filter((block) => block.bullet)
+    .map((block) => inlineText(block.text))
 }
 
 /** A section's own blocks of text, with the markdown left as it is: its bullets, or its
  *  paragraphs when the section is not a list. */
 function blocksOf(document, heading, kind) {
-  if (kind === 'bullet') return bulletLinesOf(document, heading)
+  if (kind === 'bullet') return plainBlocks(document, heading).map((block) => block.text)
   return sectionLines(document, heading)
     .join('\n')
     .split(/\n[ \t]*\n/)
@@ -588,6 +621,18 @@ test('the summary the page renders is SECURITY.md\'s own "In short" section', ()
   assert.ok(bullets.length >= 4, `read ${bullets.length} bullets out of ${SOURCE}'s "${SUMMARY}" section: the document has moved, so this check saw nothing`)
   assert.ok(bullets.join(' ').length > 200, `the "${SUMMARY}" section of ${SOURCE} is ${bullets.join(' ').length} characters: the section this page renders is the document's, so a stub would make every check in this file vacuous`)
 
+  // The section is a list and nothing else, read by this file's own reader rather than by the
+  // page's: a paragraph written under the list — after a blank line, so not a wrapped bullet —
+  // is text the page has no room for, and the page's reader used to fold it into the bullet
+  // above it (round 5, finding 1). The page stops the build there now; this is the same fact
+  // held from the document's side, where it can be seen even when the page's rule changes.
+  const stray = strayBlocks(document, SUMMARY)
+  assert.deepEqual(
+    stray,
+    [],
+    `${SOURCE}'s "${SUMMARY}" section carries ${stray.length} block(s) that are not bullets (${stray.map((block) => JSON.stringify(block)).join(', ')}): the page renders that section as the list it is, and a paragraph under the list is text with nowhere to go — it stopped the build rather than being rendered into the last bullet's list item until round 5 of the review`,
+  )
+
   assert.deepEqual(securityFailures(DIST), [])
 })
 
@@ -611,14 +656,15 @@ test('the summary is rendered from the document, and is not written on the page'
 })
 
 test('a document the page cannot render stops the build', (t) => {
-  // The refusal is the **build's**: `npm run check` builds the site first, so a document the
-  // page cannot render stops there rather than shipping a page with the edit rendered in the
-  // wrong place. The plant goes into the copy's generated document —
-  // `website/content/security.md`, the file the page actually reads — because `SECURITY.md`
-  // itself is the owner's file and this gate does not edit it.
+  // The page's own readers refuse two shapes of document edit, and the refusal has to be the
+  // **build's**: `npm run check` builds the site first, so a document the page cannot render
+  // stops there rather than shipping a page with the edit rendered in the wrong place. Both
+  // plants are made in the copy's generated document — `website/content/security.md`, the file
+  // the page actually reads — because `SECURITY.md` itself is the owner's file and this gate
+  // does not edit it.
   //
-  // A paragraph written under the summary's list, after a blank line so it is not a wrap. The
-  // page's `bulletLines()` used to append any such line to the bullet above it, so the
+  // (a) A paragraph written under the summary's list, after a blank line so it is not a wrap.
+  // The page's `bulletLines()` used to append any such line to the bullet above it, so the
   // paragraph was rendered inside the last bullet's `<li>` — and this file's reader merged
   // continuations by the same rule, so the two agreed and every check passed (round 5,
   // finding 1).
@@ -638,6 +684,26 @@ test('a document the page cannot render stops the build', (t) => {
     `the build failed, but not at the page's own reading of the section: ${paragraph.output}`,
   )
   assert.match(paragraph.output, /A paragraph beside the list/, 'the failure does not name the line the document added, so the person editing the document has to find it themselves')
+
+  // (b) A reporting section with its paragraphs taken out. The page renders that section as
+  // the document writes it and has no text of its own to fall back on (D189), so an emptied
+  // section built a page with a bare `<h2>` and no instructions under it — the one thing a
+  // reporter follows the page for.
+  const emptied = buildCopy(
+    t,
+    ({ site }) => patchGenerated(site, /(## Reporting a vulnerability\n)[\s\S]*?(\n## Supported versions)/, '$1$2'),
+    'fugaro-security-emptied-',
+  )
+  assert.notEqual(
+    emptied.status,
+    0,
+    `an emptied "## ${REPORTING}" section did not stop the build, so the page ships a heading with nothing under it:\n${emptied.output}`,
+  )
+  assert.match(
+    emptied.output,
+    /"## Reporting a vulnerability" section carries no paragraph/,
+    `the build failed, but not at the page's own reading of the section: ${emptied.output}`,
+  )
 })
 
 test('a wrapped bullet is one bullet to the page', (t) => {
