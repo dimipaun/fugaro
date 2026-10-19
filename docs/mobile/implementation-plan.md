@@ -45,7 +45,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | **4 — The other end, the checks, the release** | The consumer beside the orchestrator, checks 80–89, the CI job, the store path | P4.1–P4.4, P4.2a | P4.1 yes — **D113c** answered it a new `fugaro` command, so it merges from a CLI plan (D19); P4.2a and P4.2 write the register, and **the checks they write, P4.3 and P4.4 are owner-run** |
 | **5 — Later, unscheduled** | Phase 2 hosting, push, the local/remote voice evaluation switch, the conversational front agent | P5.1–P5.4 | Unscheduled by construction |
 | **6 — APPROVED 2026-10-18 (functional spec v0.1)** | Wake-word routing and the app-command grammar, the spoken-confirmation machine, the schema and rules for agents/prompts/action records/the MAC, the prompt queue, `fugaro pair`, the consumer's enforcement, pairing and overview in the app, the text screen, the offline gate, checks 100–104 | P6.1–P6.13 | Yes, each — **the owner approved all of Phase 6 on 2026-10-18**, and each still waits on the D160–D172 rows its line names |
-| **7 — PROPOSED 2026-10-19, NOT APPROVED (telemetry)** | Firebase Crashlytics and Firebase Analytics in the app, reporting to a Firebase project **Fugaro operates and not an installation's**: the config plugin and the never-committed native files, the consent gate and the two SDK switches, the closed event allow-list and the scan that holds it, the store labels and the website's paragraph, checks 111–113 | P7.1–P7.5 | Yes, each — but **the owner has approved nothing here**: Phase 7 is **proposed**, every task waits on the **D193–D200** rows its line names, and D194 is an **owner step** (the Firebase project does not exist). Its plan is [../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md) |
+| **7 — PROPOSED 2026-10-19, NOT APPROVED (telemetry)** | Firebase Crashlytics and Firebase Analytics in the app, reporting to a Firebase project **Fugaro operates and not an installation's**: the config plugin and the never-committed native files, the **always-on statement** and no consent gate (**D195**), the closed event allow-list and the scan that holds it, the store labels and the website's paragraph, checks 111–113 | P7.1–P7.5 | Yes, each — but **the owner has approved nothing here**: Phase 7 is **proposed**, every task still waits on the decision row its line names — **D199 is the one row the owner has not answered** — and **D194 is an owner step** in a project that already exists (**`fugaro-prod`**, the owner's answer). **Answering a row approves no task.** Its plan is [../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md) |
 
 ---
 
@@ -70,7 +70,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 
 **Checks 100–109 (approved 2026-10-18).** The functional-spec reconciliation took a second block, **100–109**, after reading every number in use on `main` and in every open pull request (credentials-service holds 90–99). Phase 6 proposes **100** (QR pairing end to end, with the code confirmation), **101** (revocation: deleting the device node denies the next read; the Auth user's token timing), **102** (the wake word's recognition rate on the oldest supported device), **103** (a spoken cancel and a spoken merge on the **sandbox repository only**, each with its read-back and "confirm", and the refusals: a misheard confirm, a replayed confirm, a confirm for another target), **104** (offline: no command is sent or queued while disconnected). **105–109 are reserved and unused** — **P6.11 writes 100–104 and is open as PR #667** — and the telemetry plan below **takes none of them** (*an unused number is not a free number*). All are owner-run; P6.11 writes 100–104 into the register.
 
-**Checks 111, 112 and 113 (proposed 2026-10-19, NOT approved).** The telemetry plan ([../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md), Phase 7) takes **three** numbers — **111** (nothing is collected before consent, on a device, with the Firebase console as the second half of the proof), **112** (a real crash reaches the Fugaro-operated project with nothing that names anything in it, and with consent off produces no report at all) and **113** (the two store forms match what the app sends, category by category, and the site's privacy page carries the app's paragraph on the day the first SDK-carrying build is submitted). **They are the first free numbers after every claim, and not the first gap in the register**: 105–109 are **reserved and unused** — an unused number is not a free number, the rule this work applies to D79–D89 and D174–D179 — and 110 is claimed by the always-on orchestrator design (open PR #632), which [design/voice-evaluation-switch.md](design/voice-evaluation-switch.md) (P5.3) also names and nobody writes. **The plan takes nothing out of 100–109** — that block is what **P6.11 writes, open as PR #667** — and **nothing above 113**: **114 onward stays free**. All three are **owner-run** — no agent performs any step of any of them — and **all three are proposed, not approved**: they are written by **P7.5** and run by the owner, and a check is never run before its text is in the register. The amendment of the 100–109 row above is recorded there as a **dated note**, so the original reading stays visible.
+**Checks 111, 112 and 113 (proposed 2026-10-19, NOT approved).** The telemetry plan ([../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md), Phase 7) takes **three** numbers — **111** (the reports arrive, they arrive from the **first launch**, and they arrive at **`fugaro-prod`** and no other project, on a device, with the Firebase console as the second half of the proof — and the negative halves: no switch in the app turns them off, and the build carries no `AD_ID` permission) — **112** (a real crash on a freshly installed device reaches the Fugaro-operated project with **no advertising identifier** in it, and the control is **the FIRST build, which carries neither SDK (D198), producing no report at all**) and **113** (the two store forms match what the app sends, category by category, and the site's live privacy page carries the app's paragraph **sentence by sentence** on the day the first SDK-carrying build is submitted — the build does not ship until the two agree). **D195's answer is what 111 and 112 are written around**: there is no consent state to observe, so the proof is that the reports arrive from the first launch rather than that they wait for one. **They are the first free numbers after every claim, and not the first gap in the register**: 105–109 are **reserved and unused** — an unused number is not a free number, the rule this work applies to D79–D89 and D174–D179 — and 110 is claimed by the always-on orchestrator design (open PR #632), which [design/voice-evaluation-switch.md](design/voice-evaluation-switch.md) (P5.3) also names and nobody writes. **The plan takes nothing out of 100–109** — that block is what **P6.11 writes, open as PR #667** — and **nothing above 113**: **114 onward stays free**. All three are **owner-run** — no agent performs any step of any of them — and **all three are proposed, not approved**: they are written by **P7.5** and run by the owner, and a check is never run before its text is in the register. The amendment of the 100–109 row above is recorded there as a **dated note**, so the original reading stays visible.
 
 **Checks 81, 82 and 89 are written into the register by P4.2a — before P2.3 and P4.4 run them — and checks 80 and 83–88 by P4.2; all ten are run by the owner.** A check is never run before its text is in the register. Until they are run, the app's live behaviour is **unverified**, and no task below may claim otherwise.
 
@@ -682,13 +682,17 @@ the labels, the checks and the UNVERIFIED list all live there, and this section 
 registration.
 
 **The numbers it takes.** **D193–D200** — the next free decision block (D192 is the highest
-number written anywhere in `docs/`), D193 answered by the ruling and **D194–D200 open for the
-owner with a recommendation each**. **Checks 111, 112 and 113** — the first free numbers after
+number written anywhere in `docs/`). **The owner answered seven of the eight on 2026-10-19**:
+**D193** is the ruling the phase is built on, reporting to **`fugaro-prod`**; **D194**,
+**D196**, **D197**, **D198** and **D200** are answered as recommended; and **D195 is answered
+"always on"** — no switch and no first-launch sheet, **against** the plan's opt-in
+recommendation, which stays visible in the row. **D199 is the one row still open.** **Checks 111, 112 and 113** — the first free numbers after
 every claim, since 105–109 are reserved and 110 is claimed — leaving 114 onward free. **A reserved number is never reused and never
 renumbered**, and this phase renumbers nothing.
 
 **Three things this phase is not.** It is **not approved** (the gate below still stands, and
-Phase 7 enters it as a new **step 7b**, which is the label the gate below carries). It
+Phase 7 enters it as a new **step 7b**, which is the label the gate below carries — **an
+answered row is not an approval**, and D199 is still owed). It
 **changes no rules file, no Terraform, no `fugaro`
 command and no workflow** — the only live action in the whole phase is the owner creating the
 Firebase project and uploading two EAS file secrets. And it **moves no existing task**: Phase
@@ -698,10 +702,15 @@ Firebase project and uploading two EAS file secrets. And it **moves no existing 
 §1: the app has **no Firebase SDK wired at all** today (`mobile/index.js` wires
 `expo-secure-store`, `expo-async-storage`, `react` and `react-native` and nothing else), so
 whichever project the native config files name becomes the app's **default** Firebase app —
-which is why **D199** exists; and the settings store **refuses an `AIza…` value outright**
-(`mobile/src/accounts/settings.js`), so an installation's web API key cannot live in the
-account tuple, which **widens D111** from two items to four if D199 is answered as
-recommended.
+which is why **D199** exists and is **still open** — the owner's
+question on that row asked whether the Firebase config should not simply be built into the
+app, and the answer is that **the telemetry project's native config files are** (as EAS file
+secrets, D200) **but each installation's own Firebase connection is not**; and the settings
+store **refuses an `AIza…` value outright** (`mobile/src/accounts/settings.js`), so an
+installation's web API key cannot live in the account tuple, which **narrows** the store's
+refusal to API-key-shaped values generally while the plan's stronger sentence — that no such
+value is stored anywhere — no longer holds. The recommendation still **widens D111** from two
+items to four, and **the owner must accept that explicitly**.
 
 ### Task P7.1: The config plugin, the native files, and the development build — SECURITY-SENSITIVE
 
@@ -713,7 +722,7 @@ the extension of the existing credential walk to `app.config.js`, and **the ad-I
 two Android ad switches `false`, no `AD_ID` permission, no `AdSupport` linked, with a planted
 control — the plan's §4.2 and §7.4, and the website's *the app carries no advertising
 identifier* sentence is what it holds).
-**Depends on.** **D199**, **D200**, and **D194** (the project exists before its file can). Both
+**Depends on.** **D200** (answered: the config is built into the app through EAS file secrets, the development build, Expo Go unsupported, and a build that cannot see them fails loudly) and **D194** (answered: **`fugaro-prod`**, the project the owner creates the two apps in by hand). **D199 is still open and gates this task**: the native config files are the telemetry project's, and what may not be built in is each **installation's** own Firebase connection (its Realtime Database URL and web API key). Both
 store-path files are on `main` — **PR #675** merged them — so P7.1 modifies them in place and
 waits on no pull request.
 **Verification.** `cd mobile && npm test` — both native config paths are untracked and
@@ -728,20 +737,31 @@ the generated native files.
 the app's **default** Firebase app is, and it is the change that would put a native config
 file in the tree if it were wrong.
 
-### Task P7.2: The consent gate, the switch and the link — SECURITY-SENSITIVE
+### Task P7.2: The always-on statement, and the link — SECURITY-SENSITIVE
 
-**Files.** `shared/telemetry-consent/` (new: the pure choice machine and the platform flag
-table as data, with its tests), `mobile/src/telemetry/consent.js`, `mobile/src/app/root.js`
-(the sheet as the first screen's sibling), and the settings key `telemetry.consent`.
-**Depends on.** P7.1; **D195**; **D124** (the host allow-list P0.3's validator needs for the
-`/privacy/` link).
-**Verification.** `npm test` in `shared/` and `cd mobile && npm test`: with no stored choice
-both flags are **off** and no collection call is made; with the choice on, both runtime calls
-are made **once**; the choice is stored under a **non-`secret.`** key and the store's own
-fence accepts it; the link is built through `shared/url`'s validator, and a host the
-allow-list does not name renders as text.
-**Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It is the only place that
-turns collection on, and the only place a link leaves the app.
+**Renamed 2026-10-19 by the owner's answer to D195.** It was *"The consent gate, the switch
+and the link"*; the answer is **always on** — there is no switch, no first-launch sheet and no
+consent state — so the gate this task was written around does not exist and is not built. The
+task keeps its number, its place and its tier, and does the two things that remain: the app
+**says** what it does, and the link to `/privacy/` is built the one safe way.
+**Files.** `mobile/src/telemetry/notice.js` (new: the sentence and the platform-neutral
+statement the settings surface renders), `mobile/src/app/root.js` (the settings surface
+carries the statement; **no sheet, and nothing is added to the first screen**),
+`mobile/src/telemetry/notice.test.js`. **Nothing is created in `shared/`** — the consent
+machine, the platform flag table and the settings key `telemetry.consent` the earlier version
+of this task named are all deleted from the phase (§6 of the plan lists what the answer
+removes from the tree).
+**Depends on.** P7.1; **D195** (answered: always on); **D124** (the host allow-list P0.3's
+validator needs for the `/privacy/` link).
+**Verification.** `cd mobile && npm test`: the statement is rendered from a single source and
+its text is the one §6 of the plan states; the `/privacy/` link is built through
+`shared/url`'s validator, and a host the allow-list does not name renders as text, not as a
+link; the settings surface carries **no switch** that turns collection off, and the module
+makes **no `setAnalyticsCollectionEnabled(`/`setCrashlyticsCollectionEnabled(` call** — the
+plan's §7.4 scan refuses one anywhere in the app, which is what makes "there is no switch" a
+test rather than a sentence.
+**Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It is the only place a
+link leaves the app, and it is where the app's own statement about the reports is worded.
 
 ### Task P7.3: The allow-list, the redaction rule, and the scan — SECURITY-SENSITIVE
 
@@ -762,10 +782,17 @@ existing scan's allow-list.
 
 **Files.** `website/src/pages/privacy.astro`, and the `website/` gates the paragraph's word
 count moves (`docs/website/`'s ceilings are the authority, D188).
-**Depends on.** P7.3 (the list the labels are answered from); **D197**; and **PR #689**,
-whichever way it lands — the plan says so rather than guessing.
+**Depends on.** P7.3 (the list the labels are answered from); **D197** (answered as
+recommended: the labels come from what the SDKs collect, and the website's words change in the
+same release that ships the SDKs); and the website work — **PRs #689 and #705 are merged on
+`main`**, and the page they leave is **ahead of the SDKs by design**: it already says the
+app's reports are always on (D195's answer) and that earlier builds send nothing. **This task
+does not have to write those sentences**; it reconciles the release sequencing with them and
+holds them with `website/test/privacy.mjs`, which is on `main` and **not on this plan's base**.
 **Verification.** `node --test` in `website/` (the word ceilings, the origin gate, the copy
-gate). **The two store forms are answered by the owner and recorded in the owner's notes** —
+gate, and **`website/test/privacy.mjs`**, which holds the page's app sentences — *no
+advertising identifier*, *no switch inside the app*, *uninstalling the app stops them*, *not
+installing it avoids them*). **The two store forms are answered by the owner and recorded in the owner's notes** —
 no Go test and no agent can see the Play console or App Store Connect.
 **Reviewer tier.** **standard** for the website change; **owner** for the two store forms,
 which no agent fills in.
@@ -783,7 +810,9 @@ any step of 111, 112 or 113.**
 parallel** (different directories, no shared file — `mobile/src/telemetry/` is split into two
 files with two owners rather than one directory with two). **PR #675 has merged and left P7.1's
 two store-path files on `main`** (`app.config.js`, `eas.json` — P7.1 modifies them in place),
-and **PR #689 holds P7.4.** `mobile/` has **no CI job** (`.github/workflows/ci.yml` runs four jobs and none
+and **PRs #689 and #705 have merged into `main` and left the page P7.4 lands against** — the
+page is ahead of the SDKs by design, and P7.4 reconciles the sequencing rather than writing the
+sentences from scratch. `mobile/` has **no CI job** (`.github/workflows/ci.yml` runs four jobs and none
 of them runs the app's tests), so every `npm test` above runs **where someone runs it**, and a
 job for the app would be a **new staged workflow** — **this phase stages none**, and the owner
 decides whether one is wanted when the first task lands.
@@ -791,8 +820,8 @@ decides whether one is wanted when the first task lands.
 | The task | Verifiable with no device | Not verifiable |
 |---|---|---|
 | P7.1 | the tracked-file rules, the ignore rules, the `AIza…` walk, the guard's pure part | that the plugin applies or a development build is produced — `expo prebuild` and `eas build` need a toolchain this repository's CI does not have |
-| P7.2 | the choice machine, the flag table, the link's validator path | that the sheet renders, and that the runtime enable calls reach the native SDK |
-| P7.3 | the scan, the never-send test, the existing fences | that the **native** SDK collects nothing before consent — only check 111 can show that |
+| P7.2 | the statement's text, the link's validator path, and the absence of a switch and of any runtime collection call (the scan) | that the settings surface renders as intended, and that the **native** SDK is what actually sends — only check 111 can show that |
+| P7.3 | the scan, the never-send test, the existing fences | that the **native** SDK collects what the allow-list says and nothing else — only checks 111 and 112 can show that |
 | P7.4 | the website's own gates | the two store forms (owner) |
 | P7.5 | the register's own docs tests | the three checks (owner) |
 
@@ -842,10 +871,10 @@ decides whether one is wanted when the first task lands.
 | P6.11 *(approved 2026-10-18)* | P6.4 | D126 |
 | P6.12 *(approved 2026-10-18)* | P3.5, P6.1, P6.2, P6.5 | D162, D169 |
 | P6.13 *(approved 2026-10-18)* | P6.7 | D118, D168 (amended) |
-| P7.1 *(proposed 2026-10-19)* | none — **PR #675 merged `app.config.js` and `eas.json`, and P7.1 modifies them in place** | **D199, D200**, **D194** (the project is the owner's step) |
-| P7.2 *(proposed 2026-10-19)* | P7.1 | **D195**, D124 |
-| P7.3 *(proposed 2026-10-19)* | P7.1 | **D196** |
-| P7.4 *(proposed 2026-10-19)* | P7.3 | **D197**, and **PR #689** whichever way it lands |
+| P7.1 *(proposed 2026-10-19)* | none — **PR #675 merged `app.config.js` and `eas.json`, and P7.1 modifies them in place** | **D199 (STILL OPEN)**, D200 *(answered)*, D194 *(answered — the project is the owner's step)* |
+| P7.2 *(proposed 2026-10-19)* | P7.1 | **D195** *(answered: always on — the task is the statement and the link, not a gate)*, D124 |
+| P7.3 *(proposed 2026-10-19)* | P7.1 | **D196** *(answered)* |
+| P7.4 *(proposed 2026-10-19)* | P7.3 | **D197** *(answered)*, and the website work — **#689 and #705 merged on `main`** |
 | P7.5 *(proposed 2026-10-19)* | P7.1, P7.2, P7.3 | D126's rule (a check is never run before its text is in the register) |
 
 ---
@@ -886,9 +915,12 @@ decides whether one is wanted when the first task lands.
    `mobile/app.config.js` and `mobile/eas.json` are **PR #675's and are on `main`** since that
    branch was merged, so P7.1 modifies them in place; `dev.fugaro.app` is the
    brief's name for the first internal build's environment and **is in no file**; and the
-   website's privacy page is stated as **PR #689** leaves it, which is not on this base. Each
-   is listed in the plan's §14 rather than smoothed over, and P7.1 confirms the first three
-   against the SDK's own documentation and the generated native project at its own merge.
+   website's privacy page is stated as **PRs #689 and #705** leave it — both merged on
+   **`origin/main` at `66bbcf8d`**, **neither on this base**, and this change merges no base
+   in — so the page's text is read from `origin/main` rather than from the branch P7.4 lands
+   against. Each is listed in the plan's §14 rather than smoothed over, and P7.1 confirms the
+   first three against the SDK's own documentation and the generated native project at its own
+   merge.
 
 ---
 
@@ -910,7 +942,7 @@ decides whether one is wanted when the first task lands.
 
 **7. Answer C1–C8 (C7 withdrawn into D113c), or let them stand.** They are the plan's own provisional choices, and each names the task it changes.
 
-**7b. Answer D194–D200, or let them stand — added 2026-10-19, for Phase 7 only.** **D193 is already answered** (the owner's ruling of 2026-10-19) and approves no task. Phase 7 is **PROPOSED, not approved**: no task of P7.1–P7.5 may start before the steps above that name it are done, before **D194–D200** are answered or their recommendations accepted in writing, and before the owner explicitly approves the phase. **D194 is an owner step as well as a decision** — the Firebase project does not exist, and nothing in this repository can create it. **Phase 7 changes no approved phase and holds back no existing task.**
+**7b. Answer D194–D200, or let them stand — added 2026-10-19, for Phase 7 only.** *(Dated note, 2026-10-19: the owner answered **seven of the eight rows** the same day — **D193 to D198, and D200**, D195 as **always on**, against the recommendation — and **D199 is the one row still open**. **Answering a row is not approving a task**, and this step is not done until D199 is answered or its recommendation accepted in writing.)* **D193 is already answered** (the owner's ruling of 2026-10-19) and approves no task. Phase 7 is **PROPOSED, not approved**: no task of P7.1–P7.5 may start before the steps above that name it are done, before **every** row it names is answered or its recommendation accepted in writing — **P7.1 waits on D199, and on nothing else** — and before the owner explicitly approves the phase. **D194 is an owner step as well as a decision** — the project is **`fugaro-prod`**, it exists, and the owner creates the two Firebase apps in it **by hand**; nothing in this repository can do that. **Phase 7 changes no approved phase and holds back no existing task.**
 
 **The recommendations in [reconciliation.md](reconciliation.md) are not answers.** This plan is written so that either answer to each decision leaves a coherent plan; it is not written so that the recommendations can be treated as settled.
 

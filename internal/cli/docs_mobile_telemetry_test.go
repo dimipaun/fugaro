@@ -235,13 +235,105 @@ func TestTelemetryPlanTakesTheNextFreeDecisionBlock(t *testing.T) {
 		}
 	}
 
-	// D193 is the owner's answered ruling and D194–D200 are not. The plan must
-	// say both, because the difference is what a reader takes to the owner.
+	// The block is now seven answered rows and one open one. The plan must say
+	// both, because the difference is what a reader takes to the owner: an
+	// answered row is a ruling a task can be built on, and D199 is the row that
+	// governs P7.1.
 	if !strings.Contains(doc, "D193 is already answered") && !strings.Contains(doc, "**D193 is answered**") && !strings.Contains(doc, "answered 2026-10-19") {
 		t.Errorf("%s does not record that D193 is answered by the owner's ruling of 2026-10-19: the whole plan is built on that ruling, and a block whose first row is answered must say so", telemetryPlan)
 	}
-	if !strings.Contains(doc, "D194–D200 are open") && !strings.Contains(doc, "D194–D200 open") {
-		t.Errorf("%s does not record that D194–D200 are open for the owner: the plan recommends seven answers and approves nothing, and a block that reads as answered would let a task start on a recommendation", telemetryPlan)
+	if !strings.Contains(doc, "D199 is the one row still open") {
+		t.Errorf("%s does not record that D199 is the one row of D193–D200 the owner has not answered: the owner answered seven of the eight on 2026-10-19, D199 gates P7.1's \"Depends on\" line, and a block that reads as wholly answered would let P7.1 start on a recommendation — while a block that reads as wholly open would hide the seven rulings this plan is now built on", telemetryPlan)
+	}
+}
+
+// telemetryAnswerCell returns the last cell of a markdown table row: the
+// "Owner's answer" column every decision row in §3 ends with. It is read from
+// the row itself rather than from a phrase beside it, because the row is the
+// unit a reader reads — a paragraph saying the answer arrived while the row a
+// reader lands on still says *(empty — owner)* is exactly the contradiction this
+// file exists to catch.
+func telemetryAnswerCell(t *testing.T, row string) string {
+	t.Helper()
+	cells := strings.Split(strings.TrimSpace(row), "|")
+	if len(cells) < 4 {
+		t.Fatalf("the row %q has %d cells: a decision row is five columns, and the answer is the last", row, len(cells))
+	}
+	return cells[len(cells)-2]
+}
+
+// TestTelemetryPlanKeepsNoAnsweredRowOpen is the pin the owner's answers of
+// 2026-10-19 need. The owner answered seven of the block's eight rows — D193,
+// D194, D195 (always on, AGAINST the plan's opt-in recommendation), D196, D197,
+// D198 and D200 — and D199 is the one still open. Two failures are possible and
+// this test catches both: an answered row left reading as open (which sends the
+// owner back to answer a question they have answered, and hides a ruling the
+// plan is now built on), and the block described in prose as still open while
+// the rows say otherwise. The recommendation the owner overruled stays visible
+// in D195's row, which is checked here too: superseding a recommendation is not
+// deleting it.
+func TestTelemetryPlanKeepsNoAnsweredRowOpen(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+	decisions := planSection(t, doc, "## 3. Owner decisions")
+
+	// The rows the owner answered, and the phrase each answer carries. D194's
+	// and D195's are the two that are more than "as recommended": the project's
+	// own name, and the answer that supersedes the recommendation.
+	answered := []struct{ row, want string }{
+		{"D193", "answered"},
+		{"D194", "fugaro-prod"},
+		{"D195", "ALWAYS ON"},
+		{"D196", "as recommended"},
+		{"D197", "as recommended"},
+		{"D198", "SECOND build"},
+		{"D200", "as recommended"},
+	}
+	for _, tc := range answered {
+		cell := telemetryAnswerCell(t, telemetryRowWith(t, decisions, "| **"+tc.row+"** |"))
+		if !strings.Contains(cell, "Owner answered 2026-10-19") {
+			t.Errorf("%s's %s row does not record the owner's answer of 2026-10-19 in its own answer column: the answer is what a task is built on, and it has to be in the row a reader lands on", telemetryPlan, tc.row)
+		}
+		if !strings.Contains(cell, tc.want) {
+			t.Errorf("%s's %s row records an answer that does not say %q: the row has to carry what the owner actually ruled, not that a ruling arrived", telemetryPlan, tc.row, tc.want)
+		}
+		for _, open := range []string{"NOT ANSWERED", "**(empty — owner)**", "*(empty — owner)*"} {
+			if strings.Contains(cell, open) {
+				t.Errorf("%s's %s row is answered (2026-10-19) and still carries %q: an answered row left reading as open sends the owner back to a question they have answered, and hides a ruling this plan is now built on", telemetryPlan, tc.row, open)
+			}
+		}
+	}
+
+	// D199 is the exception, and it has to read as one: the owner asked a
+	// question instead of answering, so the row carries the question VERBATIM,
+	// the answer to it, and the consequence still to be accepted. A row that
+	// quietly reads as recommended here would let P7.1 start on the plan's own
+	// recommendation — the one thing the gate forbids.
+	d199 := telemetryAnswerCell(t, telemetryRowWith(t, decisions, "| **D199** |"))
+	for _, want := range []string{
+		"NOT ANSWERED",
+		"OPEN",
+		"firebase config should be built into the app, no?",
+		"secure storage",
+	} {
+		if !strings.Contains(d199, want) {
+			t.Errorf("%s's D199 row does not carry %q: the owner asked a question instead of answering, so the row has to hold the question verbatim, the answer to it (the telemetry config IS built into the app; an installation's own Firebase connection cannot be) and the consequence the owner still has to accept", telemetryPlan, want)
+		}
+	}
+
+	// And no prose in the plan may describe the block as open when seven of its
+	// rows are answered. Each string below was true before 2026-10-19 and is
+	// false now; leaving one in sends a reader to the gate for answers that are
+	// already in §3.
+	for _, stale := range []string{
+		"D194–D200 are open",
+		"D194–D200 open",
+		"D194–D200 are open for the owner",
+		"D194–D200 open for the owner",
+		"each with a recommendation",
+	} {
+		if strings.Contains(telemetryPlain(doc), telemetryPlain(stale)) {
+			t.Errorf("%s still says %q: the owner answered seven of the eight rows on 2026-10-19, and a sentence that still describes the whole block as open is a sentence that hides the rulings this plan is built on", telemetryPlan, stale)
+		}
 	}
 }
 
@@ -421,11 +513,11 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 	section := planSubsection(t, doc, "### 4.2 The flags, named exactly")
 
 	// Every switch that can gate collection, spelled as the SDKs spell it. A
-	// misspelled switch is a switch that is not thrown, so the plan's whole
-	// consent recommendation rests on these strings and they are pinned
-	// verbatim. P7.1 confirms each against the SDK's own documentation at its
-	// own merge (the plan's §14 says so), and if one is renamed there the pin
-	// moves with it — which is the point of pinning it.
+	// misspelled switch is a switch that is not thrown, so the whole of D195's
+	// answer rests on these strings and they are pinned verbatim. P7.1 confirms
+	// each against the SDK's own documentation at its own merge (the plan's §14
+	// says so), and if one is renamed there the pin moves with it — which is the
+	// point of pinning it.
 	for _, flag := range []string{
 		"firebase_analytics_collection_enabled",                     // Android, AndroidManifest meta-data
 		"FIREBASE_ANALYTICS_COLLECTION_ENABLED",                     // iOS, Info.plist
@@ -437,11 +529,46 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 		"com.google.android.gms.permission.AD_ID", // Android: the permission that must NOT be declared
 		"analytics_auto_collection_enabled",       // firebase.json, react-native block
 		"crashlytics_auto_collection_enabled",     // firebase.json, react-native block
-		"setAnalyticsCollectionEnabled",           // the runtime call, after consent
-		"setCrashlyticsCollectionEnabled",         // the runtime call, after consent
+		"setAnalyticsCollectionEnabled",           // the runtime call D195's answer forbids
+		"setCrashlyticsCollectionEnabled",         // the runtime call D195's answer forbids
 	} {
 		if !strings.Contains(section, flag) {
-			t.Errorf("%s's §4.2 does not name %q: the consent gate is recommended as OFF until opt-in, and a switch named approximately is a switch that is not thrown", telemetryPlan, flag)
+			t.Errorf("%s's §4.2 does not name %q: the app's collection state is set by these switches and by nothing else, and a switch named approximately is a switch that is not thrown", telemetryPlan, flag)
+		}
+	}
+
+	// The values, read from each switch's OWN row. D195's answer is what they
+	// are: the six switches that decide whether collection happens at all are
+	// `true` — there is no consent to wait for, so the build that carries the
+	// SDK collects from the first launch — and the two that decide what may be
+	// collected are `false`, the advertising identifier staying uncollected
+	// under always-on exactly as it did under opt-in. Per row, because a value
+	// named in prose beside a row saying the opposite is not a requirement.
+	for _, sw := range []string{
+		"firebase_analytics_collection_enabled",
+		"FIREBASE_ANALYTICS_COLLECTION_ENABLED",
+		"firebase_crashlytics_collection_enabled",
+		"FirebaseCrashlyticsCollectionEnabled",
+		"analytics_auto_collection_enabled",
+		"crashlytics_auto_collection_enabled",
+	} {
+		if row := telemetryRowWith(t, section, sw); !strings.Contains(row, "`true`") {
+			t.Errorf("%s's §4.2 row for %q does not require `true`: D195 is answered always-on, so the collection switches ARE the collection, and a row that reads `false` describes the opt-in recommendation the owner did not take", telemetryPlan, sw)
+		}
+	}
+	for _, sw := range []string{
+		"google_analytics_adid_collection_enabled",
+		"google_analytics_default_allow_ad_personalization_signals",
+	} {
+		if row := telemetryRowWith(t, section, sw); !strings.Contains(row, "`false`") {
+			t.Errorf("%s's §4.2 row for %q does not require `false`: the advertising identifier is not collected under D195's always-on answer any more than it was to be collected under the opt-in recommendation the owner overruled", telemetryPlan, sw)
+		}
+	}
+	// And the two runtime calls are refused rather than used: a call that can set
+	// collection state IS the switch D195 says the app does not have.
+	for _, call := range []string{"setAnalyticsCollectionEnabled", "setCrashlyticsCollectionEnabled"} {
+		if row := telemetryRowWith(t, section, call); !strings.Contains(row, "never called") {
+			t.Errorf("%s's §4.2 row for %q does not say it is never called: D195 is answered always-on and the app has no switch, so a runtime call that turns collection on or off is the switch the answer rules out", telemetryPlan, call)
 		}
 	}
 
@@ -453,7 +580,7 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 		}
 	}
 	if !strings.Contains(section, "false") {
-		t.Errorf("%s's §4.2 states no required value: every native switch is recommended `false`, and that is the whole of the \"nothing is collected before consent\" claim", telemetryPlan)
+		t.Errorf("%s's §4.2 states no required value: every switch in the table is thrown, one way or the other, and a table that names a switch without a value is a table an implementer reads as optional", telemetryPlan)
 	}
 }
 
@@ -541,12 +668,17 @@ func TestTelemetryPlanRequiresNoAdvertisingIdentifier(t *testing.T) {
 		}
 	}
 
-	// The consent row says which way it recommends, and says that this one fact
-	// is not contingent on the answer.
+	// The D195 row says what the plan recommended, what the owner answered, and
+	// that this one fact is not contingent on which of the two won. The
+	// recommendation stays visible: the owner overruled it, and superseding a
+	// recommendation is not deleting it — a reader has to be able to see both.
 	decisions := planSection(t, doc, "## 3. Owner decisions")
 	d195 := telemetryRowWith(t, decisions, "| **D195** |")
 	if !strings.Contains(d195, "recommended: opt-in") {
-		t.Errorf("%s's D195 row does not say \"recommended: opt-in\": the owner has not answered opt-in against opt-out, and the plan's recommendation is what the row has to state as its recommendation", telemetryPlan)
+		t.Errorf("%s's D195 row no longer says \"recommended: opt-in\": the owner answered always-on AGAINST that recommendation, so the row has to keep the recommendation visible while it records the answer — a row that drops the recommendation loses the fact that the plan did not propose what was ruled", telemetryPlan)
+	}
+	if !strings.Contains(d195, "ALWAYS ON") {
+		t.Errorf("%s's D195 row does not record the owner's answer of 2026-10-19 (always on): the answer is what §6, P7.2 and every dependent sentence are rewritten to, and it is what turns the recommendation in the same row into history", telemetryPlan)
 	}
 	if !strings.Contains(d195, "advertising identifier") {
 		t.Errorf("%s's D195 row does not say that the advertising identifier is collected under neither option: the consent answer is the owner's, and the ad-ID promise is not contingent on it", telemetryPlan)
@@ -830,11 +962,13 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 var telemetryWillCreate = map[string]string{
 	"mobile/firebase.json":                         "P7.1 (the react-native auto-collection switches and the two ad-ID switches, §4.2)",
 	"mobile/google-services.json":                  "never — §4.3: delivered by an EAS file secret and kept out of git, so its absence here is the rule (checked beside `mobile/GoogleService-Info.plist` in TestTelemetryPlanKeepsTheNativeFilesOutOfGit)",
-	"mobile/src/telemetry/consent.js":              "P7.2 (the app's sheet logic, as a function of its ports)",
+	"mobile/src/telemetry/consent.js":              "never — D195's answer is always-on, so there is no consent gate and no stored choice; §6 names it as a path the opt-in recommendation would have created and the answer takes out of the plan",
+	"mobile/src/telemetry/notice.js":               "P7.2 (the always-on statement the settings surface renders — D195's answer, in place of the sheet)",
+	"mobile/src/telemetry/notice.test.js":          "P7.2 (the statement's text, the link, and the absence of a switch and of any runtime collection call)",
 	"mobile/src/telemetry/analytics-calls.test.js": "P7.3 (the scan of §4.2's rules with its planted positive controls)",
 	"mobile/src/telemetry/events.test.js":          "P7.3 (the never-send test, over a fixture account, mailbox and token)",
-	"shared/telemetry-consent":                     "P7.2 (the pure choice machine and the platform flag table)",
-	"mobile/src/telemetry":                         "P7.2 (consent.js) and P7.3 (the event module, the enum sets and the breadcrumbs)",
+	"shared/telemetry-consent":                     "never — D195's answer is always-on, so there is no choice machine and no platform flag table to put in `shared/`; §6 names it as a path the opt-in recommendation would have created and the answer takes out of the plan",
+	"mobile/src/telemetry":                         "P7.2 (notice.js and notice.test.js) and P7.3 (the event module, the enum sets and the breadcrumbs)",
 }
 
 // TestTelemetryPlanModifiesTheFilesPR675Merged pins the correction #675's merge
