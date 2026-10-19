@@ -1575,7 +1575,12 @@ var runAccountGrants = setOf(
 	// those secrets away from every job account once the opt-in is on, so
 	// this account is the only Fugaro identity that reads a model credential
 	// (Check 94).
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.project_secrets[each.value] | google_service_account.credentials[0].member | for_each=toset(local.credentials == null ? [] : local.credentials.secrets) [local.credentials=var.credentials_service] [local.credentials.secrets=] | perms=`,
+	// The key is the grant's secret_id AS THE MODULE WRITES IT: the container
+	// resource, not the input map (modules/installation/credentials.tf), so
+	// the grant waits for the secret it names to exist. A literal from
+	// var.project_secrets would carry no such edge — and would key this
+	// allowlist on a value the module no longer uses.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.project[each.value].secret_id | google_service_account.credentials[0].member | for_each=toset(local.credentials == null ? [] : local.credentials.secrets) [local.credentials=var.credentials_service] [local.credentials.secrets=] | perms=`,
 	// The job account's way into the cascade: run.invoker on the credentials
 	// service, the only door its ingress leaves (invoker_iam_disabled false,
 	// modules/installation/credentials.tf). It is a call, not a credential:
