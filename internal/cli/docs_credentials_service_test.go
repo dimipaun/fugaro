@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -395,9 +396,11 @@ func TestCredentialsDocsNeverStateTheSharedJobRefusalStays(t *testing.T) {
 	if strings.Contains(c39, "refusal is lifted then") {
 		t.Error("C3.9 still says Task 3.4a's refusal is lifted only when the phase-3 rules land")
 	}
-	// The stale sentence may appear only on a line that carries the correction.
+	// The stale sentence may appear on a line only when that line also marks it
+	// as the superseded wording — which is how C0.2's red step quotes the phrase
+	// it plants as a mutation — and never as a claim of its own.
 	for _, line := range strings.Split(plan, "\n") {
-		if strings.Contains(line, "stays until then") {
+		if strings.Contains(line, "stays until then") && !strings.Contains(line, "superseded wording") {
 			t.Errorf("the plan still carries the stale claim on a line of its own: %.120s", line)
 		}
 	}
@@ -506,5 +509,166 @@ func TestChecklistCheck91PinsTheProtocolOfEachRow(t *testing.T) {
 		if !strings.Contains(step, want) {
 			t.Errorf("Check 91's body probe does not pin and record each row's protocol: it lacks %q", want)
 		}
+	}
+}
+
+// taskBlock returns one "###" task block of the plan: from its heading to the
+// next "###" heading. docSection cannot bound it — it stops only at a "##"
+// heading, which would take in every later task of the slice.
+func taskBlock(t *testing.T, path, doc, heading string) string {
+	t.Helper()
+	sec := docSection(t, path, doc, heading)
+	if i := strings.Index(sec[len(heading):], "\n### "); i != -1 {
+		return sec[:len(heading)+i]
+	}
+	return sec
+}
+
+// taskField returns one field of a task block: from the marker's line to the
+// line before the next one that opens a field ("**Tests.**", "**Red step.**",
+// …). A field is a hard-wrapped paragraph, so anchoring to the field keeps an
+// assertion from being satisfied by the same words in a neighbouring one — a
+// file named under Discarded is not a file the task writes.
+func taskField(t *testing.T, path, block, marker string) string {
+	t.Helper()
+	i := strings.Index(block, marker)
+	if i == -1 {
+		t.Fatalf("%s: a task block has no %s field", path, marker)
+	}
+	field := block[i:]
+	if j := strings.Index(field[len(marker):], "\n**"); j != -1 {
+		field = field[:len(marker)+j]
+	}
+	return field
+}
+
+// TestCredentialsPlanTaskBlocksNameTheGuardThatPinsThem: Slice 0's docs tasks
+// were written when the docs had no guards, so C0.3 said "Tests. None (a
+// document)" and "Red step. n/a (docs)" and neither it nor C0.2 listed
+// internal/cli/docs_credentials_service_test.go — which is now what pins the
+// sentences those tasks wrote, and which was mutation-proven against them. A
+// task block that still says it has no test, or that names no file for one,
+// tells the next reader the guard can be deleted with the text it protects.
+func TestCredentialsPlanTaskBlocksNameTheGuardThatPinsThem(t *testing.T) {
+	const path = "docs/credentials-service/implementation-plan.md"
+	doc := readDoc(t, path)
+	const guard = "internal/cli/docs_credentials_service_test.go"
+
+	c03 := taskBlock(t, path, doc, "### Task C0.3: Checks 90 and 91")
+	if files := taskField(t, path, c03, "**Files.**"); !strings.Contains(files, guard) {
+		t.Errorf("C0.3's Files line does not name %s, which is the guard for both checks it writes", guard)
+	}
+	tests := taskField(t, path, c03, "**Tests.**")
+	if !strings.Contains(tests, guard) {
+		t.Errorf("C0.3's Tests line does not name %s", guard)
+	}
+	if strings.Contains(tests, "None") {
+		t.Error("C0.3 still says it has no tests, though the guards for Checks 90 and 91 are part of this work")
+	}
+	red := taskField(t, path, c03, "**Red step.**")
+	if strings.Contains(red, "n/a") {
+		t.Error("C0.3 still has no red step, though each of its guards was proven by planting the defect it catches")
+	}
+	for _, want := range []string{"plant", "mutation"} {
+		if !strings.Contains(strings.ToLower(red), want) {
+			t.Errorf("C0.3's red step does not describe how its guards were proven: it lacks %q", want)
+		}
+	}
+
+	c02 := taskBlock(t, path, doc, "### Task C0.2: The supersession notes")
+	if tests := taskField(t, path, c02, "**Tests.**"); !strings.Contains(tests, guard) {
+		t.Errorf("C0.2's Tests line does not name %s, which pins the notes it writes (§7's lifting and m9 §11)", guard)
+	}
+}
+
+// TestCredentialsPlanC06ListsEveryCaseTheFileHas: C0.6's Tests line listed four
+// cases while the file it writes has five — the mailbox and phone identities'
+// denial was added and never written back — so the plan's own count of its
+// guards was wrong. This reads the test file itself and requires every case in
+// it to be named in the task block, which is what keeps the two from drifting
+// the next time a case is added.
+func TestCredentialsPlanC06ListsEveryCaseTheFileHas(t *testing.T) {
+	const path = "docs/credentials-service/implementation-plan.md"
+	doc := readDoc(t, path)
+	block := taskBlock(t, path, doc, "### Task C0.6:")
+	const file = "internal/budget/rules/creds_emulator_test.go"
+	src := readDoc(t, file)
+	re := regexp.MustCompile(`(?m)^func (Test\w+)\(t \*testing\.T\)`)
+	names := re.FindAllStringSubmatch(src, -1)
+	if len(names) < 5 {
+		t.Fatalf("%s has %d test functions; this test's floor is the five known cases", file, len(names))
+	}
+	for _, m := range names {
+		if !strings.Contains(block, m[1]) {
+			t.Errorf("C0.6's Tests line does not name %s, which %s defines", m[1], file)
+		}
+	}
+}
+
+// TestCredentialsReadmeCallsTheSupersededPlanSuperseded: the README's Related
+// list called the OAuth-reviewer-stage plan "the held" one, while the plan's
+// own banner reads SUPERSEDED and this plan's Related line reads "(superseded
+// by D130)" — the same stale sentence that named the parked design, which is
+// mixed-credentials and not that plan.
+func TestCredentialsReadmeCallsTheSupersededPlanSuperseded(t *testing.T) {
+	const path = "docs/credentials-service/README.md"
+	doc := readDoc(t, path)
+	plan, mixed := "", ""
+	for _, l := range strings.Split(doc, "\n") {
+		if strings.Contains(l, "[docs/plans/2026-10-14-oauth-reviewer-stage.md]") {
+			plan = l
+		}
+		if strings.Contains(l, "[docs/design/mixed-credentials.md]") {
+			mixed = l
+		}
+	}
+	if plan == "" || mixed == "" {
+		t.Fatalf("%s no longer links the OAuth-reviewer-stage plan and the parked design", path)
+	}
+	if strings.Contains(plan, "held") {
+		t.Errorf("the README still calls the superseded OAuth-reviewer-stage plan a held one: %.160s", plan)
+	}
+	for _, want := range []string{"superseded", "D130"} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("the README's entry for the OAuth-reviewer-stage plan does not say what it is: it lacks %q", want)
+		}
+	}
+	// The sentence's other half: the parked design the spec answers is
+	// mixed-credentials, and that is the entry that has to say so.
+	for _, want := range []string{"parked", "answers", "D130"} {
+		if !strings.Contains(mixed, want) {
+			t.Errorf("the README's entry for mixed-credentials does not say what it is: it lacks %q", want)
+		}
+	}
+	if strings.Contains(doc, "the held [docs/plans/2026-10-14-oauth-reviewer-stage.md]") {
+		t.Error("the README still calls the OAuth-reviewer-stage plan the held one")
+	}
+}
+
+// TestCredentialsPlanListsTheGuardFileAmongItsFiles: the guard file is new in
+// this work, so every list of this work's files has to carry it — the docs
+// guards the plan builds on, the files the plan creates, and the L0 level row
+// that enumerates what C0.2, C0.3 and C0.6 write. A list that omits it is how
+// a reader concludes the file is not part of the task.
+func TestCredentialsPlanListsTheGuardFileAmongItsFiles(t *testing.T) {
+	const path = "docs/credentials-service/implementation-plan.md"
+	doc := readDoc(t, path)
+	const guard = "internal/cli/docs_credentials_service_test.go"
+
+	// That row lists bare file names, the way it lists docs_security_test.go
+	// beside docs_project_centric_test.go.
+	guards := docTail(t, path, doc, "| The docs guards |")
+	guards = guards[:strings.Index(guards, "\n")]
+	if !strings.Contains(guards, "docs_credentials_service_test.go") {
+		t.Error("the plan's list of the docs guards does not name the guards this work adds")
+	}
+	created := docSection(t, path, doc, "### Created")
+	if !strings.Contains(created, guard) {
+		t.Error("the plan's Created table does not list the guard file this work adds")
+	}
+	l0 := docTail(t, path, doc, "| **L0** |")
+	l0 = l0[:strings.Index(l0, "\n")]
+	if !strings.Contains(l0, guard) {
+		t.Error("the plan's L0 row (what C0.2, C0.3 and C0.6 write) does not list the guard file")
 	}
 }

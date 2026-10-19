@@ -21,7 +21,8 @@ A reserved number is never reused and never renumbered.
 
 ## Related
 
-- [docs/design/mixed-credentials.md](../design/mixed-credentials.md) and the held [docs/plans/2026-10-14-oauth-reviewer-stage.md](../plans/2026-10-14-oauth-reviewer-stage.md): the parked design this spec answers (D130).
+- [docs/design/mixed-credentials.md](../design/mixed-credentials.md): the parked design this spec answers (D130) — Path B's mechanism is superseded, while its Paths A and C are this work's tiers B and C.
+- [docs/plans/2026-10-14-oauth-reviewer-stage.md](../plans/2026-10-14-oauth-reviewer-stage.md): **superseded by D130** (2026-10-17), as its own status banner says; Check 47 stays reserved and unused, and what carries over (the trusted-repository opt-in, the skew constant, the per-stage notional record) is named in the plan's C0.2.
 - [docs/design/project-centric.md](../design/project-centric.md) §7 (phase 5, the OAuth pool; D131).
 - [docs/design/m9-budget-and-dashboard.md](../design/m9-budget-and-dashboard.md) §11 (D2, the external gateway this service is) and [docs/design/budget-token-channel.md](../design/budget-token-channel.md) (the seal, D134).
 - [SECURITY.md](../../SECURITY.md) (the claims this service would change, D148).
