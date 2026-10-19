@@ -424,6 +424,11 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true, script =
       if (!documentListeners.has(type)) documentListeners.set(type, [])
       documentListeners.get(type).push({ handler, capture })
     },
+    removeEventListener(type, handler) {
+      const bound = documentListeners.get(type) ?? []
+      const at = bound.findIndex((entry) => entry.handler === handler)
+      if (at >= 0) bound.splice(at, 1)
+    },
     /** Dispatch at the document, as a key press or a click whose target is `target` arrives. */
     dispatch(type, init = {}) {
       const event = {
@@ -714,21 +719,61 @@ test('a submenu closes a moment after the pointer leaves, and a pointer that com
   page.runTimers()
   assert.equal(group.open, false, 'a submenu the pointer has left stayed open')
 
-  // A close that lands while the focus is on a link inside the list hands that focus back to
-  // the trigger rather than leaving it on an element the browser has stopped drawing — the
-  // same courtesy Escape pays, and the reason the focus handed back does not reopen the group.
+})
+
+test('a pointer that leaves a submenu the keyboard is in does not close it', () => {
+  // The pointer is not the only reader a group has. A keyboard reader tabs to the trigger —
+  // which opens the group — and on into the list; a pointer that crosses the group and leaves
+  // while they are reading is asking to close a submenu somebody is still using, and the close
+  // it asks for waits for that reader to go instead of landing under them.
+  const page = stubPage(HOME.html)
+  const group = page.groups[0]
+  const summary = group.querySelector('summary')
   const link = group.querySelector('a')
-  page.moveTo(summary)
+
+  page.focus(summary)
   page.focus(link)
-  assert.ok(page.document.activeElement === link, 'the stub would not focus a link inside an open submenu')
+  assert.equal(group.open, true, 'the keyboard did not open the group it was reading')
+
+  page.moveTo(summary)
   page.moveTo(page.find('main')[0])
   page.runTimers()
-  assert.equal(group.open, false, 'the submenu the pointer left stayed open under a focused link')
-  assert.ok(
-    page.document.activeElement === summary,
-    'the close left the focus on a link the browser no longer draws: it belongs back on the trigger',
+  assert.equal(group.open, true, 'a pointer leaving closed a submenu the keyboard was standing in')
+
+  // The reader goes, and the close the pointer asked for lands then — a moment after the focus
+  // has left rather than the instant it does, because the delay belongs to the pointer either
+  // way, and a reader who comes back inside it is the reader the delay is for.
+  const away = page.find('footer a')[0]
+  assert.ok(away, 'the built homepage has nothing outside the menu for the focus to leave to')
+  page.focus(away)
+  assert.equal(group.open, true, 'the submenu closed the instant the focus left it, with no delay at all')
+  page.runTimers()
+  assert.equal(group.open, false, 'the submenu the reader had left stayed open')
+})
+
+test('a submenu the pointer has just left stays open when the keyboard arrives in the delay', () => {
+  // The delay the pointer's close waits is a delay for a reader coming back, and a reader who
+  // comes back by keyboard is the same reader: the close is cancelled and the group is held by
+  // the focus instead — which is what Escape is then for.
+  const page = stubPage(HOME.html)
+  const group = page.groups[0]
+  const summary = group.querySelector('summary')
+
+  page.moveTo(summary)
+  page.moveTo(page.find('main')[0])
+  assert.equal(
+    page.timers.filter((timer) => !timer.cancelled).length,
+    1,
+    'the pointer left without scheduling the close there is nothing to cancel',
   )
-  assert.equal(group.open, false, 'the focus handed back to the trigger reopened the submenu the pointer had closed')
+
+  page.focus(summary)
+  page.runTimers()
+  assert.equal(group.open, true, 'the close the pointer asked for fired under the keyboard reader who had arrived inside the delay')
+
+  page.key('Escape')
+  assert.equal(group.open, false, 'Escape left the submenu open')
+  assert.ok(page.document.activeElement === summary, 'Escape did not leave the focus on the trigger it closed from')
 })
 
 test('the click the menu was built on still toggles a group', () => {
@@ -1170,6 +1215,46 @@ function menuFailures(script) {
     }
   }
 
+  // The pointer is not the only reader a group has. A pointer that leaves a submenu the keyboard
+  // is standing in has asked for a close that is not owed yet — it is owed when the focus goes —
+  // and a close that lands under the reader takes the list away from somebody reading it.
+  {
+    const page = pageOf()
+    const group = page.groups[0]
+    const summary = group.querySelector('summary')
+    page.focus(summary)
+    page.focus(group.querySelector('a'))
+    page.moveTo(summary)
+    page.moveTo(awayFrom(page))
+    page.runTimers()
+    if (!group.open) {
+      out.push(
+        'a pointer leaving closed a submenu the keyboard was standing in: the close it asked for is owed when the focus goes, not under the reader',
+      )
+    } else {
+      page.focus(page.find('footer a')[0])
+      page.runTimers()
+      if (group.open) out.push('a submenu the reader had left stayed open: the close the pointer asked for never landed')
+    }
+  }
+
+  // And the reader who comes back inside the delay the close waits is the reader the delay is
+  // for: the close is cancelled, and the focus holds the group open in its place.
+  {
+    const page = pageOf()
+    const group = page.groups[0]
+    const summary = group.querySelector('summary')
+    page.moveTo(summary)
+    page.moveTo(awayFrom(page))
+    page.focus(summary)
+    page.runTimers()
+    if (!group.open) {
+      out.push(
+        'the close the pointer asked for fired under the keyboard reader who had arrived inside the delay: the delay is for the reader who comes back, and coming back by keyboard is coming back',
+      )
+    }
+  }
+
   return out
 }
 
@@ -1230,6 +1315,30 @@ const DEFECTS = [
         '',
       ),
     refuses: [/a click on the page outside the menu handed the focus back to the trigger/],
+  },
+  {
+    what: 'a script whose pointer closes a group the keyboard is standing in',
+    plant: (source) =>
+      source.replace(
+        'if (pointerLeft && !readerIsInside()) closesAt = window.setTimeout(close, CLOSE_AFTER_MS)',
+        'if (pointerLeft) closesAt = window.setTimeout(close, CLOSE_AFTER_MS)',
+      ),
+    // Two rules, and both are this one defect: a close scheduled without asking who is reading
+    // lands under the reader, whether it was scheduled when the pointer left or re-scheduled a
+    // moment later when the focus arrived.
+    refuses: [
+      /a pointer leaving closed a submenu the keyboard was standing in/,
+      /the close the pointer asked for fired under the keyboard reader who had arrived inside the delay/,
+    ],
+  },
+  {
+    what: 'a script whose pointer’s close is not cancelled by the reader arriving inside the delay',
+    plant: (source) =>
+      source.replace(
+        /\n          stopClosing\(\)\n          closeWhenNobodyIsReading\(\)\n        \}\)/,
+        '\n          closeWhenNobodyIsReading()\n        })',
+      ),
+    refuses: [/the close the pointer asked for fired under the keyboard reader who had arrived inside the delay/],
   },
 ]
 

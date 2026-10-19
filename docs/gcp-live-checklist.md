@@ -4178,14 +4178,20 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    again: it opens on that first press. A click moves the focus to the trigger it presses on the
    way to the click, and a group opened by that focus would be closed again by the click that
    brought it, so this press is the one that would do nothing at all. The same press on a
-   **touch laptop** is the tap above.
+   **touch laptop** is the tap above. Then leave the keyboard where it is: Tab into an open
+   group's links, and with the focus still inside it move the mouse onto that group and away
+   again — the submenu **stays open**, because the pointer's close is owed when nobody is left
+   reading and the reader is still there; Tab on out of the group (to the footer) and it closes
+   a moment later. And Tab back in within that moment: the close is cancelled and the submenu
+   stays.
    **FACT:** what the pointer's arrival did with no click, whether the list stayed open with
    the pointer inside it, roughly how long the submenu stayed open after the pointer left and
    whether coming back kept it, the document's scroll width with the last group open (not
    wider than the viewport), on the emulated touch device that hovering opened nothing and the
    tap still toggled, on the touch laptop that a tap opened and a second tap closed the group
-   the query would have called a hover, and that a click on a closed group whose trigger did not
-   hold the focus opened it. **The fix, if a group does not open on hover, is in
+   the query would have called a hover, that a click on a closed group whose trigger did not
+   hold the focus opened it, and what a pointer that left a group the keyboard was standing in
+   did — nothing, until the focus went. **The fix, if a group does not open on hover, is in
    `public/scripts/site.js` or `src/styles/base.css`** — the query, the binding or the delay —
    and never in the reader's expectations: this is the behaviour the brief asks for, not a
    bonus.

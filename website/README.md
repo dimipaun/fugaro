@@ -144,10 +144,11 @@ added or removed without this sentence moving fails there:
   that taught it to read the pointer out of the event rather than out of the device's one
   answer, again in the one that taught it to tell a pointer's focus from the keyboard's, and
   again in the one that taught it that a close the reader asks for from outside the menu hands
-  nothing back — and why the page and the site move with the script (a script every page loads
-  is a page's weight as well as its JavaScript):
-  - **JavaScript per page:** 131,259 bytes. Three times 43,753: the one script the site ships,
-    `public/scripts/site.js` (35,002 bytes), plus 25 %. What the file carries is the copy
+  nothing back, and again in the one that taught the pointer's close to wait for the keyboard —
+  and why the page and the site move with the script (a script every page loads is a page's
+  weight as well as its JavaScript):
+  - **JavaScript per page:** 141,375 bytes. Three times 47,125: the one script the site ships,
+    `public/scripts/site.js` (37,700 bytes), plus 25 %. What the file carries is the copy
     control of P6 and D183; the menu's Escape/outside-click close of P3; W3.2's consent banner
     and analytics gate, which moved out of the markup and into this one file, with the cookie
     deletion the owner's ruling of 2026-10-18 added to a withdrawal; and, from the same
@@ -163,13 +164,17 @@ added or removed without this sentence moving fails there:
     `name` set opened hands the reader's focus back to its trigger — while a close the reader
     asks for from outside the menu hands nothing back, because a press on the page's own text
     moves the focus to the body without a `focusin` to hear, and the trigger of the menu just
-    dismissed is not where the reader is. Every page loads the file
+    dismissed is not where the reader is. A group has two readers, and the pointer is only one
+    of them: the close a pointer's departure owes is owed when nobody is left reading, so a
+    keyboard reader standing in the group holds it open and the close lands when the focus
+    goes — and a focus that arrives inside the `CLOSE_AFTER_MS` the close waits cancels it.
+    Every page loads the file
     once, so it is the whole of a page's JavaScript, and the test keeps a case that says so
     over the built artifact.
-  - **Page weight per page:** 982,962 bytes. Three times 327,654: the heaviest page, the
-    docs hub, at 262,123 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 993,081 bytes. Three times 331,027: the heaviest page, the
+    docs hub, at 264,821 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,088,020 bytes. Three times 1,029,340 (every file in `dist/`, 823,472
+  - **Whole site:** 3,098,139 bytes. Three times 1,032,713 (every file in `dist/`, 826,170
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -261,7 +266,11 @@ added or removed without this sentence moving fails there:
   back when the browser closes the group it was standing in because a sibling in the same `name`
   set opened — while a click on the page's own text, which closes the menu the reader is walking
   away from, hands nothing back: the press moves the focus to the body without a `focusin` to
-  hear, and the trigger of the menu just dismissed is not where the reader is. Each case was
+  hear, and the trigger of the menu just dismissed is not where the reader is. A group has two
+  readers, and the pointer is only one of them: the close a pointer's departure owes is owed when
+  nobody is left reading, so a keyboard reader standing in the group holds it open and the close
+  lands a moment after the focus goes — and a focus arriving inside that moment cancels the close
+  the pointer asked for. Each case was
   mutation-proved by hand: the defect was planted in the script or the stylesheet, the case was
   watched failing, and the defect was removed. The gate's rules are also
   one function over one script source (`menuFailures`) and one over one stylesheet
@@ -269,8 +278,10 @@ added or removed without this sentence moving fails there:
   plants each defect in the shipped script — a pointer arrival that opens whatever arrived, an
   answer sampled once at load and never again, a close that waits no time, a control that never
   says what it is, a focus a press moved that opens the group, a browser's close nobody answers, a
-  device that answers the query "no" getting the behaviour anyway, and a close the reader asked
-  for answering with the focus — and in the stylesheet, and watches the named refusal come back.
+  device that answers the query "no" getting the behaviour anyway, a close the reader asked
+  for answering with the focus, a pointer whose close lands under a keyboard reader standing in
+  the group, and a close the reader arriving inside the delay does not cancel — and in the
+  stylesheet, and watches the named refusal come back.
   Each of those rules was then mutation-proved the other way: removed from the function, with the
   refusal it names watched failing.
 

@@ -279,6 +279,12 @@
   // own group, so a click on a group the pointer has already opened closes it, which is what
   // the control did before any of this and what a reader pressing it is asking for.
   //
+  // A group has two readers, and the pointer is only one of them. The keyboard's focus is the
+  // other, and it outranks the pointer: a pointer that leaves a group somebody is standing in
+  // has asked for a close that is not owed yet, and it lands when the focus goes rather than
+  // under the reader. That is the same reader the delay is for — the one who comes back — and
+  // coming back by keyboard is coming back.
+  //
   // It returns the way back out: every listener it bound, taken off again. A close that is
   // already scheduled is left to run, because it was scheduled by a pointer that had left the
   // group and closing it is what the reader asked for by leaving; taking the listeners off is
@@ -286,45 +292,86 @@
   function hoverGroups() {
     var groups = document.querySelectorAll(GROUP_DETAILS)
     var bound = []
+    // One re-reading of each group, for the listener below that hears the reader's focus move
+    // anywhere: the drawer's list is the trigger's sibling rather than its child, so a focus
+    // landing in it never reaches the group's own listener at all.
+    var reread = []
 
     function on(element, type, handler) {
       element.addEventListener(type, handler)
       bound.push([element, type, handler])
     }
 
+    // Where the reader's focus has gone: a group it has arrived in is one the pointer's close
+    // cannot take away, and one it has left owes the close the pointer asked for.
+    function focusMoved() {
+      for (var i = 0; i < reread.length; i++) reread[i]()
+    }
+    on(document, 'focusin', focusMoved)
+
     for (var i = 0; i < groups.length; i++) {
       ;(function (group) {
         var summary = group.querySelector(SUMMARY)
         var closesAt = null
+        // The pointer has left and asked for a close. That alone does not say the close is owed:
+        // it is owed when the pointer has gone and nobody is left reading.
+        var pointerLeft = false
 
         function stopClosing() {
           if (closesAt !== null) window.clearTimeout(closesAt)
           closesAt = null
         }
 
+        // Whether a reader is standing in the group, read when it is asked rather than
+        // remembered: a focus can leave by way of something that cannot take it — a paragraph of
+        // the page's own text — and that fires no `focusin` anywhere, so a memory of the reader
+        // would outlive the reader and hold the group open for good.
+        //
+        // The one focus that is not a reader is the pointer's own on the trigger: a tap or a
+        // click leaves the focus there, and the group that press opened is the pointer's to close
+        // when the pointer goes. The keyboard's focus on the trigger is a reader — that is where
+        // a Tab to a group leaves it — and so is a focus anywhere inside the list.
+        function readerIsInside() {
+          var active = document.activeElement
+          if (!holds(group, active)) return false
+          return active !== summary || !pointerFocus
+        }
+
+        // A pointer that leaves a group the keyboard is standing in has asked for a close that is
+        // not owed yet: it is owed when the focus goes, and the focus going is what lands it. A
+        // pointer that leaves an empty group is owed it at once.
+        function closeWhenNobodyIsReading() {
+          if (pointerLeft && !readerIsInside()) closesAt = window.setTimeout(close, CLOSE_AFTER_MS)
+        }
+
+        reread.push(function () {
+          // A reader arriving inside the delay the pointer's close waits is the reader the delay
+          // is for: the close is cancelled, and the focus holds the group open in its place.
+          stopClosing()
+          closeWhenNobodyIsReading()
+        })
+
+        // This close never lands under a focus inside the group — the focus holds the group open
+        // until it goes — so there is no focus here to hand back to the trigger. The closes that
+        // can strand one are the reader's own and the browser's, and those pay it above.
         function close() {
           closesAt = null
-          // A group closed under the focus of a link inside it would leave that focus on an
-          // element that is no longer drawn, which is the courtesy `closeMenus` pays on Escape.
-          // The summary itself needs none: it is still drawn, and re-focusing what already
-          // holds the focus fires no event to be mistaken for a reader arriving at it.
-          if (summary && document.activeElement !== summary && holds(group, document.activeElement)) {
-            restored = summary
-            summary.focus()
-          }
+          pointerLeft = false
           group.open = false
         }
 
         on(group, 'pointerenter', function (event) {
           if (!hoveringPointer(event)) return
+          pointerLeft = false
           stopClosing()
           group.open = true
         })
 
         on(group, 'pointerleave', function (event) {
           if (!hoveringPointer(event)) return
+          pointerLeft = true
           stopClosing()
-          closesAt = window.setTimeout(close, CLOSE_AFTER_MS)
+          closeWhenNobodyIsReading()
         })
 
         on(group, 'focusin', function (event) {
