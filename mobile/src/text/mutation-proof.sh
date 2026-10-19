@@ -297,7 +297,13 @@ run "awaiting() asks the machine, over this module's clock" \
     if (at === null) return refuse(INPUT_CODES.BAD_CLOCK, 'now');
     const live = confirmPending(machine, at);
     if (!live.ok) return refuse(live.code, live.field);
-    return Object.freeze({ ok: true, actions: live.actions });" \
+    return Object.freeze({
+      ok: true,
+      actions: Object.freeze(live.actions.map((one) => Object.freeze({
+        ...one,
+        readBack: typedReadBack(one.readBack),
+      }))),
+    });" \
   "    const at = clock();
     if (at === null) return refuse(INPUT_CODES.BAD_CLOCK, 'now');
     return Object.freeze({ ok: true, actions: Object.freeze([]) });"

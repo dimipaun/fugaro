@@ -296,6 +296,15 @@ test('a read-back is drawn once, and the one instruction on it is the TYPED one'
   const quiet = render(screen);
   assert.equal(quiet.includes(TYPE_CUE), false);
   assert.equal(stringsOf(screen, SCREEN.CONFIRMATION).length, 0);
+  // A confirmation with no sentence is the same case: an empty box on screen
+  // would read as "something is waiting" with nothing in it to act on.
+  for (const empty of [{ readBack: '' }, { readBack: null }, { deadline: 1 }]) {
+    assert.equal(
+      stringsOf(screen, SCREEN.CONFIRMATION, { confirmation: empty }).length,
+      0,
+      JSON.stringify(empty),
+    );
+  }
 });
 
 test('the UNSENT text is shown, and a message the database already has is not', () => {
