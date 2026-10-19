@@ -48,13 +48,14 @@ import {
   RELEASE_WORKFLOW,
   SITE_YAML,
   assertReleaseURL,
-  consoleTag,
   downloadNeedle,
   downloadsData,
   publishedAssets,
   publishedDownloads,
   repoFile,
+  workflowAssetRule,
   workflowTagPrefix,
+  workflowTagShape,
 } from './lib/console-downloads.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -173,12 +174,30 @@ test('the console page renders the facts its data file carries', async (t) => {
 })
 
 test('the downloads section carries no link and no download URL while the flag is false', async (t) => {
+  // The flag the whole of this rests on, and the state it states: the console is **built for
+  // macOS and has not been published**. "Built" is not a claim taken on trust — the application
+  // and the workflow that signs, notarises and staples its `.dmg` and `.zip` are in this
+  // repository — and "not published" is what the flag and the data file's `available` say, in
+  // the two places this case reads. The four are asserted **before** the build below, because
+  // the build refuses the same disagreement: a case that read them afterwards would report the
+  // refusal instead of the broken premise, and could not fail on the premise at all.
+  assert.ok(
+    existsSync(path.join(REPO, 'console', 'package.json')),
+    'console/ holds no application, so "the console is built" is not what this repository says',
+  )
+  assert.ok(
+    existsSync(path.join(REPO, RELEASE_WORKFLOW)),
+    `${RELEASE_WORKFLOW} does not exist, and the console's release workflow is what makes "built" a statement about this repository rather than a design`,
+  )
+  assert.match(repoFile(SITE_YAML), /^\s*console_downloads:\s*false\s*$/m, `${SITE_YAML} does not have features.console_downloads false`)
+  assert.equal(
+    downloadsData().available,
+    false,
+    `${DOWNLOADS_JSON} says the console is available, and this case is about the state in which it has not been published`,
+  )
+
   const built = buildWith(t, () => {})
   const page = builtPage(built)
-
-  // The flag the whole of this rests on: the console is designed and unshipped, and
-  // `site.yaml` says so.
-  assert.match(repoFile(SITE_YAML), /^\s*console_downloads:\s*false\s*$/m, `${SITE_YAML} does not have features.console_downloads false`)
 
   const needle = downloadNeedle()
   assert.ok(
@@ -248,6 +267,20 @@ test('every console claim is traceable to the document it came from', () => {
       `no console claim cites ${id}: the page states that the console is read-only (D2), that it has no telemetry (D5) and that it is its own artifact (D11), and each of those is one of those decisions`,
     )
   }
+
+  // The not-released claim is the one whose source has to **state** it. `not_released.text` is
+  // the console's own state, and the review of this branch found it citing `docs/release.md` —
+  // a document that describes how the console's release is cut and never that there is none.
+  // The lines about the console are read one by one, so a sentence elsewhere in the file (a
+  // refusal message about something else, say) cannot vouch for the claim.
+  const stateSource = data.not_released.source.trim().split(/\s+/)[0]
+  const aboutTheConsole = repoFile(stateSource)
+    .split('\n')
+    .filter((line) => /console/i.test(line))
+  assert.ok(
+    aboutTheConsole.some((line) => /not released|has not been published|unpublished/i.test(line)),
+    `${DOWNLOADS_JSON}'s not_released claim cites ${stateSource}, and none of its ${aboutTheConsole.length} line(s) about the console says the console is not released: the claim is the console's state, so the document cited for it has to state it`,
+  )
 })
 
 test("the console's guarantees are stated as the document that decides them states them", () => {
@@ -328,27 +361,61 @@ test('the release the download URLs are built from is one this repository has re
   const data = downloadsData()
   const { release } = data
 
-  // The tag is the console's own, `console-vX.Y.Z`, and the PREFIX is the release workflow's:
-  // `CONSOLE_TAG="console-v$VERSION"` is the line that cuts it, so the data file is held to the
-  // file that publishes the release rather than to a remembered spelling. The document the data
-  // file names as the block's source is held to the same tag, because that is what it is cited
-  // for.
+  // The tag is the console's own, `console-vX.Y.Z`, and the PREFIX is the release workflow's,
+  // read twice out of that file: the `CONSOLE_TAG="console-v$VERSION"` line that cuts the tag,
+  // and the literal `console-vX.Y.Z` its header prints. Holding the prefix to those two is what
+  // makes these assertions able to fail: the line this replaces compared the composed tag with
+  // `console-v` and the version, both of which the data file had just supplied, so only a wrong
+  // literal in the test itself could have failed it. The document the data file names as the
+  // block's source is held to the same tag, because that is what it is cited for.
   assert.equal(
     release.tag_prefix,
     workflowTagPrefix(),
     `${DOWNLOADS_JSON}'s release.tag_prefix is not the prefix ${RELEASE_WORKFLOW} composes the console's tag with`,
   )
-  assert.equal(consoleTag(), `console-v${release.version}`, 'the tag the URLs are built from is not the prefix and the version the data file carries')
+  assert.equal(
+    `${release.tag_prefix}X.Y.Z`,
+    workflowTagShape(),
+    `${DOWNLOADS_JSON}'s release.tag_prefix is not the prefix ${RELEASE_WORKFLOW} prints the console's tag with`,
+  )
   assert.match(
     repoFile(release.source.split(/\s+/)[0]),
     /console-vX\.Y\.Z/,
     `${release.source} no longer documents the console's own release tag, and ${DOWNLOADS_JSON}'s URLs are built from it`,
   )
 
-  // The names are the release's own too: `console/README.md` prints what the packaging step
-  // produces, and the data file's `file` entries are those names with `{version}` where the
-  // version goes. A data file that drifted from the release puts a 404 behind every button on
-  // the day the flag is flipped, and nothing in the build would notice.
+  // The shapes the release's own job accepts, read out of that job rather than remembered:
+  // it takes exactly one `.dmg` and one `.zip`, and its `case "$f" in *"-$VERSION-"*` guard
+  // refuses any asset not named for the version. This comes **before** the names below,
+  // because those are held to `console/README.md`'s documented ones: an asset in a shape the
+  // release does not upload is otherwise reported as a drift between the data file and the
+  // README rather than as what it is — a name no release will ever publish.
+  const rule = workflowAssetRule()
+  assert.deepEqual(
+    rule.extensions,
+    ['dmg', 'zip'],
+    `${RELEASE_WORKFLOW} no longer takes exactly one .dmg and one .zip (it names ${rule.extensions.map((extension) => `.${extension}`).join(', ')}), and the data file's assets are those two`,
+  )
+  assert.ok(
+    rule.versioned,
+    `${RELEASE_WORKFLOW} no longer refuses an asset that is not named for the version (\`case "$f" in *"-$VERSION-"*\`), and the data file's names carry the version`,
+  )
+  for (const entry of data.downloads) {
+    const extension = entry.file.slice(entry.file.lastIndexOf('.') + 1)
+    assert.ok(
+      rule.extensions.includes(extension),
+      `${DOWNLOADS_JSON}'s ${entry.id} names a .${extension} file, and the release uploads ${rule.extensions.map((value) => `.${value}`).join(' and ')}`,
+    )
+    assert.ok(
+      entry.file.includes('-{version}-'),
+      `${DOWNLOADS_JSON}'s ${entry.id} is ${JSON.stringify(entry.file)}, which does not carry the version between dashes, and the release refuses an asset not named for the version`,
+    )
+  }
+
+  // And the names are the release's own too: `console/README.md` prints what the packaging
+  // step produces, and the data file's `file` entries are those names with `{version}` where
+  // the version goes. A data file that drifted from the release puts a 404 behind every
+  // button on the day the flag is flipped, and nothing in the build would notice.
   assert.deepEqual(
     data.downloads.map((entry) => entry.file.split('{version}').join(release.version)),
     publishedAssets(data),

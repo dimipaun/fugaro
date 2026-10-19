@@ -81,6 +81,40 @@ export function workflowTagPrefix() {
 }
 
 /**
+ * The tag's own spelling as the release workflow prints it: the literal `console-vX.Y.Z` in its
+ * header. A second, independent reading of the same fact `workflowTagPrefix` takes from the
+ * line that cuts the tag — this one is prose the workflow writes about itself, so a data file
+ * whose prefix drifts has to disagree with both to pass.
+ */
+export function workflowTagShape() {
+  const m = /`(console-[a-z-]+)X\.Y\.Z`/.exec(repoFile(RELEASE_WORKFLOW))
+  if (m === null) {
+    throw new Error(
+      `${RELEASE_WORKFLOW} no longer prints the console's tag as \`console-vX.Y.Z\`, and ${DOWNLOADS_JSON}'s URLs are built from that spelling`,
+    )
+  }
+  return `${m[1]}X.Y.Z`
+}
+
+/**
+ * The naming rule the console's release job enforces on the assets it uploads, read out of that
+ * job rather than remembered: `dmgs=(./*.dmg)` and `zips=(./*.zip)` are the shapes it takes, and
+ * `case "$f" in *"-$VERSION-"*)` refuses any asset not named for the version. The data file's
+ * names are held to both (`console.mjs`), so the day the release's own rule changes, the site
+ * fails there rather than publishing buttons that 404.
+ */
+export function workflowAssetRule() {
+  const workflow = repoFile(RELEASE_WORKFLOW)
+  const extensions = [...new Set([...workflow.matchAll(/\*\.(dmg|zip)\b/g)].map((match) => match[1]))].sort()
+  if (extensions.length === 0) {
+    throw new Error(
+      `${RELEASE_WORKFLOW} no longer takes the console's assets by extension (\`dmgs=(./*.dmg)\`, \`zips=(./*.zip)\`), and ${DOWNLOADS_JSON}'s assets are those shapes`,
+    )
+  }
+  return { extensions, versioned: /\*"-\$VERSION-"\*/.test(workflow) }
+}
+
+/**
  * The names the console's release publishes, as the release's own documentation prints them:
  * `console/README.md`'s `release/Fugaro Console-<version>-universal.dmg` and
  * `…-universal-mac.zip`, with the version put in for the placeholder. Read from that document

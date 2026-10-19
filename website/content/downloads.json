@@ -9,7 +9,7 @@
   "not_released": {
     "text": "Not released yet. The console is built for macOS and has not been published: this section carries no download link until its own release exists.",
     "short": "Not released yet.",
-    "source": "docs/release.md"
+    "source": "docs/website/reconciliation.md D95"
   },
   "properties": [
     {
