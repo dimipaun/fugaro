@@ -745,11 +745,15 @@ changes are cited as the feedback's own.
   held per-section rather than to README.md as one file, and why `home.mjs`'s ordering case is
   now built out of two of README.md's own `## How it works` lines: each step of the shipped flow
   cites a section of its own, and the rule that a section's lines come in the section's order
-  has to keep holding for the day two steps share one again. **What the caption cannot carry is
-  the half after it** — that the run goes on pushing checkpoints — because a caption is one
-  contiguous quotation and that is another section's sentence; the flow's step is the pull
-  request, so the caption says what opens and when, and the pushes that follow are the section
-  it cites. It is recorded here rather than left to the reader of the picture.
+  has to keep holding for the day two steps share one again. **What the caption cannot carry
+  is the rest of the fact** — that the push comes within about a minute of the run's first
+  commit, which is the section above it in the same document and `docs/gcp-setup.md`'s
+  sentence, and that the run goes on pushing checkpoints as it works, which is another sentence
+  of the section the caption cites. A caption is one contiguous quotation of a repository
+  document, and one stitched from two sentences' halves is a sentence the repository never
+  wrote; the flow's step is the pull request, so the caption says what opens and what state it
+  opens in, and the rest is the section it cites. It is recorded here rather than left to the
+  reader of the picture.
 - **The measurements, and the check that is still the owner's.** Nothing here was rendered: no
   browser was driven for this round, and no screenshot is committed — this run cannot see one.
   What the gates read is the artifact and the stylesheet: the homepage is 294 words against the
