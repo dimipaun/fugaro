@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -514,6 +515,56 @@ func TestDocsComputeBackendNamesEveryChecklistTest(t *testing.T) {
 	}
 }
 
+// TestDocsComputeBackendSecuritySensitiveSetIsComplete: Global Constraint 8 is
+// normative — it says which tasks a reviewer may not merge on a self-review —
+// and it claims to *be* the set of headings that carry the flag ("and nothing
+// else is on it"). A list like that goes wrong quietly and in both directions:
+// a task whose heading carries the flag but which the list omits is a task
+// nobody reviews, and a task the list names but whose heading lost the flag is
+// a review the constraint asks for and the work does not show.
+//
+// So the two are asserted against each other: the flagged headings are exactly
+// the tasks the constraint names, each named in the constraint's own bold form.
+func TestDocsComputeBackendSecuritySensitiveSetIsComplete(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	constraint := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "8. **Security-sensitive tasks are flagged") {
+			constraint = line
+			break
+		}
+	}
+	if constraint == "" {
+		t.Fatalf("%s has no Global Constraint 8 (the security-sensitive one): the plan's review story is what it fixes", computeBackendPlan)
+	}
+	// The tasks whose own heading carries the flag.
+	heading := regexp.MustCompile(`(?m)^### Task (\d+):(.*)$`)
+	flagged := map[string]bool{}
+	for _, m := range heading.FindAllStringSubmatch(doc, -1) {
+		if strings.Contains(m[2], "SECURITY-SENSITIVE") {
+			flagged[m[1]] = true
+		}
+	}
+	want := []string{"8", "9", "10", "11", "14"}
+	if len(flagged) != len(want) {
+		t.Errorf("%s carries the SECURITY-SENSITIVE flag on %d task headings, and Global Constraint 8 names %d tasks: the constraint says it is the set of headings that carry it, so the two are the same list", computeBackendPlan, len(flagged), len(want))
+	}
+	for _, n := range want {
+		if !flagged[n] {
+			t.Errorf("Task %s's heading no longer carries SECURITY-SENSITIVE, which Global Constraint 8 lists it as: either the heading or the constraint has moved", n)
+		}
+		if !strings.Contains(constraint, "**"+n+"**") {
+			t.Errorf("Global Constraint 8 no longer names Task %s, whose heading carries the flag: the constraint is what tells a reviewer which tasks may not merge on a self-review", n)
+		}
+	}
+	// No other task may be flagged without appearing in the constraint, and the
+	// check above is what makes the count meaningful: a sixth flagged heading
+	// leaves one of the two lists short.
+	if !strings.Contains(constraint, "and nothing else is on it") {
+		t.Errorf("%s's Global Constraint 8 no longer claims to be the whole set, which is the claim this test holds", computeBackendPlan)
+	}
+}
+
 // TestDocsComputeBackendCIReachMatchesTheTree: Global Constraint 3 rests on a
 // fact about CI — the compute root is already in the terraform job's root loop,
 // so the design's staged `docs/pending-workflows/ci.yml` request is satisfied
@@ -531,8 +582,10 @@ func TestDocsComputeBackendCIReachMatchesTheTree(t *testing.T) {
 	if !strings.Contains(doc, "for r in installation firebase repo compute; do") {
 		t.Errorf("%s no longer quotes the terraform job's root loop as naming compute, which is its whole reason for saying no workflow change is needed", computeBackendPlan)
 	}
-	if !strings.Contains(doc, "`CONTRIBUTING.md:25` and `:32`") {
-		t.Errorf("%s no longer records where CONTRIBUTING.md says the compute root is out of CI's reach", computeBackendPlan)
+	for _, want := range []string{"`CONTRIBUTING.md:25`", "`CONTRIBUTING.md:32`"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer cites %s: the plan quotes each of the two lines by its own words, and a citation that drops a line is a claim about the tree that nothing checks", computeBackendPlan, want)
+		}
 	}
 	ci := readDoc(t, ".github/workflows/ci.yml")
 	if !strings.Contains(ci, "for r in installation firebase repo compute; do") {
@@ -543,19 +596,43 @@ func TestDocsComputeBackendCIReachMatchesTheTree(t *testing.T) {
 	if _, err := os.Stat("../../docs/pending-workflows/ci.yml"); err == nil {
 		t.Errorf("docs/pending-workflows/ci.yml now exists: %s's Global Constraint 3 says the staged request was applied to the workflow instead, so either the plan or that file has to go", computeBackendPlan)
 	}
-	contributing := readDoc(t, "CONTRIBUTING.md")
-	const stale = "is the one CI does not reach until the staged `docs/pending-workflows/ci.yml` is copied in"
-	if !strings.Contains(contributing, stale) {
-		t.Errorf("CONTRIBUTING.md no longer says the compute root %q: the contributor rule has been corrected, so %s's Global Constraint 3 (and this assertion) have to change with it", stale, computeBackendPlan)
+	// The two lines the plan cites are asserted separately and at their own line
+	// numbers, because the plan quotes each line's own sentence: `:25` and `:32`
+	// say the same thing in different words, and a single "somewhere in the file"
+	// assertion would hold the file to neither of them — which is exactly how the
+	// plan came to attribute `:25`'s sentence to `:32` in the first place.
+	for _, want := range []struct {
+		line int
+		text string
+	}{
+		{25, "is the one CI does not reach until the staged `docs/pending-workflows/ci.yml` is copied in"},
+		{32, "`compute` is added by the staged `docs/pending-workflows/ci.yml`, so until that file is copied in the new root is validated locally only"},
+	} {
+		lines := strings.Split(readDoc(t, "CONTRIBUTING.md"), "\n")
+		if want.line > len(lines) {
+			t.Errorf("CONTRIBUTING.md has %d lines, so :%d no longer exists: %s's Global Constraint 3 cites it by number", len(lines), want.line, computeBackendPlan)
+			continue
+		}
+		if got := lines[want.line-1]; !strings.Contains(got, want.text) {
+			t.Errorf("CONTRIBUTING.md:%d no longer says %q (it reads %q): the contributor rule has been corrected, so %s's Global Constraint 3, which quotes that line by number, has to change with it",
+				want.line, want.text, strings.TrimSpace(got), computeBackendPlan)
+		}
 	}
 }
 
 // TestDocsComputeBackendSaysWhatTheTreeDisagreesWith: the two places the plan
 // was written against a brief that the tree does not carry — the release, and
 // the Spot result — are stated in the plan's own text rather than smoothed
-// over. The brief's Spot sentence has no `50001` anywhere under docs/, and the
-// release is 0.9.0 in the constant and the 0.8.6 note; a plan that quietly
-// agreed with either would be a plan a reader could not check.
+// over. The brief's Spot sentence has no `50001` anywhere under docs/ **outside
+// this plan**, and the release is 0.9.0 in the constant and the 0.8.6 note; a
+// plan that quietly agreed with either would be a plan a reader could not check.
+//
+// The `50001` half is a claim about the whole of `docs/`, so it is asserted
+// over the whole of `docs/` — every file, recursively, this plan excluded —
+// rather than over the two documents the number would most obviously land in.
+// The plan itself carries the number (it quotes the brief), which is why the
+// claim has to say "outside this plan" and why an assertion that looked only
+// where the plan is not would be a fact the repository contradicts.
 func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	if !strings.Contains(doc, "**Two facts this plan is written against") {
@@ -569,11 +646,38 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 			t.Errorf("%s no longer says %q about the Spot result", computeBackendPlan, want)
 		}
 	}
-	// And it is genuinely absent from the docs it would have been recorded in.
-	for _, path := range []string{"docs/design/compute-backend.md", "docs/gcp-live-checklist.md"} {
-		if strings.Contains(readDoc(t, path), "50001") {
-			t.Errorf("%s now carries `50001`: the Spot result has been measured and recorded, so %s's second opening fact and this test both have to change", path, computeBackendPlan)
+	// The plan carries the number because it quotes the brief, which is what the
+	// word "outside this plan" in the sentence is for: if it ever stops carrying
+	// it, the exclusion has become a claim about nothing.
+	if !strings.Contains(doc, "50001") {
+		t.Errorf("%s no longer carries `50001` at all, and its Spot sentence excludes itself from the claim for that reason", computeBackendPlan)
+	}
+	// And it is genuinely absent from every document under docs/ other than this
+	// plan — the claim the plan makes, asserted over the whole tree it names.
+	walked := 0
+	err := filepath.WalkDir("../../docs", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
 		}
+		walked++
+		rel := strings.TrimPrefix(filepath.ToSlash(p), "../../")
+		if rel == computeBackendPlan {
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), "50001") {
+			t.Errorf("%s now carries `50001`: the Spot result has been measured and recorded outside %s, so that plan's second opening fact (which says no `50001` appears anywhere under docs/ outside it) and this assertion both have to change", rel, computeBackendPlan)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if walked == 0 {
+		t.Fatalf("no files under docs/ were walked: %s's Spot fact is a claim about the whole directory", computeBackendPlan)
 	}
 	// The release: the tree says 0.9.0 in the constant and the 0.8.6 note, and
 	// the plan follows the brief's 0.9.5 and says so.
