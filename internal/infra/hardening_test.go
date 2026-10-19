@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -295,5 +296,120 @@ func TestHardeningBanner(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("banner lacks %q:\n%s", want, got)
 		}
+	}
+}
+
+// launcherGrant is one side of a runs_launcher change: the grant as the
+// plan's JSON spells it, with its condition block as a one-element list.
+func launcherGrant(bucket, member, role, title, expr string, desc any) map[string]any {
+	return map[string]any{"bucket": bucket, "member": member, "role": role,
+		"condition": []any{map[string]any{"title": title, "expression": expr, "description": desc}}}
+}
+
+// launcherReplace is the upgrade's replace of m's runs_launcher grant, from
+// the pre-0.9.0 runs/-only condition to the runs/ and tokens/ one, as
+// `terraform show -json` renders it.
+func launcherReplace(bucket, m string, actions ...string) tf.ResourceChange {
+	return tf.ResourceChange{Address: grantAddr("runs_launcher", m), Type: "google_storage_bucket_iam_member", Change: tf.Change{
+		Actions: actions,
+		Before:  launcherGrant(bucket, m, "roles/storage.objectUser", gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket), ""),
+		After:   launcherGrant(bucket, m, "roles/storage.objectUser", gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(bucket), nil),
+	}}
+}
+
+// The 0.9.0 upgrade replaces every non-operator launcher's runs_launcher
+// grant (its condition widened from runs/ to runs/ and tokens/, and a
+// condition is ForceNew). Exactly that replace is admitted, for a launcher on
+// the list; every near miss stays with the guard.
+func TestLauncherGrantUpgrade(t *testing.T) {
+	const bucket = "fugaro-runs-" + hardeningProject
+	const a, b, o = "user:a@example.com", "user:b@example.com", "user:o@example.com"
+	launchers, operators := []string{a, b, o}, []string{o}
+	with := func(rc tf.ResourceChange, f func(c *tf.Change)) tf.ResourceChange {
+		rc.Change.Before = maps.Clone(rc.Change.Before)
+		rc.Change.After = maps.Clone(rc.Change.After)
+		f(&rc.Change)
+		return rc
+	}
+	cond := func(side map[string]any, k string, v any) {
+		c := maps.Clone(side["condition"].([]any)[0].(map[string]any))
+		c[k] = v
+		side["condition"] = []any{c}
+	}
+	ok := launcherReplace(bucket, a, "delete", "create")
+	for _, tc := range []struct {
+		name    string
+		changes []tf.ResourceChange
+		want    []string
+	}{
+		{"two launchers upgrade", []tf.ResourceChange{ok, launcherReplace(bucket, b, "delete", "create")}, []string{grantAddr("runs_launcher", a), grantAddr("runs_launcher", b)}},
+		{"create before destroy", []tf.ResourceChange{launcherReplace(bucket, a, "create", "delete")}, []string{grantAddr("runs_launcher", a)}},
+		{"description empty on both sides", []tf.ResourceChange{with(ok, func(c *tf.Change) { cond(c.After, "description", "") })}, []string{grantAddr("runs_launcher", a)}},
+		{"a pure delete", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.Actions = []string{"delete"}; c.After = nil })}, nil},
+		{"an update", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.Actions = []string{"update"} })}, nil},
+		{"an operator's grant", []tf.ResourceChange{launcherReplace(bucket, o, "delete", "create")}, nil},
+		{"a member on no list", []tf.ResourceChange{launcherReplace(bucket, "user:gone@example.com", "delete", "create")}, nil},
+		{"another bucket", []tf.ResourceChange{launcherReplace("fugaro-runs-other-1234", a, "delete", "create")}, nil},
+		{"the bucket changes", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.After["bucket"] = "fugaro-runs-other-1234" })}, nil},
+		{"the member changes", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.After["member"] = b })}, nil},
+		{"the before member is another", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.Before["member"] = b })}, nil},
+		{"the role changes", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.After["role"] = "roles/storage.objectAdmin" })}, nil},
+		{"the before role is another", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.Before["role"] = "roles/storage.objectAdmin" })}, nil},
+		{"before is already the new condition", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.Before = maps.Clone(c.After) })}, nil},
+		{"after is still the legacy condition", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.After = maps.Clone(c.Before) })}, nil},
+		{"before has another title", []tf.ResourceChange{with(ok, func(c *tf.Change) { cond(c.Before, "title", "someone-else") })}, nil},
+		{"before has another expression", []tf.ResourceChange{with(ok, func(c *tf.Change) { cond(c.Before, "expression", "true") })}, nil},
+		{"before has a description", []tf.ResourceChange{with(ok, func(c *tf.Change) { cond(c.Before, "description", "x") })}, nil},
+		{"after has another expression", []tf.ResourceChange{with(ok, func(c *tf.Change) { cond(c.After, "expression", "true") })}, nil},
+		{"after has another title", []tf.ResourceChange{with(ok, func(c *tf.Change) { cond(c.After, "title", "someone-else") })}, nil},
+		{"after has a description", []tf.ResourceChange{with(ok, func(c *tf.Change) { cond(c.After, "description", "x") })}, nil},
+		{"before has no condition", []tf.ResourceChange{with(ok, func(c *tf.Change) { delete(c.Before, "condition") })}, nil},
+		{"after has no condition", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.After["condition"] = []any{} })}, nil},
+		{"two conditions", []tf.ResourceChange{with(ok, func(c *tf.Change) {
+			c.After["condition"] = append(slices.Clone(c.After["condition"].([]any)), c.After["condition"].([]any)[0])
+		})}, nil},
+		{"another resource", []tf.ResourceChange{func() tf.ResourceChange { r := ok; r.Address = grantAddr("runs", a); return r }()}, nil},
+		{"another module", []tf.ResourceChange{func() tf.ResourceChange {
+			r := ok
+			r.Address = strings.Replace(r.Address, "module.installation", "module.other", 1)
+			return r
+		}()}, nil},
+		{"another type", []tf.ResourceChange{func() tf.ResourceChange { r := ok; r.Type = "google_storage_bucket_iam_binding"; return r }()}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := LauncherGrantUpgrade(&tf.Plan{ResourceChanges: tc.changes}, bucket, launchers, operators)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if LauncherGrantUpgrade(nil, bucket, launchers, operators) != nil {
+		t.Error("a nil plan admits something")
+	}
+	if LauncherGrantUpgrade(&tf.Plan{ResourceChanges: []tf.ResourceChange{ok}}, `bad"bucket`, launchers, operators) != nil {
+		t.Error("a bucket name outside the condition's charset admits something")
+	}
+}
+
+// The upgrade plan as a 0.8.x installation with two launchers (one an
+// operator) gets it from 0.9.0's init, run through the guard itself: the
+// launcher's replace passes with what LauncherGrantUpgrade returns and
+// nothing else, and the guard still refuses it without that.
+func TestLauncherGrantUpgradeThroughGuard(t *testing.T) {
+	const bucket = "fugaro-runs-" + hardeningProject
+	const a, o = "user:alice@example.com", "user:o@example.com"
+	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{launcherReplace(bucket, a, "delete", "create")}}
+	if err := tf.Guard(p, nil); err == nil {
+		t.Fatal("the guard admits the replace with no allow-list: this test no longer proves anything")
+	}
+	allowed := LauncherGrantUpgrade(p, bucket, []string{a, o}, []string{o})
+	if err := tf.Guard(p, append(HardeningAllowDelete(p, []string{a, o}, []string{o}), allowed...)); err != nil {
+		t.Fatalf("the upgrade plan is refused: %v", err)
+	}
+	if got := LauncherGrantUpgradeBanner(allowed); !strings.Contains(got, "  "+a+"\n") || !strings.Contains(got, "tokens/") {
+		t.Errorf("the banner does not name %s and tokens/:\n%s", a, got)
+	}
+	if LauncherGrantUpgradeBanner(nil) != "" {
+		t.Error("a banner with nothing allowed")
 	}
 }

@@ -825,11 +825,27 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// neither a coding agent's session (which cannot create a project at
 	// all — projectStage.Apply needs a terminal and a typed confirmation)
 	// nor `fugaro managed apply`, which only reads, reaches one.
+	//
+	// While managed projects are off in this release (managedDeployerShipped),
+	// the label is not written: with it, a project this run created reads as
+	// managed, and the one reader of that in this release is init's own guard,
+	// whose refusal for a managed project drops the --allow-delete advice —
+	// in a release whose every managed entry point refuses. The creation fact
+	// is written as it always was, so the project is the state a project
+	// created before the label existed is in (docs/gcp-setup.md has the
+	// owner-run line that completes it).
+	labelOff := false
 	if err == nil {
-		err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
+		if managedDeployerOpen {
+			err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
+		} else {
+			labelOff = true
+		}
 	}
-	marked := err == nil
+	marked := err == nil && !labelOff
 	switch {
+	case labelOff:
+		fmt.Fprintf(r.w, "recorded that this run created project %s (gs://%s/%s); managed projects are off in this release, so it is not labelled %s=%s and is not a managed project\n", r.res.Created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	case marked:
 		if c := r.o.created; c != nil {
 			c.Marked = true
@@ -1731,10 +1747,16 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
 		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
-		if err := r.guard(ctx, c, plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
+		// The 0.9.0 upgrade replaces each launcher's runs/-only grant with
+		// the runs/ and tokens/ one (a condition is ForceNew); exactly that
+		// replace is allowed, and named (bucket-iam.md H5).
+		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
+		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
+		if err := r.guard(ctx, c, plan, allowed); err != nil {
 			return outs, false, err
 		}
 		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
+		fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
 		counts := infra.CountPlan(plan)
 		r.res.Changes = &counts
 		if r.o.planOnly {
