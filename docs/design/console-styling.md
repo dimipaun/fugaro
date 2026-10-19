@@ -1591,8 +1591,7 @@ tasks across five groups, since `J3` is the two PRs of Tasks 6.3 and 6.4); and
 **four** lines in the File Structure tree, one per `theme/*.css` file. **These six tasks are
 `APPROVED by the owner on 2026-10-19`**, and so is this document: the owner's approval is the
 go, **Q1** is answered by it (option (b), dark only) while **Q2 to Q6 stand as §8 writes
-them**, and the
-plan's phase heading, summary row and PR rows say the same. *The heading as first written,
+them**, and the plan's phase heading, summary row and PR rows say the same. *The heading as first written,
 kept:* `The build plan (Phase 6, UNAPPROVED)`, whose text read "**Nothing here is approved**:
 the plan's OWNER APPROVAL GATE stands, and these tasks carry `UNAPPROVED` until the owner
 answers §8" — that was the state on 2026-10-19, before the go. Task 6.2's heading
