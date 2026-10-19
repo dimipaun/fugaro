@@ -119,6 +119,13 @@ const (
 	// refuses a shape this test would not expect; what is checked here is the
 	// release the file describes.
 	websiteDownloadsPath = "website/content/downloads.json"
+	// websiteConsoleSumsPath is the release's own checksum list, copied
+	// verbatim from the `console-sha256sums.txt` asset of the `console-vX.Y.Z`
+	// release when the site's console downloads are turned on. It is the one
+	// thing that makes a checksum checkable without the network: a well-formed
+	// value can still be the wrong one, and the release's own file is what says
+	// which value is right.
+	websiteConsoleSumsPath = "website/data/console-sha256sums.txt"
 	// websiteConsoleReleaseWorkflowPath is the workflow that builds, signs, notarises
 	// and publishes the console as its own `console-vX.Y.Z` release (D11). It
 	// is read, rather than quoted, because the tag prefix the site's download
@@ -299,6 +306,42 @@ func consoleReleaseTagPrefix(t *testing.T) string {
 	t.Fatalf("%s carries no %s...$VERSION line, so the prefix the console's release tag is composed from cannot be read: the site's download URLs are built from that tag, and this check would otherwise hold them to nothing", websiteConsoleReleaseWorkflowPath, marker)
 	return ""
 }
+
+// consoleReleaseSums reads the release's own checksum list -- the
+// `console-sha256sums.txt` asset of the console's release, copied verbatim into
+// the tree -- and returns it as published name -> checksum.
+//
+// The file's shape is checked rather than tolerated: one `<64 hex>  <name>` line
+// per asset, which is what `sha256sum` writes and `shasum -a 256 -c` reads. A
+// line this cannot read is a failure and not a skip, because a skipped line is
+// an asset the cross-check in the caller silently stops covering, and a file
+// with no line at all would make every check against it vacuous.
+func consoleReleaseSums(t *testing.T) map[string]string {
+	t.Helper()
+	body := readDoc(t, websiteConsoleSumsPath)
+	sums := map[string]string{}
+	for i, line := range strings.Split(body, "\n") {
+		if line == "" {
+			continue
+		}
+		m := consoleSumsLine.FindStringSubmatch(line)
+		if m == nil {
+			t.Fatalf("%s line %d is %q, and the file the release publishes is one \"<64 hex>  <name>\" line per asset -- the shape sha256sum writes and shasum -a 256 -c reads. A line this cannot read is an asset the checks below would not cover", websiteConsoleSumsPath, i+1, line)
+		}
+		if _, dup := sums[m[2]]; dup {
+			t.Fatalf("%s names %q twice (line %d), and one published name has one checksum", websiteConsoleSumsPath, m[2], i+1)
+		}
+		sums[m[2]] = m[1]
+	}
+	if len(sums) == 0 {
+		t.Fatalf("%s carries no checksum line, so every value in %s would be checked against nothing", websiteConsoleSumsPath, websiteDownloadsPath)
+	}
+	return sums
+}
+
+// consoleSumsLine is one line of a sha256sum file: the checksum, the two spaces
+// sha256sum writes between the fields, and the file name.
+var consoleSumsLine = regexp.MustCompile(`^([0-9a-f]{64})  (.+)$`)
 
 // strictVersion reports whether a version is a strict X.Y.Z, the only shape the
 // console's workflow publishes from and the shape the published asset names
@@ -584,6 +627,7 @@ func TestWebsiteBoundaryWalkReadsEveryDirectoryOfTheSite(t *testing.T) {
 	read := []string{
 		"website/data/site.yaml",
 		"website/data/install.yaml",
+		"website/data/console-sha256sums.txt",
 		"website/src/pages/index.astro",
 		"website/src/lib/changelog.mjs",
 		"website/test/consent.mjs",
@@ -838,6 +882,14 @@ func TestWebsiteConsoleReleaseFactsAreComplete(t *testing.T) {
 	if len(downloads.Downloads) == 0 {
 		t.Fatalf("%s: the downloads list is empty: the console's downloads are %t, and a site that offers a release with no asset in it offers nothing (W1.6, W3.1)", websiteDownloadsPath, downloads.Available)
 	}
+
+	// The release's own checksums, which is what makes each value below checkable: a
+	// well-formed SHA-256 can still be the wrong one, and no build can compute the
+	// right one from anything in this tree. The file is the release's, copied
+	// verbatim, so a value that disagrees with it is a checksum that fails for every
+	// reader who checks their download (W3.1).
+	sums := consoleReleaseSums(t)
+
 	seen := map[string]string{}
 	for i, d := range downloads.Downloads {
 		if !strings.Contains(d.File, "{version}") {
@@ -858,6 +910,34 @@ func TestWebsiteConsoleReleaseFactsAreComplete(t *testing.T) {
 			t.Errorf("%s: downloads[%d] and downloads[%s] carry the same sha256 %q: two different bytes cannot share one checksum, so at least one of the two is not the file the release published (W3.1)", websiteDownloadsPath, i, first, d.SHA256)
 		}
 		seen[d.SHA256] = strconv.Itoa(i)
+
+		// And the entry against the release's own record of it: the published name
+		// the entry resolves to, and the checksum the release published for it.
+		published := strings.ReplaceAll(d.File, "{version}", downloads.Release.Version)
+		recorded, ok := sums[published]
+		if !ok {
+			t.Errorf("%s: downloads[%d] names %q, which %s does not: the file is the published name of an asset of the %s%s release, and a name the release does not carry is a download that 404s (D11, W3.1)", websiteDownloadsPath, i, published, websiteConsoleSumsPath, downloads.Release.TagPrefix, downloads.Release.Version)
+			continue
+		}
+		if recorded != d.SHA256 {
+			t.Errorf("%s: downloads[%d].sha256 = %q and %s records %q for %q: the release's own file is what the checksum is checked against -- a well-formed value that is not the published one is a checksum that fails for every reader who checks their download (W3.1)", websiteDownloadsPath, i, d.SHA256, websiteConsoleSumsPath, recorded, published)
+		}
+	}
+
+	// And the release's sums file covers nothing else: an asset the release carries
+	// and the site does not offer is a page a reader cannot get a download from,
+	// which is the other half of the same fact.
+	for name := range sums {
+		found := false
+		for _, d := range downloads.Downloads {
+			if strings.ReplaceAll(d.File, "{version}", downloads.Release.Version) == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s names %q, which %s offers no download for: the site offers the release's assets, and a reader who wants the one it leaves out has nowhere to get it (W1.6, W3.1)", websiteConsoleSumsPath, name, websiteDownloadsPath)
+		}
 	}
 
 	// The CLI release the console is published from: its note is in the tree,

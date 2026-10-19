@@ -6,7 +6,7 @@
 // release `console-v0.8.7` carries them, `site.yaml`'s `features.console_downloads` is true
 // and the data file's `available` is true with it. The page's Downloads section renders that
 // release, and the placeholder state it renders instead is a state a copy of the repository
-// is built into rather than the state this checkout ships (W3.1). Five things are checked
+// is built into rather than the state this checkout ships (W3.1). Six things are checked
 // here:
 //
 //   1. **The released section renders the release's own downloads.** One link per published
@@ -32,6 +32,11 @@
 //      URL in the data file fails the build here, naming the file, in either state: the
 //      URL is derived from the release's published names and is never written down
 //      (Global Constraint 9).
+//   6. **A checksum the release does not publish fails the build.** The data file's `sha256`
+//      values are held to the release's own `console-sha256sums.txt` (copied verbatim into
+//      `website/data/`), so a wrong value is a red build rather than a page printing a
+//      number no reader's download can match — and the case plants a well-formed wrong one,
+//      because the shape alone cannot tell the two apart.
 //
 // How it builds: the negative cases mutate a file and build again, so the builds happen in
 // a copy of the repository in a temp directory rather than in this checkout (the shape
@@ -53,11 +58,13 @@ import {
   DOWNLOADS_JSON,
   RELEASE_WORKFLOW,
   SITE_YAML,
+  SUMS_FILE,
   assertReleaseURL,
   downloadNeedle,
   downloadsData,
   publishedAssets,
   publishedDownloads,
+  releaseSums,
   repoFile,
   workflowAssetRule,
   workflowTagPrefix,
@@ -480,26 +487,46 @@ test('the release the download URLs are built from is one this repository has re
   // And each asset carries the SHA-256 of the bytes the release published: the sums file the
   // release publishes beside the two artifacts is `console-sha256sums.txt`, and the page
   // prints each value beside its link so a reader can check what arrived against what was
-  // published. The shape is the whole of what an offline gate can hold a checksum to — it is
-  // a value, not a derivation — so it is held hard: 64 lowercase hex digits, one per asset,
-  // and no two assets sharing one. A value that is not a checksum is one `shasum -a 256 -c`
-  // can never match, and a value copied from the other asset makes the page print a checksum
-  // the reader's own download will fail against. **What this cannot prove, and no offline
-  // gate can: that a well-formed value is the PUBLISHED one.** That is the owner's check
-  // against the release, the same limit the tag's existence has above; the values here were
-  // taken from the release's own `console-sha256sums.txt`.
-  const sums = data.downloads.map((entry) => entry.sha256)
+  // published. Two things are held here, and the second is the one that catches a wrong
+  // value rather than a malformed one:
+  //
+  //   - the shape: 64 lowercase hex digits, one per asset, no two assets sharing one. A value
+  //     that is not a checksum is one `shasum -a 256 -c` can never match, and a value copied
+  //     from the other asset makes the page print a checksum the reader's own download fails
+  //     against;
+  //   - the value itself, against the release's own list of them: `SUMS_FILE` is the
+  //     `console-sha256sums.txt` asset of the `console-vX.Y.Z` release, copied verbatim into
+  //     `website/data/` when the site's console downloads are turned on, and every entry's
+  //     checksum has to be what it records for the entry's published name. This is the check
+  //     that makes a wrong checksum a red build: a well-formed value is not evidence of
+  //     anything, and no build can compute the published one from anything in this tree. The
+  //     reader refuses a disagreement by name (`src/lib/console-downloads.mjs`), and the case
+  //     after this one plants one and requires that refusal.
+  const sums = releaseSums()
   for (const entry of data.downloads) {
     assert.match(
       entry.sha256,
       /^[0-9a-f]{64}$/,
       `${DOWNLOADS_JSON}'s ${entry.id} carries ${JSON.stringify(entry.sha256)} as its sha256, and the checksum a reader checks a download against is 64 lowercase hex digits`,
     )
+    const published = entry.file.split('{version}').join(release.version)
+    assert.equal(
+      sums.get(published),
+      entry.sha256,
+      `${DOWNLOADS_JSON}'s ${entry.id} carries ${JSON.stringify(entry.sha256)} and ${SUMS_FILE} records ${JSON.stringify(sums.get(published))} for ${JSON.stringify(published)}: the release's own sums file is what the page's checksum is checked against, and a value that disagrees with it fails for every reader who checks their download`,
+    )
   }
   assert.equal(
-    new Set(sums).size,
-    sums.length,
-    `${DOWNLOADS_JSON}'s assets do not each carry their own sha256 (${sums.join(', ')}): two assets with one checksum is one asset's checksum printed beside the other, and a reader who checked that download would be checking it against the wrong bytes`,
+    new Set(data.downloads.map((entry) => entry.sha256)).size,
+    data.downloads.length,
+    `${DOWNLOADS_JSON}'s assets do not each carry their own sha256 (${data.downloads.map((entry) => entry.sha256).join(', ')}): two assets with one checksum is one asset's checksum printed beside the other, and a reader who checked that download would be checking it against the wrong bytes`,
+  )
+  // And the release publishes nothing the site leaves out: a reader who wants an asset the
+  // release carries and the page does not offer has nowhere to get it.
+  assert.deepEqual(
+    [...sums.keys()].sort(),
+    data.downloads.map((entry) => entry.file.split('{version}').join(release.version)).sort(),
+    `${SUMS_FILE} and ${DOWNLOADS_JSON} name different sets of assets: the site offers the release's assets, and an asset the release carries and the page does not is a download a reader cannot reach`,
   )
 
   // And the version is one this repository has released: the console's release is cut from the
@@ -509,12 +536,13 @@ test('the release the download URLs are built from is one this repository has re
   // a version the CLI was not released at, and not one the console was built from.
   //
   // **What this cannot prove, and nothing offline can: that `console-vX.Y.Z` is a release that
-  // exists.** That is W3.1's check — the Go boundary test fails a true flag until its commit
-  // extends `TestWebsiteLinksNoConsoleWhileTheFlagIsOff` to hold every release-asset URL under
-  // `website/` against an asset of a tag that exists (plan Task W3.1, W1.6 step 2) — and it is
-  // the owner's check against the published release. What is pinned here is the offline half:
-  // the version is one the CLI was released at, and the prefix and the names are the release
-  // workflow's and the release's own.
+  // exists on GitHub.** A git tag cannot be read without a fetch, and a shallow CI checkout has
+  // none. What W3.1 added is the offline half of that claim, and the Go boundary test is where
+  // it lives: the data file's release block has to name the version of a CLI release note that
+  // is in the tree and that names the console's own tag, and every asset has to be an asset the
+  // release's own sums file records (`TestWebsiteConsoleReleaseFactsAreComplete`). What remains
+  // the owner's check is the release page itself: the tag exists, its assets are the ones the
+  // site names, and the checksums the page prints are the ones the release published.
   const highlights = `docs/releases/v${release.version}.md`
   assert.ok(
     existsSync(path.join(REPO, highlights)),
@@ -539,7 +567,7 @@ test('the build refuses a download URL in the data file, in the state this check
     data.downloads = [{ id: 'macos', platform: 'macOS', url }]
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
-  assert.notEqual(asKey.status, 0, `the build accepted a download URL while the console is unreleased:\n${asKey.output}`)
+  assert.notEqual(asKey.status, 0, `the build accepted a download URL:\n${asKey.output}`)
   assert.match(asKey.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
   assert.match(asKey.output, /carries the key "url"/, 'the failure does not say which key it refused')
   assert.match(asKey.output, /derived/, 'the failure does not say where a download URL comes from instead')
@@ -551,10 +579,62 @@ test('the build refuses a download URL in the data file, in the state this check
     data.downloads[0].file = url
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
-  assert.notEqual(asFile.status, 0, `the build accepted a URL in the file field while the console is unreleased:\n${asFile.output}`)
+  assert.notEqual(asFile.status, 0, `the build accepted a URL in the file field:\n${asFile.output}`)
   assert.match(asFile.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
   assert.match(asFile.output, /\.file is "/, 'the failure does not name the field the URL was written into')
   assert.equal(asFile.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+})
+
+test("the build refuses a checksum that is not the release's own", async (t) => {
+  // The checksum is the one value on the page a build cannot compute: it is a fact about bytes,
+  // and the release's own `console-sha256sums.txt` is its only source. So the reader holds the
+  // value against that file, and this is the case that proves the holding is real — the
+  // mutation is a WELL-FORMED checksum (64 lowercase hex digits, a real one's shape) with one
+  // character changed, which no shape check can tell from the right one. The build refuses it
+  // by name, in both directions the release's file can disagree with the data file: a value
+  // that is not the one it records, and an asset name it does not record at all.
+  const entry = downloadsData().downloads[0]
+  const wrong = `${entry.sha256.slice(0, -1)}${entry.sha256.endsWith('0') ? '1' : '0'}`
+  assert.notEqual(wrong, entry.sha256, 'the mutation below is not a mutation: the planted checksum is the published one')
+
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads[0].sha256 = wrong
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+  assert.notEqual(
+    built.status,
+    0,
+    `the build rendered ${wrong} as the checksum of ${entry.id}, which is not the value the release published:\n${built.output}`,
+  )
+  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the checksum came from')
+  assert.match(
+    built.output,
+    /console-sha256sums\.txt/,
+    "the failure does not name the release's own sums file, and that file is what the value was checked against rather than the value's shape",
+  )
+  assert.equal(built.page, null, 'the build wrote a page printing a checksum the release does not publish')
+
+  // The other half of the same fact: an asset name the release's file does not carry. The name
+  // is the URL's last segment, so a name the release does not publish is a download that 404s,
+  // and the release's sums file is where that is written down.
+  const unpublished = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads[0].file = 'Fugaro Console-{version}-universal.tar.gz'
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+  assert.notEqual(
+    unpublished.status,
+    0,
+    `the build rendered a download for an asset the release does not publish:\n${unpublished.output}`,
+  )
+  assert.match(
+    unpublished.output,
+    /console-sha256sums\.txt/,
+    "the failure does not name the release's own sums file, which is where the assets the release publishes are recorded",
+  )
 })
 
 test('with the console released, the section renders the downloads the release publishes', async (t) => {

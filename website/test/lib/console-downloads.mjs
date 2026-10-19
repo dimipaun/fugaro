@@ -29,6 +29,14 @@ export const SITE_YAML = 'website/data/site.yaml'
 /** The release's own documentation of what it publishes, and of the tag it is cut as. */
 export const CONSOLE_README = 'console/README.md'
 export const RELEASE_WORKFLOW = '.github/workflows/console-release.yml'
+/**
+ * The release's own checksum list, copied verbatim from the `console-sha256sums.txt` asset of
+ * the `console-vX.Y.Z` release when the site's console downloads are turned on. It is what the
+ * data file's `sha256` values are checked against, and it is the only thing that can tell a
+ * WRONG checksum from a right one: a well-formed value is not evidence of anything, and no
+ * build can compute the published one (W3.1).
+ */
+export const SUMS_FILE = 'website/data/console-sha256sums.txt'
 
 /** The bytes of a file in the checkout, for a test to hold the build's output against. */
 export function repoFile(relative) {
@@ -38,6 +46,33 @@ export function repoFile(relative) {
 /** The console's data file, parsed: the facts the pages render and the tests check. */
 export function downloadsData() {
   return JSON.parse(repoFile(DOWNLOADS_JSON))
+}
+
+/**
+ * The release's published checksums, as the release's own sums file records them: a map from
+ * the published name of an asset to its SHA-256.
+ *
+ * The parse is strict and the file has to carry at least one line, for the same reason the
+ * reader's is: a line this cannot read is an asset the checks below silently stop covering, and
+ * a file with nothing in it makes them all vacuous. It is a second reader of one file rather
+ * than a second source — the file is the release's, and the site's build reads it too
+ * (`src/lib/console-downloads.mjs`).
+ */
+export function releaseSums() {
+  const sums = new Map()
+  for (const [index, line] of repoFile(SUMS_FILE).split('\n').entries()) {
+    if (line === '') continue
+    const m = /^([0-9a-f]{64}) {2}(.+)$/.exec(line)
+    if (m === null) {
+      throw new Error(
+        `${SUMS_FILE} line ${index + 1} is ${JSON.stringify(line)}, and the file the release publishes is one "<64 hex>  <name>" line per asset — the shape sha256sum writes and shasum -a 256 -c reads. A line this cannot read is an asset the checks below would not cover`,
+      )
+    }
+    if (sums.has(m[2])) throw new Error(`${SUMS_FILE} names ${JSON.stringify(m[2])} twice, and one published name has one checksum`)
+    sums.set(m[2], m[1])
+  }
+  if (sums.size === 0) throw new Error(`${SUMS_FILE} carries no checksum line, so every value in ${DOWNLOADS_JSON} would be checked against nothing`)
+  return sums
 }
 
 /** `site.yaml`'s `repository`: where the console's release, and every download, lives. */

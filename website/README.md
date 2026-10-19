@@ -428,7 +428,7 @@ check until this document says the same thing.
 | `content/cli-reference.md` | the command tree, `internal/cli.NewRootCmd` | `go run ./internal/clidoc` |
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
-| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available: false` until the console ships | none: hand-kept |
+| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available` follows `site.yaml`'s `features.console_downloads` | none: hand-kept |
 
 Three things about those commands are worth stating rather than leaving to the table:
 
@@ -448,6 +448,13 @@ Three things about those commands are worth stating rather than leaving to the t
   fact in the repository, then the value here, in one commit. `site.yaml`'s
   `features.console_downloads` is held to the hand-kept `content/downloads.json`'s
   `available` by the build itself, which refuses the two disagreeing (below).
+- **`website/data/console-sha256sums.txt` is the release's, copied rather than written.** It is
+  the `console-sha256sums.txt` asset of the console's `console-vX.Y.Z` release, byte for byte —
+  one `<64 hex>  <published name>` line per artifact, the shape `sha256sum` writes and
+  `shasum -a 256 -c` reads. It is what the `sha256` values in `content/downloads.json` are held
+  to: a checksum is a fact about bytes, so no build can compute it and a well-formed value is no
+  evidence of anything. The file arrives with the console's release and the version bump beside
+  it (below).
 
 ## The changelog is built, never committed
 
@@ -484,34 +491,43 @@ D188's 250-word ceiling — the owner's flip has to be the whole change and may 
 that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 
-**The flip, in the site's own data, is three values:** `site.yaml`'s
-`features.console_downloads: true`, `downloads.json`'s `available: true`, and `release.version`
-bumped to the CLI tag the console was built from. The download list does not change — it already
-carries the release's published names — so no URL is typed anywhere and every button, label and
-URL follows from those three.
+**The flip, in the site's own data, is four values:** `site.yaml`'s
+`features.console_downloads: true`, `downloads.json`'s `available: true`, `release.version`
+bumped to the CLI tag the console was built from, and each entry's `sha256` set to the value the
+release's own sums file records for its published name. The download list itself does not change —
+it already carries the release's published names — so no URL is typed anywhere and every button,
+label and URL follows from those.
 
-**It is not a one-line change, and four checks are written to say so.** Each exists to keep the
-unreleased state true, so each refuses the flip until the commit that makes it extends it — and
-following the three values alone leaves both `npm run check` and `go test ./...` red:
+**It was not a one-line change, and four checks were written to say so** — each keeping the
+unreleased state true, and each refusing the flip until the commit that made it extended it. That
+commit is the one that turned the links on (2026-10-19), and it extended all four rather than
+retiring any of them, so each refusal is still alive in the state the site now ships:
 
-- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`
-  fails on a true flag (`t.Fatalf`, *"this test has not been extended"*). The flip's commit
-  extends it to hold every release-asset URL under `website/` against an asset of a **tag that
-  exists** (W1.6 step 2, plan Task W3.1) — that is the check nothing offline can make, and the
-  one the owner runs against the published release.
-- The same file's `TestWebsiteFactsMatchTheRepository` refuses a true flag too, and the same
-  commit relaxes that pin: the file is one writer per level in the plan, and W3.1's row names it.
+- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff` used
+  to fail on a true flag (`t.Fatalf`, *"this test has not been extended"*). It now scans in **both**
+  states: while the flag is off no file under `website/` may carry a download URL, and while it is
+  on the URLs the pages render are held by `TestWebsiteConsoleReleaseFactsAreComplete`, which
+  checks the tag prefix against the workflow's own `CONSOLE_TAG="` line, the version against a
+  release note that exists, each published name against `console/README.md` and against the
+  release's sums file, and each checksum against that file's value. The URL's *reachability* is
+  the one thing nothing offline can check, and it stays the owner's live check (69a).
+- The same file's `TestWebsiteFactsMatchTheRepository` used to refuse a true flag; it now holds
+  `site.yaml`'s `features.console_downloads` and `downloads.json`'s `available` to each other,
+  which is the agreement the build refuses too.
 - `website/test/console.mjs` guards its unreleased-state case with an assertion that `site.yaml`
-  says `false` — the case is *about* the unreleased console, so the flip's commit retires it
-  rather than leaving it failing.
-- `website/test/console-option.mjs` carries the same guard for the same reason, and the same
-  commit retires that one with it.
+  says `false`. The case is *about* the unreleased console, so it keeps its refusals alive on a
+  **fixture**: it builds a copy whose flag and `available` are flipped back off and holds that
+  build to the unreleased page, while the shipped-state cases read the real build.
+- `website/test/console-option.mjs` does the same for Getting Started's console option, and its
+  flag-disagreement case now flips whichever of the two facts the checkout does not state, so the
+  test is about the disagreement rather than about a direction.
 
-One more thing the flip does **not** have to touch, and this is the point of deriving the URLs:
-nothing under `website/src/` or `website/content/` changes beyond the two values and the version,
-and no test needs a new expectation, because the released-state cases hold the built page to the
+One more thing the flip did **not** have to touch, and this is the point of deriving the URLs:
+nothing under `website/src/` or `website/content/` changed beyond those values, and no test needed
+a new expectation, because the released-state cases hold the built page to the
 release's own documentation (`console/README.md`) and to the workflow that cuts its tag rather
-than to a URL the test composed the way the build does.
+than to a URL the test composed the way the build does. What the commit *did* add under `data/`
+is the release's sums file, because a checksum is the one fact the release's names cannot imply.
 
 The console is built for macOS and nothing else (`console/README.md`,
 `.github/workflows/console-release.yml`: one universal `.dmg` and one `.zip`), which is why the
@@ -564,6 +580,7 @@ them there.
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
+  data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ at build time
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12

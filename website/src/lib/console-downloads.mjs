@@ -28,6 +28,16 @@
 // branch, so an unreleased console has no link to follow even though its asset names are
 // already in the data file.
 //
+// **The checksums are held to the release's own sums file.** A checksum is a fact about bytes,
+// and no build can compute it: the one thing a reader of `downloads.json` cannot check is
+// whether a well-formed value is the value the release published. So the release's own
+// `console-sha256sums.txt` — the file the console's workflow uploads beside the two artifacts,
+// whose bytes are copied verbatim into `data/console-sha256sums.txt` when the console's release
+// is turned on — is read here, and every entry's `sha256` has to be the value that file records
+// for the entry's published name. That is what makes a wrong checksum a build error rather than
+// a page that prints a number nothing can match: the cross-check is the release's, and a
+// value that disagrees with it is refused by name.
+//
 // Standard library only, and no network: this module is imported by the build, and it
 // fetches nothing (Global Constraints 4 and 8).
 
@@ -37,15 +47,67 @@ import path from 'node:path'
 /** The file these facts live in, as every message below names it. */
 export const DOWNLOADS_FILE = 'website/content/downloads.json'
 
+/**
+ * The release's own sums file, as every message about a checksum names it: the console
+ * workflow uploads it beside the two artifacts (`gh release create … console-sha256sums.txt`),
+ * and the copy under `website/data/` is byte-for-byte the published one.
+ */
+export const SUMS_FILE = 'website/data/console-sha256sums.txt'
+
 /** The placeholder an asset's `file` carries where the release's version goes. */
 const VERSION_PLACEHOLDER = '{version}'
 
 /**
  * A build error naming the data file, the way `content.ts` names the file it refused: the
- * reader of the message is whoever just edited `downloads.json`.
+ * reader of the message is whoever just edited `downloads.json`. The task the rule comes from
+ * is W1.6, which wrote the file and its first refusals, unless the caller names another — the
+ * checksum cross-check below is W3.1's, and a message carrying both tags would name the wrong
+ * one twice.
  */
-function refuse(message) {
-  throw new Error(`${DOWNLOADS_FILE}: ${message} (W1.6 steps 1 and 2).`)
+function refuse(message, task = 'W1.6 steps 1 and 2') {
+  throw new Error(`${DOWNLOADS_FILE}: ${message} (${task}).`)
+}
+
+/** A build error about the release's sums file, named the way the file is. */
+function refuseSums(message) {
+  throw new Error(`${SUMS_FILE}: ${message} (W3.1).`)
+}
+
+/**
+ * The release's published checksums, read from the sums file the release carries: one
+ * `<64 hex>  <published name>` line per asset, which is the shape `sha256sum` writes and
+ * `shasum -a 256 -c` reads. A line of any other shape is refused rather than skipped — a
+ * skipped line is an asset the cross-check below would silently stop covering — and the file
+ * is required to be non-empty, because a sums file with nothing in it would make every
+ * check below vacuous.
+ */
+function releaseSums(siteRoot) {
+  const file = path.join(siteRoot, 'data', 'console-sha256sums.txt')
+  if (!existsSync(file)) {
+    refuseSums(
+      'is missing: it is the release\'s own checksum list, uploaded beside the two artifacts, and the copy here is what the checksums in the data file are held to. A console release is turned on with it (W3.1)',
+    )
+  }
+  const raw = readFileSync(file, 'utf8')
+  const sums = new Map()
+  for (const [index, line] of raw.split('\n').entries()) {
+    if (line === '') continue
+    const match = /^([0-9a-f]{64}) {2}(.+)$/.exec(line)
+    if (!match) {
+      refuseSums(
+        `line ${index + 1} is ${JSON.stringify(line)}, and the file the release publishes is one "<64 hex>  <name>" line per asset — the shape sha256sum writes and shasum -a 256 -c reads. A line this file cannot read is an asset nothing below covers`,
+      )
+    }
+    const [, sha256, name] = match
+    if (sums.has(name)) {
+      refuseSums(`names ${JSON.stringify(name)} twice (line ${index + 1}), and one published name has one checksum`)
+    }
+    sums.set(name, sha256)
+  }
+  if (sums.size === 0) {
+    refuseSums('carries no checksum line, so every asset below would be checked against nothing')
+  }
+  return sums
 }
 
 function asMap(value, what) {
@@ -152,7 +214,8 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
   // reverse.
   if (available !== flagFromSiteYAML) {
     refuse(
-      `available is ${available} and website/data/site.yaml's features.console_downloads is ${flagFromSiteYAML}. The console's release flips both in one commit, and the site cannot render a console that has shipped while the repository's own rule still refuses its download URL (W3.1, Global Constraint 9)`,
+      `available is ${available} and website/data/site.yaml's features.console_downloads is ${flagFromSiteYAML}. The console's release flips both in one commit, and the site cannot render a console that has shipped while the repository's own rule still refuses its download URL`,
+      'W3.1, Global Constraint 9',
     )
   }
 
@@ -232,6 +295,11 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     }
   })()
 
+  // The release's own published checksums, read before the entries below are: each entry's
+  // `sha256` is held to the value this file records for its published name, which is the one
+  // check that can tell a wrong checksum from a right one without the network.
+  const sums = releaseSums(siteRoot)
+
   const downloads = (() => {
     if (!Array.isArray(doc.downloads)) {
       refuse('downloads is not a list, and each page renders one link per entry when the console has shipped')
@@ -265,9 +333,8 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
       // because it is printed beside the link for a reader to check a download with:
       // a truncated, uppercased or non-hex value is a checksum `shasum -a 256 -c`
       // can never match, and a page that prints one is worse than a page that prints
-      // none. What no offline gate here can prove is that a well-formed value is the
-      // PUBLISHED one -- that is the owner's check against the release, the same
-      // limit `website/test/console.mjs` records for the tag's existence.
+      // none. The shape is not the whole check — a well-formed value can still be the
+      // wrong one — and the release's own sums file is what settles that, below.
       const sha256 = asText(map.sha256, `downloads[${index}].sha256`)
       if (!/^[0-9a-f]{64}$/.test(sha256)) {
         refuse(
@@ -275,6 +342,24 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
         )
       }
       const published = asset.split(VERSION_PLACEHOLDER).join(release.version)
+      // The release's own checksum for the published name, which is what makes the value
+      // above checkable: a well-formed checksum is one a reader can compare a download
+      // against, and the release's sums file is the only thing that says WHICH value is the
+      // right one. A name the release does not publish is refused here too — it is the same
+      // mistake, an entry naming an asset the release does not carry.
+      const recorded = sums.get(published)
+      if (recorded === undefined) {
+        refuse(
+          `downloads[${index}].file is ${JSON.stringify(asset)}, which the release's own checksum list (${SUMS_FILE}) does not name: the file is the published name of an asset of ${release.tag}, and a name the release does not publish is a download that 404s (D11)`,
+          'W3.1',
+        )
+      }
+      if (recorded !== sha256) {
+        refuse(
+          `downloads[${index}].sha256 is ${JSON.stringify(sha256)} and ${SUMS_FILE} records ${JSON.stringify(recorded)} for ${JSON.stringify(published)}: the release's own file is what the checksum is checked against, and a value that disagrees with it is a checksum that fails for every reader who checks their download`,
+          'W3.1',
+        )
+      }
       return {
         id: asText(map.id, `downloads[${index}].id`),
         platform,
