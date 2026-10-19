@@ -4783,3 +4783,240 @@ transcripts; the two fail-closed facts, with the orchestrator's transcript as th
 the owner's threshold if one was set. **No step here is run by an agent, nothing here touches
 `belong`, and no audio leaves the device.** Until this check runs, the wake word's rate is
 **UNVERIFIED** — the reconciliation's U1 says so plainly — and row 102 above stays **NOT RUN**.
+
+## Check 103: a spoken cancel and a spoken merge, with their read-backs and the three refusals — sandbox repository only (installation `fugaro`, project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P6.11** of the mobile plan
+([mobile/implementation-plan.md](mobile/implementation-plan.md), Phase 6, approved on
+2026-10-18), from **D169** (typed action records, executed by the consumer: cancel through the
+CLI's own cancel path, merge as `gh pr merge` **by the consumer under the operator's own `gh`
+login**), the owner's **D128 amendment of 2026-10-17** (cancel, merge and confirm only with a
+spoken read-back and an explicit "confirm"), **D162** (a launch goes through with no
+confirmation) and the reconciliation's **U4** (whether `gh pr merge` from the consumer process
+behaves as it does at the terminal: auth, branch protection).
+
+**This is the one check of the five that touches a repository, and it is the sandbox repository
+only.** `R=edgeappinc/fugarosandbox` is hard-coded in the guard block, the checkout's own origin
+is a hard stop, and the merge step re-runs a fourth stop of its own that refuses any pull request
+that is not **this check's own open one** in that repository — the branch it pushed. Nothing
+below names, reads, pushes to or merges anything in `edgeappinc/fugaro` or in any other
+repository, and the PR the confirmation merges is a throwaway the check opened minutes earlier.
+**Never `belong`** (EdgeWeb's and EdgeServer's): the installation is `fugaro` (project
+`fugaro-dev`) and no step touches `belong`.
+
+**Method.** The phone (Check 100's pairing), the consumer running as `fugaro mailbox` on the
+laptop, and a terminal in the sandbox checkout. **No agent runs any step of this check — every
+command and every utterance is yours**, and the two things it can change in the world are a
+sandbox run's state and one throwaway pull request.
+
+⚠ **Set these, and pass the four hard stops, by running ONE block — and re-run that whole block
+at the start of every step and before the Restore.** It is Check 43's guard shape with the
+sandbox repository's stop added.
+
+```bash
+# === Check 103: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1, 2, 3, 4, 5, 6, 7, 8, Restore). ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+R=edgeappinc/fugarosandbox   # the sandbox repository, owner/name: the ONLY repository this check touches
+N=chk103                     # this check's device name (Check 100's block pairs and revokes it)
+B=chk103                     # this check's branch and pull-request label: the merge stop reads it
+
+[ "$P" = fugaro-dev ] && [ -n "$R" ] && [ -n "$N" ] && [ -n "$B" ] \
+  || { echo "Check 103 stopped: re-run the whole setup block (P=$P must be fugaro-dev; R=$R N=$N B=$B must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 103 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 103 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+gh repo view "${R:?}" --json nameWithOwner -q .nameWithOwner | grep -qx "${R:?}" \
+  || { echo "Check 103 stopped: gh does not resolve $R to itself under your login — this check merges in the sandbox repository and nowhere else" >&2; exit 1; }
+:
+```
+
+**And the merge step's own stop, immediately before `gh pr merge` is reached.** `gh pr merge`
+takes a number and a repository, and a number typed by eye is a merge in the wrong place; this
+block is what makes that impossible:
+
+```bash
+# The merge step's fourth stop: the PR is THIS check's own open, non-draft pull
+# request in the sandbox repository, and its head is the branch this check
+# pushed. Nothing merges unless it passes, and it is re-run immediately before
+# the merge rather than once at the start of the step.
+gh pr view "${PR:?}" --repo "${R:?}" --json headRefName,state,isDraft,headRefOid \
+  | jq -e --arg b "${B:?}" '.state=="OPEN" and (.isDraft|not) and (.headRefName|startswith($b))' >/dev/null \
+  || { echo "Check 103 stopped: PR $PR in $R is not this check's own open, non-draft pull request (its head branch does not start with $B) — nothing is merged" >&2; exit 1; }
+```
+
+1. **The ground the check stands on.** **FACT:** `fugaro version`; the app's build id; that the
+   consumer is running (`fugaro mailbox`, P4.1/P6.7) and where its log goes; **`gh auth status`'s
+   account**, which is the operator's own login and the identity the merge runs under (U4); and
+   the sandbox checkout's `origin`.
+
+2. **A throwaway pull request, in the sandbox repository.** In the sandbox checkout, on a branch
+   named `${B}-1`, one trivial commit, pushed, and a pull request opened against the sandbox
+   repository's own default branch (read it, do not assume it: `gh repo view "$R" --json
+   defaultBranchRef -q .defaultBranchRef.name`). It is **not** a draft, because a draft cannot be
+   merged and this pull request exists to be merged. **FACT:** the PR number, its head SHA, its
+   base branch, and that its head branch starts with `$B` — the stop above reads exactly that.
+
+3. **The spoken cancel.** With a small sandbox run in flight (`fugaro run` from the sandbox
+   checkout, `--project fugaro`, or a run already going), speak `<alias>, cancel the run
+   <what you called it>`. **FACT:** the read-back **verbatim**, which must name the **resolved run
+   id** (`<slug>/<run-id>`) and not the paraphrase that produced it — D47's rule, and the reason
+   the read-back is built from the target. Then speak `<alias>, confirm`. **FACT:** the run's
+   state afterwards, the consumer's log line naming the CLI's own cancel path, and the wall clock
+   from the read-back to the cancel. Then the same command with a target that resolves to
+   **nothing** (a run id that does not exist, or a phrase matching no configured list): **FACT:**
+   that it was refused with no read-back at all, and so cannot be confirmed (D169's
+   unresolved-target).
+
+4. **The spoken merge.** Speak `<alias>, merge pull request <n> in edgeappinc/fugarosandbox`, with
+   `<n>` from step 2. **FACT:** the read-back **verbatim**, naming the repository, the PR number
+   **and the PR's current head SHA**. Then re-run the merge stop above and speak
+   `<alias>, confirm`. **FACT:** the PR's state (merged), the head SHA it merged, the wall clock,
+   and **what branch protection answered** — which is U4's live half: `gh pr merge` from the
+   consumer process, under the operator's login, behaving as it does at the terminal, or not.
+
+5. **The refusal: a misheard confirm.** With a fresh read-back outstanding, say, one at a time
+   and each with its own read-back: "conform", "confirmed it", "yes", "confirm it", and
+   "<alias>, confirm it". **FACT:** each utterance's outcome and that **nothing ran**; then the
+   utterances that **are** the phrase — `<alias>, confirm`, and the alias set's other entry with
+   `confirm` after it — confirming. The phrase list is closed (`shared/command`'s
+   `CONFIRMATION_PHRASES`) and `yes` is not in it.
+
+6. **The refusal: a replayed confirm.** After a confirmation has authorised an action, say the
+   identical utterance again. **FACT:** the second outcome — a spent confirmation id, or a spent
+   utterance id — and that nothing ran twice. Then the other replay, which is the one that
+   matters: the same **action** re-sent under a **new message id** is refused too (P6.7's
+   action-id dedupe). **FACT:** both, and whether either survived a consumer restart.
+
+7. **The refusal: a confirm for another target.** Two shapes, and both are recorded. **(a)** Two
+   read-backs outstanding at once (a cancel and a merge): a `<alias>, confirm` names no one of
+   them and is refused. **(b)** The target **moved**: with a merge read-back outstanding and
+   before the confirmation, push a commit to that PR's branch so its head SHA changes — the
+   confirmation is refused as a different target, and even if it were not, the consumer re-reads
+   the PR's head and refuses a head that differs from the record's (D169). **FACT:** each
+   refusal's code, the PR's head SHA before and after the push, and that nothing ran.
+
+8. **The contrast D162 pins.** Speak `<alias>, kick off <a no-change task>`. **FACT:** that it
+   goes through with **no** read-back and **no** confirmation, and that the caps still apply. A
+   launch that the check did not intend to start is a paid run, which is why the task is a
+   no-change one in the sandbox repository.
+
+9. **Restore.** Close the throwaway pull request if it did not merge, and delete its branch
+   either way; decline and delete whatever the launch of step 8 opened (never merge it); stop the
+   consumer; and **FACT:** the consumer's ledger (the spent message, action and confirmation ids)
+   and any pending prompts it still holds, recorded rather than cleared.
+
+**Passes when:** the cancel's read-back names the **resolved run id** and the confirmation makes
+the consumer run the CLI's own cancel; the merge's read-back names the repository, the PR number
+and the PR's **current head SHA**, and the confirmation makes the consumer run `gh pr merge`
+under the operator's login against **this check's own throwaway pull request in the sandbox
+repository**; a misheard confirm, a replayed confirm and a confirm for another target each
+authorise nothing, including the same action under a new message id; and a launch goes through
+with no confirmation at all.
+
+**Fails when:** the read-back repeats the speaker's paraphrase instead of the resolved target; a
+confirmation authorises two actions, or the same action twice; the merge reaches any repository
+other than `edgeappinc/fugarosandbox`, or any pull request other than the check's own — which is
+the failure the fourth stop exists to make impossible; `gh pr merge` runs at **your** terminal
+instead of in the consumer process (that would test your `gh`, not U4); a "confirm" that is not
+the phrase confirms anything; a launch demands a confirmation (D162 answered no); or a
+destructive command arrives as **free text** and is executed. What failing looks like: the
+consumer executing text rather than the action record; a confirmation whose id is not spent; a
+head SHA read at read-back time and not re-read at confirmation time.
+
+**Paste back:** the read-back for the cancel, verbatim, and the run id it named; the read-back
+for the merge, verbatim, with the head SHA, and what branch protection answered (U4's answer);
+each refusal's code with the utterance that produced it; the head SHA before and after the push
+of step 7(b); the launch's pass-through; and the Restore's state. **Never a token, a key or a
+credential, and never the contents of the sandbox's own secrets.** **No step here is run by an
+agent, nothing here touches `belong`, and no repository other than
+`edgeappinc/fugarosandbox` is named, read or merged.** Until this check runs, the D128
+amendment's live enforcement is **UNVERIFIED** — the simulator is not a `gh` login — and row 103
+above stays **NOT RUN**.
+
+## Check 104: offline — no command is sent and none is queued (installation `fugaro`, project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P6.11** of the mobile plan
+([mobile/implementation-plan.md](mobile/implementation-plan.md), Phase 6, approved on
+2026-10-18), from **D167(a)** (the app **never** relies on the SDK's offline write queue: with no
+connection, or with the consumer stale or offline, it refuses to send, says why, and keeps the
+utterance only as unsent text — and **a destructive action record is never queued**), **D167(b)**
+(the text screen, which is the same pipeline with a keyboard) and the reconciliation's **U3**
+(whether the Expo/React Native Firebase SDK queues writes while offline — the thing this check
+exists to prove the app does not depend on).
+
+**Method.** The phone (Check 100's pairing) and the consumer on the laptop. **Check 100's setup
++ guard block is re-run at the start of every step below, with `N=chk104`** — that one line is
+the only change. **Never `belong`**: the phone is paired with installation `fugaro` (project
+`fugaro-dev`) for this check, and no step reads or speaks to a `belong` device. **No agent runs
+any step of this check — every command and every utterance is yours.** Nothing here costs
+anything: the point of the check is that **nothing is sent**, and its evidence is a mailbox read
+twice.
+
+1. **The ground the check stands on.** **FACT:** the app's build id; that the consumer is running
+   and its heartbeat is fresh; the mailbox path this account reads and writes
+   (`mailbox/<mb>/inbox/<msg>`, and the ack on its own outbox message); and the phone's
+   connection state before anything is turned off. Step 1's freshness reading is what step 5 is
+   measured against, so it is recorded before the network is touched.
+
+2. **Offline, and a command that must not be sent.** Put the phone in airplane mode (or take its
+   network away), wait for the app to show it, and speak an app command. **FACT:** that the app
+   **refuses to send** and says why — its wording, verbatim; that the utterance is kept **only as
+   unsent text the user can resend**, and not as a queued write; and that the mailbox read back
+   **before and after** holds **no new message**. The "before" read is what makes the "after" one
+   mean anything.
+
+3. **The reconnect delivers nothing.** Turn the connection back on and wait past the SDK's own
+   retry window — record how long you waited. **FACT:** the mailbox **still holds nothing**, so
+   the app never handed the write to the SDK's queue (U3's live half), and the unsent text is
+   still on the screen. An SDK that queued it would deliver it here, minutes later, into a
+   conversation that has moved on — which is exactly the failure D167 refuses.
+
+4. **A destructive command offline is never queued.** Still offline, speak
+   `<alias>, cancel …` against a real target: the read-back **may** be spoken, because the
+   confirmation machine's clock is the phone's own (P6.2 has no clock of the network's). Then
+   speak `<alias>, confirm`. **FACT:** the mailbox holds **nothing** after the confirmation; the
+   app says the action was not sent; and when the connection returns, **no cancel runs** — the
+   action record was never queued. A read-back that becomes an action when the network comes back
+   is the one thing D167's sentence names outright.
+
+5. **The stale consumer.** With the network **up** and the consumer stopped (or its heartbeat
+   older than the staleness bound, `shared/presence`), the app must refuse in the same way.
+   **FACT:** the heartbeat's age, the app's refusal and its wording, and the mailbox's emptiness
+   — the same two reads as step 2. A phone that sends into a consumer nobody is running has sent
+   a command into the void, which is the second half of D167(a).
+
+6. **The text fallback.** Open the text screen: it lists pending prompts and recent summaries
+   **per installation** and accepts typed input and typed answers (D167(b)). **FACT:** offline, a
+   typed command is refused exactly as a spoken one is; and the typed path is the **same mailbox
+   client** (P6.9: typed input goes through the same client, and a typed destructive command goes
+   through the same confirmation machine — a typed "confirm" is a confirmation, not a bypass).
+   **FACT:** both, with the typed message and the typed confirm recorded.
+
+7. **Restore.** Bring the network and the consumer back. **FACT:** the unsent text from step 2 is
+   still there and can be resent by hand — resend one, so the pass is proved rather than assumed —
+   and the step-4 action is **not** among the things that ran when the connection returned.
+
+**Passes when:** with no connection, and again with a stale or stopped consumer, the app refuses
+to send, says why, and keeps the utterance only as unsent text; the mailbox read before and after
+holds nothing; the reconnect delivers nothing, so the SDK's queue was never relied on; a
+confirmed destructive command offline leaves no action record anywhere and runs nothing when the
+connection returns; and the text screen is refused the same way and goes through the same client.
+
+**Fails when:** anything reaches the mailbox while the phone is offline — including "just one"
+queued write; a command spoken offline is delivered after the reconnect, whether by the app's own
+retry or by the SDK's queue; a destructive action record is queued or executed late; the app
+sends to a **stale** consumer because the network looked fine; or the text screen bypasses the
+mailbox client or the confirmation machine, which would make D167's fallback a second, unchecked
+write path. What failing looks like: a write issued through the SDK and left to its queue rather
+than refused at the call site — which is why step 2 records the app's own refusal and step 3
+waits past the retry window rather than trusting that nothing was sent.
+
+**Paste back:** the two reads of the mailbox around the offline command, with their paths and
+times; the app's refusal wording, spoken and typed; the wait of step 3 and the emptiness after
+it; the confirmed offline cancel and the proof that nothing ran on reconnect; the stale
+consumer's heartbeat age and the refusal it produced; and the resend of step 7. **Never a token,
+a key or a credential.** **No step here is run by an agent and nothing here touches `belong`.**
+Until this check runs, the offline gate's live behaviour is **UNVERIFIED** — U3 is a claim about
+an SDK, and a fake connection state is not an SDK — and row 104 above stays **NOT RUN**.
