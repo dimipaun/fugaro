@@ -176,6 +176,8 @@ test('the plan, sentence one: with the switch off a proactive update is queued, 
   assert.deepEqual({ ...offered }, { ok: true, queued: 1 });
   assert.deepEqual(h.tts.spoken(), [], 'the switch is off: nothing was said');
   assert.deepEqual(h.screen.state().queued, [{ text: 'a run was killed', severity: 'kill' }]);
+  assert.deepEqual(h.screen.queued(), [{ text: 'a run was killed', severity: 'kill' }], 'and the reader answers with the same list');
+  assert.equal(Object.isFrozen(h.screen.queued()), true, 'a list handed out is a list frozen');
   assert.equal(h.screen.state().switch, INTERRUPT_SWITCH.OFF, 'and off is where a phone starts');
   // The boundary is free -- nobody is speaking and no turn is open -- and it is
   // still not spoken, which is what makes the switch the reason rather than the
@@ -356,6 +358,60 @@ test('a live orchestrator is what lifts the refusal, and it is P1.4 that says so
   assert.equal(h.screen.state().refused, null, 'and there is no refusal to show');
 });
 
+test('the refusal a screen shows is the last one, and the message that is accepted clears it', async () => {
+  // The snapshot's `refused` is a state, not a history. A screen that went on
+  // rendering `offline` over a message that had just left the phone would be
+  // showing a state the phone is not in -- which is the one thing a status line
+  // must not do -- and the lease's own refusal is cleared by the call that
+  // succeeds for the same reason.
+  const h = await harness();
+  await h.screen.poll();
+  await h.screen.accept('run the tests');
+  assert.deepEqual(h.screen.state().refused, { code: 'offline', field: 'presence' }, 'shown while it holds');
+
+  await h.plantHeartbeat();
+  await h.screen.poll();
+  const accepted = await h.screen.accept('run the tests');
+  await settle();
+  assert.equal(accepted.ok, true, 'the orchestrator is back, so the message goes');
+  assert.equal(h.screen.state().refused, null, 'and the refusal it followed is cleared');
+});
+
+test('P1.4\'s answer is adopted through one guard, whether a caller or the poll brings it', async () => {
+  const h = await harness();
+  // A caller may hand the screen a presence directly -- a screen that reads the
+  // node itself, or a test -- and the same guard adopts it.
+  assert.deepEqual({ ...h.screen.setPresence({ state: STATE.LIVE, reason: null }) }, { ok: true });
+  assert.deepEqual({ ...h.screen.presence() }, { state: STATE.LIVE, reason: null }, 'and the reader answers with it');
+  assert.equal(h.screen.state().offline, false);
+
+  // A state outside P1.4's four is refused, and the last real answer stands
+  // rather than being replaced by it.
+  assert.deepEqual({ ...h.screen.setPresence({ state: 'gone' }) }, { ok: false, code: 'bad-presence', field: 'state' });
+  assert.deepEqual({ ...h.screen.presence() }, { state: STATE.LIVE, reason: null });
+});
+
+test('the poll\'s presence goes through that same guard, which is the path the app takes', async () => {
+  // The real client reports one of P1.4's own four states, so this is the
+  // port's contract rather than a case the app meets today -- and a rule
+  // checked only on a path the app does not take is a rule the screen does not
+  // have. The client's report is returned as itself; what the screen shows is
+  // what it adopted, and a refusal it did not choose is shown rather than
+  // swallowed.
+  const h = await harness();
+  const stub = {
+    send: async () => Object.freeze({ ok: true }),
+    poll: async () => Object.freeze({ ok: true, presence: { state: 'gone', reason: 'nonsense' } }),
+  };
+  const screen = createVoiceScreen({ pipeline: h.pipeline, client: stub, now: h.now, holder: PHONE });
+
+  const report = await screen.poll();
+  assert.equal(report.presence.state, 'gone', 'the client\'s report is the client\'s');
+  assert.equal(screen.presence(), null, 'and nothing outside P1.4\'s four is stored');
+  assert.deepEqual(screen.state().refused, { code: 'bad-presence', field: 'state' }, 'the screen shows why');
+  assert.equal(screen.state().offline, false, 'and an unreadable state is not read as offline');
+});
+
 test('stale is not offline: a heartbeat three intervals old still accepts a message', async () => {
   // The refusal is P1.4's `offline` and nothing wider. A stale orchestrator is
   // one the phone can still talk to -- the mailbox is not the heartbeat -- and
@@ -401,6 +457,7 @@ test('the plan, sentence three: a lease held by another consumer is surfaced rat
   assert.equal(taken.ok, true);
   const held = h.screen.state().lease;
   assert.equal(held, null, 'nothing is held to begin with');
+  assert.deepEqual({ ...h.screen.lease() }, { ok: true, lease: null }, 'and the reader says so in P1.2\'s own shape');
 
   // The other consumer takes it, in P1.2's own shape, and the phone adopts the
   // state it read out of the database.
@@ -415,6 +472,7 @@ test('the plan, sentence three: a lease held by another consumer is surfaced rat
   assert.deepEqual({ ...mine.existing }, { holder: LAPTOP, at: h.now() });
   assert.match(mine.message, new RegExp(LAPTOP), 'and the message names the holder');
   assert.deepEqual(h.screen.state().lease, { holder: LAPTOP, at: h.now() }, 'surfaced in the view, not swallowed');
+  assert.deepEqual({ ...h.screen.lease() }, { ok: true, lease: { holder: LAPTOP, at: h.now() } }, 'and by the reader');
   assert.equal(h.screen.state().leaseRefused.code, 'already-claimed');
 
   // A release that is not the phone's is refused as itself, and never done.

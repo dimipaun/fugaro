@@ -150,7 +150,13 @@ export function createVoiceScreen({
   let microphone = Object.freeze({ ok: true });
   /** The proactive updates waiting for a boundary, oldest first. */
   const queue = [];
-  /** The last refusal this screen produced, so a screen can show it. */
+  /**
+   * The last refusal this screen produced, so a screen can show it, and `null`
+   * once there is nothing to show. It is **cleared by the message that is
+   * accepted after it**: a snapshot that went on saying `offline` over a message
+   * that had just left the phone would be showing a state the phone is not in,
+   * which is the one thing a status line must not do.
+   */
   let lastRefused = null;
   /** The last thing heard, partial or final. */
   let transcript = null;
@@ -240,13 +246,41 @@ export function createVoiceScreen({
    * recorded as well as returned: a refusal nobody renders is a message the
    * owner believes they sent.
    *
+   * And a message that **is** accepted clears what the last refusal left: the
+   * snapshot's `refused` is the screen's current state, not a history of every
+   * refusal it ever made.
+   *
    * @param {unknown} text what the owner said
    * @returns {Promise<object>} the client's own verdict, or this screen's refusal
    */
   async function accept(text) {
     if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
     if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
-    return client.send(text);
+    const sent = await client.send(text);
+    if (sent.ok) lastRefused = null;
+    return sent;
+  }
+
+  /**
+   * Adopt P1.4's answer, whether a caller hands it over or `poll` brings it.
+   *
+   * One guard for both paths on purpose: `poll` is the path the app actually
+   * takes, so a check that only a caller's `setPresence` went through would be
+   * a rule enforced where it is not used. A state outside P1.4's own four is
+   * refused rather than stored -- a screen showing a state nothing can produce
+   * is worse than one showing the last real answer -- and the refusal is
+   * recorded, because the caller of `poll` is not the one who chose it.
+   *
+   * @param {unknown} value P1.4's presence object
+   */
+  function setPresence(value) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      return refuse(SCREEN_CODES.BAD_PRESENCE, null);
+    }
+    if (!PRESENCE_STATES.includes(value.state)) return refuse(SCREEN_CODES.BAD_PRESENCE, 'state');
+    presence = value;
+    drain();
+    return Object.freeze({ ok: true });
   }
 
   return {
@@ -268,22 +302,8 @@ export function createVoiceScreen({
       return Object.freeze({ ok: true, switch: switchValue });
     },
 
-    /**
-     * Adopt P1.4's answer, as the client's `poll` reports it. A state outside
-     * P1.4's own four is refused rather than stored: a screen showing a state
-     * nothing can produce is worse than one showing the last real answer.
-     *
-     * @param {unknown} value P1.4's presence object
-     */
-    setPresence(value) {
-      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-        return refuse(SCREEN_CODES.BAD_PRESENCE, null);
-      }
-      if (!PRESENCE_STATES.includes(value.state)) return refuse(SCREEN_CODES.BAD_PRESENCE, 'state');
-      presence = value;
-      drain();
-      return Object.freeze({ ok: true });
-    },
+    /** Adopt P1.4's answer, as a caller hands it over. See the function above. */
+    setPresence,
 
     /**
      * Adopt a digest, and take its most severe severity as the top of the
@@ -337,10 +357,26 @@ export function createVoiceScreen({
     /**
      * One mailbox pass: the client's own `poll`, and the presence it reports is
      * what this screen shows and refuses on.
+     *
+     * The presence goes through `setPresence` rather than being stored here.
+     * The client reports one of P1.4's own four states today, so the guard is
+     * not what the app meets -- and that is exactly why it is on this path:
+     * the rule is "a state outside P1.4's four is refused rather than stored",
+     * and a rule checked only on a path the app does not take is a rule this
+     * screen does not have. The client's report is returned as itself either
+     * way; what the screen shows is what it adopted.
      */
     async poll() {
       const report = await client.poll();
-      if (report.ok && report.presence !== undefined) presence = report.presence;
+      if (report.ok && report.presence !== undefined) {
+        const adopted = setPresence(report.presence);
+        // The caller did not choose this presence -- the mailbox did -- so a
+        // refusal is shown rather than only returned. `setPresence` has already
+        // drained if it adopted anything, and a second drain is a no-op: the
+        // first one either spoke (so `speaking()` is true) or found nothing
+        // eligible, which is what the second one finds too.
+        if (!adopted.ok) noteRefusal(adopted);
+      }
       drain();
       return report;
     },

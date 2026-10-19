@@ -315,6 +315,21 @@ run "the message is judged before the presence is" \
 run "an empty message is refused as an empty message" \
   "    if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));" ""
 
+# 5b. The refusal's lifetime, and the presence guard on the path the app takes.
+#     A review found both of these: `refused` was only ever set, so a snapshot
+#     went on rendering `offline` over a message that had just left the phone,
+#     and `poll` stored the client's presence without the guard `setPresence`
+#     applies -- so the module's own rule was enforced on a path the app does
+#     not take.
+run "an accepted message clears the refusal it followed" \
+  "    if (sent.ok) lastRefused = null;" ""
+run "the poll's presence goes through the same guard a caller's does" \
+  "        const adopted = setPresence(report.presence);" \
+  "        const adopted = Object.freeze({ ok: true });
+        presence = report.presence;"
+run "a presence outside P1.4's four is refused rather than stored" \
+  "    if (!PRESENCE_STATES.includes(value.state)) return refuse(SCREEN_CODES.BAD_PRESENCE, 'state');" ""
+
 # 6. The lease: surfaced, and never enforced (screen.js).
 run "a lease another consumer holds is surfaced" \
   "      const taken = take(leaseState ?? emptyLeaseState(), { holder, at: now() });" \
