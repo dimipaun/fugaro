@@ -2161,7 +2161,7 @@ List runs with their status, stage, cost and PR
 
 List runs, newest first, joining the runs bucket with what the backend knows.
 
-By default ls shows the last 7 days of the local config's repositories (every
+By default ls shows the last 7d of the local config's repositories (every
 repository in the bucket when the config lists none). A run shows as succeeded
 only when its result.json says so; an execution that ended without finalizing
 is an infra_error.
