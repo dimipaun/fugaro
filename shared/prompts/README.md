@@ -122,7 +122,9 @@ Both bounds were kept when D168 was amended, and they bound different things.
 **Escalation bounds attention.** A waiting prompt is read out at the next natural pause, then
 re-announced after **one hour** and once a **day** after that, and it is listed first in "what's
 pending". The schedule is anchored to the prompt's own `at` — `reminderStage(at, now)` is a pure
-function of the clock — while whether it has been **spoken** is the entry's `announcedAt`. An
+function of the clock, and of a clock that is a time: both of its arguments are checked and a
+value that is not one is refused, because `NaN` is neither 0 nor any stage and is what the text
+screen would render — while whether it has been **spoken** is the entry's `announcedAt`. An
 announcement made late counts for the reminder it was late for, so a stage is never spoken twice.
 The listing order is the queue's own order — oldest first, then the id — and that *is* §3.4's
 escalated-first order: `reminderStage` is monotone in `at`, so the prompt that has waited longest is
@@ -194,20 +196,21 @@ which on these inputs could be a name out of a key or a document; `field` is the
 because which field was at fault is exactly what could not be determined. `index.test.js` asserts
 this against every entry point, `guarded` is mutation-proved both ways (the `try` deleted, the
 caught value echoed), and the predicates are covered too: `isExpired` checks all three of its
-arguments before it subtracts anything, and answers a refusal rather than `false` for a value that
-is not a positive integer in the bound that argument has everywhere else in this module (`invalid-at`,
-`invalid-now`, `invalid-ttl`). `false` means "still alive" — subtraction gives it freely for
-`undefined`, `'x'` and `NaN`, and `true` for `null` — and either would hand the user a question whose
-TTL has already ended, or drop one that is still open.
+arguments before it subtracts anything, and `reminderStage` checks both of its, each answering a
+refusal rather than a value for an argument that is not a positive integer in the bound it has
+everywhere else in this module (`invalid-at`, `invalid-now`, `invalid-ttl`). The arithmetic gives
+those answers freely — `false` for `undefined`, `'x'` and `NaN`, `true` for `null`, and `NaN` for a
+stage — and neither `false` ("still alive", for a question whose TTL has ended) nor `NaN` (neither 0
+nor any stage, and the value the text screen would render) is an answer a caller can use.
 
 | Code | When |
 |---|---|
 | `input-not-an-object` | a queue, an event or the policy's input is not a plain object |
 | `unknown-field` | a value carries a field this module does not read — a value is never a bag |
-| `missing-field` | a field this module requires was not carried at all: `now`, or the installation's `account` on `initialQueue` (P1.1's and P6.2's code, spelled the same). A queued prompt's own missing fields come from the schema, under `prompt.` |
+| `missing-field` | a field this module requires was not carried at all: `now` on every entry point that takes a clock, or the installation's `account` on `initialQueue` (P1.1's and P6.2's code, spelled the same). A queued prompt's own missing fields come from the schema, under `prompt.` |
 | `accessor-property` | a field this module does read is an accessor, so it is refused without ever being called (P1.1's code, spelled the same) — including `digest.severity`, the one field this module reads out of P1.3's result |
 | `invalid-now` | `now` is not a positive safe integer |
-| `invalid-at` | (`isExpired`) `at` is not a positive safe integer — the predicate's argument is checked, never coerced, so it cannot answer `false` by arithmetic on a value that is not a time |
+| `invalid-at` | (`isExpired`, `reminderStage`) `at` is not a positive safe integer — the predicate's argument is checked, never coerced, so it cannot answer `false` or `NaN` by arithmetic on a value that is not a time |
 | `now-went-backwards` | `now` is earlier than the queue's own, so expiry would run in reverse |
 | `invalid-account` | the installation id is not 1..64 characters |
 | `invalid-ttl` | the TTL is outside P1.1's `MIN_WINDOW_MS`..`MAX_PROMPT_TTL_MS` |
@@ -230,7 +233,7 @@ TTL has already ended, or drop one that is still open.
 | `queue-full` | the cap — carries `QUEUE_FULL_REPLY` for the orchestrator |
 | `unknown-prompt` | the answer names a prompt this queue does not hold |
 | `internal-error` | an entry point was handed a value that made it raise — a revoked `Proxy`, or one whose traps throw. Frozen, `field: null`, and what was thrown is never echoed (P1.1's and P6.2's code, spelled the same) |
-| `invalid-switch` / `invalid-severity` / `invalid-presence` / `invalid-caps` | the policy was handed a value outside the vocabulary it reads — an unknown severity is refused, never ranked as "not a kill" |
+| `invalid-switch` / `invalid-severity` / `invalid-presence` / `invalid-caps` | the policy was handed a value outside the vocabulary it reads — an unknown severity is refused, never ranked as "not a kill". Absent and `null` mean the same for the three signals (`digest`, `presence`, `caps`): nothing to report, never "no event" for a value the module could not read |
 
 ## Who consumes it
 
@@ -275,7 +278,7 @@ function of the prompt's `at`, the TTL and the consumer's clock", written agains
 that never expires anything and failing on it. It is `mutation-proof.sh`'s first guard, so it stays
 re-runnable rather than living only in a pull-request transcript.
 
-`mutation-proof.sh` plants 66 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 70 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It

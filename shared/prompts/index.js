@@ -453,10 +453,30 @@ function expiredBy(at, now, promptTtlMs) {
  * the prompt's own arrival -- while whether it has actually been SPOKEN is the
  * entry's local `announcedAt`, because this module cannot know when the app's
  * natural pauses were.
+ *
+ * Its two arguments are checked like `isExpired`'s, and for the same reason: a
+ * stage is a number the text screen renders and this module compares, and the
+ * arithmetic would otherwise answer one for a value that is not a time --
+ * `NaN`, which is neither 0 nor any stage, and which sorts and compares as
+ * nothing at all. `invalid-at` for `at`, `invalid-now` for `now`, both bounded
+ * `1..TIME_MAX` as everywhere else, and a hostile Proxy in a number's place is
+ * refused with the same code.
  */
 export const reminderStage = guarded(reminderStageUnguarded);
 
 function reminderStageUnguarded(at, now) {
+  if (!isIntegerInRange(at, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_AT, 'at');
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  return stageOf(at, now);
+}
+
+/**
+ * The schedule itself, over two values a caller has already validated: the
+ * queue's own walk calls this rather than `reminderStage`, so a refusal object
+ * -- truthy, and not a stage -- can never reach the comparison that decides
+ * whether a question is read out.
+ */
+function stageOf(at, now) {
   const waited = now - at;
   if (waited < REMINDER_AFTER_MS) return 0;
   return 1 + Math.floor((waited - REMINDER_AFTER_MS) / REMINDER_INTERVAL_MS);
@@ -487,7 +507,7 @@ function reminderAt(at, stage) {
 // its own; the hour has to pass before anything is due again.
 function isDue(entry, now) {
   if (entry.announcedAt === null) return true;
-  const stage = reminderStage(entry.prompt.at, now);
+  const stage = stageOf(entry.prompt.at, now);
   if (stage === 0) return false;
   return entry.announcedAt < reminderAt(entry.prompt.at, stage);
 }
@@ -764,6 +784,22 @@ function open(queue, event, names, where) {
   if (!isIntegerInRange(read.values.now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
   if (read.values.now < current.queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
   return { ok: true, queue: current.queue, values: read.values };
+}
+
+/**
+ * The clock alone, read from an event that carries nothing else: the two
+ * cross-account reads take `{ now }` and no queue, and they answer a missing
+ * or unusable `now` exactly as `open` does -- one fault, one code, wherever the
+ * module is entered (`missing-field` when it is not carried at all,
+ * `invalid-now` when it is carried and is not a time).
+ */
+function readClock(event, where) {
+  const time = readFields(event, TIME_ONLY_FIELDS, where);
+  if (!time.ok) return time;
+  const now = time.values.now;
+  if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  return time;
 }
 
 /**
@@ -1098,7 +1134,7 @@ function listing(entry, now) {
     destructive: entry.destructive,
     safe: entry.safe,
     announcedAt: entry.announcedAt,
-    stage: reminderStage(entry.prompt.at, now),
+    stage: stageOf(entry.prompt.at, now),
     due: isDue(entry, now),
   });
 }
@@ -1116,7 +1152,7 @@ function spokenItem(entry, now) {
     destructive: entry.destructive,
     safe: entry.safe,
     announcedAt: entry.announcedAt,
-    stage: reminderStage(entry.prompt.at, now),
+    stage: stageOf(entry.prompt.at, now),
   });
 }
 
@@ -1290,10 +1326,9 @@ export const pendingAcross = guarded(pendingAcrossUnguarded);
 function pendingAcrossUnguarded(queues, event = {}) {
   const read = readQueues(queues, 'queues');
   if (!read.ok) return read;
-  const time = readFields(event, TIME_ONLY_FIELDS, 'event');
+  const time = readClock(event, 'event');
   if (!time.ok) return time;
   const now = time.values.now;
-  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
 
   const accounts = [];
   let count = 0;
@@ -1328,10 +1363,9 @@ export const announcement = guarded(announcementUnguarded);
 function announcementUnguarded(queues, event = {}) {
   const read = readQueues(queues, 'queues');
   if (!read.ok) return read;
-  const time = readFields(event, TIME_ONLY_FIELDS, 'event');
+  const time = readClock(event, 'event');
   if (!time.ok) return time;
   const now = time.values.now;
-  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
 
   let count = 0;
   const due = [];
@@ -1384,7 +1418,14 @@ const CAP_FIELDS = Object.freeze(['reached', 'near']);
  *             left available and off by default, so the caller passes false
  *             until the user turns it on.
  *   switch    D127's local setting: it narrows D160's set or widens it to "any
- *             prompt" (see `SWITCH`).
+ *             prompt" (see `SWITCH`); absent means the default.
+ *
+ * The three signals are optional too, and each of them reads `null` exactly as
+ * it reads absence -- the app has nothing to report for that signal. That is
+ * not the same fault as a signal it cannot read: a value that is neither is
+ * refused, never taken for "no event" (`invalid-severity`, `invalid-presence`,
+ * `invalid-caps`), because a kill switch the app cannot read must not be
+ * answered as a kill switch that is not set.
  *
  * The order of the answers is the severity order -- kill, then the cap, then
  * the consumer, then a prompt -- so two events at once report the one that
@@ -1404,7 +1445,7 @@ function evaluateInterruptUnguarded(input = {}) {
   if (!current.ok) return current;
   const queue = current.queue;
 
-  if (values.now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');
+  if (values.now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');
   if (!isIntegerInRange(values.now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
   if (values.now < queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
 
@@ -1506,7 +1547,7 @@ function readPresence(presence) {
 
 /** The cap signals: recomputed on the phone, validated here as booleans. */
 function readCaps(caps) {
-  if (caps === undefined) return { value: { reached: false, near: false } };
+  if (caps === undefined || caps === null) return { value: { reached: false, near: false } };
   const read = readFields(caps, CAP_FIELDS, 'caps');
   if (!read.ok) return { bad: refuse(REFUSAL.INVALID_CAPS, 'caps') };
   const values = read.values;

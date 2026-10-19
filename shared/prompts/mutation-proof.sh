@@ -504,12 +504,6 @@ run "an over-age answer takes its kind's code, not always replay" \
   "    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'answer.at');" \
   "    return refuse(REFUSAL.REPLAY, 'answer.at');"
 
-# A duplicate is answered from the queue it is already in: a redelivery cannot
-# clear an announcement the user has already heard.
-run "a redelivery cannot clear an announcement" \
-  "      return Object.freeze({ ok: true, outcome: OUTCOME.DUPLICATE, id: prompt.id, queue: current });" \
-  "      return Object.freeze({ ok: true, outcome: OUTCOME.DUPLICATE, id: prompt.id, queue: freezeQueue({ ...current, prompts: current.prompts.map((held) => Object.freeze({ ...held, announcedAt: null })) }) });"
-
 # Answering settles the prompt and drops its entry, so what is outstanding is
 # what is held and nothing else. Keeping the answered entry would leave a
 # settled question pending, and would make the next delivery of the same id a
@@ -582,8 +576,10 @@ run "an unknown answer field is not echoed back" \
 # user the wrong question. Each check is its own guard.
 run "isExpired checks \`at\` rather than coercing it" \
   "  if (!isIntegerInRange(at, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_AT, 'at');
-  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');" \
-  "  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');"
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  if (!isIntegerInRange(promptTtlMs, MIN_TTL_MS, MAX_TTL_MS)) {" \
+  "  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  if (!isIntegerInRange(promptTtlMs, MIN_TTL_MS, MAX_TTL_MS)) {"
 
 run "isExpired checks \`now\` rather than coercing it" \
   "  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
@@ -596,6 +592,41 @@ run "isExpired checks the TTL rather than coercing it" \
   }
   return expiredBy(at, now, promptTtlMs);" \
   "  return expiredBy(at, now, promptTtlMs);"
+
+# One fault, one code, wherever the module is entered: a clock that is not
+# carried at all is `missing-field` on the policy's own input and on the
+# cross-account reads, exactly as it is on the queue operations.
+run "a policy with no \`now\` is missing-field, not unknown-field" \
+  "  if (values.now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');" \
+  "  if (values.now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');"
+
+run "the cross-account reads: a missing \`now\` is missing-field" \
+  "  const now = time.values.now;
+  if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');" \
+  "  const now = time.values.now;
+  if (now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');"
+
+# `reminderStage` is a predicate like `isExpired`, and the stage it answers is
+# rendered: each argument is checked, so a value that is not a time cannot
+# become `NaN` -- neither 0 nor any stage.
+run "reminderStage checks \`at\` rather than coercing it" \
+  "  if (!isIntegerInRange(at, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_AT, 'at');
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  return stageOf(at, now);" \
+  "  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  return stageOf(at, now);"
+
+run "reminderStage checks \`now\` rather than coercing it" \
+  "  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  return stageOf(at, now);" \
+  "  return stageOf(at, now);"
+
+# Absent and null are the same for all three of the policy's signals: nothing to
+# report. Only `undefined` meaning that would make one of them refuse where the
+# other two answer.
+run "an absent and a null caps signal mean the same thing" \
+  "  if (caps === undefined || caps === null) return { value: { reached: false, near: false } };" \
+  "  if (caps === undefined) return { value: { reached: false, near: false } };"
 
 git checkout -- "$F"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"

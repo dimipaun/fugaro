@@ -732,6 +732,26 @@ test('reminderStage is a pure function of the clock: an hour, then a day', () =>
   assert.equal(reminderStage(T0, T0 + HOUR + DAY - 1), 1);
   assert.equal(reminderStage(T0, T0 + HOUR + DAY), 2);
   assert.equal(reminderStage(T0, T0 + HOUR + 3 * DAY), 4);
+  // A stage is a number the text screen renders and this module compares, so a
+  // value that is not a time is refused rather than answered with `NaN` -- which
+  // is neither 0 nor any stage, and compares as nothing at all. The two
+  // arguments are checked as `isExpired` checks its three.
+  for (const [at, now] of [
+    [undefined, T0],
+    [null, T0],
+    ['x', T0],
+    [NaN, T0],
+    [0, T0],
+    [T0, undefined],
+    [T0, 'x'],
+    [T0, null],
+  ]) {
+    const result = reminderStage(at, now);
+    assert.equal(result.ok, false, `reminderStage(${String(at)}, ${String(now)}) must refuse`);
+    assert.equal(result.code, at === T0 ? REFUSAL.INVALID_NOW : REFUSAL.INVALID_AT);
+    assert.equal(result.field, at === T0 ? 'now' : 'at');
+    assert.ok(Object.isFrozen(result));
+  }
 });
 
 test('a pause speaks what is due, then the count alone, then escalates', () => {
@@ -916,7 +936,14 @@ test('the cross-account view refuses two queues for one installation', () => {
   assert.equal(pendingAcross(duplicated, { now: T0 }).code, REFUSAL.INVALID_QUEUES);
   assert.equal(announcement('nope', { now: T0 }).code, REFUSAL.INVALID_QUEUES);
   assert.equal(announcement(queues, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
-  assert.equal(announcement(queues, {}).code, REFUSAL.INVALID_NOW);
+  // A clock that is not carried at all is missing-field here as it is on every
+  // other entry point: the two faults have two fixes, and the module answers
+  // one code for one fault wherever it is entered.
+  assert.equal(announcement(queues, {}).code, REFUSAL.MISSING_FIELD);
+  assert.equal(announcement(queues, {}).field, 'now');
+  assert.equal(pendingAcross(queues, {}).code, REFUSAL.MISSING_FIELD);
+  assert.equal(announcement(queues, { now: 0 }).code, REFUSAL.INVALID_NOW);
+  assert.equal(pendingAcross(queues, { now: 'x' }).code, REFUSAL.INVALID_NOW);
   // The cross-account view is not a bag either: an event with a field it does
   // not read is refused rather than read with the field dropped.
   assert.equal(announcement(queues, { now: T0, at: T0 }).code, REFUSAL.UNKNOWN_FIELD);
@@ -971,6 +998,7 @@ test('only D160\'s set interrupts, and the switch decides which part of it', () 
       'going offline': INTERRUPT.OFFLINE,
     },
   };
+  const reasons = new Set();
   for (const [name, input, reason] of events) {
     for (const setting of [SWITCH.NARROW, SWITCH.DEFAULT, SWITCH.WIDEN]) {
       const result = policy({ ...input, switch: setting });
@@ -981,8 +1009,19 @@ test('only D160\'s set interrupts, and the switch decides which part of it', () 
         `${name} under ${setting} should answer ${expected[setting][name]}`,
       );
       assert.equal(result.interrupt, reason !== null && expected[setting][name] !== null);
+      assert.equal(result.interrupt, result.reason !== null, 'the flag and the reason agree');
+      if (result.reason !== null) reasons.add(result.reason);
     }
   }
+  // `widen`'s fifth cell is its own test below; it is the last reason this
+  // vocabulary has to account for.
+  reasons.add(policy({ queue: enqueueOne(makeQueue()).queue, switch: SWITCH.WIDEN }).reason);
+  // The vocabulary is exactly what the policy answers, both ways round: every
+  // reason it returns is a member of `INTERRUPT` (a caller renders a string
+  // this module defined), and every member is reachable (a member nothing
+  // returns is a reason a caller would wait for for ever).
+  assert.deepEqual([...reasons].sort(), [...Object.values(INTERRUPT)].sort());
+  assert.equal(Object.values(INTERRUPT).includes('loud'), false, 'and nothing off the list is on it');
 });
 
 test('widening adds "any prompt", and only when one is due', () => {
@@ -1063,6 +1102,20 @@ test('the policy refuses what it cannot read, and never guesses a severity', () 
   assert.equal(policy({ now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
   assert.equal(policy({ now: 0 }).code, REFUSAL.INVALID_NOW);
   assert.equal(policy({ extra: 1 }).code, REFUSAL.UNKNOWN_FIELD);
+  // The clock: not carried is missing-field, carried and unusable is
+  // invalid-now, exactly as on every other entry point (the `policy` helper
+  // injects `now`, so this is the one place the fault is reachable).
+  const untimed = evaluateInterrupt({ queue: makeQueue() });
+  assert.equal(untimed.code, REFUSAL.MISSING_FIELD);
+  assert.equal(untimed.field, 'now');
+  // A signal that is absent and a signal that is null mean the same thing --
+  // nothing to report -- for all three of the policy's inputs, and a value that
+  // is neither is still refused rather than read as "no event".
+  assert.equal(policy({ digest: null }).ok, true);
+  assert.equal(policy({ caps: null }).ok, true, 'null caps are no caps, as null presence is no presence');
+  assert.equal(policy({ caps: null }).interrupt, false);
+  assert.equal(policy({ presence: null }).ok, true);
+  assert.equal(evaluateInterrupt({ queue: makeQueue(), now: T0, caps: null, digest: null, presence: null }).ok, true);
   // A severity below the top rung is not an interruption, and every rung of
   // P1.3's ladder is readable.
   for (const severity of Object.values(SEVERITY)) {
@@ -1087,10 +1140,14 @@ test('the policy is a pure function of its inputs', () => {
   assert.deepEqual(first, second);
   assert.equal(first.pending, 1);
   assert.equal(first.interrupt, false);
-  // The reason is null when nothing interrupts, and a string when it does:
-  // a caller that renders an unlisted reason is rendering something this
-  // module never returns.
-  assert.equal(Object.values(INTERRUPT).includes('loud'), false);
+  // The reason is null when nothing interrupts. When something does, it is one
+  // of `INTERRUPT`'s members and nothing else: the table test above collects
+  // every reason the module answers across the whole (event x switch) table and
+  // asserts that set IS `Object.values(INTERRUPT)`, so a caller rendering a
+  // reason is rendering a string this module defines -- and no member of the
+  // vocabulary is a reason nothing returns.
+  assert.equal(first.reason, null);
+  assert.equal(policy({ digest: digestOf(SEVERITY.kill) }).reason, INTERRUPT.KILL);
 });
 
 test('the queue module holds no clock: an unchanged input is unchanged output', () => {
@@ -1256,14 +1313,15 @@ test('an exception from a hostile input is a refusal, and what was thrown is nev
     // A queue whose own entries are hostile: the throw happens deeper in, in
     // the reader that re-validates each held prompt.
     ['pending(a hostile entry)', () => pending({ ...queue, prompts: [hostile()] }, { now: T0 })],
-    // `reminderStage` does arithmetic on its values, so a value in place of a
-    // number throws inside it: it answers the same refusal rather than throwing,
-    // and `false` is NOT the answer -- false means "still alive". `isExpired`
-    // does not reach the arithmetic with a hostile value: it checks all three
-    // arguments first (`invalid-at`/`invalid-now`/`invalid-ttl`, its own test),
-    // which is the same fail-closed answer reached one step earlier.
-    ['reminderStage(hostile)', () => reminderStage(revoked(), T0)],
+    ['evaluateInterrupt(hostile caps)', () => evaluateInterrupt({ queue, now: T0, caps: hostile() })],
   ];
+  // The two predicates are named here because they are NOT in the list: each
+  // checks its arguments first and answers the argument's own code
+  // (`invalid-at`/`invalid-now`/`invalid-ttl`, their own tests), which is the
+  // same fail-closed answer reached one step earlier -- and never `false` or
+  // `NaN`, the two answers a caller cannot tell from a real one.
+  assert.equal(isExpired(revoked(), T0, HOUR).code, REFUSAL.INVALID_AT);
+  assert.equal(reminderStage(revoked(), T0).code, REFUSAL.INVALID_AT);
 
   for (const [what, call] of calls) {
     let result;
