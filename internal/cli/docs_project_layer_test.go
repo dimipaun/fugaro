@@ -521,3 +521,42 @@ func TestDocsReleaseChecklistNamesEveryPolicyVersion(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning: the publish row of
+// docs/project-layer.md is the operator's only description of what a publish
+// writes, and C1.2 added two things to it that the row did not carry before —
+// the per-repository admissions (O4) and the direction their two writes take,
+// and the warning the diff prints for the two members an older Fugaro refuses
+// whole. A row that named neither would leave an operator publishing an account
+// list and a cascade with no page telling them what either costs.
+//
+// Mutation (verified, run and restored): delete the admissions sentence from the
+// row — this fails naming the order; delete the warning sentence — it fails
+// naming the warning.
+func TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"`config/policy/repos/$slug` holding the **names** of its admitted accounts",
+		"is written **before** the shared node while the widening half follows it",
+		"leaves the installation tighter than the config asked and never looser",
+		"The diff also **warns** when the node it wrote carries a member an older",
+		"`routing.claude.via: cascade`, which stops those **and**",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's publish row lacks %q: the row is where an operator reads what a publish writes and what it costs", want)
+		}
+	}
+	// The command's own help is the other text an operator reads before running
+	// it, and it carries the same two facts.
+	help := newProjectPolicyPublishCmd().Long
+	for _, want := range []string{
+		"holding the NAMES of its admitted accounts",
+		"narrowed before the shared node and widened",
+		"tighter than the config asked, never looser",
+		"the diff warns: older launchers",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("the publish command's help lacks %q: the help is what an operator reads before a publish", want)
+		}
+	}
+}
