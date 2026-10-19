@@ -273,8 +273,12 @@ the page's own copy rather than out of the ceiling — `install.yaml`'s archive,
 plugin notes and names are shorter for it, and the notes the Go test pins (the Homebrew
 "tested on macOS", the go install's three phrases) are untouched. `install.yaml`'s header
 now says the first path is the quick path, because that is what puts it above the fold.
-The site's own build is 1,642 bytes heavier, re-derived in `website/README.md` in the same
-commit (D192).
+The bands are held by a gate rather than by this paragraph: `website/test/fold.mjs` gains a
+fourth rule — Getting Started's sections are exactly `#install`, `#setup`, `#details` in
+that order, `#setup` is an `ol` and every step in it names the document behind it — so the
+two things the reader came for cannot drift back down a page that grows. The site's own
+build is 1,654 bytes heavier (12 of them the Firebase step's own wording), re-derived in
+`website/README.md` in the same commits (D192).
 
 ### P6 — a copy button on every command block (RF13, RF14, RF15; D183, D192)
 

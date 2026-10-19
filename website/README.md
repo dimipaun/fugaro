@@ -342,7 +342,11 @@ added or removed without this sentence moving fails there:
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
-  first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its
+  first `h2` precedes the first `pre`. Its fourth rule is the owner's feedback of 2026-10-19:
+  Getting Started is three bands in the order a reader reads them — `#install` (the command
+  and the console), `#setup` (what a real installation needs, an `ol` whose every step names
+  the document behind it), `#details` (everything else) — so the two things a reader came for
+  cannot drift back down a page that grows. The whole gate is one function over one `dist`, so its
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.

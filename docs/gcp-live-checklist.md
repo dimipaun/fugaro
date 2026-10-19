@@ -4429,7 +4429,9 @@ RF23), and written here rather than left to the redesign's own plan because this
 owner runs live checks out of. It is the half of P5 no hermetic test can take. Two gates hold the
 halves the claim rests on — `website/test/fold.mjs` the **ordering** (the homepage's lead region is
 the promise and its call to action and nothing else, Getting Started's install section opens with
-its commands, and every page that prints a command prints it under a heading) and
+its commands, Getting Started's three bands — the install, then the steps a real installation
+takes, then the details — are the page's sections in the order a reader reads them, and every page
+that prints a command prints it under a heading) and
 `website/test/budget.mjs` the **word ceilings** (D188: 40 words in a page's lead, 250 per page
 except the three reference pages) — and
 neither of them can see a viewport, which is exactly D187's question. The fold is a position on a
