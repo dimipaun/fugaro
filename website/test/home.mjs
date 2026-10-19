@@ -672,6 +672,73 @@ function readmeReasons() {
 /** The document the benefits section is quoted from, as the page and the component cite it. */
 const BENEFITS_SOURCE = 'README.md#Why Fugaro'
 
+/**
+ * The attributes of an element as one stable string, without the build's own scope attribute:
+ * what a glyph is drawn with is its drawing, and Astro's `data-astro-cid-…` is the same on
+ * every element of the section rather than part of any picture.
+ */
+function attrsOf(el) {
+  return [...el.attrs.entries()]
+    .filter(([name]) => !name.startsWith('data-astro-cid-'))
+    .map(([name, value]) => `${name}=${JSON.stringify(value)}`)
+    .sort()
+    .join(' ')
+}
+
+/** The drawing inside one `<svg>`: its shapes and their own attributes, and nothing above it. */
+function drawingOf(svg) {
+  return [...walk(svg)]
+    .filter((el) => el.name !== 'svg')
+    .map((el) => (el.name === undefined ? '' : `${el.name} ${attrsOf(el)}`.trim()))
+    .filter(Boolean)
+    .join(';')
+}
+
+/**
+ * The ways an `<svg>` could pull something in from outside itself, which is what an inline
+ * icon may never do: an attribute that names another document, or an element whose whole job
+ * is to reference one. `style` is on the list for the same reason and not for a different
+ * one: a glyph painted by an inline style is a colour the palette does not carry and the
+ * deployed policy's `style-src` would have to admit.
+ */
+const REFERRING_ATTRS = new Set(['href', 'xlink:href', 'src', 'srcset', 'style', 'poster'])
+const REFERRING_ELEMENTS = new Set(['image', 'use', 'script', 'foreignobject', 'iframe', 'object', 'embed'])
+
+/**
+ * What one of a benefit's icons points at, or '' when it points at nothing (the good case).
+ * The `<svg>` itself is read beside its descendants, because an `<svg href="…">` is a
+ * reference as much as a `<use href="…">` inside one is.
+ */
+function referenceOf(svg) {
+  for (const el of [svg, ...walk(svg)]) {
+    for (const [name, value] of el.attrs ?? []) {
+      if (REFERRING_ATTRS.has(name)) return `<${el.name} ${name}=${JSON.stringify(value)}>`
+    }
+    if (REFERRING_ELEMENTS.has(el.name)) return `<${el.name}>`
+  }
+  return ''
+}
+
+/**
+ * The icons a benefit renders, as the facts the refusals below are about: one entry per
+ * `<svg>` in the item, carrying what it draws, whether it is marked as decoration, and what
+ * it references. Every `<svg>` under the item is one of its icons — the reader does not go
+ * looking for a class name, so a second picture added without the class is still counted.
+ */
+function iconsOf(item) {
+  const out = []
+  for (const el of walk(item)) {
+    if (el.name !== 'svg') continue
+    out.push({
+      drawing: drawingOf(el),
+      hidden: el.attrs.get('aria-hidden') === 'true',
+      focusable: el.attrs.get('focusable') === 'false',
+      reference: referenceOf(el),
+    })
+  }
+  return out
+}
+
 /** A built page's benefits, as the elements it renders: the section's title and its items. */
 function benefitsOf(html) {
   const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
@@ -687,7 +754,11 @@ function benefitsOf(html) {
     out.source = section.attrs.get('data-source') ?? ''
     for (const item of walk(section)) {
       if (item.name !== 'li' || !classes(item).includes('benefit')) continue
-      out.items.push({ name: inside(item, 'benefit-name'), line: inside(item, 'benefit-line') })
+      out.items.push({
+        name: inside(item, 'benefit-name'),
+        line: inside(item, 'benefit-line'),
+        icons: iconsOf(item),
+      })
     }
   }
   return out
@@ -705,7 +776,14 @@ function benefitsOf(html) {
  *     the four lines could be shuffled among the four reasons and each would still be a
  *     quotation, while the page sold the reader the sentence about safety under the name about
  *     models. Held to the reason's own paragraph, a line that moved stops the build (Global
- *     Constraint 6, D102).
+ *     Constraint 6, D102);
+ *   - **every benefit carries exactly one icon, it is decoration, and it fetches nothing.**
+ *     The owner's feedback of 2026-10-19 asks each point for an icon; so the page may not
+ *     render a benefit with none, with two, with an icon a screen reader is handed as content
+ *     beside the name that already says the point, or with one that references a file or an
+ *     origin — an icon font, an `<image>`, a `<use href>`, an inline style. The four glyphs are
+ *     also held to being four: four points drawn with one picture is one icon used four times,
+ *     and the picture then says nothing about the point under it.
  *
  * Written as a function over a benefits section and the README's reasons so a fixture can
  * prove it refuses.
@@ -749,13 +827,65 @@ export function benefitFailures(benefits, reasons) {
       )
     }
   }
+
+  // The icons: one per benefit, decoration, and nothing fetched (the owner's feedback of
+  // 2026-10-19). Read per benefit rather than as a count over the section, because "four
+  // icons for four benefits" is also true of one benefit with four of them and three with
+  // none.
+  for (const [index, item] of benefits.items.entries()) {
+    const icons = item.icons ?? []
+    const where = `benefit ${index + 1} of the benefits`
+    if (icons.length !== 1) {
+      out.push(
+        `${where} carries ${icons.length} icon(s) and every point of the benefits carries one: the owner's feedback of 2026-10-19 asks each point for an icon, and a benefit drawn with none or with several is a point the picture does not mark (the owner's feedback of 2026-10-19)`,
+      )
+      continue
+    }
+    const [icon] = icons
+    if (!icon.hidden) {
+      out.push(
+        `${where}: its icon is not marked as decoration (aria-hidden="true"), and the picture is the point's — a screen reader handed the glyph as well reads the name beside it twice (the owner's feedback of 2026-10-19)`,
+      )
+    }
+    if (icon.reference !== '') {
+      out.push(
+        `${where}: its icon references something outside itself (${icon.reference}), and an icon of this site is inline SVG drawn with the page's own tokens — an icon font, an image file, a <use href> or an inline style is another thing a reader's browser has to fetch, or a colour the palette does not carry (the owner's feedback of 2026-10-19; Global Constraints 4 and 8)`,
+      )
+    }
+  }
+
+  // Four points, four pictures: a glyph repeated under two points is one icon used twice, and
+  // the drawing then says nothing about the point it sits under.
+  const drawings = benefits.items.flatMap((item) => (item.icons ?? []).map((icon) => icon.drawing))
+  if (new Set(drawings).size !== drawings.length) {
+    const repeated = drawings.filter((drawing, i) => drawings.indexOf(drawing) !== i)
+    out.push(
+      `the benefits draw ${drawings.length} icon(s) with ${new Set(drawings).size} distinct picture(s), so ${repeated.length} of them repeat another point's glyph (${JSON.stringify(repeated[0])}): each point carries a glyph of its own (the owner's feedback of 2026-10-19)`,
+    )
+  }
   return out
 }
+
+/**
+ * One icon, in the shape the section writes one: an inline `<svg>` with a glyph inside it.
+ * `body` is what it draws — or references, in the fixtures that plant a defect — and `marks`
+ * are the attributes beyond the drawing, so a fixture can leave `aria-hidden` off or hang an
+ * `href` on the `<svg>` itself.
+ */
+function iconMarkup(body, marks = 'aria-hidden="true" focusable="false"') {
+  return `<svg class="benefit-icon" viewBox="0 0 24 24" ${marks}>${body}</svg>`
+}
+
+/** Four distinct drawings, one per point, so the fixture section is the page the gate passes. */
+const FIXTURE_GLYPHS = ['M1 1h2v2', 'M3 3h2v2', 'M5 5h2v2', 'M7 7h2v2']
 
 /** A page carrying nothing but a benefits section, for the refusals above. */
 function benefitsPage(items, { title = 'Benefits', source = BENEFITS_SOURCE, sections = 1 } = {}) {
   const body = items
-    .map((item) => `<li class="benefit"><h3 class="benefit-name">${item.name}</h3><p class="benefit-line">${item.line}</p></li>`)
+    .map(
+      (item, index) =>
+        `<li class="benefit">${item.icon ?? iconMarkup(`<path d="${FIXTURE_GLYPHS[index % FIXTURE_GLYPHS.length]}"></path>`)}<h3 class="benefit-name">${item.name}</h3><p class="benefit-line">${item.line}</p></li>`,
+    )
     .join('')
   const section = `<section class="home-benefits" aria-labelledby="benefits-title" data-source="${source}"><h2 class="benefits-title" id="benefits-title">${title}</h2><ul class="benefit-list">${body}</ul></section>`
   return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1>${section.repeat(sections)}</main></body></html>`
@@ -823,6 +953,59 @@ test('the benefits refusals fire on a paraphrase, a shuffled line and a dropped 
     benefitFailures(benefitsOf(benefitsPage(good, { source: 'README.md' })), reasons).join('\n'),
     /cites "README\.md", and its names and lines are README\.md's "## Why Fugaro"/,
     'a section that cites the whole README instead of the section is not refused',
+  )
+})
+
+test('the benefits refusals fire on a missing icon, a second one, a named glyph and a repeated one', () => {
+  // The owner's feedback of 2026-10-19: "use an icon for each point". Five defects, each
+  // planted alone beside the section that keeps the rule, so the gate is a gate rather than a
+  // description of today's markup: a point with no icon, a point with two, an icon a screen
+  // reader is handed as content, one that references another file, and four points drawn with
+  // one picture between them. The fixture passes with its four distinct glyphs, which is what
+  // makes the five refusals below about the planted defect and not about the fixture.
+  const reasons = readmeReasons()
+  const good = reasons.map((reason) => ({ name: reason.name, line: firstSentence(reason.paragraph) }))
+  assert.deepEqual(benefitFailures(benefitsOf(benefitsPage(good)), reasons), [], 'the fixture section is not the README\'s own, so the five refusals below prove nothing')
+
+  const plant = (index, icon) => good.map((item, i) => (i === index ? { ...item, icon } : item))
+  const refusal = (items) => benefitFailures(benefitsOf(benefitsPage(items)), reasons).join('\n')
+
+  assert.match(
+    refusal(plant(0, '')),
+    /benefit 1 of the benefits carries 0 icon\(s\) and every point of the benefits carries one/,
+    'a benefit drawn with no icon is not refused',
+  )
+
+  assert.match(
+    refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>') + iconMarkup('<path d="M9 9h2v2"></path>'))),
+    /carries 2 icon\(s\)/,
+    'a benefit drawn with two icons is not refused',
+  )
+
+  assert.match(
+    refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>', 'focusable="false"'))),
+    /benefit 1 of the benefits: its icon is not marked as decoration/,
+    'an icon a screen reader is handed as content beside the name is not refused',
+  )
+
+  // A reference from inside the `<svg>` and one on the `<svg>` itself: an icon font or an
+  // image file arrives through the first, and the second is the shape that has no glyph in it
+  // at all.
+  assert.match(
+    refusal(plant(0, iconMarkup('<use href="/icons.svg#shield"></use>'))),
+    /references something outside itself \(<use href="\/icons\.svg#shield">\)/,
+    'an icon that pulls a glyph in from another file is not refused',
+  )
+  assert.match(
+    refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>', 'aria-hidden="true" focusable="false" style="stroke:red"'))),
+    /references something outside itself \(<svg style="stroke:red">\)/,
+    'an icon painted by an inline style is not refused',
+  )
+
+  assert.match(
+    refusal(good.map((item) => ({ ...item, icon: iconMarkup('<path d="M1 1h2v2"></path>') }))),
+    /draw 4 icon\(s\) with 1 distinct picture\(s\)/,
+    'four points drawn with one glyph between them are not refused',
   )
 })
 

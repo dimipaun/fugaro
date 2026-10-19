@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **973,619 bytes in a checkout with no tags** and to **973,619 bytes with the
+  commit builds to **975,301 bytes in a checkout with no tags** and to **975,301 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -448,6 +448,17 @@ added or removed without this sentence moving fails there:
     words ceiling re-derived with it, 919 → **949** (the page's own 759 words plus 25 %, below).
     The page weight, the script and the number of files did not move: the heaviest page is still
     the docs hub, which renders none of this, and the clone figure moved by the same bytes.
+  - **The benefits' points got their icons and a step up the type scale** (the owner's feedback
+    of 2026-10-19: "make them bigger, bolder, use an icon for each point"), and it moved the
+    site figure alone, 973,619 → **975,301**, by **1,682 bytes**: one inline `<svg>` per point —
+    four glyphs, drawn with `stroke="currentColor"` and the presentation attributes that go with
+    it — and the rules that size and place them, and the section's heading, its point names and
+    their one line each a step up the type scale. All of it is on the homepage, which is the one
+    page that renders the section, so the page weight and the script did not move: the heaviest
+    page is the docs hub, and it carries no benefits. Nothing was fetched for any of it — the
+    four glyphs are shapes in the markup, and `test/home.mjs` reads each one back off the built
+    page and refuses an icon that references a file or an origin. The words are the ones the
+    section already carried, so the word ceiling did not move.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -474,7 +485,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
     docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,651,072 bytes. Three times 1,217,024 (every file in `dist/`, 973,619
+  - **Whole site:** 3,657,381 bytes. Three times 1,219,127 (every file in `dist/`, 975,301
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
