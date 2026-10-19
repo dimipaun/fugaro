@@ -79,12 +79,15 @@ const provisionTimeout = 10 * time.Minute
 // computed from the job rather than read from the environment, as the provider
 // and the clone URL already are (project-centric.md §12a items 1 and 2).
 //
-// The three callers depend on it together: without it a project job would clone
-// whole through gitops.OpenOrClone instead of blobless, provision nothing
-// (images/base's mise-system.toml sets auto_install = false, so a tool its
-// mise.toml names then fails loudly rather than installing), and in review mode
-// leave the work tree on the remote's default branch instead of
-// origin/<spec.Ref>.
+// Its four call sites depend on it, and each does the baked job's thing without
+// it: openCheckout clones whole through gitops.OpenOrClone instead of blobless
+// (gitops.CloneBlobless); provision installs nothing (images/base's
+// mise-system.toml sets auto_install = false, so a tool its mise.toml names
+// then fails loudly rather than installing); bootstrap's review branch leaves
+// the work tree on the remote's default branch instead of checking out
+// origin/<spec.Ref>; and prefetchObjects skips its fill, leaving a review-mode
+// project job's agent to fetch the branch's revisions and the base tip its
+// reads want with git credentials it does not have.
 func (r *run) cloneJob() bool {
 	if _, project := r.projectJob(); project {
 		return true
