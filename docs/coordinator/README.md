@@ -12,10 +12,9 @@ backs that claim, and the shape of citation it does not cover, are stated in
 
 **All sixteen questions are answered, and none is approved.** The owner answered Q1–Q16 on
 **2026-10-19**, each by taking **option (A)**, the recommended one; each answer is recorded
-under its question in the reconciliation's §3, with what it means for the spec. **An answer
-is not an approval**: nothing in this directory has been accepted, approved or given a
-decision number, no plan exists, and the plan that follows is a separate document with its
-own gate. The options that were not taken are left in place, unedited, so the answer can be
+under its question in the reconciliation's §3, with what it means for the spec.
+**An answer is not an approval**: nothing in this directory has been accepted, approved or given a decision number, no plan exists, and the plan that follows is a separate document with its own gate.
+The options that were not taken are left in place, unedited, so the answer can be
 read against what it was choosing between. Two things the answers do not settle: **U2 stays
 an owner check** (whether the GitHub App already has `pull_requests: read`, which Q3's answer
 asks it for), and **U6/U7 are still drafts** in open pull requests.

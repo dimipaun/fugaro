@@ -49,7 +49,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 24, one per way these documents can
+// Mutation (verified, run and restored) -- 25, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -63,8 +63,10 @@ package cli
 //	  delete the reconciliation's "The owner answered all sixteen" sentence ->
 //	  fails;
 //	  delete the README's "All sixteen questions are answered" sentence -> fails;
-//	  drop "an answer is not an approval" from that README sentence -> fails,
-//	  which is the half of it that matters most;
+//	  drop "and none is approved" from the README's answered sentence -> fails:
+//	  what is left says the questions were answered, not that answering one
+//	  approves nothing;
+//	  delete the README's "An answer is not an approval" sentence -> fails;
 //	  revert the README's numbers row to "its open items are Q1–Q16" -> fails.
 //	TestDocsCoordinatorSpecIsVerbatim
 //	  paste a `### Q1 — ` heading into spec.md -> fails;
@@ -75,17 +77,21 @@ package cli
 //	TestDocsCoordinatorCitationsExist
 //	  rename a cited path to `internal/budget/modelX.go` -> fails, naming it;
 //	  cite a nonexistent path in the `path:line Symbol` shape the old regexp
-//	  missed (`internal/task/taskNOPE.go:328 NewRunID`) -> fails, naming it,
-//	  where before this file's fix it passed;
+//	  missed (`internal/task/taskNOPE.go:328 NewRunID`) -> fails, naming it.
+//	  Run against the old regexp with the census check removed, the same
+//	  citation is not reported at all -- that is the hole this shape closed,
+//	  and the reason the census is checked first;
 //	  restore the old shape-blind regexp -> the census assertion fails,
-//	  reporting "217 path-looking tokens and the citation check matched 186";
+//	  reporting "217 path-looking tokens and the citation check matched 182";
 //	  make the regexp line-bounded again -> fails in the relative check below,
 //	  because that loses the anchor `:127 notCovered` resolves against.
 //	TestDocsCoordinatorRelativeCitationsResolve
 //	  put the literal `:...` back where the F36 line reference is -> fails: a
 //	  placeholder is not a line number;
-//	  cite `:14024` against a 410-line file -> fails, past the end of the file;
-//	  cite `:1190 Start` for the same -> fails, and does not slice out of range;
+//	  cite `:14024` against `internal/gateway/gateway.go`, a 573-line file ->
+//	  fails, past the end of the file;
+//	  cite `:1190 Start` for the same -> fails the same way, and does not slice
+//	  out of range: the symbol window is only reached for a line that is there;
 //	  name `:209 denyWindowGone` -> fails: no such symbol near the line;
 //	  write the same reference as a bare `:83 tokenPermissions` after an anchor
 //	  that is another file (secretmounts_test.go) -> fails on the symbol. This
@@ -196,8 +202,14 @@ const coordinatorAnsweredMarker = "**Answered 2026-10-19: option (A)**"
 // questions and that answering one is not approving a plan. Each is pinned
 // whole, and each is written on a single line in its document so that the pin
 // is a sentence rather than a fragment that a rewrap can satisfy.
+//
+// The README states the second fact twice -- once inside the answered sentence
+// ("none is approved") and once as its own sentence -- and both halves are
+// pinned, because each is a place a later edit can soften the claim without
+// touching the other.
 const (
 	coordinatorReadmeAnswered     = "**All sixteen questions are answered, and none is approved.**"
+	coordinatorReadmeNotApproval  = "**An answer is not an approval**: nothing in this directory has been accepted, approved or given a decision number, no plan exists, and the plan that follows is a separate document with its own gate."
 	coordinatorReconciledAnswered = "**The owner answered all sixteen on 2026-10-19, each by taking option (A) — the recommendation — and an answer is not an approval.**"
 )
 
@@ -256,12 +268,14 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 	// no-D-number rule exists to prevent, and nothing else in this package
 	// would see it. A reader who finds the answers described here as a plan
 	// should treat that as an error in the other document.
-	for path, want := range map[string]string{
-		coordinatorReadme:     coordinatorReadmeAnswered,
-		coordinatorReconciled: coordinatorReconciledAnswered,
+	for path, wants := range map[string][]string{
+		coordinatorReadme:     {coordinatorReadmeAnswered, coordinatorReadmeNotApproval},
+		coordinatorReconciled: {coordinatorReconciledAnswered},
 	} {
-		if !strings.Contains(readDoc(t, path), want) {
-			t.Errorf("%s no longer says both that the owner answered Q1–Q16 and that an answer is not an approval: it lacks %q", path, want)
+		for _, want := range wants {
+			if !strings.Contains(readDoc(t, path), want) {
+				t.Errorf("%s no longer says both that the owner answered Q1–Q16 and that an answer is not an approval: it lacks %q", path, want)
+			}
 		}
 	}
 }
@@ -613,7 +627,13 @@ func TestDocsCoordinatorRelativeCitationsResolve(t *testing.T) {
 			t.Errorf("%s:%d cites %q against %q, which could not be read: %v", coordinatorReconciled, line, ref, file, err)
 			continue
 		}
-		lines := strings.Split(string(body), "\n")
+		// The trailing newline every Go file ends with is not a line of it.
+		// Splitting without trimming counts one line more than the file has,
+		// which makes a reference to that phantom last line resolve to
+		// nothing and still pass the check below -- the same "sees less than
+		// it claims" shape this file is written against, and the reason the
+		// file sizes in the mutation record above are the ones `wc -l` gives.
+		lines := strings.Split(strings.TrimSuffix(string(body), "\n"), "\n")
 		checked++
 		nums := coordinatorLineNumbers(spec)
 		lo, hi, past := nums[0], nums[0], false
