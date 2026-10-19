@@ -226,7 +226,7 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 	}
 
 	// And the checklist prints them in the order the plan prints them: DB.Plan
-	// appends the PutRules action before the marker's PutIfMatch, and
+	// appends the rules action before the marker's own `d.put` call, and
 	// deployDatabase prints the actions in slice order, so the rules line comes
 	// first and the marker line last. That order is the check's substance, not
 	// its style: the owner reads the plan before typing the project's name, and

@@ -154,46 +154,46 @@ func TestDocsCheck82ConfirmationIsTheOrdinaryOne(t *testing.T) {
 	}
 }
 
-// TestDocsCheck82PlanLineNumbersPointAtTheActLines: check 82 step 3 names the
-// two lines of internal/infra/firebasedb.go that plan the two act lines, and
-// the numbers are what tells the owner which of them comes first. The test
-// reads the numbers out of the checklist and checks the lines they name, so a
-// file that moved under the claim fails here instead of printing a line
-// number that points at something else (the merge of 2026-10-18 moved the
-// marker write from :274 to :276).
-func TestDocsCheck82PlanLineNumbersPointAtTheActLines(t *testing.T) {
+// TestDocsCheck82PlanCitesTheConstructsThatPlanTheActLines: check 82 step 3
+// tells the owner which of the two act lines `DB.Plan` plans first, and it used
+// to do that with two line numbers into internal/infra/firebasedb.go -- the
+// rules action at `:251` and "the marker's `PutIfMatch`" at `:276`. Both halves
+// were the wrong kind of claim about a file that is read rather than
+// remembered: `:251` was a bare line number, right the day it was written and
+// stale the first time anything above it moved, and `:276` was not the
+// construct it named at all -- it is the marker act line's own format string,
+// while the `PutIfMatch` call is the shared helper inside `func (d *DB) put`,
+// below the marker's plan.
+// The check now names the constructs instead, and this test holds each named
+// construct to the file, so a rename fails here rather than leaving the check
+// citing a call that is no longer in the plan.
+func TestDocsCheck82PlanCitesTheConstructsThatPlanTheActLines(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
 	section := docSection(t, path, doc, "## Check 82:")
 
-	re := regexp.MustCompile("appends the PutRules action at `:(\\d+)` and the marker's `PutIfMatch` after it at `:(\\d+)`")
-	m := re.FindStringSubmatch(section)
-	if m == nil {
-		t.Fatalf("## Check 82: does not carry the sentence naming the two lines of DB.Plan that plan the rules action and the marker write: the test reads the line numbers from it, and the check needs them to say which of the two act lines is planned first")
-	}
-	lines := strings.Split(readSrc(t, "../infra/firebasedb.go"), "\n")
-	for _, c := range []struct {
-		n    int
-		want string
-		what string
-	}{
-		{atoi(t, m[1]), "deploys the security rules (%d bytes, generated)", "the rules action"},
-		{atoi(t, m[2]), "records the rules generation (%s = %d)", "the marker's PutIfMatch"},
+	src := readSrc(t, "../infra/firebasedb.go")
+	for _, c := range []struct{ construct, what string }{
+		{`Path: "rules"`, "the rules action"},
+		{"d.put(projectpolicy.PathRulesMarker()", "the marker's plan call"},
 	} {
-		if c.n < 1 || c.n > len(lines) {
-			t.Errorf("check 82 names internal/infra/firebasedb.go:%d, and the file has %d lines", c.n, len(lines))
-			continue
+		if !strings.Contains(section, c.construct) {
+			t.Errorf("## Check 82: does not name %s (`%s`) among the constructs of `DB.Plan` that plan the two act lines: the check tells the owner which of the two comes first, and a bare line number into internal/infra/firebasedb.go is a claim about a file that moves under it -- cite the construct", c.what, c.construct)
 		}
-		if !strings.Contains(lines[c.n-1], c.want) {
-			t.Errorf("check 82 names internal/infra/firebasedb.go:%d as %s, and that line is %q: the number is the check's own claim about which act line is planned first, so it is updated with the file", c.n, c.what, strings.TrimSpace(lines[c.n-1]))
+		if !strings.Contains(src, c.construct) {
+			t.Errorf("internal/infra/firebasedb.go does not carry `%s`, which check 82 names as %s: a check that cites a construct the plan no longer has sends the owner looking for something that is not there", c.construct, c.what)
 		}
+	}
+	if m := regexp.MustCompile("`:[0-9]+`").FindString(section); m != "" {
+		t.Errorf("## Check 82: cites %s, a bare line number into a source file: the line a construct sits on moves with every edit above it, and the citation this replaces was wrong about the construct as well as fragile about the position -- cite the symbol or the construct, which this test holds to the file", m)
 	}
 }
 
 // TestDocsCheck82RulesDeployComesBeforeTheMarker: check 82's preamble said the
 // generated document is put on the database "as the last write of its database
 // step", and that is the reverse of what the step does. `DB.Plan` appends the
-// rules action and then the marker's `PutIfMatch` (internal/infra/firebasedb.go),
+// rules action and then plans the marker with its `d.put(projectpolicy.PathRulesMarker(),
+// ...)` call (internal/infra/firebasedb.go),
 // and `Apply` writes them in that order -- which is what makes the marker's
 // presence a statement about the document underneath it, the property step 3
 // and the "what a step failed before the deploy leaves behind" paragraph are
@@ -213,7 +213,7 @@ func TestDocsCheck82RulesDeployComesBeforeTheMarker(t *testing.T) {
 		"the marker is written **after** the rules",
 	} {
 		if !strings.Contains(section, want) {
-			t.Errorf("## Check 82: the preamble does not say %q: `DB.Plan` appends the rules action and then the marker's `PutIfMatch`, and the marker being last is what makes its presence a statement about the deployed document", want)
+			t.Errorf("## Check 82: the preamble does not say %q: `DB.Plan` appends the rules action and then plans the marker with its `d.put(projectpolicy.PathRulesMarker(), ...)` call, and the marker being last is what makes its presence a statement about the deployed document", want)
 		}
 	}
 
@@ -300,7 +300,7 @@ func TestGcpSetupDatabaseStepOrderIsTheCodes(t *testing.T) {
 		"the marker is written **after** the rules and never before",
 	} {
 		if !strings.Contains(bullet, want) {
-			t.Errorf("%s: the \"Deploying the rules is an owner step\" bullet does not say %q: `DB.Plan` appends the rules action and then the marker's `PutIfMatch`, and the marker being last is what makes its presence a statement about the document under it -- the page an owner reads before the step has to say the same thing", path, want)
+			t.Errorf("%s: the \"Deploying the rules is an owner step\" bullet does not say %q: `DB.Plan` appends the rules action and then plans the marker with its `d.put(projectpolicy.PathRulesMarker(), ...)` call, and the marker being last is what makes its presence a statement about the document under it -- the page an owner reads before the step has to say the same thing", path, want)
 		}
 	}
 	if strings.Contains(bullet, "last write") {
@@ -462,13 +462,16 @@ func stoppedOnCommandSubstitution(guard string) bool {
 // document back from `/.settings/rules.json` and compare it with what this
 // binary generates -- and `internal/infra`'s DB.Plan makes that comparison with
 // `SameJSON`, which unmarshals both documents and re-marshals them: the same
-// JSON, **formatting ignored**. The checks said the read-back was 42687 bytes,
-// which is `rules.Generate()`'s own size and nothing the database owes them:
-// a document the API stored with other whitespace is the same document at
-// another byte count, and a check that calls it a failure is a check that fails
-// a correct deployment. The generator's number is right and stays -- it is what
-// the plan's rules line prints and what `testdata/rules.golden.json` holds --
-// so this test holds the two apart instead of dropping it.
+// JSON, **formatting ignored**. The checks once said the read-back was 42687
+// bytes, and that is `rules.Generate()`'s own size -- the number it produced
+// then, and nothing the database owes them: a document the API
+// stored with other whitespace is the same document at another byte count, and
+// a check that calls it a failure is a check that fails a correct deployment.
+// The generator's number is right and stays -- it is what the plan's rules line
+// prints and what `testdata/rules.golden.json` holds -- so this test holds the
+// two apart instead of dropping it, and it reads the size it must not find
+// attached to the read-back out of the golden rather than writing it down, so
+// the guard below catches the claim whatever the template grows to.
 func TestDocsReadBackIsComparedAsJSONNotBytes(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -476,6 +479,16 @@ func TestDocsReadBackIsComparedAsJSONNotBytes(t *testing.T) {
 	if !strings.Contains(readSrc(t, "../infra/firebasedb.go"), "if !SameJSON(live, gen) {") {
 		t.Fatalf("internal/infra/firebasedb.go no longer decides the rules action with `if !SameJSON(live, gen) {`: the two checks' account of what a correct deployment is is written against that comparison, so read the code again before changing them")
 	}
+
+	// The number a clause about the read-back may not name: the generated
+	// document's own size, read from the golden the checks quote and formatted
+	// the way they print it. A hard-coded 42687 here would stop catching the
+	// claim the moment the template grew, which is exactly what generation 3 did.
+	golden, err := os.ReadFile("../budget/rules/testdata/rules.golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	genSize := fmt.Sprint(len(golden))
 
 	for _, heading := range []string{"## Check 81:", "## Check 82:"} {
 		section := docSection(t, path, doc, heading)
@@ -488,8 +501,8 @@ func TestDocsReadBackIsComparedAsJSONNotBytes(t *testing.T) {
 				continue
 			}
 			for _, clause := range clausesOf(para) {
-				if strings.Contains(clause, "42687") && mentionsReadBack(clause) {
-					t.Errorf("%s: the same sentence claims a size for the document read back and names 42687:\n%s\n42687 is `rules.Generate()`'s own size, not the read-back document's -- DB.Plan calls the two the same document when SameJSON says so, formatting ignored, so the byte count of what the API stored is the API's to choose and a check that requires this number of it fails a correct deployment", heading, clause)
+				if strings.Contains(clause, genSize) && mentionsReadBack(clause) {
+					t.Errorf("%s: the same sentence claims a size for the document read back and names %s:\n%s\n%s is `rules.Generate()`'s own size (internal/budget/rules/testdata/rules.golden.json, %d bytes), not the read-back document's -- DB.Plan calls the two the same document when SameJSON says so, formatting ignored, so the byte count of what the API stored is the API's to choose and a check that requires this number of it fails a correct deployment", heading, genSize, clause, genSize, len(golden))
 				}
 			}
 			if byteIdenticalClaim(para) {
@@ -1620,13 +1633,15 @@ func TestDocsCheck81StatedCountsMatchTheirBlocks(t *testing.T) {
 }
 
 // TestDocsGeneratorSizeAndMailboxCountAreTheGoldens: check 81 step 8 and check
-// 82 step 5 both state the generated document's size (42687) and check 82
-// states the mailbox subtree's count (1). The three `grep -o` counts of check
-// 81 step 8 are held to the golden document; these two numbers, which the
-// owner pastes back as the deployment's fingerprint, were not. Both are read
-// out of the file the checks name -- `rules.Generate()`'s own document, which
+// 82 step 5 both state the generated document's size and check 82 states the
+// mailbox subtree's count (1). The three `grep -o` counts of check 81 step 8
+// are held to the golden document; these two numbers, which the owner pastes
+// back as the deployment's fingerprint, were not. Both are read out of the
+// file the checks name -- `rules.Generate()`'s own document, which
 // `internal/budget/rules/testdata/rules.golden.json` holds byte for byte -- so
-// a template change moves them together.
+// a template change moves them together. Neither number is written down here:
+// the size was 42687 bytes under the generation-2 template, and what the test
+// uses now is `len(golden)`.
 func TestDocsGeneratorSizeAndMailboxCountAreTheGoldens(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -1659,9 +1674,10 @@ func TestDocsGeneratorSizeAndMailboxCountAreTheGoldens(t *testing.T) {
 	// printed: check 82's cost paragraph ("one rules deploy of about N KB") and
 	// the register row, which the owner reads to decide what the run costs.
 	// Generation 3 grew the document past the round number generation 2 had, and
-	// the paragraph kept saying "about 42 KB" while the row said "about 53 KB":
-	// the two are the same number, read from the same file, so both are held to
-	// it here.
+	// the paragraph was left saying "about 42 KB" while the row had already been
+	// moved to the new one: the two are the same number, read from the same file,
+	// so both are held to it here -- and the number itself is not written down,
+	// because it is `len(golden)` rounded.
 	kb := fmt.Sprint((len(golden) + 512) / 1024)
 	for _, c := range []struct{ what, text string }{
 		{"## Check 82's cost paragraph", docSection(t, path, doc, "## Check 82:")},
@@ -1935,9 +1951,10 @@ func TestDocsCheck81AccountCountIsTheRestores(t *testing.T) {
 }
 
 // TestDocsCheck82PlansOneRulesDeploy: check 82's cost paragraph and its
-// register row both say one rules deploy ("**one rules deploy** of about 42
-// KB", "One rules deploy of about 42 KB and at most the marker write beside
-// it"). One is what the plan holds: `DB.Plan` appends a single
+// register row both say one rules deploy ("**one rules deploy** of about <N>
+// KB", "One rules deploy of about <N> KB and at most the marker write beside
+// it"), at the size `TestDocsGeneratorSizeAndMailboxCountAreTheGoldens` reads
+// from the golden. One is what the plan holds: `DB.Plan` appends a single
 // `Path: "rules"` action and then the marker's write. Nothing derived it, so a
 // second rules action would leave both sentences promising a run that writes
 // the document once.
