@@ -918,6 +918,18 @@ func (o *initOptions) checkOnboardRepo() error {
 
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
+	// Two features this release cannot complete, refused first and before
+	// any cloud call (managedDeployerShipped, batchProvisionShipped).
+	if o.managed {
+		if err := refuseManagedNotShipped(); err != nil {
+			return err
+		}
+	}
+	if o.provisionBatch {
+		if err := refuseBatchProvisionNotShipped(); err != nil {
+			return err
+		}
+	}
 	if o.noBuild || o.allowJobDelete || o.retire {
 		return userErr("--no-build, --allow-job-delete and --retire are for fugaro init --repo")
 	}
@@ -2143,6 +2155,11 @@ func (r *initRun) printResult() error {
 
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
+	if o.provisionBatch {
+		if err := refuseBatchProvisionNotShipped(); err != nil {
+			return err
+		}
+	}
 	if o.anchor {
 		return userErr("--anchor and --repo exclude one another: --anchor writes the gcp_project line of an onboarded repository's checkout (run fugaro init --anchor there), and fugaro init --repo does not write it")
 	}

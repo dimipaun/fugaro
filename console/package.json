@@ -13,7 +13,8 @@
     "test:e2e": "npm run build && playwright test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
     "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
-    "package": "npm run build && electron-builder --mac --universal --publish never"
+    "package": "npm run build && electron-builder --mac --universal --publish never",
+    "package:targets": "electron-builder --mac --universal --publish never"
   },
   "build": {
     "appId": "io.github.dimipaun.fugaro-console",

@@ -2695,3 +2695,218 @@ func allResourceBlocks(t *testing.T, path string, src []byte) []block {
 	}
 	return out
 }
+
+// customRolePermissions is the snapshot of the permissions Google allows in a
+// custom role (GA, customRolesSupportLevel empty), for the service prefixes
+// the modules use. See the header of the file for how it is made and refreshed.
+const customRolePermissionsSnapshot = "testdata/custom-role-permissions.txt"
+
+var (
+	customRoleType       = regexp.MustCompile(`^google_[a-z0-9_]*iam_custom_role$`)
+	permissionsAttr      = regexp.MustCompile(`(?m)^\s*permissions\s*=`)
+	permissionsLiteral   = regexp.MustCompile(`(?s)^\s*permissions\s*=\s*\[([^\]]*)\]`)
+	literalPermissionSeq = regexp.MustCompile(`^(?:\s*"[^"\\$]*"\s*,?)*\s*$`)
+	quotedString         = regexp.MustCompile(`"([^"\\]*)"`)
+)
+
+// permissionStrings returns, for every custom role resource in a .tf file
+// (google_*_iam_custom_role), the role and the entries of its `permissions`
+// list. Comments of all three kinds (#, // and /* */) are dropped first, by
+// the same stripComments the other tests use, so a permission written in a
+// comment is never read as one.
+//
+// It reads literal lists only, and a role whose permissions are anything else
+// is an error rather than a role with nothing to check: a local, a variable or
+// a concat() could carry any permission past the test. A custom role with no
+// permissions attribute, or with two, is an error too.
+func permissionStrings(src string) (out []struct{ Role, Permission string }, errs []string) {
+	code := stripComments(src)
+	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
+		typ := code[m[2]:m[3]]
+		if !customRoleType.MatchString(typ) {
+			continue
+		}
+		role := typ + "." + code[m[4]:m[5]]
+		open := m[1] - 1
+		end := matchBrace(code, open)
+		if end < 0 {
+			errs = append(errs, role+": unbalanced braces")
+			continue
+		}
+		body := code[open+1 : end]
+		attrs := permissionsAttr.FindAllStringIndex(body, -1)
+		if len(attrs) != 1 {
+			errs = append(errs, fmt.Sprintf("%s: %d permissions attributes, want exactly one literal list", role, len(attrs)))
+			continue
+		}
+		lit := permissionsLiteral.FindStringSubmatch(body[attrs[0][0]:])
+		if lit == nil || !literalPermissionSeq.MatchString(lit[1]) {
+			errs = append(errs, role+": permissions is not a literal list of quoted permissions (a local, a variable or a concat() cannot be checked)")
+			continue
+		}
+		for _, q := range quotedString.FindAllStringSubmatch(lit[1], -1) {
+			out = append(out, struct{ Role, Permission string }{role, q[1]})
+		}
+	}
+	return out, errs
+}
+
+func loadPermissionSnapshot(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile(customRolePermissionsSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{}
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		allowed[l] = true
+	}
+	return allowed
+}
+
+// 0.8.5 shipped with a custom role naming cloudscheduler.jobs.resume, which
+// does not exist (Google names it cloudscheduler.jobs.enable), so creating the
+// role failed at apply. Every permission any module puts in a custom role
+// must be one Google allows in a custom role.
+func TestCustomRolePermissionsAreAllowedByGoogle(t *testing.T) {
+	// Known-invalid entries not fixed by this change, keyed "file|permission".
+	// The compute module is not part of the installation root's apply: it is
+	// applied only by fugaro init --provision-batch, which refuses before any
+	// cloud call while internal/cli's batchProvisionShipped is false (0.8.6;
+	// the reaper is redesigned for 0.9.0). Which permission its reaper needs
+	// to cancel a Batch job is that design call (Google lists
+	// batch.jobs.create/delete/get/list only). Remove the entry when the
+	// module is fixed: the test fails while it is stale.
+	knownInvalid := map[string]string{
+		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute module: --provision-batch refuses until 0.9.0 (batchProvisionShipped)",
+	}
+	usedKnown := map[string]bool{}
+	allowed := loadPermissionSnapshot(t)
+	if len(allowed) < 100 {
+		t.Fatalf("%s has %d permissions: the snapshot is missing or truncated", customRolePermissionsSnapshot, len(allowed))
+	}
+	checked := 0
+	err := filepath.WalkDir("gcp", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".tf") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		perms, errs := permissionStrings(string(b))
+		for _, e := range errs {
+			t.Errorf("%s: %s", p, e)
+		}
+		for _, ps := range perms {
+			checked++
+			key := filepath.ToSlash(p) + "|" + ps.Permission
+			if _, ok := knownInvalid[key]; ok {
+				usedKnown[key] = true
+				if allowed[ps.Permission] {
+					t.Errorf("%s is allowed by Google now: remove it from knownInvalid", key)
+				}
+				continue
+			}
+			if !allowed[ps.Permission] {
+				t.Errorf("%s: %s names permission %q, which is not in %s (not a permission Google allows in a custom role, or a restricted/testing one); if it is valid, refresh the snapshot as its header says",
+					p, ps.Role, ps.Permission, customRolePermissionsSnapshot)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := range knownInvalid {
+		if !usedKnown[k] {
+			t.Errorf("knownInvalid entry %q matches nothing: remove it", k)
+		}
+	}
+	if checked < 30 {
+		t.Fatalf("only %d permission strings found in deploy/terraform: the extraction is broken", checked)
+	}
+}
+
+func TestPermissionStringsExtraction(t *testing.T) {
+	src := `resource "google_project_iam_custom_role" "a" {
+  permissions = [
+    "x.y.z", # "no.pe.rm"
+    "x.y.w", // "no.pe.rm2"
+    /* "no.pe.rm3", */
+  ]
+}
+/*
+resource "google_project_iam_custom_role" "commented" {
+  permissions = ["no.pe.rm4"]
+}
+*/
+// resource "google_project_iam_custom_role" "commented2" { permissions = ["no.pe.rm5"] }
+resource "google_project_iam_custom_role" "b" {
+  permissions = ["p.q.r", "p.q.s"]
+}
+resource "google_organization_iam_custom_role" "c" {
+  permissions = ["o.r.g"]
+}
+resource "google_storage_bucket" "notarole" {
+  permissions = ["n.o.t"]
+}
+`
+	got, errs := permissionStrings(src)
+	if len(errs) != 0 {
+		t.Fatalf("errors on a literal source: %v", errs)
+	}
+	want := []string{"google_project_iam_custom_role.a/x.y.z", "google_project_iam_custom_role.a/x.y.w", "google_project_iam_custom_role.b/p.q.r", "google_project_iam_custom_role.b/p.q.s", "google_organization_iam_custom_role.c/o.r.g"}
+	var have []string
+	for _, g := range got {
+		have = append(have, g.Role+"/"+g.Permission)
+	}
+	if !slices.Equal(have, want) {
+		t.Fatalf("got %v want %v", have, want)
+	}
+
+	// A custom role whose permissions are not a literal list must fail loudly,
+	// never be skipped: each of these once passed the test with an invalid
+	// permission in it.
+	for name, body := range map[string]string{
+		"local":           `permissions = local.sneaky`,
+		"variable":        `permissions = var.perms`,
+		"concat":          `permissions = concat(["run.jobs.get"], ["bogus.perm.x"])`,
+		"list with local": `permissions = ["run.jobs.get", local.more]`,
+		"interpolation":   `permissions = ["${local.p}"]`,
+		"no permissions":  `title = "x"`,
+		"two attributes":  "permissions = [\"a.b.c\"]\n  permissions = [\"d.e.f\"]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := "resource \"google_project_iam_custom_role\" \"r\" {\n  " + body + "\n}\n"
+			if _, errs := permissionStrings(src); len(errs) == 0 {
+				t.Errorf("%q was not refused", body)
+			}
+		})
+	}
+}
+
+// TestRootManagedDeployerScopedDefaultsOff pins the installation root's
+// default for managed_deployer_scoped. The tftest runs plan the module
+// directly (assertions cannot reach into a child module from the root), so
+// nothing else fails if the root's default flips to true and the scoped role
+// and its binding return to every plan.
+func TestRootManagedDeployerScopedDefaultsOff(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/roots/installation/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	m := regexp.MustCompile(`(?m)^\s*variable\s+"managed_deployer_scoped"\s*\{`).FindStringIndex(code)
+	if m == nil {
+		t.Fatal("the installation root declares no managed_deployer_scoped variable")
+	}
+	body := code[m[1]:matchBrace(code, m[1]-1)]
+	if !hasAttr(body, "default", "false") {
+		t.Errorf("the root's managed_deployer_scoped must default to false; fugaro init never sets it in 0.8.6:\n%s", body)
+	}
+}

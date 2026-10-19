@@ -42,7 +42,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import { APP_ENTRY_URL, REFUSAL_ENTRY_URL } from '../../src/main/protocol'
@@ -52,6 +52,7 @@ import type { CliCompatibilityMode } from '../../src/shared/version'
 import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { dismissFirstRunPicker } from '../support/firstRun'
+import { launchConsole } from '../support/launch'
 import type { BinaryResolution } from '../../src/main/spawn'
 
 // The console's own directory, from this file's location, as in the other
@@ -140,7 +141,7 @@ async function launch(env: Record<string, string>): Promise<Launched> {
   // the first run's handshake, rule 4's resolution with nothing chosen, so the
   // picker opens beside the window under test and is dismissed before any
   // assertion about that window (`dismissFirstRunPicker`).
-  const app = await electron.launch({ args: stub.launchArgs(consoleDir), env })
+  const app = await launchConsole({ args: stub.launchArgs(consoleDir), env })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   await dismissFirstRunPicker(app, page)
@@ -151,7 +152,7 @@ async function launch(env: Record<string, string>): Promise<Launched> {
  * installation naming `seeded`'s stub, so the handshake reads exactly that
  * binary and no picker opens. */
 async function launchSeeded(): Promise<Launched> {
-  const app = await electron.launch({ args: seeded.launchArgs(consoleDir), env: seeded.env })
+  const app = await launchConsole({ args: seeded.launchArgs(consoleDir), env: seeded.env })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   return { app, page }

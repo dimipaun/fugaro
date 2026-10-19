@@ -147,13 +147,31 @@ checksum are hand-bumped and documented rather than floated (design section
 5.2) — but with `--ignore-scripts` the download simply happens later: Electron
 44.7.2 fetches its runtime on the first `require('electron')` (its `index.js`
 spawns `install.js` when `path.txt` and `dist/` are missing, printing
-`Downloading Electron binary...`), which is what Playwright's `electron.launch`
-does in Task 1.1's e2e specs. Verified on this tree: `npm ci
+`Downloading Electron binary...`). Verified on this tree: `npm ci
 --ignore-scripts --no-audit --no-fund`, then `require('electron')`, downloads
 and resolves `node_modules/electron/dist/electron`. So the e2e path works with
 scripts ignored, the runtime arrives on the machine that runs the tests rather
 than on the machine that installs, and by packaging time (Task 4.1) it is
 already on disk.
+
+**That lazy fetch is a writer, and it has to finish before anything execs what
+it writes.** `install.js` unpacks the archive into `node_modules/electron/dist`
+as it goes, so a launch that reaches the executable while the unpack is still
+running finds a file open for writing: Linux refuses that with ETXTBSY (and a
+launch that gets there before the file exists at all gets ENOENT). Two
+Playwright workers on a cold `node_modules` did exactly that, which is what made
+the `console (ubuntu-latest)` check — a required check of
+`scripts/release-gate.sh` — fail intermittently (`Error: electron.launch: spawn
+ETXTBSY`, run 39174336894 attempt 1, then a red gate). The fetch is therefore
+**hoisted out of the workers**: `playwright.config.ts` names
+`test/support/globalSetup.ts`, which resolves the binary once in Playwright's
+main process before the first worker is forked, so the writer exits — every
+descriptor closed — before a launch exists to race it. Every spec starts the
+console through `test/support/launch.ts` (`launchConsole`), which resolves the
+binary again on the way into each launch and retries ETXTBSY three times, 250 ms
+apart (`test/support/textFileBusy.ts`); no other launch error is retried, and
+`test/unit/playwright.test.ts` holds both the config line and the rule that no
+spec calls `electron.launch` itself.
 
 ## The hardened window (Task 1.1)
 
@@ -700,6 +718,291 @@ chunks are still in the pipe), with one more grace period after the `SIGKILL` fo
 a pipe that never closes. A torn last line is dropped rather than
 recorded as garbage, while a last line that is a whole JSON document — a CLI
 that wrote its final frame without a newline — is recorded like any other.
+
+### The `normal` fixture: the real CLI's shape, every value invented
+
+`test/fixtures/normal.ndjson` is the one fixture of the eight that exists. The
+owner ruled on 2026-10-19 "record from the real installation, scrub by hand". One
+snapshot (`fugaro watch --json --once`) was read from a real installation with
+the 0.8.6 CLI (header `cli: 0.8.6`), outside this repository, and
+`tools/scrub-fixture/` replaced every value that could identify it. **The shape
+is the real CLI's** (every key, its type, its order, which optional keys are
+present); **every value in the file is invented**, so the header says
+`synthetic: true` and its note says every value is invented (the two agree: no
+installation produced these values). The raw recording is never committed and is
+deleted after the scrub. **It is not reproducible from this repository, by
+design:** the committed fixture is the only artefact, and nothing is kept that
+could lead back to a removed value (no list, no hash, no salt). *A file of
+digests of the removed values was in PR #643's branch until review removed it;
+the paragraph below says what that leaves exposed, and it is not nothing.*
+
+```
+node node_modules/typescript/bin/tsc -p tsconfig.record-fixture.json
+node .record-fixture/tools/scrub-fixture/index.js --in <raw.json, outside the repo> \
+  --out test/fixtures/normal.ndjson --cli 0.8.6
+```
+
+The command prints the COUNT of values it replaced and nothing else, and the test
+gets the removed values in memory, through a callback the scrub run is given, on a
+scrub of a synthetic input: nothing derived from a removed value is written
+anywhere. One file of digests did exist on PR #643's branch, and **it is still in
+the pull request's history — this is the honest account of it.** PR #643's first
+commit (`d41f726b`) added `console/tools/scrub-fixture/normal.scrubbed.json`, a
+JSON array of the unsalted SHA-256 digests of the values the scrub had replaced,
+and a later commit on the same branch (`2fc37c7fd8`) removed it again. The PR was
+**squash-merged**, so neither commit is on `main` and no commit on `main` ever
+held the file — but the pull request's own history on GitHub still does, and a
+squash does not delete anything from the remote. (Those two commits are not in a
+clone of `main` either: `git cat-file` does not know them, and this branch was
+created after the squash, so nothing was ever in its history either. So this
+paragraph is the account of what the PR's history holds, and a reader here cannot
+read the file itself to check it.) An unsalted SHA-256 digest is a dictionary: a
+small integer, a dollar amount or a repository name is recovered from a bare
+digest by trying candidates, so the values that file covered must be treated as
+**exposed**, not merely removed. Those values were a public repository's name, the
+project's name and some development spend figures. Nothing here undoes that; the
+note is here because a reader of this file is the person most likely to believe
+the opposite.
+
+The scrub (`scrub.ts`) is fail-closed: an unknown key is a refusal, and every key
+it copies has its own typed rule (numbers are copied; an enum is copied only if
+the value is in the CLI's vocabulary; a free string is refused unless the key has
+an explicit replacement). It replaces the project, repo, slug, run ID, title
+(`# Task: example task N`), models, requester and kill actor, PR URL, workflow,
+recipe and every dollar amount, and **shifts the whole clock by a random offset
+drawn for the run** (`now`, `day`, the header's `recorded`, `kill.at`, and the
+run IDs' timestamps, which are the shifted `now` minus the run's own age, so
+every `age_seconds` stays consistent). Totals, percentages, `runs` and
+`run_hours` are recomputed from the invented rows so the document's invariants
+hold. The result then goes through the console's redactor with a public key (as
+`synthetic.ndjson` does), which is why the repo and slug read as pseudonyms
+(`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
+them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,
+`VERIFY_KINDS`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
+verify, connection state, `queued_note`, and the ages and burn numbers. A
+connection `reason` is the one value with a free-text branch: the two sentences
+the CLI writes itself are kept, and the transport's own error text is replaced
+rather than copied (see the vocabularies below).
+
+**The clock shift is drawn, not committed** (owner review of PR #643, item 2).
+`scrubDocument` takes the offset as an argument and, given none, draws a
+crypto-random one of up to ±400 days; the tool never passes one and never prints
+it. So the scrub is **not reproducible byte for byte between runs**, and that is
+the point: `normalFixture` takes the offset as an optional argument too, so a
+test can hold the clock still and scan a scrub run that is the same on every
+machine — the tool never passes one, and the tests that hold the drawn clock's
+randomness use the scrub's own draw (`scrub-vocabulary.test.ts`: the offset is an
+integer inside the range; `normal-fixture.test.ts`: two unsaid draws differ).
+The fixture of PR #643 was shifted by `TIME_SHIFT_MS`, a constant in
+the file, and that constant added back to its `now` gave the real recording
+instant exactly. The committed fixture was re-scrubbed from its own structure
+under a drawn offset (`console: re-scrub the normal fixture…`), so the file on
+`main` is not a shift of anything and the old constant is dead against it — it
+still recovers the instant from the *history* of that write, which is why the
+paragraph above says what it says. Nothing but the clock, the run IDs, the
+header's `recorded` and its checksum moved in that re-scrub: the invented
+project, repos, slugs, titles, amounts and verify lines are the ones they were.
+
+**The vocabularies are derived from the Go source, and a Go test holds them
+there.** Every list in `scrub.ts` names the writer it came from, and
+`TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource` — in
+`internal/cli/docs_desktop_console_test.go`, the one Go file Task 0.3's boundary
+test allows to mention a `console/` path, reading this file as bytes and
+importing nothing from it, so the allow-list keeps its single entry — reads the
+lists back out of the file and compares them with the constants the source writes
+them from: the runs[].stage vocabulary, the config's allowed `agent.auth`, the
+budget's modes, the three verify kinds, the two status words and the rerun flag,
+the one warning sentence and the clean-tree note, the connection, health,
+deadline, status and outcome tables, the two connection `reason` sentences
+`internal/watch/state.go` writes itself (`CONNECTION_REASONS`), the two
+`commands.reports` globs the warning
+sentence carries (`VERIFY_REPORT_GLOBS`, against `internal/config/defaults.go`),
+and the 120-rune clip the registry puts on the summary (`VERIFY_CLIP_RUNES`,
+against internal/runner's `verifySummaryRunes`) — the scrub needs the number
+because a clipped line is a PREFIX of the writer's, which is what its matchers
+are built to accept. The verify line's *head* is not a list but a
+grammar, so it is held differently: the test reads `VERIFY_HEAD`'s regex source
+out of the file, fills its `${...}` interpolations with the values it derived,
+compiles it and tries it against lines built from `verify.go`'s own format
+string — with the exit code `internal/procgroup/procgroup.go` leaves for a
+process it killed, which is `-1`, so a timed-out verify writes `(exit -1; timed
+out)` and a pattern narrowed to `\d+` fails there. The *tail* is held the same
+way, and was the gap this round closed: the test renders `Record.Summary`'s
+segments and the file's `VERIFY_TAIL` from their own sources — a literal as
+written, the writer's `%d` as a digits marker, each `strings.Join` as a
+test-names marker, and `r.Warning` as the warning sentence the Go source builds
+plus the globs marker — and compares them segment by segment, in order. So a
+segment added to `verify.go` (a `; N skipped` for the `Skipped` count the summary
+does not print today, say) fails here instead of leaving the scrub refusing an
+ordinary recording. The segment scan skips the `if` line a segment sits under (a
+condition names what it guards without writing it), so the one condition a
+segment *is* decided by is read on its own: the counts are written under
+`r.Kind == KindTest` and no other kind, which is what lets the grammar slice that
+group off for a build or a lint and require it for a test. The list that was too *short* is
+the failure that review found: a value the CLI writes and the scrub does
+not know is not a leak, it is a recorder that throws on an ordinary run.
+`bootstrap` and `review_first` were missing from `stage`, `vertex`
+from `auth`, and `warn` was a mode no CLI writes.
+
+**A list that is too *long* is the same failure from the other side, and the
+scan has to read the right field to see it.** `stage` held five names
+`runs[].stage` cannot carry — `provision`, `check`, `render`, `writeback`,
+`finalize` — because the scan took every stage string in `internal/runner`. Only
+one of those is the row's: `internal/watch/build.go` writes `dash(e.Stage)` from
+the run's **registry entry**, which is given a stage by exactly two writers — the
+literal it is created with, `bootstrap`
+(`internal/runner/budget_session.go`'s `registryEntry`), and `beginBudgetStage`,
+whose only caller is `r.stage(ctx, name, ...)`, so the rest are that helper's
+call sites. The others are other documents: `r.rec.Stage` (`render`,
+`writeback`, `check`, `finalize`) is the run record's own stage in `result.json`,
+and `provisionStage` names the timing row provisioning records. The scan now
+reads the entry's literal plus `r.stage`'s call sites plus the `queued`
+`internal/watch/queued.go` gives a runs-bucket row with no entry yet, and pins
+that `beginBudgetStage` still has that one caller taking its own `name`
+argument. `sameSet` compared the two lists in both directions already — the
+premise, not the comparison, was what a too-long list slipped past.
+
+**A connection reason is kept only when the CLI wrote it.** `connection.reason`
+had no rule at all, so any recording made while the link was not live failed the
+scrub — `internal/watch/state.go` sets `access refused` for a permission error
+and `connecting` before the first event, and its third branch is the transport's
+own error, one-lined and clipped there. Those two sentences are
+`CONNECTION_REASONS`, held against the source by the drift test; anything else
+that is a string is **replaced** with `INVENTED_CONNECTION_REASON`, so the free
+text never reaches the fixture, and anything that is not a string is refused.
+The scan that gates a commit carries all three values in its allow-list, and
+`normal-fixture.test.ts` holds the whole path — scrub, redactor, writer, scan —
+for each of them: accepting a reason the scan then refuses would leave the
+recording the rule exists for uncommittable, which is the shape of the finding.
+That test is one case of a **round-trip property** the file also holds in full:
+every value of every list in `VOCAB`, and every invented value the scrub writes
+in its place, goes through the whole tool and the result is scanned, so a
+vocabulary value the allow-list cannot carry fails there rather than at the
+first real recording. (The verify line is the one value the property does not
+sweep: the scrub keeps it as the writer wrote it, while the scan's matcher pins
+the globs slot to the CLI's own two defaults on purpose, so the two matchers are
+not meant to agree.)
+
+**Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
+`repo-at-cap` (they need cloud writes), and the other cases still await a
+recording. `normal` is one snapshot: no `finished`, `ready` or queued runs (the
+runs bucket did not answer within 3 s on that read), so those shapes are covered
+by `synthetic.ndjson` and the Go types, not by this file.
+
+**No spec consumes `normal.ndjson` yet**: only its own tests
+(`test/unit/normal-fixture.test.ts`, the Go
+`TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes`) and the recorder tests
+read it.
+
+Held by `test/unit/normal-fixture.test.ts`: the shape, the invariants, a scan of
+every decoded key and string value (after NFKC, case and zero-width folding)
+against forbidden substrings and a positive allow-list of shapes, and the scrub's
+refusals, each mutation-proven. One rule in that scan refuses a run of twelve or
+more decimal digits — a leaked amount, identifier or epoch-millisecond stamp the
+allow-list would otherwise take for an invented value. It reads a number, not a
+digest: the header's SHA-256 is hex, so twelve consecutive digits occur inside it
+about 7% of the time (1504 of 20000 digests, and 145 of 2000 scrubs, measured),
+and the digest is redrawn every run because the scrub draws a fresh clock
+offset. As a bare `\d{12}` the rule failed the scan at random, about one run in
+fourteen; it now matches a run only with no hex digit beside it, so the digits
+inside a longer hex token (a digest, a pseudonym, a commit) are not a number
+standing on its own — 0 of 20000 digests, measured — while a planted
+`123456789012`, `1234567890123` or `acme-123456789012` still is. The run is the
+whole maximal one (`\d{12,}`): a fixed twelve would match neither lookaround
+inside a thirteen-digit stamp, since every twelve-character window there has a
+digit on both sides, and that stamp is exactly what the rule is for — the verify
+line's name slot is open in the allow-list, because `junit.go` copies an ID
+verbatim, so this rule is the only guard against a number riding in it. The proof
+is a deterministic case (a 64-character digest with a twelve-digit run planted in
+it, plus runs of 12, 13 and 20 digits standing on their own) and a loop that
+scrubs and scans 300 drawings of the clock.
+
+**The removed-values rule is a substring rule, and it does not run over tokens
+the scrub drew.** The second flake of the same loop, and the one that failed on
+`main` (CI run 39231293918, `iteration 252`): the scan looks for each removed
+value as a substring of every string in the fixture, and a plain recording's
+`kill.at` sits an hour before its `now` — so an offset of between 22 and 23 hours
+(the shift is uniform over ±400 days, one offset in 19200) puts the shifted
+`kill.at` back on the recording's own date while the shifted `now` lands on the
+next one. The recording's `day` is a removed value as soon as the offset leaves
+it, so the rule read that day inside a timestamp that is a function of the
+offset, and the run failed: about one run in sixty of the 300 draws, which is
+exactly the shape of a flake nobody can reproduce. Inside a token the scrub draws
+— the shifted clock (`now`, `day`, `kill.at`, the header's `recorded` and `at`),
+the run IDs stamped from it, and the body's SHA-256 — nothing of the recording is
+present, so only coincidence can put a removed value there, and the rule is not
+run over them. It is still run over `removed.includes(raw)`, and the exemption is
+the shape of the value the *fixture carries*, never which removed value it is: a
+removed day riding in a verify line's name slot (the one slot the allow-list
+leaves open) is refused, and that case is held.
+
+**The draws are committed, so the loop is deterministic.** The 300 offsets no
+longer come from the scrub's own draw but from `CLOCK_SEED` in the test (a
+mulberry32 walk, written out there): a test that draws its own randomness passes
+on every machine but the unlucky one, which is what happened. The walk asserts
+what it is made of — that at least one of its 300 headers carries a digest with
+twelve digits in it, and that at least one of its offsets crosses the date — so a
+seed that stopped covering either flake fails the walk instead of passing
+quietly, and the crossing draw is a named regression case that fails when the
+rule is restored to the substring-only one (both mutations were run: restoring
+the rule fails the walk at `iteration 13` and the regression case; exempting the
+removed value's shape instead of the fixture's fails the name-slot case). The
+scrub's own draw is unchanged and still random — `scrub-vocabulary.test.ts` holds
+its range and `normal-fixture.test.ts` holds that two unsaid draws differ. Held by `test/unit/scrub-vocabulary.test.ts`: that
+the scrub accepts every stage, auth and mode the CLI writes and refuses what it
+does not — the stage list it loops over is `VOCAB.stage` itself, so this file
+keeps no second copy of it — that the connection `reason` the CLI wrote is kept
+and the transport's own error text replaced, that the verify shape is the one
+`internal/verify/verify.go` writes
+(every tail variant, the `FAILED` spelling, the `exit -1` a killed process
+leaves, and the 120-rune clip) and refuses a line it cannot, that the pinned
+matcher takes the IDs `junit.go` builds verbatim — pytest parametrisations, names
+with spaces or a bare comma, `TestFoo#01`, an escaped bidi character — and holds
+the warning globs to the CLI's own two, that the nullable Go
+fields may be null, and that the clock shift is drawn per run — all
+mutation-proven, and the vocabularies themselves pinned against the Go source by
+the drift test named above.
+
+**A test line carries its counts; no other kind carries any.** `Record.Summary`
+appends `, %d tests, %d failures` under `if r.Kind == KindTest` and nowhere else,
+so the grammar's first tail group is sliced off entirely for a build or a lint
+and required **whole** for a test. Requiring it whole is what the writer does, not
+a tightening for its own sake: every run writes it, and the 120-rune clip lands
+far past it, so a test line that stops at `(exit 0)` — or part way through the
+counts — is one no run can produce, and an earlier grammar took it as a clipped
+one. Both directions are tested (`fugaro verify build #5: passed (exit 0)` passes,
+the same line with counts does not), the clip test's cuts now start where the
+counts end, and the drift test reads the `KindTest` condition itself, since its
+segment scan skips the `if` line.
+
+**The scan pins the verify line's globs slot; nothing can pin its name slots.**
+The verify line is the one value whose middle the CLI fills from the repository
+it ran in — the test names its reports carry and the globs it was configured to
+read — so `scrub.ts` has two matchers for it. `isVerifySummary` is the scrub's
+rule and leaves those slots open on purpose: a real recording's test names are
+the writer's own output, and a vocabulary that refused one would refuse an
+ordinary run. The fixture's scan uses `isKnownVerifySummary`, the same grammar
+with the **globs** slot pinned to the two `commands.reports` defaults the CLI
+writes there with no configuration — any other glob is text the CLI was never
+given, and with an open slot `**/acme-payroll/*.xml` passed the scan too.
+
+The name slots are open in **both** matchers, and that is not a leftover: an
+earlier round pinned them to a character class that looked like Go test names
+(`[A-Za-z0-9_.:/\-#]` and `, `), which was wrong twice over. `internal/verify/
+junit.go` builds each ID as `classname + "." + name`, verbatim from the JUnit
+XML, so a pytest parametrisation (`test_mod.py::test_add[1-2]`, and one carrying
+`, ` of its own), a name with a space, the `#01` `go-junit-report` appends to a
+duplicated subtest, and the escape `internal/pluginwire` writes in place of a
+control or bidi character are all ordinary names — and a recording the pinned
+matcher refuses cannot be committed, which is the failure these vocabularies
+exist to avoid. What guards that slot is the fixture scan's forbidden-substring
+pass, which runs over the **whole** verify value, name list included: a
+`dimipaun/fugaro` planted in a failed-name slot is caught by that pass, not by
+the shape matcher.
+
+The warning sentence is not a slot in either matcher —
+`Record.Summary` writes one sentence there, and the drift test fails first if
+`verify.go` ever gains a second one.
 
 ### The eight recordings, and why seven of them are missing
 
@@ -2030,7 +2333,7 @@ publish step.
 
 **The version is the tag's.** `package.json` says `0.0.0` and nothing in it is
 a release version, so a step before anything is built refuses a tag that is
-not a strict `vX.Y.Z`, and both packs are stamped with
+not a strict `vX.Y.Z`, and every pack is stamped with
 `-c.extraMetadata.version=X.Y.Z` (through `env:`). The `.dmg` and `.zip` names
 therefore carry the real version (`Fugaro Console-X.Y.Z-universal.dmg`,
 `…-universal-mac.zip`), the signing step refuses artifacts not named for it,
@@ -2044,34 +2347,127 @@ is where they are exposed.) The checkout, setup-node (no `cache:`: a restored
 cache is written by other runs), `npm ci --ignore-scripts --no-audit
 --no-fund`, Electron's own download (`node node_modules/electron/install.js`)
 and an unsigned warm-up `npm run package -- -c.mac.identity=null
--c.extraMetadata.version=X.Y.Z` (whose output is deleted) run first, with no
+-c.mac.notarize=false -c.extraMetadata.version=X.Y.Z` (whose output is
+deleted) run first, with no
 secret in any step's environment: the warm-up is what downloads the two Electron archives the
 universal build needs and the packer's DMG and zip toolsets, into the packer's
 cache. Then **one step** — `Sign, notarise and staple the console` — reads the
 six secrets into its own `env:` (never a workflow- or job-level `env:`) and
 does everything that needs them, in this order: the fail-closed check, the
 temporary keychain, the certificate's team checked against `APPLE_TEAM_ID`,
-the `.p8` file, `npm run package` (with the certificate, its password and the
-key's contents unset — which keeps them out of the packer's environment, not
-out of the signing shell's own starting environment — and `APPLE_API_KEY`
-re-exported as the key file's path),
-the signature's TeamIdentifier and the bundle's staple checked, then the
-`.dmg` signed, notarised and stapled. Its exit trap deletes the keychain and
+the `.p8` file, the first `npm run package` (with the certificate, its
+password and the key's contents unset — which keeps them out of the packer's
+environment, not out of the signing shell's own starting environment — and
+`APPLE_API_KEY` re-exported as the key file's path), the signature's
+TeamIdentifier checked, the bundle notarised, stapled and validated by
+`console/scripts/notarize-and-staple.sh`, the `.dmg` and the `.zip` packed
+from that stapled bundle, and the `.dmg` signed and then notarised, stapled and
+validated by the same script. Its exit trap deletes the keychain and
 both key files whether it passed or failed, so no later step runs with key
 material on disk; an `if: always()` step at the end is the backstop.
 
 **The order inside that step is the load-bearing part: the bundle is notarised
 and stapled *before* the `.dmg` and the `.zip` are built, and what is verified
-is the bundle inside them.** `npm run package` is one command that does both,
-and electron-builder notarises and staples the `.app` while packing it —
-before it builds the targets — when the App Store Connect triple is in its
-environment. That is the owner's own flow above: notarising after packing,
-which an earlier revision of the staged file did, ships two artifacts carrying
-an unstapled bundle (the review of Task 4.2 caught it). The disk image is then
-**signed** (`codesign --sign <identity> --timestamp`: electron-builder leaves
-`dmg.sign` false, Apple's guidance is to sign a disk image before notarising
-it, and a hardened runtime is for executables, not a `.dmg`), submitted with
-`xcrun notarytool submit --wait` and stapled.
+is the bundle inside them.** An earlier revision of the staged file notarised
+after packing, which ships two artifacts carrying an unstapled bundle (the
+review of Task 4.2 caught it). The current revision goes further, because the
+packer's own notarisation turned out to be a place nothing can retry: **the
+workflow now does the notarising, and the packer does none of it.**
+
+The packer is run twice in the signing step, with `-c.mac.notarize=false` both
+times — `npm run package` for the first, and `npm run package:targets` (the
+same packer without its `npm run build`) for the second:
+
+1. `npm run package -- --dir -c.mac.notarize=false
+   -c.extraMetadata.version=X.Y.Z` builds and signs the universal `.app` and
+   **nothing else** — no `.dmg`, no `.zip` — and, with notarisation off, does
+   not submit it or staple it. That call is the one that failed: electron-builder's
+   `@electron/notarize` step submits the bundle *and staples the ticket* inside
+   `npm run package`, so a lost connection to Apple's ticket delivery there is
+   one call in the middle of the packer's process, where nothing can retry it
+   and the pack simply fails (error 68).
+2. `console/scripts/notarize-and-staple.sh app "release/mac-universal/Fugaro
+   Console.app"` does the three calls this file owns: `ditto -c -k
+   --keepParent` the bundle into a `.zip` and `xcrun notarytool submit … --wait
+   --output-format json` it **once**, refusing at once (no staple, the answer
+   printed) unless `notarytool` **exited 0 and** Apple's status is exactly
+   `Accepted` — neither alone is the whole answer; then `xcrun stapler staple`
+   and `xcrun stapler validate`, both retried.
+3. `npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false
+   -c.extraMetadata.version=X.Y.Z` builds the `.dmg` and the `.zip` **from the
+   bundle that now carries its ticket**, so both artifacts contain a stapled
+   `.app`. This is the one-of-the-two pack that does not rebuild: `package` is
+   `npm run build && electron-builder …`, and with `--prepackaged` the bundle
+   is already built, so the compile would only be spent a second time — here,
+   in the step that holds the unlocked keychain and the exported `.p8` path.
+   `package:targets` is the same pinned local packer alone. What the first pack
+   builds is unchanged.
+4. The `.dmg` is **signed** (`codesign --sign <identity> --timestamp`:
+   electron-builder leaves `dmg.sign` false, Apple's guidance is to sign a disk
+   image before notarising it, and a hardened runtime is for executables, not a
+   `.dmg`), then handed to the same script as `dmg`, which submits it (a
+   notarytool submission takes a `.dmg` as itself — no zip step) and staples
+   and validates it with the retry.
+
+The owner's own `npm run package` on their Mac (Task 4.1, above) is unchanged:
+no `-c.mac.notarize=false`, no `--dir`, so it still signs, notarises and
+staples the `.app` in one command and then builds the targets. Nothing in
+`console/package.json`'s **build configuration** changed — the switch is on the
+workflow's command lines, which is also what keeps `entitlements.test.ts`'s
+"does not turn the notariser off" assertion true of the checked-in
+configuration. The manifest did gain one script, `package:targets`,
+`electron-builder --mac --universal --publish never` with no `npm run build`,
+which is what the workflow's second pack uses; `fuses.test.ts` still pins
+`package` exactly as it was.
+
+**Every `xcrun stapler` call in the pipeline is retried, bounded — the retry
+and the move out of the packer landed together, on 2026-10-19, after the
+release run failed there.** `xcrun stapler staple` and `xcrun stapler validate`
+reach Apple's ticket-delivery service over the network, and the run printed
+`CloudKit … error is Error Domain=NSURLErrorDomain Code=-1005 "The network
+connection was lost"` against
+`.../com.apple.gk.ticket-delivery/production/public/records/lookup`, error 68,
+after which the signing step refused with "carries no stapled ticket: refusing
+to publish artifacts that would carry it unstapled". **Which call failed
+matters, and it moved the notarisation out of the packer**: release run
+39163351646 was attempted five times, and of those only the fourth and the
+fifth reached Apple — the fourth attempt's failure was `@electron/notarize`'s
+staple *inside* `npm run package` ("Failed to staple your application with
+code: 68"), and the fifth's a `xcrun stapler validate` **on the bundle**, in
+the workflow, before any target was packed. The three earlier attempts never
+reached Apple: the first failed within about a second with no step having
+started (its cause is not recorded, and this section does not guess one), the
+second on missing `APPLE_API_*` secrets, the third on a certificate import with
+the wrong password. So "three consecutive runs failed at the stapler" is not
+what happened, and this section said so until 2026-10-19. The notarisation
+itself had been accepted where it was submitted: what was lost was the
+connection, not the ticket.
+
+So one shell function, `retry_apple_network`, defined once in
+`console/scripts/notarize-and-staple.sh` and once — character for character the
+same — in the verification step, makes up to five attempts at every `xcrun
+stapler` call on the way to a release (the bundle's and the disk image's in the
+script; the bundle inside the mounted `.dmg`, the one inside the extracted
+`.zip` and the disk image itself in the verification step), with a growing
+pause between them (15, 30, 60, 90 seconds), printing each attempt's number and
+exit code, and returns the failure only after the fifth: a ticket that is
+genuinely absent still refuses to publish. In the verification step the calls
+sit inside `record`, so every attempt is in `console-verification.txt` too.
+
+**The submission is deliberately not retried, and the file is not pretending
+otherwise.** `xcrun notarytool submit --wait` is the submission itself — a
+rejection is final, and re-submitting is not this file's business — so the
+script runs it once, reads Apple's own answer as JSON (`--output-format json`)
+and refuses at once, with the answer printed and no staple, unless `notarytool`
+exited 0 **and** the status is exactly `Accepted`. Both halves are needed:
+`notarytool` can exit non-zero having printed an answer, and it can exit 0
+having printed something other than `Accepted`, and neither case is a
+submission with a ticket to staple. **Nothing outside the `xcrun stapler` calls
+is retried at all** — `codesign`, the submission and its result, the TeamIdentifier
+checks, `scripts/release-gate.sh` and the fail-closed secret check all still
+fail at once, with no retry — and the tests read it both ways over the script
+and over every step: every line naming the helper is one of those calls, and
+every line that calls `xcrun stapler` names the helper.
 
 **The environment is `console-release`, and the owner creates it before the
 copy-in.** Required reviewers on the owner, deployment branches restricted to
@@ -2105,10 +2501,12 @@ set there. Nothing in this section changes the owner's commands, and they are
 not a fallback for the workflow.
 
 **Where the two agree, and where the workflow deliberately differs.** Both call
-the same script, `npm run package` (the pinned local electron-builder, `--mac
---universal --publish never`), so the hardened runtime, the `.dmg` and `.zip`
-targets, `entitlements.mac.plist` and the fuse hook are one configuration and
-not two. The differences are on purpose:
+the same script, `console/scripts/notarize-and-staple.sh`, and the same pinned
+local electron-builder (`--mac --universal --publish never`, through `npm run
+package`, or through `package:targets` where the workflow has no reason to
+rebuild), so the hardened runtime, the `.dmg` and `.zip` targets,
+`entitlements.mac.plist` and the fuse hook are one configuration and not two.
+The differences are on purpose:
 
 - **The certificate goes into a keychain the step creates**, never the runner's
   login keychain: a random password from `openssl rand`, `security
@@ -2125,6 +2523,17 @@ not two. The differences are on purpose:
   end in `(APPLE_TEAM_ID)` before anything is packed, and `codesign -dv` must
   report the same TeamIdentifier on the bundle after, so a development
   certificate or another team's is refused rather than submitted.
+- **The packer's own notarisation is off** (`-c.mac.notarize=false` on every
+  pack, with `--dir` for the bundle-only one and `--prepackaged` for the
+  targets, which go through `npm run package:targets` rather than `npm run
+  package` because the bundle they pack is already built), and the workflow's
+  own `console/scripts/notarize-and-staple.sh`
+  submits, staples and validates instead. That is the one deliberate difference
+  in the *packing* as well as in the signing: the packer's staple is a call
+  inside its own process, so a lost connection there cannot be retried, and one
+  did fail a release run. The owner's manual flow keeps the packer's
+  notarisation, so this is a property of the workflow's command lines and of
+  nothing checked in.
 
 **The verification is recorded, not just performed, and it is about the
 shipped bytes.** The SHA-256 of the `.dmg` and the `.zip` opens the record
@@ -2164,8 +2573,19 @@ with `CSC_KEYCHAIN`; that codesign signs with only `apple-tool:,apple:` in the
 partition list; that the warm-up pack leaves everything the signed pack needs
 in the cache; that `-c.extraMetadata.version` reaches the bundle's version
 and the artifact names as described; and that the signed, stapled DMG passes
-`spctl --assess --type open --context context:primary-signature`. None of
-these can be checked offline. **Accepted residuals:** `security` takes the
+`spctl --assess --type open --context context:primary-signature`. To that the
+2026-10-19 retry adds one more: that a `xcrun stapler` call which really does
+meet a transient CloudKit failure recovers inside the five attempts (the fake
+`xcrun` the tests run the helper and the script with proves the *control flow* —
+five attempts, the pauses, the refusal, the no-retry on a submission whose exit
+status or status is not good — and nothing about Apple's service). The same
+change's move of the notarisation out of the packer adds three more, all about
+electron-builder's own flags rather than the retry: that `--dir` builds the
+universal `.app` and no targets, that `--prepackaged "$APP"` packs the `.dmg`
+and the `.zip` from that bundle with the tag's version still in their names
+under `--mac --universal` and with `-c.mac.notarize=false`, and that a
+prepackaged pack needs no `npm run build` before it (which is what
+`package:targets` leaves out). None of these can be checked offline. **Accepted residuals:** `security` takes the
 keychain password (`create-keychain -p`, `unlock-keychain -p`,
 `set-key-partition-list -k`) and the `.p12` password (`import -P`) only on its
 command line, so another process of the same user can read them in the process
@@ -2246,3 +2666,23 @@ a scratch copy of the staged file and turned the named test red:
 | `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
 | the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
 | the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |
+| `retry_apple_network` removed from `console/scripts/notarize-and-staple.sh` or from the verification step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the helper's definition in each of the two places and on every call site it must have |
+| the retry wrapped around a step's `codesign --sign`, or around the script's `xcrun notarytool submit` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the only-lines-that-may-name-the-helper clause ("retries … the helper wraps the `xcrun stapler` calls this pipeline makes and nothing else") |
+| the script's `xcrun stapler staple` or `xcrun stapler validate` left unwrapped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two retried calls the script must run |
+| the attempt bound lowered to 3, in the script only | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two definitions differing, and on the five-attempt clause; and `TestDocsConsoleReleaseRetryHelperIsBounded` and `TestDocsConsoleNotarizeAndStapleScript`, on the fifth attempt never being made |
+| the first pause changed (15 → 5) in the script only | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the pause clause; and `TestDocsConsoleReleaseRetryHelperIsBounded`, on the pause the helper asked for |
+| the helper made to return after its first failure | `TestDocsConsoleReleaseRetryHelperIsBounded`, on the retried case and on the five-attempt case; and `TestDocsConsoleNotarizeAndStapleScript`, on the staple that recovers after two failures |
+| `exit 1` removed from the script's refusal after the fifth failure, at the staple or at the validation | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines; and `TestDocsConsoleNotarizeAndStapleScript`, on the two never-gets-there cases |
+| a fresh, un-retried `xcrun stapler validate` added to the script or to a step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the both-directions clause — every line that calls `xcrun stapler` must name the helper |
+| `-c.mac.notarize=false` removed from any `npm run package` (the packer notarising and stapling again) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on every pack carrying the switch |
+| `--dir` dropped from the bundle-only pack, or `--prepackaged "$APP"` from the targets pack | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the bundle/script/targets order |
+| the script's call for the `.app`, or the one for the `.dmg`, removed from the signing step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that order and on the `.dmg`'s sign-then-notarise order |
+| the status check neutered (`if false`), or a status that is not `Accepted` accepted | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines; and `TestDocsConsoleNotarizeAndStapleScript`, on the rejected-submission case (no staple, no pause, non-zero exit) |
+| the exit-status half of the submission's result dropped (`[ "$status" != "Accepted" ]` alone, so an Accepted body over a non-zero `notarytool` exit is stapled) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines; and `TestDocsConsoleNotarizeAndStapleScript`, on the Accepted-body-over-a-non-zero-exit case |
+| `npm run build` added to `package:targets` (the second pack rebuilding under the unlocked keychain) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the manifest's `package:targets` being the packer alone |
+| `npm run build` removed from `package` (the first pack, and the owner's command, with nothing to pack) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `package` still building |
+| the second pack back to plain `npm run package -- --prepackaged "$APP"` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the targets pack's exact line |
+| `--output-format json` dropped from the submission | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the submission line |
+| the `ditto -c -k --keepParent` zip of the bundle dropped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that line; and `TestDocsConsoleNotarizeAndStapleScript`, on the calls the fake `xcrun` and `ditto` log |
+| the script left non-executable | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on its file mode (the signing step runs it directly) |
+| the "Re-copy required" note deleted from `docs/pending-workflows/README.md` while the staged and applied files differ | `TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn`: the owner is the one who has to copy the file in, and that section is where they read it |

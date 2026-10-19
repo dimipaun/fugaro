@@ -55,13 +55,22 @@ golden=$repo/internal/infra/tf/testdata/golden
 
 # name:root pairs. firebase-same-project is the Firebase root with the
 # installation's own project as the Firebase project (skip_apis set).
-for pair in installation:installation repo:repo firebase:firebase firebase-same-project:firebase; do
+# installation-managed is the installation root with managed_deployer_scoped
+# set: the managed deployer's scoped role and its conditioned binding, which
+# are off by default (0.8.6) and so absent from installation.plan.json, are
+# still planned and covered there.
+for pair in installation:installation installation-managed:installation repo:repo firebase:firebase firebase-same-project:firebase; do
   r=${pair%%:*}
   root=${pair##*:}
   (
     cd "$tmp/gcp/roots/$root"
     if [ "$r" = firebase-same-project ]; then
       cp "$repo/internal/infra/testdata/firebase-same-project.tfvars.json" terraform.tfvars.json
+    fi
+    if [ "$r" = installation-managed ]; then
+      jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json
+    elif [ "$r" = installation ]; then
+      cp "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" terraform.tfvars.json
     fi
     sed -i.bak '/backend "gcs" {}/d' main.tf
     "${tfenv[@]}" terraform init -backend=false >/dev/null

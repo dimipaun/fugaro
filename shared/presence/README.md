@@ -93,13 +93,13 @@ rule here accepts `{at, bootId}` and refuses any other field
 `{at, boot, agents?, mac}`, which is the shape P2.1's template already gates
 (`internal/budget/rules/rules.json.tmpl` uses `boot`) plus P6.3's `mac` and `agents`. So a
 heartbeat signed per §3.5 cannot be handed to `evaluatePresence` without a mapping, and
-no landed or planned task writes one: P6.4 touches the rules template, `rules.go` and the
-golden plan, not this module. The `boot`/`bootId` half is older than P6.3 and the
-template sides with `boot`; the `mac` and `agents` halves are new. This is recorded as a
-**conflict for the owner** in `shared/mailbox-schema/README.md`'s gaps, not resolved
-here: renaming a field on either side, or naming and testing the caller-side mapping in
-P3.6, is the owner's call, and either way the phone must not end up treating a *signed*
-heartbeat as offline because the rule could not read it.
+no task writes one: P6.4 has landed (it touched the rules template, `rules.go` and the
+golden plan) and it does not touch this module. The `boot`/`bootId` half is older than
+P6.3 and the template sides with `boot`; the `mac` and `agents` halves are new. This is
+recorded as a **conflict for the owner** in `shared/mailbox-schema/README.md`'s gaps, not
+resolved here: renaming a field on either side, or naming and testing the caller-side
+mapping in P3.6, is the owner's call, and either way the phone must not end up treating a
+*signed* heartbeat as offline because the rule could not read it.
 
 ## Who consumes it
 

@@ -45,9 +45,10 @@ func goldenCover(listed ...string) Cover {
 
 func TestGoldenPlansAreCovered(t *testing.T) {
 	for name, listed := range map[string][]string{
-		"installation": nil,
-		"repo":         {"user:launcher@example.com", "user:operator@example.com"},
-		"firebase":     {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		"installation":         nil,
+		"installation-managed": nil,
+		"repo":                 {"user:launcher@example.com", "user:operator@example.com"},
+		"firebase":             {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
@@ -388,9 +389,32 @@ func TestAdoptVariantShapeMatchesRealTerraform(t *testing.T) {
 // It then breaks the golden's own scoped binding and requires the cover to
 // refuse it, so the condition check runs against the real plan's shape and
 // not only against hand-written fixtures.
+//
+// The scoped role and its binding are gated off by default in 0.8.6
+// (managed_deployer_scoped, deployer.tf's header), so they are read from
+// installation-managed, the same root planned with the gate open; the default
+// golden must carry everything else of the deployer and neither of the two.
 func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
-	p := goldenPlan(t, "installation")
 	const mod = "module.installation."
+	def := goldenPlan(t, "installation")
+	defAddr := map[string]bool{}
+	for _, rc := range def.ResourceChanges {
+		defAddr[rc.Address] = true
+	}
+	for _, addr := range []string{"google_project_iam_custom_role.fugaro_deployer_scoped", "google_project_iam_member.fugaro_deployer_scoped"} {
+		for _, a := range []string{mod + addr, mod + addr + "[0]"} {
+			if defAddr[a] {
+				t.Errorf("the default installation golden plans %s, which is gated off unless managed_deployer_scoped is set", a)
+			}
+		}
+	}
+	for _, addr := range []string{"google_service_account.fugaro_deployer", "google_project_iam_custom_role.fugaro_deployer", "google_project_iam_member.fugaro_deployer"} {
+		if !defAddr[mod+addr] {
+			t.Errorf("the default installation golden has no %s: the account and its unconditioned role are not gated", addr)
+		}
+	}
+
+	p := goldenPlan(t, "installation-managed")
 	byAddr := map[string]ResourceChange{}
 	for _, rc := range p.ResourceChanges {
 		byAddr[rc.Address] = rc
@@ -399,7 +423,7 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 		t.Helper()
 		rc, ok := byAddr[mod+addr]
 		if !ok {
-			t.Fatalf("the installation golden has no %s: regenerate it with scripts/gen-golden-plans.sh", addr)
+			t.Fatalf("the installation-managed golden has no %s: regenerate it with scripts/gen-golden-plans.sh", addr)
 		}
 		if !slices.Equal(rc.Change.Actions, []string{"create"}) {
 			t.Fatalf("%s: actions %v, want create", addr, rc.Change.Actions)
@@ -410,8 +434,8 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 		t.Errorf("the deployer account's ID is %q, want %q", got, DeployerAccountID)
 	}
 	for addr, id := range map[string]string{
-		"google_project_iam_custom_role.fugaro_deployer":        DeployerRole,
-		"google_project_iam_custom_role.fugaro_deployer_scoped": DeployerScopedRole,
+		"google_project_iam_custom_role.fugaro_deployer":           DeployerRole,
+		"google_project_iam_custom_role.fugaro_deployer_scoped[0]": DeployerScopedRole,
 	} {
 		rc := need(addr)
 		if got := str(rc.Change.After["role_id"]); got != id {
@@ -430,8 +454,8 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 	}
 	member := "serviceAccount:" + DeployerAccount("proj-1234")
 	for addr, id := range map[string]string{
-		"google_project_iam_member.fugaro_deployer":        DeployerRole,
-		"google_project_iam_member.fugaro_deployer_scoped": DeployerScopedRole,
+		"google_project_iam_member.fugaro_deployer":           DeployerRole,
+		"google_project_iam_member.fugaro_deployer_scoped[0]": DeployerScopedRole,
 	} {
 		rc := need(addr)
 		if unknown(rc.Change, "role") || str(rc.Change.After["role"]) != "projects/proj-1234/roles/"+id {
@@ -477,7 +501,7 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i, rc := range q.ResourceChanges {
-				if rc.Address == mod+"google_project_iam_member.fugaro_deployer_scoped" {
+				if rc.Address == mod+"google_project_iam_member.fugaro_deployer_scoped[0]" {
 					q.ResourceChanges[i].Change.After["condition"] = cond
 				}
 			}
