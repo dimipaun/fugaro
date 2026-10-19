@@ -52,8 +52,15 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// (TestGoldenAccountJobMountsOnlyItsOwnToken reads the rest).
 		"installation-accounts": nil,
 		"installation-managed":  nil,
-		"repo":                  {"user:launcher@example.com", "user:operator@example.com"},
-		"firebase":              {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		// installation-credentials is deliberately not here. It is the only
+		// golden whose tfvars name an operator, and an operator's
+		// google_storage_bucket_iam_member.state grant is refused by the
+		// cover of every run (Buckets is the runs bucket, and the state
+		// bucket is not in it): pre-existing, unrelated to the opt-in, and
+		// fail-closed. TestGoldenCredentialsServiceIsTheOnlyReader pins that
+		// grant as the plan's only refusal and reads the rest.
+		"repo":     {"user:launcher@example.com", "user:operator@example.com"},
+		"firebase": {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
@@ -515,5 +522,124 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 				t.Fatalf("the golden with its scoped binding's condition changed (%s): %q, want that binding alone refused", name, got)
 			}
 		})
+	}
+}
+
+// TestGoldenCredentialsServiceIsTheOnlyReader reads the opt-in's own real
+// plan (installation-credentials, C1.18) and pins what the service is and what
+// it may reach: one account, one service whose invoker IAM check is on and
+// whose identity is that account, an accessor grant on the model secret and
+// nothing else, and actAs for the operator alone. A real plan is the only
+// thing that can say the least-privilege claims hold of what the provider
+// actually receives; a hand-written fixture would only agree with itself.
+//
+// It is not in TestGoldenPlansAreCovered because the plan is not covered —
+// for a reason that predates the opt-in and has nothing to do with it: the
+// tfvars name one operator, and an operator's
+// google_storage_bucket_iam_member.state grant is on the installation's state
+// bucket, which no run's cover lists (Cover.Buckets is the runs bucket). It
+// fails closed (the apply asks its own typed confirmation), so it is left
+// alone here and this test pins it as the plan's ONLY refusal: a widening of
+// the credentials service, or a new resource type it needs an allowance for,
+// shows up as a second reason.
+//
+// The last part of the test is the one that would catch a widening: no
+// resource in the plan grants the credentials account anything but its model
+// secrets and the invocation, so a bucket grant, a project role or a second
+// secret added to the module fails here.
+func TestGoldenCredentialsServiceIsTheOnlyReader(t *testing.T) {
+	const mod = "module.installation."
+	const acct = "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+	p := goldenPlan(t, "installation-credentials")
+	byAddr := map[string]ResourceChange{}
+	for _, rc := range p.ResourceChanges {
+		byAddr[rc.Address] = rc
+	}
+	need := func(addr string) ResourceChange {
+		t.Helper()
+		rc, ok := byAddr[mod+addr]
+		if !ok {
+			t.Fatalf("the installation-credentials golden has no %s: regenerate it with scripts/gen-golden-plans.sh", addr)
+		}
+		return rc
+	}
+
+	if got := str(need("google_service_account.credentials[0]").Change.After["account_id"]); got != CredentialsAccountID {
+		t.Errorf("the service's account ID is %q, want %q", got, CredentialsAccountID)
+	}
+
+	svc := need("google_cloud_run_v2_service.credentials[0]").Change.After
+	if svc["invoker_iam_disabled"] != false {
+		t.Error("the service's invoker IAM check is off: every run.invoker grant on it would be decoration, and the service would be reachable by anyone")
+	}
+	// The template names the account's email; the member form is the same
+	// account (google_service_account.credentials[0].member).
+	if got := str(at(svc["template"], "service_account")); got != strings.TrimPrefix(acct, "serviceAccount:") {
+		t.Errorf("the service runs as %q, want its own account %q: any other identity would be a different set of secrets", got, acct)
+	}
+	cs := objects(at(svc["template"], "containers"))
+	if len(cs) != 1 {
+		t.Fatalf("the service has %d containers, want one", len(cs))
+	}
+	wantEnv := map[string]string{"FUGARO_PROJECT": "aurora", "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_RTDB_URL": "https://aurora-default-rtdb.firebaseio.com"}
+	gotEnv := map[string]string{}
+	for _, e := range objects(cs[0]["env"]) {
+		if len(objects(e["value_source"])) > 0 {
+			t.Errorf("the service's env %s reads a secret: its identity is its account, and a credential in the environment is one more place it can leak from", e["name"])
+		}
+		gotEnv[str(e["name"])] = str(e["value"])
+	}
+	if !reflect.DeepEqual(gotEnv, wantEnv) {
+		t.Errorf("the service's env is %v, want %v: the cascade's project, the GCP project and the database its state lives in (D136)", gotEnv, wantEnv)
+	}
+
+	grant := need(`google_secret_manager_secret_iam_member.credentials["anthropic-api-key"]`).Change.After
+	if got := str(grant["member"]); got != acct {
+		t.Errorf("the model secret's accessor is %q, want the service's account", got)
+	}
+	if got := str(grant["role"]); got != "roles/secretmanager.secretAccessor" {
+		t.Errorf("the model secret's grant is %q, want secretAccessor alone", got)
+	}
+	if got := str(grant["secret_id"]); got != "fugaro-project-aurora-anthropic-api-key-c07a73f5c7ccc211" {
+		t.Errorf("the accessor is on %q, want the project's own container of the logical name the opt-in gives", got)
+	}
+	if len(objects(grant["condition"])) != 0 {
+		t.Error("the model secret's grant carries a condition, which the module does not set")
+	}
+
+	actAs := need(`google_service_account_iam_member.credentials_operator["user:operator@example.com"]`).Change.After
+	if got := str(actAs["role"]); got != "roles/iam.serviceAccountUser" {
+		t.Errorf("the operator's grant is %q, want actAs alone", got)
+	}
+	if got := str(actAs["service_account_id"]); got != "projects/proj-1234/serviceAccounts/fugaro-credentials@proj-1234.iam.gserviceaccount.com" {
+		t.Errorf("the operator's actAs is on %q, want the credentials account by its literal path", got)
+	}
+	if got := str(actAs["member"]); got != "user:operator@example.com" {
+		t.Errorf("actAs on the credentials account is granted to %q, want the installation's operator and nobody else", got)
+	}
+
+	// The plan's only refusal, and it is not the opt-in's (see the header).
+	got := goldenCover("user:operator@example.com").NotCovered(p, nil)
+	if len(got) != 1 || !strings.Contains(got[0], "google_storage_bucket_iam_member.state") {
+		t.Errorf("the plan's refusals are %q, want the operator's pre-existing state-bucket grant alone: anything else is the credentials service reaching past its two grants, or a resource type without an allowance", got)
+	}
+	for _, rc := range p.ResourceChanges {
+		if !slices.Equal(rc.Change.Actions, []string{"create"}) {
+			t.Errorf("%s: actions %v, want a fresh create plan", rc.Address, rc.Change.Actions)
+		}
+	}
+
+	// And nothing else in the plan reaches the account.
+	for _, rc := range p.ResourceChanges {
+		a := rc.Change.After
+		if str(a["member"]) != acct || !strings.HasSuffix(rc.Type, "_iam_member") {
+			continue
+		}
+		switch rc.Address {
+		case mod + `google_secret_manager_secret_iam_member.credentials["anthropic-api-key"]`,
+			mod + "google_cloud_run_v2_service_iam_member.credentials[0]":
+		default:
+			t.Errorf("%s grants the credentials account %q: it reads model secrets and is invoked, and nothing else", rc.Address, a["role"])
+		}
 	}
 }

@@ -62,8 +62,12 @@ golden=$repo/internal/infra/tf/testdata/golden
 # already deploys; installation-managed is the installation root with
 # managed_deployer_scoped set: the managed deployer's scoped role and its
 # conditioned binding, which are off by default (0.8.6) and so absent from
-# installation.plan.json, are still planned and covered there.
-for pair in installation:installation installation-accounts:installation installation-managed:installation repo:repo firebase:firebase firebase-same-project:firebase; do
+# installation.plan.json, are still planned and covered there;
+# installation-credentials is the installation root with the credentials
+# service opted in (0.9.5, C1.18) and one operator, so the plan holds the
+# service, its account, its model-secret grant and the operator's actAs on it
+# — the resources the opt-in adds, which no other golden can hold.
+for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation repo:repo firebase:firebase firebase-same-project:firebase; do
   r=${pair%%:*}
   root=${pair##*:}
   (
@@ -73,6 +77,7 @@ for pair in installation:installation installation-accounts:installation install
       installation) cp "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" terraform.tfvars.json ;;
       installation-accounts) cp "$repo/internal/infra/testdata/installation-accounts.tfvars.json" terraform.tfvars.json ;;
       installation-managed) jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json ;;
+      installation-credentials) jq '. + {operators: ["user:operator@example.com"], credentials_service: {account_id: "fugaro-credentials", name: "fugaro-credentials", image: "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.9.5", rtdb_url: "https://aurora-default-rtdb.firebaseio.com", secrets: ["anthropic-api-key"]}}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json ;;
     esac
     sed -i.bak '/backend "gcs" {}/d' main.tf
     "${tfenv[@]}" terraform init -backend=false >/dev/null
