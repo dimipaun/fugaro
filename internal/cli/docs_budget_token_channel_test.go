@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -202,6 +203,76 @@ func TestCheck60LearnsTheJobBeforeAnyStepNamesIt(t *testing.T) {
 	}
 	if a, b := strings.Index(step3, learn), strings.Index(codeLines(sec), "${SANDBOX_JOB:?"); a < 0 || b < 0 || b < a {
 		t.Errorf("Check 60's first `${SANDBOX_JOB:?}` is not after the step that learns the job (learn at %d, first hard stop at %d): the guard at the point of use is what has to catch an empty job, not the setup block", a, b)
+	}
+}
+
+// TestCheck60ReadsFailOnAMissingField: step 3 turns two reads into a job name
+// and an execution name, and both were bare `jq -r` reads — which print the
+// word `null` when the field is missing and exit 0. `null` is a non-empty
+// string, so the `${SANDBOX_JOB:?}` guard after the first one lets it through
+// and the step goes on to describe a job called `null` and record a FACT about
+// nothing. `jq -e` is what makes the read fail instead — with `-e` jq exits 1
+// when the last value is null, or when there is no result at all — but `-e`
+// alone is not enough, because jq still prints `null` and `$(...)` captures
+// stdout whatever the exit status is: the step has to consume the non-zero exit
+// (`|| { echo "Check 60 stopped" …; exit 1; }`) or the guard is handed `null`.
+// The read failing is the whole point — not the variable being empty. This is
+// the 2026-10-19 independent review's first leftover.
+func TestCheck60ReadsFailOnAMissingField(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	i := strings.Index(doc, "## Check 60: the sealed budget token")
+	j := strings.Index(doc, "## Check 69a:")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no Check 60 section followed by Check 69a: the section this test reads is gone", path)
+	}
+	step3 := codeLines(section(t, doc[i:j], "### 3. ", "### 4. "))
+	for _, want := range []string{"jq -er .job", "jq -er .row.execution"} {
+		if !strings.Contains(step3, want) {
+			t.Errorf("Check 60's step 3 does not read %q: a bare `jq -r` on a missing field prints `null` and exits 0, so a `null` job or a `null` execution name is carried on as if it were read", want)
+		}
+	}
+	if strings.Contains(step3, "jq -r .") {
+		t.Errorf("Check 60's step 3 still reads a field with a bare `jq -r`: `null` is what a missing field prints, it exits 0, and `${SANDBOX_JOB:?}` accepts it — use `jq -er`, which exits non-zero and leaves the variable empty")
+	}
+	// `-e` changes only jq's exit status: it still prints `null` for a missing
+	// field, and `$(...)` captures stdout whatever that status is — so the
+	// read has to stop the step itself, or the word `null` goes on to be read
+	// as a name. That is what makes the guard after it meaningful.
+	for _, read := range []string{"jq -er .job", "jq -er .row.execution"} {
+		failsClosed := regexp.MustCompile(regexp.QuoteMeta(read) + `\)\s*(\\\n\s*)?\|\| \{ echo "Check 60 stopped`)
+		if !failsClosed.MatchString(step3) {
+			t.Errorf("Check 60's `%s` does not consume jq's non-zero exit (`|| { echo \"Check 60 stopped\" …; exit 1; }` on the same command): jq prints `null` for a missing field whatever its status, so without this the step goes on with a job or an execution named null", read)
+		}
+	}
+	// The guard the block already had still catches an empty one.
+	const guard = `echo "SANDBOX_JOB=${SANDBOX_JOB:?}"`
+	if a, b := strings.Index(step3, "jq -er .job"), strings.Index(step3, guard); a < 0 || b < a {
+		t.Errorf("Check 60's step 3 does not hand the job read to the ${SANDBOX_JOB:?} guard (the read at %d, the guard at %d): an empty job is what the guard is for", a, b)
+	}
+}
+
+// TestCheck60SaysHowToStartOver: the setup block reads $CHK60/vars.env back,
+// which is what makes the steps runnable from separate shells — and what makes
+// a /tmp/chk60 left over from an earlier attempt actively harmful. The block
+// would take that attempt's SLUG, RUN2 and SANDBOX_JOB as this attempt's, every
+// step would read the earlier run's objects and record them as the new run's,
+// and the baseline would be the earlier attempt's policy file. The Method has
+// to say how to start clean. This is the 2026-10-19 independent review's second
+// leftover.
+func TestCheck60SaysHowToStartOver(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	i := strings.Index(doc, "## Check 60: the sealed budget token")
+	j := strings.Index(doc, "## Check 69a:")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no Check 60 section followed by Check 69a: the section this test reads is gone", path)
+	}
+	method := section(t, doc[i:j], "**Method.**", "### 1. Setup")
+	for _, want := range []string{"earlier attempt", "rm -rf /tmp/chk60", "vars.env"} {
+		if !strings.Contains(method, want) {
+			t.Errorf("Check 60's Method does not say %q: it is where the owner is told the variables live, and a leftover /tmp/chk60 from an earlier attempt makes every step read that attempt's variables", want)
+		}
 	}
 }
 

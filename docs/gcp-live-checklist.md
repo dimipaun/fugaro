@@ -3953,7 +3953,7 @@ The budget token's seal ([design/budget-token-channel.md](design/budget-token-ch
 
 **Before you start.** The installation must have been applied with this release's `fugaro init` (the `tokens/` grants and the widened launcher condition — step 8 reads them), and the sandbox repository's job image must be at `sealSince` (0.9.0) or later, or a development image built from this branch (its build record then says `sealed_budget_token`, and the launch passes with no seal warning; a development job image whose record does not say it is refused if built before 2026-10-17T17:45:33Z and otherwise launches with only a warning — record which you got) — a launch that mints against an older image is refused by the launcher (`sealGate`), which is itself worth a FACT if you meet it. A `checkout: clone` workflow has no job image to judge, so there the gate reads the installation's own `base_images.base` (`sealGate`'s `checkCloneImageSince`): a release ref below 0.9.0 is refused, and a ref that is not a release only warns. Check 52 step 3 (U2) is the probe this check's step 3 repeats on the deployed shape; it has not run either.
 
-**Method.** Every block runs in `bash`. Keep the step variables in `$CHK60/vars.env` and re-run the guard block at the start of every step: the block reads that file back, so a later shell keeps `SLUG`, `RUN2`, `RUN9` and `SANDBOX_JOB`, which is what makes the steps runnable in any order of shells — and what lets step 1 and step 2 run before step 3 has learnt the job.
+**Method.** Every block runs in `bash`. Keep the step variables in `$CHK60/vars.env` and re-run the guard block at the start of every step: the block reads that file back, so a later shell keeps `SLUG`, `RUN2`, `RUN9` and `SANDBOX_JOB`, which is what makes the steps runnable in any order of shells — and what lets step 1 and step 2 run before step 3 has learnt the job. **Starting over:** if `/tmp/chk60` is left from an earlier attempt, its `vars.env` is read back as this attempt's, so every step would work on the earlier attempt's run and the baseline would be its policy file — delete the directory first (`rm -rf /tmp/chk60`) and start the check again at step 1, which makes it again (and if the earlier attempt had already changed the bucket, run Restore first).
 
 ### 1. Setup and guard
 
@@ -4013,7 +4013,14 @@ FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose 
 **Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a `checkout: clone` workflow of a project whose published policy defines the profile it selects launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the clone path only, and only once the project has published that profile), and a baked workflow, or a project that has published none, keeps the repository's own job. Read it off the run's own launch record — this step is where it is learnt, so steps 1 and 2 do not have it and every step from here re-runs the setup block, which reads it back out of `vars.env` — and use that job in every step below that names it (3 to 7, and 9 — step 4's audit-log filter carries it too, and a filter left on the repository's own job would return nothing and record a false FACT). Every use is `${SANDBOX_JOB:?}`-guarded, so an empty one stops there rather than reaching `gcloud`:
 
 ```bash
-SANDBOX_JOB=$(gcloud storage cat "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/launch.json" --project="${P:?}" | jq -r .job)
+# -er, not -r, AND the non-zero exit is consumed: a launch record with no .job
+# prints the word `null` — under -r it also exits 0, and under -e it exits 1 but
+# still prints `null`, which `$(...)` captures whatever the status is — and
+# `null` is a non-empty name the guard below would accept, so the step would go
+# on to describe a job called null. The `||` is what makes the read fail: it
+# stops the step before anything is described or recorded.
+SANDBOX_JOB=$(gcloud storage cat "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/launch.json" --project="${P:?}" | jq -er .job) \
+  || { echo "Check 60 stopped: ${SLUG:?}/${RUN2:?}'s launch record carries no .job (jq -e exited non-zero), so step 2's run is not one this check can read: re-read step 2, or start over at step 1" >&2; exit 1; }
 echo "SANDBOX_JOB=${SANDBOX_JOB:?}" >> "$CHK60/vars.env"
 ```
 
@@ -4028,8 +4035,13 @@ gcloud storage ls "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/budget-toke
 # The job's own environment: no key there (the key is an execution override).
 gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json \
   | jq '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN")] | length'
-# The execution's record (v1 path): what it shows of the override, recorded, not asserted.
-EXE=$(fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro --json | jq -r .row.execution)
+# The execution's record (v1 path): what it shows of the override, recorded, not
+# asserted. -er with its exit consumed, for the reason above: a row carrying no
+# execution prints `null`, and describe below would look up an execution named
+# null. A row with no execution is itself what U2 records, so read the row by
+# hand before going on.
+EXE=$(fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro --json | jq -er .row.execution) \
+  || { echo "Check 60 stopped: ${SLUG:?}/${RUN2:?}'s diagnose row carries no execution (jq -e exited non-zero): read the row by hand and record what U2 finds there" >&2; exit 1; }
 gcloud run jobs executions describe "${EXE##*/}" --project="${P:?}" --region="${L:?}" --format=json \
   | jq '[.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN") | (.value|length)]'
 ```
