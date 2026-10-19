@@ -146,6 +146,46 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	if height := mdRow(t, path, liveSection, "| `data-height` |"); !strings.Contains(height, "never `n/a`") {
 		t.Errorf("%s: §2.3's `data-height` row does not say it is never `n/a`; a sparkline bar's height is a measured share or a gap", path)
 	}
+	// The same row's other half: "each sparkline bar" is one bar too many. The
+	// empty-sparkline branch draws its one bar outside the loop that writes the
+	// attribute, so a rule keyed on `[data-height]` misses exactly that bar.
+	if height := mdRow(t, path, liveSection, "| `data-height` |"); !strings.Contains(height, "no `data-height` at all") {
+		t.Errorf("%s: §2.3's `data-height` row claims every sparkline bar carries the attribute; the empty sparkline's single bar sets only `data-state`, so a `[data-height]` rule selects nothing on it", path)
+	}
+	// `data-silence`'s value set is narrower than `formatReading`'s, because the
+	// banner is drawn only for a stale feed and a stale feed always has a
+	// measured silence: the row has to say which form is reachable, and that the
+	// reading can never be a gap.
+	if silence := mdRow(t, path, liveSection, "| `data-silence` |"); !strings.Contains(silence, "always `<seconds> s`") || !strings.Contains(silence, "never a `gap`") {
+		t.Errorf("%s: §2.3's `data-silence` row does not give the attribute's real value set; the banner is appended only when the feed is stale, which means the silence is always a measured number of seconds, so the `n/a` and `—` forms cannot appear", path)
+	}
+	// And the screen's tree order: the design drew the stale banner and the
+	// last-read line after `ol.live-orphans`, and they are the header's own last
+	// children, appended before the total block and the repos list.
+	if !strings.Contains(mdFlat(liveSection), "the header's last children") {
+		t.Errorf("%s: §2.3's region list no longer says where the stale banner and the last-read line hang; they are children of `header.live-header`, drawn before the total block, the repos list and the orphans list", path)
+	}
+	if strings.Contains(mdFlat(liveSection), "→ the stale banner") {
+		t.Errorf("%s: §2.3 puts the stale banner after the repos and orphans lists; `header()` appends it inside the header, and `renderLive` appends only the header, the total, the repos and the orphans to the root", path)
+	}
+	// §2.4's four element attributions, each read from `spend.ts` because each
+	// names the element a rule would be written against: `data-limit` is the
+	// reserve line and not the banner, the banner hangs inside the caps panel
+	// rather than beside it, the person note is text and not a `title`, and the
+	// unknown-breakdown flag is on the switch, not on the item under it.
+	spendSection := mdFlat(mdBetween(t, path, doc, "### 2.4 Spend", "### 2.5 Projects"))
+	for _, want := range []struct {
+		has, because string
+	}{
+		{"on **`div.spend-cap-limit`**", "`data-limit=\"max_reserve\"` is set on the reserve line, not on the kill banner; a rule written against the banner for it selects nothing"},
+		{"but **inside it**", "the kill banner is appended into `div.spend-cap-global` or `li.spend-cap-repo`, inside `section.spend-caps`; the panel's own `data-killed` is never set, but a scoped rule does select the banner"},
+		{"the **text** of `p.spend-persons-note`", "the person view's note is drawn as that paragraph's text; only the switch's `person` item carries it in `title`"},
+		{"`ol.spend-switch` whose own `data-known=\"false\"`", "the unknown-breakdown flag is on the switch element, not on the `spend-dim-unknown` item under it"},
+	} {
+		if !strings.Contains(spendSection, want.has) {
+			t.Errorf("%s: §2.4 does not say %q — %s", path, want.has, want.because)
+		}
+	}
 	// And no table cell may hold an unescaped `|` inside a code span: GFM splits
 	// the row on it, drops every column past the header's, and renders the row
 	// truncated mid-span — the navigation row's `data-view="live|spend|projects"`
@@ -621,7 +661,7 @@ func mdTaskSections(t *testing.T, path, doc string, marks ...string) []string {
 // mdClauseStartRE opens one of a task's labelled clauses, in either document's
 // shape: the plan writes them as paragraphs (`**Files.** …`), the design as list
 // items (`- **Files:** …`).
-var mdClauseStartRE = regexp.MustCompile(`^(?:- )?\*\*(Scope|Files|Tests|Command|Verification)\b`)
+var mdClauseStartRE = regexp.MustCompile(`^(?:- )?\*\*(Scope|Files|Tests|Command|Verification|Depends on|Commit)\b`)
 
 // mdClause returns the clause of a task's body that opens with the given label —
 // `**Files.**`, `**Tests:**` and their kin — with the markdown wrapping flattened
@@ -732,14 +772,18 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 		"### 7.6 Task 6.6",
 		"### 7.7 The red steps")
 
-	// The general rule, over both documents: Files and Tests never name a task
-	// that comes after the one they are in.
+	// The general rule, over both documents: Files, Tests and Depends never name
+	// a task that comes after the one they are in. The phase's six tasks arrived
+	// without a **Depends on:** clause at all — every other task in the plan has
+	// one, so a reader of phase 6 could not tell which task waits for which — and
+	// the first draft of these clauses broke the rule twice: Task 6.1's named its
+	// successor and Task 6.5's named the golden task it precedes.
 	for _, doc := range []struct {
 		path  string
 		tasks []string
 	}{{planPath, planTasks}, {designPath, designTasks}} {
 		for i, task := range doc.tasks {
-			for _, label := range []string{"Files", "Tests"} {
+			for _, label := range []string{"Files", "Tests", "Depends on"} {
 				clause, ok := mdClause(t, doc.path, task, label)
 				if !ok {
 					if label == "Files" {
@@ -756,6 +800,24 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 						t.Errorf("%s: task 6.%d's **%s** paragraph names Task 6.%d, which comes after it; a task's files and its tests have to exist when it lands, so this is a dependency on a later task's work", doc.path, i+1, label, later)
 					}
 				}
+			}
+		}
+	}
+
+	// Phase 6's six tasks carry the two clauses every other task in the plan
+	// carries, and which these six arrived without: **Depends on:** and
+	// **Commit:**. The commit subject is the one line a reviewer sees in the log,
+	// and the dependency is the sentence that says whether the task can land on
+	// its own — the claim the phase's header makes about all six.
+	for i, task := range planTasks {
+		for _, label := range []string{"Depends on", "Commit"} {
+			clause, ok := mdClause(t, planPath, task, label)
+			if !ok {
+				t.Errorf("%s: Task 6.%d has no **%s:** clause; every other task in this plan states one, and a reader of this phase cannot tell which task waits for which without it", planPath, i+1, label)
+				continue
+			}
+			if label == "Commit" && !strings.HasPrefix(clause, "**Commit:** `console: ") {
+				t.Errorf("%s: Task 6.%d's **Commit:** clause is %q; the plan's console tasks commit under `console: `, and the subject is what the log shows", planPath, i+1, truncate(clause, 60))
 			}
 		}
 	}

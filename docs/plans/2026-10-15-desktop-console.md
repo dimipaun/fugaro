@@ -1217,6 +1217,13 @@ dark and 6.27:1 light, so no real value produces that line.
 
 **Command:** `cd console && npm run test:unit`
 
+**Depends on:** nothing. It writes two new files and their test, and nothing reads them yet —
+the task after this one is what makes the stylesheet a file the console serves. The phase as
+a whole is scheduled after Task 3.4a, whose bundle step and served root it extends; that
+dependency is the next task's, and its paragraph carries it.
+
+**Commit:** `console: the theme's tokens, and the palette they are painted in`
+
 **What this task does not own, and why the cases land later.** Two cases of the design's
 §6.3 read a file this task does not write, so neither can be written here without asserting
 something that does not exist yet:
@@ -1298,6 +1305,13 @@ handler's change is the allow-list entry and **nothing else**.
 `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` — this task edits no Go,
 but that is the command this repository reaches a doc change by (rule 10).
 
+**Depends on:** Task 6.1 (the two stylesheets `THEME_STYLESHEETS` opens with — the list may
+not name a file that does not exist, so the task that creates them comes first) and Phase
+3's Task 3.4a (the bundle step and the served root this task extends; the phase is
+scheduled after it).
+
+**Commit:** `console: the stylesheet is bundled, served and linked`
+
 **Reviewer tier:** **SECURITY-SENSITIVE, independent opus review.** This is the task to
 attack: can the served root grow a file nothing vouches for, can `style-src` be widened by
 one token, can a document gain a second stylesheet or an inline style.
@@ -1333,6 +1347,13 @@ test:e2e -- entry` — the four golden tests are skipped, as they are in 6.4 and
 task changes pixels the committed baselines do not have, and re-recording them before the
 last stylesheet lands is exactly what Task 6.6 exists to stop. The staged console-tests
 workflow already sets that variable on the job, so CI is green through the phase.
+
+**Depends on:** Task 6.2. The rules here are the first visible change the phase makes, and
+they are visible only once the stylesheet is bundled, served and linked — before that the
+file is one nothing reads, and Task 6.2 is the ordering the phase's own header calls "before
+any visible change".
+
+**Commit:** `console: the document, the bands and the focus rules`
 
 **Reviewer tier:** ordinary.
 
@@ -1378,6 +1399,12 @@ reason Task 6.3 gives.
 
 **Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run test:e2e`
 
+**Depends on:** Task 6.3 (the reset, the document and the bands these per-screen rules are
+written on top of) — and Task 6.1 for the tokens every rule reads, which 6.3 already
+depends on.
+
+**Commit:** `console: the screen rules, and the fifth number hook`
+
 **Reviewer tier:** ordinary.
 
 **Red step — `Expected: FAIL`** — a selector planted against a class no screen emits.
@@ -1422,6 +1449,14 @@ regression.
 
 **Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run test:e2e`
 
+**Depends on:** Task 6.2 (the served, linked stylesheet the switch chooses between — a
+theme choice is a choice about a document that has one) and Task 6.1 (the two `--ground`
+values its case compares the window's literals against). It needs nothing later in the
+phase: the pictures it changes belong to the phase's last task, which is why this task's own
+run skips the goldens.
+
+**Commit:** `console: the OS chooses the theme, and the window paints its ground first`
+
 **Reviewer tier:** ordinary, against the design's §5.5 rule explicitly (no style write, no
 loosening).
 
@@ -1447,6 +1482,13 @@ missing baseline fail rather than be written), and it **supersedes the draft PR 
 darwin set**, which is a picture of the unstyled tree — pending the owner's Q4.
 
 **Command:** `cd console && npm run test:e2e` after the owner records.
+
+**Depends on:** Task 6.5 (**hard**). The computed-background assertion it lands asserts that
+the two schemes paint *different* backgrounds, and they cannot until the theme choice is
+wired; the baselines are a picture of the stylesheets this phase has finished writing, which
+is why this is the phase's last task and the owner's to run.
+
+**Commit:** `console: the golden frames, re-recorded in both themes`
 
 **Reviewer tier:** the assertions ordinary; the recording is the owner's.
 

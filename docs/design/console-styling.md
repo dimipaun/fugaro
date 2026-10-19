@@ -218,10 +218,17 @@ styles them by id rather than adding classes.
 ### 2.3 Live — `console/src/renderer/screens/live.ts`
 
 The default screen: one glance at what is spending money now. Regions in tree order:
-header (`h1.live-project`, mode, day, connection, notes) → total block → `ol.live-repos`
-of `li.live-repo`, each with a cap bar, a burn sparkline and a kill banner and an
-`ol.live-runs` of `li.live-run` → an optional `ol.live-orphans` → the stale banner and the
-"last read" line.
+header → total block → `ol.live-repos` of `li.live-repo`, each with a cap bar, a burn
+sparkline and a kill banner and an `ol.live-runs` of `li.live-run` → an optional
+`ol.live-orphans`. The header is `header.live-header` (`h1.live-project`, mode, day, the
+connection cell, an optional note, and — when the caller keeps a feed reading — the
+`p.live-since` "last read" line, with the `div.live-stale` banner after it once that feed is
+stale). **The stale banner and the last-read line are the header's last children, not
+siblings after the repositories**: `header()` appends them itself (`live.ts` 1038-1039,
+inside the `header` it builds at 1005), and `renderLive` appends exactly four things to the
+root — the header, the total, `ol.live-repos` and the optional `ol.live-orphans` (1115-1124).
+A rule that puts the banner below the repos list is a rule that selects it in a place it
+never occupies.
 
 | Group | Class hooks |
 |---|---|
@@ -241,7 +248,7 @@ of `li.live-repo`, each with a cap bar, a burn sparkline and a kill banner and a
 | `data-theme` | `light` \| `dark` | on the `section.live` root |
 | `data-received-at` | an ISO stamp, or `''` | the newest frame |
 | `data-fill` | `12.5%` or `n/a` — one decimal, and **nothing else** | a bar's fill, as text. `bar()` writes it from the **same percent reading** it writes `data-state` from (`live.ts`), and both call sites pass a *percent* figure — `repo.percent`, `total.percent` — which `schema.ts` reads through `readNumber`, whose only two states are `measured` and `unavailable`. So this attribute is never `≥ 12.5%` (no `lowerBound` reaches a percent reading), never `NOTIONAL~12.5%` or `est. 12.5%` (no percent reading is marked), and never the em dash; **a rule keyed on a marked form here would match nothing** |
-| `data-height` | `12.5%` or `—` — and **never `n/a`** | each sparkline bar. The heights are the bar's own shapes, not the reading's: `spark()` builds every one as `measured(share)` or, for a sample that is not plottable, `gap(...)` — so a bar the console cannot fill draws the em dash and never the `n/a` a `data-fill` may carry |
+| `data-height` | `12.5%` or `—` — and **never `n/a`** | each sparkline bar, **except the empty one**. The heights are the bar's own shapes, not the reading's: `spark()` builds every one as `measured(share)` or, for a sample that is not plottable, `gap(...)` — so a bar the console cannot fill draws the em dash and never the `n/a` a `data-fill` may carry. **The one-bar empty sparkline is drawn outside that loop** (`live.ts` 900-910): a line with no sample appends a single `li.live-burn-bar` carrying `data-state="gap"` and **no `data-height` at all** (909), so a rule keyed on `[data-height]` selects every bar of a drawn window and misses the bar of an empty one — the case the empty-sparkline rule of §2.3's state list is about |
 | `data-state` | **two vocabularies.** A bar's availability: `measured` \| `notional` \| `estimated` \| `unavailable` \| `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` (and the sparkline's bars) writes the five availability words; `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the five words and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
 | `data-segments` | an integer as a string | how many pieces a sparkline broke into |
 | `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
@@ -253,7 +260,7 @@ of `li.live-repo`, each with a cap bar, a burn sparkline and a kill banner and a
 | `data-fast` | `true` \| `false` | burn faster than the cap allows |
 | `data-stale` | `true` (present only) | the stale banner |
 | `data-stale-by-age` | `true` \| `false` | the connection cell |
-| `data-silence` | the measured silence **as drawn** (`formatReading`, so `45 s`, `n/a`, `—`) | the stale banner `div.live-stale` — the number the screen drew, for a rule that wants to key on it without recomputing it from the stamps |
+| `data-silence` | the measured silence **as drawn** — always `<seconds> s` | the stale banner `div.live-stale` — the number the screen drew, for a rule that wants to key on it without recomputing it from the stamps. **Only the seconds form is reachable.** `staleBanner` writes `formatReading(feedReading(feed), 'seconds')` (`live.ts` 1071), and the banner is appended only when `model.feed.stale` (1039) — which is `seconds !== null && seconds > 45` (`src/source/cli.ts`), so the reading is always **measured** and the attribute always carries a whole number of seconds. The `n/a` and `—` forms `formatReading` can produce for the `seconds` unit belong to readings this call site cannot hold: `feedReading` (`live.ts` 640) returns only `unavailable` — for a console that has heard nothing, which is exactly the feed whose `stale` is false — or `measured`, and **never a `gap`** |
 
 State variants and **how each is marked**: killed/halted (`div.live-kill` with
 `data-killed="true"`, the word `KILLED by` then who, when, why); stale (`div.live-stale`
@@ -294,15 +301,23 @@ caps panel.
 | Caps | `spend-caps`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-global`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-headroom`, `spend-cap-defaults`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
 | Notes | `spend-note`, `spend-warning` |
 
-`data-*`: `data-theme`; `data-current`, `data-enabled`, `data-known`,
-`data-dimension` (`day|week|month|year|repo|model|person`, or `unknown`), `data-day`,
+`data-*`: `data-theme`; `data-current`, `data-enabled`, `data-known` (on the
+`ol.spend-switch` itself, beside the seven words), `data-dimension`
+(`day|week|month|year|repo|model|person`, or `unknown`), `data-day`,
 `data-until` (`set` \| `cli`) on the controls; `data-state`
-(`measured|notional|estimated|unavailable|gap`), `data-height`, `data-partial`,
-`data-hollow`, `data-key`, `data-account` (`model|notional|compute`), `data-peak`,
-`data-segments` on the charts and rows; `data-available`, `data-scope-known`,
-`data-daily-scope`, `data-per-run-scope` (a document word, or `unknown`), `data-limit`
-(`max_reserve`), `data-killed` (`true`) on the **kill banner `div.spend-kill`** — not on
-`div.spend-caps`, which the banner is appended beside rather than written onto.
+(`measured|notional|estimated|unavailable|gap`), `data-height`, `data-account`
+(`model|notional|compute`), `data-peak`, `data-segments` on the **chart points and their
+accounts** — an `li.spend-row` carries **none of those five**, so a `[data-state]` or
+`[data-height]` rule is a rule about the charts; `data-partial`, `data-hollow`, `data-key`
+on **both** the points and the rows (`data-partial` also on `div.spend-totals`, `data-key`
+also on the caps panel's `li.spend-cap-repo`); `data-degraded` (`true`) on
+`span.spend-degraded`; `data-available`, `data-scope-known`, `data-daily-scope`,
+`data-per-run-scope` (a document word, or `unknown`) on the caps panel, `data-limit`
+(`max_reserve`) on **`div.spend-cap-limit`** — the reserve line, drawn above the global
+block; and `data-killed` (`true`) on the **kill banner `div.spend-kill`** — never on
+`section.spend-caps` itself, but **inside it**: the banner is appended into
+`div.spend-cap-global` or `li.spend-cap-repo`, so a `[data-killed]` rule scoped to the caps
+panel does select it.
 
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
 (`data-partial="true"` / `data-hollow="true"` plus the `(partial)` marker text in
@@ -310,8 +325,13 @@ States: killed (the kill banner, `data-killed="true"`); partial/hollow
 reason in `title`); unavailable (caps absent: `data-available="false"` and the sentence
 "…every cap here is n/a, not zero"); empty per account (a `gap` reading, `data-state="gap"`);
 degraded (`span.spend-degraded` with `data-degraded="true"` and the word `degraded`);
-person view withheld (`data-enabled="false"`, state text `off`, the note in `title`);
-unknown breakdown (`spend-dim-unknown`, `data-dimension="unknown"`, `data-known="false"`);
+person view withheld (`div.spend-persons` with `data-enabled="false"`, the state text `off`,
+and the note drawn as the **text** of `p.spend-persons-note` — not in a `title`; the same
+sentence is in `title` on the switch's `person` item, which is the element disabled until the
+knob is on);
+unknown breakdown (`li.spend-dim-unknown` with `data-dimension="unknown"`, under an
+`ol.spend-switch` whose own `data-known="false"` is what says the document used a word this
+console does not know);
 unknown cap scope (`data-scope-known="false"`, "a scope this console does not know").
 **There is no loading state, no stale state and no halted state on this screen**, and no
 "cap reached" marker (as on Live).
