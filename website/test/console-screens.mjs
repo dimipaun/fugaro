@@ -28,6 +28,15 @@
 //      naming the row — so the data file cannot carry a second copy of a URL (Global
 //      Constraint 9) and cannot render a picture nobody can identify.
 //
+// **The fixture's text is this file's own, and that is the console page's tight spot.** The
+// page stands at 239 of the 250 words D188 allows it, and the page ceiling counts a row's
+// `alt` as well as its `caption` (`test/budget.mjs`'s `visibleText`), so two rows with a
+// sentence each are already more words than the page has room for: a build carrying this
+// fixture would be refused by the word gate, and that is why the fixture build is asserted
+// about here rather than held to that gate. It is a real tension and the owner's to settle —
+// website/README.md, "Adding a console screenshot", states the numbers, and the first
+// screenshot that needs more words needs the page ceiling raised in the commit that adds it.
+//
 // How it builds: the fixture and the refusal cases mutate a file and build again, so they
 // build a copy of the repository in a temp directory rather than this checkout — the shape
 // `console.mjs` and `layout.mjs` use, and `test/lib/build.mjs`'s `buildCopy` is that
