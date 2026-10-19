@@ -4168,15 +4168,20 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    the three labels measured **65**, **83.5** and **59.3 px** wide beside the 47 px mark.
    **FACT:** the three labels' widths and heights, and that no `Menu` control is on the page.
 
-2. **A label opens its own panel, by keyboard, and only one is open at a time.** With the
-   viewport still narrow, Tab to the first group label (`.site-nav-group summary`) and press
-   Enter: its panel opens across the header's own width, and the header's own height does not
+2. **A label opens its own panel when the keyboard reaches it, and only one is open at a time.**
+   With the viewport still narrow, Tab to the first group label (`.site-nav-group summary`):
+   **the panel opens on the focus's arrival**, across the header's own width — the script opens
+   a group for the keyboard (the owner's brief of 2026-10-18, item 1: step 7), which is what
+   makes the links inside a closed group reachable by Tab — and the header's own height does not
    change (the panel is out of its flow — step 1's number again, with the panel open). Press
-   Escape: the panel closes and the focus is back on the label that opened it. Open it again
-   and click somewhere else on the page: it closes. Open it again and then open a **second**
-   label: the first closes, because the three share one `name` and the browser keeps that set
-   exclusive — one group open at a time, at every width. **FACT:** what each of the five did —
-   Enter, Escape, the outside click, the second label's open, and the header's height with a
+   **Enter** now: the label is a `<summary>` and toggles its own group, so the panel **closes**
+   (press it again and it opens; the keyboard's arrival is what opened it, not the key). Press
+   **Escape** with the panel open: it closes and the focus is back on the label that opened it,
+   and stays there — the focus the close hands back does not reopen the group. Open it again and
+   click somewhere else on the page: it closes. Open it again and then Tab to a **second** label:
+   the first closes, because the three share one `name` and the browser keeps that set exclusive
+   — one group open at a time, at every width. **FACT:** what each of them did — Tab's arrival,
+   Enter, Escape, the outside click and the second label's focus — and the header's height with a
    panel open.
 
 3. **Every link in the three groups is reachable.** Tab to each group's label, open it, and
@@ -4189,9 +4194,11 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    844: each label still opens its own group on Enter or on a tap, the second one still closes
    the first (the `name` set is the browser's, not the script's), every link is still there and
    still follows. **FACT:** that each of those held with scripting off. The script's jobs in
-   the menu are the two closes step 2 checks **and** the hover-open step 6 checks (the owner's
-   brief of 2026-10-18, item 1), so with no script a group opens and closes by the `<details>`'s
-   own behaviour, and the only things missing are the two closes and the hover.
+   the menu are the two closes step 2 checks, the keyboard's **focus-open** step 2 checks too
+   **and** the hover-open step 6 checks (the owner's brief of 2026-10-18, item 1), so with no
+   script a group opens and closes by the `<details>`'s own behaviour — **Enter** is the whole
+   of it there, and Tab to a label opens nothing — and the only things missing are the two
+   closes, the focus-open and the hover.
 
 5. **At 1280 × 900, the same three labels are in the header's one row, drawn there as they are
    at every width.** Widen the viewport to 1280 × 900. The header shows the wordmark's
@@ -4277,9 +4284,11 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
 **77 px** rather than 177, with no sideways scroll, and the wordmark's text is out of the row
 below the breakpoint the method block reads while the mark stays; the three labels are the
 whole menu there — **Product**, **Reference**, **Project**, each at least 44 px tall, no `Menu`
-control on the page — and each opens its own panel on Enter or on a tap, closes on Escape and
-on an outside click with the focus returned to the label, with the three kept exclusive by
-their shared `name`; every link in the three groups is reachable by keyboard and follows,
+control on the page — and each opens its own panel when the keyboard reaches it or on a tap,
+toggles on **Enter** (the `<summary>`'s own control, so with the panel open by the keyboard's
+arrival Enter is what closes it), closes on Escape and on an outside click with the focus
+returned to the label, with the three kept exclusive by their shared `name`; every link in the
+three groups is reachable by keyboard and follows,
 **all of that holds with JavaScript disabled**, Privacy is a footer link and not a menu item,
 and at 1280 × 900 the same three labels are in the header's one row with **no `Menu` control
 and no overlay panel**, as three dropdowns whose links are behind their summaries, opening a
@@ -4308,10 +4317,14 @@ scrolls sideways; the wordmark's text is still in the row at 375 px (or the mark
 of it with the text); a label is under 44 px tall, or a `Menu` control is in the header at any
 width — the brief of 2026-10-19 took the single `Menu` button away, so the three labels are the
 whole menu there;
-a label does not open its panel, or Escape or an outside click leaves it open, or the focus is
+a label does not open its panel — on the keyboard's arrival or on a tap — or the keyboard's
+arrival opens nothing while Tab still reaches the label (which is the script's focus-open
+missing, and it leaves the links inside a closed group unreachable by Tab), or Escape or an
+outside click leaves the panel open, or the focus is
 lost, or two groups are open at once; a group or a link cannot be reached or does not follow;
 the menu stops working with scripting off (which would mean P3 made the menu depend on the
-script, where the script adds two ways to close it and the hover-open); Privacy has moved into
+script, where the script adds two ways to close it, the keyboard's focus-open and the
+hover-open); Privacy has moved into
 the menu; **at 1280 × 900 the three labels are not
 drawn** — the wordmark and nothing else in the header's row, which is what a rule that hides
 `.site-nav-groups` (or the labels themselves) produces, at any width: since the brief of
@@ -4336,7 +4349,8 @@ failure: the dropdowns are D182's decision. The **structural** half of each of t
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the header to one row
 with the three labels in it at every width, takes a group's list out of that row's flow and
 refuses a rule that hides a group's list, and `navFailures`
-holds the menu to its contract — and the hover behaviour's own half is refused, without a
+holds the menu to its contract — and the keyboard's focus-open (step 2) and the hover
+behaviour's own half (step 6) are refused, without a
 browser, by `website/test/nav-hover.mjs` — so a failure here that the build did not catch is a
 **rendered** fact — a measurement, a focus behaviour, a gesture or a browser's own `<details>`
 — and the
@@ -4346,9 +4360,10 @@ added to one of those tests where the test can see it.
 
 **Paste back:** the header's height and the document's scroll width at 390, 375, 320 and 391,
 and whether the wordmark's text was in the row or out of it at each; the three labels' widths
-and heights at 375, and that no `Menu` control is on the page; what Enter, Escape, the outside
-click and a second label's open each did, and the header's height with a panel open; the three
-group names, their links, and where Privacy is; what held with JavaScript disabled; at
+and heights at 375, and that no `Menu` control is on the page; what Tab's arrival, Enter,
+Escape, the outside click and a second label's focus each did, and the header's height with a
+panel open; the three group names, their links, and where Privacy is; what held with
+JavaScript disabled; at
 1280 × 900 the header's height closed **and** with a group open, the group names, and the links
 that appeared; and what the pointer's arrival, its move into the
 list, its departure and its return each did, with roughly how long the submenu stayed open

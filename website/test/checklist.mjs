@@ -111,6 +111,10 @@ test('Check 70a names the refusals the website tests make', () => {
   // `navFailures`. They are read out of the tests' sources, so a renamed refusal is a check
   // pointing at nothing.
   const named = [...new Set([...section.matchAll(/`([A-Za-z][\w]*Failures)`/g)].map((m) => m[1]))]
+  assert.ok(
+    named.length > 0,
+    'Check 70a names no `…Failures` refusal at all: the case below exists to hold the refusals the check says already hold the structural half to the tests that make them, and a rewrite that stopped naming them would pass it while pointing the reader at nothing (the same vacuous loop its two sibling cases guard against)',
+  )
   const tests = readdirSync(path.join(SITE, 'test')).filter((name) => name.endsWith('.mjs'))
   const source = tests.map((name) => readFileSync(path.join(SITE, 'test', name), 'utf8')).join('\n')
   for (const name of named) {
