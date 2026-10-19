@@ -1480,14 +1480,75 @@ test('the queue module holds no clock: an unchanged input is unchanged output', 
   const first = announcement([queue], { now: T0 + HOUR });
   const second = announcement([queue], { now: T0 + HOUR });
   assert.deepEqual(first, second);
-  // Every answer and every refusal is frozen, so a caller that mutates one it
-  // was handed is a caller whose next call this module refuses rather than
-  // answers from a value it never read.
-  assert.ok(Object.isFrozen(first));
-  assert.ok(Object.isFrozen(first.due));
-  assert.ok(Object.isFrozen(enqueue(queue, { now: T0, prompt: promptMessage({ text: '' }) })));
+  assert.equal(first.count, second.count);
+});
+
+test('every object the module hands back is frozen, entry point by entry point', () => {
+  // The header's rule ("every answer and every refusal is frozen"), walked
+  // rather than sampled. A caller may hold any of these results and keep it in
+  // its own state, and a value it could rewrite is a value this module's next
+  // call could not predict -- so the claim has to be over EVERY entry point,
+  // not the handful an earlier version of this test happened to name. That
+  // version also asserted `Object.isFrozen` on `evaluateInterrupt`'s `due` and
+  // on `isExpired`'s answer, which are booleans: a primitive is frozen whatever
+  // this module does, so those two asserts could never fail. The rule is about
+  // the objects -- and walking the surface is what found the one object that
+  // was not frozen, `initialQueue`'s result, which is now frozen like the rest
+  // and pinned by its own guard in `mutation-proof.sh`.
+  const queue = enqueueOne(makeQueue()).queue;
+
+  /** Every object at or under `value`, four levels down, must be frozen. */
+  const walk = (value, where, depth) => {
+    if (value === null || typeof value !== 'object') return;
+    assert.ok(Object.isFrozen(value), `${where} is frozen`);
+    if (depth === 0) return;
+    for (const [key, inner] of Object.entries(value)) {
+      walk(inner, `${where}.${key}`, depth - 1);
+    }
+  };
+
+  const answers = [
+    ['initialQueue', () => initialQueue({ now: T0, account: 'acct-a' })],
+    ['enqueue (queued)', () => enqueue(queue, { now: T0, prompt: promptMessage({ id: 'p2' }) })],
+    ['expire', () => expire(queue, { now: T0 + PROMPT_TTL_MS + 1 })],
+    ['answer', () => answer(queue, { now: T0, answer: answerMessage() })],
+    ['pending', () => pending(queue, { now: T0 })],
+    ['announce', () => announce(queue, { now: T0 })],
+    ['pendingAcross', () => pendingAcross([queue], { now: T0 })],
+    ['announcement', () => announcement([queue], { now: T0 })],
+    ['evaluateInterrupt', () => evaluateInterrupt({ queue, now: T0, switch: SWITCH.WIDEN })],
+  ];
+  for (const [name, call] of answers) {
+    const result = call();
+    assert.equal(result.ok, true, `${name}: ${JSON.stringify(result)}`);
+    walk(result, name, 4);
+  }
+
+  const refusals = [
+    ['initialQueue', () => initialQueue({ now: T0 })],
+    ['enqueue (id-conflict)', () => enqueue(queue, { now: T0 + MINUTE, prompt: promptMessage({ id: 'p1', at: T0 + MINUTE }) })],
+    ['expire (backwards)', () => expire(queue, { now: T0 - 1 })],
+    ['answer (unknown prompt)', () => answer(queue, { now: T0, answer: answerMessage({ reply_to: 'nope' }) })],
+    ['pending (backwards)', () => pending(queue, { now: T0 - 1 })],
+    ['announce (backwards)', () => announce(queue, { now: T0 - 1 })],
+    ['pendingAcross (not a list)', () => pendingAcross(queue, { now: T0 })],
+    ['announcement (two queues, one account)', () => announcement([queue, { ...queue }], { now: T0 })],
+    ['evaluateInterrupt (bad switch)', () => evaluateInterrupt({ queue, now: T0, switch: 'shout' })],
+  ];
+  for (const [name, call] of refusals) {
+    const result = call();
+    assert.equal(result.ok, false, `${name}: ${JSON.stringify(result)}`);
+    walk(result, name, 4);
+  }
+
+  // Four entry points answer a bare value rather than a result, and a primitive
+  // is frozen whatever this module does: asserted for the shape of the answer,
+  // not for a freeze that could never fail.
+  assert.equal(typeof isExpired(T0, T0, HOUR), 'boolean');
+  assert.equal(typeof reminderStage(T0, T0), 'number');
+  assert.equal(typeof waitingSentence(2), 'string');
+  assert.equal(typeof acceptanceKind(false), 'string');
   assert.ok(Object.isFrozen(policy({})));
-  assert.ok(Object.isFrozen(isExpired(T0, T0, HOUR)));
 });
 
 test('the module is a pure function: no clock, no file, no network, no node: builtin', () => {

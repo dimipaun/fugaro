@@ -813,6 +813,18 @@ run "an absent and a null caps signal mean the same thing" \
   "  if (caps === undefined || caps === null) return { value: { reached: false, near: false } };" \
   "  if (caps === undefined) return { value: { reached: false, near: false } };"
 
+# Frozen is a rule over the whole surface, not over `initialQueue` alone. The
+# test walks every entry point's answer and every entry point's refusal, so
+# these two mutations -- one result left unwrapped, one queue's held prompts
+# left thawed -- are killed by it rather than by nothing.
+run "a listing is frozen like every other answer" \
+  "  return Object.freeze({ ok: true, queue: current, pending: Object.freeze(list) });" \
+  "  return { ok: true, queue: current, pending: Object.freeze(list) };"
+
+run "a queue's held prompts are frozen with it" \
+  "  for (const entry of queue.prompts) Object.freeze(entry);" \
+  ""
+
 git checkout -- "$F"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"
 [ "$survivors" -eq 0 ] && [ "$unapplied" -eq 0 ] && [ "$guards" -eq "$killed" ]

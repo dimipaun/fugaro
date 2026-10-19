@@ -338,8 +338,14 @@ why `expire` needs no sort), and `digest.severity` is read through its own descr
 `readKill` has no plain property access). One test is not about values at all: it scans `index.js`
 and refuses a clock, a file, a network, a process handle, a global, a `node:` builtin or an import
 that resolves outside `shared/`, because the module's header claims all of that and a claim nothing
-checks is a comment. And one test walks every exported function with a hostile `Proxy` — alive and
-revoked — asserting no entry point raises and that a refusal never repeats what was thrown.
+checks is a comment. One test walks **every entry point's answer and every entry point's refusal**, four levels down, and
+asserts each object in them is frozen — the header's rule, walked rather than sampled, and the walk
+is what found the one object that was not (`initialQueue`'s result, since frozen like the rest). It
+also pins what the rule is *not* about: the four entry points that answer a bare value
+(`isExpired`, `reminderStage`, `waitingSentence`, `acceptanceKind`) answer primitives, and a
+primitive is frozen whatever this module does. And one test walks every exported function with a
+hostile `Proxy` — alive and revoked — asserting no entry point raises and that a refusal never
+repeats what was thrown.
 
 **The verification line** this module was built against is the one P6.5's own card names:
 "an unanswered prompt expires at D118's mailbox TTL … decided as a pure function of the prompt's
@@ -348,7 +354,7 @@ P6.13 have one — so that sentence is the task's *Verification* clause, and thi
 step the plan named. It is still written first and kept as `mutation-proof.sh`'s first guard: it is
 the clause the task is verified by, and re-running it costs nothing.
 
-`mutation-proof.sh` plants 90 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 92 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It
