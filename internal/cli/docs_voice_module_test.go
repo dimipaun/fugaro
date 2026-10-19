@@ -146,10 +146,16 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 		"docs/mobile/README.md",
 		"docs/mobile/implementation-plan.md",
 		"docs/mobile/functional-spec-reconciliation.md",
-		// The console's security model, its one write, and its feed contract.
+		// The console's security model and its one write. Its feed contract is
+		// cited by the reconciliation as well, but deliberately NOT stat'ed
+		// here: docs_console_boundary_test.go's consoleBoundaryAllowList is a
+		// ONE-entry exception -- internal/cli/docs_desktop_console_test.go, the
+		// file that reads that contract as bytes -- and a sub-test refuses a
+		// second entry, so no path under the console directory may be written
+		// into this file at all, not even inside a comment. The contract's own
+		// existence is that test's business.
 		"docs/design/desktop-console.md",
 		"docs/design/desktop-console-v2.md",
-		"console/docs/json-contract.md",
 		// The plan the earlier spec's reconciliation points at, and the register.
 		"docs/plans/2026-10-16-voice.md",
 		"docs/gcp-live-checklist.md",
