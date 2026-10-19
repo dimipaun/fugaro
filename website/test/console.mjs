@@ -571,7 +571,7 @@ test('the build refuses a download URL in the data file, in the state this check
   assert.match(asKey.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
   assert.match(asKey.output, /carries the key "url"/, 'the failure does not say which key it refused')
   assert.match(asKey.output, /derived/, 'the failure does not say where a download URL comes from instead')
-  assert.equal(asKey.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+  assert.equal(asKey.page, null, 'the build wrote a page carrying a download URL the data file is not allowed to hold')
 
   const asFile = buildWith(t, (copy) => {
     const file = path.join(copy.root, 'website', 'content', 'downloads.json')
@@ -582,7 +582,7 @@ test('the build refuses a download URL in the data file, in the state this check
   assert.notEqual(asFile.status, 0, `the build accepted a URL in the file field:\n${asFile.output}`)
   assert.match(asFile.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
   assert.match(asFile.output, /\.file is "/, 'the failure does not name the field the URL was written into')
-  assert.equal(asFile.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+  assert.equal(asFile.page, null, 'the build wrote a page whose download link came from a URL rather than from the release it names')
 })
 
 test("the build refuses a checksum that is not the release's own", async (t) => {
