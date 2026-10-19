@@ -38,7 +38,7 @@
 // string a11y.mjs's own committed fixture prints) is what keeps the two copies honest
 // about being the same check.
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -58,6 +58,65 @@ function readTheme(name: string): string {
         `test reads both of them from the tree (${String(error)})`,
     )
   }
+}
+
+/** readThemeDirectory reads every stylesheet of the theme directory as a Map of file name
+ * to text, in name order. The "a light theme cannot arrive silently" case below walks this
+ * rather than the two files this task writes: the directory is the theme, and Tasks 6.3 and
+ * 6.4 add two more files to it. */
+function readThemeDirectory(): Map<string, string> {
+  const names = readdirSync(THEME)
+    .filter((name) => name.endsWith('.css'))
+    .sort()
+  const files = new Map<string, string>()
+  for (const name of names) files.set(name, readFileSync(`${THEME}/${name}`, 'utf8'))
+  return files
+}
+
+/** LIGHT_THEME_SPELLINGS is the four ways a light theme could arrive in a theme file
+ * without a task owning it. `source` is a snippet that spells it, planted by the case's
+ * positive control; `test` is what the scan looks for, matched against the lower-cased
+ * text because CSS keywords and attribute values are case-insensitive -- `LIGHT-DARK(` and
+ * `[data-theme="light"]` are the same theme as the lower-case forms, and a check that knew
+ * only the lower-case ones would let a light set in through a capital letter. Both quote
+ * styles are matched for the same reason: `[data-theme]` is written by the screens, and
+ * which quote they use is not this file's business. */
+const LIGHT_THEME_SPELLINGS: readonly { readonly spelling: string; readonly source: string; readonly test: RegExp }[] = [
+  { spelling: '`light dark`', source: 'color-scheme: light dark;', test: /light\s+dark/ },
+  {
+    spelling: '`light-dark()`',
+    source: '--ground: light-dark(#F2F6FA, #0A0E16);',
+    test: /light-dark\s*\(/,
+  },
+  {
+    spelling: '`prefers-color-scheme`',
+    source: '@media (prefers-color-scheme: light) { :root { color-scheme: light; } }',
+    test: /prefers-color-scheme/,
+  },
+  {
+    spelling: "a `light` data-theme",
+    source: "[data-theme='light'] { color-scheme: light; }",
+    test: /data-theme\s*=\s*['"]?light['"]?/,
+  },
+]
+
+/** lightThemeOffences lists every theme file that spells a light theme, one line per file
+ * and spelling, as `palette.css spells ->light dark<-: ...`. The scan is per file rather
+ * than over the concatenation so the line can name the file a reader has to open. */
+function lightThemeOffences(files: ReadonlyMap<string, string>): string[] {
+  const offences: string[] = []
+  for (const [name, css] of files) {
+    const text = stripComments(css).toLowerCase()
+    for (const { spelling, test } of LIGHT_THEME_SPELLINGS) {
+      if (test.test(text)) {
+        offences.push(
+          `${name} spells ${spelling}; the console ships one value set, dark (the owner's Q1 ` +
+            `ruling of 2026-10-19), so a light theme arrives only with a case that decides it`,
+        )
+      }
+    }
+  }
+  return offences
 }
 
 /** stripComments removes CSS comments before anything is parsed. It is load-bearing in
@@ -381,23 +440,45 @@ describe("the console's theme tokens", () => {
 
   it('ships one value set, dark, and a light one cannot arrive silently', () => {
     // The owner's ruling of 2026-10-19 (Q1, option (b)): dark only, the light set deferred.
-    // The three spellings below are the three ways a light theme could creep back in
-    // without a task owning it -- the OS-driven pair, the per-token colour function, and a
-    // block keyed on the attribute the screens already stamp -- and each is an offence
-    // here rather than a review note.
-    const stripped = [stripComments(paletteCss), stripComments(tokensCss)].join('\n')
-    expect(stripped, `${PALETTE_FILE} does not fix color-scheme to dark`).toMatch(/color-scheme:\s*dark;/)
-    // The four offences are matched against the LOWER-CASED text, because CSS keywords and
-    // attribute values are case-insensitive: `LIGHT-DARK(` and `[data-theme="light"]` are the
-    // same theme as the spellings below, and a check that only knew the lower-case ones would
-    // let a light set in through a capital letter. Both quote styles are matched for the same
-    // reason -- `[data-theme]` is written by the screens, and which quote they use is not this
-    // file's business.
-    const lowered = stripped.toLowerCase()
-    expect(lowered, 'a theme file declares the OS-driven pair `light dark`').not.toMatch(/light\s+dark/)
-    expect(lowered, 'a theme file uses light-dark(); a light set would then ship with no case deciding it').not.toContain('light-dark(')
-    expect(lowered, 'a theme file reads prefers-color-scheme; the console follows the CLI theme, not the OS').not.toContain('prefers-color-scheme')
-    expect(lowered, 'a theme file keys a block on a `light` data-theme, in either quote style').not.toMatch(/data-theme\s*=\s*['"]?light['"]?/)
+    // The four spellings in LIGHT_THEME_SPELLINGS are the four ways a light theme could
+    // creep back in without a task owning it -- the OS-driven pair, the per-token colour
+    // function, the media query, and a block keyed on the attribute the screens already
+    // stamp -- and each is an offence here rather than a review note.
+    //
+    // **The scan is over the whole theme directory, not over this task's two files**, which
+    // is what the README and the design's section 3.6 promise: Task 6.3's `base.css` and
+    // Task 6.4's `screens.css` land in the same directory and are read by this case the
+    // moment they exist, so a light set arriving in one of them fails here without anyone
+    // remembering to add the file to a list.
+    const files = readThemeDirectory()
+    expect(files.size, `${THEME} holds no stylesheet to scan`).toBeGreaterThanOrEqual(2)
+    for (const name of [PALETTE_FILE, TOKENS_FILE]) {
+      expect(files.has(name), `${THEME} does not hold ${name}`).toBe(true)
+    }
+
+    const joined = [...files.values()].map(stripComments).join('\n')
+    expect(joined, `no theme file fixes color-scheme to dark`).toMatch(/color-scheme:\s*dark;/)
+    expect(lightThemeOffences(files), 'a theme file spells a light theme').toEqual([])
+
+    // The positive control: the case above is only worth what it refuses, so each spelling
+    // is planted in a real file of the real directory and the scan has to name it. A temp
+    // file rather than a map built in memory, because the thing under test is the directory
+    // walk -- a walk that was narrowed back to two files would still pass an in-memory
+    // control while missing `base.css`.
+    const planted = `${THEME}/.light-theme-control.css`
+    try {
+      LIGHT_THEME_SPELLINGS.forEach(({ spelling, source }, index) => {
+        writeFileSync(planted, `/* control ${index} */\n:root { color-scheme: light; }\n${source}\n`)
+        const offences = lightThemeOffences(readThemeDirectory())
+        expect(
+          offences.some((line) => line.includes('.light-theme-control.css') && line.includes(spelling)),
+          `planting ${spelling} in a file of the theme directory was not reported: ${offences.join('; ')}`,
+        ).toBe(true)
+      })
+    } finally {
+      rmSync(planted, { force: true })
+    }
+    expect(lightThemeOffences(readThemeDirectory()), 'the control file was left behind').toEqual([])
   })
 
   it('refuses a pair below AA, with the line the red step recorded', () => {
