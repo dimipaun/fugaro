@@ -26,7 +26,7 @@
  *      carries a comment naming the `SECURITY.md` section (or the design document) it comes
  *      from, and the page claims nothing those sources do not say: no bullet softens a
  *      limit the document states, and the two that are conditional (budget mode, the
- *      per-installation read grant) say so.
+ *      user-claim read grant) say so.
  *   3. **The link is the repository's, and its path is read rather than typed.** The URL is
  *      built from `site.yaml`'s repository and the generated file's own `source:` header,
  *      so the page cannot point at a document this repository does not carry —
@@ -163,53 +163,64 @@ const sourceHref = new URL(`blob/main/${securityDocument.source}`, `${site.facts
     {/* The high-level description (1) and (2): one bullet per boundary, each naming the
         source it comes from in the comment beside it. Every claim here is a sentence of
         `SECURITY.md` in shorter words; the two conditional ones (budget mode off by default,
-        the phone's per-installation read grant) say what they are conditional on. */}
+        the phone's user-claim read grant) say what they are conditional on. */}
     <section data-security-model>
       <h2>The security model</h2>
       <ul>
         {/* SECURITY.md, "What limits the blast radius today": one container per run. */}
         <li>
-          <strong>What runs where.</strong> Every run gets a fresh cloud container of its own,
-          which is discarded when the run ends.
+          <strong>What runs where.</strong> Every run gets a fresh container,
+          discarded when the run ends.
         </li>
-        {/* SECURITY.md, "What limits the blast radius today": narrow git credentials. */}
+        {/* SECURITY.md, "What limits the blast radius today": the two providers' own
+            credentials, each narrow — the GitHub token expires, Bitbucket's token is
+            Bitbucket's own scoping. */}
         <li>
-          <strong>The git credential.</strong> A run's git credential is an installation token
-          for its one repository, and it expires within about an hour.
+          <strong>The git credential.</strong> On GitHub a run gets an installation token for
+          its one repository, expiring within about an hour; on Bitbucket, a repository access
+          token.
         </li>
         {/* SECURITY.md, "What limits the blast radius today": the App's own permissions. */}
         <li>
           <strong>CI workflows.</strong> A run cannot change <code>.github/workflows/</code>:
-          the GitHub App has no <code>workflows</code> permission.
+          the App has no <code>workflows</code> permission.
         </li>
         {/* SECURITY.md, "Cloud keys stay in the cloud" and "Logs are isolated". */}
         <li>
-          <strong>Secrets.</strong> No command copies a secret value back to your machine and
+          <strong>Secrets.</strong> No command copies a secret value back and
           <code>fugaro secrets</code> never prints one. Logs are redacted of every mounted
           secret; redaction is best effort.
         </li>
-        {/* SECURITY.md, "What is not on by default" and "Money": the gateway, and the backstop
-            you set yourself. The order matters here — the bullet says the mode is off first. */}
+        {/* SECURITY.md, "What is not on by default": the gateway is off until you turn it on,
+            and what it does when it is on. */}
         <li>
-          <strong>Spend.</strong> With budget mode on, every model call goes through a per-run
-          gateway that pins the models and charges it against your caps. It is off by default:
-          set a credit limit on every key you give Fugaro.
+          <strong>Spend.</strong> Budget mode is off by default. With it on, an API-key run's
+          calls go through a per-run gateway that pins the models and charges them against
+          your caps.
+        </li>
+        {/* SECURITY.md, "Money": the runs the caps do not bound, and the backstop to set
+            instead. The three cases are the document's own: OAuth has no gateway at all,
+            Vertex has no dollar cap in any mode, and an agent that reads the real key from
+            `/proc` spends outside the gateway. */}
+        <li>
+          <strong>Spend limits.</strong> An OAuth run has no gateway and Vertex has
+          no dollar cap, so the caps are not the whole limit. Set a credit limit on every key
+          you give Fugaro.
         </li>
         {/* docs/design/desktop-console.md §3.4 and D2, D14: read-only by an exact-argv
             allow-list, which is the whole fence; docs/mobile/reconciliation.md §4 (b1) and
             docs/mobile/README.md (D112's answer, the plan's P2.1): the four families the user
             claim may read, and the mailbox that is the phone's database surface. */}
         <li>
-          <strong>Console and phone.</strong> The desktop console runs a fixed list of
-          read-only <code>fugaro</code> commands and has no write path. The phone reads the
-          caps, spend and kill switches under a user-claim read grant, and writes only its own
-          mailbox.
+          <strong>Console and phone.</strong> The console runs a fixed list of read-only
+          <code>fugaro</code> commands and has no write path. The phone reads the caps, spend
+          and kill switches under a user-claim read grant, and writes only its mailbox.
         </li>
         {/* SECURITY.md, "The assumption". */}
         <li>
-          <strong>The boundary.</strong> Fugaro assumes you trust the repository and the task:
-          anyone who can push to the repository or launch a run can steer the agent, and a run
-          is not a sandbox for code you would not run yourself.
+          <strong>The boundary.</strong> Fugaro trusts the repository and the task: anyone who
+          can push to it or launch a run can steer the agent, and a run is not a sandbox for
+          code you would not run yourself.
         </li>
       </ul>
     </section>

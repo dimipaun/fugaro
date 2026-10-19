@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **930,068 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **930,153 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **928,553 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **928,638 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -252,10 +252,10 @@ added or removed without this sentence moving fails there:
 
   - **The security page was cut to three things** (the owner's brief of 2026-10-19), and it is
     the round this build's site figure comes from. The page rendered `SECURITY.md` byte for
-    byte; it now carries a seven-bullet summary of the model, the document's own *Reporting a
+    byte; it now carries an eight-bullet summary of the model, the document's own *Reporting a
     vulnerability* section and a link to the policy, which `website/test/security.mjs` holds
-    it to. `dist/security/index.html` is **17,637 bytes** where it was 65,490, so the site
-    figure falls **47,853 bytes**, 977,921 → **930,068** — the two builds' figures differ by
+    it to. `dist/security/index.html` is **17,722 bytes** where it was 65,490, so the site
+    figure falls **47,768 bytes**, 977,921 → **930,153** — the two builds' figures differ by
     that number and the page's own bytes are the whole of it. The page weight and the script
     did not move: the page renders neither the script's behaviour nor the docs hub, which is
     still the heaviest page.
@@ -285,7 +285,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,487,755 bytes. Three times 1,162,585 (every file in `dist/`, 930,068
+  - **Whole site:** 3,488,076 bytes. Three times 1,162,692 (every file in `dist/`, 930,153
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -332,7 +332,7 @@ added or removed without this sentence moving fails there:
     section and links to the rest of it, so the three carry text the repository wrote rather
     than a page of the site, and the brief allows those to stay long. The exemption is the
     owner's and this change did not touch it: the page is much shorter than the document it
-    used to render whole and still carries 301 words, over this ceiling, so it stays on the
+    used to render whole and still carries 313 words, over this ceiling, so it stays on the
     list — and `test/security.mjs` holds it to a ceiling of its own.
     The ceiling is set against the site as it was measured before the redesign
     (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,

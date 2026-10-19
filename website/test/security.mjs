@@ -13,7 +13,12 @@
 //   1. **The page carries its three regions and no other text** (the brief: "Nothing else").
 //      Everything a reader sees inside the page's own `<article>` is its `h1`, the
 //      description, the reporting section and the policy link; a paragraph of introduction,
-//      a summary of a limit, or a second copy of anything fails here.
+//      a summary of a limit, or a second copy of anything fails here. The rule is applied
+//      twice over, because the page can grow two ways: the article's text has to be exactly
+//      the four regions' text (so nothing sits between them), and each region has to be the
+//      shape the brief gives it — a heading and one list, a heading and the document's
+//      paragraphs, the link and the sentence around it (so nothing sits inside one, where the
+//      first half of the rule would count it as the region's own text and pass it).
 //   2. **The reporting section is `SECURITY.md`'s own words** (the brief: "the real
 //      reporting instructions, unchanged in substance"). It is compared with the document in
 //      the repository, paragraph by paragraph, through one normalisation — inline markup off,
@@ -66,6 +71,13 @@ const MAX_BULLETS = 8
 const MAX_BULLET_WORDS = 40
 const MAX_MODEL_WORDS = 220
 
+/**
+ * The words the pointer to the document may spend around its link: "The full policy is … in
+ * the repository." is seven, and the ceiling leaves room for the owner to reword it without
+ * this file pinning a sentence of the page's own.
+ */
+const POINTER_WORDS = 12
+
 // ---------------------------------------------------------------------------------------
 // Reading the document, the page, and the text out of either of them.
 // ---------------------------------------------------------------------------------------
@@ -114,6 +126,20 @@ function flatten(s) {
 /** The words of a piece of text, the way a reader counts them. */
 function words(s) {
   return s.trim().split(/\s+/).filter(Boolean).length
+}
+
+/** The element children of a node, in document order: what a region is made of. */
+function childElements(node) {
+  return (node.children ?? []).filter((child) => child.name !== undefined)
+}
+
+/**
+ * The words a node says itself, with every element child's text taken out: the text a region
+ * carries beside the elements the brief allows it. A `<p>` written into the description, or a
+ * second sentence written into the pointer, is what this counts.
+ */
+function ownWords(node) {
+  return words((node.children ?? []).map((child) => (child.name === undefined ? (child.text ?? '') : '')).join(' '))
 }
 
 /** One line of the document as a reader reads it, with its inline markup taken off. */
@@ -206,6 +232,32 @@ export function securityFailures(dist = DIST) {
     fail(
       `the page carries text outside its title, its description, the document's reporting section and the link to it: the page is those four things and nothing else (the owner's brief of 2026-10-19), so a sentence written anywhere else on it is a security claim the document does not make (D99)`,
     )
+  }
+
+  // 1b. And each region is the shape the brief gives it: the description is its heading and
+  //     its one list, the reporting section is its heading and the document's own paragraphs
+  //     (compared below), and the pointer is the link and the few words that point at it. The
+  //     balance above cannot see a sentence added *inside* a region — its text is counted
+  //     either way — so without this rule a paragraph slipped into the description, or a
+  //     second sentence slipped into the pointer, would read as part of the page's own
+  //     summary and pass.
+  for (const { region, what, shape, allowed, own } of [
+    { region: model, what: 'the description', shape: 'its heading and its one list', allowed: ['h2', 'ul'], own: 0 },
+    { region: reporting, what: "the document's reporting section", shape: 'its heading and the document\'s paragraphs', allowed: ['h2', 'p'], own: 0 },
+    { region: policy, what: 'the pointer to the document', shape: 'the link and the one sentence around it', allowed: ['a'], own: POINTER_WORDS },
+  ]) {
+    const foreign = childElements(region).filter((child) => !allowed.includes(child.name))
+    if (foreign.length > 0) {
+      fail(
+        `${what} carries a <${foreign[0].name}> that is not part of it: ${what} is ${shape}, and an element inside it is text the page wrote that the balance above counts as if the brief had asked for it (the owner's brief of 2026-10-19)`,
+      )
+    }
+    const spoken = ownWords(region)
+    if (spoken > own) {
+      fail(
+        `${what} says ${spoken} words of its own around ${shape}: those words are the page's own, and the page's own text is the description and the one sentence pointing at the document (${own} words at most there; the owner's brief of 2026-10-19)`,
+      )
+    }
   }
 
   // 2. The reporting section is the document's own, word for word.
@@ -340,6 +392,15 @@ test('the gate refuses each planted defect', (t) => {
   // A sentence the page adds to itself: the region balance catches it wherever it sits.
   const extra = planted(html, /(<article\b[^>]*data-security-page[^>]*>)/, '$1\n<p>A friendly note about the model.</p>')
   assert.match(verdict(t, extra).join('\n'), /carries text outside/, 'an extra paragraph on the page is not refused')
+
+  // A paragraph slipped *inside* the description, which the balance cannot see: its text is
+  // counted as the description's either way.
+  const inside = planted(html, /(<section\b[^>]*data-security-model[^>]*>)/, '$1<p>A friendly note about the model.</p>')
+  assert.match(verdict(t, inside).join('\n'), /the description carries a <p> that is not part of it/, 'a paragraph inside the description is not refused')
+
+  // A second sentence slipped into the pointer, beside the link: the same hole, one region on.
+  const pointed = planted(html, /(rel="noopener">SECURITY\.md<\/a>)/, '$1 Report it privately, never in a public issue.')
+  assert.match(verdict(t, pointed).join('\n'), /the pointer to the document says \d+ words of its own/, 'a sentence added to the pointer is not refused')
 
   // A ninth bullet.
   const ninth = planted(html, /(<section\b[^>]*data-security-model[^>]*>[\s\S]*?)<\/ul>/, '$1<li>One more boundary.</li><li>And one more.</li></ul>')
