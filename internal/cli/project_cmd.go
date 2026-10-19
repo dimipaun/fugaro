@@ -2020,6 +2020,18 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	if p.Routing != nil {
 		fmt.Fprintf(out, "  routing: %s\n", routingText(p.Routing))
 	}
+	// One line for the credentials block, when the node carries one, for the
+	// reason the clone URLs get one and one more: this Fugaro reads the block
+	// and no command of this release writes any of it (D153 — it is
+	// operator-written policy, per project), so this command is the only place
+	// an operator sees whether the cascade's fallback, its threshold or D142's
+	// two controls are set — on the settings that decide whether the project
+	// spends money and whose subscription quota it spends. Printing a block the
+	// node does not carry would read as a policy that has one, so an absent
+	// member prints as no line.
+	if p.Credentials != nil {
+		fmt.Fprintf(out, "  credentials: %s\n", credentialsText(p.Credentials))
+	}
 	// One line per clone URL, under the canonical repository name the runner
 	// looks up (plan task 3.3 step 3). Like routing: this Fugaro reads the
 	// block and writes none, so an operator has to be able to see what the

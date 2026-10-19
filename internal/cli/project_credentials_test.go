@@ -331,6 +331,57 @@ func TestPolicyAdmissionsAreWrittenBeforeTheSharedNode(t *testing.T) {
 	}
 }
 
+// TestPolicyShowPrintsTheCredentialsBlock: the block has no writer in this
+// release (D153 — the values are the operator's, per project), so `policy show`
+// is the only place an operator reads them back; a block the node carries and
+// the command does not print is a setting nobody can audit, on the one node
+// that decides whether the project spends money and whose subscription quota it
+// spends. An absent member prints as no line (the node does not write it), and
+// a node with no block prints no line at all — printing one would read as a
+// policy that has a block.
+//
+// Mutation (verified, run and restored): drop the `if p.Credentials != nil`
+// print in printPolicy — this test fails, and the third case (a node with no
+// block) is what the guard is for.
+func TestPolicyShowPrintsTheCredentialsBlock(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version,
+		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"credentials": map[string]any{
+			"fallback":              "auto",
+			"wait_threshold":        "90s",
+			"concurrency_per_token": 3,
+		},
+	})
+	out, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatalf("policy show: %v\n%s", err, out)
+	}
+	for _, want := range []string{"credentials:", "fallback auto", "wait_threshold 90s", "concurrency_per_token 3"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("policy show does not print %q:\n%s", want, out)
+		}
+	}
+	// A member the node does not write is not printed as one: the line is the
+	// node's members, not the defaults a reader would resolve.
+	if strings.Contains(out, "backoff.initial") {
+		t.Errorf("policy show invents a member the node does not carry:\n%s", out)
+	}
+	// And a node with no credentials block prints no credentials line.
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version,
+		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
+	})
+	out, _, err = execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatalf("policy show: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "credentials:") {
+		t.Errorf("policy show prints a credentials block the node does not carry:\n%s", out)
+	}
+}
+
 // rewriteProjectExtra replaces the extra YAML a fixture was built with, so a
 // test can publish twice from one project with a different config — the
 // publisher reads the file on every run, and a second publish is a second
