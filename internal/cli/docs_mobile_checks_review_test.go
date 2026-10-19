@@ -1514,15 +1514,15 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		n    int
 		pred string
 	}{
-		{11, `"TOKEN || USER"`}, {12, `"TOKEN || USER"`},
-		{22, `"TOKEN || USER"`}, {87, `"TOKEN || USER"`},
-		{13, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{23, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{107, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{154, `"RUN || USER"`},
-		{52, `"RUN"`}, {175, `"RUN"`},
-		{257, `"MAILBOX"`}, {301, `"MAILBOX"`},
-		{44, `"PAIRING"`},
+		{12, `"TOKEN || USER"`}, {13, `"TOKEN || USER"`},
+		{23, `"TOKEN || USER"`}, {97, `"TOKEN || USER"`},
+		{14, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{24, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{126, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{182, `"RUN || USER"`},
+		{53, `"RUN"`}, {212, `"RUN"`},
+		{296, `"MAILBOX"`}, {340, `"MAILBOX"`},
+		{45, `"PAIRING"`},
 	} {
 		if want.n < 1 || want.n > len(lines) {
 			t.Fatalf("rules.json.tmpl has %d lines and the paragraph cites line %d", len(lines), want.n)
@@ -1532,10 +1532,10 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		}
 	}
 	if !strings.Contains(para, "`RUN || USER`") {
-		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 154): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
+		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 182): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
 	}
 	if !strings.Contains(para, "`RUN`") {
-		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 52 and 175), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
+		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 53 and 212), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
 	}
 }
 

@@ -19,9 +19,22 @@ import (
 
 const goldenPath = "testdata/rules.golden.json"
 
-// parentChain collapses a run of newData.parent() calls to one, so two rules
-// that differ only in how deep the location they guard sits compare equal.
-var parentChain = regexp.MustCompile(`(?:\.parent\(\)){2,}`)
+// parentChain matches one run of .parent() calls. deeperBy lengthens every
+// run by exactly k, so a rule copied k locations deeper compares equal only
+// when each of its chains climbs exactly k further -- not merely "some" -- and
+// a chain that stops one parent() short still differs.
+var parentChain = regexp.MustCompile(`(?:\.parent\(\))+`)
+
+func deeperBy(rule string, k int) string {
+	extra := strings.Repeat(".parent()", k)
+	return parentChain.ReplaceAllStringFunc(rule, func(run string) string { return run + extra })
+}
+
+// shallowerByOne drops one parent() from every run: the rule a by-tier leaf
+// would carry if its chains reached one location short of the node they mean.
+func shallowerByOne(rule string) string {
+	return parentChain.ReplaceAllStringFunc(rule, func(run string) string { return strings.TrimSuffix(run, ".parent()") })
+}
 
 // TestRulesGolden pins the generated rules. Regenerate on purpose with
 // UPDATE_GOLDEN=1 go test ./internal/budget/rules and review the diff: it is
@@ -1547,13 +1560,21 @@ func TestByTierCountersAreValidatedLikeSpent(t *testing.T) {
 				t.Errorf("/%s carries no %s", p.leaf, a)
 				continue
 			}
-			// The leaf sits one location deeper than the total it repeats, so
-			// the new-data chain reaches the same node through one more
-			// parent(). Everything else -- every bound, every conjunct, every
-			// absolute path -- is identical, which is what "validated like
-			// today's spent" means.
-			if parentChain.ReplaceAllString(got, ".parent()") != parentChain.ReplaceAllString(want, ".parent()") {
-				t.Errorf("/%s %s = %q, want the rule of /%s at one more parent(): %q", p.leaf, a, got, p.spent, want)
+			// The leaf sits `depth` locations deeper than the total it
+			// repeats (byTier/$tier: two), so every new-data chain must reach
+			// the same node through exactly that many more parent() calls.
+			// Everything else -- every bound, every conjunct, every absolute
+			// path -- is identical, which is what "validated like today's
+			// spent" means.
+			depth := strings.Count(p.leaf, "/") - strings.Count(p.spent, "/")
+			wantHere := deeperBy(want, depth)
+			if got != wantHere {
+				t.Errorf("/%s %s = %q, want the rule of /%s at exactly %d more parent(): %q", p.leaf, a, got, p.spent, depth, wantHere)
+			}
+			// The comparison is depth-exact: a leaf whose chains stop one
+			// parent() short is a different rule, not an equal one.
+			if parentChain.MatchString(want) && shallowerByOne(wantHere) == wantHere {
+				t.Errorf("/%s %s: a chain one parent() short compares equal to the right depth", p.leaf, a)
 			}
 		}
 		tier := strings.TrimSuffix(p.leaf, "/spent")
