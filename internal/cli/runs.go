@@ -48,6 +48,26 @@ type lsOptions struct {
 // bucket still holds is listed.
 var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
 
+// lsDefaultWindow is runs ls's default --since as a span, and the two
+// spellings of it are built from that one number: lsDefaultSince is what the
+// flag takes (parseSince's "Nd" form) and lsDefaultDays is what the help text
+// says ("7 days"). Variables, not constants, for prLookback's reason — they
+// are derived — but nothing writes 7 or "7d" a second time. The test guard
+// (internal/cli: runid_test.go) reads lsDefaultSince, so change the window
+// here and the guard's failure message names the new one.
+var (
+	lsDefaultWindow = 7 * 24 * time.Hour
+	lsDefaultDays   = int(lsDefaultWindow / (24 * time.Hour))
+	lsDefaultSince  = fmt.Sprintf("%dd", lsDefaultDays)
+)
+
+// lsNow is runs ls's clock: --since's window (lsDefaultSince by default) is
+// measured back from it, so which runs a listing shows depends on the day it
+// runs.
+// Tests replace it to pin that window instead of minting run IDs dated
+// against the day the test happens to run (internal/cli: runid_test.go).
+var lsNow = time.Now
+
 // lsFilter selects the runs loadRows reads.
 type lsFilter struct {
 	slugs  []string
@@ -87,7 +107,7 @@ func newLsCmd() *cobra.Command {
 		Use:   "ls",
 		Short: "List runs with their status, stage, cost and PR",
 		Long: "List runs, newest first, joining the runs bucket with what the backend knows.\n\n" +
-			"By default ls shows the last 7 days of the local config's repositories (every\n" +
+			"By default ls shows the last " + strconv.Itoa(lsDefaultDays) + " days of the local config's repositories (every\n" +
 			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
 			"only when its result.json says so; an execution that ended without finalizing\n" +
 			"is an infra_error.\n\n" +
@@ -101,7 +121,7 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
-	f.StringVar(&o.since, "since", "7d", "only runs started within this long (7d, 36h, 90m; 0 for all)")
+	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
@@ -161,7 +181,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	// --watch would otherwise read them again on every redraw.
 	warnings := imageWarnings(ctx, env, f.slugs, time.Now().UTC())
 	for {
-		now := time.Now()
+		now := lsNow()
 		if since > 0 {
 			f.since = now.Add(-since)
 		}

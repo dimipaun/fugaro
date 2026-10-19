@@ -483,7 +483,7 @@ func runWatchDegraded(cmd *cobra.Command, o *watchOptions, lc *localcfg.Config) 
 	}
 	clear := !o.once && !o.json && !o.plain && isTTY(out)
 	for {
-		now := time.Now()
+		now := watchNow()
 		f.since = now.Add(-degradedSince)
 		rows, err := loadRows(ctx, env, f, now)
 		if err != nil {

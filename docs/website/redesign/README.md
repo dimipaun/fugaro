@@ -230,7 +230,7 @@ here goes stale the way the byte budgets did before D192.
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,580** (three times 49,860; `public/scripts/site.js` 39,888 bytes),
   **page weight per page 1,000,974** (three times 333,658; the docs hub 266,926 bytes) and
-  **whole site 3,661,311** (three times 1,220,437; the gates' own build of the site, 976,349
+  **whole site 3,667,206** (three times 1,222,402; the gates' own build of the site, 977,921
   bytes across 23 files, the `fugaro watch` assets below included). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
@@ -262,11 +262,17 @@ here goes stale the way the byte budgets did before D192.
   eleven pages **278 bytes lighter**, the base stylesheet every one of them inlines being that
   much shorter, and takes **181 bytes off the script**; the review round that followed put the
   script's own comments back in step with the menu, which is **290 bytes back onto it**. So the
-  script is 39,779 → 39,888 and the site figure 979,298 → **976,349** — the eleven pages' 3,058
+  script is 39,779 → 39,888 and the site figure 979,298 → 976,349 — the eleven pages' 3,058
   and the script's 109 — while the page weight moves with both, 267,095 → **266,926**: the docs
   hub inlines the stylesheet (−278) and fetches the script (+109). The console's link of item 6
-  renders nothing while its flag is off, so it moves no byte of the build the figures are
-  derived from. **The figures above are the build this branch ships.**
+  rendered nothing in that round, its flag being off. **And the round after it is the console's
+  release** (W3.1), which turned `features.console_downloads` on and moved the site figure
+  alone, 976,349 → **977,921**, by 1,572 bytes: the console page's downloads section — each
+  artifact's published name as a link, the release's own SHA-256 beside it, and the command
+  that checks a download against the release's sums file — Getting Started's console option
+  and the hero's link to the console. The page weight and the script stay where they were: the
+  heaviest page is the docs hub, which renders none of the three. **The figures above are the
+  build this branch ships.**
   The
   figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
@@ -279,17 +285,20 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **976,349 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **974,834 with the tags this repository's clone carries**,
+  to **977,921 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **976,406 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
-  the artifact gates over a copy with the console's flag flipped, and that copy is a different
-  build — **622 bytes larger at the site figure**, measured (the homepage's call to action 86,
-  the console page's downloads 146 and Getting Started's option 390), and the page weight where
-  it was —
-  rather than another copy of this one.
+  the artifact gates over a copy with the console's flag flipped off — the state the checkout
+  built until the console's release turned it on — and that copy is a different build — **1,572
+  bytes smaller at the site figure** than the gates' own, 976,349 against 977,921, measured (the
+  console page's downloads 1,100, Getting Started's option 386 and the homepage's call to
+  action 86), and the page weight where it was — rather than another copy of this one.
+  **The direction is the one the flag's own round gave it, read the other way:** turning the
+  flag on added those 1,572 bytes, so the copy that turns it back off is the smaller build
+  (2026-10-19).
 - **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
   acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
   `fugaro run` transcript the homepage carried (`Terminal.astro`, D184) is removed from it —
