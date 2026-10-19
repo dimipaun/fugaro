@@ -18,7 +18,7 @@ const (
 	inJobReviewREADME  = "docs/in-job-review/README.md"
 	inJobReviewSpec    = "docs/in-job-review/spec.md"
 	inJobReviewRecon   = "docs/in-job-review/reconciliation.md"
-	inJobReviewStatus  = "**Status: reconciliation only; no code is implemented; Q1, Q4 and Q9 answered 2026-10-19; the plan waits for the rest.**"
+	inJobReviewStatus  = "**Status: reconciliation only; no code is implemented; all seventeen questions answered 2026-10-19; no plan is written.**"
 	inJobReviewSubject = "Fugaro: In-Job Review Spec"
 	// gcpLiveChecklist is where an owner-run live check claims its number. This
 	// work claims none, so the file must name neither this folder nor the spec.
@@ -29,9 +29,9 @@ const (
 // documents, the index carries the brief's status line word for word and
 // names the other two files, and the reconciliation carries the structure the
 // brief asked for — a headline table, findings classified Wrong / Exists /
-// Gap / Rule / Open and numbered from #1 without a gap, a section "Open for
-// the owner", and an UNVERIFIED table. Its red state is this test: the folder
-// did not exist.
+// Gap / Rule / Open and numbered from #1 without a gap, a questions section,
+// and an UNVERIFIED table. Its red state is this test: the folder did not
+// exist.
 func TestDocsInJobReviewIsWritten(t *testing.T) {
 	readme := readDoc(t, inJobReviewREADME)
 	spec := readDoc(t, inJobReviewSpec)
@@ -61,7 +61,7 @@ func TestDocsInJobReviewIsWritten(t *testing.T) {
 		"| Spec concept | What exists, and under what name | New? |",
 		// Every section the brief asked for.
 		"## 2. Findings",
-		"## 4. Open for the owner",
+		"## 4. Questions for the owner (all answered 2026-10-19)",
 		"## 5. Owner's answers (2026-10-19)",
 		"## 7. UNVERIFIED",
 		// The revision this was read at, so a later run can tell when it ages.
@@ -106,7 +106,7 @@ func TestDocsInJobReviewIsWritten(t *testing.T) {
 			t.Errorf("%s classifies no finding as %s: every finding carries one of Wrong, Exists, Gap, Rule, Open", inJobReviewRecon, c)
 		}
 	}
-	// The questions: numbered from Q1 with no gap, so "Open for the owner" is a
+	// The questions: numbered from Q1 with no gap, so the questions section is a
 	// list a reader can count, and the index's own "Q1–Q17" is true.
 	question := regexp.MustCompile(`(?m)^\*\*Q([0-9]+)\.`)
 	qnums := []int{}
@@ -264,26 +264,43 @@ func TestDocsInJobReviewAllocatesNoDecisionsOrChecks(t *testing.T) {
 	}
 }
 
-// TestDocsInJobReviewRecordsTheOwnersAnswers: the owner answered Q1, Q4 and Q9
-// on 2026-10-19, and the documents have to say so where a reader looks — in the
-// index's status line, in a section of its own, and on the question itself.
-// The answered set is pinned exactly, and so is the set of questions an answer
-// constrains: a marker removed, a marker moved to another question, a fourth
-// question quietly marked answered, or a question losing the line that says how
-// an answer constrains it all fail. Q9 is the answer with the largest
-// consequence — it gates in-job Opus review on the credentials service — so its
-// substance is asserted, not just its presence.
+// TestDocsInJobReviewRecordsTheOwnersAnswers: the owner answered all seventeen
+// questions on 2026-10-19, and the documents have to say so where a reader
+// looks — in the index's status line, in a section of its own, and on each
+// question itself. The answered set is pinned exactly, and so is the option
+// each answer took: Q9 is the one question answered against its own
+// recommendation (option 2), every other takes the option it recommends. A
+// question left unmarked, a marker moved to another question, an option
+// changed, an answer left without its consequence, or a question losing the
+// line that says how an answer constrains it all fail. Q9 is the answer with
+// the largest consequence — it gates in-job Opus review on the credentials
+// service — so its substance is asserted, not just its presence.
 func TestDocsInJobReviewRecordsTheOwnersAnswers(t *testing.T) {
 	recon := readDoc(t, inJobReviewRecon)
 	blocks := questionBlocks(t, recon)
 
-	// The answered set, exactly: the three the owner answered on 2026-10-19 and
-	// no others, each marked in place with the date.
+	// The answered set, exactly: all seventeen, each marked in place with the
+	// date and with the option it took. Q9 is the one question answered against
+	// its own recommendation (option 2); every other takes option 1, which is
+	// the option each of them recommends. A question left unmarked, or marked
+	// with a different option, fails here.
 	answered := []int{}
 	constrained := []int{}
+	options := map[int]int{}
+	mark := regexp.MustCompile(`\*\*Answered 2026-10-19: option ([0-9]+)\*\* — \S`)
 	for n, b := range blocks {
 		if strings.Contains(b, "**Answered 2026-10-19") {
 			answered = append(answered, n)
+		}
+		if m := mark.FindStringSubmatch(b); m != nil {
+			opt, err := strconv.Atoi(m[1])
+			if err != nil {
+				t.Fatalf("Q%d's answer names option %q, which is not a number", n, m[1])
+			}
+			options[n] = opt
+		} else if strings.Contains(b, "**Answered 2026-10-19") {
+			t.Errorf("Q%d is marked answered without a \"**Answered 2026-10-19: option N** — <consequence>\" line: every answer carries the option it took and that option's consequence",
+				n)
 		}
 		if strings.Contains(b, "**Constrained by") {
 			constrained = append(constrained, n)
@@ -291,15 +308,44 @@ func TestDocsInJobReviewRecordsTheOwnersAnswers(t *testing.T) {
 	}
 	sort.Ints(answered)
 	sort.Ints(constrained)
-	if got, want := numbers(answered), "[1 4 9]"; got != want {
-		t.Errorf("the questions marked answered 2026-10-19 are %s, want %s: the owner answered Q1, Q4 and Q9, each marked in place in %s",
+	if got, want := numbers(answered), "[1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17]"; got != want {
+		t.Errorf("the questions marked answered 2026-10-19 are %s, want %s: the owner answered all seventeen on 2026-10-19, each marked in place in %s",
 			got, want, inJobReviewRecon)
+	}
+	for n := range blocks {
+		want, why := 1, "the option each of these questions recommends"
+		if n == 9 {
+			want, why = 2, "the owner chose option 2 for Q9, over the option it recommends"
+		}
+		if got, ok := options[n]; !ok {
+			t.Errorf("Q%d carries no \"Answered 2026-10-19: option N\" line: %s", n, why)
+		} else if got != want {
+			t.Errorf("Q%d is marked answered option %d, want option %d: %s", n, got, want, why)
+		}
 	}
 	// Every question an answer constrains says how, so a reader cannot act on the
 	// superseded reading by accident.
 	if got, want := numbers(constrained), "[2 3 5 6 7 8 10 13 14 15 16]"; got != want {
 		t.Errorf("the questions carrying a \"Constrained by\" line are %s, want %s: each question an answered one constrains must say how in %s",
 			got, want, inJobReviewRecon)
+	}
+
+	// Nothing is open any more. Before the answers landed the section heading,
+	// the index's paragraph and §8 each said the questions were open; every one
+	// of those sentences has to be gone from both documents.
+	for _, doc := range []string{inJobReviewRecon, inJobReviewREADME} {
+		src := readDoc(t, doc)
+		for _, gone := range []string{
+			"Open for the owner",
+			"Fourteen stay open",
+			"the rest are open",
+			"questions still open",
+		} {
+			if strings.Contains(src, gone) {
+				t.Errorf("%s still carries %q: all seventeen questions were answered on 2026-10-19, so no sentence may say one is open",
+					doc, gone)
+			}
+		}
 	}
 
 	// Q9's answer, as substance: the gate, what it withholds, and what the first

@@ -1,6 +1,6 @@
 # In-job review — reconciliation
 
-**Status: reconciliation only; no code is implemented; Q1, Q4 and Q9 answered 2026-10-19; the plan waits for the rest.** This document reconciles the owner's spec ([spec.md](spec.md), Oct 18, 2026) against the code, classifies every concrete claim it makes, and turns the claims that need a decision into questions **Q1–Q17** (§4). The owner answered three of them on **2026-10-19** — **Q1**, **Q4** and **Q9** — recorded in §5 and marked in place in §4; the other fourteen stay open, and each one an answer constrains says how. Nothing here is approved and nothing follows it: a recommendation is not a go, and answering a question is not approving a task.
+**Status: reconciliation only; no code is implemented; all seventeen questions answered 2026-10-19; no plan is written.** This document reconciles the owner's spec ([spec.md](spec.md), Oct 18, 2026) against the code, classifies every concrete claim it makes, and turns the claims that need a decision into questions **Q1–Q17** (§4). The owner answered **all seventeen** on **2026-10-19** — recorded in §5 and marked in place in §4 with each answer's own consequence, and each one an answer constrains says how. Nothing here is approved and nothing follows it: a recommendation is not a go, and answering a question is not approving a task.
 
 **Checked against:** `origin/main` at `82ba600d984a420c595cf06417af6d781c18535a`, on **2026-10-19**. Where a fact lives only on another branch the text says so and names the branch. `graphify` has no graph for this repository (there is no `graphify-out/`), so every claim below was located with `git grep` and then read in place; every path and Go symbol cited was re-checked to exist on `82ba600` before it was written. Line numbers are never cited in a citation; a few appear inside quoted code only where the quote is the point.
 
@@ -206,9 +206,9 @@ Against the caps: `budget.per_run_usd` (the binding one; written into the job as
 
 **Consequence for this work:** the spec's "outer loop wants Opus" is buildable **today** on Path A (an Anthropic API key) or Path C (a Claude model through an OpenRouter route, the shipped opt-in) — no new credential plumbing at all. Path B is held, and the credentials service is not on `main`. Q9.
 
-## 4. Open for the owner
+## 4. Questions for the owner (all answered 2026-10-19)
 
-Each question: the options, my recommendation first **with the reason**, the consequence of each, and which part of the spec it changes. Findings with one defensible answer are in §6 as resolutions, not questions. Three questions — **Q1**, **Q4** and **Q9** — were answered by the owner on 2026-10-19 and are marked **Answered** below with their answer and its consequence (§5); the rest are open, and any that an answer constrains carries a line saying how.
+Each question: the options, my recommendation first **with the reason**, the consequence of each, and which part of the spec it changes. Findings with one defensible answer are in §6 as resolutions, not questions. The owner answered **all seventeen** on 2026-10-19 — **Q1**, **Q4** and **Q9** first, then the other fourteen on the option each question recommends. Every one is marked **Answered** below with its answer and that answer's own consequence (§5), and each question an answer constrains carries a line saying how. Nothing is open here any more; an answer is not approval, so no plan or code follows from it on its own (§8).
 
 **Q1. Where does a review plan live, and who may write it?**
 1. **(Recommended) A task field (`review_plan` in `task.Spec`) plus a `--review-plan` flag, version-gated with its own `…Since` constant.** It is the only carrier that is genuinely per task, it follows the `recipe`/`oauth_token`/`title` precedent exactly (`internal/cli/recipes_skew.go`, `checkImageSince`), and it keeps "the orchestrator states its choice up front" true by construction.
@@ -227,6 +227,8 @@ Changes: §4 entirely. Consequence of (1): one new task field, one new skew cons
 
 Changes: §4's field list; combined with #4 it decides whether this is a format change or a task-field change.
 
+**Answered 2026-10-19: option 1** — the rule is kept and the plan stays outside the recipe. With Q1's answer the plan is task/config data in the task field, so §4's field list changes and this is a task-field change rather than a format change; `recipe.Parse`'s refusal to let a repository's `fugaro.yaml` reach around the owner's allow-list is untouched.
+
 **Constrained by Q1 and Q9 (both answered).** Q1 puts the plan in a task field, so option 1 is now the natural reading and options 2 and 3 are not the carrier the owner chose. Q9 means the models a plan may name are only those the job's existing credential already reaches — `opus` is not one of them in the first slice, so an example plan naming it is aspirational until the credentials service lands (§5).
 
 **Q3. The preset vocabulary collides with the recipe catalog's. Which wins?**
@@ -235,6 +237,8 @@ Changes: §4's field list; combined with #4 it decides whether this is a format 
 3. Make the plan preset a property of a recipe (a recipe may reference a plan). This is the cleanest product story, but it puts the plan inside the recipe and so collides with Q2.
 
 Changes: §4's "Suggested starting presets".
+
+**Answered 2026-10-19: option 1** — the review-plan presets get their own names (or a namespace), so `standard` stops meaning two things. Only §4's "Suggested starting presets" changes: the catalog, its docs, `recipe.Renamed` and every published project recipe keep the names they have.
 
 **Constrained by Q1 and Q9 (both answered).** The preset names are values in Q1's task field, so they need no recipe-catalog collision argument beyond naming — and a `security-sensitive` preset whose meaning is "an Opus reviewer" is not deliverable in the first slice (§5), so its meaning has to be "which reviews, on which reachable models" until it is.
 
@@ -254,6 +258,8 @@ Changes: §5's first bullet; and the answer decides whether `timeouts.total` and
 
 Changes: §6's routing bullets; the readiness sentences in `docs/recipes.md` §1 and `docs/design/recipes.md` §4 if option 2.
 
+**Answered 2026-10-19: option 1** — `Decide`'s readiness rule is kept and a plan chooses only who reviews and for how many rounds. "Ready" therefore goes on meaning one thing for every plan, the `on_pass`/`on_fail` refusals are not lifted, and the only change is §6's routing bullets.
+
 **Constrained by Q9 (answered).** With the reviewers on the job's existing credential, severity routing routes a finding back to a reviewer no stronger than the coder — the same reviewer the loop already has — so the routing's value is smaller in the first slice than §6 assumes, and option 1 (keep `Decide`'s rule) costs nothing to keep.
 
 **Q6. The verdict vocabulary and the `FAILED, passed review` rendering.**
@@ -262,6 +268,8 @@ Changes: §6's routing bullets; the readiness sentences in `docs/recipes.md` §1
 3. Add `approve`/`escalate` as **new** top-level fields beside the existing ones and keep `ship`/`changes` where they are. Most compatible and the most state to keep consistent — the plan must then say which one is authoritative.
 
 Changes: §6 (verdict), and it is the one part of this spec that can ship alone.
+
+**Answered 2026-10-19: option 1** — the `FAILED, passed review` rendering is fixed now, `ship`/`changes` stay, and the plan's verdict is a *record* object rather than a rename. No schema enum change, no prompt change and no `ReviewedPR` enum change follow, and this is the part of the spec that ships alone.
 
 **Constrained by Q9 (answered).** The rendering half is in the first slice, because it needs no reviewer at all (§5); the vocabulary half is not, because renaming `ship`/`changes` to `approve`/`escalate` is about a verdict the first slice cannot make any stronger. Option 1 is the shape the owner's answer leaves.
 
@@ -272,6 +280,8 @@ Changes: §6 (verdict), and it is the one part of this spec that can ship alone.
 
 Changes: §6's "structured verdict"; adds a finding-identity requirement (#34) if findings are to be listed.
 
+**Answered 2026-10-19: option 1** — one `verdict` object on `runstore.Record` (the verdict, the merged findings, the flags, the round it came from), with the schema's `version` bumped and the console contract touched only if `runs ls --json`/`watch --json` carry it. Listing the findings brings #34's finding-identity requirement with it.
+
 **Constrained by Q1 and Q9 (both answered).** The object can be built and populated in the first slice — Q1 gives it a plan to describe, and it records whatever model the job reached — but Q9 means its verdict is a peer model's, so the record must not read as an independent sign-off (Q13).
 
 **Q8. Calibration: what is logged, where, and for how long?**
@@ -280,6 +290,8 @@ Changes: §6's "structured verdict"; adds a finding-identity requirement (#34) i
 3. Keep everything in the transcript and mine it offline. No new surface at all; but the transcript is redacted text and building an outcome from it is guesswork.
 
 Changes: §10 entirely.
+
+**Answered 2026-10-19: option 1** — §10 waits past the first slice, and in the meantime the findings themselves (not just the count) are persisted in `result.json`. The outcomes log is deferred, so no new bucket object class and no retention or privacy question follows from it here; what changes is §10 entirely.
 
 **Constrained by Q9 (answered).** §10's most valuable signal is "caught later by a stronger reviewer" (#35), and the first slice has no stronger reviewer inside the job — so option 1 (persist the findings, defer the outcomes log) is the only one the owner's answer leaves affordable, and the cross-run half of the calibration waits with the credentials service.
 
@@ -290,7 +302,7 @@ Changes: §10 entirely.
 
 Changes: §3.3's "senior reviewer on Opus" and §9's cost picture; it also decides whether the spec inherits the "a run does not mix credentials" question.
 
-**Answered 2026-10-19: option 2, over the recommendation above — wait for the credentials service** (§5). The first slice therefore carries **no Opus reviewer**: the spec's §3.3 and §9 are not deliverable in it, and what it can still deliver — the plan and its carrier, the serial multi-review loop on the job's existing credential, the verdict record, the round-level time check and the `watch` rendering fix — is listed in §5. It constrains Q2, Q3, Q5, Q6, Q8, Q10, Q13 and Q14, each of which says how in place.
+**Answered 2026-10-19: option 2** — over the recommendation above: wait for the credentials service (§5). The first slice therefore carries **no Opus reviewer**: the spec's §3.3 and §9 are not deliverable in it, and what it can still deliver — the plan and its carrier, the serial multi-review loop on the job's existing credential, the verdict record, the round-level time check and the `watch` rendering fix — is listed in §5. It constrains Q2, Q3, Q5, Q6, Q8, Q10, Q13 and Q14, each of which says how in place.
 
 **Q10. The round-level time check: what is "enough for a full round"?**
 1. **(Recommended) A fixed per-round reservation in config** (e.g. `timeouts.round`), checked by the runner before starting a round against `Budget.finalizeAt()`; stop cleanly with the existing escalation signal (`status: failed`, `outcome: draft`, a reason naming the budget) when it does not fit. Deterministic, cheap, and it uses the deadline that already exists.
@@ -298,6 +310,8 @@ Changes: §3.3's "senior reviewer on Opus" and §9's cost picture; it also decid
 3. No reservation: let `StageContext` cut the stage as it does today, and only make the *reason* clearer. Nothing new; the spec's "instead of being killed mid-fix" is not delivered.
 
 Changes: §9's second bullet; (1) needs a new config key and a recipe-visible meaning.
+
+**Answered 2026-10-19: option 1** — a fixed per-round reservation in config (`timeouts.round`), checked by the runner before it starts a round against `Budget.finalizeAt()`, stopping cleanly with the existing escalation signal (`status: failed`, `outcome: draft`, a reason naming the budget) when the round does not fit. §9's second bullet changes, and the new config key needs a recipe-visible meaning.
 
 **Constrained by Q9 (answered).** "Enough for a full round" is now the cost of a cheap-model review round, not an Opus one, so the reservation in option 1 is smaller and easier to justify — and the same check has to hold when the credentials service lands and a round does get expensive (§5).
 
@@ -308,6 +322,8 @@ Changes: §9's second bullet; (1) needs a new config key and a recipe-visible me
 
 Changes: §8 entirely. Any answer other than (3) also needs the conflict detector that does not exist (#27).
 
+**Answered 2026-10-19: option 1** — the target branch is merged in, never rebased, so no history rewrite happens and the force-push question of §1.2 does not arise; already-posted checkpoints and any pull-request review stay valid, and a conflict is resolved as a merge commit whose own diff can be reviewed. §8 changes entirely, and #27's conflict detector is needed.
+
 **Q12. "Reviewers are read-only" — instruction or enforcement?**
 1. **(Recommended) Instruction, stated as such, with the existing content hygiene.** It is what the code does and what `SECURITY.md` already says ("None of this is a sandbox"); the honest framing is that the reviewer is told not to modify files and that nothing enforces it.
 2. Enforce it with a Claude Code tool allow-list (deny `Edit`/`Write`/`Bash` write paths). Not built anywhere today, and the reviewer does need `Read`/`Grep`/`Bash(git diff)`; a deny list is feasible but it is new agent-surface work with its own bypass questions.
@@ -315,12 +331,16 @@ Changes: §8 entirely. Any answer other than (3) also needs the conflict detecto
 
 Changes: §5's "Reviewers are read-only"; (3) is a much larger piece of work that this spec would then depend on.
 
+**Answered 2026-10-19: option 1** — read-only stays an instruction, stated as such, with the existing content hygiene: the reviewer is told not to modify files and nothing enforces it, which is what the code does and what `SECURITY.md` already says. §5's "Reviewers are read-only" is reworded to say so, and no tool allow-list and no separate user follow.
+
 **Q13. Does an in-job verdict replace the owner's independent review, or precede it?**
 1. **(Recommended) Precede it for ordinary work; never for security-sensitive work.** The spec's §2 goal then holds for the cheap-loop majority while [dogfooding.md](../dogfooding.md) and [credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md)'s Global Constraint 10 keep their force for the tasks that handle money or security — which is the owner's own 2026-10-18 process, unchanged. The spec should carry that sentence.
 2. Replace it whenever the plan's reviewer is a stronger, different-family model. That is a real change of posture and it contradicts the standing rule as written; it needs the rule amended in both documents, not just this spec.
 3. Never: in-job review is always additional. Safest; makes the laptop the bottleneck the spec set out to remove, so it fails §1.
 
 Changes: §2 (the goal) and §3.6's "the orchestrator only gives final sign-off".
+
+**Answered 2026-10-19: option 1** — an in-job verdict precedes the owner's review for ordinary work and never replaces it for security-sensitive work. §2's goal and §3.6's "the orchestrator only gives final sign-off" change to say that, while [dogfooding.md](../dogfooding.md) and Global Constraint 10 keep their force unchanged.
 
 **Constrained by Q9 (answered).** The owner's answer leaves the first slice with peer reviewers only, and a verdict from a model no stronger than the coder cannot replace the owner's review at all — so option 1 ("precede it for ordinary work, never for security-sensitive work") is the only one consistent with §5, and the spec's §2 wording has to say "reviewed" means "reviewed by a peer of the coder" until the credentials service lands.
 
@@ -331,6 +351,8 @@ Changes: §2 (the goal) and §3.6's "the orchestrator only gives final sign-off"
 
 Changes: §9's time/cost picture and §4's `max_rounds` example; (1) is a local-config change plus a redeploy.
 
+**Answered 2026-10-19: option 1** — a named per-run number in the spec (order $5–$10 with cache misses, order $1 with caching — #41's arithmetic), with `budget.per_run_usd` raised to match and redeployed by `fugaro init --repo`. §9's time/cost picture and §4's `max_rounds` example change; it is a local-config change plus a redeploy.
+
 **Constrained by Q9 (answered).** The $5–$10 Opus arithmetic in #41 does not bind the first slice, which runs on the credential the job already has, so no `budget.per_run_usd` change is needed for it; the ceiling decision moves to the slice that can reach Opus, and is best taken then, with U6's measurement in hand (§5).
 
 **Q15. Are the review plan's reviews billed as line items the owner can see?**
@@ -338,6 +360,8 @@ Changes: §9's time/cost picture and §4's `max_rounds` example; (1) is a local-
 2. A new per-reviewer dimension (`reviewer: 1|2`) on the record and the ledger. Needed for §5's parallelism to be legible when two reviews run at once (a shared ledger folds them together, #16).
 
 Changes: §4's `max_rounds`/§10's calibration; the answer depends on Q4 (serial vs parallel).
+
+**Answered 2026-10-19: option 1** — yes: one `stages[]` entry per review round (`StageTiming` already carries `name`, `duration_s`, `model_usd` and `model`), plus `model_by`/`route_by` as they are. §4's `max_rounds` and §10's calibration change, and no new per-reviewer dimension is added.
 
 **Constrained by Q4 (answered).** Serial reviews mean one `stages[]` entry per review round is unambiguous — two concurrent reviews sharing one ledger would fold together (#16) — so option 1 stands as written and option 2 waits for the parallelism Q4 deferred.
 
@@ -348,6 +372,8 @@ Changes: §4's `max_rounds`/§10's calibration; the answer depends on Q4 (serial
 
 Changes: §7's first bullet, and the `mode: review` constraints in `docs/recipes.md` §3 (`max_rounds` pinned to 1, no `roles`, `--pr` required).
 
+**Answered 2026-10-19: option 1** — `review-only`/`pick` (`mode: review`) are extended to take a plan rather than a second entry point being added. §7's first bullet and `docs/recipes.md` §3's `mode: review` constraints change, and because that mode pins its single `review` step to `max_rounds: 1`, the plan has to say whether it lifts that pin or means one round of each review in the plan.
+
 **Constrained by Q1 (answered).** The plan arrives as a task field plus `--review-plan`, so the review-only path has to accept the same flag and build the same field — option 1's shape, and a reason option 2 (a new command) would have to re-implement the carrier.
 
 **Q17. Should the spec's "the diff goes beyond what the plan covers" flag be a diff-path check or a model judgement?**
@@ -357,9 +383,11 @@ Changes: §7's first bullet, and the `mode: review` constraints in `docs/recipes
 
 Changes: §7's third bullet.
 
+**Answered 2026-10-19: option 1** — the flag is a deterministic diff-path check declared by the plan (a plan may declare path classes; paths under `auth/`, `payments/`, `iam/`, `secrets/` with no `adversarial-security` review produce a flag), not a model judgement, so the diff's own text cannot talk the reviewer out of it. §7's third bullet changes.
+
 ## 5. Owner's answers (2026-10-19)
 
-The owner answered three of the seventeen questions on **2026-10-19**. Each is marked **Answered** in place in §4, and every question an answer constrains carries a line saying how. The rest stay open. Answering a question is not approving a task: nothing in this section is code, Terraform, schema, recipe or live action, and the plan still needs the owner's go task by task (§8).
+The owner answered **all seventeen** questions on **2026-10-19**. Every one is marked **Answered 2026-10-19: option N** in place in §4 with that option's own consequence; the three below — **Q1**, **Q4** and **Q9** — are set out in full because their consequences reach furthest. The other fourteen (**Q2**, **Q3**, **Q5**, **Q6**, **Q7**, **Q8** and **Q10–Q17**) each took the option its own question recommends, option 1; Q9 is the one question answered against its recommendation, taking option 2. Every question an answer constrains carries a line saying how, and nothing in §4 is open any more. Answering a question is not approving a task: nothing in this section is code, Terraform, schema, recipe or live action, the plan still needs the owner's go task by task, and no D-number is allocated here (§8).
 
 **Q1 — answered: option 1.** A `review_plan` field in `task.Spec` plus a `--review-plan` flag, version-gated with its own `…Since` constant. The consequence is the one §4 already states: one new task field, one new constant in `internal/cli/recipes_skew.go` judged against the job's build record (#32), a release that ships the gate before any launcher may set the field, and `fugaro image refresh` as the named remedy. It also settles Q2's premise (the plan is task data, not a recipe field) and Q3's carrier (preset names are values in that field).
 
@@ -382,7 +410,7 @@ The owner answered three of the seventeen questions on **2026-10-19**. Each is m
 
 **R4.** The reviewer already runs with a **fresh context** (`agent.NewSessionID()` per round, `runner.ReviewPrompt` scoped to the branch diff) — §5's first bullet is a description of what is there, and the plan should not re-specify it (#15).
 
-**R5.** A new task field costs a version gate. `task.Parse` uses `DisallowUnknownFields` and every existing spec field has a `…Since` constant and a build-record check in `internal/cli/recipes_skew.go` (#32). Whatever Q1 answers, the plan must include that gate and the `fugaro image refresh` remedy.
+**R5.** A new task field costs a version gate. `task.Parse` uses `DisallowUnknownFields` and every existing spec field has a `…Since` constant and a build-record check in `internal/cli/recipes_skew.go` (#32). Q1's answer adds such a field, so the plan must include that gate and the `fugaro image refresh` remedy.
 
 **R6.** Three things the parked designs name do **not** exist in this tree, and every document that mentions them is a plan: there is no `agent.stage_auth` and no `StageAuth` symbol anywhere in `internal/` (grep: none); no credential `cascade` mode; and no `tokens/` bucket prefix and no budget-token **seal** symbol. The last is why [credentials-service/README.md](../credentials-service/README.md) says its product work waits for the seal "on `main` first" — the runner half is merged into `next-0.9`, the launcher half is still an open draft (#11).
 
@@ -403,4 +431,4 @@ The owner answered three of the seventeen questions on **2026-10-19**. Each is m
 
 ## 8. What changes now the owner has answered
 
-Nothing is implemented by this document. The owner answered **Q1, Q4 and Q9** on 2026-10-19 (§5); the other fourteen are open, and Q9 constrains nine of them. The next run writes `implementation-plan.md` in this folder from those answers — and it can be written now for the five things Q9's answer leaves deliverable without the credentials service (§5), which is the first slice the plan should carry. Only then does any code, Terraform, schema or recipe change follow — each task needing its own explicit go, as [credentials-service/README.md](../credentials-service/README.md) states for its own plan. The questions still open (Q2, Q3, Q5, Q6, Q7, Q8, Q10–Q17) are the ones the plan has to answer or route around; the answers recorded in §5 are not a substitute for them.
+Nothing is implemented by this document. The owner answered **all seventeen** questions on 2026-10-19 (§5) — Q1, Q4 and Q9 first, then the other fourteen on the option each question recommends — so §4 holds no open question and the plan has none left to route around. Q9's answer is the one with the largest reach: **Q9 constrains nine of them**, and each says how in place. The next run writes `implementation-plan.md` in this folder from those answers — and it can be written now for the five things Q9's answer leaves deliverable without the credentials service (§5), which is the first slice the plan should carry. Only then does any code, Terraform, schema or recipe change follow — each task needing its own explicit go, as [credentials-service/README.md](../credentials-service/README.md) states for its own plan. An answer is not approval: the plan itself still needs the owner's go, and no D-number is allocated by this document — D-numbers live in design and plan documents, while this work's findings are #1–#43 and its questions Q1–Q17.
