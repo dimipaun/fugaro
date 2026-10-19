@@ -633,6 +633,74 @@ func TestSharedTestsWorkflowReadmeNamesEveryProofScript(t *testing.T) {
 	}
 }
 
+// websiteReadmeCheckPath is the site's own doc-consistency test, the one the
+// README's copy-in steps tell the owner they will break if they leave the
+// website page saying something the tree no longer holds.
+const websiteReadmeCheckPath = "website/test/readme.mjs"
+
+// sharedTestsWebsiteCheckCrossReferenceRE is the shape of the README's
+// cross-reference to that test: the file name and the claim that the test it
+// names is the file's LAST one. The claim is checkable -- the last `test(`
+// line in the .mjs is a fact about that file -- and it was wrong once
+// ("last-but-one"), which pointed a reader at the .gitignore test instead.
+var sharedTestsWebsiteCheckCrossReferenceRE = regexp.MustCompile("`website/test/readme\\.mjs`'s \\*\\*last\\*\\* test")
+
+// websiteTestCallRE finds a top-level `test('title', ...)` call in
+// website/test/readme.mjs, which is how that file's tests are declared.
+var websiteTestCallRE = regexp.MustCompile(`(?m)^test\('([^']*)'`)
+
+// TestSharedTestsWorkflowReadmePointsAtTheWebsiteCheckItNames holds the
+// README's cross-reference to the site's check to the file it points at: the
+// test it names must be that file's LAST `test(...)`, quoted by the title the
+// file actually gives it. Two things can go wrong here and both are
+// documentation, not code: the last-but-one wording that was there before,
+// which sent a reader to a test about .gitignore, and a later test appended to
+// readme.mjs, which makes a sentence that was true stop being true. The rest
+// of the same paragraph is pinned too, because it describes what that check
+// scans: the check reads the WHOLE flattened page rather than the sentence,
+// which is the difference that decides whether a `docs/pending-workflows/...`
+// mention anywhere else in website/README.md is safe (it is not).
+func TestSharedTestsWorkflowReadmePointsAtTheWebsiteCheckItNames(t *testing.T) {
+	section := sharedTestsReadmeSectionText(t)
+	if !sharedTestsWebsiteCheckCrossReferenceRE.MatchString(section) {
+		t.Errorf("%s's `%s` section no longer says that `%s`'s **last** test is the one that compares the page with docs/pending-workflows/. Name the last test, not the last-but-one: a reader who opens the wrong one finds a test about .gitignore and concludes the copy-in is safe",
+			pendingWorkflowsReadmePath, sharedTestsReadmeHeading, websiteReadmeCheckPath)
+	}
+
+	check := readDoc(t, websiteReadmeCheckPath)
+	calls := websiteTestCallRE.FindAllStringSubmatch(check, -1)
+	if len(calls) == 0 {
+		t.Fatalf("%s declares no `test('...')` call: this test cannot tell whether the one the README names is the last", websiteReadmeCheckPath)
+	}
+	title := calls[len(calls)-1][1]
+	if !strings.Contains(title, "docs/pending-workflows/") {
+		t.Errorf("%s's last `test(...)` is %q, which is not the check the README's `%s` section sends the owner to: a test added after it silently makes the documented cross-reference point at the wrong one -- quote the new last test in the README, or move this one back",
+			websiteReadmeCheckPath, title, sharedTestsReadmeHeading)
+	}
+	if !strings.Contains(section, title) {
+		t.Errorf("%s's `%s` section does not quote %s's last test by its title (%q), so a rename there leaves the README pointing at a name the file no longer has",
+			pendingWorkflowsReadmePath, sharedTestsReadmeHeading, websiteReadmeCheckPath, title)
+	}
+
+	// The paragraph's claim about the scan is only true while the check is
+	// document-wide: it flattens the whole page and collects every claimed path
+	// from that flattened text. If the check is ever scoped back to one
+	// sentence, the README's warning about stray mentions has to go with it.
+	for _, want := range []struct{ needle, why string }{
+		{"const flat = text.replace(/\\s+/g, ' ')", "the check no longer flattens the whole page"},
+		{"flat.matchAll(", "the check no longer collects the claimed paths from the flattened page"},
+	} {
+		if !strings.Contains(check, want.needle) {
+			t.Errorf("%s lacks %q: %s, so the README's `%s` section -- which tells the owner that every backticked `docs/pending-workflows/<name>.yml` anywhere on the page is a claim that the file is pending -- describes a check that is no longer there",
+				websiteReadmeCheckPath, want.needle, want.why, sharedTestsReadmeHeading)
+		}
+	}
+	if strings.Contains(sharedTestsReadmeProse(t), "last-but-one") {
+		t.Errorf("%s calls %s's check the last-but-one test somewhere: it is the file's last test",
+			pendingWorkflowsReadmePath, websiteReadmeCheckPath)
+	}
+}
+
 // sharedTestsReadmeProse returns docs/pending-workflows/README.md with its
 // fenced code blocks removed: three-backtick fences and the lines between them,
 // including the ```sh blocks that hold the copy-in commands. A command quoted
