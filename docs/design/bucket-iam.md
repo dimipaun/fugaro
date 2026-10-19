@@ -69,7 +69,7 @@ People are made launchers or operators by `fugaro init --launcher/--operator`, s
 | `fugaro/recipes/<name>.yaml` | `fugaro recipes publish` (`internal/cli/recipes.go` `publishRecipe`) | every launch that names a recipe (`recipes_resolve.go`) |
 | `fugaro/project-layer.yaml` | (0.6.0) `fugaro config publish` | every launch and most in-checkout commands (layered-config §7) |
 
-**No launcher command writes outside `runs/`.** The only writers of `fugaro/` and `builds/` that a person runs are `init` (all stages), `recipes publish`, `config publish`, `image build` and `image refresh` (operator steps: they need `fugaroBuildSubmitter` or Owner rights anyway), and a non-dry-run `image check`. The `cache/` and `locks/` writers are the runner, which runs as the job account. There is only the `gcp` backend, so no local mode writes `cache/` or `locks/` with a person's credentials. Every bucket write a person makes goes through `internal/blobx` or `gocloud.dev/blob`.
+**No launcher command writes outside `runs/` and `tokens/`.** The one object a launcher writes under `tokens/` is its own launch's sealed budget token (the writers table above); the only writers of `fugaro/` and `builds/` that a person runs are `init` (all stages), `recipes publish`, `config publish`, `image build` and `image refresh` (operator steps: they need `fugaroBuildSubmitter` or Owner rights anyway), and a non-dry-run `image check`. The `cache/` and `locks/` writers are the runner, which runs as the job account. There is only the `gcp` backend, so no local mode writes `cache/` or `locks/` with a person's credentials. Every bucket write a person makes goes through `internal/blobx` or `gocloud.dev/blob`.
 
 **The "job" of the `runs/`, `cache/` and `locks/` rows is the account, not the slug, once phase 3 is deployed.** A per-repository job account's condition narrows it to its own slug, so "the job" and "that repository's job" are the same thing there. A project job account (§2.1's phase-3 row) reaches every slug under those three prefixes, so on a shared job the writer of any of those rows is the account of the (profile, provider, account) the run is in, and the objects it can write are not its repository's own. §10 states what that reaches.
 
@@ -361,7 +361,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 
 ## 11. Verified from the code, and not verified (live checklist)
 
-**Verified from the code** (§2): the grants, the object paths and their writers, the absence of launcher writes outside `runs/`, gocloud's 403 mapping, the guard's missing condition check, and the bucket's uniform access with no versioning or retention.
+**Verified from the code** (§2): the grants, the object paths and their writers, the absence of launcher writes outside `runs/` and `tokens/`, gocloud's 403 mapping, the guard's missing condition check, and the bucket's uniform access with no versioning or retention.
 
 **Verified live earlier, by analogy:** a prefix condition with `objectUser` allows writes and deletes under the prefix and denies writes, reads and listing elsewhere, for the job account (check 7).
 
