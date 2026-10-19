@@ -13,26 +13,43 @@ package cli
 // prefixes, Firestore's spendDaily) is printed as *seen*, never taken as an
 // enrollment (B3: a slug is not invertible, and under phase 3's broadened
 // runs/ grant a run of a profile can write those prefixes).
+//
+// The interim path 1.6 opened (P4, 12a item 3) is closed here: a new repository
+// needs `repos add` or a confirmed `sync`, no Terraform and no init --repo.
 
 import (
+	"bufio"
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/firestore"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// newProjectReposCmd is `fugaro project repos`: the interim enrollment path
-// between phases 1 and 4 (P4, 12a item 3). `sync` and the discovery surface
-// stay in phase 4 (task 4.1).
+// newProjectReposCmd is `fugaro project repos`: the project's allow-list as
+// data. `ls` prints it against what this installation has seen run, and
+// `add`/`rm` edit one entry each (task 1.6's write path, unchanged).
+// `project sync` — what the App is installed on — is its sibling.
 func newProjectReposCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repos",
@@ -105,6 +122,14 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
+	// The seen set is read before the node is printed: it is the half of this
+	// command that can fail on the way to the data (the bucket's marker, the
+	// Firestore mark), and a listing that printed half of itself before
+	// refusing would read as one that had finished.
+	seen, notes, err := seenRepos(ctx, lc, budgetNow())
+	if err != nil {
+		return err
+	}
 	p, found, err := projectpolicy.Read(ctx, db)
 	if err != nil {
 		return policyReadErr(err)
@@ -119,10 +144,6 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 	if err != nil {
 		return err
 	}
-	running, err := runningRepos(ctx, db, lc)
-	if err != nil {
-		return err
-	}
 	fmt.Fprintf(out, "allow_repos (%s):\n", projectpolicy.PathShared())
 	if len(p.AllowRepos) == 0 {
 		fmt.Fprintln(out, "  (empty: a published policy with an empty allow-list admits no repository at all)")
@@ -130,18 +151,221 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 	for _, r := range p.AllowRepos {
 		fmt.Fprintf(out, "  %s%s\n", r, sourceSuffix(sources[r]))
 	}
-	fmt.Fprintln(out, "repositories running now (from the run registry):")
-	if len(running) == 0 {
-		fmt.Fprintln(out, "  (none)")
+	fmt.Fprintln(out, seenHeader)
+	for _, n := range notes {
+		fmt.Fprintf(out, "  note: %s\n", n)
 	}
-	for _, r := range running {
-		mark := ""
-		if !projectpolicy.AdmitRepo(p.AllowRepos, r) {
-			mark = notAdmittedNote(r)
-		}
-		fmt.Fprintf(out, "  %s%s\n", r, mark)
+	if len(seen) == 0 {
+		fmt.Fprintln(out, "  (none: no run of any repository has been recorded here)")
+	}
+	for _, r := range seen {
+		fmt.Fprintf(out, "  %s%s\n", r.Name, seenNote(r, projectpolicy.AdmitRepo(p.AllowRepos, r.Name)))
 	}
 	return nil
+}
+
+// seenHeader introduces the seen half of `project repos ls`. It names both
+// sources because the list is their union: an operator reading an entry has to
+// know which of them still holds it — the bucket keeps a repository's runs
+// until its objects go, spendDaily only the days inside the window read below.
+const seenHeader = "repositories seen here (the runs bucket's runs/<slug>/ prefixes and Firestore's spendDaily):"
+
+// seenWindowDays is how far back spendDaily is read. The collection holds one
+// document per (day, repository) and only a finished day's document is
+// durable, so the window bounds a query rather than the history: a repository
+// whose runs are older than it is still named by the runs bucket, which is
+// the source that keeps them.
+const seenWindowDays = 30
+
+// seenRepo is one repository this installation has seen a run of, and where
+// that was read.
+type seenRepo struct {
+	// Name is the canonical name ("github/acme/app") when this machine's
+	// config names the repository, and the storage slug otherwise: a slug is
+	// a hash of the provider and the canonical name (task.Slug) and cannot be
+	// turned back into one.
+	Name string
+	// Provider is the git provider the name carries, and "" for a slug:
+	// nothing durable records which provider a slug was hashed from.
+	Provider string
+	// Sources are the durable sources that recorded a run of it, in the
+	// order they are printed.
+	Sources []string
+}
+
+// seenRepos reads the two durable sources of "which repositories have run
+// here": the runs bucket's runs/<slug>/ prefixes and Firestore's spendDaily.
+//
+// The notes are what one of them could not answer — a project with no spend
+// history, a Firebase project whose database has no mark — and never a reason
+// to print nothing: the allow-list this command exists for is printed either
+// way, and a note that says which half is missing is what keeps an empty seen
+// list from reading as "nothing has ever run here".
+//
+// It writes nothing. The seen set is derived (design §4.3: "no registration
+// record" — no principal on this path may write one) and a listing that wrote
+// one would be the record the design refused.
+func seenRepos(ctx context.Context, lc *localcfg.Config, now time.Time) ([]seenRepo, []string, error) {
+	bySlug := map[string]*seenRepo{}
+	add := func(slug, source string) {
+		if slug == "" {
+			return
+		}
+		r, ok := bySlug[slug]
+		if !ok {
+			r = &seenRepo{Name: slug, Sources: []string{source}}
+			bySlug[slug] = r
+			return
+		}
+		if !slices.Contains(r.Sources, source) {
+			r.Sources = append(r.Sources, source)
+		}
+	}
+	// The runs bucket: the durable record of the runs themselves. It is
+	// opened the way every cloud command opens it, checkCloudName included —
+	// a config pointing at another project's bucket is refused rather than
+	// listed, which is a refusal this command must not swallow to show an
+	// allow-list.
+	slugs, err := runsBucketSlugs(ctx, lc, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, s := range slugs {
+		add(s, sourceRunsBucket)
+	}
+	recs, why, err := spendRepos(ctx, lc, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	var notes []string
+	if why != "" {
+		notes = append(notes, why)
+	}
+	for _, r := range recs {
+		// spendDaily's own repo field is a display name ("acme/app") with no
+		// provider, so it is not carried into the answer: a name this command
+		// printed would be read as one `repos add` takes, and a bare
+		// owner/name resolves only through this machine's config — the one
+		// source that answers below, already.
+		add(r.Slug, sourceSpendDaily)
+	}
+	// A slug is resolved only through this machine's config (repoBySlug,
+	// which pairs a slug with the provider only the config knows): the
+	// canonical form an allow-list entry needs cannot be recovered from the
+	// slug, which is why an unresolved entry is printed as the slug it is.
+	known := repoBySlug(lc)
+	out := make([]seenRepo, 0, len(bySlug))
+	for _, s := range slices.Sorted(maps.Keys(bySlug)) {
+		r := *bySlug[s]
+		if c, ok := known[budget.Key(s)]; ok {
+			r.Name, r.Provider = c, providerOf(c)
+		}
+		out = append(out, r)
+	}
+	slices.SortFunc(out, func(a, b seenRepo) int { return strings.Compare(a.Name, b.Name) })
+	return out, notes, nil
+}
+
+// The two sources, as the listing names them.
+const (
+	sourceRunsBucket = "the runs bucket"
+	sourceSpendDaily = "spendDaily"
+)
+
+// runsBucketSlugs is the bucket's repositories: one runs/<slug>/ prefix per
+// repository that has run, which is what a run's objects are stored under.
+func runsBucketSlugs(ctx context.Context, lc *localcfg.Config, now time.Time) ([]string, error) {
+	if lc.BucketURL() == "" {
+		return nil, userErr("project %s's config names no runs bucket (bucket_url), so the repositories that have run here cannot be listed", lc.Name)
+	}
+	b, err := blobx.Open(ctx, lc.BucketURL())
+	if err != nil {
+		return nil, remote(err)
+	}
+	defer b.Close()
+	if err := checkCloudName(ctx, b, lc, os.Getenv, now); err != nil {
+		return nil, err
+	}
+	slugs, err := runstore.ListSlugs(ctx, b.Bucket)
+	if err != nil {
+		return nil, remote(fmt.Errorf("listing the runs bucket's repositories: %w", err))
+	}
+	return slugs, nil
+}
+
+// spendRepos is Firestore's spendDaily over the last seenWindowDays days: one
+// document per (day, repository), the durable source of what ran. why is
+// non-empty when the project has no spend history to read at all — the same
+// degraded answers `report` gives, so the two surfaces agree on what "no
+// history" means; a read that fails is an error.
+//
+// The database is checked to be this project's before anything is read from
+// it (the mark, exactly as reportHistory checks it): these documents name
+// repositories, and a config pointing budget.firebase_project at another
+// installation's Firebase project would otherwise print that installation's
+// repositories as this project's.
+func spendRepos(ctx context.Context, lc *localcfg.Config, now time.Time) (recs []budget.DayRecord, why string, err error) {
+	if lc.Budget == nil || lc.Budget.FirebaseProject == "" {
+		return nil, "project " + lc.Name + " has no Firebase budget backend, so its spend history was not read", nil
+	}
+	// The client `report` reads its history with: one factory, so the two
+	// cannot disagree about which credentials reach which database.
+	fs, err := newReportFirestore(ctx, lc)
+	if err != nil {
+		return nil, "", err
+	}
+	doc, err := fs.Get(ctx, budget.MetaCollection, budget.MarkDocument)
+	switch {
+	case errors.Is(err, firestore.ErrNoDatabase):
+		return nil, "the project's Firebase project has no Firestore database, so its spend history was not read", nil
+	case errors.Is(err, firestore.ErrNotFound):
+		return nil, "the project's Firestore database has no history mark (fugaro init --firebase has not set it up), so its spend history was not read", nil
+	case err != nil:
+		return nil, "", firestoreErr(lc, err)
+	}
+	if p, _ := doc.Fields["project"].(string); p != lc.Name {
+		return nil, "", userErr("the Firestore database of Firebase project %s belongs to project %q, not %q; fix budget.firebase_project in project %s's config", lc.Budget.FirebaseProject, safetext.Strip(p), lc.Name, lc.Name)
+	}
+	today := budget.Day(now)
+	docs, err := fs.Query(ctx, budget.SpendCollection, "date", budget.DayDate(today-seenWindowDays+1), budget.DayDate(today))
+	if err != nil {
+		return nil, "", firestoreErr(lc, err)
+	}
+	for _, d := range docs {
+		// A document this Fugaro cannot read is left out rather than failing
+		// the listing: it is one day of one repository — the bucket still
+		// names the repository, and an operator who has to repair a
+		// spendDaily document does not need this command to stop listing
+		// what the allow-list holds (report totals such a document as a
+		// warning because its figures are its answer; here they are not).
+		if r, err := budget.FromFields(d.Fields); err == nil {
+			recs = append(recs, r)
+		}
+	}
+	return recs, "", nil
+}
+
+// providerOf is the provider a canonical name carries.
+func providerOf(canonical string) string {
+	p, _, _ := strings.Cut(canonical, "/")
+	return p
+}
+
+// seenNote is one seen entry's parenthetical: where it was read, what the
+// allow-list does with it, and — for a name that is a slug — why it cannot be
+// passed to the remedy as it stands. The refusal and the slug's meaning are
+// project_cmd.go's own sentences (notAdmittedSentence, slugIsAHash), so the
+// seen list and `project show` cannot word the same state differently.
+func seenNote(r seenRepo, admitted bool) string {
+	parts := []string{"seen in " + strings.Join(r.Sources, " and ")}
+	switch {
+	case !admitted:
+		// The sentence carries its own slug half when the name is one.
+		parts = append(parts, notAdmittedSentence(r.Name))
+	case r.Provider == "":
+		parts = append(parts, slugIsAHash)
+	}
+	return "  (" + strings.Join(parts, "; ") + ")"
 }
 
 // runProjectReposEdit adds or removes one allow_repos entry. It edits the
@@ -242,12 +466,24 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 		allow = append(allow, canonical)
 		slices.Sort(allow)
 	}
-	allow = nonNil(allow)
-	// The node is patched, not rewritten: only allow_repos changes, and a key
-	// this Fugaro does not know inside `routing` — a newer release's, where
-	// Decode cannot list it — stays exactly as it was (patchPolicyJSON).
-	// Providers entries are handled above: an unknown key inside one is a
-	// refusal, not something to preserve.
+	return putAllowRepos(ctx, out, lc, db, etag, raw, before, nonNil(allow))
+}
+
+// putAllowRepos is the write every editor of allow_repos ends in: the node is
+// patched to hold allow, and written back under the ETag the read returned.
+//
+// The node is patched, not rewritten: only allow_repos changes, and a key this
+// Fugaro does not know inside `routing` — a newer release's, where Decode
+// cannot list it — stays exactly as it was (patchPolicyJSON). Providers entries
+// are the other half of that rule, handled before this point: an unknown key
+// inside one is a refusal, not something to preserve.
+//
+// The line is printed after the write, not before it: it is a claim about the
+// node, and a PutIfMatch that comes back refused (the policy changed while this
+// ran, or the credential may not write it) left the list exactly as it was — an
+// operator who read "allow_repos: [a] → [a b]" on a failed write would take the
+// entry for enrolled.
+func putAllowRepos(ctx context.Context, out io.Writer, lc *localcfg.Config, db *rtdb.Client, etag string, raw []byte, before, allow []string) error {
 	patched, err := patchPolicyJSON(raw, "allow_repos", allow)
 	if err != nil {
 		return userErr("editing %s: %v; nothing was written", projectpolicy.PathShared(), err)
@@ -255,11 +491,6 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	if err := checkPolicyBytes(patched); err != nil {
 		return err
 	}
-	// The line is printed after the write, not before it: it is a claim about
-	// the node, and a PutIfMatch that comes back refused (the policy changed
-	// while this ran, or the credential may not write it) left the list
-	// exactly as it was — an operator who read "allow_repos: [a] → [a b]" on a
-	// failed write would take the entry for enrolled.
 	if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(patched)); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return userErr("the policy changed while this ran; nothing was written: run it again")
@@ -466,45 +697,31 @@ func asciiLower(s string) string {
 	return string(b)
 }
 
-// ---------------------------------------------------------------- seen, sync
+// ---------------------------------------------------------------- sync
 
-// seenRepo is one repository the installation has seen a run of, and where
-// that was read.
-type seenRepo struct {
-	// Name is the canonical name ("github/acme/app") when this machine's
-	// config names the repository, and the storage slug otherwise: a slug is
-	// a hash of the provider and the canonical name (task.Slug) and cannot be
-	// turned back into one.
-	Name string
-	// Provider is the git provider the name carries, and "" for a slug:
-	// nothing durable records which provider a slug was hashed from.
-	Provider string
-	// Sources are the durable sources that recorded a run of it, in the
-	// order they are printed.
-	Sources []string
-}
+// syncAppKeyFlag is the flag that allows `project sync` to read the project's
+// GitHub App private key from Secret Manager. Same rule as
+// --check-github-app (githubapp.go): the read is behind a flag the command
+// name does not imply, so a plain `fugaro project sync` never reaches a key,
+// and the flag is refused under a coding agent's marker before anything is
+// read.
+const syncAppKeyFlag = "--github-app-key"
 
-// seenRepos reads the two durable sources of "which repositories have run
-// here": the runs bucket's runs/<slug>/ prefixes and Firestore's spendDaily.
-// The notes are what one of them could not answer.
-func seenRepos(ctx context.Context, lc *localcfg.Config, now time.Time) ([]seenRepo, []string, error) {
-	_ = ctx
-	_ = lc
-	_ = now
-	return nil, nil, nil
-}
+// syncAppIDFlag is the flag carrying the App's ID, which is a number and not a
+// secret (init's own words for it).
+const syncAppIDFlag = "--github-app-id"
 
 // projectSyncOptions are `project sync`'s flags.
 type projectSyncOptions struct {
 	cloud cloudOptions
-	// githubAppID is the App to list; "" takes the one this machine's config
-	// holds for its repositories.
+	// githubAppID is the App whose installations are listed; "" takes the one
+	// this machine's config holds for its repositories.
 	githubAppID string
-	// githubAppKey is --github-app-key: it allows reading the project's
-	// GitHub App private key from Secret Manager with the operator's own
-	// credentials. Without it nothing is read.
+	// githubAppKey is --github-app-key: it allows the key's Secret Manager
+	// read with the operator's own credentials. Without it nothing is read.
 	githubAppKey bool
-	yes          bool
+	// yes confirms the batch without the typed project name.
+	yes bool
 }
 
 func newProjectSyncCmd() *cobra.Command {
@@ -512,8 +729,22 @@ func newProjectSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync [--github-app-id <id>] [--github-app-key] [--yes]",
 		Short: "Offer the GitHub App's installed repositories that the allow-list does not admit",
-		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return runProjectSync(cmd, &o) },
+		Long: "Ask GitHub which repositories the project's GitHub App is installed on (the\n" +
+			"App API, with the App's own credentials) and offer the ones the published\n" +
+			"allow_repos does not admit, as one list confirmed once. The accepted list is\n" +
+			"written through the same ETag-guarded write `project repos add` uses; entries\n" +
+			"are only ever added, so a sync never un-enrolls a repository — including one\n" +
+			"the App is not installed on at all (another provider's, or one whose\n" +
+			"installation was removed). A repository the list already admits, a pattern\n" +
+			"included, is not offered: its runs are admitted already.\n\n" +
+			"Reading the App's private key is --github-app-key: without it, nothing is\n" +
+			"read. Under it the key is read from the project's github-app-key secret with\n" +
+			"your own credentials and held in memory only to sign the App's 9-minute JWT\n" +
+			"(never printed, never passed as an argument, never in an error), and the\n" +
+			"flag is refused in a coding agent's session. The App ID is a number, not a\n" +
+			"secret: --github-app-id, or the one this machine's config already holds.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectSync(cmd, &o) },
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID (a number, not a secret); default: the one this machine's config holds")
@@ -523,8 +754,112 @@ func newProjectSyncCmd() *cobra.Command {
 	return cmd
 }
 
+// runProjectSync lists the App's installed repositories and adds the ones the
+// allow-list does not admit, in one confirmed batch.
+//
+// It is a writer of config/policy/shared, so it takes the writer's refusals
+// before it reads anything: every one runProjectReposEdit takes (the shared
+// config, a database that is not this project's, the deployed rules marker).
+// What it never does is remove: the list it writes is the list it read plus
+// what it was told to add.
 func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
-	_ = cmd
-	_ = o
-	return nil
+	ctx := cmd.Context()
+	lc, db, err := openProjectBudget(ctx, o.cloud)
+	if err != nil {
+		return err
+	}
+	if err := requirePolicyRules(ctx, db, lc); err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	appID := o.githubAppID
+	if appID == "" {
+		appID = anyStoredAppID(lc)
+	}
+	if appID == "" {
+		return userErr("no GitHub App ID: this machine's config holds none for its repositories; pass %s (the number on the App's settings page, not a secret)", syncAppIDFlag)
+	}
+	key, err := syncAppKey(ctx, cmd, lc, o.githubAppKey)
+	if err != nil {
+		return err
+	}
+	installed, err := infra.InstalledRepos(ctx, infra.GitHubApp{AppID: appID, PrivateKey: key, BaseURL: githubAPIURL, HTTP: githubAPIClient})
+	var bad *github.BadCredentialsError
+	switch {
+	case errors.As(err, &bad):
+		return userErr("%v; the key read is the project's github-app-key secret: store the right App's .pem again with 'fugaro secrets set github-app-key --project-wide < PATH-TO-THE-PEM-FILE'", bad)
+	case err != nil:
+		return remote(fmt.Errorf("listing the repositories the GitHub App %s is installed on: %w", appID, err))
+	}
+	etag, exists, raw, err := readPolicyNode(ctx, db, lc)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return userErr("no policy is published for project %s (%s): 'fugaro project sync' adds to the published allow-list, so publish one first ('fugaro project policy publish')", lc.Name, projectpolicy.PathShared())
+	}
+	if err := refuseNewerPolicy(raw); err != nil {
+		return err
+	}
+	p, err := publishedPolicyOf(raw, true)
+	if err != nil {
+		return err
+	}
+	// The offer is what the list does not *admit*, not what it does not spell
+	// out: a repository a pattern already admits runs today, so adding its
+	// concrete name would change nothing and read as an enrollment the
+	// operator still had to make.
+	missing := slices.DeleteFunc(slices.Clone(installed), func(name string) bool {
+		return projectpolicy.AdmitRepo(p.AllowRepos, name)
+	})
+	if len(missing) == 0 {
+		fmt.Fprintf(out, "the GitHub App %s is installed on %d repositories, and the allow-list of %s already admits every one of them; nothing to add\n", appID, len(installed), projectpolicy.PathShared())
+		return nil
+	}
+	fmt.Fprintf(out, "the GitHub App %s is installed on %d repositories; %s does not admit %d of them:\n", appID, len(installed), projectpolicy.PathShared(), len(missing))
+	for _, r := range missing {
+		fmt.Fprintf(out, "  %s\n", r)
+	}
+	before := append([]string{}, nonNil(p.AllowRepos)...)
+	allow := append(nonNil(p.AllowRepos), missing...)
+	slices.Sort(allow)
+	what := fmt.Sprintf("add %d repositories to the allow-list and remove none: %s", len(missing), strings.Join(missing, ", "))
+	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, what); err != nil {
+		return err
+	}
+	return putAllowRepos(ctx, out, lc, db, etag, raw, before, nonNil(allow))
+}
+
+// syncAppKey is the App's private key, parsed, behind --github-app-key.
+//
+// It is the one secret this command needs and it is treated like
+// `--check-github-app` treats the same key: the flag is refused under a
+// coding agent's marker before the read, the read is announced in one line,
+// and only the PEM copy is cleared — the encoded payload and the parsed key
+// live until garbage collection, which is what signing needs them for.
+func syncAppKey(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, allowed bool) (*rsa.PrivateKey, error) {
+	if !allowed {
+		return nil, userErr("%s lists the repositories the GitHub App is installed on, which needs the project's github-app-key secret: rerun with %s, which reads it with your own credentials", "fugaro project sync", syncAppKeyFlag)
+	}
+	if err := refuseKeyReadInAgent(os.Getenv, syncAppKeyFlag, "the project's GitHub App private key"); err != nil {
+		return nil, err
+	}
+	secretID := gcp.ProjectSecretID(lc.Name, "github-app-key")
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s: reads the GitHub App's private key from %s with your own credentials and holds it in memory only to sign a 9-minute token; only the PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection); GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first\n", syncAppKeyFlag, secretID)
+	pem, err := readAppKey(ctx, lc, secretID)
+	switch {
+	case errors.Is(err, gcp.ErrNoVersion):
+		return nil, userErr("the project has no github-app-key secret with a version, so the App's repositories cannot be listed: store it with 'fugaro secrets set github-app-key --project-wide < PATH-TO-THE-PEM-FILE'")
+	case errors.Is(err, gcp.ErrNoAccess):
+		return nil, userErr("you may not read the project's github-app-key secret (a project owner can), and this command signs with the App's key to ask GitHub")
+	case err != nil:
+		return nil, userErr("the GitHub App's private key could not be read: %s", oneLineCLI(err.Error()))
+	}
+	key, err := github.ParsePrivateKey(pem)
+	clear(pem)
+	if err != nil {
+		// A parse error's message never holds key material.
+		return nil, userErr("the private key stored for the GitHub App is not a PEM RSA private key (%s); store the App's .pem again with 'fugaro secrets set github-app-key --project-wide < PATH-TO-THE-PEM-FILE'", oneLineCLI(err.Error()))
+	}
+	return key, nil
 }

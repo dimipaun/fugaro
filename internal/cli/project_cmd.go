@@ -1916,11 +1916,29 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 // operator has to name the repository instead of being handed an argument that
 // fails.
 func notAdmittedNote(r string) string {
-	if projectpolicy.ValidPattern(r) != nil {
-		return "  (not admitted: its next run is refused until the allow-list admits it; this is a slug, a hash of the repository's name, so name it: 'fugaro project repos add provider/owner/name')"
-	}
-	return "  (not admitted: its next run is refused until 'fugaro project repos add " + r + "')"
+	return "  (" + notAdmittedSentence(r) + ")"
 }
+
+// notAdmittedSentence is the sentence notAdmittedNote wraps, unwrapped for the
+// listings that print it inside a parenthetical of their own (`project repos
+// ls`'s seen list names the sources first). It is one sentence for one state,
+// so the two listings cannot word the same refusal differently.
+func notAdmittedSentence(r string) string {
+	if projectpolicy.ValidPattern(r) != nil {
+		return "not admitted: its next run is refused until the allow-list admits it — " + slugIsAHash + ", so " + slugNameIt
+	}
+	return "not admitted: its next run is refused until 'fugaro project repos add " + r + "'"
+}
+
+// slugIsAHash and slugNameIt are the two halves of what a name that is a slug
+// means for a reader: it is not invertible, and the remedy is to name the
+// repository. A listing that prints a slug (the run registry's keys, the
+// bucket's runs/<slug>/ prefixes) hands the operator neither a provider nor a
+// name, so it says both, in the same words, wherever it prints one.
+const (
+	slugIsAHash = "this is a slug, a hash of the repository's name, so its provider is not recorded"
+	slugNameIt  = "name it: 'fugaro project repos add provider/owner/name'"
+)
 
 func sourceSuffix(src string) string {
 	if src == "" {

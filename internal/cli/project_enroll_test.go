@@ -58,15 +58,16 @@ func slugOf(t *testing.T, provider, repo string) string {
 	return s
 }
 
-// ran makes the runs bucket hold a run of slug: runs/<slug>/<run-id>/task.json,
-// which is what makes runs/<slug>/ a prefix the listing sees.
-func (f *seenFixture) ran(t *testing.T, slug string) {
+// putRun makes the runs bucket hold a run of slug: runs/<slug>/<run-id>/task.json,
+// which is what makes runs/<slug>/ a prefix the listing sees. dir is the
+// project's runs directory (the fixture's bucket_url is file://dir/runs).
+func putRun(t *testing.T, dir, slug string) {
 	t.Helper()
-	dir := filepath.Join(f.dir, "runs", slug, "20261010-101010-abcd")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	p := filepath.Join(dir, "runs", "runs", slug, "20261010-101010-abcd", "task.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "task.json"), []byte(`{"version":1}`), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(`{"version":1}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -145,8 +146,8 @@ func TestProjectReposListsEnrolledAndSeen(t *testing.T) {
 	})
 	today := budget.DayDate(budget.Day(f.now))
 	appSlug := slugOf(t, "github", "acme/app")
-	f.ran(t, appSlug)                              // both sources
-	f.ran(t, slugOf(t, "bitbucket", "acme/other")) // the bucket alone, and not admitted
+	putRun(t, f.dir, appSlug)                              // both sources
+	putRun(t, f.dir, slugOf(t, "bitbucket", "acme/other")) // the bucket alone, and not admitted
 	f.spent(t, today, appSlug, "acme/app")
 	f.spent(t, today, "ghost-0123", "acme/ghost") // spendDaily alone, a slug no config names
 
@@ -249,6 +250,7 @@ func newSyncRig(t *testing.T, names ...string) *syncRig {
 // allow-list instead of appending the missing ones — this test fails on the
 // bitbucket entry, which a sync would have un-enrolled.
 func TestProjectSyncAddsOnlyTheMissingOnesAndConfirmsOnce(t *testing.T) {
+	typed(t)
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version":     projectpolicy.Version,
@@ -311,6 +313,7 @@ func TestProjectSyncAddsOnlyTheMissingOnesAndConfirmsOnce(t *testing.T) {
 // entries (slices.Contains) instead of AdmitRepo — this test fails, the
 // pattern's repository offered as missing.
 func TestProjectSyncOffersNothingTheListAlreadyAdmits(t *testing.T) {
+	typed(t)
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version":     projectpolicy.Version,
@@ -338,6 +341,7 @@ func TestProjectSyncOffersNothingTheListAlreadyAdmits(t *testing.T) {
 // Mutation (verified, run and restored): ignore confirmTyped's error — this
 // test fails, the node holding the batch after a refused confirmation.
 func TestProjectSyncWritesNothingWhenTheConfirmationIsRefused(t *testing.T) {
+	typed(t)
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version":     projectpolicy.Version,
@@ -471,5 +475,73 @@ func TestProjectRemoveRepoStopsAdmittingTheRepo(t *testing.T) {
 	}
 	if storedTask(t, f.cloudFixture) {
 		t.Error("the refused launch stored a task")
+	}
+}
+
+// The seen half reads the project's own bucket and its own Firestore database,
+// and both reads are checked to be this project's before anything is printed:
+// the bucket's marker (checkCloudName, the check every cloud command makes) and
+// the installation mark in Firestore. A config pointed at another project's
+// bucket or Firebase project is refused rather than answered with that
+// project's repositories, which is the one way this command could print
+// another installation's data.
+//
+// Mutation (verified, run and restored): drop checkCloudName from
+// runsBucketSlugs — the first case fails, listing another project's bucket.
+func TestProjectReposRefusesAnotherProjectsSources(t *testing.T) {
+	t.Run("bucket", func(t *testing.T) {
+		f := newSeenFixture(t)
+		f.db.Set(projectpolicy.PathShared(), map[string]any{
+			"version":     projectpolicy.Version,
+			"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+			"allow_repos": []string{"github/acme/app"},
+		})
+		writeRunsMarker(t, filepath.Join(f.dir, "runs"), "someone-else", "proj-9999")
+		out, _, err := execute(t, "project", "repos", "ls")
+		if err == nil {
+			t.Fatalf("a bucket of another project was listed:\n%s", out)
+		}
+		if !strings.Contains(err.Error(), "someone-else") {
+			t.Errorf("the refusal does not name the project the bucket belongs to: %v", err)
+		}
+	})
+	t.Run("firestore", func(t *testing.T) {
+		f := newSeenFixture(t)
+		f.db.Set(projectpolicy.PathShared(), map[string]any{
+			"version":     projectpolicy.Version,
+			"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+			"allow_repos": []string{"github/acme/app"},
+		})
+		f.fs.Set(budget.MetaCollection, budget.MarkDocument, map[string]any{"project": "someone-else", "version": int64(1)})
+		out, _, err := execute(t, "project", "repos", "ls")
+		if err == nil {
+			t.Fatalf("a Firestore database of another project was read:\n%s", out)
+		}
+		if !strings.Contains(err.Error(), "someone-else") {
+			t.Errorf("the refusal does not name the project the database belongs to: %v", err)
+		}
+	})
+}
+
+// A project with no Firebase budget backend still lists: the allow-list is the
+// policy's, and the note says which source is missing rather than leaving an
+// empty seen list to read as "nothing has run here".
+func TestProjectReposListsWithoutASpendHistory(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	putRun(t, f.dir, slugOf(t, "github", "acme/app"))
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "no Firebase budget backend") {
+		t.Errorf("the listing does not say that the spend history was not read:\n%s", out)
+	}
+	if !strings.Contains(out, "runs bucket") || !strings.Contains(out, "github/acme/app") {
+		t.Errorf("the listing dropped the bucket's answer with the missing source:\n%s", out)
 	}
 }
