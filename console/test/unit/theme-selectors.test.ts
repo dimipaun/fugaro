@@ -398,7 +398,20 @@ function drawnPairs(): ReadonlySet<string> {
  * screen's `element` is an `li.spend-point` in `point()` and an `li.spend-row`
  * in `rowLine()`, so each `const name = <emitter>` rebinds, a
  * `setAttribute('class', …)` on the name adds to its classes, and an attribute
- * write on the name is recorded against every class it then carries. */
+ * write on the name is recorded against every class it then carries.
+ *
+ * **The second shape is a loop over a container the renderer filled with
+ * elements it drew** (Task 6.5): the rail's `select` walks `rows` and the
+ * navigation's `markButtons` walks `buttons`, and both write the marks on the
+ * loop's own variable rather than on the name they were drawn under. Both loops
+ * are also written *above* the loop that fills the container -- `select` is a
+ * closure the drawing below it calls, and `markButtons` is called once the
+ * buttons exist -- so the walk has not bound the element they walk when it
+ * reaches them. The shape is therefore read from the container's own fill
+ * (`rows.push(row)`, `buttons.set(entry.id, button)`), and the element is
+ * resolved from the walk where the walk has it and from the file where the file
+ * creates that name exactly once -- which is the honest limit of a scan that
+ * cannot run the code: a name the file reuses is one only the order can read. */
 function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
   const attributes = new Map<string, Set<string>>()
   for (const dir of RENDERER) for (const file of sourceFiles(dir)) {
@@ -407,6 +420,27 @@ function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
     const constants = stringConstantsIn(text)
     const bindings = new Map<string, { tag: string; classes: string[] }>()
     const events: { readonly at: number; readonly apply: () => void }[] = []
+    // holds is which element each container was filled with, and once is the one
+    // `factory.create` binding of a name the file creates only once.
+    const holds = new Map<string, string>()
+    for (const match of text.matchAll(/(\w+)\.push\((\w+)\)/g)) holds.set(match[1] ?? '', match[2] ?? '')
+    for (const match of text.matchAll(/(\w+)\.set\([^,()]*,\s*(\w+)\)/g)) holds.set(match[1] ?? '', match[2] ?? '')
+    const created = new Map<string, { tag: string; classes: string[] }>()
+    const times = new Map<string, number>()
+    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*factory\.create\('([a-z][a-z0-9]*)'\)/g)) {
+      const name = match[1] ?? ''
+      times.set(name, (times.get(name) ?? 0) + 1)
+      created.set(name, { tag: match[2] ?? '', classes: [] })
+    }
+    for (const match of text.matchAll(/(\w+)\.setAttribute\('class',\s*(?:'([^']*)'|(\w+))\)/g)) {
+      const shape = created.get(match[1] ?? '')
+      if (shape === undefined) continue
+      for (const one of (match[2] ?? constants.get(match[3] ?? '') ?? '').split(/\s+/).filter(Boolean)) {
+        if (!shape.classes.includes(one)) shape.classes.push(one)
+      }
+    }
+    const sole = (name: string): { tag: string; classes: string[] } | undefined =>
+      times.get(name) === 1 ? created.get(name) : undefined
     // The optional wrapper is `literal(cell(element, factory, 'span',
     // 'degraded-mode'), 'polling')`, which binds the span the same way.
     for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:\w+\(\s*)?(?:make|cell|textCell|numberCell)\(/g)) {
@@ -444,6 +478,22 @@ function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
         },
       })
     }
+    // The loop over a filled container: `for (const each of rows)` and
+    // `for (const [key, button] of buttons)` both bind their variable to the
+    // element the container holds.
+    for (const match of text.matchAll(/for\s*\(\s*const\s+(?:\[[^,\]]+,\s*)?(\w+)\s*\]?\s+of\s+(\w+)\s*\)/g)) {
+      const name = match[1] ?? ''
+      const element = holds.get(match[2] ?? '')
+      if (element === undefined) continue
+      events.push({
+        at: match.index,
+        apply: () => {
+          const bound = bindings.get(element) ?? sole(element)
+          if (bound === undefined) return
+          bindings.set(name, { tag: bound.tag, classes: [...bound.classes] })
+        },
+      })
+    }
     for (const match of text.matchAll(/(\w+)\.setAttribute\('([a-z][a-z0-9-]*)'/g)) {
       const name = match[1] ?? ''
       const attribute = match[2] ?? ''
@@ -470,17 +520,16 @@ function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
 /** AHEAD_OF_THE_CODE is the attribute claims that are deliberately written
  * before the code that emits them, keyed `tag.class[attribute]`.
  *
- * There is one, and `base.css`'s header is where Task 6.3 recorded it: the
+ * **Task 6.5 emptied it.** It held one, recorded in `base.css`'s header: the
  * selected rail row's `button.console-rail-row[aria-selected='true']` is the
  * design's own rule (§4.1: "the attribute is the machine-readable mark and the
- * border is the drawn one"), §2.1 hands `role` and `aria-selected` to Task 6.5,
- * and the border is Task 6.3's -- so the rule is here before the attribute is,
- * which is the design's split and not an oversight. The case below says so
- * instead of failing on it; a **second** entry here would be a rule style
- * nothing emits, and the list is short enough to read. */
-const AHEAD_OF_THE_CODE: readonly string[] = Object.freeze([
-  "button.console-rail-row[aria-selected]",
-])
+ * border is the drawn one"), §2.1 handed `role` and `aria-selected` to Task 6.5
+ * while the border was Task 6.3's, so for one task the rule was there before the
+ * attribute was. The tablist behaviour arrived with Task 6.5 and the scan reads
+ * it (the container-loop shape in `drawnAttributes`), so the exemption is gone
+ * rather than stale: a **new** entry here would be a rule that styles nothing
+ * the code emits, and the list is short enough to read. */
+const AHEAD_OF_THE_CODE: readonly string[] = Object.freeze([])
 
 /** QualifiedAttribute is one compound selector's claim that an element carrying
  * a class carries an attribute. */
