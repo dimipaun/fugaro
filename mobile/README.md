@@ -97,10 +97,11 @@ paste.
 
 ```sh
 # --- as the owner, signed in as the Expo account that owns the EAS project ---
+IDENTITY='<the reverse-DNS identity>'   # one name for both stores (the 2026-10-19 ruling)
 # Both environments: whichever one a build profile resolves to must hold them.
 for env in production preview; do
-  eas env:create --environment "$env" --name FUGARO_IOS_BUNDLE_ID --value <reverse-dns-name> --visibility plaintext
-  eas env:create --environment "$env" --name FUGARO_ANDROID_PACKAGE --value <reverse-dns-name> --visibility plaintext
+  eas env:create --environment "$env" --name FUGARO_IOS_BUNDLE_ID --value "$IDENTITY" --visibility plaintext
+  eas env:create --environment "$env" --name FUGARO_ANDROID_PACKAGE --value "$IDENTITY" --visibility plaintext
 done
 ```
 

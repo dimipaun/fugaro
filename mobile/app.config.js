@@ -14,8 +14,8 @@
 // variables**, at build time, through this file -- Expo's dynamic config, the
 // documented `({ config }) => ({ ...config, ... })` form, which Expo calls with
 // the `expo` object it read from `app.json` and whose return value is the
-// config the build actually uses. The two variables are named here, and only
-// here:
+// config the build actually uses. The two variables are named here -- and in
+// `README.md`, where the owner reads what sets them:
 //
 //   FUGARO_IOS_BUNDLE_ID      the iOS bundle identifier   (a reverse-DNS name)
 //   FUGARO_ANDROID_PACKAGE    the Android package name    (a reverse-DNS name)
@@ -61,8 +61,9 @@ export const ID_VARIABLES = Object.freeze({
  *
  * Shared body: at least two dot-separated segments, each of lower-case letters,
  * digits, hyphens and underscores. **The Android package is stricter than the
- * iOS one**: no segment may start with a digit (Play's rule; `dev.fugaro.1app`
- * is a package the Play Console refuses), while a bundle identifier may.
+ * iOS one**: no segment may start with a digit (Play's rule: a package such as
+ * `com.example.1app` is one the Play Console refuses), while a bundle
+ * identifier may.
  */
 const SEGMENT = '[a-z0-9][a-z0-9_-]*';
 const ANDROID_SEGMENT = '[a-z][a-z0-9_-]*';
