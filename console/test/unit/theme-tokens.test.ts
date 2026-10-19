@@ -39,7 +39,9 @@
 // string a11y.mjs's own committed fixture prints) is what keeps the two copies honest
 // about being the same check.
 
-import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -61,17 +63,39 @@ function readTheme(name: string): string {
   }
 }
 
-/** readThemeDirectory reads every stylesheet of the theme directory as a Map of file name
- * to text, in name order. The "a light theme cannot arrive silently" case below walks this
- * rather than the two files this task writes: the directory is the theme, and Tasks 6.3 and
- * 6.4 add two more files to it. */
-function readThemeDirectory(): Map<string, string> {
-  const names = readdirSync(THEME)
+/** readThemeDirectory reads every stylesheet of a directory as a Map of file name to text,
+ * in name order. The "a light theme cannot arrive silently" case below walks this rather
+ * than the two files this task writes: the directory is the theme, and Tasks 6.3 and 6.4
+ * add two more files to it.
+ *
+ * **The directory is a parameter, and the positive controls hand it a temporary one.** The
+ * controls have to plant a file for the walk to find, and planting it in the real
+ * `src/renderer/theme/` would write into the tree every other test reads: `secret-hygiene`
+ * walks `src` and reads each entry, and the design's §6.2 case scans this very directory for
+ * `.css` files, so a file that exists for the length of one control is a file another
+ * worker can read half-written or fail to find. Nothing in this suite writes inside `src`. */
+function readThemeDirectory(directory: string): Map<string, string> {
+  const names = readdirSync(directory)
     .filter((name) => name.endsWith('.css'))
     .sort()
   const files = new Map<string, string>()
-  for (const name of names) files.set(name, readFileSync(`${THEME}/${name}`, 'utf8'))
+  for (const name of names) files.set(name, readFileSync(join(directory, name), 'utf8'))
   return files
+}
+
+/** withTempThemeDirectory hands `body` a temporary copy of the theme directory — the real
+ * stylesheets, in a directory of its own — and removes it afterwards whatever happens. The
+ * copy holds the real files, so a control exercises the same walk the case does: a walk that
+ * had been narrowed back to the two known names would miss a planted file and fail its own
+ * control, which is the point of running the control at all. */
+function withTempThemeDirectory<T>(body: (directory: string) => T): T {
+  const directory = mkdtempSync(join(tmpdir(), 'fugaro-theme-control-'))
+  try {
+    for (const [name, css] of readThemeDirectory(THEME)) writeFileSync(join(directory, name), css)
+    return body(directory)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 }
 
 /** LIGHT_THEME_SPELLINGS is the four ways a light theme could arrive in a theme file
@@ -113,6 +137,40 @@ function lightThemeOffences(files: ReadonlyMap<string, string>): string[] {
         offences.push(
           `${name} spells ${spelling}; the console ships one value set, dark (the owner's Q1 ` +
             `ruling of 2026-10-19), so a light theme arrives only with a case that decides it`,
+        )
+      }
+    }
+  }
+  return offences
+}
+
+/** RETRACTED_REASONS are the sentences the design's §3.2 retracted: `--accent-ink` was
+ * first justified as the site's `--accent-on-dark` renamed away from naming the wrong one
+ * of two grounds, and the owner's Q1 ruling of 2026-10-19 ships one ground, so §3.2 says
+ * the rename "stands on the name alone". `test` is what the scan looks for, matched against
+ * the lower-cased comment text. */
+const RETRACTED_REASONS: readonly { readonly spelling: string; readonly source: string; readonly test: RegExp }[] = [
+  { spelling: 'the wrong one of two grounds', source: 'under a name that does not name the wrong one of two grounds', test: /wrong one of (?:the )?two grounds/ },
+  { spelling: 'two grounds', source: 'the console has two grounds, so "on-dark" would name the wrong one of them', test: /\btwo grounds\b/ },
+]
+
+/** commentOffences lists every theme file whose **comments** carry a reason the design has
+ * retracted, as `palette.css's comments say ->two grounds<-: ...`. It is the mirror of the
+ * checks below rather than another one of them: every scan in this file strips comments
+ * first — a colour named in prose is not a colour the window paints, and a comment that
+ * spells `light-dark()` is not a light theme — so a comment is exactly where a reason that
+ * is no longer true survives unread, quoting the sentence the design took back. The reader
+ * of a shipped file is who the comment is for, and it is the reader who is told the wrong
+ * reason. */
+function commentOffences(files: ReadonlyMap<string, string>): string[] {
+  const offences: string[] = []
+  for (const [name, css] of files) {
+    const comments = css.match(/\/\*[\s\S]*?\*\//g)?.join('\n').toLowerCase() ?? ''
+    for (const { spelling, test } of RETRACTED_REASONS) {
+      if (test.test(comments)) {
+        offences.push(
+          `${name}'s comments say ${spelling}; the design's §3.2 retracted that reason — with one ` +
+            `value set shipping there is one ground, and the rename stands on the name alone`,
         )
       }
     }
@@ -280,7 +338,8 @@ const tokens = declarations(tokensCss)
  * `--ink-on-fill` of section 3.4's fill table as the fifteenth declaration. The seven the
  * website's palette-logo.css already ships are here byte for byte (`--warn`'s amber most
  * of all: it is the site's, not this design's invention); `--accent-ink` is that file's
- * `--accent-on-dark` under a name that does not name the wrong one of two grounds; and
+ * `--accent-on-dark` under a name that says what the token is for -- the accent as text
+ * (§3.2: with one ground shipping, the rename stands on the name alone); and
  * the six others -- the second surface, the strong border, and the four state colours --
  * are this console's own. */
 const VALUE_SET: Readonly<Record<string, string>> = Object.freeze({
@@ -370,9 +429,16 @@ describe("the console's theme tokens", () => {
 
   it('clears the ratio every pair of the design keeps requires', () => {
     // The count first: PAIRS is section 3.4's dark table written as a list, and a pair
-    // dropped from the list is a pair this case would stop checking. Nine tokens on three
-    // surfaces, the two boundaries on three, and the ink on six fills.
-    expect(PAIRS).toHaveLength(TEXT_ON_SURFACE.length * SURFACES.length + BOUNDARY_ON_SURFACE.length * SURFACES.length + FILLS.length)
+    // dropped from the list is a pair this case would stop checking. **The number is the
+    // literal**, not the same expression PAIRS is built from -- `TEXT_ON_SURFACE.length *
+    // SURFACES.length + ...` is true by construction, so it held whatever the three lists
+    // held, and a pair dropped from any of them passed it. 39 is section 3.4's dark table
+    // counted from the table: the nine text tokens on the three surfaces (27), the two
+    // boundaries on the three (6), and `--ink-on-fill` on the six fills (6). The table's
+    // tenth measured row is `--border-strong`, which is the second of those boundaries and
+    // not a text token, and its `--border` row is the decorative hairline the case below
+    // holds below 3:1 rather than a pair this one measures.
+    expect(PAIRS).toHaveLength(39)
     // And the failures are empty: each line names its own pair and the ratio it computed,
     // so a token edited to break one requirement fails by name rather than by number --
     // the lines are in the failure message for exactly that reason, since a bare `[]` diff
@@ -461,7 +527,7 @@ describe("the console's theme tokens", () => {
     // Task 6.4's `screens.css` land in the same directory and are read by this case the
     // moment they exist, so a light set arriving in one of them fails here without anyone
     // remembering to add the file to a list.
-    const files = readThemeDirectory()
+    const files = readThemeDirectory(THEME)
     expect(files.size, `${THEME} holds no stylesheet to scan`).toBeGreaterThanOrEqual(2)
     for (const name of [PALETTE_FILE, TOKENS_FILE]) {
       expect(files.has(name), `${THEME} does not hold ${name}`).toBe(true)
@@ -469,27 +535,47 @@ describe("the console's theme tokens", () => {
 
     const joined = [...files.values()].map(stripComments).join('\n')
     expect(joined, `no theme file fixes color-scheme to dark`).toMatch(/color-scheme:\s*dark;/)
+    // The real theme directory passes both lookings: no file spells a light theme, and no
+    // file's comments carry the reason §3.2 took back.
     expect(lightThemeOffences(files), 'a theme file spells a light theme').toEqual([])
+    expect(commentOffences(files), "a theme file's comments justify a value with a retracted reason").toEqual([])
 
-    // The positive control: the case above is only worth what it refuses, so each spelling
-    // is planted in a real file of the real directory and the scan has to name it. A temp
-    // file rather than a map built in memory, because the thing under test is the directory
-    // walk -- a walk that was narrowed back to two files would still pass an in-memory
-    // control while missing `base.css`.
-    const planted = `${THEME}/.light-theme-control.css`
-    try {
+    // The positive controls, each in a temporary copy of the directory: the cases above are
+    // only worth what they refuse, so every spelling is planted in a file of that copy and
+    // the scan has to name it. A copy rather than a map built in memory, because the thing
+    // under test is the directory walk -- a walk narrowed back to two files would still pass
+    // an in-memory control while missing `base.css` -- and a copy rather than the real
+    // directory, because a file written inside `src` for the length of a control is a file
+    // the rest of the suite (`secret-hygiene`'s walk, Task 6.2's own scan of this directory)
+    // can read half-written or fail to find.
+    withTempThemeDirectory((directory) => {
+      const planted = join(directory, '.light-theme-control.css')
       LIGHT_THEME_SPELLINGS.forEach(({ spelling, source }, index) => {
         writeFileSync(planted, `/* control ${index} */\n:root { color-scheme: light; }\n${source}\n`)
-        const offences = lightThemeOffences(readThemeDirectory())
+        const offences = lightThemeOffences(readThemeDirectory(directory))
         expect(
           offences.some((line) => line.includes('.light-theme-control.css') && line.includes(spelling)),
           `planting ${spelling} in a file of the theme directory was not reported: ${offences.join('; ')}`,
         ).toBe(true)
       })
-    } finally {
+      // And the same for the comment scan: the retracted reason planted in the comments of a
+      // file of the directory has to be reported, in the name of the file that carries it.
+      const commentControl = join(directory, '.retracted-control.css')
+      RETRACTED_REASONS.forEach(({ spelling, source }) => {
+        writeFileSync(commentControl, `/* ${source} */\n:root { color-scheme: dark; }\n`)
+        const offences = commentOffences(readThemeDirectory(directory))
+        expect(
+          offences.some((line) => line.includes('.retracted-control.css') && line.includes(spelling)),
+          `planting ${spelling} in a file's comments was not reported: ${offences.join('; ')}`,
+        ).toBe(true)
+      })
       rmSync(planted, { force: true })
-    }
-    expect(lightThemeOffences(readThemeDirectory()), 'the control file was left behind').toEqual([])
+      rmSync(commentControl, { force: true })
+      // And the copy is clean again once the controls are removed, so neither assertion
+      // above is passing on a file of the control's own leaving.
+      expect(lightThemeOffences(readThemeDirectory(directory)), 'the control file was left behind').toEqual([])
+      expect(commentOffences(readThemeDirectory(directory)), 'the control file was left behind').toEqual([])
+    })
   })
 
   it('refuses a pair below AA, with the line the red step recorded', () => {

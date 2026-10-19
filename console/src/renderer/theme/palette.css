@@ -22,8 +22,9 @@
  *
  * The hue is the website's. `--ground`, `--surface`, `--text`, `--text-muted`, `--accent`,
  * `--border` and `--warn` are reused from website/src/styles/palette-logo.css BYTE FOR
- * BYTE, and `--accent-ink` is that file's `--accent-on-dark` under a name that does not
- * name the wrong one of two grounds. The amber matters most: it is the site's, not this
+ * BYTE, and `--accent-ink` is that file's `--accent-on-dark` under a name that says what
+ * the token is for — the accent as text (design §3.2: with one ground shipping, the rename
+ * stands on the name alone). The amber matters most: it is the site's, not this
  * design's invention, because "attention" means the same thing on both sides of the
  * product. The remaining six are this console's own — the second surface, the control
  * border, and the four state colours the site has no equivalent for — and of those, only
