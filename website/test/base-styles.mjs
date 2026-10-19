@@ -366,15 +366,42 @@ function shorthandParts(value) {
 }
 
 /**
+ * The growth factor a `flex` shorthand declares, as a number, or `NaN` when the shorthand is
+ * not one this reader knows. The growth factor is the shorthand's first component when that
+ * is a number (`flex: 1`, `flex: 1 1 auto`, the row's `flex: 1 1 0`), and the shorthand's own
+ * keywords otherwise: `auto` is `1 1 auto` and grows, `none` is `0 0 auto` and does not, and
+ * `initial` is `0 1 auto`. The keywords are not a nicety — a minifier writes the card's
+ * `flex: 1 1 auto` as `flex: auto`, so a reader that only took the first component as a
+ * number would read the page as it ships as a page whose cards do not grow.
+ */
+function growthOf(value) {
+  if (value === undefined) return undefined
+  const keyword = { auto: 1, none: 0, initial: 0 }[value.trim()]
+  if (keyword !== undefined) return keyword
+  const first = Number(shorthandParts(value)[0])
+  return Number.isFinite(first) ? first : NaN
+}
+
+/**
  * The **inline** component of a shorthand — the room a `padding` takes from the sides, and
  * the gap a two-value `gap` puts between columns — which is the second component when there
  * is one and the first when the shorthand names a single value. The horizontal half is the
  * one that matters to the arithmetic below: a card's block padding is the reader's breathing
  * room and costs the name nothing, while its inline padding comes straight out of the box the
  * name has to print in.
+ *
+ * **Four values are `top right bottom left`**, so the room a side takes is the *last* one —
+ * the left edge, the one a line of the card's content starts at — and not the second, which
+ * is the right edge. Reading the second made a card whose left padding is what the name is up
+ * against (`padding: var(--space-md) 0 var(--space-md) var(--space-3xl)`) look like a card
+ * that takes no room at all at its sides, which is a name that fits the arithmetic and does
+ * not fit the page. The arithmetic below spends what this returns on **both** sides, which is
+ * an over-estimate when the two differ — and an over-estimate is the direction to be wrong in,
+ * since it refuses a row that might not fit a name rather than passing one that does not.
  */
 function inlineToken(value) {
   const parts = shorthandParts(value)
+  if (parts.length === 4) return parts[3]
   return parts.length > 1 ? parts[1] : parts[0]
 }
 
@@ -860,10 +887,13 @@ export function flowLayoutAt(css, width) {
  *     The estimate is this file's own per-character table (`textWidth`) at the size the
  *     stylesheet sets, it is an upper bound rather than a measurement, and the check asks for
  *     a margin on top of it (`NAME_MARGIN`) — see the constant;
- *   - **the four cards are one height.** The steps stretch to the row and the cards stretch to
- *     their step, and a card's content starts at its top: a row whose steps are
- *     `align-items: center` gives each card its own content's height, which is how card 4 came
- *     out about 30 px shorter than card 3;
+ *   - **the four cards are one height.** The steps stretch to the row, each card grows to fill
+ *     its step (`flex: 1 1 auto` in the column-flex step), and the card's content starts at its
+ *     top. Three declarations and three refusals: a row whose steps are `align-items: center`
+ *     gives each card its own content's height (how card 4 came out about 30 px shorter than
+ *     card 3), a card with no growth factor of its own does the same inside a step that is the
+ *     row's tallest, and a card that packs its content down itself spreads the number, the name
+ *     and the caption;
  *   - **the two-by-two's columns hold the longest word.** Between a phone and the full row the
  *     steps are `1 2 / 3 4`, so a card is half the column rather than a quarter — a different
  *     box, and the one a 768 px screen reads. It is checked at the width the two-by-two starts
@@ -1093,6 +1123,25 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
           `at ${width / 16} rem ${what} aligns its items to \`${align}\`, and a flow whose items are aligned to anything but \`stretch\` gives each card its own content's height: the four cards of a row are one height, and the row's bottom edge is ragged otherwise (changes spec 2026-10-18, item 4)`,
         )
       }
+    }
+    // And the card's own growth, which is the property that makes the four one height: a step
+    // is a column-flex box, so the axis the cards are sized along is its main axis and what
+    // fills it is the card's `flex-grow` — `.step-card { flex: 1 1 auto }` — while the two
+    // `align-items` above decide the other axis and the packing below decides where the
+    // content sits. A card that does not grow keeps its own content's height inside a step
+    // that is the row's tallest, which is the ragged bottom edge the review measured, and the
+    // loop above cannot see it: nothing about `align-items` says whether the item grew.
+    const cardFlex = declared('step-card', 'flex', width)
+    const cardGrow = declared('step-card', 'flex-grow', width)
+    const grow = cardGrow ?? growthOf(cardFlex)
+    if (grow === undefined || Number.isNaN(grow)) {
+      out.push(
+        `at ${width / 16} rem the step card's growth factor cannot be read (\`flex: ${cardFlex ?? '(nothing declared)'}\`, \`flex-grow: ${cardGrow ?? '(nothing declared)'}\`), and a growth factor this check cannot read is one it cannot hold the four cards' height to: teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 4)`,
+      )
+    } else if (grow <= 0) {
+      out.push(
+        `at ${width / 16} rem the step card does not grow (\`flex: ${cardFlex ?? '(nothing declared)'}\`, \`flex-grow: ${cardGrow ?? '(nothing declared)'}\`), and a card is a flex item of a step that is the row's tallest: without a growth factor of its own it takes its own content's height and the four cards' bottoms do not line up (changes spec 2026-10-18, item 4)`,
+      )
     }
     const packing = declared('step-card', 'align-content', width) ?? declared('step-card', 'align-items', width)
     if (packing === undefined || !['start', 'flex-start'].includes(packing)) {
@@ -1351,25 +1400,49 @@ export function homeRhythmFailures(css, html) {
   const tokens = lengthTokens(css)
 
   /**
-   * A block's own vertical padding, out of the last rule in force at `width` that declares a
-   * `padding` on any of its classes: the block shorthand's first component is the top and its
-   * third the bottom (the second when the shorthand names two values, the first when it names
-   * one). `null` when no rule declares one — a block with no padding of its own is a block that
-   * cannot pad the gap. The width is a parameter because the rules that decide it are read out
-   * of the cascade at that width: a block that pads the gap on a phone and not on a desktop is
-   * the defect on the phone, and the reading has to be taken there to see it.
+   * A block's own vertical padding, out of the declarations in force at `width` on any of its
+   * classes, read in the order a browser applies them: the block shorthand's first component
+   * is the top and its third the bottom (the second when the shorthand names two values, the
+   * first when it names one), and `padding-top`/`padding-bottom` override the shorthand for
+   * the edge they name — including a rule that pads one edge and writes no shorthand at all,
+   * which is how a block pads a gap without the word `padding` ever appearing. Reading the
+   * shorthand alone made that block look like one that pads nothing, and the doubled gap the
+   * review measured was the one a shorthand declared: the check could only see the shape it
+   * was written for. `null` when nothing declares a vertical padding — a block with no
+   * padding of its own is a block that cannot pad the gap. The width is a parameter because
+   * the rules that decide it are read out of the cascade at that width: a block that pads the
+   * gap on a phone and not on a desktop is the defect on the phone, and the reading has to be
+   * taken there to see it.
    */
   const vertical = (block, width) => {
     const classes = classesOf(block)
-    const declared = rules
-      .filter((r) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector)) && appliesAt(width)(r))
-      .map((r) => declarations(r)['padding'])
-      .filter((value) => value !== undefined)
-      .pop()
-    if (declared === undefined) return null
-    const parts = shorthandParts(declared)
-    const bottom = parts.length > 2 ? parts[2] : parts[1] ?? parts[0]
-    return { top: toPx(parts[0], tokens), bottom: toPx(bottom, tokens), declared }
+    const inForce = rules.filter(
+      (r) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector)) && appliesAt(width)(r),
+    )
+    let top
+    let bottom
+    for (const rule of inForce) {
+      for (const [property, value] of cssDeclarations(rule.decls)) {
+        if (property === 'padding') {
+          const parts = shorthandParts(value)
+          top = parts[0]
+          bottom = parts.length > 2 ? parts[2] : parts[1] ?? parts[0]
+        } else if (property === 'padding-top') {
+          top = value
+        } else if (property === 'padding-bottom') {
+          bottom = value
+        }
+      }
+    }
+    if (top === undefined || bottom === undefined) return null
+    return {
+      top: toPx(top, tokens),
+      bottom: toPx(bottom, tokens),
+      // What a failure quotes: the two values the edges were read from, so a reader of the
+      // sentence can find the rule to fix — one value when a shorthand set both, and both
+      // when the edges came from declarations of their own.
+      declared: top === bottom ? top : `top: ${top}, bottom: ${bottom}`,
+    }
   }
 
   /** The name a block is reported by: its classes, as a reader finds them in the markup. */
@@ -1448,6 +1521,19 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
       `${TODAY()}@media screen and (width<=30rem){.home-install{padding:var(--space-lg) var(--space-md) var(--space-3xl)}}`,
       [/the gap between them is 144 px/],
       [375],
+    ],
+    // **The same doubled gap written as a longhand**, which is the shape the check could not
+    // see: it read the `padding` shorthand out of the cascade and nothing else, so a rule that
+    // pads one edge — `padding-top`, which is how a block that keeps the shorthand for its
+    // sides writes its own top — left the block looking like one that cannot pad the gap at
+    // all, and the 144 px band went unmeasured. The plant appends the rule rather than editing
+    // the section's own, because a longhand in a rule of its own is exactly the case: the
+    // declaration that pads the gap and the shorthand that does not are in two rules, and the
+    // reading has to take the last one in force for each edge.
+    [
+      'an install section that pads the gap with a longhand',
+      `${TODAY()}.home-install{padding-top:var(--space-lg)}`,
+      [/the gap between them is 144 px/],
     ],
   ]
   for (const [what, css, expected, widths = RHYTHM_WIDTHS] of cases) {
@@ -2045,6 +2131,30 @@ test('every flow-layout refusal fires on the defect it names', () => {
       'a card that spreads its content down the row’s height',
       plant('align-content:start;gap:var(--space-xs)', 'align-content:space-between;gap:var(--space-xs)'),
       /packs its content with `space-between`/,
+    ],
+    // The card's own growth factor, which is the third thing that makes the four one height and
+    // the one the two `align-items` readings cannot see: the step is a *column*-flex box, so
+    // the axis the cards share the row's height along is its main axis, and a card that does not
+    // grow takes its own content's height inside a step that is the tallest of the four. `none`
+    // is the shorthand that says so, and the reader has to read it: a browser resolves it to
+    // `0 0 auto`, which no first-component-as-a-number reader sees.
+    // The anchor is the card's own run of declarations rather than `flex:auto` alone, which a
+    // browser reads as `1 1 auto`: the minified stylesheet writes the same shorthand for the
+    // command block's `<pre>`, and a fixture that replaced the first occurrence would edit that
+    // one and leave this case asserting a page it never changed.
+    [
+      'a card that does not grow to its step’s height',
+      plant('background:var(--surface);flex:auto;display:grid', 'background:var(--surface);flex:none;display:grid'),
+      /the step card does not grow/,
+    ],
+    // And the same card padded by a four-value shorthand, whose room at the sides is the *left*
+    // value: `top right bottom left` is what the shorthand means, and the right value is `0`,
+    // so a reader that took the second component would call this a card with no inline padding
+    // and pass a name that has 7 rem of it on one side.
+    [
+      'a card whose four-value padding is read from the wrong side',
+      plant('padding:var(--space-md) var(--space-2xs)', 'padding:var(--space-md) 0 var(--space-md) var(--space-3xl)'),
+      /cannot render its own step names/,
     ],
     // The two-by-two's own arithmetic: its cards are half the column, and padding wide enough
     // takes the longest word out of one.

@@ -30,10 +30,12 @@ import RunDetail from '../components/RunDetail.astro'
      heading margin (`--space-xs`, 12 px) left the drawing almost against the title — the
      review measured the gap and found the picture starting 12 px under the `h1`. The room is
      this page's rather than the diagram's, because the same component is the homepage's
-     picture too, where it sits under the hero's call to action and the review of round 2
-     asked for it to be met early: a margin on the component would move it there as well.
-     `website/test/base-styles.mjs` reads this rule and refuses a title with a heading's
-     margin under it. */
+     picture too, and there it is not the first thing under the `h1`: the homepage's order is
+     the hero, then the chat, then the flow (`index.astro`), and round 2's complaint about it
+     was that the flow sat outside the first 900 px of that page — read down to, not met,
+     which is a position the homepage's own sections answer and a margin on the shared
+     component would move as well. `website/test/base-styles.mjs` reads this rule and refuses
+     a title with a heading's margin under it. */
   .page-title {
     margin-bottom: var(--space-xl);
   }
