@@ -112,6 +112,20 @@ func TestDocsCheck81FingerprintsMatchTheGoldenRules(t *testing.T) {
 		}
 	}
 
+	// The summary also promised "at least 1 for each in any document that
+	// carries the mailbox", and that is false of the one older document this
+	// check exists to catch: a generation-2 document carries the mailbox and
+	// answers 0 for the last three patterns, which generation 3 added -- the
+	// paragraph's own next sentence says so. A threshold the older document
+	// fails would have the owner read a correct generation-2 deployment as a
+	// fingerprint the check never asked for (the review of PR #580's finding).
+	if strings.Contains(step, "at least 1 for each") {
+		t.Errorf("## Check 81 step 8: the counts are promised as \"at least 1 for each in any document that carries the mailbox\", and a generation-2 document -- which carries the mailbox and is the older document this check is written to catch -- has **0** for each of the last three patterns (`config/admin/devices`, `\"pairing\"` and `\"mac\"`, all three of them generation 3's own): the threshold makes a correct older deployment read as a fingerprint the check never asked for")
+	}
+	if !strings.Contains(step, "**0** for each of the last three") {
+		t.Errorf("## Check 81 step 8: the counts paragraph does not say a generation-2 document answers **0** for the last three patterns: the sentence after it already says the last three are generation 3's own, so a FACT line that promises them in any document with a mailbox contradicts the check's own text")
+	}
+
 	// The step prints the six counts a second time, as one list ("The six
 	// counts: **1, 12, 13, 12, 1 and 3**"), and the list is the same six
 	// numbers in the same order. Nothing held the two together, so a template
@@ -249,6 +263,182 @@ func TestDocsCheck82RulesDeployComesBeforeTheMarker(t *testing.T) {
 	}
 	if rules > marker {
 		t.Errorf("DB.Plan plans the marker write (%d) before the rules action (%d): check 82's preamble says the marker is written after the rules, and this test holds the sentence to the code -- if the order really changed, rewrite the sentence with it", marker, rules)
+	}
+}
+
+// TestDocsCheck82SkewStatesAreTheCodes: check 82 step 1 said which
+// `policy-rules-skew` line doctor prints "is a function of the marker and of
+// nothing else", enumerated "five states", and told the owner to record and
+// **stop** for any line that was "neither of the two above and not the 'newer
+// Fugaro' warning", on the ground that `DB.Plan` refuses it. `doctorRulesSkew`
+// has a sixth state, and the marker does not decide it: with a marker equal to
+// `RulesVersion` doctor reads the deployed document, compares it with the one
+// this binary generates through `infra.SameJSON`, and prints no line when they
+// match, `rulesSkewText` when they differ, and an info note when either read
+// fails. `rulesSkewText` is what a console hand-edit of `/.settings/rules.json`
+// leaves behind; `DB.Plan` does not refuse it, and its remedy is the deploy this
+// check exists to run -- an owner told to stop would abandon the check on the
+// very state it is written for. The states are read out of the source here, and
+// the section has to carry the sixth and to tell the two stop-states apart.
+func TestDocsCheck82SkewStatesAreTheCodes(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 82:")
+
+	// The five states the marker alone decides, as doctorRulesSkew decides them.
+	src := readSrc(t, "doctor.go")
+	for _, want := range []string{
+		"if err != nil || !found {",
+		"MarkerHandEdited(gen)",
+		"gen > projectpolicy.RulesVersion",
+		"rulesMarkerPrePolicyText(gen)",
+		"rulesMarkerOlderText(gen)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("internal/cli/doctor.go's doctorRulesSkew no longer carries `%s`: check 82 step 1's account of the marker-decided states is written against these branches, so read the function again before changing the check", want)
+		}
+	}
+	// The sixth: the marker at this generation, decided by the deployed document.
+	if !strings.Contains(src, "infra.SameJSON(live, want)") || !strings.Contains(src, "rulesSkewText()") {
+		t.Fatalf("internal/cli/doctor.go's doctorRulesSkew no longer compares the deployed document with the generated one (`infra.SameJSON(live, want)`) and prints `rulesSkewText()` when they differ: that pair is check 82 step 1's sixth state, and the check's account of it is written against them")
+	}
+
+	for _, want := range []string{"sixth state", "rulesSkewText", "step 1's marker tells them apart", "**confirm step 3**"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("## Check 82: does not carry %q: a marker at this release's generation is the one state the marker does not decide (doctorRulesSkew compares the deployed document with the generated one and prints rulesSkewText for a difference), and that state's remedy is step 3's deploy -- the follow-up has to send the owner to the deploy, not to a stop, for the line that names it", want)
+		}
+	}
+	if strings.Contains(section, "is a function of the marker and of nothing else") {
+		t.Errorf("## Check 82: step 1 still says which `policy-rules-skew` line doctor prints \"is a function of the marker and of nothing else\": with a marker of 3 the line is decided by the deployed document -- no line when it is `infra.SameJSON`-equal to what this binary generates, `rulesSkewText` when it is not -- so the marker alone does not decide it")
+	}
+}
+
+// TestDocsMarkerOrderIsNotAFailClosedClaim: checks 82 and docs/gcp-setup.md's
+// rules-deploy bullet both said a rules deploy that fails "leaves no marker and a
+// runner reading it fails closed", and check 82 step 7 said that while a
+// hand-written marker above this binary's generation stands "every runner that
+// reads the marker fails closed". Neither is what the code does. An absent marker
+// is generation 0, the legacy path: `projectpolicy`'s `rulesGeneration` answers
+// "not found" (internal/projectpolicy/read.go), the runner keeps the ceiling its
+// job environment was deployed with, and the launcher's allow-list and
+// release-skew gates return no refusal for it (internal/cli/run_allowlist.go). A
+// marker *above* `RulesVersion` reads as deployed, so the policy published under
+// it is read and enforced -- internal/cli/doctor.go's own words. What stops a run
+// is a policy node that exists and cannot be read or decoded:
+// internal/runner/projectpolicy.go's `unreadablePolicy`, for a denied read, a node
+// that is not this Fugaro's policy, or a hand-edited marker. Both sentences are
+// read here, and the code facts they are written against with them.
+func TestDocsMarkerOrderIsNotAFailClosedClaim(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 82:")
+
+	// The code first: the legacy path for an absent marker, the marker-above
+	// reading, and the refusal that is fail-closed.
+	for _, c := range []struct{ file, want, why string }{
+		{"../projectpolicy/read.go", "is generation 0: the pre-policy rules",
+			"projectpolicy's rulesGeneration reads an absent marker as the pre-policy rules, under which no policy node is read and nothing is refused"},
+		{"doctor.go", "a marker at or above this Fugaro's generation reads as deployed",
+			"doctor's own words for the state check 82 step 7 called fail-closed: a marker above this generation reads the policy under it"},
+		{"../runner/projectpolicy.go", "func (r *run) unreadablePolicy(err error) error",
+			"the runner's fail-closed path is a policy node that exists and cannot be read or decoded, not a marker that is not there"},
+	} {
+		if !strings.Contains(readSrc(t, c.file), c.want) {
+			t.Fatalf("%s no longer carries %q: %s", c.file, c.want, c.why)
+		}
+	}
+
+	for _, c := range []struct{ text, where string }{
+		{section, "## Check 82:"},
+		{gcpSetupRulesBullet(t), "docs/gcp-setup.md's rules-deploy bullet"},
+	} {
+		if strings.Contains(c.text, "fails closed") || strings.Contains(c.text, "fail closed") {
+			t.Errorf("%s claims a runner fails closed on a marker that is absent or above this binary's generation: an absent marker is generation 0, the legacy path (the policy nodes are simply not read, and nothing is refused), and a marker above this generation reads as deployed, so the policy under it is read and enforced -- what fails closed is a policy node that exists and cannot be read or decoded (`internal/runner/projectpolicy.go`'s `unreadablePolicy`)", c.where)
+		}
+	}
+}
+
+// gcpSetupRulesBullet is the "Deploying the rules is an owner step" bullet of
+// docs/gcp-setup.md, the page check 82's preamble is held to.
+func gcpSetupRulesBullet(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../../docs/gcp-setup.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "Deploying the rules is an owner step") {
+			return line
+		}
+	}
+	t.Fatalf("docs/gcp-setup.md has no line saying \"Deploying the rules is an owner step\": this test holds that bullet's account of the marker to the code")
+	return ""
+}
+
+// TestDocsCheck81StepsNameTheIdsTheyInherit: check 81's steps mint ids into
+// shell variables of their own (`MSG` in step 2, `OUT` in step 4, `OUT2` in step
+// 5) and later steps read them. Every step that reads an id it does not set has
+// to name it in its prerequisite header -- the parenthesis that lists what the
+// step needs -- because the header is what an owner runs the step from, and with
+// `set -u` on a block that reads an unset variable aborts at its first use, after
+// the statuses recorded above it. Step 5 names "`$OUT` from step 4" and step 2
+// names "tokens from step 1"; step 4 read `$MSG`, the message step 2 wrote, and
+// named only "tokens" -- the second review of PR #580's finding. The ids and the
+// step that sets each are read out of the blocks here.
+func TestDocsCheck81StepsNameTheIdsTheyInherit(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	re := regexp.MustCompile(`(?m)^(\d+)\. \*\*`)
+	at := re.FindAllStringSubmatchIndex(section, -1)
+	if len(at) < 2 {
+		t.Fatalf("## Check 81: carries %d numbered steps, so this test cannot read a step's header and block", len(at))
+	}
+	type step struct{ n, header, text string }
+	var steps []step
+	for i, loc := range at {
+		end := len(section)
+		if i+1 < len(at) {
+			end = at[i+1][0]
+		}
+		text := section[loc[0]:end]
+		header, _, _ := strings.Cut(text, "\n")
+		steps = append(steps, step{n: section[loc[2]:loc[3]], header: header, text: text})
+	}
+	// Only the fenced blocks are commands the owner runs: a step's FACT
+	// paragraph names the ids of earlier steps in prose ("step 2's `$MSG` is
+	// taken"), and prose is not a block that can abort on an unset variable.
+	fence := regexp.MustCompile("(?s)```[a-z]*\\n(.*?)```")
+	cmds := map[string]string{}
+	for _, st := range steps {
+		var b strings.Builder
+		for _, m := range fence.FindAllStringSubmatch(st.text, -1) {
+			b.WriteString(m[1])
+		}
+		cmds[st.n] = b.String()
+	}
+	setters := map[string]string{}
+	for _, st := range steps {
+		for _, id := range []string{"MSG", "OUT", "OUT2"} {
+			if strings.Contains(cmds[st.n], id+"=") && setters[id] == "" {
+				setters[id] = st.n
+			}
+		}
+	}
+	if len(setters) == 0 {
+		t.Fatalf("## Check 81: no step's block assigns an id this test knows (`MSG=`, `OUT=` or `OUT2=`): the cross-step ids are what the headers have to name, so read the steps again before changing the check")
+	}
+	for _, st := range steps {
+		for id, setter := range setters {
+			if setter == st.n || !strings.Contains(cmds[st.n], "$"+id) {
+				continue
+			}
+			want := "`$" + id + "` from step " + setter
+			if !strings.Contains(st.header, want) {
+				t.Errorf("## Check 81 step %s: the block reads `$%s`, which step %s sets, and the step's prerequisite header does not say %q: the header is the list the step is run from, and with `set -u` on an id the block does not set aborts it at the first use, after the statuses it has already recorded", st.n, id, setter, want)
+			}
+		}
 	}
 }
 
@@ -1333,6 +1523,14 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 // where the section mints four (step 1's two, step 7's mismatch token and its
 // residual's). Every count is derived from the blocks, so an edit that changes
 // what the check does fails this test until the prose counts it.
+//
+// The seeds are of two kinds, though, and the second review of PR #580 found
+// this test holding both sentences to their *total*: `word` was the five IAM
+// seeds while the first sentence counts the three under Alice's mailbox, so the
+// assertion passed on the unrelated "**Five nodes in all**" in the same
+// paragraph -- changing "Three nodes under Alice's mailbox are seeded with IAM"
+// to "Two" left the test green. Each sentence is now held to its own subject,
+// and the paragraph's device-node and total statements to their own counts.
 func TestDocsCheck81CountsMatchTheBlocks(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -1345,14 +1543,45 @@ func TestDocsCheck81CountsMatchTheBlocks(t *testing.T) {
 		t.Fatalf("## Check 81: has no \"**Restore.**\" paragraph, so this test cannot tell the steps' seeds from the Restore's deletes")
 	}
 	steps := section[:i]
-	seeds := strings.Count(steps, "?access_token=$AT")
-	if seeds == 0 {
+	// The seeds are of two kinds, and the sentences count them separately: the
+	// mailbox nodes (step 4's outbox message and heartbeat, and step 5's second
+	// outbox message) and the device nodes (step 1's Alice, step 5's Bob). The
+	// two paragraphs name both -- "the three nodes it reads and acks ... are
+	// seeded with the operator's IAM credentials" and "the two device nodes
+	// steps 1 and 5 write are seeded the same way, five nodes in all" -- so a
+	// sentence is held to its own subject and to the totals the paragraph
+	// states. Holding both sentences to the *total* is what let the section say
+	// "Three nodes under Alice's mailbox" and still pass, on the unrelated
+	// "**Five nodes in all**" in the same paragraph (the review of PR #580's
+	// finding on this test).
+	var mailboxSeeds, deviceSeeds, unclassified int
+	for _, line := range strings.Split(steps, "\n") {
+		if !strings.Contains(line, "?access_token=$AT") {
+			continue
+		}
+		switch {
+		case strings.Contains(line, "/mailbox/"):
+			mailboxSeeds++
+		case strings.Contains(line, "/config/admin/devices/"):
+			deviceSeeds++
+		default:
+			unclassified++
+		}
+	}
+	if unclassified > 0 {
+		t.Fatalf("check 81's steps make %d IAM writes (`?access_token=$AT`) this test cannot file under a mailbox node or a device node: the sentences below count one kind each, so every seed has to be one of the two", unclassified)
+	}
+	if mailboxSeeds+deviceSeeds == 0 {
 		t.Fatalf("## Check 81: no step writes with `?access_token=$AT`: the seeding this test counts is gone from the blocks, so the sentences below cannot be checked against them")
 	}
-	word, ok := map[int]string{1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}[seeds]
-	if !ok {
-		t.Fatalf("check 81's steps make %d IAM seeds and this test has no word for that count: write one", seeds)
+	word := func(n int) string {
+		w, ok := map[int]string{1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}[n]
+		if !ok {
+			t.Fatalf("check 81 counts %d of something and this test has no word for that count: write one", n)
+		}
+		return w
 	}
+	seeds := mailboxSeeds + deviceSeeds
 	for _, stem := range []string{
 		"nodes under Alice's mailbox are seeded with IAM",
 		"are **seeded with the operator's IAM credentials**",
@@ -1367,8 +1596,19 @@ func TestDocsCheck81CountsMatchTheBlocks(t *testing.T) {
 		if para == "" {
 			t.Fatalf("## Check 81: no paragraph says %q: this test holds that sentence to the blocks' seed count, so it cannot check a sentence that is not there", stem)
 		}
-		if !strings.Contains(strings.ToLower(para), strings.ToLower(word)+" nodes") {
-			t.Errorf("## Check 81: the paragraph saying %q does not count the seeds as %q, and the blocks make %d IAM writes (`?access_token=$AT` in the steps): an owner reading a smaller number looks for a seed the check never made, and one reading a larger number for a node the Restore does not remove", stem, word+" nodes", seeds)
+		lower := strings.ToLower(para)
+		for _, c := range []struct {
+			want  string
+			what  string
+			count int
+		}{
+			{word(mailboxSeeds) + " nodes", "the mailbox nodes the sentence itself counts", mailboxSeeds},
+			{word(deviceSeeds) + " device nodes", "the device nodes the paragraph adds", deviceSeeds},
+			{word(seeds) + " nodes in all", "the total the paragraph states", seeds},
+		} {
+			if !strings.Contains(lower, strings.ToLower(c.want)) {
+				t.Errorf("## Check 81: the paragraph saying %q does not say %q, and the blocks make %d IAM writes (`?access_token=$AT` in the steps): %d under a mailbox and %d under `config/admin/devices`. %s -- an owner reading a smaller number looks for a seed the check never made, and one reading a larger number for a node the Restore does not remove", stem, c.want, seeds, mailboxSeeds, deviceSeeds, c.what)
+			}
 		}
 	}
 
@@ -1380,7 +1620,7 @@ func TestDocsCheck81CountsMatchTheBlocks(t *testing.T) {
 	// same way TestDocsCheck89RegisterRowDoesNotClaimTheGuardReadsTheTrack
 	// reads check 89's.
 	row := registerRow(t, doc, "81")
-	for _, phrase := range []string{word + " nodes are seeded", word + " seeded nodes"} {
+	for _, phrase := range []string{word(seeds) + " nodes are seeded", word(seeds) + " seeded nodes"} {
 		if !strings.Contains(strings.ToLower(row), strings.ToLower(phrase)) {
 			t.Errorf("## Check 81: the register row does not say %q, and the blocks make %d IAM writes (`?access_token=$AT` in the steps): the row is the summary the owner reads before the section, so a smaller count there sends them looking for a seeded node that is not in the blocks -- and a larger one for a node the Restore does not remove", phrase, seeds)
 		}
