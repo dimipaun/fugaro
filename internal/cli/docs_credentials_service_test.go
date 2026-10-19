@@ -404,13 +404,15 @@ func TestChecklistCheck91ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 // TestChecklistCheck91NeverAdoptsWhatItDidNotCreate: the Restore deletes the
 // service, its image and the registry repository, so every one of those deletes
 // rests on the check knowing what it created. Hard stop 4 refuses a fugaro-chk91
-// that is already there unless step 3 recorded the deploy in
-// $CHK91/service-mine, and the baseline stops the check outright on a
-// repository of its own name that is already in the project — it never adopts
-// one — so $CHK91/repo-existed is the ownership record the Restore reads before
-// the scratch directory holding it is removed. Deleting either stop leaves a
-// check that would adopt, write into and then delete a service or repository
-// the installation already had.
+// service that is already there unless step 3 recorded the deploy in
+// $CHK91/service-mine, hard stop 5 refuses a registry repository that is there
+// and that step 3 did not create itself (recorded in $CHK91/repo-mine) before
+// the build pushes its tag into it, and the baseline stops the check outright
+// on a repository of its own name that is already in the project — it never
+// adopts one — so $CHK91/repo-existed is the ownership record step 3 and the
+// Restore read before they write or delete. Deleting either stop leaves a check
+// that would adopt, write into and then delete a service or repository the
+// installation already had.
 func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
@@ -430,6 +432,45 @@ func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 	build := stepBlock(t, checklistPath, check, "### Check 91 step 3: build and deploy the throwaway service")
 	if !strings.Contains(build, `: > "$CHK91/service-mine"`) {
 		t.Error("Check 91's step 3 does not record the service it deployed in $CHK91/service-mine, so hard stop 4 would refuse the service this check itself created")
+	}
+
+	// Hard stop 5, the same refusal at the moment of the push. The baseline
+	// looks once, before anything is created, so a fugaro-chk91 that appeared
+	// afterwards would be adopted by an ungated `describe || create`: the build
+	// would push its :chk91 tag into it — moving a tag that may be somebody
+	// else's image — and step 7's Restore, whose record still says `no`, would
+	// delete it. Step 3 therefore reads the ownership record back and refuses a
+	// repository that is there but that this step did not create itself.
+	recRead := strings.Index(build, `[ "$(cat "$CHK91/repo-existed" 2>/dev/null)" = no ]`)
+	refuse := strings.Index(build, `[ -f "$CHK91/repo-mine" ]`)
+	mkRepo := strings.Index(build, `gcloud artifacts repositories create "${SVC:?}"`)
+	mineWrote := strings.Index(build, `: > "$CHK91/repo-mine"`)
+	push := strings.Index(build, `gcloud builds submit`)
+	for _, part := range []struct {
+		what string
+		at   int
+	}{
+		{"the ownership record read back", recRead},
+		{"the refusal of a repository this step did not create", refuse},
+		{"the repository's create", mkRepo},
+		{"the record of the repository it created", mineWrote},
+		{"the build that pushes the image tag", push},
+	} {
+		if part.at == -1 {
+			t.Fatalf("Check 91's step 3 lacks %s, so nothing stands between the push and a repository this check did not create", part.what)
+		}
+	}
+	// The order is the property: the record is read, the create and the refusal
+	// all stand ahead of the push, and the record is written by the create it
+	// names.
+	if !(recRead < mkRepo && recRead < push && refuse < mkRepo && refuse < push && mkRepo < mineWrote && mineWrote < push) {
+		t.Errorf("Check 91's step 3 does not gate the push on what this check created (read=%d, refuse=%d, create=%d, repo-mine=%d, push=%d): the image tag would be pushed into a repository the check did not make", recRead, refuse, mkRepo, mineWrote, push)
+	}
+	if !strings.Contains(build[refuse:mkRepo], "exit 1") {
+		t.Error("Check 91's step 3 only warns about a registry repository it did not create instead of stopping: the build below would still push into it")
+	}
+	if !strings.Contains(build[refuse:mkRepo], "never adopts") {
+		t.Error("Check 91's step 3 does not say that a repository this check did not create is never adopted, which is what the stop is for")
 	}
 
 	// The baseline: taken once, before anything is created, and it is a hard
@@ -482,11 +523,97 @@ func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 	}
 }
 
+// chk91Steps returns Check 91's steps keyed by their number, each read with
+// stepBlock so that a claim about one step cannot be answered by another step's
+// text (stepBlock's own doc says why that matters here).
+func chk91Steps(t *testing.T, check string) map[string]string {
+	t.Helper()
+	steps := map[string]string{}
+	re := regexp.MustCompile(`### Check 91 step (\d+): [^\n]*`)
+	for _, m := range re.FindAllStringSubmatchIndex(check, -1) {
+		steps[check[m[2]:m[3]]] = stepBlock(t, checklistPath, check, check[m[0]:m[1]])
+	}
+	return steps
+}
+
+// stepNumberNamed matches "step 3" and "Step 3" wherever a passage names one.
+var stepNumberNamed = regexp.MustCompile(`[Ss]tep (\d+)`)
+
+// TestChecklistCheck91OwnershipClaimsNameOnlyStepsThatReadTheRecord: the
+// baseline's $CHK91/repo-existed file is the ownership record, and two
+// passages say which steps read it back — the checklist's baseline paragraph
+// and C0.3's Check 91 bullet in the plan. Both used to name step 3, which did
+// not read it at all: step 3 was an ungated `describe || create`, so the record
+// gated the Restore alone and the sentence was true of the Restore alone. Step
+// 3 now reads it (hard stop 5, pinned by
+// TestChecklistCheck91NeverAdoptsWhatItDidNotCreate), so both passages may name
+// step 3 and the Restore — and nothing else: a passage that names a step which
+// does not read the record fails here rather than being believed, and so does a
+// passage that stops naming a step that does.
+func TestChecklistCheck91OwnershipClaimsNameOnlyStepsThatReadTheRecord(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	steps := chk91Steps(t, check)
+
+	// The claim, out of the baseline paragraph: from its opening to the blank
+	// line that ends it.
+	i := strings.Index(check, "`no` is therefore the only answer this file ever holds")
+	if i == -1 {
+		t.Fatal("Check 91's baseline paragraph is gone, so nothing says which steps read the ownership record back")
+	}
+	claim := check[i:]
+	if j := strings.Index(claim, "\n\n"); j != -1 {
+		claim = claim[:j]
+	}
+
+	// C0.3's bullet, out of the plan: one line of the Check 91 bullet.
+	const planPath = "docs/credentials-service/implementation-plan.md"
+	plan := readDoc(t, planPath)
+	c03 := taskBlock(t, planPath, plan, "### Task C0.3: Checks 90 and 91")
+	bullet := docTail(t, planPath, c03, "- **Check 91** (installation")
+	if j := strings.Index(bullet, "\n"); j != -1 {
+		bullet = bullet[:j]
+	}
+
+	for _, passage := range []struct {
+		where string
+		text  string
+	}{
+		{"the checklist's baseline paragraph", claim},
+		{"C0.3's Check 91 bullet", bullet},
+	} {
+		named := map[string]bool{}
+		for _, m := range stepNumberNamed.FindAllStringSubmatch(passage.text, -1) {
+			named[m[1]] = true
+		}
+		if strings.Contains(passage.text, "Restore") {
+			named["7"] = true
+		}
+		for n := range named {
+			block, ok := steps[n]
+			if !ok {
+				t.Errorf("%s names step %s, which Check 91 does not have", passage.where, n)
+				continue
+			}
+			if !strings.Contains(block, `cat "$CHK91/repo-existed"`) {
+				t.Errorf("%s names step %s as reading the ownership record back, but step %s never reads $CHK91/repo-existed", passage.where, n, n)
+			}
+		}
+		// Both readers have to be named: step 3 is the one that writes (its push
+		// is what an unread record would let into a repository that is not the
+		// check's) and the Restore is the one that deletes.
+		if !named["3"] || !named["7"] {
+			t.Errorf("%s does not name both steps that read the ownership record back — step 3 before it writes and the Restore before it deletes — it names %v", passage.where, named)
+		}
+	}
+}
+
 // TestChecklistCheck91CreatesItsOwnRegistryRepository: the image tag names an
 // Artifact Registry repository in the project, and nothing created it, so the
 // build failed at its first step. The check creates the repository its own name
 // points at — the baseline has already stopped it unless that repository was
-// absent, so this one is the check's own — and the Restore deletes it.
+// absent, and hard stop 5 stops it again unless the one that is there is the
+// check's own — and the Restore deletes it.
 func TestChecklistCheck91CreatesItsOwnRegistryRepository(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
