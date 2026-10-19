@@ -456,7 +456,7 @@ func TestPublishSharedSelfCheck(t *testing.T) {
 		"batch image of another project": {func(lc *localcfg.Config) {
 			lc.Batch = &localcfg.Batch{Image: "us-east5-docker.pkg.dev/evil-proj/fugaro/fugaro:1"}
 		}, "batch.image"},
-		"non-default runs bucket":         {func(lc *localcfg.Config) { lc.RunsBucket = "my-own-runs" }, "default runs bucket name"},
+		"non-default runs bucket": {func(lc *localcfg.Config) { lc.RunsBucket = "my-own-runs" }, "default runs bucket name"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCloudFixture(t)
