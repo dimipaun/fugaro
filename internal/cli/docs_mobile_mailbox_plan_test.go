@@ -233,3 +233,75 @@ func TestMailboxPlanExitContractIsOneRule(t *testing.T) {
 		}
 	}
 }
+
+// TestMailboxPlanNamesTheMacTriggersAndTheCosts pins the three things a review
+// of this plan found stated twice with incompatible answers.
+//
+//  1. "cannot verify or sign" was one phrase for two states: M4b, section 7's
+//     loop and T2a described a per-write refusal (write nothing, report a code,
+//     owe the reply again) while 8.3 and T5 described a startup exit, and
+//     nothing separated them. They are now M4's three-row table — unavailable
+//     (startup, exit 1, no pass), a message that does not verify (per-message,
+//     inside a pass), and a value the signer rejects (per-write, inside a pass,
+//     reached only by an injected failing signer).
+//  2. T7 was said to "run the docs guards" for a guard whose globs never reach
+//     docs/plans/, and its own `-run 'Sweep|Expiry'` filter excludes them anyway.
+//  3. An unverifiable inbox message can never be retired — nothing records it
+//     and the create-only inbox grant refuses a delete — so every pass re-reads
+//     and re-refuses it. The cost is now stated where the design decision is
+//     (section 7), where the rule is (M4a) and in section 16, rather than left
+//     to be discovered.
+//
+// Mutation (verified, run and restored): delete the "injected failing signer"
+// mention from M4 and this test fails naming the section; put "T7 runs the docs
+// guards" back and it fails on the withdrawn claim.
+func TestMailboxPlanNamesTheMacTriggersAndTheCosts(t *testing.T) {
+	doc := readDoc(t, mailboxPlan)
+	m4 := planSection(t, doc, "### M4 —")
+	s83 := planSection(t, doc, "## 8. The MAC, precisely")
+	t2a := planSection(t, doc, "### Task T2a:")
+	s7 := planSection(t, doc, "## 7. The loop")
+
+	for _, section := range []struct{ name, text string }{
+		{"M4", m4}, {"8.3", s83}, {"T2a", t2a},
+	} {
+		for _, want := range []string{"injected failing signer"} {
+			if !strings.Contains(section.text, want) {
+				t.Errorf("%s no longer names %q: the per-write signing failure is unreachable without it, and without it M4b's refusal and 8.3's startup exit read as the same behaviour", section.name, want)
+			}
+		}
+	}
+	// M4's table is the separation itself: the three states, and the fact that
+	// the first is the only startup one.
+	for _, want := range []string{
+		"cannot be computed **at all**", // the availability trigger
+		"exit 1, no pass run",           // what the startup state does
+		"A message that does not verify",
+		"A write that cannot be signed",
+		"only the first is",
+	} {
+		if !strings.Contains(m4, want) {
+			t.Errorf("%s's M4 no longer states %q: the two per-value states and the startup state must stay told apart", mailboxPlan, want)
+		}
+	}
+	// The retired claim: no guard reaches docs/plans/, and T7 does not run them.
+	for _, gone := range []string{"T7 runs the docs guards", "T7's docs guard"} {
+		if strings.Contains(doc, gone) {
+			t.Errorf("%s says %q again: no docs guard's globs reach docs/plans/, so a guard could not prove anything about this document", mailboxPlan, gone)
+		}
+	}
+	if !strings.Contains(doc, "never reach `docs/plans/*.md`") {
+		t.Errorf("%s no longer states that the docs guards' globs stop at docs/", mailboxPlan)
+	}
+	// The parked-message cost, in the three places it has to be.
+	for _, section := range []struct{ name, text string }{{"M4", m4}, {"7", s7}} {
+		for _, want := range []string{"retire"} {
+			if !strings.Contains(section.text, want) {
+				t.Errorf("%s no longer states that an unverifiable message cannot be retired and is re-read every pass", section.name)
+			}
+		}
+	}
+	if !strings.Contains(doc, "An unverifiable inbox message is never retired") {
+		t.Errorf("%s's unverified list no longer carries the parked-message cost", mailboxPlan)
+	}
+}

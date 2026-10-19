@@ -231,13 +231,36 @@ So P4.1 plans **two seams, one function**, and both are SECURITY-SENSITIVE:
 
 - **M4a — inbound, before delivery.** Every inbox message is MAC-verified **before** it is handed to
   the ledger. A message that does not verify is refused, recorded by code, and never acted on, and
-  it consumes no `(sender, id)` slot.
+  it consumes no `(sender, id)` slot — **and it therefore cannot be retired**: nothing records it,
+  and the merged inbox grant refuses a delete as well as an overwrite, so every later pass re-reads
+  and re-refuses it. That is a stated cost with a named remedy, in §7's ordering 2 and §16.
 - **M4b — outbound, before the write.** Every outbox reply and every heartbeat write **carries a
   MAC** over the same canonicalisation, with the same key. A consumer that cannot sign **writes
   nothing**: it does not write an unsigned reply and it does not write an unsigned heartbeat, so it
   also does not take the lease (M1's write *is* the heartbeat). The write is refused with a code and
   reported, and the reply is owed again on the next pass — a reply the ledger has not retired is a
   reply still owed (M2), so the refusal is recoverable rather than a lost answer.
+
+**"Cannot verify or sign" names three states, and the plan gives each its own answer** — an earlier
+revision described the first and the third with the same words and named no trigger between them,
+which left an implementer unable to satisfy §8.3's startup exit and T2a's per-write refusal at once:
+
+| The state | What triggers it | What the command does | Where |
+| --- | --- | --- | --- |
+| **Unavailable** — the MAC layer cannot be computed **at all** | decided **once, before the loop**: the schema carries no `mac` / no `canonicalBytes` / no vectors (this is the pre-P6.3 world, §8.3), or the keychain item is absent, unreadable or not of M5's shape | **refuses to start**: one fixed sentence per reason, **exit 1, no pass run and nothing written** | M5, §8.3, §4.4's exit-1 row |
+| **A message that does not verify** | the layer is available and this message's signature is wrong, absent or tampered | a **per-message refusal**: the code is recorded, the message is not handed to the ledger, the pass continues | M4a, §8.1, T2 |
+| **A write that cannot be signed** | the layer is available and the key is loaded, and it is **this value** the signer errors on | a **per-write refusal**: nothing is written for that value, the code is recorded, the pass continues, and the reply is owed again next pass | M4b, §8.2, T2a |
+
+The second and third are **outcomes of a running pass** and are exit **0** (§4.4); only the first is
+exit 1. **Why the third is not a startup condition:** M5 reads the key **once**, so a *key read* that
+fails is always the availability check above — what is left at run time is an error from a signer
+that **is** present, which is a fault path (a key that no longer fits the algorithm, an OS signing
+service that fails, or, in tests, an injected failing signer). T2a is the task that reaches it, with
+the injected signer the review asks for, and **the pre-P6.3 build never reaches either of the last
+two rows**: §8.3's availability check fires first, so in that state there are no passes, no
+per-message refusals and no per-write refusals — §8.1's and §8.2's refusals describe the behaviour
+the same code has **once P6.3 lands**, which is why T2 and T2a test them with the MAC layer stubbed
+in rather than by running the shipped default.
 
 **What does not exist yet, and why both halves fail closed.** The merged schema has **no `mac`
 field** (`shared/mailbox-schema`'s `FIELDS` is `['id','sender','text','at','acked']`), **no
@@ -396,8 +419,8 @@ same and they do not share an exit code:
 
 | Exit | When | Not |
 | --- | --- | --- |
-| **0** | a pass completed, whatever it managed to read and whatever it refused: an **empty inbox**, a pass that **held no lease** (and so read nothing, §7), and a pass whose every message was refused as a duplicate, a replay, expired, `stale-pending` or badly signed. Refusals are outcomes and are reported in `refused[]` and in the `pass` counters | a per-message refusal is **never** an exit 1, and **neither is reading no message at all** — see the predicate below, which requires at least one |
-| **1** | **a run-level refusal**, all of it before or outside the pass loop: a bad flag (`--interval` below 1 s, a negative duration, an unknown project selector); no project selectable; no mailbox configured; a keychain item name absent or not of M5's shape; **the M4/§8.3 state — MAC verification or signing unavailable — which fails at startup** rather than looping over a mailbox it can do nothing with; the database or keychain **refusing** — `dbErr`'s `rtdb.ErrPermission` branch (→ `adminDenied` for a write, a `userErr` for a read) and `checkDBProject`'s not-this-project's-database, which is a `userErr` too. **And** the one pass-level case: the predicate below | a remote failure — an outage, a transport error, anything `dbErr` sends to `remote(err)` — is 2, not 1 |
+| **0** | a pass completed, whatever it managed to read and whatever it refused: an **empty inbox**, a pass that **held no lease** (and so read nothing, §7), a pass whose every message was refused as a duplicate, a replay, expired, `stale-pending` or badly signed, and a pass whose **write** was refused as unsignable (M4b's per-write state — an outcome, not a failure to run). Refusals are outcomes and are reported in `refused[]` and in the `pass` counters | a per-message refusal is **never** an exit 1, **neither is reading no message at all** (the predicate below requires at least one), and **neither is a per-write signing refusal** — clause 4 wants an *action* refusal |
+| **1** | **a run-level refusal**, all of it before or outside the pass loop: a bad flag (`--interval` below 1 s, a negative duration, an unknown project selector); no project selectable; no mailbox configured; a keychain item name absent or not of M5's shape; **the MAC layer's availability check (M4's table, §8.3) — it cannot be computed at all, so the command fails at startup** rather than looping over a mailbox it can do nothing with; the database or keychain **refusing** — `dbErr`'s `rtdb.ErrPermission` branch (→ `adminDenied` for a write, a `userErr` for a read) and `checkDBProject`'s not-this-project's-database, which is a `userErr` too. **And** the one pass-level case: the predicate below | a remote failure — an outage, a transport error, anything `dbErr` sends to `remote(err)` — is 2, not 1 |
 | **2** | what `dbErr` sends to `remote(err)`: the database could not be **reached or written** (an outage, a transport error, a 5xx), and nothing else; plus the new keychain package's own unopenable-backend case, classified the same way (that package is T2's, and this row is the mapping it must implement) | a permission refusal and a foreign database are **1**, not 2 — `dbErr` maps the first to `userErr` and `checkDBProject` raises the second as a `userErr` |
 
 **The one place a D128 action refusal meets the exit code.** A refused action is first a **recorded
@@ -455,10 +478,11 @@ performed, and the replies written. `--json` carries the same as one document pe
 that a voice-originated message may never cause a destructive command (D128), with the amendment's
 allowance named and its P6.2 dependency named; that **both directions of the wire are MAC-covered** —
 every message is verified before it is acted on and an unverifiable one is refused and never acted
-on, and every reply and heartbeat is signed before it is written, so a command that cannot sign
-writes nothing (M4); that the pairing key is read from the OS keychain by item name and is never
-printed; that the command writes only the outbox and the heartbeat, and with which credential
-(C0); and where its own state is.
+on, and every reply and heartbeat is signed before it is written, so a value it cannot sign is not
+written (M4); that the MAC layer's unavailability — which is the pre-P6.3 state of the world — stops
+the command at startup rather than letting it loop (M4's first row); that the pairing key is read
+from the OS keychain by item name and is never printed; that the command writes only the outbox and
+the heartbeat, and with which credential (C0); and where its own state is.
 
 ### 4.2 `fugaro mailbox sweep` (hidden)
 
@@ -503,7 +527,7 @@ like `ls`'s, so a reader can rely on it.
 | Code | When | Decided by |
 | --- | --- | --- |
 | 0 | **a pass completed**, including one that read nothing at all — no lease held, or an empty inbox — and one whose every message was refused as a duplicate, a replay, expired, `stale-pending` or badly signed. Per-message refusals are outcomes, reported in `refused[]` and the pass counters | the pass's own counters: `read == 0` is a completed pass, and a per-message refusal is recorded, not returned |
-| 1 | **a run-level refusal**, before or outside the pass loop: a bad flag or combination (`--interval` below 1 s); no project selectable; no mailbox configured; a keychain item name absent or not of M5's shape; **MAC verification or signing unavailable (M4/§8.3), refused at startup**; **and the database or keychain refusing** — `dbErr`'s `rtdb.ErrPermission` branch, `adminDenied` for a refused write, `checkDBProject`'s not-this-project's-database (**all three are `userErr`**) | `userErr` / `ExitUserError`, and the flag and config refusals the command raises itself |
+| 1 | **a run-level refusal**, before or outside the pass loop: a bad flag or combination (`--interval` below 1 s); no project selectable; no mailbox configured; a keychain item name absent or not of M5's shape; **the MAC layer's availability check (M4's table, §8.3) — it cannot be computed at all, refused at startup with no pass run**; **and the database or keychain refusing** — `dbErr`'s `rtdb.ErrPermission` branch, `adminDenied` for a refused write, `checkDBProject`'s not-this-project's-database (**all three are `userErr`**) | `userErr` / `ExitUserError`, and the flag and config refusals the command raises itself |
 | 2 | the database could not be **reached or written** — an outage or a transport error, which is all `dbErr` sends to `remote(err)`; and the new keychain package's unopenable-backend case, which T2 must classify the same way | `remote(err)` / `ExitRemoteError` |
 
 **The second exit 1, and the only one that is a pass-level outcome**: a `--once` pass that read at
@@ -511,6 +535,14 @@ least one message, performed no action, refused every message it read, and refus
 **action** — M12's four clauses — is also **1**, decided by that predicate, which is the command's
 single exit branch. This is the row M12 spends its detail on, and it is the same code as the
 run-level refusal because it is the same answer to the operator: nothing happened.
+
+**The two per-value MAC failures are not exit 1, and they are not M12's clause 4 either.** A message
+that fails verification (M4a) and a write that cannot be signed (M4b) are each **recorded outcomes
+of a completed pass**: the pass keeps running, the code lands in `refused[]`, and the exit is 0 —
+even when the pass acted on nothing, because clause 4 asks for an **action** refusal and neither of
+these is one. Reading them as run-level refusals is the error M4's table exists to prevent: what is
+run-level is the **availability** check, which happens once and before any pass (above), while these
+two need a pass to have started at all.
 
 **The rule in code is M12's one predicate**, four clauses: **at least one message read**, **no action
 performed**, **every message read refused**, **at least one of those refusals an action refusal** →
@@ -549,9 +581,15 @@ subcommand of it, so it needs no line of its own. What that line drags with it, 
    checklist.
 3. **The hidden sweeper does not appear** in either, because `internal/clidoc`'s skip rule reads
    cobra's own `Hidden` field (`documentedCommands`), and `newBudgetHistoryCmd` is the precedent.
-4. **No `docs_bucket_iam_test.go` pressure**: its guards scan for IAM claims in docs, and the globs
-   it scans do not reach `docs/plans/*.md`. This plan therefore adds no IAM sentence anywhere near
-   the bucket, and T7 runs the docs guards to prove it.
+4. **No `docs_bucket_iam_test.go` pressure — and no guard either way.** That test scans for IAM
+   claims in `../../docs/*.md`, `../../docs/design/*.md`, `README.md`, `SECURITY.md` and the plugin
+   skills; its globs stop at `docs/`, so they **never reach `docs/plans/*.md`**, which is this file's
+   directory. This plan therefore adds no IAM sentence anywhere near the bucket as a **duty**, and
+   nothing would go red if it did: **no test in this repository reads this document**, which is both
+   why the pin in §13 exists and why this claim is made in prose rather than attributed to a guard.
+   (An earlier draft made T7 the proof, which was wrong twice over: T7's verification filters on
+   `-run 'Sweep|Expiry'`, so it does not run those guards at all, and a guard whose globs stop at
+   `docs/` could not prove anything about a file in `docs/plans/` in any case.)
 
 ---
 
@@ -571,8 +609,9 @@ subcommand of it, so it needs no line of its own. What that line drags with it, 
 **Nothing here is stored in the runs bucket**, and the sweeper's `keep` set holds no `m~` key
 today — `internal/budget/sweep.go`'s `deleteUsers` and `RunUID` are the runs bucket's (`r~…`), and
 extending the sweeper to `m~…` is **P6.6's** (proposed, NOT APPROVED), not this plan's. If the
-sweeper deletes an `m~…` user before P6.6 lands, that is a **finding, not a silent fix** — T7's
-docs guard and T8's review check it, and it goes in the PR body.
+sweeper deletes an `m~…` user before P6.6 lands, that is a **finding, not a silent fix** — §16's
+rule makes it one, T8's review checklist carries it as a line (a `go test -run 'Sweep'` cannot see it;
+the store's own state is the only evidence), and it goes in the PR body.
 
 ---
 
@@ -603,6 +642,11 @@ docs guard and T8's review check it, and it goes in the PR body.
 
   the heartbeat, every renewal: SIGN {at, boot} … then write it (M4b/T2a) — cannot sign: no write,
   and since the heartbeat write IS the lease, no lease: the pass acts on nothing (§8.2)
+
+  the loop above starts only after M4's first row: a command whose MAC layer is unavailable never
+  gets here (it refuses to start, §8.3). Both "cannot sign" notes above are M4's third row — the
+  layer is available and the signer errored on this value — and both are per-value refusals inside a
+  running pass, not the startup exit.
 ```
 
 **The three orderings that are load-bearing**, and each is tested with a mutation:
@@ -611,14 +655,31 @@ docs guard and T8's review check it, and it goes in the PR body.
    two re-performs nothing after the restart (T4's kill-and-restart test).
 2. **The MAC is verified before the delivery reaches the ledger**, so a message that fails
    verification is not in the ledger, is not acted on, and does not consume its `(sender, id)`
-   slot — a forged message cannot deny service to the real one (T2's mutation).
+   slot — a badly signed message cannot deny service to the genuine one that shares its id, which is
+   the property that costs the re-read below (T2's mutation).
+   **And that is a cost, stated:** nothing retires an unverifiable message. The ledger holds no slot
+   for it (this ordering, by design), and the merged inbox grant is **create-only** — a delete is
+   refused exactly as an overwrite is (§2's `MAILBOX && newData.exists() && !data.exists()`) — so
+   neither the consumer nor the phone can remove it. **Every pass therefore re-reads it and
+   re-refuses it for as long as the node exists**, and it counts in `pass.read` and in `refused[]`
+   each time. The only thing that removes it today is the operator's ADC, out of band and by hand —
+   the credential the inbox read already uses (§2's C0) and the one the rules cannot fence. The
+   alternative (record the `(sender, id)` of a bad-MAC message as a tombstone) is refused because it
+   would consume the slot the genuine message needs, which is the denial of service this ordering
+   exists to prevent; a store-side delete landlord would be a rules change and a Phase 2 re-open.
+   **This is a known cost of the merged design, not a bug this plan introduces** — §16 and T8's
+   checklist carry it, with one runbook line: an operator removes a parked bad message by deleting
+   `mailbox/<mb>/inbox/<id>` with their own credential, out of band.
 3. **The MAC is applied before the write**, so an unsigned reply or heartbeat never reaches the
    store at all — which is what makes "the phone saw it" imply "the consumer signed it" (T2a's
    three mutations, one of them on the heartbeat).
 
 **A message the command cannot parse is refused once and not retried for ever.** The ledger records
 it as refused with its code, the pass is counted, and the next pass does not re-read it as new;
-`input-refusals` are the module's, per its `INPUT_REFUSALS`.
+`input-refusals` are the module's, per its `INPUT_REFUSALS`. **This is the parse class only, and the
+difference matters:** a message the schema accepts and the MAC rejects takes **no** ledger slot
+(ordering 2 above), so it is the opposite — it is re-read and re-refused on every pass until someone
+removes the node. The two classes are not the same and the plan does not pretend they are.
 
 ---
 
@@ -638,7 +699,14 @@ it as refused with its code, the pass is counted, and the next pass does not re-
    `DEFAULT_FUTURE_TOLERANCE_MS`) — one millisecond beyond it and the delivery is refused
    `future-timestamp`.
 5. **Failure is a refusal with a code, never an error that stops the loop**, never a retry that
-   never ends, and never a fallback to acting.
+   never ends, and never a fallback to acting. This is the **per-message** failure of a layer that is
+   available (M4's table): a message that does not verify never reaches the unavailability case,
+   which is decided once at startup (§8.3) and leaves no pass to refuse anything in. **"Never a
+   retry that never ends" is true of the *pass*, not of the message**: the pass ends, and the next
+   pass reads that same message again and refuses it again for as long as the node exists, because
+   nothing can retire it (§7's ordering 2, M4a). The retry that does end is the deliberate one — the
+   module's window and the ledger's slot — and an unverifiable message has no slot; the cost of that
+   choice is the re-read, stated there and in §16.
 
 ### 8.2 Outbound — what is signed, and when the write is refused
 
@@ -658,6 +726,10 @@ The same function, the same key, the same covered fields, in the other direction
    and since the heartbeat write is the lease (M1), a consumer that cannot sign also cannot hold the
    lease, so it acts on nothing. It reports the refusal with a code (never the message's text) and
    retries the reply on the next pass, because a reply the phone has not spoken is still owed (M2).
+   **This is the per-write failure of a layer that is available** — the key is loaded (M5 reads it
+   once, at startup) and it is this value the signer errors on. It is not §8.3's unavailability,
+   which is decided before the loop and never reaches a write; T2a reaches this path with an
+   **injected failing signer**, because nothing in the shipped pre-P6.3 build can.
 5. **The same is true of every other write**: the ledger and the pending-prompt file are local
    state, not wire messages, and they are **not** MAC-covered — but they are written with the
    redactor (D118) and at `0o600` (M7).
@@ -665,12 +737,18 @@ The same function, the same key, the same covered fields, in the other direction
 ### 8.3 The honest state until P6.3 and P6.4 land
 
 **Until P6.3 is approved**, neither half can be computed: the schema carries no `mac`, no
-`canonicalBytes` and no vectors, and `FIELDS` has no member for it. So the command **refuses every
-inbox message as unverifiable** (8.1) **and refuses every outbox and heartbeat write as
-unsignable** (8.2); it says so with **one fixed sentence per direction**, and — per the exit
-contract (M12, §4.4) — a command that can neither verify nor sign **fails at startup with exit 1**
-rather than looping over a mailbox it can do nothing with. The tests prove all of it: the inbound
-refusal, the outbound refusal, the two mutations that must fail one each, and the startup exit.
+`canonicalBytes` and no vectors, and `FIELDS` has no member for it. So the command **cannot verify
+and cannot sign**, and — per the exit contract (M12, §4.4) — **fails at startup with exit 1** rather
+than looping over a mailbox it can do nothing with: **one fixed sentence for the availability
+failure, before the loop, no pass run, nothing written.** That is the first row of M4's table, and it
+is the whole of this command's behaviour until P6.3 lands: **with the availability check firing,
+there is no pass, so 8.1's per-message refusal and 8.2's per-write refusal cannot occur** — they are
+what the same code does once the check passes, and T2 and T2a test them with the MAC layer stubbed
+in (T2a's per-write half with an **injected failing signer**, the only way to reach a signer error
+when the layer is available). The tests prove all of it: the inbound refusal, the outbound refusal,
+the two mutations that must fail one each, and **the startup exit** — with the startup case and the
+two per-value cases asserted as three separate tests, because they are three different states of the
+world (M4's table).
 **This is the honest state of the world and it is the first owner decision, which must be answered
 for both directions.**
 
@@ -736,7 +814,9 @@ do.
 | The store | the ETag CAS refuses the loser with **nothing written**; the ledger survives a restart; the write set is exactly the outbox and the heartbeat | `internal/gcpfake` |
 | The fence | every destructive action is refused, before any spawn; the mutation that removes the allow-list turns a test red; the exit code is 0 for a pass that also delivered, 0 for a pass that read only per-message refusals, and 1 for one whose only reading was a refused action | a fake action runner that records what was spawned |
 | The MAC, **inbound** | an unverifiable message is refused and never acted on; a verified one is delivered; the mutation that skips verification turns a test red | a fake keychain |
-| The MAC, **outbound** | every outbox reply and heartbeat carries a signature over the same covered fields; the command's own `verify` accepts what its `sign` produced; a write it cannot sign **does not happen** (no unsigned reply, no unsigned heartbeat, no lease taken); the mutation that writes unsigned turns a test red | a fake keychain, and a recording store |
+| The MAC, **outbound** | every outbox reply and heartbeat carries a signature over the same covered fields; the command's own `verify` accepts what its `sign` produced; a write it cannot sign **does not happen** (no unsigned reply, no unsigned heartbeat, no lease taken); the mutation that writes unsigned turns a test red | a fake keychain, **an injected failing signer** (M4's third row), and a recording store |
+| M4's three states are three states | the availability check is a startup refusal with **no pass run** (T5); a message that fails verification is a per-message refusal inside a running pass (T2); a value the signer rejects is a per-write refusal inside a running pass (T2a) — and the third is unreachable without the injected signer, which is why the tests are three and not one | `internal/cli`'s `RunE` tests, `internal/mailbox`'s gate tests, and a signer that fails on demand |
+| An unverifiable message is never retired | the node is still read on the next pass and refused again with its code; nothing the command can do removes it (M4a, §7's ordering 2) | `internal/gcpfake`'s Realtime Database, two passes |
 | The **write credential** | the writes are made with a `CONSUMER`-claimed token (C0), and the merged create-only grant refuses a second write to one outbox id | `internal/gcpfake`'s identitytoolkit fake, and the emulator rules for the store's other half |
 | The expiry | the 72-hour boundary, exactly; the 6-hour command window; the 5-minute future tolerance | injected `now` |
 | The exit contract | 0 for a completed pass, refusals included **and nothing read included**; 1 for a bad flag, a missing mailbox, the M4/§8.3 startup refusal and a refused database (`dbErr`/`checkDBProject`); 2 only for `dbErr`'s `remote` errors; M12's four-clause predicate for the one pass-level case | `--once` runs through the command's own `RunE` |
@@ -778,8 +858,10 @@ a fake) + tests; `internal/localcfg`'s item-name field and its validation test.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/mailbox/... ./internal/localcfg -count=1`: the
 covered field set is exactly `FIELDS` minus `mac` minus `acked`, pinned by the corpus; the inbound
 gate refuses an unsigned, wrongly-signed, tampered or future-stamped message and never hands it to
-the ledger; a test asserts the key never appears in any output, any error string, any log line or
-the JSON; a test asserts the item name **does** appear in the diagnostic.
+the ledger; **a test asserts the cost M4a and §7 state — the refused message is still in the inbox
+on the next pass and is refused again, with its code, and nothing this command can do retires it**;
+a test asserts the key never appears in any output, any error string, any log line or the JSON; a
+test asserts the item name **does** appear in the diagnostic.
 **Red step.** Make the gate return "verified" when the MAC field is absent and watch
 `TestUnverifiableIsRefused` fail — and, separately, put the key into an error message and watch
 `TestKeyIsNeverPrinted` fail.
@@ -795,13 +877,20 @@ outbox or the heartbeat; corpus entries for the round trip.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/mailbox -run 'Sign|Outbound|Heartbeat' -count=1`:
 what `sign` produces, the command's own `verify` accepts; the covered set is the same one T2 pins, in
 both directions; **both** families are signed (the outbox reply and the heartbeat, the heartbeat's
-`{at, boot}` included); a consumer that cannot sign writes **nothing** — no reply, no heartbeat, and
-therefore no lease taken (M1) — and reports the refusal by code; the reply it could not write is owed
-again on the next pass rather than lost. Swept over the simulator's seeded schedules, not one call.
+`{at, boot}` included); a consumer whose **signer fails for this value** writes **nothing** — no
+reply, no heartbeat, and therefore no lease taken (M1) — and reports the refusal by code; the reply
+it could not write is owed again on the next pass rather than lost. **That case is reached with an
+injected failing signer**, in a build where the MAC layer is available: it is M4's third row, and the
+delay between "the layer is unavailable" (the startup exit, T5) and "the signer errored on this
+value" (this task) is the whole reason T2a cannot be tested by the shipped default. Swept over the
+simulator's seeded schedules, not one call.
 **Red step.** (a) Write the reply without a MAC and watch `TestOutboundIsSigned` fail; (b) swap the
 key in `sign` (sign with one key, verify with the other) and watch `TestSignVerifyRoundTrip` fail;
 (c) let the heartbeat be written unsigned when signing fails and watch
-`TestUnsignedHeartbeatIsNotWritten` fail.
+`TestUnsignedHeartbeatIsNotWritten` fail; (d) make the failing signer's error a startup refusal
+instead of a per-write one and watch `TestSigningFailureIsAPerWriteRefusal` fail — the injected
+signer is only reachable if the availability check has already passed, and this step is what keeps
+M4's second row and third row from collapsing into the first.
 **Reviewer tier.** SECURITY-SENSITIVE — an unsigned reply is a phone reading an answer it cannot
 attribute, which is the same class of exposure as the inbound half.
 
@@ -853,11 +942,14 @@ not exist.
 shape, the `project` field, and that no message text and no key appears in it. **The exit contract is
 tested here, on the command's own `RunE`, on both sides of every row of §4.4**: `--interval 500ms`
 → 1; no mailbox configured → 1; a malformed item name → 1; **M4/§8.3 (verification or signing
-unavailable) → 1 at startup, with no pass run**; a completed pass whose every message was refused as
+unavailable) → 1 at startup, with no pass run** — this is **M4's first row** (the availability check),
+and it is the only MAC case that is a startup exit; a completed pass whose every message was refused as
 a duplicate → **0**; a pass that held no lease → **0**; a pass over an empty inbox → **0** (both read
 nothing, so M12's first clause fails and the exit is 0); a `--once` pass that read only per-message
 refusals and performed no action → **0** (clause 4); a `--once` pass that read only a refused action
-and performed no action → **1**.
+and performed no action → **1**; **and, with the MAC layer stubbed in, a pass whose write the signer
+refuses → 0** (M4's third row is an outcome, not a startup refusal — the assertion T2a's injected
+signer makes possible and this task's own `RunE` test repeats).
 **Red step.** Add the command to the tree without regenerating the reference and watch
 `TestCliReferenceIsCurrent` fail with the regenerating command in the message; **and**, separately,
 make the pass return `ExitUserError` on any refused message and watch
@@ -902,7 +994,10 @@ and watch the reference test fail; make the sweeper write a verdict node and wat
 **Files.** `internal/mailbox/parity_test.go` (the replay, the hash check, **and the regenerate-and-diff
 check**); `shared/mailbox-sim/parity.test.js` (the scenario exporter);
 `docs/mobile/mailbox-review-checklist.md` (new, short: the things a reviewer of T1–T7 must confirm,
-each with the test that proves it).
+each with the test that proves it **or marked as a line no test in this repository can prove** — the
+`docs/design/v1.md` §9.1 row, the absence of an IAM sentence in this plan (no guard's globs reach
+`docs/plans/*.md`), the `m~…` sweeper question, and the parked-unverifiable-message cost, which is
+behaviour a test asserts but an operator's decision to accept).
 **Depends on.** T1–T7.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/mailbox -run 'Parity' -count=1`; 120 seeded
 schedules with three messages, two consumers and twelve passes each, replayed in Go and compared
@@ -987,10 +1082,11 @@ Each with the recommendation first. Decisions 1, 2, 3 and 8 hold the task back; 
 
 1. **The MAC covers both directions of the wire (§3.5's "who signs"): what does `fugaro mailbox` do
    while P6.3 and P6.4 are not approved? (Answer for both halves.)**
-   **Recommended: fail closed in both** — refuse every inbox message it cannot verify (M4a) **and**
-   refuse every outbox reply and heartbeat it cannot sign (M4b), say so with one fixed sentence per
-   direction, and — because a command that can neither verify nor sign has no work — **fail at
-   startup with exit 1** rather than looping over a mailbox it can do nothing with (§8.3, M12). The
+   **Recommended: fail closed in both** — and, in the state the question asks about, **fail closed
+   once**: while P6.3 is unapproved the MAC layer **cannot be computed at all**, so it is M4's first
+   row — one fixed sentence, **startup with exit 1, no pass run and nothing written** — rather than
+   the per-message and per-write refusals of M4a and M4b, which are what the same code does **once
+   the availability check passes** (M4's table, §8.3). The
    command is built complete with both seams, P6.3's `canonicalBytes` and vectors fill the one
    function used by both, and neither an unverified action nor an unsigned reply ever reaches the
    wire. The alternatives: verify inbound but write replies unsigned "until P6.7" (a phone reading an
@@ -1072,7 +1168,19 @@ Each with the recommendation first. Decisions 1, 2, 3 and 8 hold the task back; 
   depended on it; the parity design (M9) is built so that no Go verification does either. It is
   recorded in the pull request body.
 - **The Go tests this plan describes do not exist yet** — every "Verification" line above is a
-  **plan**, not a result. No task in this plan is done.
+  **plan**, not a result. No task in this plan is done. **In particular, the per-write signing
+  refusal (M4's third row) has no producer in the merged tree**: the shipped build cannot compute a
+  MAC at all, so the availability check fires before any write, and T2a's injected failing signer is
+  the only thing that reaches it. If a reviewer reads M4b's "writes nothing, reports a code, owes the
+  reply again" as describing the pre-P6.3 state, that is the misreading M4's table was written to
+  stop.
+- **An unverifiable inbox message is never retired, and this plan does not fix it** — it cannot: the
+  ledger holds no slot for it (M4a's anti-denial-of-service rule) and the merged inbox grant refuses
+  a delete as well as an overwrite (§2), so every pass re-reads it and re-refuses it until an
+  operator removes the node with their own credential, out of band. The cost is one inbox read and
+  one `refused[]` entry per pass, forever, from one bad message; the alternatives are a tombstone
+  that would consume the genuine message's `(sender, id)` (refused) or a rules change (Phase 2).
+  §7's ordering 2 states it where the design decision is made; T2 asserts the behaviour.
 - **Checks 80 and 83–88** (a real phone, a real orchestrator, a real database, a real clock, real
   audio hardware) are owner-run and unrun. **No live behaviour is verified by this document.**
 - **The RTDB conditional write against a real database** is not verified here. The client supports
@@ -1109,6 +1217,7 @@ Each with the recommendation first. Decisions 1, 2, 3 and 8 hold the task back; 
 | The `CONSUMER` write credential is never minted | the writes fall back to the ADC and the store stops being a fence | decision 8; T6's write-set test is the fence that survives either answer |
 | The keychain code is ours | a platform bug, or a leak | T2's two mutations; the reviewer tier |
 | `internal/budget/sweep.go` touching `m~…` | a deleted mailbox's state | §6 and §16: a finding, not a silent fix |
+| An unverifiable message parks in the inbox for ever | one inbox read and one `refused[]` entry **per pass**, forever, from one bad message | nothing in the merged design retires it (§7's ordering 2, §16): the ledger holds no slot for it by design, and the create-only inbox grant refuses a delete. The operator's own credential is the only remedy, and it is out of band |
 
 ## 18. Execution
 
