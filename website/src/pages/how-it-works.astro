@@ -1,18 +1,42 @@
 ---
 // website/src/pages/how-it-works.astro — the run, step by step (website plan, Task W1.4;
-// redesign part P8, D185).
+// redesign part P8, D185; website changes spec of 2026-10-18, item 4).
 //
-// The page is the flow and nothing else, because everything else this page could say is a
-// fact of its own: what each stage costs, what it can reach, what the caps are. Those are
-// pages and sections of their own (W1.5, W1.6, W2.x), and a page that summarised them here
-// would be a second copy of them to keep in step (Global Constraint 6). The flow's own note
-// says where its words come from, and `ArchitectureDiagram.astro` holds every caption to the
-// document it cites at build time.
+// The page is the picture and then the detail of it, in that order: the four steps the
+// changes spec names (`ArchitectureDiagram.astro`, the same component the homepage renders —
+// one drawing, not two) and, under it, the run README.md's `## How it works` numbers, in
+// that section's own words (`RunDetail.astro`). A reader who wants the whole of it reads
+// down; a reader who wants the shape of it stops at the picture.
+//
+// Everything else this page could say is a fact of its own: what each stage costs, what it
+// can reach, what the caps are. Those are pages and sections of their own (W1.5, W1.6,
+// W2.x), and a page that summarised them here would be a second copy of them to keep in step
+// (Global Constraint 6). Both components hold every line they render to the document it
+// cites at build time.
 import Base from '../layouts/Base.astro'
 import ArchitectureDiagram from '../components/ArchitectureDiagram.astro'
+import RunDetail from '../components/RunDetail.astro'
 ---
 
 <Base title="How it works">
-  <h1>How it works</h1>
+  <h1 class="page-title">How it works</h1>
   <ArchitectureDiagram />
+  <RunDetail />
 </Base>
+
+<style>
+  /* The page's own title, and the room under it (review round 3, item 3d). This page is the
+     picture and then the detail of it, and the picture is what it opens with: `base.css`'s
+     heading margin (`--space-xs`, 12 px) left the drawing almost against the title — the
+     review measured the gap and found the picture starting 12 px under the `h1`. The room is
+     this page's rather than the diagram's, because the same component is the homepage's
+     picture too, and there it is not the first thing under the `h1`: the homepage's order is
+     the hero, then the chat, then the flow (`index.astro`), and round 2's complaint about it
+     was that the flow sat outside the first 900 px of that page — read down to, not met,
+     which is a position the homepage's own sections answer and a margin on the shared
+     component would move as well. `website/test/base-styles.mjs` reads this rule and refuses
+     a title with a heading's margin under it. */
+  .page-title {
+    margin-bottom: var(--space-xl);
+  }
+</style>

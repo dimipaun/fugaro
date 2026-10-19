@@ -2,6 +2,7 @@ package tf
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -780,7 +781,7 @@ var deployerRoleGolden = map[string][]string{
 	DeployerScopedRole: {
 		"apikeys.keys.delete", "apikeys.keys.update",
 		"artifactregistry.repositories.delete", "artifactregistry.repositories.setIamPolicy", "artifactregistry.repositories.update",
-		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.resume", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
+		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
 		"iam.serviceAccounts.actAs", "iam.serviceAccounts.delete", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
 		"run.jobs.delete", "run.jobs.run", "run.jobs.runWithOverrides", "run.jobs.setIamPolicy", "run.jobs.update",
 		"secretmanager.secrets.delete", "secretmanager.secrets.setIamPolicy", "secretmanager.secrets.update",
@@ -797,9 +798,60 @@ func permVerb(p string) string {
 	return p
 }
 
+// changesExisting is whether a permission changes or reaches an existing
+// resource, which the unconditioned deployer role may never hold. GCP names a
+// Cloud Scheduler job's resume cloudscheduler.jobs.enable (no
+// cloudscheduler.jobs.resume exists), so enable is a changing verb too, with
+// one exception: serviceusage.services.enable, which turns an API on and is
+// the unconditioned role's on purpose.
+func changesExisting(p string) bool {
+	switch permVerb(p) {
+	case "update", "delete", "run", "runWithOverrides", "pause", "setIamPolicy", "actAs":
+		return true
+	case "enable":
+		return p != "serviceusage.services.enable"
+	}
+	return false
+}
+
+// unconditionedDeployerViolations is why perms, as fugaroDeployer's list,
+// breaks D75's split: a verb that belongs to the scoped role, or a storage
+// permission other than the one creation.
+func unconditionedDeployerViolations(perms []string) []string {
+	var out []string
+	for _, p := range perms {
+		if changesExisting(p) {
+			out = append(out, fmt.Sprintf("%s holds %s: that verb belongs to the scoped role, under its condition", DeployerRole, p))
+		}
+		if strings.HasPrefix(p, "storage.") && p != "storage.buckets.create" {
+			out = append(out, fmt.Sprintf("%s holds %s: the only storage permission it may hold is storage.buckets.create", DeployerRole, p))
+		}
+	}
+	return out
+}
+
+// The unconditioned role's check must catch every scoped verb moved into it,
+// Cloud Scheduler's resume (cloudscheduler.jobs.enable) included, and must not
+// trip on serviceusage.services.enable, which that role holds by design.
+func TestUnconditionedDeployerCheckCatchesEveryScopedVerb(t *testing.T) {
+	if got := unconditionedDeployerViolations(deployerRoleGolden[DeployerRole]); len(got) != 0 {
+		t.Fatalf("the real unconditioned role is refused: %v", got)
+	}
+	for _, p := range deployerRoleGolden[DeployerScopedRole] {
+		moved := append(slices.Clone(deployerRoleGolden[DeployerRole]), p)
+		if got := unconditionedDeployerViolations(moved); len(got) == 0 {
+			t.Errorf("moving %s into %s is not caught", p, DeployerRole)
+		}
+	}
+	if got := unconditionedDeployerViolations([]string{"cloudscheduler.jobs.enable"}); len(got) == 0 {
+		t.Error("cloudscheduler.jobs.enable (a Scheduler job's resume) in the unconditioned role is not caught")
+	}
+}
+
 // The deployer's two roles hold exactly the lists D75 names, and the split
 // between them is the decision: every verb that changes or reaches an existing
-// resource — update, delete, run, pause, resume, setIamPolicy — and actAs
+// resource — update, delete, run, pause, resume (cloudscheduler.jobs.enable),
+// setIamPolicy — and actAs
 // itself are in the scoped role alone, which is bound once and only under the
 // managed-prefix condition. The other role creates, reads and enables, and
 // nothing else.
@@ -829,17 +881,11 @@ func TestDeployerRolesHoldOnlyWhatD75Names(t *testing.T) {
 			}
 		}
 	}
-	// The unconditioned role: no update, delete, run, pause, setIamPolicy or
-	// actAs, and among storage permissions exactly the one creation.
-	changing := map[string]bool{"update": true, "delete": true, "run": true, "runWithOverrides": true, "pause": true, "resume": true,
-		"setIamPolicy": true, "actAs": true, "getIamPolicy": false, "get": false, "list": false, "create": false, "enable": false}
-	for _, p := range RolePermissions[DeployerRole] {
-		if changing[permVerb(p)] {
-			t.Errorf("%s holds %s: that verb belongs to the scoped role, under its condition", DeployerRole, p)
-		}
-		if strings.HasPrefix(p, "storage.") && p != "storage.buckets.create" {
-			t.Errorf("%s holds %s: the only storage permission it may hold is storage.buckets.create", DeployerRole, p)
-		}
+	// The unconditioned role: no update, delete, run, pause, resume
+	// (cloudscheduler.jobs.enable), setIamPolicy or actAs, and among storage
+	// permissions exactly the one creation.
+	for _, why := range unconditionedDeployerViolations(RolePermissions[DeployerRole]) {
+		t.Error(why)
 	}
 	// The scoped role: exactly the nine storage permissions of D75, and no
 	// secretmanager.versions.*, which would make a secret value readable.

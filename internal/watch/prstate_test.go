@@ -67,18 +67,42 @@ const ghStates = `case "$3" in
 esac
 `
 
+// prStateTestTimeout is how long the tests below let one lookup take. Every
+// one of them asserts an ANSWER — which rows survive, what gh was asked, how
+// many times — and a test about an answer must never also be a test of how
+// long the machine took: a fork, an exec and a shell script can outlast a
+// short budget on a loaded machine, and the lookup is then killed and read as
+// "gh could not tell the pull request's state" instead of as the answer the
+// test means to check. The timeout itself has its own tests
+// (TestPRStateGHThatHangsLeavesTheRowListed and
+// TestPRStateGHLeavingAChildBehindAnswers), which set their own short one.
+const prStateTestTimeout = 30 * time.Second
+
+// waitLookups waits for the lookups Filter started to finish, however long
+// they take. Settle(d) is the production wait, and it is bounded because a
+// screen has to draw; a test that asserts an answer waits for the lookup
+// itself, with no deadline to race, so what it reads is the lookup's answer
+// and never the clock's. A lookup that never finishes hangs the test, and a
+// hung test is a failure, not a flake.
+func waitLookups(p *PRState) {
+	if p == nil || p.disabled {
+		return
+	}
+	p.wg.Wait()
+}
+
 // The point of the whole thing: a merged or closed pull request leaves the
 // list, an open one stays, and nothing else about the row is touched.
 func TestPRStateDropsMergedAndClosedKeepsOpen(t *testing.T) {
 	calls := fakeGH(t, ghStates)
-	p := NewPRState(PRStateOptions{})
+	p := NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	rows := []ReadyRow{
 		readyRow("https://github.com/acme/app/pull/1", 1),
 		readyRow("https://github.com/acme/app/pull/2", 2),
 		readyRow("https://github.com/acme/app/pull/3", 3),
 	}
 	p.Filter(rows)
-	p.Settle(5 * time.Second)
+	waitLookups(p)
 	got := p.Filter(rows)
 	if want := []string{"https://github.com/acme/app/pull/3"}; !slices.Equal(urls(got), want) {
 		t.Fatalf("kept %v, want %v", urls(got), want)
@@ -113,9 +137,9 @@ func TestPRStateAsksTheHostTheURLNames(t *testing.T) {
 	calls := fakeGH(t, "echo OPEN\n")
 	t.Setenv("GH_HOST", "github.example.com")
 	rows := []ReadyRow{readyRow("https://github.com/acme/app/pull/3", 3)}
-	p := NewPRState(PRStateOptions{})
+	p := NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	p.Filter(rows)
-	p.Settle(5 * time.Second)
+	waitLookups(p)
 	if got := p.Filter(rows); len(got) != 1 {
 		t.Fatalf("kept %d rows, want the open one", len(got))
 	}
@@ -149,19 +173,19 @@ func TestPRStateAsksTheHostTheURLNames(t *testing.T) {
 // word gh never prints both leave the row listed. The note says so once, and
 // never carries gh's output.
 //
-// The timeout is the generous production one: every row here answers at once,
-// and a freshly written /bin/sh script can take a good fraction of a second to
-// start on a loaded machine — a short timeout would make this test about the
-// machine, not about the answer. The timing case has its own test below.
+// The timeout is prStateTestTimeout, not the production one: both rows here
+// answer at once, and a test about the answer must not become a test of how
+// fast a loaded machine can start a shell. The timing case has its own test
+// below.
 func TestPRStateKeepsRowsWhenGHDisagrees(t *testing.T) {
 	calls := fakeGH(t, ghStates)
-	p := NewPRState(PRStateOptions{Timeout: PRStateTimeout})
+	p := NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	rows := []ReadyRow{
 		readyRow("https://github.com/acme/app/pull/4", 4),
 		readyRow("https://github.com/acme/app/pull/5", 5),
 	}
 	p.Filter(rows)
-	p.Settle(30 * time.Second)
+	waitLookups(p)
 	if got := p.Filter(rows); len(got) != 2 {
 		t.Fatalf("kept %d rows, want both", len(got))
 	}
@@ -236,7 +260,7 @@ func TestPRStateGHLeavingAChildBehindAnswers(t *testing.T) {
 func TestPRStateMissingGHKeepsRowsAndNotesOnce(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir) // no gh here, and not the developer's either
-	p := NewPRState(PRStateOptions{})
+	p := NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	rows := []ReadyRow{
 		readyRow("https://github.com/acme/app/pull/1", 1),
 		readyRow("https://github.com/acme/lib/pull/2", 2),
@@ -244,7 +268,7 @@ func TestPRStateMissingGHKeepsRowsAndNotesOnce(t *testing.T) {
 	if got := p.Filter(rows); len(got) != 2 {
 		t.Fatalf("kept %d rows, want both", len(got))
 	}
-	p.Settle(5 * time.Second)
+	waitLookups(p)
 	if got := p.Filter(rows); len(got) != 2 {
 		t.Fatalf("kept %d rows after the failed lookup, want both", len(got))
 	}
@@ -263,9 +287,9 @@ func TestPRStateKeepsTheAnswersItHasWhenGHGoesAway(t *testing.T) {
 		readyRow("https://github.com/acme/app/pull/1", 1), // merged
 		readyRow("https://github.com/acme/app/pull/3", 3), // open
 	}
-	p := NewPRState(PRStateOptions{})
+	p := NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	p.Filter(rows)
-	p.Settle(30 * time.Second)
+	waitLookups(p)
 	if got := p.Filter(rows); len(got) != 1 || urls(got)[0] != "https://github.com/acme/app/pull/3" {
 		t.Fatalf("kept %v, want the open one only", urls(got))
 	}
@@ -274,7 +298,7 @@ func TestPRStateKeepsTheAnswersItHasWhenGHGoesAway(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	rows = append(rows, readyRow("https://github.com/acme/app/pull/5", 5))
 	p.Filter(rows)
-	p.Settle(30 * time.Second)
+	waitLookups(p)
 	got := p.Filter(rows)
 	if len(got) != 2 {
 		t.Fatalf("kept %v, want the open one and the unanswered one — and never the merged one", urls(got))
@@ -298,7 +322,7 @@ func TestPRStateKeepsTheAnswersItHasWhenGHGoesAway(t *testing.T) {
 // space, a newline, a command substitution, a traversal.
 func TestPRStateNeverExecutesAnythingForOtherURLs(t *testing.T) {
 	calls := fakeGH(t, ghStates)
-	p := NewPRState(PRStateOptions{})
+	p := NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	rows := []ReadyRow{
 		readyRow("https://bitbucket.org/acme/app/pull-requests/7", 7),
 		readyRow("https://github.com/a/b/pull/1;rm -rf x", 1),
@@ -315,7 +339,10 @@ func TestPRStateNeverExecutesAnythingForOtherURLs(t *testing.T) {
 	if got := p.Filter(rows); len(got) != len(rows) {
 		t.Fatalf("kept %d rows, want all %d", len(got), len(rows))
 	}
-	p.Settle(time.Second)
+	// Every URL here is one gh must never see, so no lookup was started and
+	// this waits for nothing: what it proves is that nothing was ever in
+	// flight, not that a second was long enough for something to have run.
+	waitLookups(p)
 	if got := ghCalls(t, calls); got != nil {
 		t.Fatalf("gh was run for a URL it must never see: %v", got)
 	}
@@ -329,13 +356,13 @@ func TestPRStateNeverExecutesAnythingForOtherURLs(t *testing.T) {
 func TestPRStateCachesAnswers(t *testing.T) {
 	calls := fakeGH(t, ghStates)
 	now := time.Unix(1_700_000_000, 0)
-	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, OpenTTL: time.Minute})
+	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, OpenTTL: time.Minute, Timeout: prStateTestTimeout})
 	rows := []ReadyRow{
 		readyRow("https://github.com/acme/app/pull/1", 1),
 		readyRow("https://github.com/acme/app/pull/3", 3),
 	}
 	p.Filter(rows)
-	p.Settle(5 * time.Second)
+	waitLookups(p)
 	if n := len(ghCalls(t, calls)); n != 2 {
 		t.Fatalf("calls = %d, want two", n)
 	}
@@ -352,7 +379,7 @@ func TestPRStateCachesAnswers(t *testing.T) {
 	if got := p.Filter(rows); len(got) != 1 {
 		t.Fatalf("kept %d rows, want the open one only", len(got))
 	}
-	p.Settle(5 * time.Second)
+	waitLookups(p)
 	if n := len(ghCalls(t, calls)); n != 3 {
 		t.Fatalf("calls = %d, want the open URL re-asked exactly once", n)
 	}
@@ -374,7 +401,7 @@ func TestPRStateCachesAnswers(t *testing.T) {
 func TestPRStateRetriesAFailureSlowly(t *testing.T) {
 	calls := fakeGH(t, ghStates)
 	now := time.Unix(1_700_000_000, 0)
-	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, Retry: time.Minute, RetryMax: 4 * time.Minute})
+	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, Retry: time.Minute, RetryMax: 4 * time.Minute, Timeout: prStateTestTimeout})
 	rows := []ReadyRow{readyRow("https://github.com/acme/app/pull/4", 4)}
 	want := 0
 	// fail asks and checks that the number of gh processes so far is want.
@@ -382,7 +409,7 @@ func TestPRStateRetriesAFailureSlowly(t *testing.T) {
 		t.Helper()
 		want++
 		p.Filter(rows)
-		p.Settle(30 * time.Second)
+		waitLookups(p)
 		if n := len(ghCalls(t, calls)); n != want {
 			t.Fatalf("calls = %d after %s, want %d", n, what, want)
 		}
@@ -391,7 +418,7 @@ func TestPRStateRetriesAFailureSlowly(t *testing.T) {
 	quiet := func(what string) {
 		t.Helper()
 		p.Filter(rows)
-		p.Settle(30 * time.Second)
+		waitLookups(p)
 		if n := len(ghCalls(t, calls)); n != want {
 			t.Fatalf("calls = %d after %s, want none more than %d", n, what, want)
 		}
@@ -429,10 +456,10 @@ func TestPRStateNoteClearsWhenGHAgreesAgain(t *testing.T) {
 	}
 
 	now := time.Unix(1_700_000_000, 0)
-	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, Retry: time.Minute})
+	p := NewPRState(PRStateOptions{Now: func() time.Time { return now }, Retry: time.Minute, Timeout: prStateTestTimeout})
 	rows := []ReadyRow{readyRow("https://github.com/acme/app/pull/1", 1)}
 	p.Filter(rows)
-	p.Settle(30 * time.Second)
+	waitLookups(p)
 	if want := "PR state unavailable: " + errGHNoAnswer.Error(); p.Note() != want {
 		t.Fatalf("note = %q, want %q", p.Note(), want)
 	}
@@ -441,7 +468,7 @@ func TestPRStateNoteClearsWhenGHAgreesAgain(t *testing.T) {
 	}
 	now = now.Add(2 * time.Minute)
 	p.Filter(rows)
-	p.Settle(30 * time.Second)
+	waitLookups(p)
 	if p.Note() != "" {
 		t.Fatalf("note = %q, want none: gh answered on the retry", p.Note())
 	}
@@ -455,7 +482,7 @@ func TestPRStateDisabled(t *testing.T) {
 	if got := p.Filter(rows); len(got) != 1 {
 		t.Fatalf("kept %d rows, want the merged one listed with --no-pr-state", len(got))
 	}
-	p.Settle(time.Second)
+	waitLookups(p)
 	if got := ghCalls(t, calls); got != nil {
 		t.Fatalf("gh ran under --no-pr-state: %v", got)
 	}
@@ -464,7 +491,14 @@ func TestPRStateDisabled(t *testing.T) {
 	}
 }
 
-// Many rows resolve, and never more than Concurrency gh processes at a time.
+// Many rows resolve, never more than Concurrency gh processes run at once, and
+// two of them really do run at once.
+//
+// The timeout is prStateTestTimeout: this test asserts an ANSWER (the peak), so
+// it must not also be a test of how fast a loaded machine can fork and exec a
+// shell. A gh killed at a short budget would answer nothing, and a killed gh
+// never runs its own decrement, which would leave the counter reading a peak
+// that is not there.
 func TestPRStateBoundsConcurrency(t *testing.T) {
 	dir := t.TempDir()
 	live := filepath.Join(dir, "live")
@@ -484,7 +518,7 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 			with("n=$(cat "+live+" 2>/dev/null || echo 0); echo $((n-1)) > "+live)+
 			"echo OPEN\n")
 
-	p := NewPRState(PRStateOptions{Concurrency: 2})
+	p := NewPRState(PRStateOptions{Concurrency: 2, Timeout: prStateTestTimeout})
 	var rows []ReadyRow
 	for i := 10; i < 18; i++ {
 		rows = append(rows, readyRow("https://github.com/acme/app/pull/"+strconv.Itoa(i), i))
@@ -492,19 +526,29 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 	if got := p.Filter(rows); len(got) != len(rows) {
 		t.Fatalf("kept %d rows, want all of them listed while unknown", len(got))
 	}
-	p.Settle(20 * time.Second)
+	waitLookups(p)
 	if got := p.Filter(rows); len(got) != len(rows) {
 		t.Fatalf("kept %d rows, want every open one", len(got))
 	}
 	if n := len(ghCalls(t, calls)); n != len(rows) {
 		t.Fatalf("calls = %d, want %d", n, len(rows))
 	}
+	// The peak is read exactly. Two is the semaphore's bound, so a higher
+	// reading is a lookup that ran outside it; and the bound has to be
+	// *reached*: eight rows with a gh that holds its slot for 0.2s must put
+	// two lookups in flight at once, and a peak of one would mean this test no
+	// longer sees the overlap it exists for. A one-sided check would let that
+	// pass as a quiet machine.
 	b, err := os.ReadFile(peak)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(b)); got != "2" {
-		t.Fatalf("peak concurrency = %s, want 2", got)
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatalf("peak concurrency = %q, want a number", b)
+	}
+	if n != 2 {
+		t.Fatalf("peak concurrency = %d, want exactly 2: the semaphore's bound, and the overlap it exists to allow", n)
 	}
 }
 
@@ -525,7 +569,7 @@ func TestPRStateListsBeforeAnyAnswer(t *testing.T) {
 func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 	fakeGH(t, "case \"$3\" in 1) echo MERGED ;; *) echo OPEN ;; esac\n")
 	x := newTM(t)
-	x.m.o.PRState = NewPRState(PRStateOptions{})
+	x.m.o.PRState = NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
 		return nil, []FinishedRun{
 			{Run: "r-merged", Slug: "acme/app", Title: "Already merged", Status: "succeeded",
@@ -538,7 +582,7 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 	if s := x.screen(); !strings.Contains(s, "Ready for your review (2)") {
 		t.Fatalf("the first frame must draw the list as it is, before any answer:\n%s", s)
 	}
-	x.m.o.PRState.Settle(5 * time.Second)
+	waitLookups(x.m.o.PRState)
 	x.m.Update(renderMsg{}) // the tick is what turns an answer into a frame
 	s := x.screen()
 	if !strings.Contains(s, "Ready for your review (1)") {

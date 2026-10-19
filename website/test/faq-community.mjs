@@ -53,7 +53,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkNodeModules } from './lib/build.mjs'
+import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -206,7 +206,7 @@ function entries(dir) {
 // directories (the last two are symlinked and rebuilt instead). `.github/` is *not* skipped:
 // the community page renders `ci.yml` and the issue templates, which is what one of the cases
 // below mutates.
-const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
+const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
 
 /** A copy of the repository in a temp directory, ready to be mutated and built. */
@@ -219,6 +219,9 @@ function copyOfTheRepository() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
+      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
+      // quotes the skills (website/test/lib/build.mjs).
+      if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
     },

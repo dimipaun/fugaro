@@ -188,6 +188,12 @@ type restoreRun struct {
 // checkout and the apply — and every refusal before the creation is a hard
 // return.
 func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) error {
+	// A restore creates a managed project and applies as its deployer, and
+	// neither is possible in this release (managedDeployerShipped): refused
+	// before anything else, and before any cloud call.
+	if err := refuseManagedNotShipped(); err != nil {
+		return err
+	}
 	// A credential leak first, before anything opens the cloud (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err

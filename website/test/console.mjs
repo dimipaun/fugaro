@@ -1,10 +1,12 @@
 // website/test/console.mjs — the console page (website plan, Task W1.6).
 //
 // The spec asks for "Console downloads: per-OS download links (placeholder until the
-// console ships)" and there is nothing to download: `console/` holds two documents and no
-// code, the release notes list the desktop console under "Not in this release", and a link
-// to an unsigned or unreleased artifact is the one outcome here with a real consequence for
-// a reader (finding 23, finding 25, D95). Four things are checked here:
+// console ships)" and there is nothing to download: the console is built — `console/` holds
+// the application, its packaging and the workflow that signs, notarises and staples its macOS
+// artifacts — but it is **unreleased**: that workflow creates the release as a draft the owner
+// publishes, `site.yaml`'s `features.console_downloads` is false until then, and a link to an
+// unsigned or unpublished artifact is the one outcome here with a real consequence for a
+// reader (finding 23, finding 25, D95). Four things are checked here:
 //
 //   1. **The placeholder carries no link.** While `features.console_downloads` is false the
 //      built page contains no download URL, and the downloads section contains no element a
@@ -39,7 +41,22 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkNodeModules } from './lib/build.mjs'
+import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
+import {
+  CONSOLE_README,
+  DOWNLOADS_JSON,
+  RELEASE_WORKFLOW,
+  SITE_YAML,
+  assertReleaseURL,
+  downloadNeedle,
+  downloadsData,
+  publishedAssets,
+  publishedDownloads,
+  repoFile,
+  workflowAssetRule,
+  workflowTagPrefix,
+  workflowTagShape,
+} from './lib/console-downloads.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -47,21 +64,8 @@ const REPO = path.dirname(SITE)
 // What a site build cannot read, and therefore what the copies below leave out: the Go
 // module's own tree and test data, the console application, and the installed and built
 // directories (the last two are symlinked and rebuilt instead).
-const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
+const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
-
-const DOWNLOADS_JSON = 'website/content/downloads.json'
-const SITE_YAML = 'website/data/site.yaml'
-
-/** The bytes of a file in the checkout, for a test to hold the build's output against. */
-function repoFile(relative) {
-  return readFileSync(path.join(REPO, relative), 'utf8')
-}
-
-/** The console's data file, parsed: the facts the page renders and this test checks. */
-function downloadsData() {
-  return JSON.parse(repoFile(DOWNLOADS_JSON))
-}
 
 /**
  * One decision row of the console's design, as that document writes it: the row is the
@@ -76,18 +80,6 @@ function decisionRow(id) {
   return row[0]
 }
 
-/**
- * The string a console download URL of this repository contains, built from `site.yaml`'s
- * own repository rather than typed here: while the flag is false the built page may carry
- * none of it, and the same shape is what the Go boundary test scans the whole site for
- * (Global Constraint 9). It is assembled at run time so that this file is not itself a
- * second spelling of a URL the site must not carry.
- */
-function downloadNeedle() {
-  const repository = /^repository:\s*(\S+)$/m.exec(repoFile(SITE_YAML))[1]
-  return `${new URL(repository).host}${new URL(repository).pathname}/releases/download`
-}
-
 /** A copy of the repository in a temp directory, ready to be mutated and built. */
 function copyOfTheRepository() {
   const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-console-'))
@@ -98,6 +90,9 @@ function copyOfTheRepository() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
+      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
+      // quotes the skills (website/test/lib/build.mjs).
+      if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
     },
@@ -182,12 +177,30 @@ test('the console page renders the facts its data file carries', async (t) => {
 })
 
 test('the downloads section carries no link and no download URL while the flag is false', async (t) => {
+  // The flag the whole of this rests on, and the state it states: the console is **built for
+  // macOS and has not been published**. "Built" is not a claim taken on trust — the application
+  // and the workflow that signs, notarises and staples its `.dmg` and `.zip` are in this
+  // repository — and "not published" is what the flag and the data file's `available` say, in
+  // the two places this case reads. The four are asserted **before** the build below, because
+  // the build refuses the same disagreement: a case that read them afterwards would report the
+  // refusal instead of the broken premise, and could not fail on the premise at all.
+  assert.ok(
+    existsSync(path.join(REPO, 'console', 'package.json')),
+    'console/ holds no application, so "the console is built" is not what this repository says',
+  )
+  assert.ok(
+    existsSync(path.join(REPO, RELEASE_WORKFLOW)),
+    `${RELEASE_WORKFLOW} does not exist, and the console's release workflow is what makes "built" a statement about this repository rather than a design`,
+  )
+  assert.match(repoFile(SITE_YAML), /^\s*console_downloads:\s*false\s*$/m, `${SITE_YAML} does not have features.console_downloads false`)
+  assert.equal(
+    downloadsData().available,
+    false,
+    `${DOWNLOADS_JSON} says the console is available, and this case is about the state in which it has not been published`,
+  )
+
   const built = buildWith(t, () => {})
   const page = builtPage(built)
-
-  // The flag the whole of this rests on: the console is designed and unshipped, and
-  // `site.yaml` says so.
-  assert.match(repoFile(SITE_YAML), /^\s*console_downloads:\s*false\s*$/m, `${SITE_YAML} does not have features.console_downloads false`)
 
   const needle = downloadNeedle()
   assert.ok(
@@ -257,6 +270,20 @@ test('every console claim is traceable to the document it came from', () => {
       `no console claim cites ${id}: the page states that the console is read-only (D2), that it has no telemetry (D5) and that it is its own artifact (D11), and each of those is one of those decisions`,
     )
   }
+
+  // The not-released claim is the one whose source has to **state** it. `not_released.text` is
+  // the console's own state, and the review of this branch found it citing `docs/release.md` —
+  // a document that describes how the console's release is cut and never that there is none.
+  // The lines about the console are read one by one, so a sentence elsewhere in the file (a
+  // refusal message about something else, say) cannot vouch for the claim.
+  const stateSource = data.not_released.source.trim().split(/\s+/)[0]
+  const aboutTheConsole = repoFile(stateSource)
+    .split('\n')
+    .filter((line) => /console/i.test(line))
+  assert.ok(
+    aboutTheConsole.some((line) => /not released|has not been published|unpublished/i.test(line)),
+    `${DOWNLOADS_JSON}'s not_released claim cites ${stateSource}, and none of its ${aboutTheConsole.length} line(s) about the console says the console is not released: the claim is the console's state, so the document cited for it has to state it`,
+  )
 })
 
 test("the console's guarantees are stated as the document that decides them states them", () => {
@@ -333,41 +360,168 @@ test("the console's guarantees are stated as the document that decides them stat
   }
 })
 
-test('the build refuses a download URL while the flag is false', async (t) => {
-  // The rule W0.2's Go test enforces over the whole tree, wired into the build (W1.6 step
-  // 2): a URL in the data file while the console is unreleased stops the build here, naming
-  // the file — and the URL is synthetic, because no real artifact exists to point at.
-  const built = buildWith(t, (copy) => {
-    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
-    const data = JSON.parse(readFileSync(file, 'utf8'))
-    data.downloads = [{ id: 'macos', platform: 'macOS', url: 'https://downloads.example.invalid/console-macos.tar.gz' }]
-    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
-  })
+test('the release the download URLs are built from is one this repository has released', () => {
+  const data = downloadsData()
+  const { release } = data
 
-  assert.notEqual(built.status, 0, `the build accepted a download URL while the console is unreleased:\n${built.output}`)
-  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
-  assert.match(built.output, /available is false/, 'the failure does not say why the URL was refused')
-  assert.equal(built.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+  // The tag is the console's own, `console-vX.Y.Z`, and the PREFIX is the release workflow's,
+  // read twice out of that file: the `CONSOLE_TAG="console-v$VERSION"` line that cuts the tag,
+  // and the literal `console-vX.Y.Z` its header prints. Holding the prefix to those two is what
+  // makes these assertions able to fail: the line this replaces compared the composed tag with
+  // `console-v` and the version, both of which the data file had just supplied, so only a wrong
+  // literal in the test itself could have failed it. The document the data file names as the
+  // block's source is held to the same tag, because that is what it is cited for.
+  assert.equal(
+    release.tag_prefix,
+    workflowTagPrefix(),
+    `${DOWNLOADS_JSON}'s release.tag_prefix is not the prefix ${RELEASE_WORKFLOW} composes the console's tag with`,
+  )
+  assert.equal(
+    `${release.tag_prefix}X.Y.Z`,
+    workflowTagShape(),
+    `${DOWNLOADS_JSON}'s release.tag_prefix is not the prefix ${RELEASE_WORKFLOW} prints the console's tag with`,
+  )
+  assert.match(
+    repoFile(release.source.split(/\s+/)[0]),
+    /console-vX\.Y\.Z/,
+    `${release.source} no longer documents the console's own release tag, and ${DOWNLOADS_JSON}'s URLs are built from it`,
+  )
+
+  // The shapes the release's own job accepts, read out of that job rather than remembered:
+  // it takes exactly one `.dmg` and one `.zip`, and its `case "$f" in *"-$VERSION-"*` guard
+  // refuses any asset not named for the version. This comes **before** the names below,
+  // because those are held to `console/README.md`'s documented ones: an asset in a shape the
+  // release does not upload is otherwise reported as a drift between the data file and the
+  // README rather than as what it is — a name no release will ever publish.
+  const rule = workflowAssetRule()
+  assert.deepEqual(
+    rule.extensions,
+    ['dmg', 'zip'],
+    `${RELEASE_WORKFLOW} no longer takes exactly one .dmg and one .zip (it names ${rule.extensions.map((extension) => `.${extension}`).join(', ')}), and the data file's assets are those two`,
+  )
+  assert.ok(
+    rule.versioned,
+    `${RELEASE_WORKFLOW} no longer refuses an asset that is not named for the version (\`case "$f" in *"-$VERSION-"*\`), and the data file's names carry the version`,
+  )
+  for (const entry of data.downloads) {
+    const extension = entry.file.slice(entry.file.lastIndexOf('.') + 1)
+    assert.ok(
+      rule.extensions.includes(extension),
+      `${DOWNLOADS_JSON}'s ${entry.id} names a .${extension} file, and the release uploads ${rule.extensions.map((value) => `.${value}`).join(' and ')}`,
+    )
+    assert.ok(
+      entry.file.includes('-{version}-'),
+      `${DOWNLOADS_JSON}'s ${entry.id} is ${JSON.stringify(entry.file)}, which does not carry the version between dashes, and the release refuses an asset not named for the version`,
+    )
+  }
+
+  // And the names are the release's own too: `console/README.md` prints what the packaging
+  // step produces, and the data file's `file` entries are those names with `{version}` where
+  // the version goes. A data file that drifted from the release puts a 404 behind every
+  // button on the day the flag is flipped, and nothing in the build would notice.
+  assert.deepEqual(
+    data.downloads.map((entry) => entry.file.split('{version}').join(release.version)),
+    publishedAssets(data),
+    `${DOWNLOADS_JSON}'s asset names are not the names ${CONSOLE_README} documents for the release`,
+  )
+
+  // And the version is one this repository has released: the console's release is cut from the
+  // CLI's own `vX.Y.Z` tag, and from 0.4.0 on a tag cannot be cut without a non-empty
+  // `docs/releases/vX.Y.Z.md` on `main` (docs/release.md; both tag workflows run
+  // `scripts/release-policy.sh check-highlights`). A version with no release file is therefore
+  // a version the CLI was not released at, and not one the console was built from.
+  //
+  // **What this cannot prove, and nothing offline can: that `console-vX.Y.Z` is a release that
+  // exists.** That is W3.1's check — the Go boundary test fails a true flag until its commit
+  // extends `TestWebsiteLinksNoConsoleWhileTheFlagIsOff` to hold every release-asset URL under
+  // `website/` against an asset of a tag that exists (plan Task W3.1, W1.6 step 2) — and it is
+  // the owner's check against the published release. What is pinned here is the offline half:
+  // the version is one the CLI was released at, and the prefix and the names are the release
+  // workflow's and the release's own.
+  const highlights = `docs/releases/v${release.version}.md`
+  assert.ok(
+    existsSync(path.join(REPO, highlights)),
+    `${DOWNLOADS_JSON}'s release.version is ${release.version} and ${highlights} is not in this repository: the console's release is cut from the CLI's own tag, and that tag cannot be cut without its highlights file`,
+  )
 })
 
-test('with the console released, the section renders the platform link the data carries', async (t) => {
-  // W3.1's state: the console has shipped, the flag in `site.yaml` and the data file's own
-  // `available` are both true, and the section renders what the data carries. Nothing in
-  // the page changes, which is the point of rendering the section from a data file.
+test('the build refuses a download URL while the flag is false', async (t) => {
+  // The rule W0.2's Go test enforces over the whole tree, wired into the build (W1.6 step
+  // 2): a URL written into the data file stops the build here, naming the file — and the URL
+  // is synthetic, because no real artifact exists to point at. Both shapes it can arrive in
+  // are refused: as a `url` key of its own, and as a `file` that is a URL rather than a
+  // published name. Since the owner's item 6 the URLs are DERIVED — the data file carries the
+  // release's published names and nothing else — so either shape is a file that has stopped
+  // being the file the derivation reads.
   const url = 'https://downloads.example.invalid/console-macos.tar.gz'
+
+  const asKey = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads = [{ id: 'macos', platform: 'macOS', url }]
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+  assert.notEqual(asKey.status, 0, `the build accepted a download URL while the console is unreleased:\n${asKey.output}`)
+  assert.match(asKey.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
+  assert.match(asKey.output, /carries the key "url"/, 'the failure does not say which key it refused')
+  assert.match(asKey.output, /derived/, 'the failure does not say where a download URL comes from instead')
+  assert.equal(asKey.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+
+  const asFile = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads[0].file = url
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+  assert.notEqual(asFile.status, 0, `the build accepted a URL in the file field while the console is unreleased:\n${asFile.output}`)
+  assert.match(asFile.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
+  assert.match(asFile.output, /\.file is "/, 'the failure does not name the field the URL was written into')
+  assert.equal(asFile.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+})
+
+test('with the console released, the section renders the downloads the release publishes', async (t) => {
+  // W3.1's state: the console has shipped, the flag in `site.yaml` and the data file's own
+  // `available` are both true — and that pair is the WHOLE change. Nothing in the page
+  // changes and no URL is written anywhere: the section's links are derived from the
+  // release's published names, so the flip and a version bump move every button (the owner's
+  // changes spec of 2026-10-18, item 6).
   const built = buildWith(t, (copy) => {
     const yaml = path.join(copy.root, 'website', 'data', 'site.yaml')
     writeFileSync(yaml, readFileSync(yaml, 'utf8').replace(/^(\s*console_downloads:\s*)false\s*$/m, '$1true'))
     const file = path.join(copy.root, 'website', 'content', 'downloads.json')
     const data = JSON.parse(readFileSync(file, 'utf8'))
     data.available = true
-    data.downloads = [{ id: 'macos', platform: 'macOS', url }]
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
 
-  const page = builtPage(built)
-  assert.ok(page.includes(`href="${url}"`), `the section does not render the download the data carries (${url})`)
-  assert.ok(!page.includes(downloadsData().not_released.text), 'the section still renders the not-released sentence with the console released')
+  const page = decode(builtPage(built))
+  const expected = publishedDownloads()
+  assert.ok(expected.length >= 2, `the data file names ${expected.length} asset(s), which is too few to prove the section renders the release`)
+
+  // The rendered links, in document order, held one at a time to the release's own facts: the
+  // repository, the release path, the tag and the published name. `assertReleaseURL` is where
+  // that happens, and it is deliberately not a URL composed here — see `test/lib`.
+  const links = [...downloadsSection(page).matchAll(/<a[^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((match) => ({
+    href: match[1],
+    label: match[2].trim(),
+  }))
+  assert.equal(
+    links.length,
+    expected.length,
+    `the section renders ${links.length} download link(s) with ${expected.length} asset(s) published (${links.map((link) => link.href).join(', ')})`,
+  )
+  for (const [index, download] of expected.entries()) {
+    assertReleaseURL(links[index].href, download.name)
+    assert.equal(
+      links[index].label,
+      download.label,
+      `the section offers ${JSON.stringify(links[index].label)} for ${JSON.stringify(download.name)}, and the release's own name for that asset is a ${download.platform} ${download.label.slice(download.platform.length + 1)}`,
+    )
+  }
+  assert.ok(
+    !page.includes(downloadsData().not_released.text),
+    'the section still renders the not-released sentence with the console released',
+  )
 })
 
 test('the page states nothing its data file does not carry', async (t) => {

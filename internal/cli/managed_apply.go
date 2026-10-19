@@ -146,6 +146,11 @@ of the four is a boundary against a session that goes around this program.`,
 // hard return.
 func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	ctx := cmd.Context()
+	// No deployer to apply as in this release (managedDeployerShipped):
+	// refused before the project is read or the cloud opened.
+	if err := refuseManagedNotShipped(); err != nil {
+		return err
+	}
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs, so it cannot be unset in time (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {

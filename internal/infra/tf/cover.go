@@ -261,7 +261,11 @@ const (
 	DeployerRole = "fugaroDeployer"
 	// DeployerScopedRole is the conditioned role's ID: every update, delete,
 	// run and pause permission, every *.setIamPolicy and actAs, held only
-	// where DeployerConditionExpression admits the resource.
+	// where DeployerConditionExpression admits the resource. In 0.8.6 the
+	// module creates it, and its binding, only with managed_deployer_scoped,
+	// which nothing sets (deployer.tf's header: the condition is not one IAM
+	// accepts yet). A plan without either has nothing of it to cover; one
+	// with them is covered as before.
 	DeployerScopedRole = "fugaroDeployerScoped"
 	// DeployerConditionTitle is that condition's title. The modules never set
 	// a condition description, and the plan review compares the title and the
@@ -429,7 +433,9 @@ var RolePermissions = map[string][]string{
 	// between them — creation, reads and serviceusage.services.enable here,
 	// and every update, delete, run, pause, *.setIamPolicy and actAs in
 	// fugaroDeployerScoped, which is bound exactly once and only under
-	// DeployerConditionExpression. Widening either list is a decision:
+	// DeployerConditionExpression (when the installation opts in with
+	// managed_deployer_scoped; off by default in 0.8.6). Widening either list
+	// is a decision:
 	// TestDeployerRolesHoldOnlyWhatD75Names states what each may not hold.
 	DeployerRole: {
 		"apikeys.keys.create", "apikeys.keys.get", "apikeys.keys.list",
@@ -444,7 +450,7 @@ var RolePermissions = map[string][]string{
 	DeployerScopedRole: {
 		"apikeys.keys.delete", "apikeys.keys.update",
 		"artifactregistry.repositories.delete", "artifactregistry.repositories.setIamPolicy", "artifactregistry.repositories.update",
-		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.resume", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
+		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
 		"iam.serviceAccounts.actAs", "iam.serviceAccounts.delete", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
 		"run.jobs.delete", "run.jobs.run", "run.jobs.runWithOverrides", "run.jobs.setIamPolicy", "run.jobs.update",
 		"secretmanager.secrets.delete", "secretmanager.secrets.setIamPolicy", "secretmanager.secrets.update",

@@ -37,7 +37,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import { resolveBinary } from '../../src/main/spawn'
@@ -55,6 +55,7 @@ import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { githubToken } from '../support/fakeSecrets'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { launchConsole } from '../support/launch'
 import { LIVE_STALE_AFTER_SECONDS } from '../../src/renderer/screens/live'
 import type { FeedHealth } from '../../src/renderer/screens/live'
 import { NO_BINARY_HEADLINE, PICKER_LEAD, refusedState } from '../../src/renderer/screens/degraded'
@@ -443,13 +444,13 @@ test.describe('the console with nothing to read', () => {
     // opens when no installation is chosen -- is not, and no spec touches the
     // machine's own console profile.
     cli.seedActiveInstallation()
-    app = await electron.launch({ args: cli.launchArgs(consoleDir), env: cli.env })
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })
 
   test.afterAll(async () => {
-    await app.close()
+    await app?.close()
     cli.remove()
     rmSync(scratch, { recursive: true, force: true })
   })

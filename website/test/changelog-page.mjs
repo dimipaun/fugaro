@@ -47,7 +47,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkNodeModules } from './lib/build.mjs'
+import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -87,7 +87,7 @@ const SUMMARY_HEADING = 'The newest releases'
 // module's own tree and test data, the console application, and the installed and built
 // directories (the last two are symlinked and rebuilt instead). The same sets W1.3's layout
 // test uses — a copy has to be the shape of the repository, minus what no page reads.
-const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
+const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
 
 // ---------------------------------------------------------------------------------------
@@ -112,6 +112,9 @@ function build() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
+      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
+      // quotes the skills (website/test/lib/build.mjs).
+      if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
     },
