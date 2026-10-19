@@ -414,9 +414,12 @@ export function textWidth(text, fontSize) {
  * rounding in the browser, a hinting that adds a fraction of a pixel per glyph. Four pixels
  * is a third of a character, which is enough that the name is not *exactly* at the box's edge
  * when the estimate is right, and small enough that it never decides the layout on its own —
- * the box is 232 px against an estimated 225 at the width the row starts at. The row is the
- * one layout where a name that wraps is the defect, so it is the one place the margin is
- * required rather than merely positive.
+ * this reading gives the name **234 px** against an estimated 225 at the width the row starts
+ * at, and the page's own box there is 246 px: this arithmetic counts `main`'s gutter as well as
+ * the wrapper's, and the homepage's `main:has(> .hero)` shortcut drops `main`'s, so the number
+ * read here is the narrower one — which is the direction a margin on a *fits* question should
+ * err in. The row is the one layout where a name that wraps is the defect, so it is the one
+ * place the margin is required rather than merely positive.
  */
 const NAME_MARGIN = 4
 
@@ -1317,9 +1320,21 @@ test('every run-detail refusal fires on the defect it names', () => {
 // keeps. Whichever of the two blocks owns a gap, only one of them may pad it.
 //
 // It is read from the built page rather than from the sources: the top-level blocks of the
-// homepage's `main`, in document order, and each one's own `padding` out of the cascade at the
-// desktop width. Nothing here is about a *particular* pair — a page whose blocks all pad both
-// sides of their gaps is the same defect four times, and the refusal names the pair it found.
+// homepage's `main`, in document order, and each one's own `padding` out of the cascade.
+// Nothing here is about a *particular* pair — a page whose blocks all pad both sides of their
+// gaps is the same defect four times, and the refusal names the pair it found.
+//
+// **Read at three widths**, which are the three the reviews of this branch used: 1280, 768 and
+// a phone's 375. The padding that fixes the gap is not inside a breakpoint, so the gap is 112 px
+// at all three — and that is the thing three readings hold, rather than one reading at the
+// desktop width: a rule that gave a block a top padding *only* below some width would double one
+// gap on that band and nowhere else, and a check that read one width would call the page's
+// rhythm right while a phone showed two paddings under one heading. The third case below plants
+// exactly that rule and proves the width is what decides it.
+
+/** The viewport widths the homepage's rhythm is read at: the desktop the record measures, the
+ * tablet the flow's two-by-two is drawn at, and a phone. */
+export const RHYTHM_WIDTHS = [80 * 16, 48 * 16, 375]
 
 /**
  * Every pair of the homepage's top-level blocks that both pad the gap between them, as the
@@ -1336,16 +1351,18 @@ export function homeRhythmFailures(css, html) {
   const tokens = lengthTokens(css)
 
   /**
-   * A block's own vertical padding, out of the last rule in force at the desktop width that
-   * declares a `padding` on any of its classes: the block shorthand's first component is the
-   * top and its third the bottom (the second when the shorthand names two values, the first
-   * when it names one). `null` when no rule declares one — a block with no padding of its own
-   * is a block that cannot pad the gap.
+   * A block's own vertical padding, out of the last rule in force at `width` that declares a
+   * `padding` on any of its classes: the block shorthand's first component is the top and its
+   * third the bottom (the second when the shorthand names two values, the first when it names
+   * one). `null` when no rule declares one — a block with no padding of its own is a block that
+   * cannot pad the gap. The width is a parameter because the rules that decide it are read out
+   * of the cascade at that width: a block that pads the gap on a phone and not on a desktop is
+   * the defect on the phone, and the reading has to be taken there to see it.
    */
-  const vertical = (block) => {
+  const vertical = (block, width) => {
     const classes = classesOf(block)
     const declared = rules
-      .filter((r) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector)) && appliesAt(80 * 16)(r))
+      .filter((r) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector)) && appliesAt(width)(r))
       .map((r) => declarations(r)['padding'])
       .filter((value) => value !== undefined)
       .pop()
@@ -1361,19 +1378,21 @@ export function homeRhythmFailures(css, html) {
   for (let i = 1; i < blocks.length; i += 1) {
     const above = blocks[i - 1]
     const below = blocks[i]
-    const a = vertical(above)
-    const b = vertical(below)
-    if (a === null || b === null) continue
-    if (Number.isNaN(a.bottom) || Number.isNaN(b.top)) {
-      out.push(
-        `the homepage's ${nameOf(above)} and ${nameOf(below)} carry a padding the rhythm check cannot turn into pixels (${JSON.stringify(a.declared)} and ${JSON.stringify(b.declared)}), and the room between two blocks is read from those two numbers: teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (review round 5)`,
-      )
-      continue
-    }
-    if (a.bottom > 0 && b.top > 0) {
-      out.push(
-        `the homepage's ${nameOf(above)} ends with ${Math.round(a.bottom)} px under it and ${nameOf(below)} opens with ${Math.round(b.top)} px over it, so the gap between them is ${Math.round(a.bottom + b.top)} px — twice the rhythm the page's other blocks keep, because each of these two blocks pads the one gap (review round 5)`,
-      )
+    for (const width of RHYTHM_WIDTHS) {
+      const a = vertical(above, width)
+      const b = vertical(below, width)
+      if (a === null || b === null) continue
+      if (Number.isNaN(a.bottom) || Number.isNaN(b.top)) {
+        out.push(
+          `at ${width} px the homepage's ${nameOf(above)} and ${nameOf(below)} carry a padding the rhythm check cannot turn into pixels (${JSON.stringify(a.declared)} and ${JSON.stringify(b.declared)}), and the room between two blocks is read from those two numbers: teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (review round 5)`,
+        )
+        continue
+      }
+      if (a.bottom > 0 && b.top > 0) {
+        out.push(
+          `at ${width} px the homepage's ${nameOf(above)} ends with ${Math.round(a.bottom)} px under it and ${nameOf(below)} opens with ${Math.round(b.top)} px over it, so the gap between them is ${Math.round(a.bottom + b.top)} px — twice the rhythm the page's other blocks keep, because each of these two blocks pads the one gap (review round 5)`,
+        )
+      }
     }
   }
 
@@ -1407,22 +1426,42 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
     ],
     // And the same edit on the page's own rule for the two figures, which is one rule for both
     // of them: the chat's top padding over the hero's bottom one, and the flow's over the
-    // chat's — two pairs padded twice by the one declaration, and both refused.
+    // chat's — two pairs padded twice by the one declaration, and both refused. It is the same
+    // rule at every width, so it is refused at each of the three — which is what the count
+    // below holds this case and the one above to.
     [
       'the figures padding the gaps the blocks above them already pad',
       plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)', 'last'),
       [/the gap between them is 64 px/, /the gap between them is 144 px/],
     ],
+    // **The case the three widths are for.** The same doubled gap, written inside a rule that is
+    // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
+    // 375 the install section pads a gap the flow above it already pads. A check that read one
+    // width — the desktop width, which is what this one read before review round 5's follow-up —
+    // passes this stylesheet, and the phone is where the reader sees two paddings under one
+    // heading. Two details of the plant: `(width<=48rem)` would be in force at 768 as well,
+    // because 48 rem **is** 768 px, so the band here is a phone's own 30 rem; and `appliesAt`
+    // reads ranges written with `>=`/`<=` rather than `<`, so the plant is written in the
+    // vocabulary the reader has.
+    [
+      'an install section that pads the gap only on a phone',
+      `${TODAY()}@media screen and (width<=30rem){.home-install{padding:var(--space-lg) var(--space-md) var(--space-3xl)}}`,
+      [/the gap between them is 144 px/],
+      [375],
+    ],
   ]
-  for (const [what, css, expected] of cases) {
+  for (const [what, css, expected, widths = RHYTHM_WIDTHS] of cases) {
     const failures = homeRhythmFailures(css, html)
     for (const pattern of expected) {
-      assert.ok(
-        failures.some((line) => pattern.test(line)),
-        `${what}: the refusal ${pattern} did not fire, and this is what the check said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
-      )
+      for (const width of widths) {
+        assert.ok(
+          failures.some((line) => line.startsWith(`at ${width} px `) && pattern.test(line)),
+          `${what}: at ${width} px the refusal ${pattern} did not fire, and this is what the check said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
+        )
+      }
     }
-    assert.equal(failures.length, expected.length, `${what}: the check refused ${failures.length} pair(s) where this case plants ${expected.length}:\n  ${failures.join('\n  ')}`)
+    const planted = expected.length * widths.length
+    assert.equal(failures.length, planted, `${what}: the check refused ${failures.length} gap(s) where this case plants ${planted}:\n  ${failures.join('\n  ')}`)
   }
 
   // And the page as it ships: the pairs above, with the gap padded once, are not refused — so

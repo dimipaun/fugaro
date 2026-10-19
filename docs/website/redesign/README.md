@@ -191,8 +191,9 @@ here goes stale the way the byte budgets did before D192.
   not render its own labels at any width below about 79 rem. **This round answered with a row
   at 64 rem and a wrapping name, and the third fix round replaced both halves of that** (the
   reading below): the row starts at **72 rem**, which is also where the page stops growing, so
-  it is drawn exactly where a card's content box is at its widest — 232 px against the longest
-  name's estimated 225 — and `Ephemeral cloud job` is on one line there, like the three names
+  it is drawn exactly where a card's content box is at its widest — **246 px** against the
+  longest name's estimated 225, which a headless Chromium over the built site draws 222.7 px
+  wide — and `Ephemeral cloud job` is on one line there, like the three names
   beside it; the number still sits above the name inside the row, and below 72 rem the four
   steps are a two-by-two, where a card is half the column and the name is free to wrap. The
   arithmetic is not a reading of a screenshot: `website/test/base-styles.mjs` computes the
@@ -201,7 +202,11 @@ here goes stale the way the byte budgets did before D192.
   refuses a row where the longest name does not fit one line (with a margin on top of
   `textWidth`'s per-character estimate), and one where even the longest word does not fit the
   card, so a name that outgrows its card or a row that starts earlier fails there naming the
-  width. Whether the picture then *looks* right at 1280 px is the owner's check (70a–70c), as
+  width. (That arithmetic reads the name's box as **234 px** where the page's own box is 246:
+  it counts both `main`'s gutter and the wrapper's, and the `main:has(> .hero)` shortcut drops
+  `main`'s on this page — the narrower of the two readings, which is the safe direction for a
+  rule that asks whether a name fits, and the reason the number here is the page's and not the
+  check's.) Whether the picture then *looks* right at 1280 px is the owner's check (70a–70c), as
   D190 requires, and this line of work cannot see it.
 - **The arrows point the way the run travels, and the fix round is where the sign was set.**
   The arrow is drawn pointing down (the shaft is `M12 1 V 25`), a positive angle in CSS turns
@@ -345,7 +350,9 @@ here goes stale the way the byte budgets did before D192.
     step stretches its card, and the card's content is packed from its top. And the row starts
     at **72 rem** rather than the 64 rem the round before it chose — where the page stops
     growing, and where `Ephemeral cloud job`, which wrapped onto two lines at 64 rem while the
-    three names beside it fitted on one, has a 232 px box against its estimated 225. That is
+    three names beside it fitted on one, has a 246 px box against its estimated 225 (the
+    reading above says where the check's own 234 px comes from, and why the page's box is the
+    one to quote). That is
     the correction the reading above points at, and below 72 rem the four steps are the
     two-by-two, where the name is free to wrap again. `flowLayoutFailures` reads the card's
     content box out of the built stylesheet, holds the longest name to one line at the row's
@@ -444,7 +451,17 @@ here goes stale the way the byte budgets did before D192.
   one above it ends and the room between any two of them is the block above's own padding —
   112 px of it, and never two paddings added together: before the fix above, the flow-to-install
   gap was that 112 px plus the install section's own 32, which is the 144 px band the review
-  measured. The watch slot is `display: none` until PR #622's image lands, and nothing
+  measured. **The follow-up that closed this round's three findings re-measured the built site
+  the same way and read the same page**: at each of the three widths the room under the hero is
+  32 px and the room under each figure is 112 px — at 1280 those 112 px are the distance from
+  the flow's last card (bottom 1324 px) to the "Install" heading (top 1436 px), and 768 and 375
+  read the same 112 px between the same two edges — and the flow is a row of four at 1280 with
+  the four cards one height (217.56 px, every name on one line), a two-by-two at 768 (190.38 px
+  cards) and a stack at 375 (178.56 px). Reading three widths is also what the gate does now
+  rather than one, and the gap is why: a padding that doubled a gap *below* some width would be
+  invisible to a check taken at the desktop width, so `homeRhythmFailures` reads the page at
+  1280, 768 and 375, and a case plants a phone-only double padding and proves the check refuses
+  it at 375 and nowhere else. The watch slot is `display: none` until PR #622's image lands, and nothing
   overflows horizontally, the
   reader's bubble is 288 px at the right of the card
   and the agent's 463–557 px at the left. Below 35 rem the bubbles fill the column — the
