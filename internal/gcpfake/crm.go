@@ -51,6 +51,14 @@ type crmOp struct {
 	proj  CreatedProject
 }
 
+// FirstCreatedProjectNumber is the number the fake gives the first project a
+// test creates through projects.create: nextProj starts just below it and is
+// incremented before the record is made. A test that has to know a created
+// project's number before the run — to seed the bucket the creation fact goes
+// into, which is checked against that number — reads it here rather than
+// repeating the constant.
+const FirstCreatedProjectNumber = 900000000001
+
 var (
 	crmProjectRE = regexp.MustCompile(`^/v1/projects/([^/:]+)$`)
 	crmPolicyRE  = regexp.MustCompile(`^/v1/projects/([^/:]+):getIamPolicy$`)
@@ -62,7 +70,8 @@ var (
 func NewCRM(t *testing.T) *CRM {
 	t.Helper()
 	f := &CRM{projects: map[string]int64{}, policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
-		noPolicy: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{}, nextProj: 900000000000}
+		noPolicy: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
+		nextProj: FirstCreatedProjectNumber - 1}
 	f.Server = newServer(t, f.handle)
 	return f
 }

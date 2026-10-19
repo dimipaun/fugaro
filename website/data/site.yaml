@@ -71,25 +71,40 @@ canonical_url: https://fugaro.dev
 # go.mod's module path, so the site and the module name one repository.
 repository: https://github.com/dimipaun/fugaro
 
-# Analytics, which D93 answered on 2026-10-16 as Firebase Analytics behind a
-# consent banner -- against the reconciliation's recommendation, which is why
-# these two lines exist at all. `enabled` is false and stays false until W3.2
-# sets the measurement id and turns the flag on; even then the load is decided
-# by W1.12's consent gate and not by this flag, so nothing is fetched before a
-# visitor consents either way. The two lines move together -- analytics that
-# report nowhere and a property id that nothing reports to are both broken
-# states -- and the test above holds them to that rather than to the value they
-# happen to hold today, so W3.2 flips them without meeting a red test.
+# Analytics: D93 answered on 2026-10-16 as analytics behind a consent banner,
+# against the reconciliation's recommendation, and the owner ruled on
+# 2026-10-18 that the property is Google Analytics 4 with the measurement id
+# below (the amendment under plan Task W3.2). The id is a PUBLIC identifier --
+# it is in every page's source on the live site -- so it is a fact here, stated
+# once, and never typed into a component: a second copy is a second value to
+# keep in step, which is what the test in website/test/consent.mjs refuses.
+#
+# `enabled` decides whether the banner and its analytics configuration are
+# emitted at all; it does NOT decide the load. That is W1.12's consent gate: the
+# gate's code lives in website/public/scripts/site.js (D183 -- the site ships one
+# first-party script file and no inline script), it reads the stored decision
+# the banner writes, and it fetches nothing until the visitor has granted. So
+# with the flag on and nobody consenting, the page still requests nothing from
+# Google, and with the flag off there is no banner, no configuration and no
+# analytics origin anywhere in the artifact.
+#
+# The two lines move together -- analytics that report nowhere and a property id
+# that nothing reports to are both broken states -- and the boundary test holds
+# them to that rather than to the value they happen to hold today, so clearing
+# both turns the whole thing off with no other change.
 analytics:
-  enabled: false
-  measurement_id: ""
+  enabled: true
+  measurement_id: "G-DZ4F35D3EH"
 
-# The features the site renders only when they exist. The console is designed
-# and not shipped (its release notes list it under "Not in this release"), so
-# its section renders as a placeholder with no link and no button, and the test
-# above refuses a download URL anywhere under website/ while this flag is false
-# (D95). The explainer video does not exist yet, so the hero carries no player,
-# no iframe, no poster and no play button (D107).
+# The features the site renders only when they exist. The console is built for
+# macOS and has not been published: console/ holds the application, the workflow
+# that signs, notarises and staples its .dmg and .zip is
+# .github/workflows/console-release.yml, and the release those assets would go
+# into -- console-vX.Y.Z, the console's own tag -- does not exist. So its section
+# renders as a placeholder with no link and no button, and the test above refuses
+# a download URL anywhere under website/ while this flag is false (D95). The
+# explainer video does not exist yet, so the hero carries no player, no iframe,
+# no poster and no play button (D107).
 #
 # Two tasks turn these on, and each of them edits the boundary test in the same
 # commit (§7's file-conflict note): W3.1 flips `console_downloads` with the

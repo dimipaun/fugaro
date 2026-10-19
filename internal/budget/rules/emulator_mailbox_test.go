@@ -41,10 +41,17 @@ func inbox(mb, id string) string  { return "mailbox/" + mb + "/inbox/" + id }
 func outbox(mb, id string) string { return "mailbox/" + mb + "/outbox/" + id }
 func beat(mb string) string       { return "mailbox/" + mb + "/heartbeat" }
 func mailbox(mb string) string    { return "mailbox/" + mb }
-func aHeartbeat() map[string]any  { return map[string]any{"at": msgAt, "boot": "boot-1"} }
+
+// aMessage is a well-formed record: P6.3's required fields, which since P6.4
+// include the tag. Every case that varies one field starts from this, so a
+// refusal is the rule the case names and not a missing field it forgot.
 func aMessage(id, from string) map[string]any {
-	return map[string]any{"id": id, "sender": from, "text": "the build is green", "at": msgAt}
+	return map[string]any{"id": id, "sender": from, "text": "the build is green", "at": msgAt, "mac": aMac}
 }
+
+// aHeartbeat is the consumer's liveness record, whose required fields are
+// P6.3's three: the instant, the boot id and the tag (O7).
+func aHeartbeat() map[string]any { return map[string]any{"at": msgAt, "boot": "boot-1", "mac": aMac} }
 
 // put is one write of one whole node: the mailbox's writers write a message or
 // a heartbeat whole, so they are not multi-path updates of the ledger's shape.
@@ -129,8 +136,10 @@ func TestMailboxMessageShape(t *testing.T) {
 	// An unknown field, and the ack on an inbox message: the inbox's `$other`
 	// refuses `acked` like any other field it does not name (D113's second
 	// phone write is the ack of a message the phone has *spoken*, which is an
-	// outbox message — design §6.2).
-	for _, extra := range []string{"acked", "kind"} {
+	// outbox message — design §6.2). The second name is the one the schema
+	// calls out: there is no expiry field, so every name for one is a field the
+	// rules do not have either.
+	for _, extra := range []string{"acked", "expires_at"} {
 		id := "m3-" + extra
 		m := aMessage(id, mbAlice)
 		m[extra] = true
@@ -201,7 +210,7 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 	h.wantValue(beat(mbAlice)+"/boot", `"boot-1"`)
 	// The heartbeat is the one node overwritten by design: it is the latest
 	// liveness, not a record.
-	h.mustAllow(consumer, "its heartbeat again", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-1"}))
+	h.mustAllow(consumer, "its heartbeat again", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-1", "mac": aMac}))
 
 	// An outbox message is written once: the consumer cannot rewrite history,
 	// with the same words, other words, or one field at a time.
@@ -214,7 +223,7 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 
 	// An unknown field on an outbox message, under a fresh matching id.
 	m3 := aMessage("c3", mbAlice)
-	m3["kind"] = "text"
+	m3["expires_at"] = msgAt
 	h.mustDeny(consumer, "an outbox message carrying an unknown field", put(outbox(mbAlice, "c3"), m3))
 
 	// The inbox is the phone's: no ancestor of it grants the consumer
@@ -234,10 +243,11 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 	h.mustDeny(consumer, "an outbox id that is not the node it is stored under",
 		put(outbox(mbAlice, "c5"), aMessage("other-id", mbAlice)))
 
-	// The heartbeat's shape: both fields, at an instant, unknown refused.
-	h.mustDeny(consumer, "a heartbeat with no boot", put(beat(mbAlice), map[string]any{"at": msgAt}))
+	// The heartbeat's shape: each required field, at an instant, unknown refused
+	// (each case carries a mac, so the refusal is the field it names).
+	h.mustDeny(consumer, "a heartbeat with no boot", put(beat(mbAlice), map[string]any{"at": msgAt, "mac": aMac}))
 	h.mustDeny(consumer, "a heartbeat with an unknown field",
-		put(beat(mbAlice), map[string]any{"at": msgAt, "boot": "b", "pid": 7}))
+		put(beat(mbAlice), map[string]any{"at": msgAt, "boot": "b", "mac": aMac, "pid": 7}))
 
 	// The ack is the phone's alone. The consumer's grant on the message node
 	// cascades to `acked`, but that grant is write-once (`!data.exists()`), so
@@ -274,7 +284,7 @@ func TestMailboxHeartbeatDeleteIsDenied(t *testing.T) {
 
 	// The consumer may overwrite it — that is what the node is for — but not
 	// remove it, whole or field by field.
-	h.mustAllow(consumer, "overwriting the heartbeat", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-2"}))
+	h.mustAllow(consumer, "overwriting the heartbeat", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-2", "mac": aMac}))
 	h.mustDeny(consumer, "deleting its own heartbeat", map[string]any{beat(mbAlice): nil})
 	h.mustDeny(consumer, "deleting one field of its own heartbeat", map[string]any{beat(mbAlice) + "/at": nil})
 	// A denial is atomic: the message this multi-path update writes beside the
@@ -342,6 +352,11 @@ func TestMailboxClaimMismatchIsAdmittedNowhere(t *testing.T) {
 	h.seed(w)
 	h.mustAllow(h.phone(mbAlice), "alice's own inbox message", put(inbox(mbAlice, "m1"), aMessage("m1", mbAlice)))
 	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+	// Both accounts are paired, so that the refusals below are refusals of the
+	// claim and not of D166's device node — which has its own case
+	// (TestDeviceNodeGatesEverythingUserReaches).
+	h.pairDevice(mbAlice)
+	h.pairDevice(mbBob)
 
 	// mu names alice's mailbox; the uid Firebase minted is bob's. The token is
 	// otherwise an ordinary one for this project (it keeps fp), because that is
@@ -480,58 +495,67 @@ func TestMailboxReadsAreTheGrantedSet(t *testing.T) {
 	h.mustRead(alice, budget.PathSpendGlobal(day+1))
 }
 
-// TestMailboxResidualMintedTokenPassesUntilPhase6 documents an accepted
-// residual, and asserts it so that no later change alters it silently.
+// TestMailboxResidualMintedTokenNeedsTheDeviceNode is the residual P2.2
+// documented, in the state P6.4 leaves it.
 //
 // USER binds mu to auth.uid, and a client cannot choose either. But phones
 // sign in with custom tokens only (T5, D165), and whoever mints a custom token
 // chooses the uid and every claim: a launcher (signJwt, iam.tf's token_minter)
 // or any holder of a key of one of the project's service accounts. So a token
-// minted with uid == mu == alice is, to the rules, alice's phone: it reads
-// alice's outbox and heartbeat, writes her inbox, and acks her outbox
-// messages — the ack is the phone's MAILBOX write, so a minted token can mark
-// as spoken a message the phone never spoke, and the consumer, which reads
-// the ack as "delivered and spoken", stops re-delivering it. A token minted
-// with mc == alice is alice's consumer and can fake her heartbeat. The rules
-// cannot tell these apart from the real ones; no claim they could read would
-// help, because the minter writes that claim too. (Launchers also read every
-// mailbox through roles/firebasedatabase.viewer, which bypasses the rules:
-// mobile reconciliation G13.)
+// minted with uid == mu == alice is, to the rules, as much a user as alice's
+// phone — but P6.4's device conjunct (D166) is the second key it does not
+// hold: config/admin/devices/<uid> is written over IAM, and minting a token
+// does not create one. That is the half this test now pins: **no device node,
+// no mailbox**.
 //
-// What would close it is phase 6, if the owner approves it: the admin-only
-// device node config/admin/devices/$uid that USER will also require (D166,
-// plan P6.4), and a per-pairing MAC on every inbox message and action record
-// that `fugaro mailbox` verifies before it acts (D169, D171, plan P6.3,
-// P6.7), so a minted inbox write cannot make the consumer act. Phase 6 is
-// **proposed, not approved** (the plan says "PROPOSED ... NOT APPROVED"; the
-// decisions its tasks build were answered without approving them), so this is
-// the state the rules are in, not a stage on a schedule. When P6.4 lands, the
-// device-node half of this test must change on purpose (a minted token
-// without the node is refused); the MAC half is the consumer's, not the
-// rules'.
-func TestMailboxResidualMintedTokenPassesUntilPhase6(t *testing.T) {
+// What the device node does not close, and what this file must not pretend it
+// does: the same principal that can sign a token usually holds
+// roles/firebasedatabase.admin, so it can write the device node as well as the
+// token — the row at the end of this test does exactly that and passes. The
+// rules also cannot tell a message the phone spoke from one the minter
+// invented; the per-pairing MAC of D169/D171 is what separates them, it is
+// required on every message and on the heartbeat since P6.4, and verifying it
+// is P6.7's (`fugaro mailbox`) — the rules have no key. And a launcher reads
+// every mailbox through roles/firebasedatabase.viewer, which bypasses the
+// rules entirely (mobile reconciliation G13).
+func TestMailboxResidualMintedTokenNeedsTheDeviceNode(t *testing.T) {
 	h := newHarness(t)
 	h.mustAllow(h.consumer(mbAlice), "alice's outbox message", put(outbox(mbAlice, "c1"), aMessage("c1", mbAlice)))
 	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
 
-	// A token a launcher minted for alice's uid, carrying alice's mu. It
-	// also names the launcher in rb, which the mailbox rules do not read.
+	// A token a launcher minted for alice's uid, carrying alice's mu — and
+	// alice has no device node, which is the state of every account before it
+	// is paired and of every account after `fugaro pair revoke`. It also names
+	// the launcher in rb, which the mailbox rules do not read.
 	minted := h.as(claims{uid: mbAlice, mu: mbAlice, fp: "-", rb: "mallory@example.invalid"})
-	h.mustRead(minted, "mailbox/"+mbAlice+"/outbox")
-	h.mustRead(minted, beat(mbAlice))
-	h.mustAllow(minted, "an inbox message in alice's mailbox from a minted token",
+	h.mustReadDenied(minted, "mailbox/"+mbAlice+"/outbox")
+	h.mustReadDenied(minted, beat(mbAlice))
+	h.mustReadDenied(minted, budget.PathCapsGlobal)
+	h.mustDeny(minted, "an inbox message in alice's mailbox from a minted token",
 		put(inbox(mbAlice, "m1"), aMessage("m1", mbAlice)))
-	h.mustAllow(minted, "an ack of alice's outbox message from a minted token",
+	h.mustDeny(minted, "an ack of alice's outbox message from a minted token",
 		put(outbox(mbAlice, "c1")+"/acked", true))
 
-	// A token minted with mc == alice: it writes alice's heartbeat, so the
-	// heartbeat's integrity is not the rules' to keep until the signed
-	// heartbeat that phase 6 *proposes* (O7 in
-	// docs/mobile/functional-spec-reconciliation.md: a recommendation, and
-	// phase 6 approves no task) — "proposed", not "lands", because no phase 6
-	// task may start without the owner's explicit go.
+	// The node goes in and the same token is alice again: this is the whole of
+	// what D166 buys, and it is why the residual below is a launcher-level
+	// finding and not a claim-level one.
+	h.pairDevice(mbAlice)
+	h.mustRead(minted, "mailbox/"+mbAlice+"/outbox")
+	h.mustAllow(minted, "an inbox message from a minted token whose account is paired",
+		put(inbox(mbAlice, "m1"), aMessage("m1", mbAlice)))
+
+	// Nothing personal is in the device node: it is a liveness allowlist, and
+	// the rules read its existence and no field of it. (A reader of the node
+	// needs IAM; no client token may read it at all — TestDeviceNodesAreClientDenied.)
+	h.mustReadDenied(minted, PathDevices+"/"+mbAlice)
+
+	// A token minted with mc == alice is alice's consumer, and the device node
+	// is not what a consumer passes: CONSUMER names the mailbox it serves and
+	// nothing else. So the heartbeat's integrity is still not the rules' to
+	// keep — the tag P6.4 requires on it is what P6.7 verifies, and the signed
+	// heartbeat of O7 is what would bind it to a machine.
 	forgedConsumer := h.as(claims{mc: mbAlice, fp: "-", rb: "mallory@example.invalid"})
 	h.mustAllow(forgedConsumer, "alice's heartbeat from a minted mc token",
-		put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "forged"}))
+		put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "forged", "mac": aMac}))
 	h.wantValue(beat(mbAlice)+"/boot", `"forged"`)
 }

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "plan": "docs/plans/cyclic.md",
+  "nodes": [
+    {"id": "a", "title": "first", "footprint": {"prediction": true, "paths": []}},
+    {"id": "b", "title": "second", "footprint": {"prediction": true, "paths": []}},
+    {"id": "c", "title": "third", "footprint": {"prediction": true, "paths": []}}
+  ],
+  "edges": [
+    {"task": "a", "needs": "b", "reason": "a waits for b"},
+    {"task": "b", "needs": "c", "reason": "b waits for c"},
+    {"task": "c", "needs": "a", "reason": "and c waits for a, which is the cycle"}
+  ]
+}

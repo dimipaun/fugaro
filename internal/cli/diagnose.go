@@ -119,11 +119,16 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 		return err
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
-	l, err := ownerLaunch(ctx, env, s, id)
+	l, err := viewLaunch(ctx, env, s, id)
 	var refused error // an execution checkExecution won't follow
 	switch {
 	case corruptObject(err):
 		l, err = nil, nil // the row says which object is unreadable
+	case errors.Is(err, errExecutionGone):
+		// The row and the report are still the run's own; only the logs,
+		// which nothing can tie to the run any more, are left out.
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: %v\n", err)
+		l, err = nil, nil
 	case errors.Is(err, errNotFollowing):
 		// The row says why, as in ls; exit 1 afterwards, since the run's
 		// problem is one the user sees and may act on (--region).

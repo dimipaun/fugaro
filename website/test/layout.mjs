@@ -13,9 +13,11 @@
 //      source file as a literal, and the sitemap and font hints point only at files the
 //      build actually produces.
 //   3. **The analytics tag is gated twice.** It is absent while `site.yaml`'s flag is
-//      false, and when the flag is on it still fetches nothing until the visitor has
-//      consented — which is checked by running the loader's own script against a window
-//      that records what it asks for (D93, D106).
+//      false, and when the flag is on the layout emits no fetch of its own: the origin
+//      reaches the page only as the consent banner's configuration, and the file that reads
+//      it is the site's one script (D93, D106, W3.2). What that file does with the
+//      configuration — fetch nothing before a decision, one script after a grant — is
+//      `consent.mjs`'s subject, and it runs the file to see it.
 //
 // How it builds: a test needs to *break* a file and build again, so it builds a copy of
 // the repository in a temp directory rather than the checkout itself — the plan's own
@@ -35,7 +37,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkNodeModules } from './lib/build.mjs'
+import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -43,7 +45,7 @@ const REPO = path.dirname(SITE)
 // What a site build cannot read, and therefore what the copies below leave out: the Go
 // module's own tree and test data, the console application, and the installed and built
 // directories (the last two are symlinked and rebuilt instead).
-const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
+const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
 
 // The probe page: a page that renders the layout, and through it the whole content
@@ -80,6 +82,9 @@ function copyOfTheRepository() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
+      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
+      // quotes the skills (website/test/lib/build.mjs).
+      if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
     },
@@ -226,7 +231,7 @@ test('a # inside a quoted scalar is content, and a quote can be escaped inside o
 
 test('the build refuses a misspelled key in every nested map the loader reads', async (t) => {
   const cases = [
-    ['site.yaml', '  enabled: false\n', '  enabled: false\n  enabeld: true\n', 'enabeld', 'analytics'],
+    ['site.yaml', '  enabled: true\n', '  enabled: true\n  enabeld: true\n', 'enabeld', 'analytics'],
     ['site.yaml', '  video: false\n', '  video: false\n  vidoe: true\n', 'vidoe', 'features'],
     ['install.yaml', '  arch: [amd64, arm64]\n', '  arch: [amd64, arm64]\n  archs: []\n', 'archs', 'build'],
     ['install.yaml', '    status: supported\n', '    status: supported\n    stauts: untested\n', 'stauts', 'platforms[]'],
@@ -345,69 +350,37 @@ test('the canonical URL is a read of site.yaml and is written nowhere else', asy
 })
 
 test('the analytics tag is absent while the flag is off', async (t) => {
-  const built = buildWith(t, () => {})
-  const page = builtPage(built)
-  assert.ok(!page.includes('googletagmanager'), 'the built page names the analytics origin while the flag is off')
-  assert.ok(!page.includes('dataLayer'), 'the built page carries the analytics loader while the flag is off')
-})
-
-test('the analytics loader, with the flag on, fetches nothing before consent', async (t) => {
   const built = buildWith(t, (copy) => {
     const file = path.join(copy.site, 'data', 'site.yaml')
-    writeFileSync(
-      file,
-      readFileSync(file, 'utf8').replace('  enabled: false\n  measurement_id: ""', '  enabled: true\n  measurement_id: "G-MEASUREMENT"'),
-    )
+    const before = readFileSync(file, 'utf8')
+    const after = before.replace('  enabled: true', '  enabled: false').replace(/  measurement_id: ".*"/, '  measurement_id: ""')
+    assert.notEqual(after, before, 'the fixture did not clear the analytics flag, so this test would pass on anything')
+    writeFileSync(file, after)
   })
-
   const page = builtPage(built)
-  assert.ok(page.includes('googletagmanager'), 'the built page carries no analytics loader with the flag on')
+  assert.ok(!page.includes('googletagmanager'), 'the built page names the analytics origin while the flag is off')
+  assert.ok(!page.includes('dataLayer'), 'the built page names the analytics layer while the flag is off')
+  assert.ok(!page.includes('data-analytics-origin'), 'the built page carries the gate’s configuration while the flag is off')
+})
 
-  // The loader is run here, in this process, against a window and a document that record
-  // what it asks for: what it asks for before the visitor has consented has to be nothing
-  // at all — no script element, no request, and no stored identifier (D93, D106).
-  const script = /<script>([\s\S]*?gtag\/js[\s\S]*?)<\/script>/.exec(page)
-  assert.ok(script, 'the built page carries no inline analytics loader')
+test('with the flag on, the layout emits no fetch of its own: the origin is the banner’s configuration and the reader is the site’s one file', async (t) => {
+  // The shipped build IS the flag-on state since W3.2, so this reads the copy as it stands.
+  const built = buildWith(t, () => {})
+  const page = builtPage(built)
 
-  const run = (storage) => {
-    const requested = []
-    const listeners = {}
-    const window = {
-      localStorage: {
-        getItem: (key) => (key in storage ? storage[key] : null),
-        setItem: (key, value) => {
-          storage[key] = value
-        },
-      },
-      addEventListener: (name, listener) => {
-        listeners[name] = listeners[name] ?? []
-        listeners[name].push(listener)
-      },
-    }
-    const document = {
-      head: { appendChild: (element) => requested.push(element.src) },
-      createElement: (tag) => ({ tag, src: '' }),
-    }
-    new Function('window', 'document', script[1])(window, document)
-    return { requested, listeners, storage }
-  }
+  // What the head asks the browser to fetch, before a single script runs: nothing from
+  // Google. No `script[src]` naming the origin, no preconnect, no dns-prefetch, no preload.
+  const head = page.slice(page.indexOf('<head'), page.indexOf('</head>'))
+  assert.ok(!/googletagmanager/.test(head), 'the layout fetches the analytics origin from the head, before any consent can be given')
+  assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(head), 'the layout emits an inline script in the head: the site ships one script file and no inline block (D183, W3.2)')
 
-  const undecided = run({})
-  assert.deepEqual(undecided.requested, [], 'the loader requested a script before the visitor consented')
-  assert.deepEqual(Object.keys(undecided.storage), [], 'the loader stored something before the visitor consented')
-
-  const granted = run({ 'fugaro:analytics-consent': 'granted' })
-  assert.equal(granted.requested.length, 1, 'the loader requested nothing after the visitor consented')
-  assert.match(granted.requested[0], /^https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=G-MEASUREMENT$/)
-
-  // Withdrawal, and the decision a banner dispatches rather than stores.
-  const denied = run({ 'fugaro:analytics-consent': 'denied' })
-  assert.deepEqual(denied.requested, [], 'the loader requested a script after the visitor refused')
-
-  const decided = run({})
-  assert.equal(decided.listeners['fugaro:consent']?.length, 1, 'the loader does not listen for the consent decision')
-  decided.listeners['fugaro:consent'][0]({ detail: { analytics: 'granted' } })
-  assert.equal(decided.requested.length, 1, 'the loader ignored the consent the banner dispatched')
+  // The origin reaches the page exactly once, as the consent banner's own configuration
+  // attribute, and the file that reads it is the site's one script.
+  const carriers = [...page.matchAll(/<[^>]*data-analytics-origin="([^"]*)"[^>]*>/g)]
+  assert.equal(carriers.length, 1, `the built page carries ${carriers.length} analytics configurations; the layout writes one, on the consent banner`)
+  assert.equal(carriers[0][1], 'https://www.googletagmanager.com', 'the layout names an origin other than the one D106 admits')
+  assert.match(carriers[0][0], /id="consent-banner"/, 'the layout puts the analytics configuration somewhere other than the consent banner the visitor answers')
+  assert.match(page, /<script src="\/scripts\/site\.js" defer><\/script>/, 'the layout does not load the site’s one script, which is what reads the configuration above')
 })
 
 test('the reduced-motion base is in the built page', async (t) => {
@@ -453,21 +426,27 @@ test('a comment that mentions the sitemap package does not make the head point a
   assert.ok(!builtPage(built).includes('rel="sitemap"'), 'the page points at a sitemap the build does not produce')
 })
 
-test("the page description is README.md's own tagline line", async (t) => {
+test("the page description is README.md's own subline", async (t) => {
   const built = buildWith(t, () => {})
   const page = builtPage(built)
 
-  // The line under README.md's `# Fugaro` title, read here from the README rather than
-  // from the build: the site's tagline is the README's, and it is not a second copy of it
-  // (F48, D102). The README's markdown emphasis is not part of the sentence.
+  // The **second** line under README.md's `# Fugaro` title — the sentence under the
+  // headline — read here from the README rather than from the build: the site's promise is
+  // the README's, and it is not a second copy of it (F48, D102). The changes spec of
+  // 2026-10-18 (item 2) puts the subline in the description and not the headline, which is
+  // four words with no verb in them; this test is the named test change that moved with it.
+  // The README's markdown emphasis is not part of the sentence.
   const readme = repoFile('README.md').split('\n')
   const title = readme.findIndex((line) => line.trim() === '# Fugaro')
-  const tagline = readme
+  const subline = readme
     .slice(title + 1)
-    .find((line) => line.trim() !== '')
+    .filter((line) => line.trim() !== '')[1]
     .trim()
     .replace(/^\*\*(.+)\*\*$/, '$1')
     .trim()
 
-  assert.ok(page.includes(`<meta name="description" content="${tagline}"`), `the page's description is not the README's tagline ${JSON.stringify(tagline)}`)
+  assert.ok(
+    page.includes(`<meta name="description" content="${subline}"`),
+    `the page's description is not the README's subline ${JSON.stringify(subline)}: the description is the sentence under the headline, and a page that describes itself with the headline tells a search engine four words (changes spec item 2)`,
+  )
 })

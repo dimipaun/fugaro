@@ -11,7 +11,53 @@ import (
 // not know (a newer Fugaro that adds a budget key bumps Version), but a
 // version this code does not understand is a node it must not use (fail
 // closed, §5(3)).
-const Version = 1
+//
+// Version 2 (plan task 3.3) is the first whose runner enforces a profile's
+// allow_repos and binds a run of a project job to the profile it serves. A
+// version-1 runner decodes the profiles block and ignores it, so a launcher
+// that pointed a run of a profile's job (FUGARO_REMOTE, FUGARO_RUN) at another
+// repository of the project's allow_repos would run it with that profile's
+// secrets: project jobs run the installation's base image, which can lag the
+// CLI that published the policy. The bump makes that runner refuse the node
+// (RunnerSkew) instead of running past a gate it does not know. The shape is
+// version 1's; only what a runner must enforce changed.
+const Version = 2
+
+// VersionSince names, for each policy version, the fugaro release that
+// introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
+// is the profile gate above (0.8.5). It sits beside Version because a bump of
+// Version adds its row in the same change (TestVersionSinceCoversEveryVersion
+// fails until it does; the 0.9.0 line's version 3 needs one too), and it is
+// read by every message about a node *ahead* of its reader (SkewSentence, so
+// the launch gate, the CLI's other reads, `fugaro project policy`, doctor and
+// the runner all answer from it): the release that reads such a node is the
+// one that introduced its version, never the release the model ships in — an
+// 0.8.1 binary meeting a version-2 node already runs 0.8.0.
+//
+// A row may name a version above Version: the table records history, and a
+// binary of an older line needs the row of a version a newer release
+// introduced. A version no row names gets the remedy alone (VersionRelease
+// answers false), never a borrowed release.
+var VersionSince = map[int]string{
+	1: "0.8.0",
+	2: "0.8.5",
+}
+
+// VersionRelease is the release that introduced policy version v, and false
+// when VersionSince has no row for it.
+func VersionRelease(v int) (string, bool) {
+	rel, ok := VersionSince[v]
+	return rel, ok
+}
+
+// arrivedClause is the clause a too-new refusal appends when the table knows
+// the version on the node, and "" when it does not.
+func arrivedClause(v int) string {
+	if rel, ok := VersionRelease(v); ok {
+		return fmt.Sprintf("; policy version %d arrived in fugaro %s", v, rel)
+	}
+	return ""
+}
 
 // PolicyRulesVersion is the generation of the Realtime Database security rules
 // that introduced the config/policy nodes of §5 and their per-child read
@@ -66,9 +112,39 @@ const PolicyRulesVersion = 1
 // and the owner's deploy records generation 2 — not a reason for anything to
 // read below the policy generation and answer "no policy here".
 //
+// Generation 3 is P6.4 (mobile plan task P6.4, decisions D161, D165, D166,
+// D169, D171): the mailbox's message fields as P6.3's schema defines them (a
+// `mac` required on every message of every kind and on the heartbeat, with
+// `agent`, `kind`, `options`, `reply_to` and the action record beside it), the
+// device allowlist `config/admin/devices/<uid>` that USER now requires (D166),
+// and the two pairing nodes of D165. The generation moves for the device node
+// even where nothing else did: a phone on generation 2 cannot read its own
+// mailbox under a generation-3 document until its account is paired, so an
+// installation that deploys these rules and forgets `fugaro pair` finds every
+// app read refused — and `fugaro doctor` says nothing about it *afterwards*.
+// `policy-rules-skew` compares the deployed *document* with this binary's, so
+// it warns only **before** the deploy, while the marker still records
+// generation 2; the deploy that records generation 3 is what silences it, and
+// from then on the unpaired account is the app's own empty reads to diagnose
+// rather than a skew doctor reports. The warning is where the operator is told
+// to pair first (internal/cli's rulesMarkerOlderText says it in as many words),
+// and it is the deploy that takes it away.
+//
+// What the bump does to an existing installation, plainly. Runs and the
+// project policy are untouched: Read and the publish gate stay on
+// PolicyRulesVersion (1). Under a generation-2 marker this binary's doctor
+// warns policy-rules-skew until the owner deploys. Once generation 3 is
+// deployed: every phone is refused every read and write until its account has
+// a device node, and until `fugaro pair` (P6.6) ships the only way to write one
+// is by hand over IAM; every mailbox writer that does not send a `mac` (no code in this
+// repository writes the mailbox yet, so this reaches a hand-written consumer
+// or script only) is refused; and a 0.8.5 CLI
+// (generation 2) refuses `fugaro init --firebase` against the generation-3
+// marker rather than deploying its older rules over it, and its doctor warns.
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
-const RulesVersion = 2
+const RulesVersion = 3
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own
@@ -175,12 +251,16 @@ const (
 // older side. Found < Understood means the node is behind. Equal cannot come
 // from Decode (a version it understands is not a skew), and is read as the
 // node's own problem — the direction in which this reader is the newer side.
+//
+// A node ahead of its reader also names the release that introduced its
+// version when VersionSince has a row for it ("; policy version 2 arrived in
+// fugaro 0.8.5"), and nothing more when it does not.
 func SkewSentence(ve *VersionError, reader Reader) string {
 	switch {
 	case ve.Found > ve.Understood && reader == ReaderRunner:
-		return fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood)
+		return fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood) + arrivedClause(ve.Found)
 	case ve.Found > ve.Understood:
-		return fmt.Sprintf(CLISkew, ve.Found, ve.Understood)
+		return fmt.Sprintf(CLISkew, ve.Found, ve.Understood) + arrivedClause(ve.Found)
 	case reader == ReaderRunner:
 		return fmt.Sprintf(RunnerSkewNewer, ve.Found, ve.Understood)
 	default:
@@ -191,7 +271,7 @@ func SkewSentence(ve *VersionError, reader Reader) string {
 // SkewRemedy is SkewSentence's remedy alone — everything after the shared
 // "Skew; " prefix — for the caller that prints Skew itself, with its own text
 // inside it (the launch gate's policySkewRefusal, which quotes the release the
-// policy model ships in). Deriving it here rather than wording a second remedy
+// policy model ships in for a node behind this binary). Deriving it here rather than wording a second remedy
 // keeps SkewSentence's constants the one source of both sentences.
 func SkewRemedy(ve *VersionError, reader Reader) string {
 	skew := fmt.Sprintf(Skew, ve.Found, ve.Understood)

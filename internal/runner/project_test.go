@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -132,6 +133,10 @@ func TestProjectCheckMissingEnvInCloud(t *testing.T) {
 	// Not local: the harness's default is a local run, and this one is the
 	// CLI's answer for a platform that is not the invocation's.
 	h.deps.Project, h.deps.Local = "", false
+	// A cloud run is in a job: its own per-repository one, so the admission
+	// places it (a cloud process with no execution at all is refused there,
+	// before this check: TestAdmissionRefusesAnUnclaimedProcessWithNoExecution).
+	h.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
 	refused(t, h, "job environment lacks FUGARO_PROJECT", "fugaro init --repo")
 }
 

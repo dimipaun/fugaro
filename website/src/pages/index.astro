@@ -1,14 +1,61 @@
 ---
-// website/src/pages/index.astro — the site's front page (website plan, Task W1.4).
+// website/src/pages/index.astro — the site's front page (website plan, Task W1.4; redesign
+// part P8, findings RF20 and RF21; changes spec of 2026-10-18, items 3 and 4).
 //
-// The page is the hero and nothing else: every other thing the front page could say is a
-// section of its own with a section's own facts (W2.x, W3.x), and a placeholder here would
-// be a sentence the product cannot back (F50). What the page reads, it reads through the
-// content pipeline (W1.3) — it holds no fact of its own.
+// **The order is the page's argument**, and the review of this branch asked for it in so
+// many words: the promise and the one thing to do about it, then the example of it through
+// the reader's own agent — the conversation, and the one command — then what a run is, the
+// four steps drawn, then the commands.
+//
+// **The chat is the first block under the promise and the diagram is the second** (review
+// round 5, which found the page's own picture of a run standing between a reader and the
+// thing they are being offered). What the page is selling is a conversation with the agent
+// the reader already has, so the illustration of that conversation is what they meet first;
+// the flow is what the agent does inside one of its turns, and it reads as the explanation
+// under the example. The earlier arrangement put the diagram first for item 4's acceptance —
+// that the diagram is the most visually prominent element in its section, which a picture
+// four blocks down is not — and that still holds: the flow is its own section directly under
+// the chat, drawn at the full width of the page's column, and nothing after it competes with
+// it. Item 4 orders the diagram against the *promise*, not against the chat.
+//
+// Every other thing the front page could say is a section of its own with a section's own
+// facts (W2.x, W3.x), and a placeholder here would be a sentence the product cannot back
+// (F50). What the page reads, it reads through the content pipeline (W1.3) — it holds no fact
+// of its own.
 import Base from '../layouts/Base.astro'
 import Hero from '../components/Hero.astro'
+import ArchitectureDiagram from '../components/ArchitectureDiagram.astro'
+import AgentChat from '../components/AgentChat.astro'
+import HomeInstall from '../components/HomeInstall.astro'
 ---
 
 <Base title="Fugaro">
   <Hero />
+  {/* Divs rather than sections: the flow is a figure and the chat is a figure, and a
+      `<section>` around one of them with no heading of its own would be a landmark a reader
+      has to skip through with no name on it. */}
+  <div class="home-chat">
+    <AgentChat />
+  </div>
+  <div class="home-flow">
+    <ArchitectureDiagram />
+  </div>
+  <HomeInstall />
 </Base>
+
+<style>
+  /* The two figures sit on the same column as the hero and the install paths (W1.2's tokens;
+     the spacing is the layout's, not a number of this page's own). `main:has(> .hero)` drops
+     `main`'s padding on this page, so each top-level block carries the gutter **and the room
+     below itself** — which is what makes the space between two blocks the block above's own
+     bottom padding, and why no block adds a top padding of its own on top of it (review round
+     5: the install section's `--space-lg` over the flow's `--space-3xl` was 144 px of blank
+     page between the last card and the "Install" heading, and `base-styles.mjs`'s
+     `homeRhythmFailures` now refuses a pair of blocks that both pad one gap). */
+  .home-chat,
+  .home-flow {
+    max-width: var(--page-max);
+    margin: 0 auto;
+    padding: 0 var(--space-md) var(--space-3xl);
+  }
+</style>

@@ -166,6 +166,13 @@ func Validate(c *Config) []Problem {
 		if w.Profile != "" && !ProjectNameRE.MatchString(w.Profile) {
 			add(p+".profile", "must be a profile name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 		}
+		// The job profile is a policy profile name, held to the same rule the
+		// policy holds its own names to (projectpolicy.ValidProfileName): a
+		// name this refuses could never be defined in a policy, so the
+		// selection would be refused at run start instead of here.
+		if w.JobProfile != "" && !ProjectNameRE.MatchString(w.JobProfile) {
+			add(p+".job_profile", "must be a job profile name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit (it names a profile of the project policy)")
+		}
 		if w.Base != "" {
 			add(p+".base", legacyBaseMessage, MigrationDoc)
 		}

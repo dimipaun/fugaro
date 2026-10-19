@@ -368,6 +368,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 
 	o.Checks = append(o.Checks, doctorBaseImage(lc), doctorCosign(lc))
+	if c := doctorManagedDeployer(); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones
@@ -433,6 +436,21 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	o.OK = !checksFail(o.Checks, strict)
 	return emitDoctor(cmd, o, asJSON)
+}
+
+// doctorManagedDeployer is the info line that says plainly why the managed
+// deployer's scoped role (fugaroDeployerScoped) and its conditioned binding
+// are absent from every installation in this release
+// (managedDeployerShipped): so that nobody reads their absence as a broken
+// installation. Informational, never a warning and never failing, not even
+// with --strict; nil once the managed deployer ships.
+func doctorManagedDeployer() *doctorCheck {
+	if managedDeployerOpen {
+		return nil
+	}
+	return &doctorCheck{ID: "managed-deployer-disabled", Severity: "info",
+		Problem: "the managed deployer's scoped role is disabled in this release, so its absence is expected: its fmgd- prefix fence is not an IAM condition GCP accepts yet, so the role and its binding are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.9.0",
+		Fix:     "nothing to do: an installation and a project created without --managed are unaffected (docs/design/managed-projects.md)"}
 }
 
 // doctorBaseImage warns when the installation has no Fugaro base recorded
@@ -1508,6 +1526,27 @@ func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcf
 		Fix:     "fugaro init publishes your local config's installation-wide fields"}}
 }
 
+// policyNewerThanBinaryCheck is doctor's line for a policy node written by a
+// newer Fugaro (the ve.Found > ve.Understood branch of doctorPolicyChecks).
+// It is a function of the version error alone, which is what lets the line be
+// tested for a node this binary cannot meet through its own read — a version
+// above the one it understands is refused by Decode before doctor sees a
+// node, so the rig can only write Version+1, a version projectpolicy.VersionSince
+// deliberately has no row for.
+//
+// The fix names the release that introduced the version on the node when the
+// table knows it (policyTooNewFix), because "upgrade Fugaro" alone is advice
+// an operator on a release that already writes that version cannot act on:
+// the whole complaint behind the table is that the release the model ships in
+// (policySince) is not the release a version above the reader's arrived in.
+// The problem line is projectpolicy.CLISkew, the shared sentence with this
+// reader's remedy, exactly as the launch gate prints it.
+func policyNewerThanBinaryCheck(ve *projectpolicy.VersionError, shared string) doctorCheck {
+	return doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
+		Problem: fmt.Sprintf("%s: %s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood), shared),
+		Fix:     policyTooNewFix(ve.Found)}
+}
+
 // doctorPolicyChecks reports the published project policy and the state
 // around it (plan task 1.6 step 4): whether one exists and which version,
 // whether this binary understands it (P8), whether the installation's jobs
@@ -1567,9 +1606,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// Fugaro" is backwards there and the remedy is the one the publisher
 		// itself words (publishedPolicyOf): remove it, then publish.
 		if ve.Found > ve.Understood {
-			checks = append(checks, doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
-				Problem: fmt.Sprintf("%s: %s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood), shared),
-				Fix:     fmt.Sprintf("upgrade Fugaro to a release that understands version %d", ve.Found)})
+			checks = append(checks, policyNewerThanBinaryCheck(ve, shared))
 			return append(checks, doctorRoutingChecks(lc, nil,
 				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer)...)
 		}

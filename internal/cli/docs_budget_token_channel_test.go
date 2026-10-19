@@ -13,7 +13,9 @@ import (
 // of a shared job exists, prices the four candidates the plan names, states a
 // recommendation, says plainly that nothing follows it until the owner
 // approves, and keeps the interim ruling D13's own words say the profile
-// remains the isolation boundary. Its red state is this test: the document
+// remains the isolation boundary — for secrets only, since every project job
+// account holds the same whole bucket prefixes (Task 3.2's review), which
+// leaves D13's "separate profiles" mitigation open for the owner. Its red state is this test: the document
 // did not exist.
 func TestDocsBudgetTokenChannelDesignIsWritten(t *testing.T) {
 	const path = "docs/design/budget-token-channel.md"
@@ -30,7 +32,8 @@ func TestDocsBudgetTokenChannelDesignIsWritten(t *testing.T) {
 		// The constraints it must not break.
 		"launcher-overridable",
 		"fail closed",
-		"profile is the isolation boundary",
+		"profile is the isolation boundary for secrets only",
+		"open for the owner to",
 		// The verdict and its gate.
 		"capability, not a boundary",
 		"no code follows this document until the owner approves it",
