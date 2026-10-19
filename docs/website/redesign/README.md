@@ -9,7 +9,7 @@ all of them, and it changes what they built — the hero's headline and its exam
 four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
 The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
-gates pass (299 tests, `npm run check`, on Node 22.22.0, measured at `8cc2278a`). The three documents of the
+gates pass (300 tests, `npm run check`, on Node 22.22.0, measured at `08d57ed4`). The three documents of the
 first line of work said the opposite, in the present tense — [`../README.md`](../README.md)
 `:3` and `:5`, [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — which is reconciliation
@@ -171,18 +171,21 @@ here goes stale the way the byte budgets did before D192.
   that is false about two of the things the figure prints: the request is **item 3's own
   example** of one (a line of the spec, not of a skill), and the three `Pull request n of 3`
   labels are the illustration's own, so the last review's finding asked for the wording to be
-  corrected. It reads "An illustration of the workflow, not a recording of a session: what you
-  type, and the shape of what your agent does and reports. The agent's behaviour comes from
-  the skills Fugaro installs." — the figure's own label, and the one sentence in it that is
-  neither a quotation nor a result label. The rule above is therefore stated of the lines a
-  turn *speaks*, which is the part of the figure a document vouches for.
-  `website/test/home.mjs` holds the caption to that reading (it says
-  it is an illustration and not a recording, it says where the agent's behaviour comes from,
-  it claims no quotation of the figure's lines, and the three results are checked not to be
-  lines of the document the turn cites), and `website/test/wording.mjs` refuses the phrases
-  the false sentence was made of — on every built page and in the site's own sources, with a
-  case that plants the caption back and proves the refusal, so the claim cannot return through
-  a rewrite.
+  corrected. It reads "An illustration, not a recording of a session: the agent's lines are the
+  skills Fugaro installs, and the labels are the picture's." — the figure's own label, and the
+  one sentence in it that is neither a quotation nor a result label. (Review round 5 cut the
+  caption to this one sentence, which is why the request and "the shape of what your agent does
+  and reports" are gone from it — the quote above is the sentence the site ships.) The rule above
+  is therefore stated of the lines a turn *speaks*, which is the part of the figure a document
+  vouches for. `website/test/home.mjs` holds the caption to the shape it has to keep rather
+  than to its wording — the word "illustration", the words "not a recording" and the word
+  "skills", and no claim that the figure's lines are quotations (the words it refuses are
+  "own words", "quotation", "quoted" and "verbatim") — and the same case checks that the three
+  results are not lines of the document the turn cites, and compares this record's own quote of
+  the caption against the caption the built page ships, so the sentence quoted here cannot
+  outlive the sentence on the page. `website/test/wording.mjs` refuses the phrases the false
+  sentence was made of — on every built page and in the site's own sources, with a case that
+  plants the caption back and proves the refusal, so the claim cannot return through a rewrite.
 - **Item 4's row was too narrow for the names it prints, and this round's answer to that was
   superseded.** The four cards share the row, so a card is a quarter of the column less the
   arrows between them: at 48 rem — the breakpoint the chrome switches at — a card's content
