@@ -43,6 +43,12 @@ func (c *Config) Shared() *Config {
 	s.Routing = nil
 	s.ClaudeAccounts = nil
 	s.ProjectSecrets = nil
+	// Profiles are the owner's policy, published through `fugaro project
+	// policy publish` into the policy node — not through the shared config a
+	// launcher can write (the node is what the runner reads and fails closed
+	// on). Dropping them here keeps the shared file to what it was before
+	// phase 3 added profiles.
+	s.Profiles = nil
 	s.UpdateCheck = nil
 	s.Build.ServiceAccount = ""
 	s.Repos = withoutBaseBranches(c.Repos)

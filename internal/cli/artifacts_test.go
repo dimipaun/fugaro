@@ -76,7 +76,9 @@ func seedArtifactRun(t *testing.T, f *cloudFixture, id string, files []runstore.
 	// The run launched and then ended, which is the shape a finished artifact
 	// run has: task.json, launch.json, and a record that says what it
 	// delivered.
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	// The execution reports its run (FUGARO_RUN): next-0.8.5's
+	// CheckRunExecution refuses a record naming an execution that does not.
+	exec := f.run.StartWithEnv(gcp.JobName(appSlug, "web"), map[string]string{"FUGARO_RUN": appSlug + "/" + id})
 	// Ignored for the same reason as task.json above: a subtest re-seeds the
 	// run, and what matters is that its record names the newest execution.
 	_ = s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()})

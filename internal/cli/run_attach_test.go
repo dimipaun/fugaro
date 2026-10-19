@@ -587,7 +587,11 @@ func TestAttachRefusesARunThatAlreadyLaunched(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	// The execution carries its run's FUGARO_RUN: next-0.8.5's
+	// CheckRunExecution refuses a launch record naming an execution that does
+	// not report this run (an execution of a shared job is told apart only by
+	// it), so the seeded launch must be this run's own.
+	exec := f.run.StartWithEnv(gcp.JobName(appSlug, "web"), map[string]string{"FUGARO_RUN": appSlug + "/" + id})
 	if err := runstore.Open(b, appSlug, id).WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}

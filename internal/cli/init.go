@@ -26,13 +26,21 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	// The managed-mode package of internal/managed, aliased because this file
+	// already imports internal/infra/managed as managed (the creation fact's
+	// object): managedmode is the package of the managed apply path, and the
+	// state bucket below is its first caller in the CLI (Task 3.1's apply is
+	// the next).
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -44,6 +52,13 @@ var stdinIsTerminal = func(in io.Reader) bool {
 }
 
 type initOptions struct {
+	// strictCreate and created are fugaro restore's, and nothing else sets
+	// them: no flag reaches either (restore.go builds the child with
+	// newInitCmdWith). strictCreate makes --create-project FAIL on a project
+	// that already exists instead of adopting it; created, when set, is
+	// filled with what this run did, for the caller to check.
+	strictCreate                        bool
+	created                             *initCreation
 	cloud                               cloudOptions
 	schedulerRegion                     string
 	runsBucket, stateBucket             string
@@ -85,6 +100,17 @@ type initOptions struct {
 	createProject                    bool
 	displayName, parent, linkBilling string
 
+	// --managed is a creation of a managed project (Task 4.2, design D68's
+	// spelling of the command): the monthly budget amount is required, with
+	// no default (D64), and it is written into the project's creation fact
+	// so a later run and a restore can read what was chosen
+	// (internal/infra/managed, MarkerVersionBudget). It goes with
+	// --create-project and nothing else — a project that already exists is
+	// not flaggable as managed in this release (D58; Task 6.1, unscheduled) —
+	// and it removes no confirmation: a managed creation is a creation with
+	// more guards, not fewer.
+	managed bool
+
 	// name is the project's name, for a project config fugaro init
 	// creates; with one, it must be that config's name.
 	name string
@@ -98,8 +124,23 @@ type initOptions struct {
 	checkApp    bool // --check-github-app
 }
 
-func newInitCmd() *cobra.Command {
-	o := &initOptions{}
+func newInitCmd() *cobra.Command { return newInitCmdWith(&initOptions{}) }
+
+// initCreation is what a run of init --create-project did, as the run itself
+// knows it (not inferred from the cloud afterwards): the project it created,
+// whether the project was already there when it was read, and whether this
+// run wrote the creation fact — with managed.WriteMarker's create-only
+// precondition, so a fact someone else put there first is never this run's.
+type initCreation struct {
+	Created string
+	Existed bool
+	Marked  bool
+}
+
+// newInitCmdWith is newInitCmd over options the caller holds: fugaro
+// restore's child sets strictCreate and created on them before the flags are
+// parsed into the same value.
+func newInitCmdWith(o *initOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [--repo [PATH]]",
 		Short: "Stand up or adopt the installation's, or a repository's, cloud resources through Terraform",
@@ -366,6 +407,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it init prints the one gcloud command that links it")
 	f.StringVar(&o.displayName, "display-name", "", "with --create-project: the project's display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "with --create-project: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed)")
+	f.BoolVar(&o.managed, "managed", false, "with --create-project: create a Fugaro-managed project. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is not yet possible in this release (never by init)")
 	f.StringVar(&o.linkBilling, "link-billing", "", "with --create-project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
@@ -427,9 +469,23 @@ type initRun struct {
 	// stage, held in memory for the pre-check and cleared when the run ends.
 	appKeyMem []byte
 
+	// projectExisted is whether the project this run installs into was
+	// already there when the project stage read it (projectStage.read). It
+	// is the fact markCreated's --managed warning needs and r.res.Created
+	// cannot give: an empty Created says this run created no project, which
+	// is what adoption leaves behind — and also what --plan-only, a declined
+	// or unaskable typed confirmation, an environment refusal and a failure
+	// before the project stage leave behind.
+	projectExisted bool
+
 	// review is the run's one confirmation, set only by the converge
 	// (init_review.go).
 	review *runReview
+
+	// managed is true once this run read that the project it installs into
+	// is managed (managedProject): a guard refusal's text is then the managed
+	// one. Only true is remembered; false and an error are read again.
+	managed bool
 
 	// policy is the project's published policy, read at most once per run
 	// through the operator's own credentials (policyReadOnce.read). Readiness's
@@ -586,7 +642,10 @@ func runInit(r *initRun) error {
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
 	if !o.forget && !o.configOnly {
 		// The default and --firebase modes: the converge loop over the
-		// engines (init_stages.go).
+		// engines (init_stages.go), whose own outcome records the creation
+		// fact before it prints the result (markCreated, called from
+		// outcome), whatever the loop's outcome — which the run still
+		// returns.
 		return e.converge(cmd.Context())
 	}
 
@@ -608,6 +667,149 @@ func runInit(r *initRun) error {
 	return r.printResult()
 }
 
+// markCreated records the creation fact in the runs bucket of a project
+// this run created, and sets up the state bucket a managed apply keeps its
+// state in: the object at the bucket's root that no credential a run
+// holds can write (internal/infra/managed, design D56/D57; Task 0.1 of
+// docs/plans/2026-10-16-managed-projects.md) and D77's dedicated
+// fugaro-managed-tfstate-<project> (Task 1.5 (3) of the same plan). A later
+// run reads the marker to know the project is Fugaro's own, so it is written
+// by the run that knows the fact, on the operator's own credentials, and by
+// nothing else: the project stage runs first and the runs bucket does not
+// exist until the installation stage has applied, so this is the one place
+// and the one moment either step can run from.
+//
+// The fact is the project this run created, and nothing else (D73: adding
+// Firebase to an existing project is not creating one, so init --firebase
+// writes nothing). The write itself refuses anything but that fact
+// (managed.WriteMarker); what is here is the rest: which bucket — the
+// project's own, under the name the read of Task 0.2 looks in and no other —
+// which project number, and what to say when it cannot be written.
+//
+// It runs at the end of the converge and never changes its outcome: the
+// engine calls it from outcome, before the result is printed, so what it
+// warns is in the account a --json consumer reads and not only on stderr. A run that
+// created the project and then failed later still records the fact — the
+// project exists, and the part of the work that succeeded must not be lost
+// — and a write that fails is a warning, never a failure of the run: an
+// unmarked project is the fail-closed direction (nothing is skipped for it,
+// which is where a project that was not created in this run stays).
+//
+// The budget a managed fact records is never one the run failed to create:
+// the Terraform budget is a resource of the installation root, and the fact
+// is written only when r.res.Outputs names the runs bucket, which only
+// writeConfig sets, after that root's apply succeeded. An apply the budget
+// failed (a currency that is not the billing account's, say) leaves Outputs
+// unset, so the project is left unmarked and the warning below says so
+// (TestManagedFactIsNotWrittenWhenTheInstallationApplyFails). Later stages
+// (images, secrets, the repository) do not carry the budget, so their
+// failure does not take back a fact the installation apply made true. The
+// figures themselves are checked before anything is created
+// (checkCreateProject, managed.Budget.Check).
+func (e *initEngine) markCreated(ctx context.Context) {
+	r := e.r
+	if c := r.o.created; c != nil {
+		// projectExisted is the last read's answer, and the stage reads the
+		// project again after creating it: it was there before this run only
+		// if this run did not create it.
+		c.Created, c.Existed = r.res.Created, r.projectExisted && r.res.Created == ""
+	}
+	// Created is set by the project stage alone, inside its create branch
+	// (projectStage.Apply in init_project.go): "" means this run created no project, whatever
+	// else it did, and then there is no fact to record. This is the gate the
+	// task's own test at the call site pins (init_managed_test.go): every
+	// ordinary run of an existing installation — fugaro's own, belong, the
+	// owner's — comes through here with it empty.
+	if r.res.Created == "" {
+		// --managed asked for a managed creation and this run created no
+		// project, so there is no fact to record — and the owner must not
+		// silently get an unmarked project where they asked for a managed
+		// one. Which of the two ways that happened is said as it is, because
+		// only one of them is adoption: a project the run read and found
+		// already there (projectExisted), or a creation that never ran or
+		// never finished. An empty Created alone cannot tell them apart.
+		if r.o.managed {
+			if r.projectExisted {
+				r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed", r.gcpProject))
+			} else {
+				r.warn(fmt.Sprintf("--managed was not applied: this run created no project (it stopped before creating one, or the creation did not finish), so no creation fact was written and %s is not managed", r.gcpProject))
+			}
+		}
+		return
+	}
+	if e.c == nil {
+		r.warn(fmt.Sprintf("project %s was created by this run but no Google client was built for the run: it is not marked as managed, so nothing is skipped for it until it is", r.res.Created))
+		return
+	}
+	if r.res.Created != r.gcpProject {
+		r.warn(fmt.Sprintf("this run created project %s but installs into %s: neither is marked as managed", r.res.Created, r.gcpProject))
+		return
+	}
+	bucket := ""
+	if r.res.Outputs != nil {
+		bucket = r.res.Outputs.RunsBucket
+	}
+	if bucket == "" {
+		r.warn(fmt.Sprintf("project %s was created but the runs bucket it would be marked in is not known in this run (the installation did not finish): it is not marked, so nothing is skipped for it until it is", r.res.Created))
+		return
+	}
+	// The bucket must be the project's own, under the default name, for the
+	// same reason init's owner() refuses any other (initEngine.owner in init_review.go): a
+	// custom --runs-bucket would take the marker where the read of Task 0.2
+	// does not look — owner() reads fugaro-runs-<project>, and Task 0.2's
+	// IsManaged locates the bucket the same way. A marker in a custom bucket
+	// is the fail-closed direction and still a silently unmanaged project,
+	// so this writes only into the name the read knows and says which name
+	// it found instead.
+	if want := "fugaro-runs-" + r.res.Created; bucket != want {
+		r.warn(fmt.Sprintf("project %s was created but its runs bucket is %s, not %s: it is not marked as managed, because the marker is only read from the default bucket name", r.res.Created, bucket, want))
+		return
+	}
+	// The number is what makes the marker about this project and not about a
+	// bucket of the same name in someone else's project (managed.WriteMarker
+	// checks the bucket against it).
+	// The amount a managed creation was required to choose, and nothing else:
+	// --managed is the one flag that says this creation is managed, and its
+	// own check refuses a run that passed it without the trio
+	// (init_project.go), so a non-nil budget here is one this run was given
+	// and the installation's Terraform budget carries the same figures. A
+	// creation that is not managed passes nil and writes the object it
+	// always wrote, byte for byte (Task 4.2: the change reaches nobody else).
+	var budget *managed.Budget
+	if r.o.managed {
+		budget = &managed.Budget{Amount: r.o.budget, Currency: r.o.budgetCurrency}
+	}
+	number, err := infra.ProjectNumber(ctx, e.c, r.res.Created)
+	if err == nil {
+		err = managed.WriteMarker(ctx, e.c.Storage, bucket, r.res.Created, r.gcpProject, number, budget)
+	}
+	if err != nil {
+		r.warn(fmt.Sprintf("project %s was created but not marked as managed in gs://%s (%v): the marker is written once, by the run that creates the project, so nothing is skipped for it until an owner-run command marks it", r.res.Created, bucket, err))
+		return
+	}
+	if c := r.o.created; c != nil {
+		c.Marked = true
+	}
+	fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s)\n", r.res.Created, bucket, managed.MarkerObject)
+
+	// D77's state bucket, the other half of what a managed project needs
+	// before an apply can run under the deployer: the state of the
+	// agent-authored root lives in a bucket of its own, and the deployer is
+	// bound on that bucket alone (internal/managed/statebucket.go). It
+	// belongs here for the same reason the marker does: it is setup on the
+	// operator's own credentials, in the managed creation and nowhere else.
+	// The region is the installation's, so the managed state sits where the
+	// rest of the project's storage does. Like the marker, this never changes
+	// the outcome of the run — a project that is marked but has no state
+	// bucket is the fail-closed direction (a managed apply finds nowhere to
+	// keep its state and says so, rather than writing it somewhere else).
+	if err := managedmode.EnsureManagedStateBucket(ctx, managedmode.InfraStore{Clients: e.c}, r.res.Created, e.spec.Region); err != nil {
+		r.warn(fmt.Sprintf("project %s was created and marked as Fugaro-managed, but its managed state bucket was not set up (%v): a managed apply has nowhere to keep its state until an owner-run command sets it up", r.res.Created, err))
+		return
+	}
+	fmt.Fprintf(r.w, "set up the managed state bucket gs://%s and bound the deployer to it (%s)\n", managedmode.ManagedStateBucketName(r.res.Created), managedmode.DeployerStateRole)
+}
+
 // checkEnv refuses an environment that would point Terraform or the
 // Google tools elsewhere (preflight.Environment, shared with fugaro
 // doctor), and finds terraform. It prints the local config's warnings once
@@ -620,7 +822,7 @@ func (r *initRun) checkEnv(lc *localcfg.Config) (string, error) {
 	}
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
-		return "", userErr("fugaro init needs terraform (>= 1.7, < 2) on PATH: %v", err)
+		return "", userErr("fugaro init needs terraform (>= 1.9, < 2) on PATH: %v", err)
 	}
 	for _, w := range lc.Warnings() {
 		r.warn(w)
@@ -716,6 +918,18 @@ func (o *initOptions) checkOnboardRepo() error {
 
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
+	// Two features this release cannot complete, refused first and before
+	// any cloud call (managedDeployerShipped, batchProvisionShipped).
+	if o.managed {
+		if err := refuseManagedNotShipped(); err != nil {
+			return err
+		}
+	}
+	if o.provisionBatch {
+		if err := refuseBatchProvisionNotShipped(); err != nil {
+			return err
+		}
+	}
 	if o.noBuild || o.allowJobDelete || o.retire {
 		return userErr("--no-build, --allow-job-delete and --retire are for fugaro init --repo")
 	}
@@ -1140,18 +1354,106 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 	return remote(fmt.Errorf("%s was enabled in %s but still answers SERVICE_DISABLED: the enable is still propagating; rerun fugaro init in a few minutes", infra.ServiceResourceManager, r.gcpProject))
 }
 
-// guard is tf.Guard, a refusal being exit 1 with a hint for each refused
-// delete that flags left out of this run would keep.
-func guard(plan *tf.Plan, allowDelete []string) error {
+// guard is tf.Guard at init's call sites, and the one place a managed
+// project's refusal TEXT differs from every other project's (Task 3.2 of
+// docs/plans/2026-10-16-managed-projects.md).
+//
+// What it approves and refuses is tf.Guard's decision over allowDelete, the
+// list today's call site has always handed it (--allow-delete, plus what init
+// derives itself: the hardening addresses for the installation root, the log
+// isolation's own deletes for --forget), in every project, managed or not. The
+// owner's delete list (fugaro/allow-delete.json) is not read here and approves
+// nothing here: D72/D74 scope it to a managed apply of the project's
+// agent-authored root, and these are fugaro's own roots. A plan with no delete
+// is admitted without reading anything, as before.
+//
+// Only the text of a refusal turns on the project, and the project is read
+// only once the plan is refused (managedProject). Outside a managed project it
+// is today's text, byte for byte: Guard's sentence naming --allow-delete, and a
+// hint for each refused delete that flags left out of this run would keep,
+// infra.DeleteHints' lines. In a managed project those are an instruction to
+// pass a flag, in text the coding agent's session it refuses reads, so neither
+// is printed: the refusal ends with initManagedDeleteAdvice, which names no
+// flag and sends the reader to the owner — and only when some refused change is
+// one an approval could admit (tf.Listable). A refusal made only of what no
+// approval clears (an object moved here from another address, an action the
+// guard does not know, a change with no actions) ends at what it refused.
+//
+// When whether the project is managed cannot be read, the refusal is neither
+// mode's advice: it says the read failed and names no way past it — never the
+// unmanaged text, whose flag is what the read exists to withhold.
+func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, allowDelete []string) error {
+	if err := infra.RefuseProjectJobDeletes(plan); err != nil {
+		return userErr("%v", err)
+	}
 	err := tf.Guard(plan, allowDelete)
 	if err == nil {
 		return nil
+	}
+	isManaged, readErr := r.managedProject(ctx, c)
+	switch {
+	case readErr != nil:
+		return userErr("%s\nwhether %s is a managed project could not be read (%s), so this refusal names no way past it: say which address is refused to the person who owns the project",
+			tf.GuardWith(plan, allowDelete, ""), safetext.Field(r.projectName), safetext.Field(readErr.Error()))
+	case isManaged:
+		advice := ""
+		if len(tf.Listable(plan, allowDelete)) > 0 {
+			advice = initManagedDeleteAdvice
+		}
+		return userErr("%s", tf.GuardWith(plan, allowDelete, advice))
 	}
 	msg := err.Error()
 	for _, h := range infra.DeleteHints(plan, allowDelete) {
 		msg += "\nhint: " + h
 	}
 	return userErr("%s", msg)
+}
+
+// initManagedDeleteAdvice is the sentence a managed project's init refusal ends
+// with when the plan deletes or replaces something an approval could admit. It
+// names no flag and no agent marker (Task 3.2's negative test), and it does not
+// point at the owner's delete list either: that list approves deletes in the
+// project's agent-authored root only (D72/D74), never in fugaro's own roots,
+// so naming it here would send the owner to write an approval that changes
+// nothing.
+const initManagedDeleteAdvice = "This is a managed project: deleting or replacing fugaro's own resources in it is its owner's decision, made by the owner and not by this session, so say which address is refused to the person who owns the project and stop"
+
+// isManagedFact is managed.IsManaged; a variable only so a test can make the
+// read fail in a way the fake APIs do not (an error that is neither a 403/404,
+// which the read answers as not managed, nor a 5xx, which the client retries).
+var isManagedFact = managed.IsManaged
+
+// managedProject is whether the project this run installs into is managed: the
+// creation fact of Task 0.2, read only when a guard refusal needs it — the
+// fact decides which text that refusal ends with, and nothing else in init's
+// flow turns on it.
+//
+// It fails closed: an error reading the fact is returned, never read as "not
+// managed", because not managed is the mode whose refusal names the flag; and
+// a run with no clients to read with is that error too. Only a managed answer
+// is kept for the rest of the run (r.managed): a run that creates a managed
+// project is managed from the moment its project stage created it, before the
+// marker is written at the end of the converge (markCreated) and without
+// reading it, and an answer of "not managed" or an error is read again by the
+// next refusal rather than remembered.
+func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, error) {
+	if r.managed {
+		return true, nil
+	}
+	if r.o.managed && r.res.Created != "" && r.res.Created == r.gcpProject {
+		return true, nil
+	}
+	if c == nil {
+		return false, errors.New("no Google client to read the creation fact with")
+	}
+	ok, _, err := isManagedFact(ctx, c.Storage, c.CRM, r.projectName, r.gcpProject)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		r.managed = true
+	}
+	return ok, nil
 }
 
 // prepare writes the root's tfvars, imports and backend configuration.
@@ -1297,7 +1599,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
 		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
-		if err := guard(plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
+		if err := r.guard(ctx, c, plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
 			return outs, false, err
 		}
 		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
@@ -1800,7 +2102,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		if err := infra.CheckForgetPlan(plan); err != nil {
 			return initErr(err)
 		}
-		if err := guard(plan, infra.ForgetAllowDelete(plan)); err != nil {
+		if err := r.guard(ctx, c, plan, infra.ForgetAllowDelete(plan)); err != nil {
 			return err
 		}
 		counts := infra.CountPlan(plan)
@@ -1853,6 +2155,11 @@ func (r *initRun) printResult() error {
 
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
+	if o.provisionBatch {
+		if err := refuseBatchProvisionNotShipped(); err != nil {
+			return err
+		}
+	}
 	if o.anchor {
 		return userErr("--anchor and --repo exclude one another: --anchor writes the gcp_project line of an onboarded repository's checkout (run fugaro init --anchor there), and fugaro init --repo does not write it")
 	}
@@ -1900,7 +2207,7 @@ func (o *initOptions) installationFlags() []string {
 		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
-		"--create-project": o.createProject, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
+		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
@@ -2574,7 +2881,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
-	if err := guard(plan, r.o.allowDelete); err != nil {
+	if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
 		return infra.RepoSpec{}, nil, err
 	}
 	counts := infra.CountPlan(plan)

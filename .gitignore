@@ -16,3 +16,7 @@
 # docs/website/redesign/capture-screenshots.mjs, never committed (see that directory's README).
 /docs/website/redesign/current/*.jpg
 /docs/website/redesign/after/*.jpg
+# Owner-local, never committed: the Firebase CLI's per-project cache and the folder the
+# owner keeps signing material and similar secrets in.
+/.firebase/
+/secrets/

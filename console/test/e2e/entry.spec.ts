@@ -1,0 +1,718 @@
+// The renderer entry, in a real Electron window (desktop-console plan Task 3.4a,
+// steps 1, 2, 4 and 5; design section 5.1 rules 1, 3, 5 and D7).
+//
+// Everything this file asserts is a claim about a *running* app, and each of
+// them is here rather than in the unit suite for the same reason: the unit
+// suite proves the parts (`test/unit/bundle.test.ts` runs the bundled entry in a
+// `vm` realm, `test/unit/csp-document.test.ts` reads the served documents,
+// `test/unit/preload-surface.test.ts` runs the built preload against a recording
+// loader) and none of those is a browser. Chromium is what enforces the CSP,
+// `contextBridge` is what copies the bridge into the renderer's world, and the
+// `app://` handler is what serves the one script the document loads. So this is
+// where those three become facts:
+//
+//   - **the dashboard document loads the bundled entry from its own origin.**
+//     One `<script>`, resolved to `app://console/console.js`, and what is on
+//     `window` afterwards is the preload's frozen bridge -- which is the only
+//     way the renderer can ask anything, and proof that both the preload and the
+//     script ran.
+//   - **nothing else is on `window`.** No `require`, no `process`, no
+//     `ipcRenderer`, and no way to name a channel. `sandbox: true` and
+//     `contextIsolation: true` are the flags; this is what they mean from inside
+//     the page.
+//   - **the CSP is live.** An inline `<script>` injected into the page does not
+//     run and raises a `securitypolicyviolation` -- a claim only a real browser
+//     can make, and the one that would go on passing if the policy were only a
+//     `<meta>` tag nobody enforced.
+//   - **a refused console loads the other document**, which has no script at
+//     all and no bridge, and **no handler is behind any channel** (D7 at the
+//     document level; `test/unit/startup.test.ts` pins the wiring that keeps the
+//     surface off `ipcMain`).
+//   - **a reduced console loads the dashboard, draws the banner, and refuses a
+//     withheld read** with the console's own sentence -- over real IPC, through
+//     the real preload, in a real window.
+//   - **the spawn log holds the handshake and the live watch, and no other
+//     read.** The log is the one place a spawn that should not have happened is
+//     visible, and since Task 3.4c the console makes exactly two: the
+//     handshake's own `version` probe, and the Live screen's `watch --json`,
+//     planned with the chosen installation's binary and `--project`. A refused
+//     console mounts nothing, so its log is the probe alone.
+//   - **the Live screen draws the synthetic recording.** The whole chain in one
+//     window: the entry mounts Live, the poll asks `live.watch`, the main
+//     process spawns the installation's own `fugaro watch --json`, and the
+//     fixture's repository and runs appear in the page -- drawn by the one
+//     script the document loaded, with no code injected into the window.
+//
+// **The premise (Task 3.4b; review S3).** Every launch here runs against a
+// scratch `--user-data-dir` seeded with one **active installation naming the
+// stub**, so the startup handshake reads that binary and no other
+// (`resolveHandshakeBinary`) -- whatever `fugaro` the machine has in
+// `/usr/local/bin` or `/opt/homebrew/bin`. No case here skips for the machine
+// it runs on. The one first-run case uses an unseeded profile of its own, and
+// asserts nothing that depends on which `fugaro` the machine resolves.
+//
+// Nothing here reaches the network and nothing here starts a child that the
+// console's own read would not have started: the stub answers `version`, and
+// answers `watch`/`doctor` **only** for the seeded project -- any other argv
+// exits 2 -- so a console that asked it for something else, or asked for the
+// right thing about the wrong project, fails here rather than passing on an
+// answer it should not have been able to get. `watch` prints
+// `test/fixtures/synthetic.ndjson`, so what the Live screen draws is a committed
+// recording rather than a shape invented in the spec.
+
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { expect, test } from '@playwright/test'
+import type { ElectronApplication, Page } from '@playwright/test'
+
+import { NO_ACTIVE_INSTALLATION, REDUCED_REFUSAL } from '../../src/main/ipc'
+import { APP_ENTRY_URL, APP_ORIGIN, REFUSAL_ENTRY_URL, SERVED_FILES } from '../../src/main/protocol'
+import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
+import type { SpawnLogEntry } from '../../src/main/spawnlog'
+import {
+  CLI_VERSION_BUILT_AGAINST,
+  REDUCED_VIEWS,
+  SKEW_HEADLINES,
+} from '../../src/shared/version'
+import { EXPOSED_OPERATIONS } from '../../src/preload/index'
+import { installCliStub } from '../support/cliStub'
+import type { CliStub } from '../support/cliStub'
+import { dismissFirstRunPicker } from '../support/firstRun'
+import { launchConsole } from '../support/launch'
+import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
+import { sanitizeRefusal } from '../../src/shared/sanitize'
+
+// The console's own directory, from this file's location, as in the other specs:
+// `test/e2e/x.spec.ts` is two levels below it, and Playwright loads these specs
+// as CommonJS.
+const consoleDir = join(__dirname, '..', '..')
+
+/**
+ * SHIPPED_KEYS is what `window.fugaro` must carry, read out of the preload's own
+ * table: the thirteen methods, plus `version` and `operations`. Read rather than
+ * spelled, because the claim here is "the bridge in the page is the surface this
+ * console ships" -- a retyped list would only prove the retyping.
+ */
+const SHIPPED_KEYS: readonly string[] = [
+  'operations',
+  'version',
+  ...EXPOSED_OPERATIONS.map(([, method]) => method),
+].sort()
+
+interface Launched {
+  readonly app: ElectronApplication
+  readonly page: Page
+  readonly spawnLog: string
+  /** scratch is the directory the spawn log lives in, removed by `close`. */
+  readonly scratch: string
+  /** records is the spawn log as parsed records, read *after* the handshake:
+   * the read that produced them is what opened and closed it. */
+  records(): readonly SpawnLogEntry[]
+}
+
+/**
+ * launch starts the app the way a user starts it, with the stub's environment
+ * and one addition: `FUGARO_CONSOLE_SPAWN_LOG` names a scratch file, which is
+ * the operator's own opt-in and the only way the spawn log is ever written
+ * (design section 5.1 rule 10).
+ */
+async function launch(
+  stubEnv: Record<string, string>,
+  options: { readonly firstRun?: CliStub; readonly env?: Record<string, string> } = {},
+): Promise<Launched> {
+  const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
+  const spawnLog = join(scratch, 'spawn.jsonl')
+  // The seeded profile (see the header), or -- for the first-run case -- an
+  // unseeded one, whose picker opens beside the window under test and is
+  // dismissed before any assertion about that window (`dismissFirstRunPicker`).
+  const profile = options.firstRun ?? stub
+  const app = await launchConsole({
+    args: profile.launchArgs(consoleDir),
+    env: { ...stubEnv, ...(options.env ?? {}), [SPAWN_LOG_ENV]: spawnLog },
+  })
+  // A console that exits before it opens a window would leave `firstWindow`
+  // waiting until the test's own timeout; this says so, with the exit code.
+  const page = await app.firstWindow({ timeout: 15_000 }).catch((error: unknown) => {
+    throw new Error(
+      `the console opened no window (exit code ${String(app.process().exitCode)}): ${error instanceof Error ? error.message : String(error)}`,
+    )
+  })
+  await page.waitForLoadState('domcontentloaded')
+  if (options.firstRun !== undefined) await dismissFirstRunPicker(app, page)
+  return {
+    app,
+    page,
+    spawnLog,
+    scratch,
+    records(): readonly SpawnLogEntry[] {
+      let text: string
+      try {
+        text = readFileSync(spawnLog, 'utf8')
+      } catch {
+        // Unset, unreadable, never written: an empty log is the honest answer,
+        // and the tests that need records assert a length.
+        return []
+      }
+      return text
+        .split('\n')
+        .filter((line) => line.trim() !== '')
+        .map((line) => JSON.parse(line) as SpawnLogEntry)
+    },
+  }
+}
+
+/** close ends the app and the scratch tree beside it. */
+async function close(launched: Launched): Promise<void> {
+  await launched.app.close()
+  rmSync(launched.scratch, { recursive: true, force: true })
+}
+
+/** pageShape is the document as the renderer's own world sees it: the URL, the
+ * one script element and where its `src` resolves to, what is on `window`, and
+ * the banner if there is one. Everything here is read *from inside the page*,
+ * which is the whole point -- the main process can describe what it built, and
+ * only the page can say what a renderer actually got. */
+function pageShape(page: Page): Promise<{
+  url: string
+  scripts: readonly string[]
+  scriptUrls: readonly string[]
+  bridgeKeys: readonly string[]
+  bridgeFrozen: boolean
+  bridgeVersion: number | null
+  bridgeOperations: readonly string[]
+  globals: Record<string, string>
+  mode: string | null
+  bannerHeadline: string | null
+  hiddenViews: readonly string[]
+  bodyChildren: readonly string[]
+  bodyText: string
+}> {
+  return page.evaluate(() => {
+    const bridge = (window as unknown as { fugaro?: Record<string, unknown> }).fugaro
+    const banner = document.querySelector('section.console-skew')
+    const headline = document.querySelector('h1.skew-headline')
+    const globals: Record<string, string> = {}
+    for (const name of ['require', 'process', 'module', 'ipcRenderer', 'Buffer', 'global']) {
+      globals[name] = typeof (window as unknown as Record<string, unknown>)[name]
+    }
+    return {
+      url: window.location.href,
+      scripts: [...document.querySelectorAll('script')].map((element) => element.outerHTML),
+      scriptUrls: [...document.querySelectorAll('script')].map((element) => element.src),
+      bridgeKeys: bridge === undefined ? [] : Object.keys(bridge).sort(),
+      bridgeFrozen: bridge !== undefined && Object.isFrozen(bridge),
+      bridgeVersion: bridge === undefined ? null : (bridge['version'] as number),
+      bridgeOperations:
+        bridge === undefined ? [] : [...(bridge['operations'] as readonly string[])],
+      globals,
+      mode: banner?.getAttribute('data-mode') ?? null,
+      bannerHeadline: headline?.textContent ?? null,
+      hiddenViews: [...document.querySelectorAll('li.skew-hidden')].map(
+        (element) => element.getAttribute('data-hidden') ?? '',
+      ),
+      // What the document's body holds, which is the entry's own drawing and
+      // nothing else: the placeholder Task 1.1's document carried would be a
+      // child here that no screen of this console draws.
+      bodyChildren: [...document.body.children].map(
+        (element) => element.getAttribute('class') ?? element.tagName.toLowerCase(),
+      ),
+      bodyText: document.body.textContent ?? '',
+    }
+  })
+}
+
+/**
+ * openPickerFromMenu clicks the application menu's `Installations…` item -- the
+ * one door to the picker (C9) -- and answers the picker's page.
+ */
+async function openPickerFromMenu(app: ElectronApplication): Promise<Page> {
+  const opened = app.waitForEvent('window')
+  const clicked = await app.evaluate(({ Menu }, label) => {
+    const menu = Menu.getApplicationMenu()
+    for (const top of menu?.items ?? []) {
+      for (const item of top.submenu?.items ?? []) {
+        if (item.label === label) {
+          item.click()
+          return true
+        }
+      }
+    }
+    return false
+  }, INSTALLATIONS_MENU_LABEL)
+  expect(clicked, `the application menu has no ${INSTALLATIONS_MENU_LABEL} item`).toBe(true)
+  const picker = await opened
+  await picker.waitForLoadState('load')
+  expect(picker.url()).toBe(PICKER_ENTRY_URL)
+  return picker
+}
+
+/** installationOf is the dashboard's `installation.current`, read through the
+ * real preload from inside the page. */
+function installationOf(page: Page): Promise<Record<string, unknown>> {
+  return page.evaluate(async () => {
+    const api = (window as unknown as { fugaro: { getInstallation: () => Promise<unknown> } }).fugaro
+    return (await api.getInstallation()) as Record<string, unknown>
+  })
+}
+
+let stub: CliStub
+
+test.describe('the renderer entry, in the real window', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  test.beforeAll(() => {
+    stub = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    stub.seedActiveInstallation('e2e')
+  })
+
+  test.afterAll(() => {
+    stub?.remove()
+  })
+
+  test('loads the bundled entry from the console’s own origin, and the frozen bridge with it', async () => {
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const launched = await launch(stub.env)
+    try {
+      const shape = await pageShape(launched.page)
+      // The document, then the one script the document is allowed to load. The
+      // resolved `src` is the assertion that matters: it is same-origin, it is
+      // the file `SERVED_FILES` lists, and it is not a `file:` or `data:` URL.
+      expect(shape.url).toBe(APP_ENTRY_URL)
+      expect(shape.scripts).toHaveLength(1)
+      expect(shape.scripts[0]).toContain('src="./console.js"')
+      expect(shape.scripts[0]).toContain('defer')
+      // The resolved `src`: same-origin, and the file the served root lists.
+      // `APP_ORIGIN` rather than `new URL(...).origin`, which is the string
+      // `'null'` for a scheme the URL standard does not treat as special.
+      expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
+      expect(SERVED_FILES).toContain('/console.js')
+      // The bridge `src/preload/index.ts` exposes, as the renderer received it:
+      // the thirteen methods and the two fields, frozen, at the shipped version.
+      // Two files have to be right for this to hold -- the preload that exposed
+      // it and the entry that ran beside it -- because the preload only reaches
+      // the dashboard window (`dashboardWebPreferences`).
+      expect(shape.bridgeKeys).toEqual(SHIPPED_KEYS)
+      expect(shape.bridgeFrozen).toBe(true)
+      expect(shape.bridgeVersion).toBe(1)
+      expect([...shape.bridgeOperations].sort()).toEqual(
+        EXPOSED_OPERATIONS.map(([name]) => name).sort(),
+      )
+    } finally {
+      await close(launched)
+    }
+  })
+
+  test('gives the renderer nothing but that one object', async () => {
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const launched = await launch(stub.env)
+    try {
+      const shape = await pageShape(launched.page)
+      // Every Node-shaped global is absent from the page's world. This is what
+      // `sandbox: true` and `contextIsolation: true` buy, and it is read in the
+      // renderer rather than trusted from the window's options: the unit suite
+      // pins the options (`test/unit/window.test.ts`) and only a browser can say
+      // what they left behind.
+      for (const [name, kind] of Object.entries(shape.globals)) {
+        expect(kind, `window.${name} is ${kind}`).toBe('undefined')
+      }
+      // And the bridge itself carries no generic escape hatch: no `invoke` to
+      // point at a channel, no listener registrar, nothing that takes a channel
+      // name.
+      const bridge = (await launched.page.evaluate(() => {
+        const api = (window as unknown as { fugaro?: Record<string, unknown> }).fugaro
+        const found: string[] = []
+        for (const forbidden of [
+          'invoke',
+          'send',
+          'sendSync',
+          'on',
+          'once',
+          'addListener',
+          'removeListener',
+          'postMessage',
+        ]) {
+          if (api !== undefined && forbidden in api) found.push(forbidden)
+        }
+        return found
+      })) as readonly string[]
+      expect(bridge).toEqual([])
+    } finally {
+      await close(launched)
+    }
+  })
+
+  test('does not run an inline script, and says so through the CSP', async () => {
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const launched = await launch(stub.env)
+    try {
+      // The claim the policy is for. An inline `<script>` appended to the page is
+      // refused by `script-src 'self'` -- no `'unsafe-inline'` -- and Chromium
+      // reports the refusal rather than failing silently, so this is asserted
+      // twice: the injected code did not run, and a `securitypolicyviolation`
+      // fired naming `script-src`. A `<meta>`-only policy that nobody enforced,
+      // or a policy that had gained `'unsafe-inline'`, fails here.
+      const violation = await launched.page.evaluate(
+        () =>
+          new Promise<string>((resolve) => {
+            const timer = setTimeout(() => {
+              resolve('no violation')
+            }, 5000)
+            document.addEventListener(
+              'securitypolicyviolation',
+              (event) => {
+                clearTimeout(timer)
+                resolve(event.violatedDirective)
+              },
+              { once: true },
+            )
+            const element = document.createElement('script')
+            element.textContent = 'globalThis.__inlineRan = true'
+            document.body.appendChild(element)
+          }),
+      )
+      expect(violation).toContain('script-src')
+      expect(
+        await launched.page.evaluate(
+          () => typeof (globalThis as unknown as { __inlineRan?: unknown }).__inlineRan,
+        ),
+      ).toBe('undefined')
+    } finally {
+      await close(launched)
+    }
+  })
+
+  test('a refused console loads the refusal document: no script, and no bridge', async () => {
+    stub.setVersion('0.5.0')
+    const launched = await launch(stub.env)
+    try {
+      expect(launched.app.windows()).toHaveLength(1)
+      const shape = await pageShape(launched.page)
+      expect(shape.url).toBe(REFUSAL_ENTRY_URL)
+      expect(shape.url).not.toBe(APP_ENTRY_URL)
+      // The two halves of step 1 and step 2 read from the page: the refusal
+      // window has no preload, so there is no bridge for it to reach, and the
+      // document loads no script at all -- so even a handler that had been
+      // registered has no code here that could call it.
+      expect(shape.scripts).toEqual([])
+      expect(shape.bridgeKeys).toEqual([])
+      expect(shape.globals['require']).toBe('undefined')
+      // **And the log holds no read.** A refused console drives nothing: the
+      // handshake's own `version` probe is the one spawn, and no screen's read
+      // follows it (Task 3.4c -- a console that mounted a screen here would
+      // have to read through a source it never built).
+      const records = launched.records()
+      expect(records.map((record) => record.argv.slice(1))).toEqual([['version']])
+    } finally {
+      await close(launched)
+    }
+  })
+
+  test('a reduced console draws the banner and refuses a withheld read over real IPC', async () => {
+    stub.setVersion('0.9.0')
+    const launched = await launch(stub.env)
+    try {
+      const shape = await pageShape(launched.page)
+      // The dashboard document, with the renderer's own drawing in it: the
+      // bundled entry ran, asked the handshake, and drew the banner. This is the
+      // one place the *bundle* is proven to execute in a browser -- the unit
+      // suite runs it in a `vm` realm, and this is the real document.
+      expect(shape.url).toBe(APP_ENTRY_URL)
+      expect(shape.mode).toBe('reduced')
+      expect(shape.bannerHeadline).toBe(SKEW_HEADLINES.reduced)
+      expect([...shape.hiddenViews].sort()).toEqual([...REDUCED_VIEWS].sort())
+      // The withheld read, over the real preload and the real registrar: the
+      // handler refuses *before* the source, the source refuses everything
+      // anyway, and the sentence is the console's own.
+      const spend = (await launched.page.evaluate(async () => {
+        const api = (
+          window as unknown as {
+            fugaro: { runReport: (args: unknown) => Promise<unknown> }
+          }
+        ).fugaro
+        return await api.runReport({})
+      })) as { readonly ok: boolean; readonly reason?: string }
+      expect(spend).toEqual({ ok: false, reason: REDUCED_REFUSAL })
+      // The live feed is *not* withheld (design C10): the kill-switch fields
+      // arrive inside it, so a reduced console still reads it. Since Task 3.4c
+      // the main process binds a real source to the active installation, so the
+      // read reaches the stub's own `watch` and answers with a document -- and
+      // that is the claim: the operation is *reachable* in a reduced mode, and
+      // what answered it was the installation's `fugaro` and not a gate that had
+      // swallowed the read.
+      const live = (await launched.page.evaluate(async () => {
+        const api = (
+          window as unknown as {
+            fugaro: { subscribeLive: (args: unknown) => Promise<unknown> }
+          }
+        ).fugaro
+        return await api.subscribeLive({})
+      })) as { readonly ok: boolean; readonly reason?: string; readonly data?: unknown }
+      expect(live.ok, `live.watch was refused in a reduced mode: ${String(live.reason)}`).toBe(true)
+      expect(live.reason, 'live.watch must not be withheld by the reduced mode').toBeUndefined()
+      const snapshot = live.data as {
+        readonly document?: { readonly repos?: readonly { readonly repo: string }[] }
+        readonly receivedAt?: unknown
+      }
+      // The committed synthetic frame, which is what the stub's `watch` prints.
+      expect(snapshot.document?.repos?.[0]?.repo, 'the live snapshot carries no document').toBe(
+        'r-4c25cf20/r-f1aa9214',
+      )
+      expect(typeof snapshot.receivedAt, 'the snapshot carries no arrival stamp').toBe('string')
+
+      // And the navigation offers Live alone: Spend is the withheld view, and
+      // Projects is the `caps` view, which this mode withholds with it. A Spend
+      // entry here would be a door to a screen whose read the gate refuses.
+      const nav = await launched.page.evaluate(() =>
+        [...document.querySelectorAll('nav.console-views button.console-view')].map((button) =>
+          button.getAttribute('data-view'),
+        ),
+      )
+      expect(nav).toEqual(['live'])
+      // And nothing behind the withheld views was read: the spawn log holds the
+      // handshake's `version` and the live `watch`, and no `report`.
+      const reducedLog = launched.records()
+      expect(reducedLog.filter((record) => record.argv.includes('report'))).toEqual([])
+      expect(reducedLog.filter((record) => record.argv.includes('budget'))).toEqual([])
+      // The header's read says reduced too, with the version the startup
+      // handshake read -- never a default `ok` (review S1) -- and the dashboard
+      // draws it.
+      const installation = await installationOf(launched.page)
+      expect(installation).toEqual({
+        ok: true,
+        data: {
+          chosen: true,
+          id: '0123456789abcdef',
+          project: 'e2e',
+          binary: join(stub.dir, 'fugaro'),
+          cliVersion: '0.9.0',
+          mode: 'reduced',
+        },
+      })
+      const header = await launched.page.evaluate(() => {
+        const section = document.querySelector('section.console-installation')
+        return {
+          kind: section?.getAttribute('data-installation') ?? null,
+          lines: [...(section?.querySelectorAll('p') ?? [])].map((line) => line.textContent),
+        }
+      })
+      // The binary line is the path as the console's sanitizer draws it (a
+      // scratch directory's random suffix can read as a token and is redacted,
+      // exactly as the picker's row draws it).
+      const drawnBinary = sanitizeRefusal(join(stub.dir, 'fugaro'), 'the installation’s binary')
+      expect(drawnBinary.ok).toBe(true)
+      expect(header).toEqual({
+        kind: 'chosen',
+        lines: ['e2e', drawnBinary.ok ? drawnBinary.text : '', '0.9.0 · reduced'],
+      })
+      // And the picker's status line, opened from the menu.
+      const picker = await openPickerFromMenu(launched.app)
+      await expect(picker.locator('#picker-status')).toHaveText('e2e is the installation this console is showing (reduced).')
+    } finally {
+      await close(launched)
+    }
+  })
+
+  test('the spawn log holds the handshake and the live watch, and no other read, in every mode', async () => {
+    // The log is the evidence for what this console drives, and it is read in
+    // all three modes. Since Task 3.4c there are exactly two spawns a healthy
+    // console makes: the handshake's own `version` probe, and the Live screen's
+    // `watch --json` -- which the bound source plans with the installation's
+    // `--project` and the installation's binary. A `report`, a `budget`, a
+    // `runs` or a `diagnose` here is a read some screen made that it should not
+    // have, and this is where it is seen.
+    for (const [version, mode] of [
+      [CLI_VERSION_BUILT_AGAINST, 'ok'],
+      ['0.9.0', 'reduced'],
+      ['0.5.0', 'refused'],
+    ] as const) {
+      stub.setVersion(version)
+      const launched = await launch(stub.env)
+      try {
+        const shape = await pageShape(launched.page)
+        // The mode is the premise of the claim about the log, so it is asserted
+        // rather than assumed: a spec that read the log for a mode the app never
+        // reached would be asserting nothing. The *document* is what says which
+        // mode this was -- a refused console's document loads no script, so
+        // nothing in it draws a banner and there is no `data-mode` to read --
+        // and the banner is checked where the renderer is the thing that ran.
+        expect(shape.url, `the ${mode} case`).toBe(
+          mode === 'refused' ? REFUSAL_ENTRY_URL : APP_ENTRY_URL,
+        )
+        expect(shape.mode, `the ${mode} case`).toBe(mode === 'reduced' ? 'reduced' : null)
+        // A console that refused mounts nothing, so its `watch` is not merely
+        // absent from this list -- the list is one line long.
+        const expected: readonly string[][] =
+          mode === 'refused'
+            ? [['version']]
+            : [
+                ['version'],
+                ['watch', '--json', '--project', 'e2e'],
+              ]
+        // The watch is written by the entry's *first poll*, which is a message
+        // round and a spawn behind the window's `domcontentloaded` -- so a mode
+        // that mounts waits for it rather than racing it. A mode that mounts
+        // nothing never writes one, and for that mode the wait is the loop
+        // below: one record, the probe.
+        if (mode !== 'refused') {
+          await expect
+            .poll(() => launched.records().some((record) => record.argv[1] === 'watch'), {
+              message: `${mode}: the live read never reached the spawn log`,
+            })
+            .toBe(true)
+        }
+        const records = launched.records()
+        expect(records.length, `${mode}: the handshake read is not in the log`).toBeGreaterThan(0)
+        for (const record of records) {
+          expect(Object.keys(record).sort(), `${mode}: the record has extra keys`).toEqual([
+            'argv',
+            'cwd',
+            'project',
+            'ts',
+          ])
+          // The active installation's binary (Task 3.4b, step 3) is the argv's
+          // first element in every record: the handshake's probe and the source's
+          // reads both resolve through the installation the operator chose.
+          expect(record.argv[0], `${mode}: a spawn used another binary`).toBe(join(stub.dir, 'fugaro'))
+          expect(record.project, `${mode}: the spawn log lost the installation's project`).toBe('e2e')
+          // The argv after the binary is one of the two this console plans --
+          // compared whole, so a flag added to either is a failure here rather
+          // than a substring nobody looked at.
+          expect(expected, `${mode}: the console ran ${record.argv.join(' ')}`).toContainEqual(
+            record.argv.slice(1),
+          )
+        }
+      } finally {
+        await close(launched)
+      }
+    }
+  })
+
+  test('the Live screen draws the synthetic frame, and the console injects no code to do it', async () => {
+    // The whole chain in one window: the entry mounts Live, the poll asks
+    // `live.watch`, the main process spawns the installation's own `fugaro`
+    // `watch --json`, and the stub prints the committed synthetic recording --
+    // so what the page shows is the fixture's repository and its runs, drawn by
+    // the bundle the document loaded and by nothing else.
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const launched = await launch(stub.env)
+    try {
+      const shape = await pageShape(launched.page)
+      expect(shape.url).toBe(APP_ENTRY_URL)
+      // The drawing is the document's own script's. One script element, resolved
+      // to the bundle, and no inline code: a screen that appeared because the
+      // main process had injected it would show up here as a second element or
+      // as an inline one (`src/main/index.ts` names no `executeJavaScript`, and
+      // `test/unit/startup.test.ts` holds it to that).
+      expect(shape.scripts).toHaveLength(1)
+      expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
+      // And the window holds the entry's drawing and nothing the document
+      // shipped: the header, the navigation and the panel, in that order. Task
+      // 1.1's placeholder -- "The console's window is up. It has no data yet." --
+      // would be a fourth child here, a second `<h1>` and a sentence this task
+      // made false, printed above the figures.
+      expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])
+      expect(shape.bodyText).not.toContain('It has no data yet')
+
+      const panel = launched.page.locator('div.console-panel')
+      await expect(panel.locator('li.live-repo')).toHaveCount(1)
+      await expect(panel.locator('span.live-repo-name')).toHaveText('r-4c25cf20/r-f1aa9214')
+      // The last frame of the recording carries both runs.
+      await expect(panel.locator('li.live-run')).toHaveCount(2)
+      await expect(panel.locator('li.live-run span.live-run-id')).toHaveText([
+        '20261015-120000-aa01',
+        '20261015-120400-aa03',
+      ])
+      // The navigation, and Live as the view on screen.
+      await expect(launched.page.locator('nav.console-views button.console-view')).toHaveText([
+        'Live',
+        'Spend',
+        'Projects',
+      ])
+      await expect(
+        launched.page.locator('nav.console-views button.console-view[aria-current="true"]'),
+      ).toHaveText('Live')
+      // And the read behind that drawing is the installation's own binary and
+      // project, in the log -- not merely inferred from the screen.
+      const watch = launched
+        .records()
+        .filter((record) => record.argv[1] === 'watch')
+        .map((record) => record.argv)
+      expect(watch.length, 'the live read is not in the spawn log').toBeGreaterThan(0)
+      for (const argv of watch) {
+        expect(argv).toEqual([join(stub.dir, 'fugaro'), 'watch', '--json', '--project', 'e2e'])
+      }
+    } finally {
+      await close(launched)
+    }
+  })
+  test('a stored binary that is gone is a refusal, never another fugaro, and the picker is still reachable (review B1)', async () => {
+    // A second profile whose active installation names a binary that is not
+    // there. Before the fix the handshake walked on to the machine's own
+    // `fugaro` (or the stub on `PATH`) and drew a dashboard for it.
+    const gone = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    gone.seedActiveInstallation('gone', join(gone.dir, 'missing', 'fugaro'))
+    const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
+    const spawnLog = join(scratch, 'spawn.jsonl')
+    const app = await launchConsole({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      expect(page.url()).toBe(REFUSAL_ENTRY_URL)
+      expect(app.windows()).toHaveLength(1)
+      // Nothing was spawned: not the stub on `PATH`, not the machine's own.
+      let logged = ''
+      try {
+        logged = readFileSync(spawnLog, 'utf8')
+      } catch {
+        logged = ''
+      }
+      expect(logged).toBe('')
+      // The door out of a refusal is still there (plan 3.4b step 5).
+      const picker = await openPickerFromMenu(app)
+      const listed = (await picker.evaluate(async () => {
+        const api = (window as unknown as { fugaroInstallations: { list: () => Promise<unknown> } }).fugaroInstallations
+        return await api.list()
+      })) as { ok: boolean; data: { rows: { project: string; active: boolean; mode: string }[] } }
+      expect(listed.ok).toBe(true)
+      expect(listed.data.rows.map((row) => [row.project, row.active, row.mode])).toEqual([['gone', true, 'refused']])
+    } finally {
+      await app.close()
+      rmSync(scratch, { recursive: true, force: true })
+      gone.remove()
+    }
+  })
+
+  test('the first run reads no ambient project, and opens the picker once', async () => {
+    // An unseeded profile: D13's first run. `FUGARO_PROJECT` is planted in the
+    // app's environment and must not reach the handshake (plan 3.4b, tests).
+    // Which `fugaro` the machine resolves is not asserted -- only what the
+    // console sent it.
+    const fresh = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    try {
+      const launched = await launch(fresh.env, { firstRun: fresh, env: { FUGARO_PROJECT: 'planted-ambient-project' } })
+      try {
+        // `launch` asserted the picker opened, once, and closed it.
+        expect(launched.app.windows()).toHaveLength(1)
+        const records = launched.records()
+        expect(records.length).toBeGreaterThan(0)
+        for (const record of records) {
+          expect(record.argv[1]).toBe('version')
+          expect(record.project, 'the handshake took a project nobody chose').toBe('')
+        }
+        if (launched.page.url() === APP_ENTRY_URL) {
+          const installation = await installationOf(launched.page)
+          expect(installation).toEqual({ ok: true, data: { chosen: false, sentence: NO_ACTIVE_INSTALLATION } })
+          await expect(launched.page.locator('section.console-installation p.installation-none')).toHaveText(
+            NO_ACTIVE_INSTALLATION,
+          )
+        }
+      } finally {
+        await close(launched)
+      }
+    } finally {
+      fresh.remove()
+    }
+  })
+})

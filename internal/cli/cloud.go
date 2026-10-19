@@ -324,39 +324,62 @@ func locateRun(ctx context.Context, env *cloudEnv, ref string) (slug, runID stri
 }
 
 // checkExecution refuses name, an execution name read from the bucket
-// objects of run slug (whose task is spec), unless it is an execution of
-// the run's own job in this region (gcp.CheckRunExecution): the run's service account can write those
-// objects, so they could name another repository's job. Without
-// a readable task there is no job to bind it to, so it is refused too.
+// objects of run slug/<runID>, unless it is that run's own execution: the
+// FUGARO_RUN the execution itself reports is the run's (gcp.CheckRunExecution).
 //
-// The run's own job is gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken),
-// not the bare workflow: a named run (docs/design/named-oauth-tokens.md)
-// starts JobName(slug, WorkflowVariant(...)), so comparing against the
-// plain workflow would refuse every one of its own executions (review
-// finding: this broke --run-id repeats, ls, logs, diagnose and follow-up
-// alike for any run that used --token or agent.oauth_token).
-func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
-	if spec == nil || spec.Workflow == "" {
-		return fmt.Errorf("its task.json is unreadable or names no workflow, so execution %s can't be tied to the run's job", name)
-	}
-	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
-	if !ok {
-		return fmt.Errorf("its task.json names workflow %q, which is not a workflow name, so execution %s can't be tied to the run's job", oneLineCLI(spec.Workflow), name)
-	}
+// What it used to bind the two by was the execution's job
+// (JobName(slug, WorkflowVariant(spec.Workflow, spec.OAuthToken))). Under the
+// project-centric model one job is shared by every repository admitted to a
+// profile (design §4.1), so the job says nothing about which run an
+// execution is: two runs of one job — two --run-id repeats, or two
+// repositories on one profile — would each be followable by the other's
+// objects, and the run's service account can write its own (plan task 3.4
+// step 2).
+//
+// The name is checked first, on its own, because it needs no request and
+// because a name in another region must be refused with the region to pass
+// (--region) rather than as a missing execution. x is the execution, when the
+// caller already has it (a listing's own entry), and nil makes this read it
+// back; an execution the backend does not have is not a refusal, since a run
+// whose execution has been deleted (Cloud Run keeps them 30 days) can be
+// neither followed nor made to act on anyone else's — cancel's own tolerance
+// of a vanished execution depends on it. What comes back is that execution,
+// nil when there is none, so a caller that needs it (ls) does not read it
+// twice.
+//
+// The task.json is not read at all: the run the execution must be is the one
+// the caller asked about, which the caller knows from the reference it
+// resolved (and not from an object the run itself can write).
+func (e *cloudEnv) checkExecution(ctx context.Context, x *backend.Execution, name, slug, runID string) (*backend.Execution, error) {
 	// TODO(compute-backend Task 8): this is Cloud Run's own codec, reached
 	// through the concrete gcp package rather than the backend seam, so a
 	// project whose backend is not Cloud Run would be checked with the wrong
 	// codec. It is correct today only because localcfg refuses every other
 	// backend name (internal/localcfg/localcfg.go). Task 8 -- not the enable
 	// task, which is Task 9 and only lifts that refusal -- replaces it with
-	// the selected backend's Codec.ValidateRun (design
-	// compute-backend.md §8.1 Task 8, C12).
-	err := gcp.CheckRunExecution(name, e.lc.Region, slug, variant)
-	var wr *backend.WrongRegionError
-	if errors.As(err, &wr) {
-		return fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
+	// the selected backend's Codec (design compute-backend.md §8.1 Task 8,
+	// C12).
+	if err := gcp.CheckExecutionName(name, e.lc.Region); err != nil {
+		var wr *backend.WrongRegionError
+		if errors.As(err, &wr) {
+			return nil, fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
+		}
+		return nil, err
 	}
-	return err
+	if x == nil {
+		got, err := e.be.Execution(ctx, name)
+		switch {
+		case errors.Is(err, backend.ErrNotFound):
+			return nil, nil
+		case err != nil:
+			return nil, err
+		}
+		x = &got
+	}
+	if err := gcp.CheckRunExecution(*x, slug, runID); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
 
 // jobWorkflow is gcp.WorkflowVariant(workflow, token), refusing instead of

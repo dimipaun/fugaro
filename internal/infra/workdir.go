@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 )
@@ -21,8 +22,19 @@ const (
 	// the installation's).
 	StatePrefixFirebase = "fugaro/firebase"
 	StatePrefixRepos    = "fugaro/repos/"
-	VarsFile            = "terraform.tfvars.json"
-	BackendFile         = "backend.hcl"
+	// StatePrefixManaged is where the agent-authored root's state lives in
+	// D77's dedicated bucket (managed.ManagedStateBucketName). It is a prefix
+	// of a bucket of its own, so it carries none of the installation's state
+	// and no part of the managed resource prefix (tf.ManagedPrefix, "fmgd-"):
+	// the deployer's project-level role is conditioned on the latter, and its
+	// access to the state is a binding on that bucket alone.
+	StatePrefixManaged = "fugaro/managed"
+	VarsFile           = "terraform.tfvars.json"
+	BackendFile        = "backend.hcl"
+	// BackendBlockFile is the root's own backend block: the file
+	// Workdir.WriteBackendBlock writes, and the only backend terraform reads
+	// in a managed apply's workdir.
+	BackendBlockFile = "fugaro_backend.tf"
 	// PlanFile is the saved plan that is shown, guarded and applied.
 	PlanFile = "fugaro.tfplan"
 )
@@ -92,6 +104,21 @@ func PluginCache(getenv func(string) string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(cache, "fugaro", "terraform-plugins"), nil
+}
+
+// ManagedWorkdir is where fugaro managed apply works on the agent-authored
+// root of project: $XDG_STATE_HOME/fugaro/terraform/<project>/managed, beside
+// the installation's workdir and never the checkout the root is read from
+// (docs/design/managed-projects.md, D76). A workdir of its own, for the same
+// reason the Firebase root's is one: the installation's tfvars, imports and
+// saved plan must never be written by an apply of another root, and a plan
+// saved by one root must never be gated and applied as another's.
+func ManagedWorkdir(getenv func(string) string, project string) (string, error) {
+	dir, err := InstallationWorkdir(getenv, project)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(dir), "managed"), nil
 }
 
 // Workdir is a disposable directory terraform runs a root in: Dir holds the
@@ -164,4 +191,187 @@ func (w *Workdir) WriteBackend(bucket, prefix string) (map[string]string, error)
 		return nil, err
 	}
 	return map[string]string{"bucket": bucket, "prefix": prefix}, nil
+}
+
+// WriteBackendBlock writes the root's backend block: the file terraform reads
+// the backend from, and the one this program sets itself rather than taking
+// from the configuration it is about to apply (D77, Task 3.1's residual (a)).
+//
+// Why a block and not only the -backend-config settings: terraform's
+// -backend-config configures a backend the CONFIGURATION declares, and a root
+// that declares none keeps the implicit local backend and ignores the settings
+// (init warns and carries on). The managed apply's state is D77's bucket or it
+// is not an apply, so the block is written here, and the root's own files are
+// refused before init if they carry one (managed's preflight), which leaves
+// exactly one.
+func (w *Workdir) WriteBackendBlock() error {
+	hcl := "terraform {\n  backend \"gcs\" {}\n}\n"
+	return os.WriteFile(filepath.Join(w.Root, BackendBlockFile), []byte(hcl), 0o600)
+}
+
+// managedLockSource is the embedded lock file a managed root's own is cut
+// from: the Firebase root's, the one embedded root that pins both of Google's
+// providers (hashicorp/google and hashicorp/google-beta), with the versions
+// and hashes this release of fugaro was built and tested against.
+const managedLockSource = "gcp/roots/firebase/.terraform.lock.hcl"
+
+// LockFile is the name of terraform's dependency lock file in a root.
+const LockFile = ".terraform.lock.hcl"
+
+// WriteManagedLock writes the root's dependency lock file: the entries of the
+// embedded lock for exactly the providers named (registry addresses, such as
+// "registry.terraform.io/hashicorp/google"), in that file's own words.
+//
+// Why this program writes it rather than taking the root's: terraform init
+// runs with -lockfile=readonly (tf.Init), so the lock file decides which
+// provider package is accepted — its hashes are what a downloaded or cached
+// package is checked against — and a lock the agent wrote would let the agent
+// choose the binary that runs, at init and plan, with the deployer's
+// credential. The root's own lock is refused by the managed preflight before
+// this runs, and this one names the embedded versions and nothing else.
+//
+// Only the providers the root uses are written, because terraform refuses a
+// read-only lock file that carries a provider the configuration does not
+// require. A provider the embedded lock does not carry is an error: there is
+// no hash this program can vouch for.
+func (w *Workdir) WriteManagedLock(providers []string) error {
+	src, err := fs.ReadFile(terraform.FS, managedLockSource)
+	if err != nil {
+		return err
+	}
+	blocks, err := lockBlocks(string(src))
+	if err != nil {
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("# Written by fugaro managed apply from the lock file embedded in fugaro.\n\n")
+	for i, p := range providers {
+		body, ok := blocks[p]
+		if !ok {
+			return fmt.Errorf("the lock file embedded in fugaro carries no entry for %s, so its package cannot be checked", p)
+		}
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(body)
+	}
+	return os.WriteFile(filepath.Join(w.Root, LockFile), []byte(b.String()), 0o600)
+}
+
+// lockBlocks splits a lock file into its provider blocks, by address. The
+// file is terraform's own output (embedded, never a root's), so the shape is
+// fixed: a block opens with `provider "ADDR" {` at the start of a line and
+// closes with `}` alone on a line.
+func lockBlocks(src string) (map[string]string, error) {
+	out := map[string]string{}
+	lines := strings.SplitAfter(src, "\n")
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		if !strings.HasPrefix(l, "provider \"") {
+			continue
+		}
+		addr, _, ok := strings.Cut(strings.TrimPrefix(l, "provider \""), "\"")
+		if !ok {
+			return nil, fmt.Errorf("the embedded lock file: a provider line with no closing quote")
+		}
+		var b strings.Builder
+		for ; i < len(lines); i++ {
+			b.WriteString(lines[i])
+			if strings.TrimRight(lines[i], "\r\n") == "}" {
+				break
+			}
+		}
+		out[addr] = b.String()
+	}
+	return out, nil
+}
+
+// CopyRoot prepares dir as the workdir of an agent-authored root read from
+// src: the root's files are copied into dir/root afresh, so no file of an
+// earlier run (or an older fugaro) is planned, and terraform's data directory
+// (dir/root/.terraform) is kept, as PrepareWorkdir keeps it.
+//
+// The copy is not a convenience: the checkout belongs to the agent and to the
+// user, and terraform writes into the directory it runs in (a plan file, a
+// .terraform directory, the lock file). Running in the checkout would put
+// those beside the configuration under review, and would let a later run of
+// this command plan a workdir another root left behind.
+//
+// What it refuses: src that is not a directory, a symlink in src (a file or a
+// directory — a managed apply reads the root's own tree, and a link out of it
+// is not that), and a src inside dir. What it does not do: it does not read
+// src's files, so what they contain is the preflight's question and not this
+// function's.
+func CopyRoot(dir, src string) (*Workdir, error) {
+	if !filepath.IsAbs(dir) {
+		return nil, fmt.Errorf("the workdir %s is not an absolute path", dir)
+	}
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		return nil, err
+	}
+	st, err := os.Stat(absSrc)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("the root %s: %w", src, err)
+	case !st.IsDir():
+		return nil, fmt.Errorf("the root %s is not a directory", src)
+	}
+	root := filepath.Join(dir, "root")
+	if rel, err := filepath.Rel(absSrc, root); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("the workdir %s is inside the root %s, and the copy would read what it writes", root, src)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, err
+	}
+	// The root's own directory is replaced, and terraform's data directory in
+	// it is kept: re-downloading every provider for every apply of the same
+	// root is minutes of a run's time for nothing.
+	data := filepath.Join(root, ".terraform")
+	if err := os.MkdirAll(data, 0o700); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if e.Name() == ".terraform" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, e.Name())); err != nil {
+			return nil, err
+		}
+	}
+	err = filepath.WalkDir(absSrc, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(absSrc, p)
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink, and a managed apply reads the root's own tree alone", p)
+		}
+		out := filepath.Join(root, rel)
+		if d.IsDir() {
+			if rel == ".git" {
+				return fs.SkipDir
+			}
+			return os.MkdirAll(out, 0o700)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, b, 0o600)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("copying the root %s into %s: %w", src, dir, err)
+	}
+	return &Workdir{Dir: dir, Root: root}, nil
 }

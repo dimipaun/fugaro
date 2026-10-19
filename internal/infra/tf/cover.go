@@ -7,9 +7,11 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // allowedTypes are the resource types our embedded modules declare
@@ -60,12 +62,15 @@ var allowedTypes = map[string]bool{
 
 // who says what kind of principal a module grants a role to: People are the
 // members the review screen lists (launchers, operators, admins), Accounts the
-// Fugaro service accounts of this run.
+// Fugaro service accounts of this run, and Deployer the deployer account of
+// D75 alone — its own kind, so that its two roles name it and nothing else, and
+// no row meant for Fugaro's accounts accepts it.
 type who uint8
 
 const (
 	toPeople who = 1 << iota
 	toAccounts
+	toDeployer
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -83,11 +88,24 @@ const customKey = "custom:"
 // differ.
 var grantRules = map[string]map[string]who{
 	"google_project_iam_member": {
-		customKey + "fugaroLauncher":              toPeople,
-		customKey + "fugaroBuildSubmitter":        toPeople | toAccounts,
-		customKey + "fugaroHistory":               toAccounts,
-		customKey + "fugaroReaper":                toAccounts,
-		customKey + "fugaroPreloadBuilder":        toAccounts,
+		customKey + "fugaroLauncher":       toPeople,
+		customKey + "fugaroBuildSubmitter": toPeople | toAccounts,
+		customKey + "fugaroHistory":        toAccounts,
+		customKey + "fugaroReaper":         toAccounts,
+		customKey + "fugaroPreloadBuilder": toAccounts,
+		// The deployer's two roles, bound to the deployer account and to
+		// nothing else (deployer.tf's two bindings; deployerGrant below is
+		// what checks their member, project and conditions, which grantRules
+		// cannot see).
+		customKey + DeployerRole:       toDeployer,
+		customKey + DeployerScopedRole: toDeployer,
+		// The whole-project inventory's read role (Task 4.1a, the owner's
+		// ruling of 2026-10-17): the installation's own custom role, granted
+		// to the operators who run a managed apply. The predefined
+		// roles/cloudasset.viewer is deliberately absent — a plan granting it,
+		// or any other Cloud Asset role, is refused, because viewer carries
+		// cloudasset.assets.listResource and the read makes no ListAssets call.
+		customKey + CloudAssetRole:                toPeople,
 		"roles/aiplatform.user":                   toAccounts,
 		"roles/batch.agentReporter":               toAccounts,
 		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
@@ -102,6 +120,12 @@ var grantRules = map[string]map[string]who{
 	"google_service_account_iam_member": {
 		customKey + "fugaroTokenMinter": toPeople,
 		"roles/iam.serviceAccountUser":  toPeople | toAccounts,
+		// D75's one-time impersonation setup: the operators, and nobody else,
+		// may assume the deployer account. On an account, for people — the
+		// grant that makes the managed apply possible and the only grant of
+		// this role anywhere (deployer.tf). Which account it is on is what
+		// deployerGrant checks, since this table sees only the member.
+		DeployerTokenCreatorRole: toPeople,
 	},
 	"google_storage_bucket_iam_member": {
 		"roles/storage.objectAdmin":  toPeople,
@@ -176,17 +200,201 @@ type Cover struct {
 	Accounts []string
 }
 
+// CloudAssetRole is the installation's whole-project inventory read role
+// (Task 4.1a of docs/plans/2026-10-16-managed-projects.md, the owner's ruling
+// of 2026-10-17): a custom role of the installation holding exactly
+// cloudasset.assets.searchAllResources, the one permission the whole-project
+// read's SearchAllResources call needs. The predefined roles/cloudasset.viewer
+// Task 4.1 first granted is deliberately not it — viewer also carries
+// cloudasset.assets.listResource and more — so the identity that runs the
+// inventory (the operator applying a managed plan, and through Task 1.5 the
+// deployer it impersonates) gains the read and no write.
+//
+// The module declares it beside the launcher's and job runner's roles
+// (installation/iam.tf) and grants it to the operators; RolePermissions pins
+// its one permission, so a plan that creates or updates the role with any
+// other is refused, and TestRolePinsAreTheModules fails when the module's list
+// and this one differ.
+const CloudAssetRole = "fugaroCloudAssetReader"
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
-// fixed service account IDs. Job and build accounts are fugaro-<readable>-<8 hex>.
+// fixed service account IDs a toAccounts row accepts. Job and build accounts
+// are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) is
+// deliberately NOT among FugaroAccounts: it holds its two roles and nothing
+// else, so it is its own kind of principal (toDeployer).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder"}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, DeployerRole, DeployerScopedRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
+
+// The deployer account of D75, and the condition that fences the half of it
+// that may touch an existing resource (Task 1.5 of
+// docs/plans/2026-10-16-managed-projects.md).
+//
+// A managed apply does not run as the operator: it assumes the deployer
+// account the installation module creates, which holds two custom roles split
+// so that a condition on one binding cannot be defeated by an unconditioned
+// binding of the same role (D75). fugaroDeployer holds only create
+// permissions, read permissions and serviceusage.services.enable, and is bound
+// to the account with no condition; fugaroDeployerScoped holds every update,
+// delete, run and pause permission, every *.setIamPolicy and
+// iam.serviceAccounts.actAs, and is bound to the account exactly once, under
+// the IAM condition below — so the authority that could reach an existing
+// resource is authority the deployer holds only over names carrying
+// ManagedPrefix. That prefix is what keeps the deployer out of the runs bucket
+// (where the marker and the owner's delete list are), out of Fugaro's own
+// accounts, jobs, secrets and repositories, and off the project's default
+// compute account, which holds Editor by default.
+//
+// Nothing here holds project-level IAM authority (no resourcemanager.projects.*)
+// and nothing here may edit an IAM role (no iam.roles.*): an account with
+// either could grant itself object access to the runs bucket and forge the
+// marker, which is the fact a managed project's confirmations are skipped on.
+const (
+	// DeployerAccountID is the deployer's fixed service account ID: one
+	// account per installation, in the installation module (C8's answer,
+	// 2026-10-16), created by the owner-run creating apply and by nothing
+	// else.
+	DeployerAccountID = "fugaro-deployer"
+	// DeployerRole is the unconditioned role's ID: create permissions, reads
+	// and serviceusage.services.enable.
+	DeployerRole = "fugaroDeployer"
+	// DeployerScopedRole is the conditioned role's ID: every update, delete,
+	// run and pause permission, every *.setIamPolicy and actAs, held only
+	// where DeployerConditionExpression admits the resource. In 0.8.6 the
+	// module creates it, and its binding, only with managed_deployer_scoped,
+	// which nothing sets (deployer.tf's header: the condition is not one IAM
+	// accepts yet). A plan without either has nothing of it to cover; one
+	// with them is covered as before.
+	DeployerScopedRole = "fugaroDeployerScoped"
+	// DeployerConditionTitle is that condition's title. The modules never set
+	// a condition description, and the plan review compares the title and the
+	// expression byte for byte.
+	DeployerConditionTitle = "fugaro-managed-prefix"
+	// DeployerTokenCreatorRole is the one role that lets an operator assume
+	// the account (D75's one-time setup, step 2 of Task 1.5). It is granted on
+	// the deployer account and on no other: deployerGrant checks which account
+	// a plan grants it on.
+	DeployerTokenCreatorRole = "roles/iam.serviceAccountTokenCreator"
+)
+
+// DeployerClause is one clause of the scoped condition: the resource type it
+// admits, and the resource.name test it admits it under. The type term is not
+// optional — a clause with no type term applies to every type the role reaches,
+// so a resource whose name happens to end in the prefix could otherwise reach
+// a permission meant for another service (a bucket named fmgd- is not a
+// service account).
+//
+// Op is "startsWith" or "contains": Cloud Storage names a bucket
+// projects/_/buckets/<bucket> and an object
+// projects/_/buckets/<bucket>/objects/<object>, so the prefix has to be tested
+// at the front of the name; the other services put the resource's own name at
+// the end of a path whose middle carries the project, the location and the
+// parent, so the prefix is tested as a substring of a segment that begins the
+// resource's own name. "contains" is deliberately used with the segment's
+// leading slash and the trailing dash ("/jobs/fmgd-"), so a resource named
+// x-fmgd- or fugaro-fmgd- is not admitted by it.
+//
+// Value is spelled with ManagedPrefix in it, and never as a prefix alone: a
+// value that admitted any name containing "fmgd-" would admit a fugaro-*
+// object in a bucket whose name contains the prefix.
+type DeployerClause struct {
+	Type, Op, Value string
+}
+
+// String is the clause as the condition writes it, and as the module writes it
+// byte for byte (TestDeployerConditionIsTheModules pins the two together).
+func (c DeployerClause) String() string {
+	return "(resource.type == " + strconv.Quote(c.Type) + " && resource.name." + c.Op + "(" + strconv.Quote(c.Value) + "))"
+}
+
+// deployerClauses is the scoped condition, one clause per service the role's
+// permissions reach. Each is written out here as the module writes it in
+// deployer.tf, because the plan review compares the two byte for byte.
+//
+// What is NOT in it, and why: the runs bucket, the installation's state bucket
+// and D77's managed state bucket (whose object access is a bucket-level
+// binding of its own, Task 1.5 (3)), Fugaro's own accounts, jobs, scheduler
+// jobs, secrets and repositories, and the project's default compute account —
+// none of their names carries the prefix, and that is the whole fence.
+//
+// Where GCP does not honour resource.name for one of these types, the
+// permission that needs it is not moved into the unconditioned role: the task
+// that would drop the matching type is Task 1.1's list, and the live check
+// that measures each form is the plan's Check 68. Until it is run, the forms
+// below are what the IAM Conditions documentation says these services name
+// their resources.
+var deployerClauses = []DeployerClause{
+	{"storage.googleapis.com/Bucket", "startsWith", "projects/_/buckets/" + ManagedPrefix},
+	{"storage.googleapis.com/Object", "startsWith", "projects/_/buckets/" + ManagedPrefix},
+	{"secretmanager.googleapis.com/Secret", "contains", "/secrets/" + ManagedPrefix},
+	{"secretmanager.googleapis.com/SecretVersion", "contains", "/secrets/" + ManagedPrefix},
+	{"artifactregistry.googleapis.com/Repository", "contains", "/repositories/" + ManagedPrefix},
+	{"run.googleapis.com/Job", "contains", "/jobs/" + ManagedPrefix},
+	{"cloudscheduler.googleapis.com/Job", "contains", "/jobs/" + ManagedPrefix},
+	{"iam.googleapis.com/ServiceAccount", "contains", "/serviceAccounts/" + ManagedPrefix},
+	{"apikeys.googleapis.com/Key", "contains", "/keys/" + ManagedPrefix},
+}
+
+// DeployerConditionClauses is the scoped condition's clauses, in order, a copy
+// so no caller can widen the fence.
+func DeployerConditionClauses() []DeployerClause { return slices.Clone(deployerClauses) }
+
+// DeployerConditionExpression is binding (2)'s condition expression: the
+// clauses above, joined with " || ". A binding of fugaroDeployerScoped whose
+// expression is not exactly this is not covered (deployerGrant), because
+// the plan review cannot tell a narrowed expression from a widened one.
+func DeployerConditionExpression() string {
+	parts := make([]string, 0, len(deployerClauses))
+	for _, c := range deployerClauses {
+		parts = append(parts, c.String())
+	}
+	return strings.Join(parts, " || ")
+}
+
+// DeployerAccount is the email of the deployer account in gcpProject: the
+// module's fixed account ID (DeployerAccountID), in the project the module is
+// applied to. It is what deployerGrant compares a token-creator grant's
+// service_account_id against, and what internal/managed assumes.
+func DeployerAccount(gcpProject string) string {
+	return DeployerAccountID + "@" + gcpProject + ".iam.gserviceaccount.com"
+}
+
+// deployerProject is the project whose deployer account this run's plans may
+// name: the installation's (Projects[0]), the one project the installation
+// module — and so deployer.tf — is applied to. "" when the cover has none.
+func (c Cover) deployerProject() string {
+	if len(c.Projects) == 0 || c.Projects[0] == "" {
+		return ""
+	}
+	return c.Projects[0]
+}
+
+// isDeployerMember is whether m is exactly this run's deployer account as an
+// IAM member: "serviceAccount:" + DeployerAccount(the installation's project).
+func (c Cover) isDeployerMember(m string) bool {
+	p := c.deployerProject()
+	return p != "" && m == "serviceAccount:"+DeployerAccount(p)
+}
+
+// namesDeployerAccount is whether a grant's service_account_id is a deployer
+// account at all — any project, any spelling the account's resource name has —
+// so that a grant on it is checked even when it is not this run's.
+func namesDeployerAccount(id string) bool {
+	if m := saName.FindStringSubmatch(id); m != nil {
+		return m[2] == DeployerAccountID
+	}
+	return strings.Contains(id, DeployerAccountID+"@")
+}
 
 var (
 	saMember   = regexp.MustCompile(`^serviceAccount:([a-z][a-z0-9-]*)@([a-z0-9-]+)\.iam\.gserviceaccount\.com$`)
 	jobAccount = regexp.MustCompile(`^fugaro-[a-z0-9-]+-[0-9a-f]{8}$`)
 	repoID     = regexp.MustCompile(`^fugaro(-[a-z0-9-]+)?$`)
+	// saName is a service account's own resource name, the form
+	// google_service_account.<x>.name has and the form the modules write as a
+	// literal when a grant has to name its account at plan time.
+	saName = regexp.MustCompile(`^projects/([a-z0-9-]+)/serviceAccounts/([a-z][a-z0-9-]*)@([a-z0-9-]+)\.iam\.gserviceaccount\.com$`)
 )
 
 // RolePermissions pins the permissions of every custom role the modules
@@ -215,6 +423,40 @@ var RolePermissions = map[string][]string{
 		"compute.images.useReadOnly", "compute.zoneOperations.get", "compute.disks.useReadOnly", "compute.images.create",
 		"compute.images.setLabels", "compute.images.get", "compute.images.getFromFamily", "compute.images.list",
 		"compute.images.delete", "compute.globalOperations.get"},
+	// The whole-project inventory's read role (Task 4.1a, the owner's ruling
+	// of 2026-10-17): the one permission SearchAllResources needs, and nothing
+	// else — no write, and no cloudasset.assets.listResource, which belongs to
+	// the wider predefined role this replaced.
+	CloudAssetRole: {"cloudasset.assets.searchAllResources"},
+	// The deployer's two roles (D75, Task 1.5). They are not installation
+	// roles: nothing a run does needs them, and their bound is the split
+	// between them — creation, reads and serviceusage.services.enable here,
+	// and every update, delete, run, pause, *.setIamPolicy and actAs in
+	// fugaroDeployerScoped, which is bound exactly once and only under
+	// DeployerConditionExpression (when the installation opts in with
+	// managed_deployer_scoped; off by default in 0.8.6). Widening either list
+	// is a decision:
+	// TestDeployerRolesHoldOnlyWhatD75Names states what each may not hold.
+	DeployerRole: {
+		"apikeys.keys.create", "apikeys.keys.get", "apikeys.keys.list",
+		"artifactregistry.repositories.create", "artifactregistry.repositories.get", "artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.list",
+		"cloudscheduler.jobs.create", "cloudscheduler.jobs.get", "cloudscheduler.jobs.list",
+		"iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.list",
+		"run.jobs.create", "run.jobs.get", "run.jobs.getIamPolicy", "run.jobs.list",
+		"secretmanager.secrets.create", "secretmanager.secrets.get", "secretmanager.secrets.getIamPolicy", "secretmanager.secrets.list",
+		"serviceusage.services.enable", "serviceusage.services.get", "serviceusage.services.list",
+		"storage.buckets.create",
+	},
+	DeployerScopedRole: {
+		"apikeys.keys.delete", "apikeys.keys.update",
+		"artifactregistry.repositories.delete", "artifactregistry.repositories.setIamPolicy", "artifactregistry.repositories.update",
+		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
+		"iam.serviceAccounts.actAs", "iam.serviceAccounts.delete", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
+		"run.jobs.delete", "run.jobs.run", "run.jobs.runWithOverrides", "run.jobs.setIamPolicy", "run.jobs.update",
+		"secretmanager.secrets.delete", "secretmanager.secrets.setIamPolicy", "secretmanager.secrets.update",
+		"storage.buckets.delete", "storage.buckets.get", "storage.buckets.setIamPolicy", "storage.buckets.update",
+		"storage.objects.create", "storage.objects.delete", "storage.objects.get", "storage.objects.list", "storage.objects.update",
+	},
 }
 
 // knownCommands are the container command and args the modules set: none for
@@ -250,8 +492,10 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		return []string{"no plan"}
 	}
 	var out []string
-	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
+	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	creates := creates(p)
+	createdSAIDs, heldSAIDs := planAccounts(p)
+	dep := planDeployer(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
 		switch {
@@ -282,7 +526,7 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case c.attributes(rc, creates) != "":
 			add(rc, c.attributes(rc, creates))
 		case strings.HasSuffix(t, "_iam_member"):
-			if why := c.grant(rc, creates); why != "" {
+			if why := c.grant(rc, creates, createdSAIDs, heldSAIDs, dep); why != "" {
 				add(rc, why)
 			}
 		}
@@ -303,17 +547,83 @@ func creates(p *Plan) map[string]bool {
 	return out
 }
 
+// planAccounts are the job accounts of a plan, by module and account ID:
+// created, the accounts this plan creates (a bucket grant whose member is
+// computed belongs to one of them, and its condition is accepted only against
+// the account the title names, bucketCondition), and held, the accounts each
+// module holds after this plan — created, updated or unchanged, never deleted
+// (a bucket grant that names its member is a project job's widened one only
+// for the account its own module holds, projectJobCondition).
+func planAccounts(p *Plan) (created, held map[string]bool) {
+	created, held = map[string]bool{}, map[string]bool{}
+	for _, rc := range p.ResourceChanges {
+		if rc.Type != "google_service_account" {
+			continue
+		}
+		id := str(rc.Change.After["account_id"])
+		if id == "" {
+			continue
+		}
+		if len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
+			held[modulePrefix(rc)+"|"+id] = true
+		}
+		if slices.Contains(rc.Change.Actions, "create") {
+			created[modulePrefix(rc)+"|"+id] = true
+		}
+	}
+	return created, held
+}
+
+// deployerPlan is what a plan does about the deployer (D75, Task 1.5).
+type deployerPlan struct {
+	// createsRole is whether this plan creates or replaces one of the
+	// deployer's two custom roles. While it does, a project grant whose role
+	// is computed is refused: the computed role could be
+	// fugaroDeployerScoped, whose IAM condition is the whole fence around the
+	// account, and a plan cannot be read as if it were not (Task 1.5 step 5).
+	// This is why the module writes its project grants' roles as literals.
+	createsRole bool
+	// accounts are the modules in which this plan creates (or holds) the
+	// deployer account: a service account grant there whose account is
+	// computed could be on the deployer, and only the operators' token
+	// creation may be (deployerGrant).
+	accounts map[string]bool
+}
+
+// planDeployer reads a plan's deployerPlan.
+func planDeployer(p *Plan) deployerPlan {
+	d := deployerPlan{accounts: map[string]bool{}}
+	for _, rc := range p.ResourceChanges {
+		if rc.Type == "google_service_account" && !slices.Contains(rc.Change.Actions, "delete") && str(rc.Change.After["account_id"]) == DeployerAccountID {
+			d.accounts[modulePrefix(rc)] = true
+		}
+		if rc.Type == "google_project_iam_custom_role" && !allOf(rc.Change.Actions, "no-op", "read") {
+			if id := str(rc.Change.After["role_id"]); id == DeployerRole || id == DeployerScopedRole {
+				d.createsRole = true
+			}
+		}
+	}
+	return d
+}
+
 // grant says why one *_iam_member change is not the modules', "" when it is:
 // the type's grant rules, then a bucket grant's or a Batch Job Editor
-// grant's condition.
-func (c Cover) grant(rc ResourceChange, creates map[string]bool) string {
+// grant's condition, then the deployer's own grants (deployerGrant).
+//
+// createdSAIDs and heldSAIDs are planAccounts': a project job's widened bucket
+// condition is accepted only for the project module's own account
+// (projectJobCondition). dep is planDeployer's.
+func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool, dep deployerPlan) string {
 	t := rc.Type
-	why := c.checkGrant(t, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"])
+	why := c.checkGrant(t, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"], dep.createsRole)
 	if why == "" && t == "google_storage_bucket_iam_member" {
-		why = c.bucketCondition(rc.Change)
+		why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
 	}
 	if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
 		why = c.jobsCondition(rc.Change)
+	}
+	if why == "" {
+		why = c.deployerGrant(t, rc.Change, dep.accounts[modulePrefix(rc)])
 	}
 	return why
 }
@@ -334,8 +644,10 @@ func (c Cover) GrantsNotCovered(p *Plan) []string {
 		return []string{"no plan"}
 	}
 	var out []string
-	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
+	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	made := creates(p)
+	createdSAIDs, heldSAIDs := planAccounts(p)
+	dep := planDeployer(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
 		if allOf(acts, "no-op", "read", "delete") && rc.Change.Importing == nil {
@@ -350,7 +662,7 @@ func (c Cover) GrantsNotCovered(p *Plan) []string {
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.attributes(rc, made); why != "" {
 				add(rc, why)
-			} else if why := c.grant(rc, made); why != "" {
+			} else if why := c.grant(rc, made, createdSAIDs, heldSAIDs, dep); why != "" {
 				add(rc, why)
 			}
 		}
@@ -463,7 +775,7 @@ func unknownAt(v any, path ...any) bool {
 	return v == true
 }
 
-func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole bool) string {
+func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, createsDeployerRole bool) string {
 	rules := grantRules[typ]
 	if rules == nil {
 		return "a grant of a type the modules do not use"
@@ -483,6 +795,10 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole bool) st
 			return "no member"
 		case strings.HasPrefix(m, "domain:"):
 			return fmt.Sprintf("grants to %s, a whole domain", m)
+		case c.isDeployerMember(m):
+			// Before the listed people: the deployer is never a person, even
+			// if the review screen listed its address.
+			kind = toDeployer
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
@@ -495,6 +811,26 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole bool) st
 	}
 	// The role.
 	if unknown(ch, "role") {
+		if kind == toDeployer {
+			return "a computed role to the deployer account: it holds its two roles, named, and nothing else"
+		}
+		if createsDeployerRole && typ == "google_project_iam_member" {
+			// The plan is creating one of the deployer's roles, so a computed
+			// PROJECT role here could be the scoped one — the role whose
+			// single binding carries the IAM condition that is D75's whole
+			// fence. A condition cannot be checked against a role nobody can
+			// name.
+			//
+			// The type matters, and this is why: only a project binding of the
+			// scoped role carries the fence. A grant of the same role at a
+			// narrower scope (a Cloud Run job, say) grants its permissions on
+			// that one resource, and refusing every computed role on every
+			// *_iam_member type would refuse the job runner's own grant
+			// (history.tf's google_cloud_run_v2_job_iam_member, whose role is
+			// the custom role being created beside it) on every installation
+			// plan that deploys the history job.
+			return "a computed project role in a plan that creates the deployer role " + DeployerScopedRole + ", which could be it: that role is bound only under its managed-prefix condition, and a plan must say which role this is"
+		}
 		if !createsRole {
 			return "a role that is not known and no custom role is created with it"
 		}
@@ -579,6 +915,173 @@ func (c Cover) jobsCondition(ch Change) string {
 	return ""
 }
 
+// deployerGrant says why a grant that is about the deployer account is not the
+// one D75 describes, "" when it is, and "" for every other grant in the plan.
+// Two of the module's grants are its business, and each is the whole of a
+// property the account's safety rests on:
+//
+//   - a project binding of one of the deployer's two roles (deployer.tf's
+//     bindings (1) and (2)), whose MEMBER, PROJECT and CONDITION this checks:
+//     the member is exactly serviceAccount:fugaro-deployer@<installation
+//     project> (a job account, the scheduler, the history account or a
+//     computed member holding either role is refused even under the exact
+//     condition), and the role and binding are in that same project. It is the only check
+//     in this file that looks at a condition on anything but a bucket grant,
+//     and it is here because a project binding of the scoped role without its
+//     condition — or with a wider one — hands the deployer every update,
+//     delete, setIamPolicy and actAs permission of that role project-wide,
+//     which is the account that could then reach the runs bucket and forge the
+//     marker.
+//   - the operators' impersonation grant, DeployerTokenCreatorRole on
+//     google_service_account_iam_member, whose ACCOUNT this checks: grantRules
+//     sees a member and a role and not the account the role is on, so without
+//     this a plan granting a listed person token creation on any account —
+//     the scheduler's, or a stranger's — would ride the same confirmation as
+//     the one grant that makes a managed apply possible. Every OTHER grant on
+//     the deployer account (actAs above all) is refused (onDeployer), and the
+//     deployer itself is a principal of its own kind (toDeployer) that no
+//     other grantRules row accepts.
+//
+// The condition rule is the module's own shape, keyed per role: fugaroDeployer
+// is bound with NO condition (binding (1)), fugaroDeployerScoped only under
+// DeployerConditionTitle and exactly DeployerConditionExpression (binding (2)).
+// Anything else is refused — a second binding of the scoped role under another
+// condition would widen the account's authority just as much as an
+// unconditioned one, and a narrowed expression is not something this review
+// could tell from a widened one. A condition known only after apply, a
+// description the modules never set, and more than one condition block are
+// refused the way bucketCondition refuses them.
+func (c Cover) deployerGrant(typ string, ch Change, createsDeployer bool) string {
+	if typ == "google_service_account_iam_member" {
+		if why := c.onDeployer(ch, createsDeployer); why != "" {
+			return why
+		}
+		return c.deployerTokenCreator(ch)
+	}
+	if typ != "google_project_iam_member" {
+		return ""
+	}
+	role := str(ch.After["role"])
+	key, ok := c.roleKey(role)
+	if !ok || (key != customKey+DeployerRole && key != customKey+DeployerScopedRole) {
+		return ""
+	}
+	// The member: this run's deployer account, named, and nothing else. The
+	// table already holds both roles to toDeployer; this says so again where
+	// the condition is checked, so the one place that reads a deployer binding
+	// reads all of it.
+	member := str(ch.After["member"])
+	if unknown(ch, "member") || !c.isDeployerMember(member) {
+		want := "this run's deployer account"
+		if p := c.deployerProject(); p != "" {
+			want = "serviceAccount:" + DeployerAccount(p)
+		}
+		return "grants " + role + " to " + member + ", which is not " + want + ": the deployer's roles are held by the deployer account and by nothing else (D75)"
+	}
+	// The project: the deployer's own, the role's and the binding's alike.
+	dp := c.deployerProject()
+	if !strings.HasPrefix(role, "projects/"+dp+"/roles/") || unknown(ch, "project") {
+		return "grants " + role + " outside the deployer's own project " + dp
+	}
+	if p := str(ch.After["project"]); p != "" && p != dp {
+		return "grants " + role + " in project " + p + ", which is not the deployer's own project " + dp
+	}
+	scoped := key == customKey+DeployerScopedRole
+	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") || unknownAt(ch.AfterUnknown, "condition", 0, "description") {
+		return "a " + role + " grant whose condition is not known: " + DeployerConditionTitle + " is what fences the deployer, and a condition decided during apply is not one"
+	}
+	condRaw := ch.After["condition"]
+	switch v := condRaw.(type) {
+	case nil, map[string]any:
+	case []any:
+		if len(objects(v)) != len(v) {
+			return "a " + role + " grant whose condition list holds something that is not a condition block"
+		}
+	default:
+		return "a " + role + " grant whose condition is not a condition block or a list of them"
+	}
+	conds := objects(condRaw)
+	if len(conds) > 1 {
+		return "a " + role + " grant with more than one condition"
+	}
+	var title, expr string
+	if len(conds) == 1 {
+		if str(conds[0]["description"]) != "" {
+			return "a " + role + " grant whose condition has a description, which the modules never set"
+		}
+		title, expr = str(conds[0]["title"]), str(conds[0]["expression"])
+	}
+	if !scoped {
+		if len(conds) != 0 {
+			return "grants " + DeployerRole + " under a condition, which the modules never do: that role is bound with none (D75 (1)), and a condition here would read as narrower than the binding beside it"
+		}
+		return ""
+	}
+	if title != DeployerConditionTitle || expr != DeployerConditionExpression() {
+		return "grants " + DeployerScopedRole + " under a condition that is not " + DeployerConditionTitle + " on the managed prefix: that condition, byte for byte, is the whole fence around the deployer (D75 (2))"
+	}
+	return ""
+}
+
+// onDeployer says why a grant on a service account is a grant ON the deployer
+// account that D75 does not make, "" otherwise. The operators' token creation
+// is the one grant on it (deployerTokenCreator checks that one); any other role
+// on it — actAs for a job account above all, which is a job that runs as the
+// deployer — is refused, on any project's deployer. A grant whose account is
+// computed, in a module that creates the deployer account, could be on it, and
+// is refused unless it is the token creation (which deployerTokenCreator then
+// refuses for being computed).
+func (c Cover) onDeployer(ch Change, createsDeployer bool) string {
+	role := str(ch.After["role"])
+	if unknown(ch, "service_account_id") {
+		if createsDeployer && (unknown(ch, "role") || role != DeployerTokenCreatorRole) {
+			return "a service account grant whose account is not known, in a module that creates the deployer account: it could be on the deployer, which only the operators' token creation is"
+		}
+		return ""
+	}
+	id := str(ch.After["service_account_id"])
+	if namesDeployerAccount(id) && (unknown(ch, "role") || role != DeployerTokenCreatorRole) {
+		return "grants " + role + " on " + id + ": the only grant on the deployer account is the operators' " + DeployerTokenCreatorRole + " (D75)"
+	}
+	return ""
+}
+
+// deployerTokenCreator says why a token-creator grant is not the operators'
+// one-time impersonation setup (Task 1.5 step 2), "" when it is and "" for
+// every other grant on that type. The role is granted on the deployer account
+// and on nothing else; grantRules has already checked that the member is a
+// person on the review screen, so what is left is which account.
+//
+// The account has to be named, and named as this run's deployer account — the
+// one in the installation's project (Projects[0]), never in a verified
+// Firebase project the installation module is not applied to: a
+// plan that says "an account, decided during apply" is a plan whose account
+// nobody can check, and the account this grant is on is the difference between
+// an operator who can assume the deployer and one who can mint a token for the
+// scheduler (which can reach the budget backend) or for any other identity.
+func (c Cover) deployerTokenCreator(ch Change) string {
+	if str(ch.After["role"]) != DeployerTokenCreatorRole {
+		return ""
+	}
+	if unknown(ch, "service_account_id") {
+		return "a " + DeployerTokenCreatorRole + " grant whose account is not known: the module grants this role on the deployer account of this run and on nothing else, and a plan must say which account this is on"
+	}
+	id, _ := ch.After["service_account_id"].(string)
+	if id == "" {
+		return "a " + DeployerTokenCreatorRole + " grant on no account"
+	}
+	m := saName.FindStringSubmatch(id)
+	dp := c.deployerProject()
+	if m != nil && dp != "" && m[1] == dp && m[3] == dp && m[2] == DeployerAccountID {
+		return ""
+	}
+	want := "the deployer account of this run"
+	if dp != "" {
+		want = DeployerAccount(dp)
+	}
+	return fmt.Sprintf("grants %s on %s, which is not %s: D75's impersonation grant is on that account alone", DeployerTokenCreatorRole, id, want)
+}
+
 // accountClause is one clause of a job or build account's bucket condition,
 // as gcp.BucketCondition writes it.
 var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/(runs|cache|locks|builds)/([a-z0-9][a-z0-9_-]*)/"\)$`)
@@ -586,11 +1089,19 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // bucketCondition says why a bucket grant's condition is not the modules'
 // (docs/design/bucket-iam.md H6), "" when it is: objectAdmin and objectViewer
 // carry none; a person's objectUser carries exactly the launchers' condition
-// on one of this run's buckets; an account's objectUser carries clauses of
-// gcp.BucketCondition's shape, each on one of this run's buckets. The modules
-// never set a description, and a condition known only after apply is not
-// covered.
-func (c Cover) bucketCondition(ch Change) string {
+// on one of this run's buckets; an account's objectUser carries either a
+// project job's widened condition (gcp.ProjectBucketCondition, byte for byte,
+// in the project module, with the title of an account that module creates) or
+// clauses of gcp.BucketCondition's shape, each on one of this run's buckets.
+// The modules never set a description, and a condition known only after apply
+// is not covered.
+//
+// createdSAIDs are the (module, account ID) pairs this plan creates and
+// heldSAIDs the pairs each module holds after it: the widened condition is
+// accepted only for the project module's own account, so a plan that widened
+// a per-repository job's grant — or a stranger's — is still stopped.
+func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool) string {
+	ch := rc.Change
 	conds, why := grantConditions(ch, "a bucket grant")
 	if why != "" {
 		return why
@@ -628,6 +1139,9 @@ func (c Cover) bucketCondition(ch Change) string {
 		if len(conds) == 0 {
 			return "grants objectUser on the bucket to an account with no condition"
 		}
+		if c.projectJobCondition(rc, createdSAIDs, heldSAIDs, title, expr) {
+			return ""
+		}
 		for _, clause := range strings.Split(expr, " || ") {
 			m := accountClause.FindStringSubmatch(clause)
 			if m == nil || !slices.Contains(c.Buckets, m[1]) || (bucket != "" && bucket != m[1]) {
@@ -636,6 +1150,73 @@ func (c Cover) bucketCondition(ch Change) string {
 		}
 	}
 	return ""
+}
+
+// projectModule is the module path of a project job's resources: the
+// installation root calls deploy/terraform/gcp/modules/project as the module
+// "project", once per (profile, provider, account)
+// (roots/installation/main.tf). The path is what says a grant belongs to that
+// module — the account IDs cannot: a per-repository job account matches
+// jobAccount's shape too (fugaro-<readable slug>-<workflow>-<8 hex>), so a
+// repository whose slug begins with "p" gets an ID of the project job's own
+// shape, and the widened condition would then be accepted for it.
+var projectModule = regexp.MustCompile(`^module\.project\["[^"]+"\]$`)
+
+// projectJobCondition reports whether a bucket grant is a project job's
+// widened one (plan task 3.2 step 2, gcp.ProjectBucketCondition), for the
+// account the grant is written for: the grant lives in the project module, the
+// expression is that builder's bytes for one of this run's buckets — no slug,
+// and no other expression can pass, since this compares the whole string — the
+// bucket is that one, and the title is the condition title of the module's
+// own account: the one the member names, which the same module must hold in
+// this plan (an update plan lists it as a no-op), or, when the member is
+// computed as the module writes it, one this plan creates in the same module.
+//
+// Both parts are what keep the widening bounded: the widened condition is the
+// project module's own, for the accounts that module creates, so widening a
+// per-repository job's grant — in its workflow module, where the account is
+// created just the same — or granting it to an account of another module, is
+// still a plan the review screen stops.
+func (c Cover) projectJobCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, expr string) bool {
+	if !projectModule.MatchString(modulePrefix(rc)) {
+		return false
+	}
+	var id string
+	switch m := saMember.FindStringSubmatch(str(rc.Change.After["member"])); {
+	case m != nil:
+		// The grant names its account (an update plan, where the account
+		// already exists): it must be a Fugaro job account of this run that
+		// the same module holds — not merely any job account of the project,
+		// which would let one module's grant widen another profile's or a
+		// repository's account — and the title must be that account's
+		// condition title.
+		if !slices.Contains(c.Projects, m[2]) || !jobAccountID(m[1]) || !heldSAIDs[modulePrefix(rc)+"|"+m[1]] {
+			return false
+		}
+		id = m[1]
+	case unknown(rc.Change, "member"):
+		// The computed member the module writes: the title is built from the
+		// account the same module creates, so the plan must create it.
+		id = strings.TrimPrefix(title, "fugaro-")
+		if id == "" || id == title || !createdSAIDs[modulePrefix(rc)+"|"+id] {
+			return false
+		}
+	default:
+		return false
+	}
+	if title != gcp.BucketConditionTitle(id) {
+		return false
+	}
+	bucket := str(rc.Change.After["bucket"])
+	for _, b := range c.Buckets {
+		if !gcp.ValidBucketName(b) || (bucket != "" && bucket != b) {
+			continue
+		}
+		if expr == gcp.ProjectBucketCondition(b, gcp.JobBucketPrefixes) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Cover) fugaroAccount(m string) bool {

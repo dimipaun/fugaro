@@ -4,29 +4,38 @@
  * Task W1.6).
  *
  * This is the section the spec asks for as *"per-OS download links (placeholder until the
- * console ships)"*, and the console has not shipped: `console/` holds two documents and no
- * code, and `docs/releases/v0.8.0.md` lists the desktop console under *"Not in this
- * release"* (finding 23). So the section ships as a placeholder whose links a test refuses
- * to emit (D95, Global Constraint 9) — the one outcome here with a real consequence for a
- * reader, because a download link to an unsigned or unreleased artifact either 404s or
- * points at something nobody has built.
+ * console ships)"*, and the console has not been **released**: `console/` holds the
+ * application, its packaging and the workflow that signs, notarises and staples its macOS
+ * artifacts, and that workflow creates the release as a draft the owner publishes — while
+ * `site.yaml`'s `features.console_downloads` is false, this site may not link any of it
+ * (finding 23, finding 25, D95, Global Constraint 9). So the section ships as a placeholder
+ * whose links a test refuses to emit — the one outcome here with a real consequence for a
+ * reader, because a download link to an unsigned or unpublished artifact either 404s or points
+ * at something nobody has published.
  *
  * **The rule is structural, not editorial.** The two states are one `if`: the link list is
  * rendered from `downloads.json`'s `downloads` array and *only* when `available` is true,
  * and the unavailable branch has no element a reader can follow. That is what makes "the
  * placeholder carries no link and no button" a property of the component rather than a
- * promise about its copy — and the page that renders this component refuses, in its own
- * build, a data file whose flag and URL list disagree (W1.6 steps 1 and 2).
+ * promise about its copy — and the module that reads the data file refuses, in the build, a
+ * flag that disagrees with `site.yaml`'s (W1.6 steps 1 and 2).
  *
- * The facts come in as props rather than being read here, because the page owns the one
+ * **The URLs are derived, not stored.** Each entry carries the *published name* of the
+ * release's asset, and `src/lib/console-downloads.mjs` composes the URL from it, from the
+ * release's tag and from `site.yaml`'s repository — so no file under `website/` carries a
+ * download URL at all, and a version bump moves every button (the owner's changes spec of
+ * 2026-10-18, item 6; Global Constraint 9).
+ *
+ * The facts come in as props rather than being read here, because the module owns the one
  * reader for them: `website/src/pages/console.astro` loads and validates
  * `website/content/downloads.json`, and this component renders what it was handed. Nothing
- * below is typed into the markup: the note is the data file's own sentence, and the
- * platform names are its own — the site invents no distribution (D4, D11).
+ * below is typed into the markup: the note is the data file's own sentence, and each
+ * label is the platform and the asset's own extension — the site invents no distribution
+ * (D4, D11).
  */
 interface DownloadFacts {
-  /** The platform the artifact is for, as the data file names it (e.g. `macOS`). */
-  platform: string
+  /** What a reader sees on the link: the platform and the asset's extension (`macOS .dmg`). */
+  label: string
   /** Where a reader downloads it from. Only ever rendered while `available` is true. */
   url: string
 }
@@ -36,7 +45,12 @@ interface Props {
   available: boolean
   /** The data file's `not_released` sentence, rendered while `available` is false. */
   note: string
-  /** The data file's `downloads` entries. Empty while `available` is false. */
+  /**
+   * The data file's `downloads` entries: the release's published names, which the data file
+   * carries from the day they are known and not only once the console ships. They are rendered
+   * while `available` is true and never otherwise, which is what makes the unreleased state
+   * structural rather than editorial.
+   */
   downloads: DownloadFacts[]
 }
 
@@ -56,7 +70,7 @@ const HEADING = 'Downloads'
         {downloads.map((download) => (
           <li>
             <a href={download.url} rel="noopener">
-              {download.platform}
+              {download.label}
             </a>
           </li>
         ))}

@@ -63,9 +63,51 @@ consent, no cookie before consent, withdrawal and keyboard reachability. `readme
 refuses a third-party font or script host in the shell's own sources today, and W1.11
 asserts the same over the built HTML's script, link, iframe and image origins.
 
+**W3.2 is the task that switched it on** (owner's ruling of 2026-10-18): Google Analytics 4,
+measurement id `G-DZ4F35D3EH`, which is a public identifier rather than a secret and lives in
+`data/site.yaml` and nowhere else — the layout and the test both read it from there, and a
+planted second copy fails. The id, the audit trail and the choices behind them:
+
+- **The property is a fact of `site.yaml`**, beside the flag that emits it: `analytics.enabled`
+  decides whether the banner and its configuration are rendered at all, and clearing the flag
+  leaves an artifact byte-for-byte free of the origin. When the flag is on, the banner carries
+  the id and the one admitted origin as `data-analytics-id` and `data-analytics-origin`.
+- **The gate is code in this site's one script file**, `public/scripts/site.js` — not an inline
+  block — because D183 admits one script and because a first-party file is admitted by
+  `script-src 'self'` while an inline block would need a hash in the deployed policy. The file
+  reads the configuration out of the banner's markup, so it names no URL at all: with the flag
+  off it finds no banner and does nothing.
+- **Nothing is requested from Google before a decision.** A stored `granted` (under
+  `fugaro:analytics-consent`, the key the banner's markup carries) loads the script once; a
+  refusal, a dismissal, an unreadable answer and silence all load nothing. `test/consent.mjs`
+  runs the shipped file in a stub browser and watches the request that does or does not arrive.
+- **The privacy defaults are pinned in the one `config` call**: one page view per page and
+  nothing else — no event, no user id — with `allow_google_signals` and
+  `allow_ad_personalization_signals` both false. GA4 anonymises the IP address by default;
+  there is no setting to add for it. `test/consent.mjs` reads `dataLayer` and holds each of
+  those to what was built.
+- **Withdrawing deletes the cookies the tag set** (owner's ruling of 2026-10-18): stopping the
+  sends was only half of a withdrawal — Google's tag left first-party cookies on the site's
+  origin, and a visitor who has said no should not keep being identified by them. So declining
+  after accepting, from the banner the privacy page always offers, deletes `_ga`,
+  `_ga_<container id>` (that name derived from the measurement id above rather than written
+  down), `_gid`, `_gat` and each `_gat_*` cookie the browser is holding — on the page's host,
+  and, only while one is still there, on the registrable parent domain the tag may have used —
+  with `Path=/` and an expiry in the past, and with nothing else in the browser touched. No
+  deletion, and no cookie read at all, runs before consent was ever given. `test/consent.mjs`
+  runs the shipped file against a cookie jar holding those cookies and reads what is left.
+- **The deployed policy is widened by exactly what Google documents** for Google Analytics 4
+  without any Ads features
+  ([tag-platform/security/guides/csp](https://developers.google.com/tag-platform/security/guides/csp),
+  read 2026-10-18): `script-src` gains `https://www.googletagmanager.com`, `img-src` and
+  `connect-src` gain that origin and `https://*.google-analytics.com`, and `connect-src` gains
+  `https://*.google.com`. No `'unsafe-inline'`, no `'unsafe-eval'`, no nonce and no hash —
+  the site ships no inline script. `test/origins.mjs` holds the policy to that exact token
+  list, and refuses any token it does not carry.
+
 ## The gates
 
-Five checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Six checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network:
 
 - `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
@@ -73,8 +115,13 @@ with fixtures that keep its refusals running, and none of them needs the network
   `allowed_hosts`, and every GitHub link into this repository names a path and heading that
   exist.
 - `test/origins.mjs` — nothing loads from a host that is not this site (images and embeds
-  may also come from `allowed_hosts`), inline scripts are on a hash allow-list, and the one
-  third-party origin D93 admits appears only in the layout's consent-gated loader.
+  may also come from `allowed_hosts`), inline scripts are on a hash allow-list — empty since
+  W3.2, because the site ships no inline script at all — and the one third-party origin D93
+  admits appears only as the consent banner's configuration. It also reads the shipped
+  `public/scripts/site.js` for the gate's contract (no URL, no second analytics vendor, the
+  consent decision compared with `granted`) and `firebase.json`'s Content-Security-Policy
+  against the token list Google's documentation states, refusing an extra origin, an
+  `'unsafe-inline'`, an `'unsafe-eval'`, a nonce, a hash or a wildcard.
 - `test/a11y.mjs` — after W1.2's contrast cases: lang, one `h1`, no heading jumps,
   landmarks, a skip link, names and labels, keyboard reachability, focus outlines, a
   `prefers-reduced-motion` path for every animation, and the shipped tokens equal to the
@@ -88,14 +135,17 @@ with fixtures that keep its refusals running, and none of them needs the network
   number fails, and the test keeps a case that proves it. The derivation (that build plus
   25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
   here, in the commit that moves them:
-  - **JavaScript per page:** 24,654 bytes. Three times 8,218: the one script the site ships,
-    `public/scripts/site.js` (6,574 bytes — the copy control of P6 and D183, and the menu's
-    Escape/outside-click close of P3), plus 25 %. Every page loads it once, so it is the whole
-    of a page's JavaScript, and the test keeps a case that says so over the built artifact.
-  - **Page weight per page:** 798,627 bytes. Three times 266,209: the heaviest page, the
-    docs hub, at 212,967 bytes (its HTML — the whole generated CLI reference — plus the
+  - **JavaScript per page:** 76,524 bytes. Three times 25,508: the one script the site ships,
+    `public/scripts/site.js` (20,406 bytes — the copy control of P6 and D183, the menu's
+    Escape/outside-click close of P3, and W3.2's consent banner and analytics gate, which
+    moved out of the markup and into this one file, with the cookie deletion the owner's
+    ruling of 2026-10-18 added to a withdrawal), plus 25 %. Every page loads it once, so
+    it is the whole of a page's JavaScript, and the test keeps a case that says so over the
+    built artifact.
+  - **Page weight per page:** 853,602 bytes. Three times 284,534: the heaviest page, the
+    docs hub, at 227,627 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 2,810,115 bytes. Three times 936,705 (every file in `dist/`, 749,364
+  - **Whole site:** 2,941,224 bytes. Three times 980,408 (every file in `dist/`, 784,326
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -107,15 +157,22 @@ with fixtures that keep its refusals running, and none of them needs the network
     the page's `h1` and its first `h2` — the paragraph a page opens with before its first
     section — and it is a lead and not an introduction: 40 words at most, on every page,
     the three reference pages included, because a lead is the page's own whichever page it
-    is. A page whose first `h2` is not in the `h1`'s own container (the homepage: the hero's
-    section holds the `h1`, and the first `h2` is a step of the flow under it) or that has
-    no `h2` at all has no such region, and its lead is the paragraphs that follow its `h1`. A page
-    whose `h1` is followed straight by its first `h2` has no lead region either, and 0 words
-    is inside the ceiling: `/security/` is shaped that way (its `h1` is the rendered
-    document's own title, and the page's lead line comes before it) and so is `/changelog/`
-    (whose summary is its first section, under the heading that names it). The ceiling is a
-    ceiling, not a floor — a page with no lead region is a page D188's definition does not
-    describe, and this gate says nothing about how much a page's first section should say.
+    is. **The region between the two headings is the whole of the definition, wherever each
+    heading sits** (P5; P4's reviewer read the homepage's lead two ways, 24 words from the
+    `h1`'s own container and 134 from the plan's region, and the stricter one is the one
+    enforced). A page that carries blocks between its `h1` and its first `h2` is a page
+    whose lead those blocks are part of — which is why the homepage opens its install
+    section with the `h2` above the commands rather than putting the commands under the
+    promise — so the fix for a long lead is a shorter lead or an earlier first `h2`, never
+    a reader that looks somewhere else. A page
+    with no `h2` at all has no such region, and its lead is the paragraphs that follow its
+    `h1`. A page whose `h1` is followed straight by its first `h2` has no lead region
+    either, and 0 words is inside the ceiling: `/security/` is shaped that way (its `h1` is
+    the rendered document's own title, and the page's lead line comes before it) and so is
+    `/changelog/` (whose summary is its first section, under the heading that names it).
+    The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
+    definition does not describe, and this gate says nothing about how much a page's first
+    section should say.
   - **Words per page:** 250 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
@@ -130,6 +187,18 @@ with fixtures that keep its refusals running, and none of them needs the network
     The ceiling is set against the site as it was measured before the redesign
     (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268 — every one of them over it).
+- `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
+  the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
+  word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
+  is a statement about the built pages, though, and it is this file's rules: the homepage's lead
+  region holds one element and it is the promise, so the install block and the terminal are the
+  section the heading opens; Getting Started's install section opens with its commands, with the
+  sentence about them still there after the paths; and on every route that prints a command —
+  three of the eleven today, and the other eight are skipped rather than asserted about — the
+  first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its
+  refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
+  each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
+  removing it from the function and watching that case fail.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other
@@ -196,7 +265,7 @@ check until this document says the same thing.
 | `content/cli-reference.md` | the command tree, `internal/cli.NewRootCmd` | `go run ./internal/clidoc` |
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
-| `content/downloads.json` | hand-kept, not generated: W3.1 fills it from the console's release artifacts; a placeholder with `available: false` until then | none: hand-kept |
+| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available: false` until the console ships | none: hand-kept |
 
 Three things about those commands are worth stating rather than leaving to the table:
 
@@ -213,7 +282,9 @@ Three things about those commands are worth stating rather than leaving to the t
   `install.yaml` is held to `README.md`, `docs/release.md` and `.goreleaser.yaml` by
   `internal/cli/docs_website_install_test.go`, and `site.yaml` to `go.mod`, the
   repository's decisions and the site's own host list by the boundary test. Change the
-  fact in the repository, then the value here, in one commit.
+  fact in the repository, then the value here, in one commit. `site.yaml`'s
+  `features.console_downloads` is held to the hand-kept `content/downloads.json`'s
+  `available` by the build itself, which refuses the two disagreeing (below).
 
 ## The changelog is built, never committed
 
@@ -223,6 +294,67 @@ what it returns. Nothing is written to disk, so a Highlights file that lands on 
 before its tag exists leaves no stale copy behind — and no date is taken from a tag,
 because a shallow checkout has no tags and the newest entry a reader sees has none yet
 (D100). `website/test/changelog.mjs` holds that.
+
+## The console's downloads are derived, never written down
+
+`content/downloads.json` is hand-kept and carries the console's facts, and the one rule about
+it is the flag: `site.yaml`'s `features.console_downloads` is what the repository's own
+boundary test reads (`internal/cli/docs_website_boundary_test.go`), and while it is false **no
+file under `website/` may carry a download URL** (Global Constraint 9, finding 25). The data
+file therefore carries the release's *published names* rather than a URL: `release.tag_prefix`,
+`release.version`, and one `file` per asset with `{version}` where the version goes.
+`src/lib/console-downloads.mjs` composes each URL at build time from those, from the tag
+(`console-vX.Y.Z`, cut from the CLI's own `vX.Y.Z` tag) and from `site.yaml`'s `repository` —
+that module is the one reader of the file, and each page renders what it returns.
+
+Two pages offer the console from those facts: the console page's own Downloads section (W1.6)
+and Getting Started's console option, beside the CLI (the owner's changes spec of 2026-10-18,
+item 6). In both, the unreleased state is **structural rather than editorial**: the download
+list is rendered from `available`'s branch and nothing else, so an unreleased console has no
+link to follow even though its assets' names are already in the data file — and the option's
+only link is the way to `/console/`. `website/test/console.mjs` holds the console page to that,
+and `website/test/console-option.mjs` holds Getting Started to it in **both** states: the
+shipped one, read off the built page, and the released one, read off a build of a copy with the
+flag flipped. That second case also runs the budget gate over the flag-on build
+(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started sits at
+D188's 250-word ceiling — the owner's flip has to be the whole change and may not be the change
+that breaks the ceiling. A data file that says the console has shipped while the flag says it
+has not stops the build, naming both files: they are one fact.
+
+**The flip, in the site's own data, is three values:** `site.yaml`'s
+`features.console_downloads: true`, `downloads.json`'s `available: true`, and `release.version`
+bumped to the CLI tag the console was built from. The download list does not change — it already
+carries the release's published names — so no URL is typed anywhere and every button, label and
+URL follows from those three.
+
+**It is not a one-line change, and four checks are written to say so.** Each exists to keep the
+unreleased state true, so each refuses the flip until the commit that makes it extends it — and
+following the three values alone leaves both `npm run check` and `go test ./...` red:
+
+- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`
+  fails on a true flag (`t.Fatalf`, *"this test has not been extended"*). The flip's commit
+  extends it to hold every release-asset URL under `website/` against an asset of a **tag that
+  exists** (W1.6 step 2, plan Task W3.1) — that is the check nothing offline can make, and the
+  one the owner runs against the published release.
+- The same file's `TestWebsiteFactsMatchTheRepository` refuses a true flag too, and the same
+  commit relaxes that pin: the file is one writer per level in the plan, and W3.1's row names it.
+- `website/test/console.mjs` guards its unreleased-state case with an assertion that `site.yaml`
+  says `false` — the case is *about* the unreleased console, so the flip's commit retires it
+  rather than leaving it failing.
+- `website/test/console-option.mjs` carries the same guard for the same reason, and the same
+  commit retires that one with it.
+
+One more thing the flip does **not** have to touch, and this is the point of deriving the URLs:
+nothing under `website/src/` or `website/content/` changes beyond the two values and the version,
+and no test needs a new expectation, because the released-state cases hold the built page to the
+release's own documentation (`console/README.md`) and to the workflow that cuts its tag rather
+than to a URL the test composed the way the build does.
+
+The console is built for macOS and nothing else (`console/README.md`,
+`.github/workflows/console-release.yml`: one universal `.dmg` and one `.zip`), which is why the
+platform, and not an invented second one, is the word each button carries. Its release is a
+**draft until the owner publishes it** (the workflow creates `console-vX.Y.Z` with `--draft`),
+so the buttons land with the published release and not with the draft.
 
 ## The rule this directory is written to
 
@@ -267,13 +399,24 @@ home-screen icons, the manifest's colours (the palette's `--ground`), the header
 ## Deploying
 
 `firebase.json` at the repository root is the hosting configuration: it serves
-`website/dist` with clean URLs, a Content-Security-Policy that admits this origin only
-(`script-src 'self'`, inline styles allowed because Astro inlines small stylesheets),
-`nosniff`, a referrer policy, a one-year immutable cache for the hashed `/_astro/` files,
-a day for icons and fonts, and five minutes for HTML. It names no project and there is no
-`.firebaserc`. It landed ahead of W2.1 with the owner's deploy script; W2.1 extends it (the
-staged workflow), and W1.12 or W3.2 must widen the CSP when the consented analytics script
-is switched on, because the policy blocks it today.
+`website/dist` with clean URLs, a Content-Security-Policy, `nosniff`, a referrer policy, a
+one-year immutable cache for the hashed `/_astro/` files, a day for icons and fonts, and five
+minutes for HTML. It names no project and there is no `.firebaserc`.
+
+The policy admits this origin and the three Google Analytics origins W3.2 widened it by, and
+nothing else: `script-src 'self' https://www.googletagmanager.com` (inline styles are still
+allowed, because Astro inlines small stylesheets), `img-src` and `connect-src` with
+`https://*.google-analytics.com`, `connect-src` with `https://*.google.com`. Those are the
+origins Google documents for GA4 without Ads features, read 2026-10-18 from
+[tag-platform/security/guides/csp](https://developers.google.com/tag-platform/security/guides/csp),
+and `test/origins.mjs` holds the served policy to that list token by token — an extra origin
+is a failure there, in the same commit that would add it. `test/brand.mjs` is the coarser
+check beside it: the served policy names those three origins and no others. (An earlier
+revision of that page listed `https://*.analytics.google.com`; the current one does not, and
+the contract follows the page rather than the memory of it. `https://*.google.com` is in
+`connect-src` because the documentation requires it, and without it the collect requests a
+consenting visitor's browser makes would be blocked.) It landed ahead of W2.1 with the
+owner's deploy script, and W2.1 extends it (the staged workflow).
 
 ### The canonical domain
 
@@ -324,4 +467,7 @@ workflow under `docs/pending-workflows/` for the owner to copy in, and the owner
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
 change `.github/workflows/`. `docs/pending-workflows/` now holds no pending workflow: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
-owner, and no deploy workflow is staged.
+owner, and no deploy workflow is staged. The only workflow files left there are the desktop
+console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
+their staged copies stay by design, because the console's docs tests assert each one is
+byte-identical to its copy under `.github/workflows/`, so neither is pending.

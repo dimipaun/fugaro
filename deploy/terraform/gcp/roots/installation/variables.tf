@@ -131,6 +131,16 @@ variable "enable_budget" {
   nullable = false
 }
 
+variable "managed_deployer_scoped" {
+  # The managed deployer's scoped role and its conditioned binding: off by
+  # default, and fugaro init never sets it in 0.8.6 (the module's variable
+  # says why). An installation that does not name it plans exactly as before
+  # minus those two resources.
+  type     = bool
+  default  = false
+  nullable = false
+}
+
 variable "history" {
   type = object({
     account_id       = string
@@ -151,6 +161,33 @@ variable "project_secrets" {
   # installation module creates or adopts; empty for an installation with
   # none, which is every installation until fugaro secrets set
   # NAME --project-wide has something to store.
+  default  = {}
+  nullable = false
+}
+
+variable "project_jobs" {
+  description = "The shared project jobs (design project-centric §4.1), by Cloud Run job name: one entry per (profile, provider, account), each the module's own object type. fugaro init writes it from the local config's profiles; empty for an installation that names none, which creates no project job at all."
+  type = map(object({
+    profile  = string
+    provider = string
+    account  = string
+    job      = string
+    service_account = object({
+      account_id   = string
+      display_name = string
+    })
+    image          = string
+    cpu            = string
+    memory         = string
+    task_timeout_s = number
+    env            = map(string)
+    secret_env     = map(string)
+    bucket_condition = object({
+      title      = string
+      expression = string
+    })
+    vertex = bool
+  }))
   default  = {}
   nullable = false
 }
