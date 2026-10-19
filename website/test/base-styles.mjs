@@ -1646,8 +1646,8 @@ export function homeRhythmFailures(css, html) {
   const nameOf = (block) => classesOf(block).map((klass) => `.${klass}`).join('') || block.name
 
   /**
-   * **A block the stylesheet names and no rule reaches**, which is a failure of its own however
-   * the pairs above read (review round 6). The pair reading can only see a block that declares a
+   * **A block the stylesheet names and no rule reaches**, which is a failure of its own whatever
+   * the pairs below read (review round 6). The pair reading can only see a block that declares a
    * vertical padding somewhere, and a block whose padding sits in a rule that cannot match it
    * declares nothing at all — `vertical` returns `null`, and `null` on either side of a pair
    * skips that pair **in silence**. That is how every gate passed over a section that padded
