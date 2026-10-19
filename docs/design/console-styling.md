@@ -1848,12 +1848,16 @@ broken slug it was written as; Phase 6's heading stripped of `UNAPPROVED`, one o
 question markers dropped, and one of its task headings renamed. The seventh is the plan's
 own: `6.2` removed from Global Constraints rule 9's list, which
 `TestPlanRule9ListsEveryFlaggedHeading` catches. **And the ordering test (§6.5's tenth)
-carries seven of its own**, one per case, planted and reverted: the four-name
+carries eight of its own**, one per case, planted and reverted: the four-name
 `THEME_STYLESHEETS` literal restored; `base.css` put back into Task 6.2's `**Files**`; the
 window-background case put back into Task 6.1's `**Tests**`; a later task named in Task
 6.3's `**Tests**`; `THEME_STYLESHEETS` removed from Task 6.3's `**Files**`; §6.3's
-"This case is [Task 6.5]'s and not Task 6.1's" removed; and §6.5's opening line put back to
-"nine tests" over a file that declares ten.
+"This case is [Task 6.5]'s and not Task 6.1's" removed; §6.5's opening line put back to
+"nine tests" over a file that declares ten; and `entry.ts` dropped from §7.5's `**Files**`
+while the plan's Task 6.5 keeps it, which is the two documents' lists disagreeing about the
+task that still owns the nav's keyboard behaviour. The two-set pin beside them is proved the
+same way, twice: an unmarked two-set sentence planted in a section that states the ruling
+somewhere above it, and a phrase a rewrap splits across two lines.
 
 ---
 
