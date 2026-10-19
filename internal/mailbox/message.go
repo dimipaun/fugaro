@@ -204,23 +204,23 @@ var ErrNotAnObject = errors.New("mailbox: a record must be a JSON object")
 //     win, because two readers disagreeing about which of two values a record
 //     holds is exactly the ambiguity this schema exists to refuse — and a tag
 //     computed over the surviving one proves nothing about the other;
-//   - a second JSON value after the first is refused, so a record followed by
-//     anything else is not read as the record;
-//   - a `\u` escape that spells an unpaired surrogate is refused, with the
-//     module's own code (bad-character in a value, bad-key in a key), because
-//     encoding/json replaces one with U+FFFD and says nothing — see
-//     checkSurrogateEscapes for why nothing later in the pipeline can tell.
+//   - a string that spells an unpaired surrogate with a `\u` escape is kept as
+//     the fault it is — invalid UTF-8 — instead of being silently replaced by
+//     U+FFFD, so the validator refuses the record with the code the field it is
+//     in calls for and no tag is ever computed over the laundered bytes. See
+//     unquoteKeepingLoneSurrogates.
 //
-// It answers a *Refusal for that last one: the module refuses such a string
-// while validating, and this is the only point where the fault is still
-// visible, so a caller that wants the code gets it.
+// It also refuses a second JSON value after the first, which `json.Decoder`'s
+// own `Decode` does not: there, a record followed by anything else is read as
+// the record and the rest is left in the stream — the same ambiguity, one
+// message over.
 //
 // Numbers are decoded as json.Number: the bytes are what is signed, and a
 // float64 in between would round a value the phone wrote.
 func Decode(data []byte) (Record, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	value, err := decodeValue(dec, data, "", 0)
+	value, err := decodeValue(dec, data, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -244,12 +244,10 @@ const maxDepth = 8
 
 // decodeValue walks one JSON value with the decoder's own tokens, so that a
 // duplicate key is seen rather than silently resolved. data is the document
-// being read: a string token is checked against the bytes it was written as,
-// because the decoder has already thrown the difference away (see
-// checkSurrogateEscapes), and where is the dotted path of the value being read
-// — `action.target.run`, `agents[0]` — so a refusal can name the field the way
-// every other refusal in this package does.
-func decodeValue(dec *json.Decoder, data []byte, where string, depth int) (any, error) {
+// being read: a string is read back out of its own bytes when it spells an
+// unpaired surrogate, because the decoder has already thrown that difference
+// away by the time the token comes back (see unquoteKeepingLoneSurrogates).
+func decodeValue(dec *json.Decoder, data []byte, depth int) (any, error) {
 	if depth > maxDepth {
 		return nil, fmt.Errorf("mailbox: a record nested deeper than %d levels", maxDepth)
 	}
@@ -263,8 +261,8 @@ func decodeValue(dec *json.Decoder, data []byte, where string, depth int) (any, 
 	if !isDelim {
 		switch tok.(type) {
 		case string:
-			if refusal := checkSurrogateEscapes(data[start:end], false, where); refusal != nil {
-				return nil, refusal
+			if hasLoneSurrogateEscape(data[start:end]) {
+				return unquoteKeepingLoneSurrogates(data[start:end]), nil
 			}
 			return tok, nil
 		case nil, bool, json.Number:
@@ -286,13 +284,13 @@ func decodeValue(dec *json.Decoder, data []byte, where string, depth int) (any, 
 			if !ok {
 				return nil, fmt.Errorf("mailbox: a record's key is not a string: %v", keyTok)
 			}
-			if refusal := checkSurrogateEscapes(data[keyStart:keyEnd], true, join(where, key)); refusal != nil {
-				return nil, refusal
+			if hasLoneSurrogateEscape(data[keyStart:keyEnd]) {
+				key = unquoteKeepingLoneSurrogates(data[keyStart:keyEnd])
 			}
 			if _, duplicate := object[key]; duplicate {
 				return nil, fmt.Errorf("mailbox: the key %q appears twice in one record", key)
 			}
-			value, err := decodeValue(dec, data, join(where, key), depth+1)
+			value, err := decodeValue(dec, data, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -304,8 +302,8 @@ func decodeValue(dec *json.Decoder, data []byte, where string, depth int) (any, 
 		return object, nil
 	case '[':
 		list := []any{}
-		for i := 0; dec.More(); i++ {
-			item, err := decodeValue(dec, data, fmt.Sprintf("%s[%d]", where, i), depth+1)
+		for dec.More() {
+			item, err := decodeValue(dec, data, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -320,50 +318,33 @@ func decodeValue(dec *json.Decoder, data []byte, where string, depth int) (any, 
 	}
 }
 
-// checkSurrogateEscapes refuses a string literal that spells an unpaired
-// surrogate with a `\u` escape: `"\ud800"` is half a character, and both ends
-// refuse it (bad-character in a value, bad-key in a key) because neither can
-// write it — Go's encoder writes U+FFFD and JavaScript's keeps the half.
+// hasLoneSurrogateEscape reports whether a JSON string literal — its own bytes,
+// quotes included — spells an unpaired surrogate with a `\u` escape: `"\ud800"`
+// is half a character, and both ends refuse such a string (README: "a string
+// the two encoders spell differently").
 //
-// It is here, in the decoder, for one reason: encoding/json replaces an
-// unpaired surrogate escape with U+FFFD and reports nothing, so by the time the
-// string comes back from Token() the fault is gone. The record no longer
-// carries anything the validator could refuse, and CanonicalBytes would sign
-// bytes the phone reads as a different message. Decoding is the last moment the
-// distinction exists, so decoding is where it is enforced.
+// It is asked of the literal rather than of the decoded string because the
+// decoder has already thrown the difference away: encoding/json replaces an
+// unpaired surrogate escape with U+FFFD and reports nothing, so the string that
+// comes back from Token() is a character the phone can speak and the record
+// carries no fault the validator could refuse. The scan is over the bytes,
+// where the three cases are still distinct:
 //
-// The scan is over the literal's own bytes, which is why it can tell the three
-// cases apart that a decoded string cannot:
-//
-//   - `\uD83D\uDE00` is a pair and one astral character, and is accepted;
-//   - `\uD800` alone is refused;
+//   - `\uD83D\uDE00` is a pair and one astral character, and is not a fault;
+//   - `\uD800` alone is;
 //   - `\\uD800` is an escaped backslash and then six characters of ordinary
 //     text — the record is about the string `\uD800`, not about a surrogate —
 //     so an escaped character is skipped rather than read as an escape.
 //
-// A literal U+FFFD in the document is not an escape and is not refused: it is a
-// character the phone can speak, and it is not this decoder's business to
-// refuse a record that never carried the fault.
-//
 // span is the raw bytes of one string token as the decoder reported them, from
-// InputOffset before the token to InputOffset after it — so it begins at the
-// opening quote or at the punctuation before it, and ends at the closing quote.
+// InputOffset before the token to InputOffset after it, so it begins at the
+// opening quote or at the punctuation before it and ends at the closing quote.
 // It never spans another token, so a backslash found in it belongs to this
 // string.
-//
-// where is the dotted path of the string, so the refusal names the field the
-// way every other refusal here does. A key's path is spelled with the character
-// its escape stands for — U+FFFD, the character the decoder read — rather than
-// with the escape itself: the path says where in the record the fault is, and
-// the record, once decoded, really does carry that character there.
-func checkSurrogateEscapes(span []byte, isKey bool, where string) *Refusal {
+func hasLoneSurrogateEscape(span []byte) bool {
 	open := bytes.IndexByte(span, '"')
 	if open < 0 {
-		return nil
-	}
-	code := CodeBadCharacter
-	if isKey {
-		code = CodeBadKey
+		return false
 	}
 	// The content is everything between the quotes.
 	end := len(span) - 1
@@ -373,23 +354,23 @@ func checkSurrogateEscapes(span []byte, isKey bool, where string) *Refusal {
 			continue
 		}
 		if i+1 >= end {
-			return nil // a decoder cannot produce a string ending in a lone backslash
+			return false // a decoder cannot produce a string ending in a lone backslash
 		}
 		if span[i+1] != 'u' {
 			i += 2 // an escaped quote, backslash or control character
 			continue
 		}
 		if i+6 > end {
-			return nil // nor an escape with no room for its four digits
+			return false // nor an escape with no room for its four digits
 		}
 		first, ok := hexQuad(span[i+2 : i+6])
 		if !ok {
-			return nil
+			return false
 		}
 		switch {
 		case first >= 0xdc00 && first <= 0xdfff:
 			// A low half with nothing before it.
-			return refuse(code, where)
+			return true
 		case first >= 0xd800 && first <= 0xdbff:
 			// A high half: it is a character only if its low half follows
 			// immediately, as another `\u` escape.
@@ -399,12 +380,116 @@ func checkSurrogateEscapes(span []byte, isKey bool, where string) *Refusal {
 					continue
 				}
 			}
-			return refuse(code, where)
+			return true
 		default:
 			i += 6
 		}
 	}
-	return nil
+	return false
+}
+
+// unquoteKeepingLoneSurrogates decodes a JSON string literal — the raw bytes,
+// quotes included — into the Go string it spells, differing from encoding/json
+// in exactly one way: an unpaired surrogate escape is kept as the three WTF-8
+// bytes of the code unit it names, rather than replaced by U+FFFD.
+//
+// Keeping it is what makes the refusal match the module's, and the reason the
+// decoder does not refuse it itself. The module's rule is by FIELD — a lone
+// surrogate in `id`, `reply_to`, `action.id` or `confirmation.id` is bad-key
+// (keyField), in `text`, `sender`, `agent`, an option or an agent's name it is
+// bad-character (stringField), and in a key that is not a field it is
+// unknown-field — and a decoder that picks a code from where the string sits
+// rather than what it is would answer half of them wrongly. So the decoder
+// hands the fault on in the one spelling Go can carry it in, and the validator,
+// which knows the field, refuses it with the module's own code; CanonicalBytes
+// refuses to sign invalid UTF-8, so no tag is ever made over the laundered
+// bytes either.
+//
+// It is called only for a literal hasLoneSurrogateEscape has already found, but
+// it decodes the whole literal, so every other escape is handled too — a pair,
+// a `\"`, a raw multi-byte character — and the result is the string the bytes
+// spell, with the lone halves kept.
+func unquoteKeepingLoneSurrogates(literal []byte) string {
+	open := bytes.IndexByte(literal, '"')
+	if open < 0 {
+		return string(literal) // unreachable: the caller found an escape in it
+	}
+	var b strings.Builder
+	end := len(literal) - 1
+	for i := open + 1; i < end; {
+		c := literal[i]
+		if c != '\\' {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if i+1 >= end {
+			break // unreachable in a decoded document
+		}
+		switch literal[i+1] {
+		case '"', '\\', '/':
+			b.WriteByte(literal[i+1])
+			i += 2
+		case 'b':
+			b.WriteByte('\b')
+			i += 2
+		case 'f':
+			b.WriteByte('\f')
+			i += 2
+		case 'n':
+			b.WriteByte('\n')
+			i += 2
+		case 'r':
+			b.WriteByte('\r')
+			i += 2
+		case 't':
+			b.WriteByte('\t')
+			i += 2
+		case 'u':
+			if i+6 > end {
+				break // unreachable: the decoder validated the escape
+			}
+			first, _ := hexQuad(literal[i+2 : i+6])
+			if isHighSurrogate(first) && i+12 <= end && literal[i+6] == '\\' && literal[i+7] == 'u' {
+				if low, ok := hexQuad(literal[i+8 : i+12]); ok && isLowSurrogate(low) {
+					b.WriteRune(utf16Rune(first, low))
+					i += 12
+					continue
+				}
+			}
+			if isHighSurrogate(first) || isLowSurrogate(first) {
+				writeWTF8(&b, first)
+				i += 6
+				continue
+			}
+			b.WriteRune(rune(first))
+			i += 6
+		default:
+			// unreachable: the decoder refused the document
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
+func isHighSurrogate(code uint32) bool { return code >= 0xd800 && code <= 0xdbff }
+
+func isLowSurrogate(code uint32) bool { return code >= 0xdc00 && code <= 0xdfff }
+
+// utf16Rune is the character a surrogate pair spells.
+func utf16Rune(high, low uint32) rune {
+	return rune(0x10000 + (high-0xd800)<<10 + (low - 0xdc00))
+}
+
+// writeWTF8 writes the three bytes of an unpaired surrogate: the encoding
+// UTF-8 has no room for — which is the point. The string is deliberately
+// invalid UTF-8, so utf8.ValidString reports it, the validator refuses it and
+// CanonicalBytes will not sign it.
+func writeWTF8(b *strings.Builder, code uint32) {
+	b.WriteByte(byte(0xe0 | code>>12))
+	b.WriteByte(byte(0x80 | code>>6&0x3f))
+	b.WriteByte(byte(0x80 | code&0x3f))
 }
 
 // hexQuad reads the four hex digits of a `\u` escape as a UTF-16 code unit.
@@ -848,13 +933,21 @@ func serialiseNumber(value any) (string, error) {
 	if !isNumber {
 		return "", fmt.Errorf("mailbox: a %T is not a value a message carries", value)
 	}
-	if f != math.Trunc(f) || math.Abs(f) > float64(maxSafeInteger) {
+	// The line is safeInteger's, not a second copy of it: a number that
+	// validates here has to serialise here, and two spellings of one line are
+	// two places for them to drift apart.
+	n, isSafe := safeInteger(f)
+	if !isSafe {
 		return "", errors.New("mailbox: a number must be a safe integer, so both languages spell it the same way")
 	}
-	if f == 0 && math.Signbit(f) {
+	// -0 passes that line — it is an integer and it is not large — and it is
+	// still refused, because it has no single spelling: JavaScript writes it as
+	// `0` in one place and `-0` in another, and the module refuses a record
+	// carrying one outright (README: it "can be neither tagged nor verified").
+	if n == 0 && math.Signbit(f) {
 		return "", errors.New("mailbox: -0 is refused: it is a safe integer with no single spelling")
 	}
-	return strconv.FormatInt(int64(f), 10), nil
+	return strconv.FormatInt(n, 10), nil
 }
 
 // encodeJSONString writes one string's canonical form: JSON's own escaping and
@@ -880,10 +973,11 @@ func encodeJSONString(value string) (string, error) {
 // canonicalString is the check a string has to pass to have a canonical form at
 // all, for a key exactly as for a value. It refuses the classes whose bytes the
 // two encoders spell differently and which therefore have no single canonical
-// form: invalid UTF-8 (a lone surrogate that arrived as JSON is already U+FFFD
-// by the time Go has it, and a string Go cannot encode is not one the phone
-// wrote), U+2028 and U+2029, and the control characters Go spells `\u0008` and
-// `\u000c` where JSON.stringify writes `\b` and `\f`.
+// form: invalid UTF-8 (which is what a lone surrogate is on this side of the
+// wire — the three WTF-8 bytes of the code unit the document escaped, see
+// unquoteKeepingLoneSurrogates — and a string Go cannot encode is not one the
+// phone wrote), U+2028 and U+2029, and the control characters Go spells
+// `\u0008` and `\u000c` where JSON.stringify writes `\b` and `\f`.
 func canonicalString(value string) error {
 	if !utf8.ValidString(value) {
 		return errors.New("mailbox: a string is not valid UTF-8, so the two encoders spell it differently")
@@ -1478,15 +1572,6 @@ func asObject(value any) (map[string]any, bool) {
 	default:
 		return nil, false
 	}
-}
-
-// join spells the path of a value inside a record, the way this package's
-// refusals spell it: `action.target.run`, and `run` at the top level.
-func join(where, key string) string {
-	if where == "" {
-		return key
-	}
-	return where + "." + key
 }
 
 // has reports whether a record carries a key at all, which is a different

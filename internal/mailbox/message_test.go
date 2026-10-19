@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // The replay of shared/mailbox-schema/vectors.json, the committed contract both
@@ -497,11 +497,6 @@ func TestCanonicalBytesRefusesValuesWithNoCanonicalForm(t *testing.T) {
 	}
 }
 
-// TestBoundsMatchTheSharedModule is M9's binding for the values Go cannot
-// import: every bound and every closed vocabulary this package declares is read
-// back out of shared/mailbox-schema/index.js and compared, so an edit to either
-// side is a failing test rather than a message the phone accepts and the
-// consumer refuses.
 // TestSafeIntegerLineIsTheSameForEveryGoNumericType holds the number line at
 // every spelling Go can hand the validators: the json.Number the wire carries,
 // and the int, int64 and float64 an `encoding/json` caller builds. The module's
@@ -689,53 +684,106 @@ func TestTheValidatorRefusesStringsItCannotSign(t *testing.T) {
 	acceptedAndSerialisable(t, record)
 }
 
-// TestDecodeRefusesLoneSurrogateEscapes closes the door finding 3 names:
+// TestALoneSurrogateEscapeReachesTheValidator is round 4's finding 1, and the
+// replacement for round 3's decode-time refusal.
+//
 // encoding/json turns an unpaired surrogate escape into U+FFFD and says
-// nothing, so by the time a string token comes back the record no longer
-// carries the fault — ValidateMessage would accept it and CanonicalBytes would
-// sign bytes the phone will not verify. The decoder is the last place the
-// distinction between a lone surrogate escape and a literal U+FFFD exists, so
-// the refusal is there, with the module's own code: bad-character in a value,
-// bad-key in a key.
-func TestDecodeRefusesLoneSurrogateEscapes(t *testing.T) {
+// nothing, so a decoder that refuses it itself has to pick a code from where
+// the string sits — bad-character in a value, bad-key in a key name — and that
+// is not the module's rule. The module's rule is by FIELD: keyField answers
+// bad-key for `id`, `reply_to`, `action.id` and `action.confirmation.id`
+// (index.js:398, 450, 749, 888), stringField answers bad-character for the
+// body, the sender, an option, an agent's name and — through identityField —
+// an agent's id (index.js:625-671, 684, 712), and a key name that is not a
+// field is refused unknown-field before any character in it is read
+// (index.js:290-300). This package's validators take the same route, because
+// they are the same question.
+//
+// So the decoder does not choose a code at all. It keeps the fault in the one
+// spelling Go can carry it in — the three WTF-8 bytes of the escaped code unit,
+// which is invalid UTF-8 — and hands it to ValidateMessage, which knows the
+// field and answers with the module's own code. That is what this test pins,
+// field by field, on the module's own records: each document is the vector for
+// its kind with one substitution, so every other field is one the module
+// already agrees with. It also pins that CanonicalBytes refuses each, so no tag
+// is ever computed over a laundered string.
+//
+// Round 4's finding listed `agents[i].id` among the bad-key fields; the module
+// says otherwise — index.js:712 sends it to identityField, which sends it to
+// stringField — and this package agrees, so the row below is bad-character.
+func TestALoneSurrogateEscapeReachesTheValidator(t *testing.T) {
+	const (
+		highHalf = "\xed\xa0\x80" // U+D800 in WTF-8: the three bytes a Go string spells of it
+		lowHalf  = "\xed\xb8\x80" // U+DE00
+	)
 	for _, tc := range []struct {
-		name      string
-		document  string
-		want      Code
-		wantField string
+		name        string
+		caseName    string
+		needle      string
+		replacement string
+		want        Code
+		wantField   string
 	}{
-		{"a high half alone in a value", `{"id":"m-0001","text":"a\uD800b"}`, CodeBadCharacter, "text"},
-		{"a low half alone in a value", `{"id":"m-0001","text":"\uDE00"}`, CodeBadCharacter, "text"},
-		{"a high half at the end of a value", `{"id":"m-0001","text":"ab\uD83D"}`, CodeBadCharacter, "text"},
-		{"a high half alone in a key", `{"id":"m-0001","\uD800":"x"}`, CodeBadKey, "\uFFFD"},
-		{"a low half alone in a nested key", `{"id":"m-0001","action":{"\uDE00":"x"}}`, CodeBadKey, "action.\uFFFD"},
-		{"a high half alone in an option", `{"id":"m-0001","options":["a\uD83Db"]}`, CodeBadCharacter, "options[0]"},
-		{"a lone half spelled in lowercase hex", `{"id":"m-0001","text":"a\ud800b"}`, CodeBadCharacter, "text"},
-		{"a lone half after a pair", `{"id":"m-0001","text":"\ud83d\ude00\ud800"}`, CodeBadCharacter, "text"},
-		{"a lone half after a pair in capitals", `{"id":"m-0001","text":"\uD83D\uDE00\uD800x"}`, CodeBadCharacter, "text"},
-		{"a lone half after an escaped backslash", `{"id":"m-0001","text":"\\\ud800"}`, CodeBadCharacter, "text"},
+		{"in a body", "plain message", `"text":"run 42 finished"`, `"text":"a\uD800b"`, CodeBadCharacter, "text"},
+		{"a low half in a body", "plain message", `"text":"run 42 finished"`, `"text":"\uDE00"`, CodeBadCharacter, "text"},
+		{"a high half at the end of a body", "plain message", `"text":"run 42 finished"`, `"text":"ab\uD83D"`, CodeBadCharacter, "text"},
+		{"a lone half spelled in lowercase hex", "plain message", `"text":"run 42 finished"`, `"text":"a\ud800b"`, CodeBadCharacter, "text"},
+		{"a lone half after a pair", "plain message", `"text":"run 42 finished"`, `"text":"\ud83d\ude00\ud800"`, CodeBadCharacter, "text"},
+		{"a lone half after an escaped backslash", "plain message", `"text":"run 42 finished"`, `"text":"\\\ud800"`, CodeBadCharacter, "text"},
+		{"in an id, after the keys are known", "plain message", `"id":"m-0001"`, `"id":"m-\uD800"`, CodeBadKey, "id"},
+		{"in a reply_to", "answer", `"reply_to":"m-0000"`, `"reply_to":"m-\uDE00"`, CodeBadKey, "reply_to"},
+		{"in an action id", "action: cancel a run", `"id":"a-0001"`, `"id":"a-\uD800"`, CodeBadKey, "action.id"},
+		{"in a confirmation id", "action: cancel a run", `"id":"c-0001"`, `"id":"c-\uD800"`, CodeBadKey, "action.confirmation.id"},
+		{"in an option", "prompt with options", `"options":["merge it","leave it"]`, `"options":["merge it","\uD800"]`, CodeBadCharacter, "options[1]"},
+		{"in a key name that is not a field", "plain message", `"id":"m-0001"`, `"\uD800":0,"id":"m-0001"`, CodeUnknownField, highHalf},
+		{"in a key name inside an action", "action: cancel a run", `"verb":"cancel"`, `"verb":"cancel","\uDE00":0`, CodeUnknownField, "action." + lowHalf},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Decode([]byte(tc.document))
-			if err == nil {
-				t.Fatalf("the decoder accepted a lone surrogate escape: it is laundered to U+FFFD and then signed")
+			record, err := Decode(surrogateDocument(t, tc.caseName, tc.needle, tc.replacement))
+			if err != nil {
+				t.Fatalf("the decoder refused the document itself: %v", err)
 			}
-			var refusal *Refusal
-			if !errors.As(err, &refusal) {
-				t.Fatalf("the refusal is %v (%T), wanted the module's own code", err, err)
+			if !carriesInvalidUTF8(record) {
+				t.Fatal("the fault was laundered: nothing in the record spells the code unit the document escaped")
 			}
-			if refusal.Code != tc.want {
-				t.Errorf("the refusal is %s, wanted %s", refusal.Code, tc.want)
+			_, refusal := ValidateMessage(record)
+			if refusal == nil {
+				t.Fatal("the validator accepted a string no encoder can spell, and it would have been signed")
 			}
-			if refusal.Field != tc.wantField {
-				t.Errorf("the refusal names %q, wanted %q: a refusal a reader cannot place is a refusal nobody can act on", refusal.Field, tc.wantField)
+			if refusal.Code != tc.want || refusal.Field != tc.wantField {
+				t.Errorf("it is refused %s at %q, wanted %s at %q", refusal.Code, refusal.Field, tc.want, tc.wantField)
+			}
+			if _, err := CanonicalBytes(record, "inbox"); err == nil {
+				t.Error("it is canonicalised: a tag would cover bytes of a string the phone never wrote")
 			}
 		})
 	}
 
-	// And the escapes that are not a fault: a pair is one character, an
-	// escaped backslash is six characters of text, and a literal U+FFFD is a
-	// character the phone can speak.
+	// A heartbeat is a different record with a different field set, judged by the
+	// validator that knows it: an agent's id goes through identityField, and so
+	// through stringField, so the code there is bad-character too.
+	t.Run("in an agent's id of a heartbeat", func(t *testing.T) {
+		record, err := Decode(surrogateDocument(t, "heartbeat", `"id":"orchestrator"`, `"id":"\uD800"`))
+		if err != nil {
+			t.Fatalf("the decoder refused the document itself: %v", err)
+		}
+		if !carriesInvalidUTF8(record) {
+			t.Fatal("the fault was laundered: nothing in the record spells the code unit the document escaped")
+		}
+		_, refusal := ValidateHeartbeat(record)
+		if refusal == nil {
+			t.Fatal("the validator accepted a string no encoder can spell, and it would have been signed")
+		}
+		if refusal.Code != CodeBadCharacter || refusal.Field != "agents[0].id" {
+			t.Errorf("it is refused %s at %q, wanted %s at %q", refusal.Code, refusal.Field, CodeBadCharacter, "agents[0].id")
+		}
+	})
+
+	// And the escapes that are not a fault, which is what makes the scan worth
+	// having rather than a blanket refusal of `\u`: a pair is one character, an
+	// escaped backslash is six characters of ordinary text, and a literal
+	// U+FFFD is a character the phone can speak, not this decoder's laundering
+	// of anything.
 	for _, tc := range []struct {
 		name     string
 		document string
@@ -746,9 +794,11 @@ func TestDecodeRefusesLoneSurrogateEscapes(t *testing.T) {
 		{"a pair spelled in lowercase hex", `{"text":"\ud83d\ude00"}`, "text", "\U0001F600"},
 		{"two paired surrogates", `{"text":"\uD83D\ude00\uD83D\ude01"}`, "text", "\U0001F600\U0001F601"},
 		{"a paired surrogate in a key", `{"\uD83D\ude00":"x"}`, "\U0001F600", "x"},
+		{"a pair and then ordinary text", `{"text":"\uD83D\uDE00x"}`, "text", "\U0001F600x"},
 		{"an escaped backslash before u", `{"text":"\\uD800"}`, "text", `\uD800`},
 		{"two escaped backslashes and two u's", `{"text":"\\\\uD83D\\\\uDE00"}`, "text", `\\uD83D\\uDE00`},
-		{"an escape that is not a surrogate", `{"text":"\u00e9"}`, "text", "é"},
+		{"an escape that is not a surrogate", `{"text":"\u00e9"}`, "text", "\u00e9"},
+		{"an escaped quote and a control character", `{"text":"a\"b\nc"}`, "text", "a\"b\nc"},
 		{"a literal replacement character", `{"text":"a` + "�" + `b"}`, "text", "a�b"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -759,8 +809,82 @@ func TestDecodeRefusesLoneSurrogateEscapes(t *testing.T) {
 			if got := record[tc.field]; got != tc.want {
 				t.Errorf("it decoded to %v, wanted %v", got, tc.want)
 			}
+			if carriesInvalidUTF8(record) {
+				t.Error("it decoded to a string Go cannot encode: the unquoter invented a fault")
+			}
 		})
 	}
+}
+
+// TestTheUnquoterDecodesWhatItKeeps pins the one function that runs only for a
+// document that spells an unpaired surrogate. The rest of such a string is
+// still the module's string — a pair is one character, `\\"` is a quote, `\n` is
+// a newline — and only the lone half is kept as the three WTF-8 bytes Go can
+// carry. A pair written as its two halves would be a different string, and
+// these are the cases where the difference is visible.
+func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		literal string
+		want    string
+	}{
+		{"a lone high half", `"\uD800"`, "\xed\xa0\x80"},
+		{"a lone low half", `"\udc00"`, "\xed\xb0\x80"},
+		{"a pair beside a lone half", `"\uD83D\uDE00\uD800"`, "\U0001F600\xed\xa0\x80"},
+		{"a lone half beside a pair", `"\uD800\uD83D\uDE00"`, "\xed\xa0\x80\U0001F600"},
+		{"a high half before an ordinary escape", `"\uD83D\u00e9"`, "\xed\xa0\xbd\xc3\xa9"},
+		{"escapes beside a lone half", `"a\\b\"c\nd\uD800"`, "a\\b\"c\nd\xed\xa0\x80"},
+		{"a raw character beside a lone half", `"é\uD800"`, "é\xed\xa0\x80"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := unquoteKeepingLoneSurrogates([]byte(tc.literal)); got != tc.want {
+				t.Errorf("it decoded to %q, wanted %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// surrogateDocument is the module's own record for a case, as JSON, with one
+// substitution applied — so every field but the one under test is the module's
+// own and the refusal that comes back is the one this test is about. The
+// needle must still be there: if a vector moves, this test says so rather than
+// quietly testing something else.
+func surrogateDocument(t *testing.T, caseName, needle, replacement string) []byte {
+	t.Helper()
+	document, err := json.Marshal(map[string]any(vectorCase(t, caseName)))
+	if err != nil {
+		t.Fatalf("marshalling the %q vector: %v", caseName, err)
+	}
+	if !strings.Contains(string(document), needle) {
+		t.Fatalf("the %q vector no longer carries %q: this test's needle is stale", caseName, needle)
+	}
+	return []byte(strings.Replace(string(document), needle, replacement, 1))
+}
+
+// carriesInvalidUTF8 reports whether any string in a decoded record — a value,
+// a list entry or a key — is one Go cannot encode. That is the shape a lone
+// surrogate escape takes once the decoder has stopped laundering it, and the
+// shape ValidateMessage and CanonicalBytes both refuse.
+func carriesInvalidUTF8(value any) bool {
+	switch v := value.(type) {
+	case string:
+		return !utf8.ValidString(v)
+	case Record:
+		return carriesInvalidUTF8(map[string]any(v))
+	case map[string]any:
+		for key, entry := range v {
+			if !utf8.ValidString(key) || carriesInvalidUTF8(entry) {
+				return true
+			}
+		}
+	case []any:
+		for _, entry := range v {
+			if carriesInvalidUTF8(entry) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // TestEveryRefusalCodeMatchesTheModule is finding 4: Code's own doc says a
@@ -856,6 +980,19 @@ func dig(t *testing.T, record Record, keys ...string) map[string]any {
 	return here
 }
 
+// TestBoundsMatchTheSharedModule is M9's binding for the values Go cannot
+// import: every bound, every closed vocabulary, every character class and every
+// refusal code this package declares is read back out of
+// shared/mailbox-schema/index.js and compared, so an edit to either side is a
+// failing test rather than a message the phone accepts and the consumer refuses.
+//
+// The character classes are here because they are the security-relevant half of
+// the shared vocabulary: RUN_PATTERN and REPO_PATTERN carry the leading `-` and
+// `.` refusals that keep a run id out of `fugaro cancel`'s flag position and a
+// repository out of `gh pr merge --repo`'s option position, and a copy that
+// drifted would be a command built from a string the module would have refused.
+// The six of them are counted as well as compared, so a class the module grows
+// is a class to bind.
 func TestBoundsMatchTheSharedModule(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "shared", "mailbox-schema", "index.js"))
 	if err != nil {
@@ -913,6 +1050,65 @@ func TestBoundsMatchTheSharedModule(t *testing.T) {
 	for name := range vocabulary {
 		t.Errorf("the module no longer declares %s: this package's list has nothing to be held to", name)
 	}
+
+	// AT_MAX is not a literal the module writes down: it is
+	// Number.MAX_SAFE_INTEGER, so the binding is two-sided — the module still
+	// draws its line there, and this package's line is that constant's value.
+	if !jsMaxSafeInteger.MatchString(string(source)) {
+		t.Error("the module no longer sets AT_MAX to Number.MAX_SAFE_INTEGER: this package's number line has nothing to be held to")
+	}
+	if maxSafeInteger != 9007199254740991 {
+		t.Errorf("maxSafeInteger is %d, and Number.MAX_SAFE_INTEGER is 9007199254740991", maxSafeInteger)
+	}
+
+	classes := map[string]string{
+		"IDENTITY_PATTERN": identityPattern.String(),
+		"RUN_CHARS":        runChars.String(),
+		"RUN_PATTERN":      runPattern.String(),
+		"REPO_CHARS":       repoChars.String(),
+		"REPO_PATTERN":     repoPattern.String(),
+		"HEX_PATTERN":      hexPattern.String(),
+	}
+	for _, m := range jsClass.FindAllStringSubmatch(string(source), -1) {
+		want, known := classes[m[1]]
+		if !known {
+			t.Errorf("the module declares the character class %s, which this package does not bind", m[1])
+			continue
+		}
+		delete(classes, m[1])
+		// JavaScript spells a slash inside a literal as `\/`; the language
+		// around it is not part of the class.
+		if got := strings.ReplaceAll(m[2], `\/`, "/"); got != want {
+			t.Errorf("%s is /%s/ in the module and /%s/ here: a class the two ends disagree about is a value one end runs and the other refuses", m[1], got, want)
+		}
+	}
+	for name := range classes {
+		t.Errorf("the module no longer declares the character class %s: this package's pattern has nothing to be held to", name)
+	}
+	if len(jsClass.FindAllStringSubmatch(string(source), -1)) != 6 {
+		t.Errorf("the module declares %d character classes and this package binds 6: a new one is a class to bind, not to ignore", len(jsClass.FindAllStringSubmatch(string(source), -1)))
+	}
+
+	// The characters a key may not contain: the set is written as a Set
+	// literal, so it is read the way the vocabularies are.
+	set := jsSet.FindStringSubmatch(string(source))
+	if set == nil {
+		t.Fatal("the module no longer declares FORBIDDEN_KEY_CHARS as a Set: this package's set has nothing to be held to")
+	}
+	// A set has no order, so both sides are sorted before they are compared.
+	var forbidden []string
+	for _, item := range jsString.FindAllStringSubmatch(set[1], -1) {
+		forbidden = append(forbidden, item[1])
+	}
+	var here []string
+	for r := range forbiddenKeyChars {
+		here = append(here, string(r))
+	}
+	sort.Strings(forbidden)
+	sort.Strings(here)
+	if strings.Join(forbidden, ",") != strings.Join(here, ",") {
+		t.Errorf("FORBIDDEN_KEY_CHARS is %v in the module and %v here: a key one end refuses is a key the other would store", forbidden, here)
+	}
 }
 
 var (
@@ -923,6 +1119,11 @@ var (
 	// is the code the two ends speak, which is the half this package binds.
 	jsRefusals = regexp.MustCompile(`(?s)export const REFUSALS = Object\.freeze\(\{(.*?)\n\}\);`)
 	jsRefusal  = regexp.MustCompile(`(?m)^\s*([A-Z_]+): '([^']*)',$`)
+	// The character classes are module-private consts, and AT_MAX is the one
+	// bound declared as a JavaScript constant rather than a number.
+	jsClass          = regexp.MustCompile(`(?m)^const ([A-Z_]+) = /(.+)/;$`)
+	jsMaxSafeInteger = regexp.MustCompile(`(?m)^export const AT_MAX = Number\.MAX_SAFE_INTEGER;$`)
+	jsSet            = regexp.MustCompile(`(?s)const FORBIDDEN_KEY_CHARS = new Set\(\[(.*?)\]\);`)
 )
 
 // tagOf is the tag HMAC-SHA-256 produces over canonical bytes: mac.js's own
