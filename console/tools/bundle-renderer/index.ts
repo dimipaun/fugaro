@@ -68,13 +68,26 @@
 //
 //   - **a `.css` file that is not on `THEME_STYLESHEETS`** -- the list is the
 //     directory's whole contents, so a stylesheet nobody reviewed is a file the
-//     console would serve and nothing vouches for;
-//   - **a listed file that is missing** -- so a rename fails the build rather
-//     than silently dropping a layer of the cascade, and so the list cannot run
-//     ahead of the files it names;
-//   - **an `@import`** and **a remote `url()`** -- the bundle is one file and the
-//     console is offline (`connect-src 'none'`), so an import would either fail
-//     at runtime or be a network call the CSP forbids.
+//     console would serve and nothing vouches for. The name test is
+//     case-insensitive, because the extension is: `X.CSS` is a stylesheet a
+//     Windows checkout and a Linux one would disagree about, and the refusal
+//     should not depend on which one made the bundle;
+//   - **a listed file that is missing, or that is not a regular file** -- so a
+//     rename fails the build rather than silently dropping a layer of the
+//     cascade, and so the list cannot run ahead of the files it names. A
+//     symlink is refused for the same reason a stray `.css` is: the list is the
+//     directory's whole contents, and following a link would put bytes the
+//     directory does not hold into the served stylesheet (review M2);
+//   - **a backslash**, **an `@import`**, **a quoted string that names a URL**
+//     and **a remote `url()`** -- the bundle is one file and the console is
+//     offline (`connect-src 'none'`), so an import would either fail at runtime
+//     or be a request the CSP forbids. The first of those four is what makes the
+//     other three unbypassable: CSS reads `\` as the start of an escape, so
+//     `@\69mport "./base.css";` is an `@import`, `u\72l(...)` is a `url(...)`
+//     and `"\68ttp://…"` is a remote URL, and none of these scans unescapes
+//     (review M1). The quoted-string scan is separate from the `url()` one
+//     because `image-set()` and `-webkit-image-set()` take a bare string as a
+//     URL, which is a remote load that never writes `url(`.
 //
 // **No CSS is parsed, minified, autoprefixed or rewritten.** The bytes on disk
 // are the bytes served, which is what makes the contrast unit test
@@ -93,7 +106,8 @@
 // compiled modules, wrapped; nothing here builds code from data, and nothing it
 // could build would run: the CSP has no `'unsafe-eval'`.
 
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import type { Stats } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 /** BundleRefusal is the one error this tool throws: a closure it will not
@@ -311,6 +325,71 @@ export function documentsOf(entry: string): readonly string[] {
   return documents.map((name) => join(directory, name))
 }
 
+/** ownedInRoot is the names *one* bundle claims in the served root: its own
+ * file, the siblings it was told about, and the documents it copies there. The
+ * union over a build's bundles is what the pre-write refusal below is given. */
+function ownedInRoot(options: BundleOptions, documents: readonly string[]): ReadonlySet<string> {
+  return new Set<string>([
+    basename(resolve(options.out)),
+    ...(options.siblings ?? []),
+    ...documents.map((file) => basename(file)),
+  ])
+}
+
+/**
+ * refuseForeignFilesIn is the served root's **one** foreign-file refusal, and
+ * it is a function rather than a paragraph inside `bundleRenderer` because it
+ * runs twice: once in `bundleRenderer`, where it belongs to the step that owns
+ * the directory, and once in `buildConsole`, **before the first write**, so a
+ * refusal cannot leave a fresh artefact behind (review M3). One implementation
+ * answers one question; the second call is that answer asked earlier.
+ *
+ * A directory that is not there yet holds nothing foreign, and is made.
+ */
+export function refuseForeignFilesIn(directory: string, owned: ReadonlySet<string>): void {
+  let existing: string[] = []
+  try {
+    existing = readdirSync(directory)
+  } catch {
+    mkdirSync(directory, { recursive: true })
+  }
+  const foreign = existing.filter((name) => !owned.has(name))
+  if (foreign.length > 0) {
+    throw new BundleRefusal(
+      `${relative(process.cwd(), directory)} holds ${foreign.join(', ')}, which this build does not write: the served root holds the bundle and its documents and nothing else`,
+    )
+  }
+}
+
+/** isSymlink is whether `path` is a symbolic link. A path that is not there is
+ * not one: the writer is about to create it, and a refusal for a name that
+ * nothing holds would refuse its own output. */
+function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * refuseSymlinkedOutput refuses an output name that is a symbolic link (review
+ * M4). Every file this tool writes is one it made itself -- `console.css`,
+ * `console.js`, `installations.js`, the served documents -- and a link at one of
+ * those names would put those bytes wherever the link points, which is outside
+ * `dist/bundle/` and outside everything `SERVED_FILES`, the foreign-file
+ * refusal and the packaged-file list are about. Nothing else in this tool
+ * touches a path it did not compute, and there is no `rm` or `unlink` anywhere
+ * in it, so the write is the one place a link could matter.
+ */
+function refuseSymlinkedOutput(path: string): void {
+  if (isSymlink(path)) {
+    throw new BundleRefusal(
+      `${relative(process.cwd(), path)} is a symbolic link: this build writes that file itself, so following the link would put its bytes outside the served root`,
+    )
+  }
+}
+
 /**
  * bundleRenderer is the step: walk the entry's closure, write the one script,
  * and copy the served documents beside it.
@@ -326,29 +405,17 @@ export function bundleRenderer(options: BundleOptions): void {
   const out = resolve(options.out)
   const directory = dirname(out)
   const documents = documentsOf(options.entry)
-  const owned = new Set<string>([
-    basename(out),
-    ...(options.siblings ?? []),
-    ...documents.map((file) => basename(file)),
-  ])
+  const owned = ownedInRoot(options, documents)
 
-  let existing: string[] = []
-  try {
-    existing = readdirSync(directory)
-  } catch {
-    mkdirSync(directory, { recursive: true })
-  }
-  const foreign = existing.filter((name) => !owned.has(name))
-  if (foreign.length > 0) {
-    throw new BundleRefusal(
-      `${relative(process.cwd(), directory)} holds ${foreign.join(', ')}, which this build does not write: the served root holds the bundle and its documents and nothing else`,
-    )
-  }
+  refuseForeignFilesIn(directory, owned)
 
   const modules = moduleClosure(options.entry)
+  refuseSymlinkedOutput(out)
   writeFileSync(out, bundleText(modules))
   for (const document of documents) {
-    copyFileSync(document, join(directory, basename(document)))
+    const destination = join(directory, basename(document))
+    refuseSymlinkedOutput(destination)
+    copyFileSync(document, destination)
   }
   process.stdout.write(
     `wrote ${relative(process.cwd(), out)}: ${String(modules.length)} modules, ${String(documents.length)} documents\n`,
@@ -418,7 +485,13 @@ const CSS_URL_RE = /url\(\s*(?:'([^']*)'|"([^"]*)"|([^)'"\s]*))\s*\)?/gi
 
 /** REMOTE_SCHEME_RE is a URL scheme that leaves this machine. `data:` is not
  * one -- it is a byte string in the file rather than a request, and the CSP's
- * `img-src 'self' data:` allows it -- so it is excluded here on purpose. */
+ * `img-src 'self' data:` allows it -- so it is excluded here on purpose.
+ * `blob:` is excluded on the same reading (it names a byte string this document
+ * made rather than a request), and the CSP allows it in no directive at all --
+ * so a `url(blob:…)` in a theme file is admitted by this scan and blocked when
+ * it is painted. That is the one silent failure this file knows about and does
+ * not refuse: it is a `data:` URL's asymmetry, one directive wide, and the
+ * README's stylesheet section states it (review N2). */
 const REMOTE_SCHEME_RE = /^(?!(?:data|blob):)[a-z][a-z0-9+.-]*:/i
 
 /** remoteUrlIn is the first remote `url()` of a stylesheet, as it is written,
@@ -427,6 +500,50 @@ export function remoteUrlIn(css: string): string | null {
   for (const match of css.matchAll(CSS_URL_RE)) {
     const target = match[1] ?? match[2] ?? match[3] ?? ''
     if (target.startsWith('//') || REMOTE_SCHEME_RE.test(target)) return match[0].trim()
+  }
+  return null
+}
+
+/** BACKSLASH_RE matches a backslash anywhere in a theme source (review M1).
+ *
+ * CSS reads `\` as the start of an **escape**, and unescapes identifiers and
+ * strings before anything else sees them: `@\69mport "./base.css";` is an
+ * `@import`, `u\72l(...)` is a `url(...)`, and `"\68ttp://…"` is a remote URL.
+ * Every scan below is a scan and not a parser -- that is the whole of its
+ * design, and the reason a comment that mentions `@import` is refused -- so
+ * none of them can see through an escape, and the escape is what is refused.
+ *
+ * The direction is the one this tool errs in everywhere: refusal. It costs a
+ * theme file nothing, because an escaped spelling of an ordinary character says
+ * nothing a literal one does not, and neither stylesheet in the tree holds a
+ * backslash at all. A later theme file that wants a character -- an em dash in
+ * `content`, say -- writes the character. */
+const BACKSLASH_RE = /\\/
+
+/** QUOTED_STRING_RE matches every quoted string of a stylesheet, either mark.
+ * The content excludes both marks and the newline, so a match cannot run from
+ * one string into the next. */
+const QUOTED_STRING_RE = /(["'])([^"'\n]*)\1/g
+
+/**
+ * quotedRemoteIn is the first quoted string of a stylesheet that names a URL
+ * off this origin, as it is written, or `null` (review M1).
+ *
+ * It exists because a quoted string is a URL in two places `CSS_URL_RE` does
+ * not look: `image-set()` and `-webkit-image-set()` take a bare string as a
+ * URL, so `image-set("https://cdn.example/x.png" 1x)` is a request neither the
+ * `url()` scan nor the at-rule scan sees. The test is the `url()` scan's own --
+ * a scheme that leaves this machine, or the protocol-relative `//` -- so
+ * `data:` and `blob:` are read the same way in both places.
+ *
+ * The cost is that a *string* that merely spells a URL is refused as well, the
+ * same way a comment that merely spells `@import` is: the scan cannot tell a
+ * load from a label, and a label that spells a URL is a label to reword.
+ */
+export function quotedRemoteIn(css: string): string | null {
+  for (const match of css.matchAll(QUOTED_STRING_RE)) {
+    const target = match[2] ?? ''
+    if (target.startsWith('//') || REMOTE_SCHEME_RE.test(target)) return match[0]
   }
   return null
 }
@@ -449,7 +566,12 @@ export function themeStylesheetSources(directory: string): readonly ThemeStylesh
     )
   }
   const listed = new Set(THEME_STYLESHEETS)
-  const unlisted = names.filter((name) => name.endsWith('.css') && !listed.has(name)).sort()
+  // The extension test is case-insensitive, because the extension is: `X.CSS`
+  // is a stylesheet, and a checkout that spells it that way must not be the one
+  // where an unreviewed stylesheet is the file the list does not name (N3).
+  const unlisted = names
+    .filter((name) => name.toLowerCase().endsWith('.css') && !listed.has(name))
+    .sort()
   if (unlisted.length > 0) {
     throw new BundleRefusal(
       `${directory} holds ${unlisted.join(', ')}, which THEME_STYLESHEETS does not list: the list is the theme directory's whole contents, so a stylesheet nobody reviewed cannot be served`,
@@ -458,12 +580,40 @@ export function themeStylesheetSources(directory: string): readonly ThemeStylesh
 
   const sources: ThemeStylesheet[] = []
   for (const name of THEME_STYLESHEETS) {
-    let css: string
+    const file = join(directory, name)
+    let stats: Stats | undefined
     try {
-      css = readFileSync(join(directory, name), 'utf8')
+      stats = lstatSync(file)
     } catch {
+      stats = undefined
+    }
+    if (stats === undefined) {
       throw new BundleRefusal(
         `THEME_STYLESHEETS names ${name}, which ${directory} does not hold: the list is the theme directory's whole contents and may not run ahead of it`,
+      )
+    }
+    // `lstatSync` and not `statSync`: a symlink is refused as the thing it is
+    // rather than followed to what it points at (review M2). The list is the
+    // theme directory's whole contents, and a link is a name whose bytes are
+    // somewhere else -- `palette.css -> ~/.config/…` or `-> ../../../somewhere`
+    // would be read into `console.css`, served to every window and packaged
+    // into the `.app`, and no test reading the sources would see it.
+    if (!stats.isFile()) {
+      throw new BundleRefusal(
+        `${name} is not a regular file: the list is the theme directory's whole contents, and a symlink or a directory there would put bytes the directory does not hold into the served stylesheet`,
+      )
+    }
+    let css: string
+    try {
+      css = readFileSync(file, 'utf8')
+    } catch {
+      throw new BundleRefusal(
+        `${name} could not be read: the theme directory holds it and the build cannot read it, so that layer would be missing from the served stylesheet`,
+      )
+    }
+    if (BACKSLASH_RE.test(css)) {
+      throw new BundleRefusal(
+        `${name} holds a backslash: CSS reads one as the start of an escape, so an @import, a url() or a remote string can be spelled in a way these scans do not unescape, and a theme source that needs none of those spellings needs no backslash at all`,
       )
     }
     if (AT_IMPORT_RE.test(css)) {
@@ -471,10 +621,21 @@ export function themeStylesheetSources(directory: string): readonly ThemeStylesh
         `${name} holds an @import: the bundle is one file and the console is offline (connect-src 'none'), so an import would either fail at runtime or be a request the CSP forbids`,
       )
     }
+    // The `url()` scan first, deliberately: a quoted `url('http://…')` holds a
+    // string this scan would also match, and the refusal a reader wants is the
+    // one about the call that made the request rather than about the mark
+    // around its argument. `image-set()` strings are what is left over, which
+    // is exactly the shape the `url()` scan cannot see.
     const remote = remoteUrlIn(css)
     if (remote !== null) {
       throw new BundleRefusal(
         `${name} loads ${remote} from another origin: the console is offline (connect-src 'none'), so a stylesheet may name only paths on this origin`,
+      )
+    }
+    const quoted = quotedRemoteIn(css)
+    if (quoted !== null) {
+      throw new BundleRefusal(
+        `${name} holds ${quoted}, a quoted string that names a URL: image-set() and -webkit-image-set() take a bare string as a URL, and the console is offline (connect-src 'none'), so a stylesheet may name only paths on this origin`,
       )
     }
     sources.push({ name, css })
@@ -500,16 +661,21 @@ export function stylesheetText(sources: readonly ThemeStylesheet[]): string {
  * stylesheet the documents link.
  *
  * The output directory is **owned** by this build, and this function does not
- * re-check that: `bundleRenderer` is the one refusal for a foreign file in it,
- * and `consoleBundles` tells it that `console.css` is one of this build's own
- * (`siblings`), so the served root's foreign-file refusal still holds for
- * anything else. A second check here would be a second answer to one question.
+ * re-check that: `refuseForeignFilesIn` is the one refusal for a foreign file in
+ * it, `bundleRenderer` calls it, and `consoleBundles` tells the renderer that
+ * `console.css` is one of this build's own (`siblings`), so the served root's
+ * foreign-file refusal still holds for anything else. A second check here would
+ * be a second answer to one question -- and the ordering question that check
+ * raises is `buildConsole`'s, which asks it **before the first write** rather
+ * than here, because a refusal that lands after `console.css` was written leaves
+ * a fresh artefact in a directory the build then abandons (review M3).
  */
 export function bundleStylesheet(options: StylesheetOptions): void {
   const out = resolve(options.out)
   const directory = dirname(out)
   const sources = themeStylesheetSources(options.directory)
   mkdirSync(directory, { recursive: true })
+  refuseSymlinkedOutput(out)
   writeFileSync(out, stylesheetText(sources))
   process.stdout.write(
     `wrote ${relative(process.cwd(), out)}: ${String(sources.length)} stylesheets\n`,
@@ -562,6 +728,39 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
   }))
 }
 
+/**
+ * buildConsole is the whole bundle step of `npm run build`, in its order, and it
+ * is a function rather than three lines in the entry point below because the
+ * **order** is a claim a test has to be able to make (review M3).
+ *
+ * The order is: the served root's foreign-file refusal, then the stylesheet, then
+ * the two renderer bundles. The refusal comes first because it is the one that
+ * can stop the build, and a build that stops must not have written anything: with
+ * the stylesheet first, a foreign file in `dist/bundle/` was a build failure that
+ * nonetheless left a fresh `console.css` behind. That was harmless -- a failed
+ * build is not packaged -- but the header's claim that "a refusal there should
+ * not leave half a bundle behind" only held one way round, and the difference
+ * between the two orders is a line.
+ *
+ * Everything else in the step is unchanged: the stylesheet's own refusals are
+ * about the theme *sources* and are already asked before it writes.
+ */
+export function buildConsole(consoleRoot: string): void {
+  const bundles = consoleBundles(consoleRoot)
+  const first = bundles[0]
+  if (first === undefined) {
+    throw new BundleRefusal(`${consoleRoot} has no bundle to write: the console's build writes two`)
+  }
+  const owned = new Set<string>()
+  for (const bundle of bundles) {
+    for (const name of ownedInRoot(bundle, documentsOf(bundle.entry))) owned.add(name)
+  }
+  refuseForeignFilesIn(dirname(resolve(first.out)), owned)
+
+  bundleStylesheet(consoleStylesheet(consoleRoot))
+  for (const bundle of bundles) bundleRenderer(bundle)
+}
+
 /** consoleRootHere is the package `npm run build` runs in. It is read from the
  * working directory and **checked**, rather than guessed from this module's own
  * location: `package.json`'s name is the one thing that says a directory is this
@@ -590,11 +789,7 @@ export function isEntryPoint(argv1: string | undefined): boolean {
 
 if (isEntryPoint(process.argv[1])) {
   try {
-    const consoleRoot = consoleRootHere(process.cwd())
-    // The stylesheet first: its refusals are about the theme *sources*, and a
-    // refusal there should not leave half a bundle behind in `dist/bundle/`.
-    bundleStylesheet(consoleStylesheet(consoleRoot))
-    for (const bundle of consoleBundles(consoleRoot)) bundleRenderer(bundle)
+    buildConsole(consoleRootHere(process.cwd()))
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
     process.stderr.write(`${message}\n`)
