@@ -84,8 +84,10 @@ name for the first internal build's environment and **does not build anything on
 
 The register of allocations is [mobile/README.md](../mobile/README.md)'s table. Read against
 this base and against the tree's own last word on the subject
-(`docs/coordinator/README.md:49-50`, which reads *"the highest number written anywhere in
-`docs/`"* as **D192**, and *"**D193 onward** … **free**"*):
+(`docs/coordinator/README.md`'s *"The numbers this work holds"* table, which reads *"the
+highest number written anywhere in `docs/`"* as **D192** and, at this base, *"**D193 onward** —
+**free**"* — the row this change moves to **D201 onward**, since the block it gave away is the
+one below):
 
 | Block | Holder | State |
 |---|---|---|
@@ -116,7 +118,7 @@ register ([gcp-live-checklist.md](../gcp-live-checklist.md)):
   (approved 2026-10-18, to be written by P6.11), and **105–109** are **reserved and unused**
   ([mobile/README.md](../mobile/README.md): *"**105–109 reserved and unused**"*).
 - **110 is claimed by another open design** — the always-on orchestrator
-  (`docs/coordinator/README.md:52`) — and the register's own rule is that *whichever of two
+  (`docs/coordinator/README.md`, its *"Check 110"* row) — and the register's own rule is that *whichever of two
   open claims merges second renumbers itself*. **This plan does not touch 110.**
 
 So this work takes **three** numbers out of the free block after 104 — **105, 106 and 107** —
@@ -680,14 +682,28 @@ is another work's claim and is not touched.**
 | Path | The edit |
 |---|---|
 | `docs/mobile/README.md` | The index: one row for this plan in the file table, and a status sentence saying the plan exists, that it is **plan only**, that **D193 is answered** and **D194–D200 are open**, and that this work takes **D193–D200** and **checks 105–107**. The "numbers this work holds" table gains the two rows. |
-| `docs/mobile/implementation-plan.md` | **Phase 7 — PROPOSED, not approved**: the phase summary row, the five tasks with their files, dependencies, verification and reviewer tier, the level table, and the check rows. |
+| `docs/mobile/implementation-plan.md` | **Phase 7 — PROPOSED, not approved**: the phase summary row, the five tasks with their files, dependencies, verification and reviewer tier, the level table, and the check rows; a step **7b** in the approval gate; an open item; and the cross-task dependency rows. |
+| `docs/coordinator/README.md` | The **numbers table** — the one table in this repository that lists every work's block. The telemetry plan's block is registered there the way the website redesign's is, and the row that read *"**D193 onward** — free"* now reads *"**D201 onward**"*, keeping the original words visible in a dated parenthetical (D129's habit). Its checks row gains the dated note that **105, 106 and 107** were taken on 2026-10-19 and that **108 and 109** are still free. |
+| `internal/cli/docs_mobile_plan_test.go` | The Phase 6 status pin, **rescoped rather than dodged**. Its flag-word half banned `NOT APPROVED` anywhere in the plan, which was a stand-in for *"no approved phase may still claim to be unapproved"* and held only while Phase 6 was the last phase written. Phase 7 is written and genuinely unapproved, so the ban is now applied **per line** to the lines naming `Phase 6` or `P6.`, and the **converse** is asserted for Phase 7 (its heading carries `PROPOSED 2026-10-19` and `NOT APPROVED`; each `P7.n` row carries its own tag). All four mutations were run. |
+| `internal/cli/docs_coordinator_test.go` | The coordinator's block table gains the `D193–D200` entry, read from `docs/mobile/README.md` the way the redesign's is read from its own README. |
 
-**Not touched by this change:** every file under `mobile/`, `shared/`, `website/`, `internal/`
-other than the new pin, every `docs/design/` document, `docs/gcp-live-checklist.md`, the
-`docs/website/` documents, and **anything under `.github/workflows/`** — no workflow is
-written by this change and none is staged in `docs/pending-workflows/`, because **no part of
-this plan's first release needs one** (a CI job for `mobile/`'s tests would be a later,
-separately-approved change, and §10.2 says so).
+**Not touched by this change:** every file under `mobile/`, `shared/`, `website/`,
+`docs/design/`, and the `docs/website/` documents; `docs/gcp-live-checklist.md` (checks 105–107
+are **written by P7.5**, after approval, and no row or section for them exists today — the pin
+asserts that); and **anything under `.github/workflows/`** — no workflow is written by this
+change and none is staged in `docs/pending-workflows/`, because **no part of this plan's first
+release needs one** (a CI job for `mobile/`'s tests would be a later, separately-approved
+change, and §10.2 says so).
+
+**On the Go pin, against the brief's "docs only".** The brief asks for a plan and no code, and
+this change adds a **test** — `internal/cli/docs_mobile_telemetry_test.go` — as well as the two
+existing pins it has to move to register a new phase. That is a judgment call and it is stated
+here rather than hidden: this repository's convention is that a planned document is pinned by a
+Go test (over forty such pins exist, and both the mailbox plan and the push design landed with
+theirs), and a plan whose claims nothing holds is a plan whose numbers can drift silently. The
+new file asserts **nothing about an app** — every assertion is about the documents this change
+edits, the register, and the two native config files' absence. Its four mutations were run and
+are recorded in the file's own header.
 
 ---
 
