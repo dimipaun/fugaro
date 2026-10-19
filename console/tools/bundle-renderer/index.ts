@@ -481,6 +481,10 @@ export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
   // fires in both directions -- a listed file that is missing and an unlisted
   // `.css` that is present are both a build failure.
   'base.css',
+  // Task 6.4's: the per-screen rules. After this task the list is the theme
+  // directory's whole contents and stays still, which is what the two refusals
+  // above enforce from both sides.
+  'screens.css',
 ])
 
 /** StylesheetOptions is what the stylesheet step is given: the theme directory

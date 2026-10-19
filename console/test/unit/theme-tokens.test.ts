@@ -24,11 +24,12 @@
 // light set deferred), so `palette.css` declares one value set and there is no second one
 // to compare against. What replaces that case is the exact-set case below, which is the
 // same "a token cannot arrive on one side only" guarantee against the design's table, plus
-// the case under it that a light set cannot arrive silently at all. The other two cases
-// section 6.3 defers -- the `--border`-is-decorative scan of `base.css` and `screens.css`
-// (Task 6.4) and the window-background comparison against the main process's window module
-// (Task 6.5) -- are not here, because neither file exists yet and this file is in their
-// Files lists for the commit that creates them.
+// the case under it that a light set cannot arrive silently at all. Of the two cases section
+// 6.3 defers to a task that writes what they read, **the `--border`-is-decorative scan is
+// here as of Task 6.4**: it reads `base.css` and `screens.css`, which Tasks 6.3 and 6.4
+// created, so this is the first task at which both exist. The window-background comparison
+// against the main process's window module is still not here, because `backgroundColor` is a
+// key Task 6.5 adds and there is nothing to compare before then.
 //
 // The arithmetic is the WCAG 2.1 relative-luminance definition, written out the way
 // website/test/a11y.mjs writes it rather than imported from it: that file is a
@@ -49,6 +50,11 @@ import { describe, expect, it } from 'vitest'
 const THEME = fileURLToPath(new URL('../../src/renderer/theme', import.meta.url))
 const PALETTE_FILE = 'palette.css'
 const TOKENS_FILE = 'tokens.css'
+
+/** LINE_SHEETS are the two stylesheets that draw rules: `tokens.css` and `palette.css` are
+ * values and declare no border at all, so the `--border`-is-decorative scan reads these two
+ * (design §6.3 names them, and they are the files Tasks 6.3 and 6.4 wrote). */
+const LINE_SHEETS: readonly string[] = Object.freeze(['base.css', 'screens.css'])
 
 /** readTheme reads one file of the theme directory, failing by name rather than with an
  * ENOENT from somewhere further along. */
@@ -196,6 +202,99 @@ function declarations(css: string): Map<string, string> {
     out.set(name ?? '', (value ?? '').trim())
   }
   return out
+}
+
+// ---- the `--border`-is-decorative scan ------------------------------------------------
+
+/** RULE is one CSS rule's selector and body, on text whose comments are stripped. A rule
+ * inside an `@media` block is what it matches: the at-rule's own wrapper has a `{` before
+ * any `}` and so is not a match, which is exactly the behaviour wanted -- the scan is about
+ * the declarations, and every declaration in this file is inside some rule. */
+const RULE = /([^{}]+)\{([^{}]*)\}/g
+
+/** CONTROL_SELECTOR is a selector that names something the operator activates: an anchor,
+ * a button, a field, or one of the installation picker's control ids
+ * (`installations.html` styles its controls by id rather than by class, design section
+ * 2.2). A **box** drawn on one of these is the control's extent, and the token that draws
+ * an extent is `--border-strong`. The box is load-bearing: the rail's rows are buttons and
+ * the design draws the `--border` hairline *between* them (`border-bottom` on
+ * `button.console-rail-row`), which is a separator rather than an extent -- a one-sided
+ * border is a rule, and only an all-sides one is a box. */
+const CONTROL_SELECTOR =
+  /(?:^|[\s,>+~])(?:a|button|input|select|textarea)(?![\w-])|#picker-(?:add-submit|pick-[a-z]+|project)/
+
+/** BorderUse is one declaration that reads `--border`: where it is, and what it draws. */
+interface BorderUse {
+  readonly selector: string
+  readonly property: string
+  readonly value: string
+}
+
+/** borderUses is every declaration in a stylesheet whose value is `var(--border)` exactly
+ * -- not `--border-width` and not `--border-strong`, which are different tokens with
+ * different roles. */
+function borderUses(css: string, name: string): readonly BorderUse[] {
+  const out: BorderUse[] = []
+  for (const [, selector, body] of stripComments(css).matchAll(RULE)) {
+    for (const declaration of (body ?? '').split(';')) {
+      const colon = declaration.indexOf(':')
+      if (colon === -1) continue
+      const property = declaration.slice(0, colon).trim().toLowerCase()
+      const value = declaration.slice(colon + 1).trim()
+      if (!/var\(--border\)/.test(value)) continue
+      if (property === '') throw new Error(`${name}: a declaration with no property reads --border`)
+      out.push({ selector: selector ?? '', property, value })
+    }
+  }
+  return out
+}
+
+/** borderOffences is every place a stylesheet uses `--border` where the design says it may
+ * not (section 3.4's row: "not admissible as a control boundary -- 1 px hairlines only").
+ * Three clauses, and each is a different way for a decorative token to start carrying a
+ * meaning: an `outline`, which is a boundary wherever it is drawn; a width other than
+ * `--rule-width`, which is a hairline's; and a box (`border` or `border-color`) on a
+ * control, whose extent the design gives to `--border-strong`. */
+function borderOffences(files: ReadonlyMap<string, string>): string[] {
+  const offences: string[] = []
+  for (const [name, css] of files) {
+    for (const { selector, property, value } of borderUses(css, name)) {
+      const where = `${name}: ${selector.trim()} { ${property}: ${value} }`
+      if (property.startsWith('outline')) {
+        offences.push(`${where} -- an outline is a boundary, and --border is decoration`)
+      } else if (!value.includes('var(--rule-width)')) {
+        offences.push(`${where} -- --border is a 1 px hairline and its width is --rule-width`)
+      } else if ((property === 'border' || property === 'border-color') && CONTROL_SELECTOR.test(selector)) {
+        offences.push(`${where} -- a box on a control, whose extent is --border-strong`)
+      }
+    }
+  }
+  return offences
+}
+
+// ---- where `--ok` may be painted -------------------------------------------------------
+
+/** OK_SELECTORS are the only selectors a rule may paint `--ok` on. Design section 3.5
+ * rule 4 gives the tone exactly two readings -- "measured and inside the cap" and the
+ * rail's `running` row -- and forbids it decoratively (section 6.1 rule 3), so the licence
+ * is a short list and not a principle a rule can stretch: the rail's `running` state, the
+ * Live sparkline's `measured` bar, and a Projects panel the CLI could `read`. */
+const OK_SELECTORS: readonly string[] = Object.freeze([
+  "div.live-bar[data-state='measured']",
+  "section.projects-panel[data-state='read']",
+  "span.console-rail-state[data-state='running']",
+])
+
+/** okSelectors is every selector of every rule whose body paints `--ok`, in name order. A
+ * rule whose body uses the token for a `border-color` is a painted `--ok` too: the
+ * sparkline's measured bar is a rule rather than a text colour. */
+function okSelectors(css: string): readonly string[] {
+  const out: string[] = []
+  for (const [, selector, body] of stripComments(css).matchAll(RULE)) {
+    if (!/var\(--ok\)/.test(body ?? '')) continue
+    for (const one of (selector ?? '').split(',')) out.push(one.trim())
+  }
+  return out.filter((one) => one !== '').sort()
 }
 
 // ---- colour arithmetic ---------------------------------------------------------------
@@ -456,6 +555,70 @@ describe("the console's theme tokens", () => {
       const ratio = contrastRatio(parseColour(palette.get('border'), '--border'), parseColour(palette.get(surface.replace(/^--/, '')), surface))
       expect(ratio, `--border on ${surface} is ${ratio.toFixed(2)}:1`).toBeLessThan(LARGE_OR_UI)
     }
+  })
+
+  it('uses --border only as a hairline, on no control and in no outline', () => {
+    // The design's §6.3 case, and the reason it is this task's: it reads `base.css` and
+    // `screens.css` rather than `palette.css`, and both of those exist as of Task 6.4.
+    // Section 3.4 prints `--border`'s ratios below 3:1 and unbolded -- "not admissible as
+    // a control boundary, 1 px hairlines only" -- so the token's whole licence is a rule
+    // between rows, and the three clauses below are the three ways a hairline stops being
+    // one: it is drawn as an outline, it is drawn thicker than `--rule-width`, or it is
+    // drawn around something the operator activates, whose extent is `--border-strong`.
+    const sheets = new Map(LINE_SHEETS.map((name): [string, string] => [name, readTheme(name)]))
+    const uses = [...sheets].flatMap(([name, css]) => borderUses(css, name))
+    expect(
+      uses.length,
+      `${LINE_SHEETS.join(' and ')} draw no --border hairline at all, so this case is vacuous`,
+    ).toBeGreaterThan(10)
+    const offences = borderOffences(sheets)
+    expect(offences, `--border used where the design does not allow it: ${offences.join('; ')}`).toEqual([])
+
+    // And the three refusals are real, planted: a scan that refused nothing would pass the
+    // case above, and one that refused everything would pass it too. Four offences, three
+    // of them for the three clauses and the fourth a second reading of the width clause; a
+    // decorative hairline on a row is not one of them, and neither is a hairline between a
+    // control and its neighbour -- the shape the rail's own rows are drawn in.
+    const planted = [
+      'li.row { border-bottom: var(--rule-width) solid var(--border); }',
+      'button.rail-row { border-bottom: var(--rule-width) solid var(--border); }',
+      'button.go { border: var(--rule-width) solid var(--border); }',
+      '#picker-project { border: var(--border-width) solid var(--border); }',
+      '.panel { border: var(--border-width) solid var(--border); }',
+      '.panel:focus-visible { outline: 2px solid var(--border); }',
+    ].join('\n')
+    const plantedOffences = borderOffences(new Map([['planted.css', planted]]))
+    expect(plantedOffences.map((one) => one.split(' -- ')[1])).toEqual([
+      'a box on a control, whose extent is --border-strong',
+      '--border is a 1 px hairline and its width is --rule-width',
+      '--border is a 1 px hairline and its width is --rule-width',
+      'an outline is a boundary, and --border is decoration',
+    ])
+    expect(borderOffences(new Map([['clean.css', 'li.row { border-bottom: var(--rule-width) solid var(--border); }']]))).toEqual([])
+  })
+
+  it('paints --ok on the readings section 3.5 rule 4 licenses, and nowhere else', () => {
+    // The regression this keeps out is a colour that *looks* like a state and is not one:
+    // `span.run-stage-passed { color: var(--ok) }` painted a stage green, and that class
+    // holds **both** of the stage's words -- `passed` and `failed`, in one class with no
+    // attribute (design section 2.6) -- so the rule read a failed stage green. `--ok` is
+    // reserved for measured-and-inside-cap and the rail's running (section 3.5 rule 4,
+    // "never decoratively" per section 6.1 rule 3); a stage is neither reading, and no
+    // tone can be right for a class that carries two states.
+    const painted = [...LINE_SHEETS].flatMap((name) => okSelectors(readTheme(name)))
+    expect(painted, 'the scan read no --ok use at all, so this case is vacuous').not.toEqual([])
+    expect(painted.sort(), 'a rule paints --ok where section 3.5 rule 4 does not license it').toEqual(
+      [...OK_SELECTORS].sort(),
+    )
+
+    // And the clause is real: a planted state rule that is not one of the three readings is
+    // refused, which is what the case above would have said about the stage rule.
+    const planted = okSelectors('span.run-stage-passed { color: var(--ok); }')
+    expect(planted).toEqual(['span.run-stage-passed'])
+    expect(
+      planted.filter((one) => !OK_SELECTORS.includes(one)),
+      'a planted --ok use the licence list accepted',
+    ).toEqual(['span.run-stage-passed'])
   })
 
   it('separates the five state colours by hue, so no two fills rely on lightness', () => {

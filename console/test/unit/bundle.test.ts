@@ -803,17 +803,33 @@ describe('the stylesheet step', () => {
     // is the same scan on a planted tree, and it is what makes the "while
     // THEME_STYLESHEETS lists it" half of that case a claim about the scan rather
     // than about the files that happen to be in the directory today. The listed
-    // file's claim is found, and the identical claim in `screens.css` -- not on
-    // the list -- is not reported, because a file the list does not name is
-    // refused by the step and never reaches a window.
+    // files' claims are found, and the identical claim in `sketch.css` -- a name
+    // no list here carries -- is not reported, because a file the list does not
+    // name is refused by the step and never reaches a window.
+    //
+    // **Task 6.4 moved this case's unlisted file out of the theme directory.**
+    // Until then `screens.css` was the file on disk that the list did not name,
+    // which is exactly the state the step's stray-`.css` refusal exists to
+    // refuse; the task that creates the file puts it on the list, and the list is
+    // then the whole directory, so the unlisted name has to be planted like the
+    // claim is. `screens.css` keeps its place in the second half, where it is the
+    // name the scan is asked about rather than one it ignores.
     const listed = THEME_STYLESHEETS[0] ?? ''
     const claim = ' * Nothing reads this file yet. It is inert until Task 6.2 lands.\n'
-    withPlantedStylesheet({ ...themeFiles(), [listed]: `${claim}${themeFiles()[listed] ?? ''}`, 'screens.css': claim }, (options) => {
-      expect(unwiredClaimsIn(options.directory, THEME_STYLESHEETS)).toEqual([{ name: listed, claim: 'Nothing reads' }])
-      // The second direction on the same tree: the scan is over the names it is
-      // given, so `screens.css` is reported only when something asks about it.
-      expect(unwiredClaimsIn(options.directory, ['screens.css'])).toEqual([{ name: 'screens.css', claim: 'Nothing reads' }])
-    })
+    withPlantedStylesheet(
+      { ...themeFiles(), [listed]: `${claim}${themeFiles()[listed] ?? ''}`, 'screens.css': claim, 'sketch.css': claim },
+      (options) => {
+        expect(unwiredClaimsIn(options.directory, THEME_STYLESHEETS)).toEqual([
+          { name: listed, claim: 'Nothing reads' },
+          { name: 'screens.css', claim: 'Nothing reads' },
+        ])
+        // The second direction on the same tree: the scan is over the names it is
+        // given, so `sketch.css` is reported when something asks about it and not
+        // before -- and `screens.css` alone is reported alone.
+        expect(unwiredClaimsIn(options.directory, ['sketch.css'])).toEqual([{ name: 'sketch.css', claim: 'Nothing reads' }])
+        expect(unwiredClaimsIn(options.directory, ['screens.css'])).toEqual([{ name: 'screens.css', claim: 'Nothing reads' }])
+      },
+    )
   })
 
   it('puts each stylesheet on a line of its own, whether or not the file ends with one', () => {
