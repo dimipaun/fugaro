@@ -25,7 +25,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	doc := readDoc(t, path)
 	for _, want := range []string{
 		// The status line, and the rule that nothing follows the document.
-		"design only; nothing is implemented",
+		"**Status: design only; nothing is implemented.**",
 		"It does not change the CSP",
 		"no `.css` file",
 		// The sections, in order, as headings: a section that is renamed or
