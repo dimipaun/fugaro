@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **977,921 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **978,623 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **976,406 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **977,108 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -162,7 +162,7 @@ added or removed without this sentence moving fails there:
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 976,349 with the flag off to 977,921 with it on:
+    moves the **site figure up by 1,572 bytes**, from 977,051 with the flag off to 978,623 with it on:
     the console option's own markup on the three pages that render it — the console page's
     downloads section (each artifact's checksum beside its link, and the verification command)
     1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
@@ -249,6 +249,12 @@ added or removed without this sentence moving fails there:
     downloads section, Getting Started's console option and the hero's link to the console.
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
+  - **The homepage's prompt line** (the owner's brief of 2026-10-19, item 1) moved the site
+    figure alone, 977,921 → **978,623**, by **702 bytes**: the request the hero renders under
+    the headline, the `>` mark in front of it and the two rules that draw it as the chat's own
+    bubble — the homepage's inline stylesheet and its HTML. Nothing outside the homepage moved,
+    because the three files that changed all render on that one page, so the page weight and
+    the script stand where they stood.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -276,7 +282,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,667,206 bytes. Three times 1,222,402 (every file in `dist/`, 977,921
+  - **Whole site:** 3,669,837 bytes. Three times 1,223,279 (every file in `dist/`, 978,623
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -296,8 +302,9 @@ added or removed without this sentence moving fails there:
     commands and its chat between the hero and the flow's first step heading, they were 24
     words from that container and 134 from the plan's region, and the stricter one is the
     one enforced). On the homepage today the first `h2` is the chat's own *Through your
-    agent* — the chat is the first block under the promise — and the region is the promise
-    and its two calls to action: 14 words. A page that carries blocks between its `h1` and
+    agent* — the chat is the first block under the promise — and the region is the request
+    the hero renders under the headline, the promise and its two calls to action: 23 words. A
+    page that carries blocks between its `h1` and
     its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
     is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
     with no `h2` at all has no such region, and its lead is the paragraphs that follow its

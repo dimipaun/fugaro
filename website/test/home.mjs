@@ -611,6 +611,59 @@ test("the hero's subline is README.md's subline, byte for byte", () => {
   )
 })
 
+/**
+ * The hero's prompt line, as the two facts about it this file reads: what it says, with the
+ * prompt mark the page hides from a screen reader taken out (a reader reads the request, not
+ * the mark in front of it), and the document its `data-source` cites. `null` when the hero
+ * renders none, which is the failure the case below reports rather than an error here.
+ */
+function heroPrompt(page) {
+  const hero = findAll(parse(page), (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'))[0]
+  assert.ok(hero, "the homepage has no hero section, and the prompt line is the hero's own (the owner's brief of 2026-10-19, item 1)")
+  const prompt = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-prompt'))
+  return prompt === undefined
+    ? null
+    : { text: decode(readableText(prompt)).replace(/\s+/g, ' ').trim(), source: prompt.attrs.get('data-source') ?? '' }
+}
+
+test("the hero's prompt line is the request, and the chat's first turn is the same sentence", () => {
+  // The owner's brief of 2026-10-19, item 1: the home page has to say, in as few words as
+  // possible, that a reader drives Fugaro through the coding agent they already have, and the
+  // fewest words are the request — "Maybe just the `> Fan out these three bug fixes.`". Two
+  // facts are read off the built page, and the second is what makes the line a quotation
+  // rather than copy: it is a line of the document its `data-source` cites (Global Constraint
+  // 6, D102 — a page renders a fact and never restates one), and it is the same sentence the
+  // chat's first turn speaks, which is the one place the page shows what happens to it. The
+  // two renderings read one string (`src/lib/agent-request.mjs`), and this case is what holds
+  // the artifact to that: a hero that typed its own version of the request would show the
+  // reader asking for one thing and the agent answering about another.
+  const page = builtPage('')
+  const prompt = heroPrompt(page)
+  assert.ok(prompt, "the hero renders no prompt line, and the owner's brief of 2026-10-19 (item 1) puts the request under the headline as what the page is about")
+  assert.ok(prompt.text, "the hero's prompt line is empty: the page's whole statement about how a reader drives Fugaro is that line (the owner's brief of 2026-10-19, item 1)")
+  assert.ok(
+    prompt.source,
+    "the hero's prompt line cites no document, and every line on the site says which document it is quoted from (Global Constraint 6)",
+  )
+  assert.ok(
+    normalize(repoFile(prompt.source)).includes(normalize(prompt.text)),
+    `the hero's prompt line ${JSON.stringify(prompt.text)} is not a line of ${prompt.source}: the line is the repository's own example of a request, not a sentence written for the page (changes spec 2026-10-18, item 3; Global Constraint 6)`,
+  )
+
+  const turns = chat(page)
+  assert.ok(turns.length > 0, 'the homepage renders no chat, and the hero\'s prompt line is the chat\'s own first turn (changes spec 2026-10-18, item 3)')
+  assert.equal(
+    prompt.text,
+    turns[0].line,
+    `the hero's prompt line reads ${JSON.stringify(prompt.text)} and the chat's first turn reads ${JSON.stringify(turns[0].line)}: they are one sentence, so the reader is not shown one request under the headline and a different one in the conversation (the owner's brief of 2026-10-19, item 1)`,
+  )
+  assert.equal(
+    prompt.source,
+    turns[0].source,
+    `the hero's prompt line cites ${JSON.stringify(prompt.source)} and the chat's first turn cites ${JSON.stringify(turns[0].source)}: one sentence is quoted from one document, and two citations would be two places to keep in step`,
+  )
+})
+
 test('a README whose promise is markdown structure stops the build, naming the file', (t) => {
   // `website/src/content.ts` reads the two lines **positionally** — the first two non-empty
   // lines under the title — so a README that reorganises its opening is the way the read is
