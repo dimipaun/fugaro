@@ -715,8 +715,9 @@ The follow-up run of 2026-10-19 was handed what the review was said to have left
 open against #666: a degraded feed folded into `broken`, the degraded document's
 `project` and `notice` discarded, and `LIST_CODES.BAD_NOW` declared and produced
 nowhere. **Each was read against the merged code before anything was changed,
-and all three were already held there** -- the merge carries the three commits
-that closed them, and the tests that close them are the three rows above. A
+and all three were already held there** -- the merge carries the commit that
+closed them (`mobile: a degraded read is its own state, and BAD_NOW is gone`),
+and the tests that hold them are the rows above. A
 finding whose guard is in the tree is dismissed rather than re-fixed to look
 like work, so this round changed no production file and no test.
 
