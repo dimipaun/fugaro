@@ -165,18 +165,28 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 	if len(seen) == 0 {
 		fmt.Fprintln(out, "  (none: no run of any repository has been recorded here)")
 	}
-	for _, r := range seen {
-		// The name is printed through the bounded printable form, and so is
-		// the copy the note's remedy carries (notAdmittedSentence applies it
-		// itself): every value on this list was written by a run, not by this
-		// program — a runs/<slug>/ prefix is a directory name in the runs
-		// bucket and spendDaily's slug is a field of a document the rollup
-		// writes, and neither path checks the shape of the name. Raw, an
-		// escape sequence in one rewrites the operator's screen, a newline
-		// adds a line that reads as another entry, and a long one pushes the
-		// note off the column. The admission question above is asked of the
-		// name itself; only what is printed is bounded.
-		fmt.Fprintf(out, "  %s%s\n", safetext.Field(r.Name), seenNote(r, projectpolicy.AdmitRepo(p.AllowRepos, r.Name)))
+	// The listing is bounded twice, and both bounds are needed. One entry is
+	// printableName (bounded to one inert line, and distinct from every other
+	// name, so the entry the allow-list refuses cannot print as the one it
+	// admits): every value on this list was written by a run, not by this
+	// program — a runs/<slug>/ prefix is a directory name in the runs bucket
+	// and spendDaily's slug is a field of a document the rollup writes, and
+	// neither path checks the shape of the name. Raw, an escape sequence in
+	// one rewrites the operator's screen, a newline adds a line that reads as
+	// another entry, and a long one pushes the note off the column. And the
+	// count is bounded (safetext.FieldListMax) because the list is as long as
+	// whoever wrote those names made it: a listing that grew with its input
+	// would push this command's own words — the header, the sources, the way
+	// to enroll — off the screen. What is left out is counted in this
+	// program's own words (safetext.FieldListNote), so a listing that stopped
+	// at twenty does not read as a list of twenty. The admission question
+	// above is asked of the name itself; only what is printed is bounded.
+	for i, r := range seen {
+		if i == safetext.FieldListMax {
+			fmt.Fprintf(out, "  (%s)\n", safetext.FieldListNote(len(seen)-i))
+			break
+		}
+		fmt.Fprintf(out, "  %s%s\n", printableName(r.Name), seenNote(r, projectpolicy.AdmitRepo(p.AllowRepos, r.Name)))
 	}
 	return nil
 }

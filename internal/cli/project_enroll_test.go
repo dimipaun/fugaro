@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -720,11 +722,11 @@ func TestProjectReposLsPrintsSeenNamesBoundedAndInert(t *testing.T) {
 	if entries != 2 {
 		t.Errorf("the seen half holds %d lines after the header, want one per repository (2): a run-written name added one:\n%s", entries, seen)
 	}
-	bounded := safetext.Field(hostileSeenName)
+	bounded := printableName(hostileSeenName)
 	if !strings.Contains(seen, bounded) {
 		t.Errorf("the seen name is not printed in its bounded form;\nwant a line holding:\n%s\ngot:\n%s", bounded, seen)
 	}
-	if !strings.Contains(seen, safetext.Field(longSeenName)) {
+	if !strings.Contains(seen, printableName(longSeenName)) {
 		t.Errorf("the over-long seen name is not printed in its bounded form: four times the cap came back unbounded")
 	}
 	// The note is printed on the entry's own line, and neither copy of the
@@ -736,6 +738,124 @@ func TestProjectReposLsPrintsSeenNamesBoundedAndInert(t *testing.T) {
 		t.Errorf("the seen entry no longer says the allow-list refuses it:\n%s", seen)
 	}
 	assertBoundedAndInert(t, "`project repos ls`", out)
+}
+
+// TestProjectReposLsPrintsALookalikeDistinctly: bounding a name must not make
+// two different names one line. safetext.Field drops what Strip drops, bidi
+// controls and zero-width characters among them, so a run that writes the name
+// "x⁦y⁩" (U+2066 and U+2069 between the letters) and a run of the repository
+// "xy" printed through Field alone would be two entries the operator reads as
+// one — and they are not the same entry: the allow-list refuses one of them
+// and admits the other. A name Field would change is printed through
+// pluginwire.PrintableN, which escapes the character instead of dropping it,
+// so the pair reads as two.
+//
+// Mutation (verified, run and restored): return safetext.Field(s) from
+// printableName in every case — this test fails, both entries printed as
+// "xy".
+func TestProjectReposLsPrintsALookalikeDistinctly(t *testing.T) {
+	f := newSeenFixture(t)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	// One name carrying the format characters, one plain name of the same
+	// letters. Neither is a repository this machine's config names, so both are
+	// listed as seen and both are refused — but they are two entries, and the
+	// listing has to read as two.
+	// Written as runes so the source stays plain text: the two format
+	// characters are what a run writes into a name, not what this file holds.
+	lookalike := "x" + string(rune(0x2066)) + "y" + string(rune(0x2069))
+	const plain = "xy"
+	putRun(t, f.dir, lookalike)
+	putRun(t, f.dir, plain)
+
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	_, seen, ok := strings.Cut(out, "repositories seen here")
+	if !ok {
+		t.Fatalf("the listing does not print the seen half:\n%s", out)
+	}
+	var lines []string
+	for _, line := range strings.Split(seen, "\n")[1:] {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 2 {
+		t.Fatalf("the seen half holds %d entries, want 2:\n%s", len(lines), seen)
+	}
+	// The name each line is about is what this compares: the notes differ on
+	// their own (a name of the slug alphabet is told it is a slug), so the
+	// whole line is not the unit — the entry's own cell is.
+	nameOf := func(line string) string {
+		if i := strings.Index(line, "  ("); i >= 0 {
+			return strings.TrimSpace(line[:i])
+		}
+		return strings.TrimSpace(line)
+	}
+	if got0, got1 := nameOf(lines[0]), nameOf(lines[1]); got0 == got1 {
+		t.Errorf("two different run-written names are printed as one, so the operator cannot tell the entry the allow-list refuses from the one it admits: %q", got0)
+	}
+	// The lookalike reads as what it is: the format characters are escaped,
+	// never dropped.
+	if !strings.Contains(seen, pluginwire.PrintableN(lookalike, safetext.FieldMax)) {
+		t.Errorf("the name carrying format characters is not printed with them escaped, so it reads as a different name:\n%s", seen)
+	}
+	if line := listLine(t, seen, plain); strings.Contains(line, `\u`) {
+		t.Errorf("a plain name is printed escaped: %s", line)
+	}
+	assertBoundedAndInert(t, "`project repos ls`", out)
+}
+
+// TestProjectReposLsBoundsHowManyNamesItLists: the seen list is as long as
+// whoever wrote the names made it — a run's grant lets it write runs/<slug>/
+// prefixes (the bucket holds an object key, which no 255-byte component limit
+// applies to) — and this listing is the one that tells an operator what to
+// enroll. Unbounded, a run that wrote a thousand prefixes would push this
+// command's own words off the screen: the header, the sources, and the fact
+// that what they are reading is a listing of what has run here. It stops at
+// safetext.FieldListMax entries and counts the rest in this program's own
+// words (safetext.FieldListNote), so a listing that stopped at twenty does not
+// read as a list of twenty.
+//
+// Mutation (verified, run and restored): drop the FieldListMax break (print
+// every entry) — this test fails, 25 entry lines and no count.
+func TestProjectReposLsBoundsHowManyNamesItLists(t *testing.T) {
+	f := newSeenFixture(t)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	const total = safetext.FieldListMax + 5
+	for i := 0; i < total; i++ {
+		putRun(t, f.dir, fmt.Sprintf("ghost-%02d", i))
+	}
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	_, seen, ok := strings.Cut(out, "repositories seen here")
+	if !ok {
+		t.Fatalf("the listing does not print the seen half:\n%s", out)
+	}
+	entries := 0
+	for _, line := range strings.Split(seen, "\n")[1:] {
+		if strings.TrimSpace(line) != "" {
+			entries++
+		}
+	}
+	// The entries, the count of what is left out, and nothing else.
+	if entries != safetext.FieldListMax+1 {
+		t.Errorf("the seen half holds %d lines after the header, want %d entries and the count of the rest:\n%s", entries, safetext.FieldListMax+1, seen)
+	}
+	if note := safetext.FieldListNote(total - safetext.FieldListMax); !strings.Contains(seen, note) {
+		t.Errorf("the listing does not count the entries it left out (%q):\n%s", note, seen)
+	}
 }
 
 // TestProjectShowRunningNamesBoundedAndInert: `project show`'s running list is
@@ -802,7 +922,7 @@ func assertBoundedJSONName(t *testing.T, what, got string) {
 	if got == "" {
 		t.Errorf("%s carries an empty repository name", what)
 	}
-	if len([]rune(got)) > safetext.FieldMax || got != strings.Join(strings.Fields(got), " ") {
+	if len([]rune(got)) > printableNameMax || got != strings.Join(strings.Fields(got), " ") {
 		t.Errorf("%s carries %q, which is not the bounded printable form", what, got)
 	}
 	for _, r := range got {

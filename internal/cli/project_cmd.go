@@ -1647,7 +1647,7 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	// it stands — budget.Key's percent-escapes of it, which leave a bidi
 	// override, a C1 control, a zero-width character and the length of the name
 	// alone. Both forms of this command print them (the table and the --json
-	// document), so both carry the bounded printable form (safetext.Field), and
+	// document), so both carry the bounded printable form (printableName), and
 	// both carry the same value: a table and a document that mirror each other
 	// must not disagree. The raw names stay in `running`, which is what
 	// admission is asked of and what the pair of lists is computed on.
@@ -1676,7 +1676,7 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 		}
 		if !projectpolicy.AdmitRepo(p.AllowRepos, r) {
 			notAdmitted[r] = true
-			doc.RunningNotEnrolled = append(doc.RunningNotEnrolled, safetext.Field(r))
+			doc.RunningNotEnrolled = append(doc.RunningNotEnrolled, printableName(r))
 		}
 	}
 	for _, r := range doc.AllowRepos {
@@ -1902,7 +1902,7 @@ func runningRepos(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) ([]
 }
 
 // boundedNames is a list of run-written names as this program prints them:
-// each one through safetext.Field, in the same order, so a table line and the
+// each one through printableName, in the same order, so a table line and the
 // --json document that mirror each other carry the same value. The raw list
 // stays the one matching and admission are asked of (AdmitRepo, MatchRepo,
 // entryHasARun): a name is compared as the run wrote it, and only what is
@@ -1910,10 +1910,55 @@ func runningRepos(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) ([]
 func boundedNames(names []string) []string {
 	out := make([]string, 0, len(names))
 	for _, n := range names {
-		out = append(out, safetext.Field(n))
+		out = append(out, printableName(n))
 	}
 	return out
 }
+
+// printableName is one run-written name as every listing of this package
+// prints it: bounded to one inert line (safetext.Field's job), and still
+// distinct from every other name.
+//
+// Field is the first half and not the second. It drops what Strip drops —
+// bidi controls, zero-width and other format characters, invalid UTF-8 — so a
+// name carrying U+2066 and U+2069 between its letters and a plain name of the
+// same letters without them print as one and the same line. An operator reads
+// that line as the entry of whichever of the two they have in mind, and the
+// two are not the same entry: one is admitted by the allow-list and the other
+// is refused. A name Field would change is therefore printed through
+// pluginwire.PrintableN, which escapes each of those characters as \uXXXX
+// instead of dropping it and cuts at the same bound (safetext.FieldMax), so a
+// name reads as what it is — and the same choice the CLI makes for a policy
+// node's unknown keys (unknownPolicyKeysText), whose provenance this shares.
+//
+// What is escaped is inert either way: Printable escapes every control and
+// format character, so the result is still one line no terminal acts on. It
+// reaches no command: the advisory this package builds is enrollableArg's,
+// which returns only a value over the repository alphabet.
+//
+// Its length bound is printableNameMax, not FieldMax: the escaped form grows
+// (one character becomes six) and PrintableN cuts the *result* at FieldMax
+// runes before appending its own marker. The bound is the same order as
+// Field's and is what the listings' line bound is built on (seenLineMaxRunes).
+//
+// The one reading it does not separate is a name that literally spells an
+// escape ("x⁦y" typed as nine ASCII characters), which Field leaves
+// alone and so prints exactly as the escaped form of a name carrying the
+// character. Real repository identifiers cannot carry a backslash at all, and
+// a name that spells one is not a repository identifier either, so neither
+// reaches a command, and telling them apart would cost the ordinary name its
+// plain form.
+func printableName(s string) string {
+	if f := safetext.Field(s); f == s {
+		return f
+	}
+	return pluginwire.PrintableN(s, safetext.FieldMax)
+}
+
+// printableNameMax is the most runes printableName returns: pluginwire
+// .PrintableN keeps safetext.FieldMax runes of the name and then appends its
+// own truncation marker, which is this constant's second term.
+const printableNameMax = safetext.FieldMax + len("... (truncated)")
 
 // allowSources says where each entry of the published allow-list came from,
 // for `project show`. It is the same seed the publisher would compute, so an
