@@ -164,11 +164,10 @@ package cli
 //	  paste a second copy of that row in -> fails, naming both lines: an anchor
 //	  that names two lines is a citation two readers would follow to different
 //	  places, which is what choosing one has to make impossible;
-//	  put the checks row's old claim back -- 70–79 "unused and deliberately not
-//	  taken" -> fails: 70 is inside that range and the register writes `## Check
-//	  70a`, so the range rule rejects it. This is the defect this round fixed;
-//	  write 71–79 as 70–79 in the row -> fails: the row no longer says of 71–79
-//	  that it is inside the website work's held range;
+//	  put a line number back on a citation in the numbers section
+//	  (`docs/mobile/README.md:25` for D1–D20) -> fails: the section's citation
+//	  matcher reads the path and the line spec together, and the block's own
+//	  citation is the one that carries the number;
 //	  drop 70a–70c from the row -> fails: the row no longer names a block the
 //	  register allocates, and the block's own document is named by no pin;
 //	  drop the credentials-service citation after 90–99 -> fails: the citation
@@ -212,7 +211,12 @@ package cli
 //	  every one of these in;
 //	  delete the two `docs/mobile/spec.md` anchors -> fails on every citation of
 //	  that document, which is what makes the table complete rather than a
-//	  reading of the entries somebody remembered to write.
+//	  reading of the entries somebody remembered to write;
+//	  add a second citation of a document that already has an anchor (a new
+//	  sentence citing `docs/design/v1.md` beside the four there) -> fails,
+//	  naming the citation count and the anchor count: one anchor holds one
+//	  citation, and a claim added against an already-anchored document is
+//	  exactly what a check comparing documents rather than citations passes.
 //	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
 //	  delete Q9 -> fails on every question after it;
 //	  leave Q12 with one option -> fails;
@@ -234,10 +238,10 @@ package cli
 // The same change in the reconciliation's citations is not counted either, and
 // for the same reason: insert a paragraph above every anchor in
 // `docs/design/v1.md` and TestDocsCoordinatorFrequentCitationsAreAnchoredByContent
-// still passes. That is what those 21 line numbers could not do -- the
-// reconciliation already says so of one of them, in its own words at the Claude
-// price table, where it cites a function by symbol because "a line range here
-// was already wrong once".
+// still passes. That is what the 21 citations into those two trees that carried a line number --
+// 20 full paths holding 22 numbers between them, and the relative `:33` beside them -- could not
+// do: the reconciliation already says so of one of them, in its own words at the Claude price
+// table, where it cites a function by symbol because "a line range here was already wrong once".
 //
 // The numbers above are a reading of the document at the commit that last
 // edited this comment, not a constant, and they have gone stale every time the
@@ -1129,13 +1133,12 @@ func coordinatorCheckRelativeRef(t *testing.T, doc string, at int, ref, spec, sy
 	return true
 }
 
-// coordinatorChecklist, coordinatorMobileReadme, coordinatorMobilePlan and
-// coordinatorCredentialsReadme are the documents the README's numbers table reads other works'
-// numbers from: the register itself, and the three documents the register does not reach.
+// coordinatorChecklist, coordinatorMobileReadme and coordinatorCredentialsReadme are the
+// documents the README's numbers table reads other works' numbers from: the register itself, and
+// the two documents the register does not reach.
 const (
 	coordinatorChecklist         = "docs/gcp-live-checklist.md"
 	coordinatorMobileReadme      = "docs/mobile/README.md"
-	coordinatorMobilePlan        = "docs/mobile/implementation-plan.md"
 	coordinatorCredentialsReadme = "docs/credentials-service/README.md"
 )
 
@@ -1224,9 +1227,13 @@ var coordinatorCheckBlocks = []coordinatorNumberBlock{
 }
 
 // coordinatorSectionCitationRE finds the citations the numbers section makes: a backticked
-// repository document. It is path-only, and deliberately: the section used to carry line numbers
-// here, and they are what this test's anchors replaced.
-var coordinatorSectionCitationRE = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.md)`")
+// repository document, with the line spec it may carry as a second group. The section used to
+// carry line numbers here, and they are what this test's anchors replaced -- so the line spec is
+// read and refused rather than left unmatched. It was left unmatched once, by a regexp that
+// required the closing backtick straight after `.md`: a `path:line` token in this section matched
+// nothing, so the block's citation was silently attributed to the next block's, and a line number
+// could be put back with every test green.
+var coordinatorSectionCitationRE = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.md)(:[0-9]+(?:[-,+][0-9]*)*)?`")
 
 // coordinatorSectionProseCitations are the section's citations that are not block citations: the
 // documents the note and the Check 110 row name in prose. They are listed rather than ignored,
@@ -1390,6 +1397,18 @@ func TestDocsCoordinatorNumbersTableIsReadFromItsSources(t *testing.T) {
 	prose := map[string]bool{}
 	for _, m := range cites {
 		doc := section[m[2]:m[3]]
+		// The line spec, which this section must not carry any more: every citation in it is
+		// by content, and a number here is the check this round removed. It is reported
+		// before the path is looked at, because the same token would otherwise be read as a
+		// clean citation of the document and the number would go unmentioned -- which is
+		// what happened while the matcher required the backtick straight after `.md`: the
+		// token matched nothing, the block's citation fell through to the next block's, and
+		// the line number was checked by nothing at all.
+		if m[4] >= 0 {
+			t.Errorf("%s's numbers section cites %s at %s: every citation in it is by content now, and a line number is the brittle citation this round removed -- the anchor in the tables above is what holds the claim, and it needs no number",
+				coordinatorReadme, doc, section[m[4]:m[5]])
+			continue
+		}
 		if claimed[doc] {
 			continue
 		}
@@ -1555,24 +1574,35 @@ type coordinatorContentAnchor struct {
 	anchor string // the text of the one line in doc that carries the claim
 }
 
-// coordinatorContentAnchors are those citations, one entry per claim. Every document the
-// reconciliation cites under either tree has at least one entry here, and the test below fails
-// when one does not: an anchored citation with no anchor behind it is the state the line numbers
-// left these citations in, where the only thing checked was that some line existed.
+// coordinatorContentAnchors are those citations: ONE ENTRY PER CITATION, in the order the
+// citations appear in reconciliation.md, and a document cited three times therefore appears three
+// times. That is deliberate, and it is the difference between this table and a list of documents:
+// the claim is that every citation into either tree is held, and a document cited four times with
+// one anchor behind it is one citation held and three that are not. The test below compares the
+// two counts per document, so a claim added against a document that already has an anchor fails
+// until it has one of its own -- which is the case a document-level check would let through.
 var coordinatorContentAnchors = []coordinatorContentAnchor{
 	{"docs/design/v1.md", "a Fugaro project, the spec's §2/§4 unit", "**Fugaro project** (the word users see)"},
 	{"docs/design/v1.md", "the installation, the same object named from the cloud side", "**Installation.** The project's cloud-side setup"},
-	{"docs/design/desktop-console-v2.md", "v2's status: nothing in it is approved or built", "**Nothing in v2 is approved or built**"},
-	{"docs/design/desktop-console-v2.md", "D22, the one write: launch", "| **D22** | Does v2's first slice contain any write at all?"},
-	{"docs/design/desktop-console.md", "D2: v1 is strictly read-only", "| **D2** | Is v1 strictly read-only, with kill/resume/cancel deferred?"},
-	{"docs/design/desktop-console-spec-v2.md", "the orchestrator, one per thread of work", "- Multiple orchestrators: typically one per thread of work"},
 	{"docs/design/m10-multi-model.md", "the model config is per slot, not per tier", "`agent.models.coder|reviewer|background`, `agent.model`, `budget.allowed_models`"},
+	{"docs/design/desktop-console-v2.md", "D22, the one write: launch", "| **D22** | Does v2's first slice contain any write at all?"},
+	{"docs/design/v1.md", "a Fugaro project, the definition finding #1 reads", "**Fugaro project** (the word users see)"},
+	{"docs/design/desktop-console-v2.md", "v2's status: nothing in it is approved or built", "**Nothing in v2 is approved or built**"},
+	{"docs/design/m10-multi-model.md", "the model config is per slot, not per tier, in finding #23", "`agent.models.coder|reviewer|background`, `agent.model`, `budget.allowed_models`"},
 	{"docs/design/provider-price-catalog.md", "the catalog's own design admits `cheapest` can undercharge", "**`cheapest` can undercharge, and this design says so plainly rather than hiding it.**"},
+	{"docs/design/desktop-console.md", "D2: v1 is strictly read-only", "| **D2** | Is v1 strictly read-only, with kill/resume/cancel deferred?"},
+	{"docs/design/desktop-console-v2.md", "D22 again, for the console's one write", "| **D22** | Does v2's first slice contain any write at all?"},
+	{"docs/design/desktop-console.md", "§5.1 rule 7: job-written text is text, never markup", "7. **Job-written text is text.**"},
 	{"docs/mobile/reconciliation.md", "mobile D115, phase 2 hosting", "| **D115** | **Phase 2 hosting: who holds the model credential?**"},
 	{"docs/mobile/implementation-plan.md", "P5.1, the always-on orchestrator, and its state", "### Task P5.1: Phase 2 hosting"},
-	{"docs/mobile/implementation-plan.md", "P5.4, the conversational front agent", "### Task P5.4: The conversational front agent"},
+	{"docs/mobile/reconciliation.md", "mobile D111, what the app may hold", "| **D111** | **What may the app hold?**"},
+	{"docs/mobile/reconciliation.md", "mobile D115 again, for Q13's refusal", "| **D115** | **Phase 2 hosting: who holds the model credential?**"},
+	{"docs/design/v1.md", "a Fugaro project, the glossary's unit", "**Fugaro project** (the word users see)"},
+	{"docs/design/v1.md", "the installation, the glossary's cloud-side name for it", "**Installation.** The project's cloud-side setup"},
+	{"docs/design/desktop-console-spec-v2.md", "the orchestrator, one per thread of work", "- Multiple orchestrators: typically one per thread of work"},
 	{"docs/mobile/spec.md", "phase 1: the orchestrator on the owner's laptop", "- Phase 1: orchestrator runs on the owner's laptop"},
 	{"docs/mobile/spec.md", "phase 2: the orchestrator moves to an always-on service", "- Phase 2: orchestrator moves to an always-on cloud service"},
+	{"docs/mobile/implementation-plan.md", "P5.4, the conversational front agent", "### Task P5.4: The conversational front agent"},
 	{"docs/mobile/spec.md", "the summarising agent beside the orchestrator", "- **Summarising agent** sits beside the orchestrator"},
 }
 
@@ -1589,9 +1619,11 @@ var coordinatorContentAnchors = []coordinatorContentAnchor{
 //
 //   - no citation under `docs/design/` or `docs/mobile/` carries a line number, so a later edit
 //     cannot put one back and get the old, silently-rotting check;
-//   - every document cited under either tree is named by at least one anchor in the table above,
-//     and each anchor is carried by exactly one line of its document, so the claim and the line
-//     behind it are the same fact and a document that stops making the claim fails.
+//   - every citation under either tree is named by one entry in the table above, counted per
+//     document, and each anchor is carried by exactly one line of its document -- so the claim
+//     and the line behind it are the same fact, a document that stops making the claim fails,
+//     and a claim added against a document that already has an anchor fails until it has one of
+//     its own.
 //
 // The line each anchor lands on is logged rather than written down, which is the whole
 // difference between this and the numbers it replaced: a citation that names the sentence it
@@ -1614,10 +1646,13 @@ func TestDocsCoordinatorFrequentCitationsAreAnchoredByContent(t *testing.T) {
 			coordinatorReconciled, path, spec)
 	}
 
-	// Then the anchors, and then the two censuses that keep the table honest: a cited document
-	// with no anchor is unchecked, and an anchor for a document nothing cites is a pin that has
-	// outlived the claim it was written for.
-	cited := map[string]bool{}
+	// Then the anchors, and then the two censuses that keep the table honest: a citation with no
+	// entry behind it is unchecked, and an entry with no citation left is a pin that has outlived
+	// the claim it was written for. Both are counted rather than listed, because the claim is
+	// that every CITATION is held: a document cited three times with one entry behind it would
+	// pass a check that compared documents, and two of its three citations would be read by
+	// nothing.
+	citations := map[string]int{}
 	for _, m := range matches {
 		if !coordinatorContentAnchored(m[1]) {
 			continue
@@ -1625,33 +1660,47 @@ func TestDocsCoordinatorFrequentCitationsAreAnchoredByContent(t *testing.T) {
 		if _, excused := coordinatorCitationExceptions[m[1]]; excused {
 			continue
 		}
-		cited[m[1]] = true
+		citations[m[1]]++
 	}
-	if len(cited) == 0 {
+	if len(citations) == 0 {
 		t.Fatalf("%s cites no document under %s: this test would otherwise check nothing",
 			coordinatorReconciled, strings.Join(coordinatorContentAnchoredDirs, " or "))
 	}
-	anchored := map[string]bool{}
+	anchors := map[string]int{}
 	for _, a := range coordinatorContentAnchors {
-		anchored[a.doc] = true
+		anchors[a.doc]++
 		if _, at, ok := coordinatorAnchorLine(t, a.doc, a.anchor, a.claim); ok {
 			t.Logf("%s: %s is at line %d", a.doc, a.claim, at)
 		}
 	}
-	for path := range cited {
-		if !anchored[path] {
-			t.Errorf("%s cites %s by content, and no anchor in coordinatorContentAnchors is read from it: the citation names a document and no longer says where in it, so nothing holds it to the sentence it means",
-				coordinatorReconciled, path)
+	for path, cited := range citations {
+		switch held := anchors[path]; {
+		case held == 0:
+			t.Errorf("%s cites %s (%s) by content, and no anchor in coordinatorContentAnchors is read from it: the citation names a document and no longer says where in it, so nothing holds it to the sentence it means",
+				coordinatorReconciled, path, coordinatorCount(cited, "citation", "citations"))
+		case held < cited:
+			t.Errorf("%s cites %s (%s) by content and coordinatorContentAnchors holds %s for it: one anchor holds one citation, and a citation with none behind it is read by nothing -- which is what a check comparing documents rather than citations would pass",
+				coordinatorReconciled, path, coordinatorCount(cited, "citation", "citations"), coordinatorCount(held, "anchor", "anchors"))
+		case held > cited:
+			t.Errorf("coordinatorContentAnchors holds %s in %s, and %s cites it (%s): delete the entries no citation is left for, or the next citation that lands on that document is checked against a claim that document has stopped making",
+				coordinatorCount(held, "anchor", "anchors"), path, coordinatorReconciled, coordinatorCount(cited, "citation", "citations"))
 		}
 	}
-	for path := range anchored {
-		if !cited[path] {
-			t.Errorf("coordinatorContentAnchors holds an anchor in %s, and %s no longer cites it: delete the entry, or the next citation that lands on that document is checked against a claim that document has stopped making",
-				path, coordinatorReconciled)
-		}
+	total := 0
+	for _, held := range anchors {
+		total += held
 	}
-	t.Logf("%s: %d documents cited under %s held by %d content anchors, none of them by a line number",
-		coordinatorReconciled, len(anchored), strings.Join(coordinatorContentAnchoredDirs, " and "), len(coordinatorContentAnchors))
+	t.Logf("%s: %d citations under %s held by %d content anchors, none of them by a line number",
+		coordinatorReconciled, total, strings.Join(coordinatorContentAnchoredDirs, " and "), len(coordinatorContentAnchors))
+}
+
+// coordinatorCount writes a count with its noun, so that a failure reads "three citations" and
+// "one anchor" rather than a bare number a reader has to work out the subject of.
+func coordinatorCount(n int, one, many string) string {
+	if n == 1 {
+		return "one " + one
+	}
+	return strconv.Itoa(n) + " " + many
 }
 
 // coordinatorLineNumbers reads the line numbers out of a spec that
