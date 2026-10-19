@@ -18,6 +18,7 @@
 | 3 | `internal/watch/source.go` (the degradation phases), `internal/cli/runs.go` (`lsDoc`), `docs/design/watch-queued.md` §6 |
 | 4 | `docs/release.md` (one tag releases everything; `scripts/release-gate.sh`; the cask), `.goreleaser.yaml`, `.github/workflows/{ci,images,release}.yml`, `docs/pending-workflows/README.md`, `.github/dependabot.yml` |
 | 5 | everything above |
+| 6 (styling, **UNAPPROVED**) | `console/src/main/protocol.ts` (`SERVED_FILES`, `mediaTypeFor`), `console/tools/bundle-renderer/index.ts`, `console/src/renderer/{index,installations,refusal}.html`, `console/src/renderer/entry.ts` (`CONSOLE_THEME`, the nav), the four screens' class and `data-*` vocabulary, `console/test/unit/{bundle,csp-document,build-files,screen-literals}.test.ts`, `website/src/styles/{tokens,palette-logo}.css` |
 
 **Releases.** The console is **its own artifact published from the CLI's own `vX.Y.Z` tag** (design D11): one release train, one gate (`scripts/release-gate.sh`), one Highlights section — which is what `docs/release.md`'s "one tag releases everything" means once a second deliverable exists. Its first shippable version is whatever release carries phase 4. **This changes one thing in this repo's release path and the plan says it plainly: until now every signature here has been keyless cosign over GitHub OIDC, and the console's Apple signing would be the first private key the repo has ever held** (`docs/release.md`: the checksums are signed, the binaries are not Apple-signed, and the Homebrew cask papers over Gatekeeper with an `xattr -dr com.apple.quarantine` postflight hook). Every step that touches that key is owner-run (Tasks 4.3 and 4.5 and Check 59), and no agent-run step in this plan or any other produces, stores, reads or transmits it.
 
@@ -31,6 +32,7 @@
 | **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)**; **the renderer entry — the preload, the handlers and the installation picker (Task 3.4, approved by the owner 2026-10-18; 3.4a implemented)** | nothing required (3.4's header and picker goldens are optional and owner-run) | phase 2 |
 | **4. macOS packaging** | the builder config and entitlements; the staged signing/notarisation workflow (a file of its own, tag-only); the update feed; **Checks 59a and 59b** | **all of it**: the certificate, the API key, the first signed build, the update round trip (Check 59); the protected GitHub environment the signing secrets live in; and Task 4.5's copy-in of the staged **signing** workflow | phase 3 |
 | **5. Later, unscheduled** | Windows and Linux packaging; the v1.1 write actions | each, when the owner decides | phase 4 |
+| **6. The console's style — UNAPPROVED** | the token layer, the stylesheet's wiring into the served bundle, the layout and the screens' rules, the theme switch and the golden frames re-recorded (`docs/design/console-styling.md` is the design) | **the eight golden baselines re-recorded** (Task 6.6), after the stylesheet lands | phase 3 (Task 3.4a's bundler and served root); **not approved** — see its six open questions |
 
 **Nothing in this table depends on a later row.** Phase 5 is deliberately empty of work: it lists the two things a reader will otherwise wonder about, and each is gated on a decision this plan does not presume.
 
@@ -77,7 +79,7 @@ These hold for every task below, and the plan's own review checks them:
 6. **`belong` is never touched** by any step, agent-run or owner-run, and no fixture is ever recorded from it.
 7. **Nothing under `.github/workflows/` is created or edited by an agent.** The console's workflow text is written as **two staged files under `docs/pending-workflows/`** for the owner to copy — **`console-tests.yml`** (staged by Task 1.4, copied in by the owner as Task 1.5) and **`console-release.yml`** (the signing pipeline, staged by Task 4.2, copied in as Task 4.5) — which is the mechanism this repo already uses (`docs/pending-workflows/README.md`) and names as an owner step in `docs/release.md`'s "Before you tag". **The two are separate files because they must have different triggers**: the tests job runs on every pull request and every `main` push and holds no secret, the signing job runs only on a version tag and reads its secrets from a protected environment (design §9.4). One file carrying both would put the signing key's job on every pull-request run.
 8. **The Go module is untouched.** `console/` holds no Go package, `go.mod` and `go.sum` do not change, and no Go file references a path under `console/`. Task 0.3's test is what makes this a fact rather than an intention.
-9. **Security-sensitive tasks are flagged `SECURITY-SENSITIVE, independent opus review`** in their own heading and are not merged on a self-review. **This list is the headings, and nothing else is on it**: 1.1, 1.2, 1.3, 2.0, 3.3, 4.1, 4.2 and 4.4, plus **2.4 (added 2026-10-17)**, plus 3.4 (approved by the owner 2026-10-18; each of its three parts, 3.4a, 3.4b and 3.4c, carries the flag) and 5.2 when it is scheduled. (An earlier revision listed 2.1 and 4.3 and omitted 2.0, 4.4 and 4.5; the headings are the authority, and Task 2.1 is not flagged — it draws the states Task 2.0 defines rather than handling hostile text itself.) **A separate flag, `OWNER-RUN`, marks the tasks no agent performs at all** — 1.4's recordings, **Task 1.5's copy-in**, 4.3, and 4.5's copy-in — and the two flags are independent: a task may carry neither, either, or both.
+9. **Security-sensitive tasks are flagged `SECURITY-SENSITIVE, independent opus review`** in their own heading and are not merged on a self-review. **This list is the headings, and nothing else is on it**: 1.1, 1.2, 1.3, 2.0, 3.3, 4.1, 4.2 and 4.4, plus **2.4 (added 2026-10-17)**, plus 3.4 (approved by the owner 2026-10-18; each of its three parts, 3.4a, 3.4b and 3.4c, carries the flag), **6.2 (added 2026-10-19 with the styling design; its subject is the CSP's own tests, the served-file list and the served documents)** and 5.2 when it is scheduled. (An earlier revision listed 2.1 and 4.3 and omitted 2.0, 4.4 and 4.5; the headings are the authority, and Task 2.1 is not flagged — it draws the states Task 2.0 defines rather than handling hostile text itself.) **A separate flag, `OWNER-RUN`, marks the tasks no agent performs at all** — 1.4's recordings, **Task 1.5's copy-in**, 4.3, and 4.5's copy-in — and the two flags are independent: a task may carry neither, either, or both.
 10. **Docs-only tasks keep the docs suite green**: every task that touches a `.md` file under `docs/` runs `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`, the command this repository's docs tests are reached by.
 
 ## Review Focus
@@ -115,7 +117,10 @@ console/
   src/renderer/entry.ts           # Task 3.4a (approved by the owner 2026-10-18, implemented): the script the dashboard document loads; startConsole first
   src/renderer/installations.{html,ts}  # Task 3.4b (approved by the owner 2026-10-18): the picker document
   src/renderer/screens/{live,spend,projects,run}.ts
-  src/renderer/theme/tokens.css
+  src/renderer/theme/tokens.css      # Task 6.1: the vocabulary - spacing, type, radius, motion; names no colour (the tree promised this file and no task created it)
+  src/renderer/theme/palette.css     # Task 6.1: the value set - every colour token, light and dark, once
+  src/renderer/theme/base.css        # Task 6.3: reset, document, the three bands, the nav, focus, responsive, forced colours
+  src/renderer/theme/screens.css     # Task 6.4: the per-screen rules, in the order docs/design/console-styling.md §2 lists the screens
   src/source/source.ts            # the FugaroSource interface - the whole data plane
   src/source/cli.ts               # v1: spawn the installed fugaro
   src/source/fixture.ts           # tests: replay a recorded NDJSON feed
@@ -162,6 +167,11 @@ Each row is one mergeable PR, green on its own:
 | H | 4.3, 4.5 | **OWNER-RUN**, no agent performs any step of either; 4.5 copies in the **signing** workflow |
 | I | 4.6 | the release gate; **merges only after C2**, and refuses a tag until the console job runs |
 | F3 | **3.4a**, **3.4b**, **3.4c** (three PRs) | **SECURITY-SENSITIVE** (the preload, the handlers and the installation store); **approved by the owner 2026-10-18** — 3.4a is implemented, 3.4b and 3.4c are not; merges after F2 and before the console MVP ships. Listed last only because it was added last |
+| J | **6.1** | **UNAPPROVED** (added 2026-10-19 with `docs/design/console-styling.md`); the token layer only — inert until J2 lands, and its PR says so |
+| J2 | **6.2** | **SECURITY-SENSITIVE** (the CSP's tests, the protocol handler's served-file list and the served documents); **UNAPPROVED** |
+| J3 | **6.3**, **6.4** (two PRs) | **UNAPPROVED**; ordinary stylesheet review |
+| J4 | **6.5** | **UNAPPROVED**; the one task that touches the renderer entry |
+| J5 | **6.6** | **UNAPPROVED**; the eight baselines are **OWNER-RUN** (recorded by the owner, once per platform), the assertions are agent-written |
 
 ---
 
@@ -1111,11 +1121,227 @@ which it must be, since two of the names carry a space and the old whitespace-sp
 
 **Steps.** Kill, resume and cancel, if the owner says so (**D2**). Each is implemented **by invoking the CLI's own command**, never by writing to RTDB from the app: the typed confirmation, the admin check and the ETag compare-and-set stay in `internal/watch/keys.go` and `internal/cli/budget.go`, where they already are, and where a `budget kill` fails with `AdminDeniedText` — "you are not a budget admin" — when the operator is not one. **That text is the refusal of a write, and round 2 is why the plan says so here**: it is the only place in the CLI that tells a caller anything about the caller's role, it arrives *after* a denied write, and no read-only command reports the role at all. So the console treats **every identity as potentially admin** and its read-only guarantee rests on the exact-argument allow-list alone — it does not detect the role, does not grey out a kill button because the operator looks like a non-admin, and shows this text only when the CLI returned it. The console's own copy of the message is never composed from anything else. Rejected outright: any design in which the console writes.
 
+## Phase 6 — The console's style — UNAPPROVED
+
+**Added 2026-10-19 with [`docs/design/console-styling.md`](../design/console-styling.md),
+which is the authority for everything below.** Read that document first: it carries the
+evidence (the console ships no stylesheet, `index.html` is script-only, no `.css` exists
+under `console/`, `SERVED_FILES` has five entries and no stylesheet, the bundler copies
+`.html` only), the screen inventory every rule is written against (every class hook and
+every `data-*` attribute the six screens emit, and every state variant, read from the
+code), the light and dark token sets with every WCAG ratio computed, the layout, and the
+wiring in full. This phase is the plan's *ordering* of that design and nothing more.
+
+**These six tasks are `UNAPPROVED`.** The OWNER APPROVAL GATE at the foot of this file
+stands: the styling design's six questions — **Q1** does a light theme ship and is the OS
+the default; **Q2** where does the owner's override live; **Q3** does the "phosphor set"
+ship; **Q4** is PR #629's darwin baseline set superseded; **Q5** is the forced-colors smoke
+a gate; **Q6** does the styling work gate the console's first release — are open, each with
+its options, its recommendation and the reason in the design's §8. **No D-number and no
+C-number is allocated to any of them**, deliberately: a number is the owner's to give.
+Nothing in this phase starts until the owner answers and gives the go.
+
+**Dependencies, all soft but the first.** Phase 6 needs Task 3.4a's bundle step and served
+root (`console/tools/bundle-renderer/index.ts` and `SERVED_FILES` do not exist before it),
+so it is scheduled after phase 3. It needs nothing else: it touches no Go, no workflow, no
+IPC channel, no preload and no spawn. **The goldens are the one hard ordering inside the
+phase** (Task 6.6 last, and owner-run) and **Task 6.2 before any visible change** — until
+the `<link>` lands, the stylesheet is a file nothing reads and every screen looks exactly
+as it does today.
+
+**Six PRs, in the file's own numbering** (this section, `### Task 6.n:` headings, a row in
+the Phase summary, five rows in the PR groups table and a line in the File Structure tree):
+**6.1** the tokens; **6.2** the wiring, SECURITY-SENSITIVE; **6.3** the layout; **6.4** the
+screens; **6.5** the theme switch, the window background and the keyboard; **6.6** the
+golden frames, re-recorded. Each is independently mergeable and green on its own; 6.1 is
+inert until 6.2, which its PR says.
+
+### Task 6.1: The token layer
+
+**Scope.** `src/renderer/theme/tokens.css` (the vocabulary — spacing, radii, type sizes,
+leading, weights, `--row-height`, the focus-ring width and offset, the motion durations;
+**no colour**) and `src/renderer/theme/palette.css` (the value set — every colour token,
+light and dark, each written once, derived from the same logo hue as the website's
+[`palette-logo.css`](../../website/src/styles/palette-logo.css), whose existing values are
+reused verbatim so the console and the site are one product; the design's §3.2 and §3.3 are
+the literal tables).
+
+**Files.** the two above, new; `console/README.md` (a note on the theme directory, the way
+its `build.files` list is already kept true); `console/test/unit/theme-tokens.test.ts`,
+new.
+
+**Tests.** `theme-tokens.test.ts` reads `palette.css` **and nothing else**, so the literals
+it checks are the literals the window paints: every pair of the design's §3.4 with its
+required ratio (4.5:1 for body text and every state colour on the three surfaces, 3:1 for
+the accent and the control border, 4.5:1 for a label on a filled control); the vocabulary
+complete and identical in both sets, so a token added to one and not the other fails by
+name; `--border` used decoratively only; and a **deliberately failing pair**, asserted to
+report `--text-muted on --surface is 3.10:1, needs 4.5:1`, in the shape
+`website/test/a11y.mjs` keeps so the refusal cannot rot into a comment.
+
+**Command:** `cd console && npm run test:unit`
+
+**Reviewer tier:** ordinary — it touches no CSP, no protocol and no document.
+
+**Red step — `Expected: FAIL`** — the token test before the palette satisfies it, and one
+palette value edited to break one ratio (named by the test, then reverted).
+
+### Task 6.2: The wiring — SECURITY-SENSITIVE, independent opus review
+
+**Scope.** The bundler's stylesheet step (`THEME_STYLESHEETS`, the four-file order, a
+refusal for a `.css` outside the list, a refusal for a missing one, a refusal for an
+`@import` or a remote `url()`, the `dist/bundle/console.css` artefact with its generated-
+file banner, and ownership of it in the output directory); **one** new `SERVED_FILES`
+entry, `/console.css`, giving six where there were five; one `<link rel="stylesheet"
+href="./console.css">` in the `<head>` of each of the three documents, beside the existing
+CSP `<meta>`; `build.files` in `console/package.json` and the README's list of served
+files; and `bundlerOutputs` in the build-files test, which is what makes a packaged app
+without its stylesheet fail rather than ship.
+
+**Files.** `console/tools/bundle-renderer/index.ts`, `console/src/main/protocol.ts`,
+`console/src/renderer/{index,installations,refusal}.html`, `console/package.json`,
+`console/README.md`, `console/test/unit/{bundle,csp-document,build-files,screen-literals}.test.ts`.
+
+**Tests, and the mutation each is proved against.** `SERVED_FILES.length` 5 → 6 and the
+directory equality in both directions (`bundle.test.ts`); the concatenation and the order
+of `console.css` (`bundle.test.ts`); exactly one `<link>` per document, same-origin,
+relative, with no `media`, `onload` or `integrity` (`csp-document.test.ts`); the `style`
+scan of `screen-literals.test.ts` extended so that a `.style` write, a
+`setAttribute('style', …)` and a `style` entry in the attribute vocabulary are offences in
+any file under `src/renderer/`. **The mutations, one per named failure:** drop
+`/console.css` from `SERVED_FILES`; change a `<link>`'s `href`; add `'unsafe-inline'` to
+`style-src` (which `window.test.ts` and `csp-document.test.ts` both refuse); put
+`style="…"` in a served document; write `el.style.color` in `entry.ts`; remove
+`dist/bundle/console.css` from `build.files`.
+
+**The security claim, and the whole reason this task is flagged.** **The CSP is unchanged
+and is not loosened.** `style-src 'self'` is already the policy's third directive
+(`console/src/main/protocol.ts`, read it), and a `<link>` to `app://console/console.css` is
+a stylesheet from this origin — so the directive admits it, `default-src 'none'` is not
+consulted, `font-src 'self'` is not consulted (no web font is loaded) and `connect-src
+'none'` is not consulted (a `<link>` is not a fetch `connect-src` governs). No inline style
+attribute, no `<style>` element, no `'unsafe-inline'` and no `bypassCSP` is introduced, and
+three tests fail if any appears. `mediaTypeFor` already maps `.css`, so the protocol
+handler's change is the allow-list entry and **nothing else**.
+
+**Command:** `cd console && npm run test:unit && npm run build`, then
+`npm run test:e2e -- entry` (the live CSP assertion), then
+`GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` — this task edits no Go,
+but that is the command this repository reaches a doc change by (rule 10).
+
+**Reviewer tier:** **SECURITY-SENSITIVE, independent opus review.** This is the task to
+attack: can the served root grow a file nothing vouches for, can `style-src` be widened by
+one token, can a document gain a second stylesheet or an inline style.
+
+**Red step — `Expected: FAIL`** — each mutation above, run for real.
+
+### Task 6.3: The layout
+
+**Scope.** `src/renderer/theme/base.css`: the reset, the document, the three bands the
+entry already appends (`section.console-installation`, `nav.console-views`,
+`div.console-panel`, held in that order by `test/e2e/entry.spec.ts`), the nav styled as the
+tab list its `aria-current` already makes it, the chrome fixed and the panel scrolling, the
+installation line's three states, the focus ring as one `:focus-visible` rule off the
+tokens, the three responsive layers of the design's §4.2, and the forced-colors rules of
+its §4.4.
+
+**Files.** `src/renderer/theme/base.css`, new; `console/README.md`.
+
+**Tests.** The computed-background assertion (Task 6.6's helper, applied to the chrome);
+the forced-colors smoke's first two legs (the state words survive, the current view is
+still marked); `entry.spec.ts`'s existing body-children assertion.
+
+**Command:** `cd console && npm run test:unit && npm run test:e2e -- entry`
+
+**Reviewer tier:** ordinary.
+
+**Red step — `Expected: FAIL`** — the forced-colors case before the rules exist.
+
+### Task 6.4: The screens
+
+**Scope.** `src/renderer/theme/screens.css`: the rules for Live, Spend, Projects, Run, the
+degraded and unavailable screens, the refusal document and the picker, in the order the
+design's §2 inventories them, including the tabular-figure and right-alignment rule for the
+four `-num`/`-number` hooks, the density rules of its §3.8, and the state colours of its
+§3.5 — where **no state is carried by colour alone**, because every state already has its
+word in the DOM (`KILLED by`, `n/a`, `—`, `(partial)`, `silent`, `lost`, `queued`,
+`NOTIONAL~`, `degraded`, `polling`, and the cap's own percentage beside its bar).
+
+**Files.** `src/renderer/theme/screens.css`, new; `console/README.md`.
+
+**Tests.** A case that every selector in `screens.css` names a hook the design's §2
+inventory lists — checked against a list derived from the screens' own class literals, so a
+rule that styles a class nothing emits fails; the computed-background assertion per screen.
+
+**Command:** `cd console && npm run test:unit && npm run test:e2e`
+
+**Reviewer tier:** ordinary.
+
+**Red step — `Expected: FAIL`** — a selector planted against a class no screen emits.
+
+### Task 6.5: The theme switch, the window background and the keyboard
+
+**Scope.** `CONSOLE_THEME` stops being the literal `'dark'` and becomes the answer of a
+`themeChoice()` that reads `matchMedia('(prefers-color-scheme: dark)')` and subscribes to
+its `change` event — `:root`'s `color-scheme: light dark` is the OS default, and the
+`data-theme` attribute the screens already emit is the single switch, which also covers
+the script-free `refusal.html` (the OS alone themes it, which is the strongest argument for
+the OS default); the entry stamps `data-theme` on the mount it draws the chrome into; the
+picker's script stamps its document; `consoleWindowOptions` gains a `backgroundColor`
+equal to `--ground` (the main process cannot read the CSS, so the token test holds the two
+literals equal); and the nav gains the WAI-ARIA tablist behaviour it lacks — `role`,
+`aria-selected`, a roving `tabindex` and Arrow/Home/End handling that calls the existing
+`show(id)`, since `entry.ts` has no keydown handling at all today.
+
+**Files.** `console/src/renderer/entry.ts`, `console/src/renderer/installations.ts`,
+`console/src/main/window.ts`, `console/test/unit/{entry-wiring,window,theme-tokens}.test.ts`.
+
+**The CSP and `ElementLike` are untouched**, and this is checked rather than asserted: a
+`matchMedia` read is not a DOM write and not a network call, `data-theme` is a `data-*`
+attribute, and `role`, `aria-*` and `tabindex` are attributes — so `ElementLike` needs no
+widening and no style is written.
+
+**Tests.** `CONSOLE_THEME` no longer follows the media query; the background literal
+drifting from `--ground`; a roving-tabindex regression.
+
+**Command:** `cd console && npm run test:unit && npm run test:e2e`
+
+**Reviewer tier:** ordinary, against the design's §5.5 rule explicitly (no style write, no
+loosening).
+
+**Red step — `Expected: FAIL`** — each of the three above.
+
+### Task 6.6: The golden frames, re-recorded
+
+**Scope.** The eight baselines per platform that the four golden specs already name, the
+per-spec assertion that the **computed background colour differs between the schemes** —
+the assertion the suite is missing today, since every spec reads `data-theme` off the
+screen root and passes with no stylesheet at all — and the forced-colors smoke.
+
+**Files.** `console/test/e2e/{live,spend,projects,run}.spec.ts`; the committed
+`console/test/e2e/__screenshots__/**` PNGs.
+
+**The recording is owner-run**, once per platform (`updateSnapshots: 'none'` makes a
+missing baseline fail rather than be written), and it **supersedes the draft PR #629's
+darwin set**, which is a picture of the unstyled tree — pending the owner's Q4.
+
+**Command:** `cd console && npm run test:e2e` after the owner records.
+
+**Reviewer tier:** the assertions ordinary; the recording is the owner's.
+
+**Red step — `Expected: FAIL`** — the computed-background assertion with the `<link>`
+removed from `index.html`.
+
+**What this phase does not do.** It changes no CSP directive, no protocol refusal, no
+preload surface, no IPC channel and no spawn contract (design §5.5, §11). It allocates no
+check number: nothing here is a live step and nothing touches
+`docs/gcp-live-checklist.md`. It creates no workflow.
+
 ## Cross-task dependencies
 
 Every task's "Depends on" is a *build* dependency, and none of them is a merge dependency beyond its own phase: phases 1, 2 and 3 each leave a working artifact even if the next phase never ships, and phase 4's two owner-run steps (Tasks 4.3 and 4.5) sit after the agent-written packaging work, so 4.1/4.2/4.4 merge as ordinary reviewed PRs whether or not the owner ever runs the rest. The two places a reader might expect a dependency that does not exist: **phase 2 does not depend on project-centric phases 1 or 4** — it renders what exists and says so when a section is not built (Task 2.3) — and **phase 4 does not depend on the CLI's release process being changed**; it adds an artifact to the existing tag, which is what D11 decided.
 
-**What ships with the MVP.** The first console release (0.8.5) ships phases 0 to 4 and **requires**: (1) the hardened shell (Tasks 1.1 to 1.3); (2) the four screens (phase 2); (3) the honest-when-missing states (Task 3.1); (4) the version-skew handshake **and its startup wiring (Tasks 3.2 and 3.3: both, since 3.2 alone builds a check nothing calls)**; (5) **the renderer entry (Task 3.4: 3.4a, 3.4b and 3.4c, approved by the owner 2026-10-18; 3.4a is implemented). Without it no window has a preload, no handler is registered, no document loads a script and no installation is chosen, so nothing is drawn from a real CLI**; (6) the signed, notarised build and its round trip (Tasks 4.1 to 4.5, Check 59, owner-run); and (7) the release gate (Task 4.6). A console build missing item 4 or item 5 does not ship, whatever else is green.
+**What ships with the MVP.** The first console release (0.8.5) ships phases 0 to 4 and **requires**: (1) the hardened shell (Tasks 1.1 to 1.3); (2) the four screens (phase 2); (3) the honest-when-missing states (Task 3.1); (4) the version-skew handshake **and its startup wiring (Tasks 3.2 and 3.3: both, since 3.2 alone builds a check nothing calls)**; (5) **the renderer entry (Task 3.4: 3.4a, 3.4b and 3.4c, approved by the owner 2026-10-18; 3.4a is implemented). Without it no window has a preload, no handler is registered, no document loads a script and no installation is chosen, so nothing is drawn from a real CLI**; (6) the signed, notarised build and its round trip (Tasks 4.1 to 4.5, Check 59, owner-run); and (7) the release gate (Task 4.6). A console build missing item 4 or item 5 does not ship, whatever else is green. **Phase 6 — the console's style — is not on this list**, which is the design's recommendation and the owner's to overturn (its Q6): the MVP list does not name a stylesheet, and a release held by a design review of colours is held by its least load-bearing part. A console that ships unstyled is a console whose screens say the true thing in the wrong shape; a console held for six styling PRs is a console nobody has.
 
 **Five dependencies that are real and are *merge* dependencies, not build ones**, listed here because a reader checking the "nothing in phase *n* is required by phase *n-1*'s merge" claim would otherwise read them as exceptions it missed:
 
