@@ -38,9 +38,13 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 		// And the release the redesigned path does ship in, which is not
 		// 0.9.0: the owner's ruling of 2026-10-19 moved it to 0.9.5.
 		"the redesign ships in 0.9.5": "the owner's ruling of 2026-10-19 moved to **0.9.5**",
-		"all three ways in refuse":    "`fugaro init --create-project --managed`, `fugaro managed apply` and `fugaro restore`",
-		// A creation without --managed writes the label too, on purpose.
-		"a plain creation labels the project": "A plain `fugaro init --create-project` (no `--managed`) writes the label as well",
+		"all four ways in refuse":     "`fugaro init --create-project --managed`, `fugaro managed flag`, `fugaro managed apply` and `fugaro restore`, each before it reads or writes anything",
+		// The flag ships in the 0.9.0 binary and refuses there (review M2).
+		"the flag refuses in 0.9.0": "the 0.9.0 binary carries that command, and it refuses with `managed projects are disabled in this release` until then",
+		// A creation without --managed writes the label too, on purpose —
+		// once managed mode is on; in 0.9.0 it writes the fact alone (m1).
+		"a plain creation labels the project": "A plain `fugaro init --create-project` (no `--managed`) writes the label as well once a release turns managed mode on",
+		"a plain creation in 0.9.0":           "**In 0.9.0, with managed mode off, a plain `fugaro init --create-project` writes the creation fact alone and no label**",
 		// And the backfill a project marked before the label needs, still
 		// marked as unverified live.
 		"the backfill line": "gcloud projects update <gcp-project> --update-labels fugaro_managed=true",
