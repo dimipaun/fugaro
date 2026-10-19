@@ -402,7 +402,7 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 51 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 53 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -464,6 +464,8 @@ than a claim.
 | an action whose write failed is not kept for a retry | `an action whose write did not land is dropped, not retried` |
 | `flush` writes nothing with no connection | `flush writes nothing while the connection is down, and keeps what it has` |
 | `poll` does nothing at all with no connection | `an offline poll does nothing at all, and hears nothing` |
+| a refused `flush` carries no sentence to render or to speak | `the gate refusal has two shapes, and only send carries a sentence` |
+| a refused `poll` carries no sentence to render or to speak | the same test |
 | a connection that is not `true` is offline (in `gate.js`) | `no connection refuses whatever the consumer looks like` |
 | a live consumer must be a VERIFIED one (in `gate.js`) | `a presence that is not evidence of a live consumer refuses` |
 | an unobserved consumer is not a refusal (in `gate.js`) | `a connected phone with nothing observed may send` |

@@ -337,7 +337,7 @@ run "the store is written in one file only (the scan)" \
 export function createRoot({ React, store, View, Text }) {" \
   mobile/src/app/root.js src/mailbox/write-path.test.js
 
-# 10. The offline gate (P6.10; D167, G21). Eleven guards in client.js, four in
+# 10. The offline gate (P6.10; D167, G21). Thirteen guards in client.js, four in
 #     gate.js and one in the store's SDK model -- and the store's is proved
 #     twice, once against its own suite and once against the client's, because
 #     "the SDK queue would have noticed" is the control the client's claim rests
