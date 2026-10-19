@@ -76,7 +76,7 @@ deliberately, with their tests, as the owner's ruling of 2026-10-18 requires.
 The owner accepted every recommendation of D180 to D192, as written in `reconciliation.md`:
 
 - **D180** the accent is the logo's hue, `#17A8E6`, as a fourth palette file; **D181** the warning colour moves to amber `#F5A524`.
-- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile.
+- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile — **amended on 2026-10-19 by the owner's brief (item 1): the three group labels ARE the menu on a phone, and the drawer and its one toggle are retired** (see "The 2026-10-19 brief" below). What D182 decided about the *groups* stands: three groups of three, Home as the wordmark, Privacy in the footer.
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
@@ -228,9 +228,9 @@ here goes stale the way the byte budgets did before D192.
   the menu's hover-open and the six corrections that day and the next made to it, which moved
   the same script again. So the figures below are derived once, over the build the merge
   produces, which is the only account of them that is true of the site that ships:
-  **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
-  **page weight per page 1,001,607** (three times 333,869; the docs hub 267,095 bytes) and
-  **whole site 3,672,369** (three times 1,224,123; the gates' own build of the site, 979,298
+  **JavaScript per page 149,580** (three times 49,860; `public/scripts/site.js` 39,888 bytes),
+  **page weight per page 1,000,974** (three times 333,658; the docs hub 266,926 bytes) and
+  **whole site 3,661,311** (three times 1,220,437; the gates' own build of the site, 976,349
   bytes across 23 files, the `fugaro watch` assets below included). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
@@ -244,8 +244,7 @@ here goes stale the way the byte budgets did before D192.
   by moving the two declarations that make a command wrap onto `base.css`'s
   `.command-block > pre`, which every page inlines: the copy control shares the command's row
   now, so the rule belongs to every command block on the site rather than to the homepage's
-  install class alone (the fifth round below). The figures above are the build
-  this branch ships. It is the
+  install class alone (the fifth round below). It is the
   sixth re-derivation on this branch's side — the second fix round moved the homepage's order,
   the flow's treatment, the chat's launch line, the install command's wrapping and the chat's
   turns out of the measure's cap; the third's four commits moved the site figure to 814,455,
@@ -258,6 +257,16 @@ here goes stale the way the byte budgets did before D192.
   the `<img>` that puts the picture on the homepage adds 299 bytes of its markup. The page
   weight does not move — the picture is on the homepage, and the ceiling is derived from the
   docs hub, which renders neither the chat nor the screenshot — and nor does the JavaScript.
+  **And the last round is this branch's own two changes from the owner's brief of 2026-10-19**,
+  measured against that build file by file: the menu's drawer out (item 1) leaves each of the
+  eleven pages **278 bytes lighter**, the base stylesheet every one of them inlines being that
+  much shorter, and takes **181 bytes off the script**; the review round that followed put the
+  script's own comments back in step with the menu, which is **290 bytes back onto it**. So the
+  script is 39,779 → 39,888 and the site figure 979,298 → **976,349** — the eleven pages' 3,058
+  and the script's 109 — while the page weight moves with both, 267,095 → **266,926**: the docs
+  hub inlines the stylesheet (−278) and fetches the script (+109). The console's link of item 6
+  renders nothing while its flag is off, so it moves no byte of the build the figures are
+  derived from. **The figures above are the build this branch ships.**
   The
   figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
@@ -270,14 +279,16 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **979,298 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **977,783 with the tags this repository's clone carries**,
+  to **976,349 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **974,834 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
   the artifact gates over a copy with the console's flag flipped, and that copy is a different
-  build — **536 bytes larger at the site figure**, measured, and the page weight where it was —
+  build — **622 bytes larger at the site figure**, measured (the homepage's call to action 86,
+  the console page's downloads 146 and Getting Started's option 390), and the page weight where
+  it was —
   rather than another copy of this one.
 - **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
   acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
@@ -527,8 +538,8 @@ without dithering and stripped of metadata (ImageMagick), from 510,664 bytes to 
 stays sharp and the green and yellow words keep their colours. No row or text was cropped or edited.
 
 Size: 130,533 bytes, inside the enforced byte budgets (`website/README.md`, re-derived over the gates'
-own build in the commit that placed it: 1,001,607 per page, 3,672,369 for the site — the two assets and
-the `<img>` moved the site figure and nothing else, above).
+own build in the commit that placed it: 1,000,974 per page and 3,661,311 for the site, this
+branch's build — the two assets and the `<img>` moved the site figure and nothing else, above).
 
 **It is on the homepage now** (`website/src/components/AgentChat.astro`): the slot
 `[data-slot="watch-screenshot"]` under the chat holds it, so the block that was empty until the asset
@@ -547,3 +558,100 @@ at each. Whether the rendered page matches the owner's design is the owner's che
 gate here can see an image: at 375 px the picture is a quarter of the width of the screen it captures, so
 its small print is not readable at that width and the transcription beside it is what a reader reads
 instead.
+
+## The 2026-10-19 brief: the phone's menu and the console in the call to action
+
+The owner's brief of **2026-10-19** asks for two changes to the built site — its item 1 and
+its item 6 — and they are implemented in this branch's pull request, one commit each. Every
+reading the brief does not spell out is recorded here, the way items 2, 3 and 4's readings
+are recorded above, so that a later reader of the site does not have to guess them from the
+markup. **The list is not counted**: each round adds bullets to it, and a number written here
+goes stale the way the byte budgets did before D192.
+
+- **The three group labels ARE the menu on a phone (item 1), and D182's drawer is retired.**
+  Below the width where the nav collapsed, the whole menu sat behind one `Menu` toggle: the
+  three groups were two taps away, and the first tap told a reader nothing about what was in
+  them. The toggle, the panel it opened and the sibling combinator that showed it are gone.
+  The three group labels stand in the header's row at **every** width, each one a
+  `<details>`/`<summary>` that opens its own list of links — a panel across the header's own
+  width on a phone, and the same list as a dropdown under its label from 48 rem up. The
+  `name` attribute is shared by the three, so the browser keeps the set exclusive: opening a
+  group closes its siblings, which is the one-menu-at-a-time behaviour the toggle used to
+  provide by hand. **D182's group decision is untouched** — three groups of three, Home as
+  the wordmark, Privacy in the footer — and what changed is only what a phone *does* with
+  them. `site.js` loses the branch it kept for the panel (`holds()` no longer looks for a
+  sibling), and with it the only reason the script had to know where the panel was.
+- **The wordmark's text leaves the header row below 390 px, and the mark stays (item 1).**
+  The owner's ruling is "hide the wordmark TEXT below about 380px (keep the logo mark)", and
+  the number is **390 px** because the row is measured rather than estimated: at 381 px the
+  wordmark's text plus the three labels is a few pixels wider than the header's content box
+  in the font the built site actually falls back to, and the row that does not fit is a row
+  that scrolls sideways. The text is hidden the way a visually-hidden label is — absolutely
+  positioned, one pixel, clipped — and **not** with `display: none` or `visibility: hidden`:
+  the wordmark is the link home, and a link whose accessible name is thrown away is a link a
+  screen reader announces as nothing. `website/test/base-styles.mjs` refuses a rule that
+  removes the text any other way, and refuses one that takes the mark out with it.
+- **A label and every link in a panel are at least 44 px tall, at every width.** The brief
+  asks the menu to be measured against a 44 px tap target, and the labels and the wide
+  dropdown's links were both shorter than that, so the rule is on the two of them and on
+  every width rather than on the phone alone. **The header grew with it, 65 px → 77 px**, and
+  a wide dropdown 114 px → 150 px: that is a change the brief's acceptance asks for and not a
+  side effect nobody noticed, and it is why the row's fit is measured again at every width
+  rather than assumed from the widths the header used to need.
+- **The console is the call to action's third link, and the flag is what renders it (item
+  6).** The homepage's hero action row carries a quiet link to `/console/`, labelled `Desktop
+  console` — the name Getting Started's console option already gives it — and it renders
+  **only** while `site.yaml`'s `features.console_downloads` is true. Nothing about the
+  console renders while it is false: no link, no sentence, no placeholder. That is item 6's
+  "findable" read the way the rest of the console's offering is read (structural rather than
+  editorial): the way *to* the console is what the hero names, and the URL a reader downloads
+  from stays derived from the release in one reader
+  (`src/lib/console-downloads.mjs`, Global Constraint 9) — a download URL typed into the hero
+  would be the second spelling of a URL that boundary test exists to refuse. The link points
+  at `/console/` rather than at a release asset because the console page is where the
+  downloads are *and* where the console is explained, and a reader who does not know what the
+  console is needs the second thing first.
+- **What the two changes cost, and what they do not.** The menu's removal takes 278 bytes off
+  the base stylesheet every page inlines and 181 off `site.js` — so 459 off the page figure
+  and 3,239 off the site's — and those three figures are re-derived in the commit that ships
+  them (D192, above). **The console's link moves no byte figure and no word ceiling**: while
+  the flag is false it renders nothing, so the build the figures are derived from is the same
+  build; and the flag-on state it produces is held by the budget gate run over that build
+  (`console-option.mjs`'s `FUGARO_GATES_DIST` run), which is where the homepage's two extra
+  words meet D188's ceilings. No new origin, no CSP change, no inline script and no second
+  script file (D183): the menu's script work shrank.
+- **The review round's re-derivation: 290 bytes back onto the script.** Three comments in
+  `site.js` still described the drawer as though it existed — the retired toggle, the second
+  level a group's list sat at, and the sibling combinator that showed the panel — and the
+  review of this branch is right that comments are the specification here, so they were
+  rewritten to describe the three `<details>` groups. Comments ship: the file the browser
+  fetches is **290 bytes larger**, and all three figures moved with it, over the same gates'
+  build — the script 39,779 → 39,888 once the round before it had taken 181 off, the docs hub
+  267,095 → 266,926 and the site 979,298 → 976,349, the two rounds' movements together (the
+  figures the merge brought in were `main`'s, and these are this branch's build's). Nothing
+  else in the artifact moved: the console's link is behind a flag this build has off, and no
+  stylesheet changed.
+- **The gates, and their proofs.** `website/test/base-styles.mjs`'s two nav gates are
+  rewritten for the menu that is (`navLayoutFailures`: the three labels in one row at both
+  widths, the header one row with the list out of its flow, a phone's row fitting, and an
+  open that moves nothing; `navFailures`: the markup's own shape, with the toggle, the panel
+  and the drawer refused by name), and each rule keeps a case that plants the defect and reads
+  the refusal back. `website/test/nav-hover.mjs`'s phone case is rewritten to the behaviour
+  that replaced the toggle — the labels are drawn with nothing in front of them, a pointer
+  that does not hover opens nothing, and a tap opens the group — and `website/test/copy.mjs`'s
+  stub DOM loses the panel and the drawer branch it carried for the old markup.
+  `website/test/home.mjs` holds the flag-off half of item 6 — the hero's row is exactly the
+  two links it carried before, and it mentions the console nowhere — and
+  `website/test/console-option.mjs` holds the flag-on half over its flipped copy: the row
+  gains `Desktop console` → `/console/` and the two links a reader met before the release are
+  the two they meet after it. **Every one was mutation-proved by hand**: the flag gate removed
+  from the hero, the console link deleted, a `display: none` on the wordmark's text, a label
+  with no `min-height`, a panel left in front of the labels, and a group's list hidden by a
+  rule, each planted, seen to fail the case that names it, and removed.
+- **The measurements, and the check that is still the owner's.** The built site was rendered
+  in a headless Chromium at **1280, 768, 375 and 320 px**: the header is one row at each, 77
+  px tall, the three labels and every link in a panel are 44 px tall, nothing scrolls
+  sideways, every group opens by tap and by keyboard, and at 375 px the three labels are 65,
+  83.5 and 59.3 px wide beside the 47 px mark. That is a measurement of the built artifact,
+  not a look at it: **whether the page then looks right is the owner's check (70a–70c, D190)**,
+  and no screenshot is committed here — this run cannot see one either.

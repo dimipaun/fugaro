@@ -720,6 +720,45 @@ test('the hero renders a player only when site.yaml says the video exists', () =
   }
 })
 
+test('the hero offers the console from its call to action only while the flag is on', () => {
+  // Item 6 of the owner's brief of 2026-10-19 asks that the console be findable from the home
+  // page's call to action, and `site.yaml`'s `features.console_downloads` is what decides
+  // whether it is offered at all. (The changes spec of 2026-10-18 has an item 6 too, and it is
+  // Getting Started's console option rather than this — `console-option.mjs` holds that one.)
+  // This is the flag-off half — the state the site ships in, and the state `npm run check`
+  // builds — and the flag-on half is `console-option.mjs`'s, over a copy with the flag
+  // flipped, because the day the console ships is not a day this build can see.
+  const flag = /^\s*console_downloads:\s*(true|false)\s*$/m.exec(repoFile('website/data/site.yaml'))
+  assert.ok(
+    flag,
+    'website/data/site.yaml carries no features.console_downloads, and the hero offers the console from that flag (item 6)',
+  )
+  if (flag[1] === 'true') return
+
+  const hero = findAll(parse(builtPage('')), (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'))[0]
+  assert.ok(hero, 'the homepage has no hero section, and the promise and its call to action are the hero (P5)')
+
+  const actions = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-actions'))
+  assert.ok(actions, 'the hero carries no action row, and the call to action is what a reader does next (W1.4)')
+
+  // The row is the two links and nothing else: no console link, no console sentence, no
+  // placeholder where the link would go. A reader of an unreleased console has nothing to
+  // click, and the hero must not offer a page that has nothing to download on it either —
+  // "findable" is item 6's word for the released state.
+  assert.deepEqual(
+    [...walk(actions)].filter((el) => el.name === 'a').map((el) => [textOf(el).trim(), el.attrs.get('href')]),
+    [
+      ['Get started', '/getting-started/'],
+      ['How it works', '/how-it-works/'],
+    ],
+    'the hero\'s call to action is not exactly the two links it carries while features.console_downloads is false: the console\'s link arrives with the flag, and until then the row says nothing about the console (the owner\'s brief of 2026-10-19, item 6)',
+  )
+  assert.ok(
+    !/console/i.test(textOf(actions)),
+    'the hero\'s call to action mentions the console while features.console_downloads is false, and the unreleased state is structural: nothing about the console renders before its release (item 6)',
+  )
+})
+
 // ---- the chat (changes spec of 2026-10-18, item 3) ---------------------------------------
 
 /**

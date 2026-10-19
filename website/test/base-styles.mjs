@@ -102,21 +102,33 @@ function mediaBlocks(css) {
 
 // The layout the header and the menu are held to, as a function over one built page's CSS, so
 // that each part of it is proved by the fixture below rather than only observed on today's
-// stylesheet. It states three things, and each of them is a defect rather than a preference:
+// stylesheet. It states four things, and each of them is a defect rather than a preference:
 //
-//   - the header is one row that cannot wrap, with the drawer positioned against it (RF3
-//     measured 177 px of three wrapped nav rows on a 390 px first screen);
-//   - **the wide viewport is where the menu is.** The base rule hides the panel and the
-//     drawer's `open` attribute is the one thing that shows it again — and that block is
-//     exactly where the drawer itself is taken away, so no `open` attribute can arrive up
-//     there. A 48rem block that moves the panel (`position: static`) without displaying it
-//     therefore leaves the menu `display: none` at every viewport at or above the breakpoint:
-//     the wordmark, and no way to reach a section. Each of the three wide rules is asserted,
-//     because the layout is the three of them together;
-//   - **opening anything must not move the page.** The drawer's panel is an overlay rather
-//     than a block in the header's row, and a group's own dropdown is out of that row's flow
-//     for the same reason: opening *Product* at 1280 px must not grow the header and push the
-//     page down under the reader.
+//   - **the menu is three labels in the header's one row, at every width.** The owner's brief
+//     of 2026-10-19 (item 1) took the single "Menu" toggle away, so the three group labels are
+//     the menu at 375 px as much as at 1280: `.site-nav-groups` is a row at every width, no
+//     rule for the drawer it replaced survives, and nothing hides a group's list — a closed
+//     `<details>` is the one thing that does that, and a stylesheet that hides a list too is a
+//     menu that cannot open;
+//   - **the header is one row that cannot wrap** (RF3 measured 177 px of three wrapped nav
+//     rows on a 390 px first screen). A group's list hangs out of that row's flow rather than
+//     joining it, at both widths: a phone's drawer across the header's width, a wide
+//     viewport's dropdown under its own label;
+//   - **a phone's row fits.** The wordmark's text is taken out of the row below the phone
+//     breakpoint (the owner's ruling: the mark stays, the text goes), and the gap between the
+//     wordmark and the labels is the phone's 8 px rather than the wide layout's 32 px. Those
+//     two are what the row measures against at 320 px, and neither is decoration: with the
+//     text drawn, or with the wide gap, the row is wider than the header's content box and
+//     the page gets a sideways scroll. Out of the row is not out of the page, though: the mark
+//     beside the text is decoration with an empty `alt`, so the text is the home link's only
+//     name and no `.site-wordmark-name` rule — in the phone block **or in the base rule above
+//     it**, which is where a `display:none` would hide it at every width — may hide it from a
+//     screen reader;
+//   - **opening anything must not move the page.** A group's list is out of the header's flow,
+//     so opening *Product* at 1280 px must not grow the header and push the page down under
+//     the reader; and on a wide viewport the dropdown hangs from the group's **right** edge,
+//     because a list opening rightwards from the last group runs past the viewport between the
+//     breakpoint and the page's maximum width, where the header's padding is still narrow.
 //
 // Whether the row *fits* 390 px, and whether a real browser's `<details>` behaves as the
 // markup says, are rendered measurements no hermetic test can take; they are the owner's live
@@ -125,10 +137,64 @@ export function navLayoutFailures(css, rel = '') {
   const out = []
   const fail = (why) => out.push(rel ? `${rel}: ${why}` : why)
 
+  // The row, and the labels in it.
   if (!/\.site-header\{[^}]*flex-wrap:nowrap/.test(css)) fail('the header wraps, so the menu can become a second row')
-  if (!/\.site-header\{[^}]*position:relative/.test(css)) fail('the header is not the box the drawer is positioned against')
-  if (!/\.site-nav-panel\{[^}]*position:absolute/.test(css)) fail("the drawer is in the header's flow, so opening it makes the header taller")
-  if (!/\.site-nav-drawer\[open\]\s*~\s*\.site-nav-panel\{[^}]*display:block/.test(css)) fail("the drawer's open state does not show the panel")
+  if (!/\.site-header\{[^}]*position:relative/.test(css)) fail("the header is not the box a phone's drawer is positioned against")
+  if (!/\.site-nav-groups\{[^}]*display:flex/.test(css)) fail("the three group labels are not laid out in the header's row")
+  if (!/\.site-nav-group ul\{[^}]*position:absolute/.test(css)) {
+    fail("a group's list is in the header's flow, so opening one grows the header's row and pushes the page down")
+  }
+  if (!/\.site-nav-group ul\{[^}]*left:0/.test(css) || !/\.site-nav-group ul\{[^}]*right:0/.test(css)) {
+    fail("a group's list is not the header's width on a phone, so the drawer is a column under one label instead of the menu")
+  }
+  for (const [, decls] of css.matchAll(/\.site-nav-group ul\{([^}]*)\}/g)) {
+    if (/display:none/.test(decls)) {
+      fail("a rule hides a group's list, and the list is the menu: a closed `<details>` is what hides it, and a stylesheet that hides it too leaves nothing that can open it")
+    }
+  }
+  // The toggle this menu replaced. Its styles outliving it would be a second control in the
+  // markup's absence, and the first sign that the drawer was half removed.
+  if (/\.site-nav-(?:toggle|panel|drawer)\b/.test(css)) {
+    fail('the stylesheet still styles the drawer the menu no longer has')
+  }
+
+  // The row at a phone's width: the text out of it, and the gap the phone's rather than the
+  // wide layout's. `min-height` is the target size the owner's brief asks the menu to be
+  // measured against — 44 px, on the labels and on the links inside a list.
+  if (!/\.site-nav-group>details>summary\{[^}]*min-height:44px/.test(css)) {
+    fail("a group's label is a tap target smaller than the 44 px the owner's brief asks for")
+  }
+  if (!/\.site-nav a\{[^}]*min-height:44px/.test(css)) {
+    fail("a link inside a group's list is a tap target smaller than the 44 px the owner's brief asks for")
+  }
+  // The base header rule and not the wide block's, which is where the 32 px belongs: the
+  // stylesheet is read as rules, so the one with no condition over it is the one at 320 px.
+  const baseHeader = cssRules(css).find((r) => !(r.conditions ?? []).length && r.selector === '.site-header')
+  if (!baseHeader || /var\(--space-lg\)/.test(baseHeader.body ?? '')) {
+    fail("the header's gap between the wordmark and the labels is the wide layout's 32 px at 320 px, where the row has none to spare")
+  }
+
+  const phone = mediaBlocks(css).filter((block) => /24\.375rem/.test(block.query))
+  if (phone.length === 0) {
+    fail("the stylesheet has no phone breakpoint, so the wordmark's text is drawn beside the labels at 375 px")
+  }
+  const hidden = phone.map((block) => /\.site-wordmark-name\{([^}]*)\}/.exec(block.body)).find(Boolean)?.[1]
+  if (phone.length && !hidden) fail("the wordmark's text is drawn beside the labels at 375 px, where the row has no room for it")
+  if (hidden && !/position:absolute/.test(hidden)) {
+    fail("the wordmark's text is taken out of the row without being taken out of the flow, so the row is still as wide as the word")
+  }
+  // **Every** `.site-wordmark-name` rule, not only the phone block's: the base rule is the one
+  // that is in force at 1280 px, so a `display:none` there takes the name away at every width
+  // while the phone block still reads as the correct clipping, and a check that only read
+  // inside the block would pass it (the review of 2026-10-19). The mark beside the text is
+  // decoration with an empty `alt`, so the text is the link's only name and this is not a
+  // layout preference.
+  for (const rule of cssRules(css)) {
+    if (rule.selector !== '.site-wordmark-name') continue
+    if (/display:none|visibility:hidden/.test(rule.body ?? '')) {
+      fail("the wordmark's text is hidden from a screen reader as well as from the eye, and the logo beside it is decoration with an empty alt: the link to the home page is left naming nothing")
+    }
+  }
 
   const wide = mediaBlocks(css).filter((block) => /48rem/.test(block.query))
   if (wide.length === 0) {
@@ -141,17 +207,19 @@ export function navLayoutFailures(css, rel = '') {
   const rule = (name) => wide.map((block) => new RegExp(`\\${name}\\{([^}]*)\\}`).exec(block.body)).find(Boolean)?.[1]
   const has = (name, declaration) => (rule(name) ?? '').split(';').filter(Boolean).some((d) => declaration.test(d))
 
-  // The one the menu dies of: the wide block has to display the panel, not only reposition it.
-  if (!has('.site-nav-panel', /^display:(?!none)/)) {
-    fail(
-      "the 48rem block hides the drawer and never displays the panel — the base rule's display:none still stands there, and the drawer whose open attribute would undo it is the element that block takes away, so the menu is invisible at every viewport at or above 48rem (P3, D182)",
-    )
+  if (!has('.site-header', /^gap:var\(--space-2xs\) var\(--space-lg\)$/)) {
+    fail('the wide viewport keeps the phone\'s 8 px between the wordmark and the labels, where the wide layout has room for 32 px')
   }
-  if (!has('.site-nav-drawer', /^display:none$/)) fail("the drawer's toggle is still shown on a wide viewport, where nothing needs opening")
-  if (!has('.site-nav-panel', /^position:static$/)) fail('the wide panel is still an overlay, hanging over the page below the header')
-  if (!has('.site-nav-groups', /^display:flex$/)) fail('the wide viewport does not lay the three groups out in one row')
-  if (!has('.site-nav-group ul', /^position:absolute$/)) {
-    fail("a group's dropdown is in the header's flow, so opening one at a wide viewport grows the header's row and pushes the page down (the drawer's panel is out of flow for the same reason)")
+  if (!has('.site-nav-group', /^position:relative$/)) {
+    fail("a group is not the box its dropdown is positioned against, so at a wide viewport the list is still anchored to the header and is the header's width")
+  }
+  // The base rule puts the list out of the header's flow and this block must leave it there:
+  // a wide rule that names a `position` of its own is a rule that takes it back in.
+  if (/position:(?:static|relative)/.test(rule('.site-nav-group ul') ?? '')) {
+    fail("a group's dropdown is in the header's flow, so opening one at a wide viewport grows the header's row and pushes the page down")
+  }
+  if (!has('.site-nav-group ul', /^left:auto$/)) {
+    fail("a group's dropdown keeps the phone's full width at a wide viewport, so it hangs across the header instead of under its label")
   }
   // And out of flow *rightwards of nothing*: the menu sits at the right of the header, so a
   // list opening to the right of the last group runs past the viewport between the breakpoint
@@ -202,55 +270,124 @@ test('the layout rule passes on the built stylesheet, so each refusal below is t
 
 test('every layout refusal fires on the defect it names', () => {
   const cases = [
-    [
-      'a wide block that repositions the panel but never displays it',
-      plant('display:block;position:static', 'position:static'),
-      /never displays the panel/,
-    ],
-    [
-      'no 48rem breakpoint at all',
-      TODAY().replaceAll('(width>=48rem)', '(width>=99rem)'),
-      /no 48rem breakpoint/,
-    ],
-    [
-      'the wide row still shows the drawer toggle',
-      plant('.site-nav-drawer{display:none}', '.site-nav-drawer{display:block}'),
-      /toggle is still shown on a wide viewport/,
-    ],
-    [
-      'a wide panel that is still an overlay',
-      plant('display:block;position:static', 'display:block'),
-      /still an overlay/,
-    ],
-    [
-      'the wide groups not laid out in one row',
-      plant('gap:var(--space-3xs) var(--space-2xs);display:flex}', 'gap:var(--space-3xs) var(--space-2xs)}'),
-      /out in one row/,
-    ],
-    [
-      "a group's dropdown left in the header's flow",
-      plant('background:var(--ground);position:absolute;top:100%;right:0}', 'background:var(--ground);top:100%;right:0}'),
-      /dropdown is in the header's flow/,
-    ],
-    [
-      "a group's dropdown opening rightwards off the viewport",
-      plant('position:absolute;top:100%;right:0}', 'position:absolute;top:100%;left:0}'),
-      /sideways scroll/,
-    ],
+    // The row, and the three labels in it.
     [
       'a header that can wrap',
       plant('flex-wrap:nowrap;display:flex;position:relative}', 'display:flex;position:relative}'),
       /header wraps/,
     ],
     [
-      'a drawer panel that is not an overlay',
-      plant('display:none;position:absolute;top:100%', 'display:none;top:100%'),
-      /drawer is in the header's flow/,
+      'a header that is not the box a phone drawer hangs from',
+      plant('flex-wrap:nowrap;display:flex;position:relative}', 'flex-wrap:nowrap;display:flex}'),
+      /not the box a phone's drawer/,
     ],
     [
-      'a panel the drawer cannot show',
-      plant('.site-nav-drawer[open]~.site-nav-panel{display:block}', '.site-nav-drawer[open]~.site-nav-panel{border-color:red}'),
-      /open state does not show the panel/,
+      "the three labels stacked instead of in the header's row",
+      plant('.site-nav-groups{gap:var(--space-3xs);display:flex}', '.site-nav-groups{gap:var(--space-3xs)}'),
+      /not laid out in the header's row/,
+    ],
+    [
+      "a group's list left in the header's flow",
+      plant('background:var(--ground);position:absolute;top:100%;left:0;right:0}', 'background:var(--ground);top:100%;left:0;right:0}'),
+      /in the header's flow/,
+    ],
+    [
+      'a phone drawer that is a column under one label',
+      plant('position:absolute;top:100%;left:0;right:0}', 'position:absolute;top:100%;left:auto;right:0}'),
+      /not the header's width/,
+    ],
+    [
+      "a rule that hides a group's list",
+      plant('background:var(--ground);position:absolute', 'background:var(--ground);display:none;position:absolute'),
+      /hides a group's list/,
+    ],
+    [
+      'the drawer this menu replaced, styled again',
+      plant('.site-nav-groups{gap:var(--space-3xs)', '.site-nav-drawer{display:none}.site-nav-groups{gap:var(--space-3xs)'),
+      /still styles the drawer/,
+    ],
+    [
+      'a label smaller than the tap target the brief asks for',
+      plant('box-sizing:border-box;min-height:44px;padding:var(--space-3xs)', 'box-sizing:border-box;padding:var(--space-3xs)'),
+      /label is a tap target smaller/,
+    ],
+    [
+      'a link smaller than the tap target the brief asks for',
+      plant('.site-nav a{box-sizing:border-box;min-height:44px', '.site-nav a{box-sizing:border-box'),
+      /link inside a group's list is a tap target/,
+    ],
+    [
+      "the wide layout's gap left in the phone's row",
+      plant('align-items:center;gap:var(--space-2xs);padding-block', 'align-items:center;gap:var(--space-2xs) var(--space-lg);padding-block'),
+      /32 px at 320 px/,
+    ],
+    // The phone's row: the text out of it, and the text out of the eye only.
+    [
+      'no phone breakpoint at all',
+      TODAY().replaceAll('(width<=24.375rem)', '(width<=99rem)'),
+      /no phone breakpoint/,
+    ],
+    [
+      "a phone breakpoint that leaves the wordmark's text in the row",
+      plant('.site-wordmark-name{clip-path', '.site-wordmark-name-kept{clip-path'),
+      /drawn beside the labels at 375 px/,
+    ],
+    [
+      "the wordmark's text hidden without leaving the row's flow",
+      plant(
+        '.site-wordmark-name{clip-path:inset(50%);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}',
+        '.site-wordmark-name{clip-path:inset(50%);white-space:nowrap;width:1px;height:1px;overflow:hidden}',
+      ),
+      /without being taken out of the flow/,
+    ],
+    [
+      "the wordmark's text hidden from a screen reader as well",
+      plant('.site-wordmark-name{clip-path:inset(50%)', '.site-wordmark-name{display:none;clip-path:inset(50%)'),
+      /naming nothing/,
+    ],
+    // And the same hiding in the base rule, which is in force at every width: the phone block
+    // is untouched here, so a check that read only inside it would pass this stylesheet while
+    // the home link names nothing at 1280 px.
+    [
+      "the wordmark's text hidden at every width by the base rule",
+      plant('.site-wordmark-name{text-overflow:ellipsis', '.site-wordmark-name{display:none;text-overflow:ellipsis'),
+      /naming nothing/,
+    ],
+    [
+      "the wordmark's text made invisible at every width by the base rule",
+      plant('.site-wordmark-name{text-overflow:ellipsis', '.site-wordmark-name{visibility:hidden;text-overflow:ellipsis'),
+      /naming nothing/,
+    ],
+    // The wide viewport.
+    [
+      'no 48rem breakpoint at all',
+      TODAY().replaceAll('(width>=48rem)', '(width>=99rem)'),
+      /no 48rem breakpoint/,
+    ],
+    [
+      "the wide viewport keeping the phone's gap",
+      plant('@media (width>=48rem){.site-header{gap:var(--space-2xs) var(--space-lg)}', '@media (width>=48rem){.site-header{gap:var(--space-2xs)}'),
+      /room for 32 px/,
+    ],
+    [
+      "a group that is not the box its dropdown hangs from",
+      plant('padding-inline:var(--space-2xs)}.site-nav-group{position:relative}', 'padding-inline:var(--space-2xs)}.site-nav-group{position:static}'),
+      /not the box its dropdown/,
+    ],
+    [
+      "a wide dropdown left in the header's flow",
+      plant('min-width:max-content;padding:var(--space-2xs)', 'position:static;min-width:max-content;padding:var(--space-2xs)'),
+      /dropdown is in the header's flow/,
+    ],
+    [
+      "a wide dropdown that is still the header's width",
+      plant('border-radius:var(--radius-sm);left:auto;right:0}', 'border-radius:var(--radius-sm);left:0;right:0}'),
+      /hangs across the header/,
+    ],
+    [
+      "a group's dropdown opening rightwards off the viewport",
+      plant('border-radius:var(--radius-sm);left:auto;right:0}', 'border-radius:var(--radius-sm);left:auto;right:auto}'),
+      /sideways scroll/,
     ],
   ]
   for (const [what, css, expected] of cases) {
@@ -2968,11 +3105,19 @@ test('every command-block refusal fires on the defect it names', () => {
 
 // The rule the menu is held to, as a function over one built page, so that each part of it
 // can be proved by a fixture below rather than only observed on today's markup. It is the
-// contract RF4 names, rewritten for the two-level menu: the nav is still a labelled landmark,
-// its top-level items are links or `<summary>` elements, every link in it is keyboard
-// reachable, and the page still carries exactly one `aria-current="page"` — on the wordmark
-// when the page being read is the home page (D182 makes the logo the link home), on the menu
-// link otherwise.
+// contract RF4 names, rewritten twice: once for the two-level menu (the nav is a labelled
+// landmark, its top-level items are `<details>` disclosures, every link in it is keyboard
+// reachable, and the page carries exactly one `aria-current="page"` — on the wordmark when the
+// page being read is the home page, D182 having made the logo the link home, on the menu link
+// otherwise), and once for the owner's brief of 2026-10-19 (item 1), which took the single
+// "Menu" toggle away: the three group labels are the menu, nothing stands in front of them,
+// and a group's list of links is the `<details>`'s own child, because a closed `<details>` is
+// the one thing that hides it.
+//
+// The wordmark's text is checked here too, beside the menu it has to share a row with: the
+// phone breakpoint takes `.site-wordmark-name` out of that row, so a wordmark whose text is
+// loose in the link is a row that overflows at 375 px with nothing in the stylesheet able to
+// say which part of it gives way.
 
 /** The route a built page's relative path serves. */
 function routeOf(rel) {
@@ -2999,32 +3144,29 @@ export function navFailures(html, rel) {
   const nav = navs[0]
   if (!(nav.attrs.get('aria-label') ?? '').trim()) fail('the section nav has an empty label: a screen reader lists landmarks by name')
 
-  // The drawer: the toggle and the panel it opens. The panel is the toggle's next element
-  // sibling, which is the structure `base.css`'s sibling combinator reads — if it stops being
-  // one, the wide layout still works and the narrow drawer silently never opens.
-  const elements = nav.children.filter((child) => child.name !== undefined)
-  const drawer = [...walk(nav)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-drawer'))
-  const panel = [...walk(nav)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-panel'))
-  if (!drawer) fail('the nav has no drawer toggle (a <details class="site-nav-drawer">): a narrow viewport shows the menu behind one control')
-  if (!panel) fail('the nav has no panel (a .site-nav-panel) holding the groups')
-  if (drawer && panel && (panel.parent !== nav || elements.indexOf(panel) !== elements.indexOf(drawer) + 1)) {
-    fail("the panel is not the drawer toggle's next sibling, which is the wire base.css shows it with: as a child of the toggle the narrow drawer would never open, because a closed <details> hides its own children")
+  // The drawer the menu replaced. A toggle standing in front of the three labels is the thing
+  // the owner's brief of 2026-10-19 took away, and its markup coming back — in any of the three
+  // parts it was made of — is a control between the reader and a section they can already see.
+  for (const gone of ['site-nav-drawer', 'site-nav-toggle', 'site-nav-panel']) {
+    if (all.some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(gone))) {
+      fail(`the page still carries a .${gone}: the menu is the three group labels in the header's row, with no toggle in front of them`)
+    }
   }
-  if (drawer) {
-    const summary = drawer.children.find((el) => el.name === 'summary')
-    if (!summary || !textOf(summary).trim()) fail('the drawer toggle is not a <summary> with words on it')
-    // The panel is the toggle's sibling rather than its child, so nothing but this attribute
-    // tells assistive technology which region the toggle's expanded state is about.
-    const controls = summary?.attrs.get('aria-controls') ?? ''
-    if (!panel || !controls || panel.attrs.get('id') !== controls) {
-      fail(`the drawer toggle's aria-controls is ${JSON.stringify(controls)} and the panel's id is ${JSON.stringify(panel?.attrs.get('id') ?? '')}: the panel is outside the <details>, so the toggle has to name the region it opens`)
+  // And nothing names a region outside the nav any more: the one `aria-controls` the menu had
+  // was the toggle's, naming the panel that was its sibling rather than its child. A group's
+  // list is its own `<details>`'s child, so a control that names something else is a control
+  // describing a structure the menu no longer has.
+  for (const el of walk(nav)) {
+    const controls = el.attrs.get('aria-controls')
+    if (controls !== undefined) {
+      fail(`a <${el.name}> in the nav names ${JSON.stringify(controls)} with aria-controls: nothing the menu draws is outside the control that opens it`)
     }
   }
 
-  // The menu itself: groups of a summary and a list of links. Every top-level item is a link
-  // or a summary — a plain span that looks like a control is one a keyboard cannot open.
-  const groups = panel ? [...walk(panel)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group')) : []
-  if (panel && groups.length === 0) fail('the menu has no groups: the nav is three groups of three (D182)')
+  // The menu itself: the three groups, as a list directly in the nav. Nothing between the nav
+  // and the groups is what there is to say about a narrow viewport — the labels are the menu.
+  const groups = [...walk(nav)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group'))
+  if (groups.length !== 3) fail(`the menu carries ${groups.length} groups: the nav is three groups of three (D182)`)
   // One `name` across the groups makes them an exclusive set, without script: opening one
   // dropdown closes the one already open, so two never hang over each other on a wide row.
   const names = new Set(groups.flatMap((group) => group.children.filter((el) => el.name === 'details').map((el) => el.attrs.get('name') ?? '')))
@@ -3034,12 +3176,33 @@ export function navFailures(html, rel) {
   for (const group of groups) {
     for (const item of group.children.filter((child) => child.name !== undefined)) {
       if (item.name !== 'details') {
-        fail(`a top-level menu item is a <${item.name}>, and every top-level item is a link or a <summary> (a disclosure a keyboard can open)`)
+        fail(`a top-level menu item is a <${item.name}>, and every top-level item is a <details> disclosure a keyboard can open`)
         continue
       }
       const summary = item.children.find((el) => el.name === 'summary')
       if (!summary || !textOf(summary).trim()) fail('a menu group has no <summary> with words on it')
+      // The list is the `<details>`'s own child, and that is the whole of the mechanism: a
+      // closed `<details>` hides what it holds, in every engine, with no stylesheet involved.
+      // A list moved out of its details — as the drawer's panel once sat outside its toggle —
+      // is a menu drawn open on every page at every width.
+      const list = item.children.find((el) => el.name === 'ul')
+      if (!list) {
+        fail("a group's list of links is not inside its own <details>, so the group is drawn open wherever it appears: a closed <details> is the one thing that hides a list")
+      } else if (![...walk(list)].some((el) => el.name === 'a')) {
+        fail('a group has no links: the nav is three groups of three (D182)')
+      }
     }
+  }
+
+  // The way home on a phone: the wordmark's text is in its own element, because that element is
+  // what the phone breakpoint takes out of the header's row (the owner's ruling of 2026-10-19:
+  // the mark stays, the text goes). Loose text in the link is text nothing can hide.
+  const wordmark = all.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark'))
+  const wordmarkName = wordmark && [...walk(wordmark)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark-name'))
+  if (!wordmark) {
+    fail('the page carries no wordmark link to the home page')
+  } else if (!wordmarkName || !textOf(wordmarkName).trim()) {
+    fail("the wordmark's text is not in its own element (.site-wordmark-name), so the phone breakpoint has nothing to take out of the header's row and the row is wider than the viewport at 375 px")
   }
 
   // Keyboard reachability, and the current page.
@@ -3080,19 +3243,22 @@ const FIXTURE_GROUPS = [
   ['Project', [['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community']]],
 ]
 
-const FIXTURE_DRAWER = '<details class="site-nav-drawer"><summary class="site-nav-toggle" aria-controls="site-nav-panel">Menu</summary></details>'
+// The wordmark, as the layout writes it: the logo is decoration beside the name, and the name
+// is the element the phone breakpoint takes out of the row.
+const FIXTURE_WORDMARK =
+  '<a class="site-wordmark" href="/" rel="home"><img src="/logo.png" alt="" width="47" height="32" /><span class="site-wordmark-name">Fugaro</span></a>'
 
-function fixtureNav({ label = 'Sections', current = '/docs/', drawer = FIXTURE_DRAWER } = {}) {
+function fixtureNav({ label = 'Sections', current = '/docs/' } = {}) {
   const groups = FIXTURE_GROUPS.map(([group, items]) => {
     const links = items
       .map(([href, text]) => `<li><a href="${href}"${href === current ? ' aria-current="page"' : ''}>${text}</a></li>`)
       .join('')
     return `<li class="site-nav-group"><details name="site-nav-group"><summary>${group}</summary><ul>${links}</ul></details></li>`
   }).join('')
-  return `<nav class="site-nav" aria-label="${label}">${drawer}<div class="site-nav-panel" id="site-nav-panel"><ul class="site-nav-groups">${groups}</ul></div></nav>`
+  return `<nav class="site-nav" aria-label="${label}"><ul class="site-nav-groups">${groups}</ul></nav>`
 }
 
-function fixturePage({ nav = fixtureNav(), wordmark = '<a class="site-wordmark" href="/" rel="home">Fugaro</a>' } = {}) {
+function fixturePage({ nav = fixtureNav(), wordmark = FIXTURE_WORDMARK } = {}) {
   return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><header class="site-header">${wordmark}${nav}</header></body></html>`
 }
 
@@ -3107,7 +3273,7 @@ test('the menu passes its own rule, so each refusal below is the one thing it br
     navRefusals(
       fixturePage({
         nav: fixtureNav({ current: '' }),
-        wordmark: '<a class="site-wordmark" href="/" rel="home" aria-current="page">Fugaro</a>',
+        wordmark: FIXTURE_WORDMARK.replace('rel="home"', 'rel="home" aria-current="page"'),
       }),
       'index.html',
     ),
@@ -3118,18 +3284,49 @@ test('the menu passes its own rule, so each refusal below is the one thing it br
 test('every menu refusal fires on the defect it names', () => {
   const cases = [
     ['an unlabelled nav', fixturePage({ nav: fixtureNav({ label: '' }) }), /empty label/],
-    ['no drawer toggle', fixturePage({ nav: fixtureNav({ drawer: '' }) }), /no drawer toggle/],
-    ['the panel inside the toggle', fixturePage({ nav: fixtureNav().replace('</details><div class="site-nav-panel" id="site-nav-panel">', '<div class="site-nav-panel" id="site-nav-panel">').replace('</ul></div></nav>', '</ul></div></details></nav>') }), /next sibling/],
-    ['a drawer toggle that does not name its panel', fixturePage({ nav: fixtureNav().replace(' aria-controls="site-nav-panel"', '') }), /aria-controls is ""/],
-    ['a drawer toggle naming another region', fixturePage({ nav: fixtureNav().replace(' id="site-nav-panel"', ' id="elsewhere"') }), /panel's id is "elsewhere"/],
-    ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
+    [
+      'the drawer toggle, back in the header',
+      fixturePage({ nav: fixtureNav().replace('<ul class="site-nav-groups">', '<details class="site-nav-drawer"><summary class="site-nav-toggle">Menu</summary></details><ul class="site-nav-groups">') }),
+      /still carries a \.site-nav-drawer/,
+    ],
+    [
+      'the panel the drawer opened, back around the groups',
+      fixturePage({
+        nav: fixtureNav()
+          .replace('<ul class="site-nav-groups">', '<div class="site-nav-panel" id="site-nav-panel"><ul class="site-nav-groups">')
+          .replace('</ul></nav>', '</ul></div></nav>'),
+      }),
+      /still carries a \.site-nav-panel/,
+    ],
+    [
+      'a control naming a region outside itself',
+      fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '<summary aria-controls="site-nav-panel">Product</summary>') }),
+      /names "site-nav-panel" with aria-controls/,
+    ],
     ['a group with no summary', fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '') }), /no <summary> with words on it/],
+    ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
+    [
+      "a group's list moved out of its own <details>",
+      fixturePage({
+        nav: fixtureNav()
+          .replace('<summary>Product</summary><ul>', '<summary>Product</summary></details><ul>')
+          .replace('</ul></details></li>', '</ul></li>'),
+      }),
+      /list of links is not inside its own <details>/,
+    ],
+    ['a group with no links', fixturePage({ nav: fixtureNav().replace(/<ul>.*?<\/ul>/, '<ul></ul>') }), /no links/],
     ['a top-level item that is not a control', fixturePage({ nav: fixtureNav().replace('<li class="site-nav-group">', '<li class="site-nav-group"><span>Product</span>') }), /top-level menu item is a <span>/],
     ['a link with no href', fixturePage({ nav: fixtureNav().replace('<a href="/docs/" aria-current="page">', '<a aria-current="page">') }), /no href/],
     ['a link out of the tab order', fixturePage({ nav: fixtureNav().replace('<a href="/faq/">', '<a href="/faq/" tabindex="-1">') }), /out of the tab order/],
     ['no current page marked', fixturePage({ nav: fixtureNav({ current: '' }) }), /marks 0 elements/],
     ['two current pages marked', fixturePage({ nav: fixtureNav().replace('<a href="/console/">', '<a href="/console/" aria-current="page">') }), /marks 2 elements/],
     ['the wrong page marked current', fixturePage({ nav: fixtureNav({ current: '/console/' }) }), /its own route is "\/docs\/"/],
+    [
+      "the wordmark's text loose in the link",
+      fixturePage({ wordmark: '<a class="site-wordmark" href="/" rel="home">Fugaro</a>' }),
+      /not in its own element/,
+    ],
+    ['no wordmark at all', fixturePage({ wordmark: '' }), /no wordmark link to the home page/],
   ]
   for (const [what, html, expected] of cases) {
     const failures = navRefusals(html)
