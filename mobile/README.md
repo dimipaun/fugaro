@@ -557,16 +557,29 @@ the rules or the scan. (`boundary.test.js` walks recursively too, but it does
 not close this gap: its import rule judges *path* specifiers, so a package name
 like `react-native-voice` is not a thing it can see.)
 
-| Rule | Why |
-| --- | --- |
-| no package import at all (production files) | an SDK here *is* the engine; the tests may import `node:` builtins and this directory only |
-| no clock, no random source | D117's clock and the message id are injected (`now`, `newId`), which is what keeps every test deterministic |
-| no timer | §5's grace period and any silence timeout are the engine's business |
-| no network | D123/D46: on-device only |
-| no device API (`getUserMedia`, `MediaRecorder`, `AudioContext`, `navigator`) | D122: the microphone is reached through the port, and the OS permission through whoever implements it |
-| no samples, in any encoding (`pcm`, `samples`, `ArrayBuffer`, `Float32Array`, `Blob`, `base64`) | D118/F26: text crosses these ports and audio never does — so there is no buffer here to leak one through |
-| no `console.` | a transcript in a log line is a transcript outside the mailbox |
-| no `process.env` | an engine chosen by an environment variable is a configuration this module cannot see or test |
+| Rule | Exactly what the scan forbids | Why |
+| --- | --- | --- |
+| no clock | `Date`, `performance.now`, `hrtime` | D117: the clock is the server-anchored one the pipeline is handed (`now`), so this module reads none |
+| no random source | `Math.random`, `crypto` | the message id is injected (`newId`), and a random source here would be one no test could pin |
+| no timer | `setTimeout`, `setInterval`, `setImmediate`, `requestAnimationFrame` | §5's grace period and any silence timeout are the engine's business |
+| no network | `fetch(`, `WebSocket`, `XMLHttpRequest`, `EventSource` | D123/D46: on-device only; a cloud engine needs a second, explicit owner decision |
+| no device API | `getUserMedia`, `MediaRecorder`, `AudioContext`, `navigator`, `Permissions` | D122: the microphone is reached through the port, and the OS permission through whoever implements it |
+| no samples, in any encoding | `pcm`, `samples`, `ArrayBuffer`, `Float32Array`, `Uint8Array`, `base64`, `Blob` | D118/F26: text crosses these ports and audio never does — so there is no buffer here to leak one through |
+| no logging | `console.` | a transcript in a log line is a transcript outside the mailbox |
+| nothing is read from the environment | `process.env` | an engine chosen by an environment variable is a configuration this module cannot see or test |
+
+The middle column is not a summary of the rule, it **is** the rule: the scan
+builds its pattern from exactly these tokens, and
+`the README's rule table and the scan are the same list` reads this table and
+compares it to the scan's own list, row for row and token for token (the two had
+drifted: the device-API row did not name `Permissions`, and the samples row did
+not name `Uint8Array`).
+
+**The import rule, which is not a token scan:** no production file here imports
+a package at all — every module specifier it names is one of this module's own
+files or `shared/`. The tests may additionally import `node:` builtins, and that
+is the whole of what they may reach; a test that needed a package would be a CI
+that needed one.
 
 Every rule has a **positive control** (it must match a planted line of real
 code) and a **prose control** (it must not match the same line in a comment),
@@ -575,14 +588,17 @@ which is what lets these files' headers explain the rules they are held to.
 ### Mutations run against this task
 
 Each was planted, the run went red on the named test, and the bug was removed.
-The tests are run with `node --test "src/**/*.test.js"` (186 tests, all
-passing); the first three sentences of `pipeline.test.js` are the plan's own
-verification.
+The tests are run with `node --test "src/**/*.test.js"` — the app's whole
+suite, all passing — and the first three sentences of `pipeline.test.js` are the
+plan's own verification. Some rows say how many tests went red; those counts are
+what the suite reports at this revision, and a task that adds a test to
+`src/audio/` should re-measure them rather than trust them, because a count is
+the kind of claim that goes stale the moment the suite grows.
 
 | Mutation | Went red |
 | --- | --- |
-| `endTurn` closes the turn instead of flushing it | the plan's sentence one, and six more |
-| the `barge-in` signal is not wired to the speech handler | the plan's sentence three, and fifteen more (the file's tests cancel as a promise never settles) |
+| `endTurn` closes the turn instead of flushing it | eight tests, the plan's sentence one among them |
+| the `barge-in` signal is not wired to the speech handler | twenty tests, the plan's sentence three among them |
 | speech no longer cancels the playback it interrupts | the plan's sentence three, `the barge-in is a speech-start too` |
 | a partial is composed into a message | `a partial is shown and is never sent` |
 | **`onFinal` keys on the state alone, not the turn id** | `a superseded turn's late final is not this turn's message` |
@@ -599,9 +615,9 @@ verification.
 | an empty transcript is repaired (`\|\| ' '`) instead of refused | `a transcript the schema refuses is refused here too` |
 | the `unavailable` event loses the OS code | `D122: the OS refusing the microphone…` |
 | every message reuses one id | `each message is its own id, sender and clock` |
-| `FakeStt.end()` closes the turn (the engine's final has nowhere to land) | eight tests, including `the end of speech flushes the turn` |
+| `FakeStt.end()` closes the turn (the engine's final has nowhere to land) | nine tests, including `the end of speech flushes the turn` |
 | `FakeStt.partial` is allowed out of a flushed turn | `the end of speech flushes the turn` |
-| an interrupted utterance settles as finished | four tests, including the plan's sentence three |
+| an interrupted utterance settles as finished | three tests, including the plan's sentence three |
 | a second utterance is queued instead of refused | `one utterance at a time` and the pipeline's refusal test |
 | the two OS denials collapse into one code | both D122 tests |
 | an event carries `samples: []` | `an event carries the event, and never anything heard`, and the no-samples rule |
@@ -610,6 +626,27 @@ verification.
 | the door grows one more export | `the door exports exactly this` |
 | a **sibling** production file imports `@react-native-voice/voice` | three test files fail to load (module resolution) — the suite goes red before the rule can report it; the nested-file mutation above is the one that proves the rule itself |
 | `Date.now()` planted in `pipeline.js` | `no clock` |
+| **a `Permissions.query` call planted in `audio-in.js`** | `no device API` — the token the rule table did not name until this round |
+| **a `Uint8Array` buffer planted in `stt.js`** | `no samples, in any encoding` — the other token the row had dropped |
+| **the README's device-API row drops `Permissions`** | `the README's rule table and the scan are the same list` |
+| **the README's samples row drops `Uint8Array`** | the same |
+| **the scan gains a token (`Reflect`) the README does not name** | the same |
+| **the scan drops a token (`performance.now`) the README names** | the same |
+| **a README rule row is renamed** | the same |
+| **the README's table header is renamed** | the same |
+| **the README's tokens are reordered within a row** | the same |
+| **the README loses a whole rule row** | the same |
+
+The rule table and the scan are one list now, and the reason is that they were
+two: `mobile/README.md` said the device-API rule forbade `getUserMedia`,
+`MediaRecorder`, `AudioContext` and `navigator`, while the pattern beside it also
+forbade `Permissions`, and the samples row listed five of the seven tokens the
+pattern carried. The scan builds its pattern from its own token list
+(`forbiddenPattern`) and `the README's rule table and the scan are the same
+list` compares that list to the table, row for row and token for token — so the
+documentation cannot promise less than the scan enforces. The prose control was
+run the same way: the three tokens planted in a *comment* leave the suite green,
+which is what the comment-stripping is for.
 
 **Three tests were passing for the wrong reason, and each is now a mutation
 above rather than a claim.** The `on(kind, handler)` guards threw a `TypeError`

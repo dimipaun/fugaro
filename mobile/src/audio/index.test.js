@@ -155,62 +155,91 @@ test('the door exports exactly this, and every name is one of the three ports, a
 });
 
 /**
- * The rules. Each is a pattern, why it is here, and what it would mean.
+ * The rules. Each is a name, the **tokens** it forbids, why it is here, and what
+ * a token would mean.
  *
- * The patterns are deliberately broad (`\bDate\b` rather than `Date.now`): the
- * point is that the *capability* is absent, and a capability is absent only if
- * every way of reaching it is.
+ * The tokens are the rule, and the pattern is built from them
+ * (`forbiddenPattern`): a rule is "these words do not appear in this module's
+ * code", and a regex written out beside them is a second copy of the same fact
+ * that can drift from the first. The README's rule table carries the same tokens
+ * in the same order, and `the README's rule table and the scan are the same
+ * list` compares the two -- so the table a reader checks is the scan that runs.
+ *
+ * The tokens are deliberately broad (`Date` rather than `Date.now`): the point
+ * is that the *capability* is absent, and a capability is absent only if every
+ * way of reaching it is.
  */
 const RULES = [
   {
     name: 'no clock',
-    pattern: /\bDate\b|\bperformance\s*\.\s*now\b|\bhrtime\b/,
+    tokens: ['Date', 'performance.now', 'hrtime'],
     sample: 'const at = Date.now()',
     why: 'D117: the clock is the server-anchored one the pipeline is handed, so this module reads none',
   },
   {
     name: 'no random source',
-    pattern: /\bMath\s*\.\s*random\b|\bcrypto\b/,
+    tokens: ['Math.random', 'crypto'],
     sample: 'const id = Math.random()',
     why: 'the message id is injected (`newId`), and a random source here would be one no test could pin',
   },
   {
     name: 'no timer',
-    pattern: /\bsetTimeout\b|\bsetInterval\b|\bsetImmediate\b|\brequestAnimationFrame\b/,
+    tokens: ['setTimeout', 'setInterval', 'setImmediate', 'requestAnimationFrame'],
     sample: 'setTimeout(() => {}, 300)',
     why: '§5\'s ~300 ms grace period and any silence timeout are measured by the engine, not by a timer this module owns',
   },
   {
     name: 'no network',
-    pattern: /\bfetch\s*\(|\bWebSocket\b|\bXMLHttpRequest\b|\bEventSource\b/,
+    tokens: ['fetch(', 'WebSocket', 'XMLHttpRequest', 'EventSource'],
     sample: "fetch('https://example.invalid/audio')",
     why: 'D123/D46: on-device engines only; a cloud engine needs a second, explicit owner decision',
   },
   {
     name: 'no device API',
-    pattern: /\bgetUserMedia\b|\bMediaRecorder\b|\bAudioContext\b|\bnavigator\b|\bPermissions\b/,
+    tokens: ['getUserMedia', 'MediaRecorder', 'AudioContext', 'navigator', 'Permissions'],
     sample: 'navigator.mediaDevices.getUserMedia({ audio: true })',
     why: 'D122: the microphone is reached through the AudioIn port, and the OS permission through whomever implements it -- never here',
   },
   {
-    name: 'no audio samples, in any encoding',
-    pattern: /\bpcm\b|\bsamples\b|\bArrayBuffer\b|\bFloat32Array\b|\bUint8Array\b|\bbase64\b|\bBlob\b/i,
+    name: 'no samples, in any encoding',
+    tokens: ['pcm', 'samples', 'ArrayBuffer', 'Float32Array', 'Uint8Array', 'base64', 'Blob'],
     sample: 'const chunk = new Float32Array(1024)',
     why: 'D118/F26: text crosses these ports and audio never does, so there is no buffer here to leak one through',
   },
   {
     name: 'no logging',
-    pattern: /\bconsole\s*\./,
+    tokens: ['console.'],
     sample: "console.log('heard something')",
     why: 'a transcript in a log line is a transcript outside the mailbox (D118), and the app logs nothing',
   },
   {
     name: 'nothing is read from the environment',
-    pattern: /\bprocess\s*\.\s*env\b/,
+    tokens: ['process.env'],
     sample: "const key = process.env.KEY",
     why: 'an engine chosen or configured by an environment variable is a configuration this module cannot see or test',
   },
 ];
+
+/**
+ * The pattern a rule's tokens make: each token escaped, and word-bounded where
+ * it begins or ends with a word character, joined as alternatives, and matched
+ * case-insensitively.
+ *
+ * The bounding is why this is derived rather than written: `fetch(` has to match
+ * `fetch(` and not `myfetch(`, and a trailing `\b` after a `(` would match
+ * nothing at all, because there is no word boundary between `(` and the quote
+ * that follows it in real code.
+ *
+ * @param {string[]} tokens the rule's forbidden tokens
+ * @returns {RegExp}
+ */
+function forbiddenPattern(tokens) {
+  const bounded = (token) => {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return `${/^\w/.test(token) ? '\\b' : ''}${escaped}${/\w$/.test(token) ? '\\b' : ''}`;
+  };
+  return new RegExp(tokens.map(bounded).join('|'), 'i');
+}
 
 /**
  * A file's code, without its comments. The same helper `boundary.test.js` uses,
@@ -241,17 +270,75 @@ test('the scan reads the module, and not an empty list', () => {
 
 for (const rule of RULES) {
   test(`${rule.name} — ${rule.why}`, () => {
+    const pattern = forbiddenPattern(rule.tokens);
     // The positive control: the rule's pattern must match the line it claims to
     // forbid, in real code.
-    assert.equal(rule.pattern.test(code(`function offence() { ${rule.sample}; }\n`)), true, rule.sample);
+    assert.equal(pattern.test(code(`function offence() { ${rule.sample}; }\n`)), true, rule.sample);
     // ... and must not match prose, which is what lets these files explain
     // themselves.
-    assert.equal(rule.pattern.test(code(`// ${rule.sample} is forbidden here\n`)), false, rule.sample);
+    assert.equal(pattern.test(code(`// ${rule.sample} is forbidden here\n`)), false, rule.sample);
     // ... and then the module itself.
-    const offenders = production().filter(([, text]) => rule.pattern.test(text)).map(([file]) => file);
+    const offenders = production().filter(([, text]) => pattern.test(text)).map(([file]) => file);
     assert.deepEqual(offenders, [], `${rule.name}: ${rule.why}`);
   });
 }
+
+// **The README's table is this list, and this test is what makes that true.**
+// The table a reader consults and the scan that runs were two hand-written lists
+// of the same tokens, and they had drifted: the device-API row did not name
+// `Permissions`, which the scan forbids, and the samples row did not name
+// `Uint8Array` -- so a reader checking the code against the documentation would
+// have checked a weaker rule than the one enforced. The rows are read out of
+// `mobile/README.md` and compared to `RULES`, token for token and row for row.
+
+/** The line that opens the README's rule table, in the P3.4 section. */
+const RULE_TABLE_HEADER = '| Rule | Exactly what the scan forbids | Why |';
+
+/**
+ * The README's rule table, as `{ name, tokens }` per row: the row's first cell
+ * is the rule's name and the backticked spans of its second cell are its tokens,
+ * in the order the row writes them.
+ *
+ * @returns {{name: string, tokens: string[]}[]}
+ */
+function readmeRuleRows() {
+  const lines = readFileSync(join(MOBILE, 'README.md'), 'utf8').split('\n');
+  const start = lines.indexOf(RULE_TABLE_HEADER);
+  assert.notEqual(start, -1, `mobile/README.md no longer carries the rule table (${RULE_TABLE_HEADER})`);
+  const rows = [];
+  for (const line of lines.slice(start + 2)) {
+    if (!line.startsWith('|')) break;
+    const cells = line.split('|').slice(1, -1);
+    const name = cells[0].trim();
+    const tokens = [...cells[1].matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    rows.push({ name, tokens });
+  }
+  assert.notEqual(rows.length, 0, 'the rule table has no rows: an empty table agrees with an empty scan');
+  return rows;
+}
+
+test("the README's rule table and the scan are the same list", () => {
+  const rows = readmeRuleRows();
+  // Row for row, in order: a rule the scan carries and the table drops is a
+  // rule a reader cannot see, and a row the scan does not carry is a rule
+  // nothing enforces.
+  assert.deepEqual(
+    rows.map((row) => row.name),
+    RULES.map((rule) => rule.name),
+  );
+  for (const [index, rule] of RULES.entries()) {
+    // Token for token, in order: this is the drift the test exists for.
+    assert.deepEqual(rows[index].tokens, rule.tokens, `${rule.name}: the row and the scan list the same tokens`);
+  }
+  // And every token is a real pattern: a token that matches nothing would make
+  // the row a promise the scan does not keep.
+  for (const rule of RULES) {
+    const pattern = forbiddenPattern(rule.tokens);
+    for (const token of rule.tokens) {
+      assert.equal(pattern.test(`function offence() { const x = ${token} ; }\n`), true, `${rule.name}: ${token}`);
+    }
+  }
+});
 
 // **The last rule is about imports, and it is not the same rule as
 // `boundary.test.js`'s.** That scan resolves *path* specifiers and catches an
