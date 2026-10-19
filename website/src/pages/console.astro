@@ -60,7 +60,12 @@ const facts = loadConsoleDownloads(SITE_ROOT, site.facts.features.consoleDownloa
 
     {/* The downloads themselves: rendered from `downloads.json`, and rendering no link and
         no button at all while the console is unreleased (W1.6 step 1). */}
-    <Downloads available={facts.available} note={facts.notReleased.text} downloads={facts.downloads} />
+    <Downloads
+      available={facts.available}
+      note={facts.notReleased.text}
+      released={facts.released}
+      downloads={facts.downloads}
+    />
 
     <section id="console-facts" aria-labelledby="console-facts-heading">
       <h2 id="console-facts-heading">Facts about the console</h2>

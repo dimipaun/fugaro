@@ -32,19 +32,38 @@
  * below is typed into the markup: the note is the data file's own sentence, and each
  * label is the platform and the asset's own extension — the site invents no distribution
  * (D4, D11).
+ *
+ * **What a reader gets once the console has shipped (W3.1).** The release's own sentence
+ * about the console (macOS only, one universal disk image and one archive, signed and
+ * Apple-notarised, the CLI first because the CLI is the data plane), one link per published
+ * asset with the SHA-256 the release recorded for its bytes beside it, and the command that
+ * checks a download against the release's sums file — in a command block, so a reader copies
+ * it rather than selecting it by hand (D183, P6). All of it comes from the data file: the
+ * checksum is the one fact here that is not derived, because it is a fact about bytes and no
+ * build can compute it.
  */
+import { copyControlHTML } from '../lib/copy-control.mjs'
+
 interface DownloadFacts {
   /** What a reader sees on the link: the platform and the asset's extension (`macOS .dmg`). */
   label: string
   /** Where a reader downloads it from. Only ever rendered while `available` is true. */
   url: string
+  /** The SHA-256 of the published bytes, printed beside the link to check a download with. */
+  sha256: string
 }
 
 interface Props {
-  /** `downloads.json`'s `available`: the console's own artifact exists (W3.1 flips it). */
+  /** `downloads.json`'s `available`: the console's own artifact exists (W3.1 flipped it). */
   available: boolean
   /** The data file's `not_released` sentence, rendered while `available` is false. */
   note: string
+  /**
+   * The data file's `released` block: what the console is once it has shipped (macOS only,
+   * signed and notarised, the CLI first) and the command that verifies a download. Rendered
+   * while `available` is true, and rendered from the data file rather than written here.
+   */
+  released: { text: string; verify: string }
   /**
    * The data file's `downloads` entries: the release's published names, which the data file
    * carries from the day they are known and not only once the console ships. They are rendered
@@ -54,7 +73,7 @@ interface Props {
   downloads: DownloadFacts[]
 }
 
-const { available, note, downloads } = Astro.props
+const { available, note, released, downloads } = Astro.props
 
 // A label rather than a fact: the section's own heading, which is the navigation's word
 // for this page and not a claim about the product (the layout's nav carries the same one).
@@ -66,15 +85,33 @@ const HEADING = 'Downloads'
 
   {
     available ? (
-      <ul class="downloads">
-        {downloads.map((download) => (
-          <li>
-            <a href={download.url} rel="noopener">
-              {download.label}
-            </a>
-          </li>
-        ))}
-      </ul>
+      <>
+        {/* What the console is now that it has shipped: the platform, the signing and
+            notarisation, and the CLI-first rule — the data file's own sentence, rendered
+            rather than written here. */}
+        <p class="downloads-released">{released.text}</p>
+
+        <ul class="downloads">
+          {downloads.map((download) => (
+            <li>
+              <a href={download.url} rel="noopener">
+                {download.label}
+              </a>
+              {/* The published bytes' own checksum, beside the link it belongs to: a
+                  reader who has the file can see whether what arrived is what the
+                  release published, without trusting the transfer. */}
+              <code class="download-sha256">{download.sha256}</code>
+            </li>
+          ))}
+        </ul>
+
+        {/* The command that checks a download, in the site's own command block so a
+            reader copies it rather than selecting it by hand (D183, P6). */}
+        <div class="command-block" data-copy>
+          <Fragment set:html={copyControlHTML('Copy the checksum verification command')} />
+          <pre><code>{released.verify}</code></pre>
+        </div>
+      </>
     ) : (
       <div class="downloads-unreleased">
         {/* One paragraph, and nothing else: while the console is unreleased this branch

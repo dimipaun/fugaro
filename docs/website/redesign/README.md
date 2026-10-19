@@ -230,7 +230,7 @@ here goes stale the way the byte budgets did before D192.
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
   **page weight per page 1,001,607** (three times 333,869; the docs hub 267,095 bytes) and
-  **whole site 3,169,137** (three times 1,056,379; the gates' own build of the site, 845,103
+  **whole site 3,174,582** (three times 1,058,194; the gates' own build of the site, 846,555
   bytes across 21 files). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
@@ -244,7 +244,12 @@ here goes stale the way the byte budgets did before D192.
   by moving the two declarations that make a command wrap onto `base.css`'s
   `.command-block > pre`, which every page inlines: the copy control shares the command's row
   now, so the rule belongs to every command block on the site rather than to the homepage's
-  install class alone (the fifth round below). The figures above are the build
+  install class alone (the fifth round below). And the round the console's release belongs to
+  moved the site figure 1,452 bytes up and left the other two where they were: turning
+  `features.console_downloads` on puts the console page's downloads section — each artifact's
+  published name as a link, the release's own SHA-256 beside it, and the command that checks a
+  download against the release's sums file — and the console option's own markup on Getting
+  Started into the artifact, and the heaviest page renders neither. The figures above are the build
   this branch ships. It is the
   sixth re-derivation on this branch's side — the second fix round moved the homepage's order,
   the flow's treatment, the chat's launch line, the install command's wrapping and the chat's
@@ -263,15 +268,16 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **845,103 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **843,588 with the tags this repository's clone carries**,
+  to **846,555 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **845,040 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
-  the artifact gates over a copy with the console's flag flipped, and that copy is a different
-  build — **536 bytes larger at the site figure**, measured, and the page weight where it was —
-  rather than another copy of this one.
+  the artifact gates over a copy with the console's flag flipped off — the state the checkout
+  built until the console's release turned it on — and that copy is a different build — **1,452
+  bytes larger at the site figure**, measured, and the page weight where it was — rather than
+  another copy of this one.
 - **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
   acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
   `fugaro run` transcript the homepage carried (`Terminal.astro`, D184) is removed from it —

@@ -131,7 +131,7 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
   }
 
   const doc = asMap(parsed, 'the document')
-  const allowed = ['version', 'available', 'name', 'what', 'not_released', 'properties', 'release', 'downloads']
+  const allowed = ['version', 'available', 'name', 'what', 'released', 'not_released', 'properties', 'release', 'downloads']
   for (const key of Object.keys(doc)) {
     if (!allowed.includes(key)) {
       refuse(
@@ -204,6 +204,21 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     return { tagPrefix, version, tag: `${tagPrefix}${version}`, source: asText(map.source, 'release.source') }
   })()
 
+  // What the section says once the console has shipped: the platform, the signing
+  // and notarisation, the CLI-first rule, and the command a reader checks a
+  // download with. The checksums themselves are per asset (below), because a
+  // checksum is a fact about one file rather than about the release.
+  const released = (() => {
+    const map = asMap(doc.released, 'released')
+    for (const key of Object.keys(map)) {
+      if (!['text', 'verify', 'source'].includes(key)) {
+        refuse(`released carries the key "${key}", and the console's released state is the sentence a page renders, the command that verifies a download and the source of both`)
+      }
+    }
+    const claim = asClaim({ text: map.text, source: map.source }, 'released')
+    return { ...claim, verify: asText(map.verify, 'released.verify') }
+  })()
+
   const notReleased = (() => {
     const map = asMap(doc.not_released, 'not_released')
     for (const key of Object.keys(map)) {
@@ -227,9 +242,9 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
         // `url` is refused by name rather than ignored: a URL in this file is the defect the
         // Go boundary test scans the whole site for, and it would be a URL nothing keeps in
         // step with the release the names below are cut from.
-        if (!['id', 'platform', 'file'].includes(key)) {
+        if (!['id', 'platform', 'file', 'sha256'].includes(key)) {
           refuse(
-            `downloads[${index}] carries the key "${key}", and a download is an id, the platform it is for and the published name of the asset it is: the URL is derived from those and never written down (Global Constraint 9)`,
+            `downloads[${index}] carries the key "${key}", and a download is an id, the platform it is for, the published name of the asset it is and the SHA-256 of the bytes the release published: the URL is derived from those and never written down (Global Constraint 9)`,
           )
         }
       }
@@ -245,10 +260,25 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
           `downloads[${index}].file is ${JSON.stringify(asset)} and carries no ${VERSION_PLACEHOLDER}: the published name carries the tag's version, and a name with no version in it is one the next release does not publish`,
         )
       }
+      // The checksum of the bytes the release published, as `console-sha256sums.txt`
+      // records them. It is written as 64 lowercase hex digits and nothing else,
+      // because it is printed beside the link for a reader to check a download with:
+      // a truncated, uppercased or non-hex value is a checksum `shasum -a 256 -c`
+      // can never match, and a page that prints one is worse than a page that prints
+      // none. What no offline gate here can prove is that a well-formed value is the
+      // PUBLISHED one -- that is the owner's check against the release, the same
+      // limit `website/test/console.mjs` records for the tag's existence.
+      const sha256 = asText(map.sha256, `downloads[${index}].sha256`)
+      if (!/^[0-9a-f]{64}$/.test(sha256)) {
+        refuse(
+          `downloads[${index}].sha256 is ${JSON.stringify(sha256)}, which is not 64 lowercase hex digits: the checksum is what a reader compares a download against with shasum -a 256, so a value of any other shape is one nothing can ever match`,
+        )
+      }
       const published = asset.split(VERSION_PLACEHOLDER).join(release.version)
       return {
         id: asText(map.id, `downloads[${index}].id`),
         platform,
+        sha256,
         // What a reader sees on the button: the platform, and the asset's own extension, so
         // two assets of one platform — the disk image and the archive — are told apart
         // without a second fact to keep in step with the file name.
@@ -267,6 +297,7 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     available,
     name: asText(doc.name, 'name'),
     what: asClaim(doc.what, 'what'),
+    released,
     notReleased,
     properties,
     release,
