@@ -1310,6 +1310,18 @@ func TestWatchRefusalBeforeTheStreamExits1WithNoDocument(t *testing.T) {
 // returning one document and exit 1.
 func TestWatchStreamRefusalEmitsOneDocumentThenExits1(t *testing.T) {
 	f := newBudgetFixture(t, "")
+	// The queued source opens the runs bucket on its own goroutine, and that
+	// open's project-name check writes the project-check cache. The open is
+	// deliberately left to finish on its own when the command ends
+	// (TestQueuedSourceQuitWhileOpenBlocked pins that: an open that ignores a
+	// cancelled ctx never blocks shutdown), so its cache write can land after
+	// this command returns. Point XDG_CACHE_HOME at TestMain's own directory,
+	// which nothing removes, so the late write cannot race t.TempDir's
+	// RemoveAll cleanup -- which is how this test used to flake ("directory
+	// not empty").
+	if testCacheRoot != "" {
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(testCacheRoot, t.Name()))
+	}
 	f.db.RefusePath("agents", 401, "UNAUTHENTICATED", "", "expired")
 	cmd := NewRootCmd()
 	out := &lockedBuf{}
