@@ -367,8 +367,8 @@ var mdForwardRefRE = regexp.MustCompile(`Task 6\.([1-6])`)
 //     there is what this test reads.
 //   - the main-process window-background assertion was assigned to Task 6.1's
 //     `theme-tokens.test.ts` while `backgroundColor` itself arrives in Task
-//     6.5's `console/src/main/window.ts`. A case asserting a key that does not
-//     exist yet is not a case that task owns, so it moved to 6.5.
+//     6.5's window module. A case asserting a key that does not exist yet is
+//     not a case that task owns, so it moved to 6.5.
 //
 // The general rule the two share is checked directly rather than by name: a
 // task's **Files** and **Tests** paragraphs must not name a later task, because
@@ -482,7 +482,7 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 		}
 	}
 	if clause, ok := mdClause(t, planPath, planTasks[4], "Scope"); !ok || !strings.Contains(clause, "backgroundColor") {
-		t.Errorf("%s: Task 6.5's **Scope** does not name backgroundColor; it is the task that adds both literals to console/src/main/window.ts, so a reader of the task would not know it owns the assertion", planPath)
+		t.Errorf("%s: Task 6.5's **Scope** does not name backgroundColor; it is the task that adds both literals to the main process's window module, so a reader of the task would not know it owns the assertion", planPath)
 	}
 	if !strings.Contains(mdFlat(design), "This case is [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)'s and not Task 6.1's") {
 		t.Errorf("%s: §6.3 does not say the window-background case is Task 6.5's; a design that leaves the owner unnamed is a design a reader can implement in the wrong task", designPath)
