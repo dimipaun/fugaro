@@ -132,6 +132,67 @@ test('a degraded feed renders as degraded, not as a zero spend', () => {
   assert.equal(text(list).includes('0'), false);
 });
 
+/** §10.8's own document: `lsDoc` embedded plus `degraded` and `notice`. */
+function degradedDocumentOf(overrides = {}) {
+  const judged = validateDocument({
+    project: 'fugaro',
+    runs: [],
+    totals: {},
+    warnings: [],
+    degraded: true,
+    notice: 'no budget backend',
+    ...overrides,
+  });
+  assert.equal(judged.ok, true, JSON.stringify(judged));
+  return { document: judged.document, snapshot: snapshotOf(judged.document, { liveness: 'degraded', degraded: true, broken: false }) };
+}
+
+test('a degraded feed is degraded, and not a broken series', () => {
+  // §10.8's state is its own: the feed's view reports `broken: false` beside
+  // `degraded: true`, and a screen that folded the two together would tell the
+  // reader the day's counter was missed when what happened is that part of the
+  // tree could not be read. Both draw no row -- that is `row === null`, and this
+  // line is the word, which is a different question from the drawing.
+  const { snapshot } = degradedDocumentOf();
+  const list = jobList({ snapshot });
+  assert.equal(list.broken, false, 'the feed’s own word, carried');
+  assert.equal(list.degraded, true);
+  assert.equal(list.row, null);
+  assert.equal(lineText(list, 'Series'), SERIES.DEGRADED);
+  assert.notEqual(lineText(list, 'Series'), SERIES.BROKEN);
+
+  // ... and a feed that has sent nothing is the feed's word too: this module
+  // carries `broken` rather than deciding it.
+  const none = jobList({ snapshot: snapshotOf(null, { liveness: 'no-document', broken: true }) });
+  assert.equal(none.broken, true);
+  assert.equal(lineText(none, 'Series'), SERIES.BROKEN);
+});
+
+test('a degraded read still says which project it is about, and why', () => {
+  // §10.8's document names the project and carries the CLI's static notice, and
+  // the list is the screen for exactly this state: the view's `note` is about a
+  // skipped or refused *line* and a successful ingest clears it, so the sentence
+  // is on the document and nowhere else. Dropping both prints
+  // `Project: not known` for a project the document names and loses the notice.
+  const { snapshot } = degradedDocumentOf();
+  const list = jobList({ snapshot });
+  assert.equal(list.project, 'fugaro');
+  assert.equal(lineText(list, 'Project'), 'fugaro');
+  assert.notEqual(lineText(list, 'Project'), NOTHING);
+  assert.equal(lineText(list, 'Note'), 'no budget backend');
+
+  // A project the degraded document does not name is absent, and says so the
+  // way an absent caption always says it.
+  const anonymous = degradedDocumentOf({ project: undefined });
+  assert.equal(anonymous.document.project, null);
+  assert.equal(lineText(jobList({ snapshot: anonymous.snapshot }), 'Project'), NOTHING);
+
+  // ... and a **live** document's note is still the view's own field, which is
+  // what it is there for.
+  const live = jobList({ snapshot: snapshotOf(documentOf(), { note: 'part of the feed could not be read' }) });
+  assert.equal(lineText(live, 'Note'), 'part of the feed could not be read');
+});
+
 test('a cap fraction is printed as a percentage, and a burn rate as a rate', () => {
   const list = jobList({
     snapshot: snapshotOf(documentOf({ burn: { known: true, usd_per_min: 0.25, fast: true } })),

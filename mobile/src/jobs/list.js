@@ -91,20 +91,33 @@ function checkSnapshot(snapshot) {
  *
  * Returns `{ ok: true, ... }` or a refusal. The list's own shape:
  *
- *   * `row` -- the project's row (`row.js`), or **`null`** when the series is
- *     broken, the feed is degraded, or nothing has arrived. `null` is the rule
- *     §10.7 states ("must not draw the zero"): a sighting of a new day before
- *     its counter has been heard is a **gap**, not a spend of zero, and a
- *     screen that drew the document anyway would print the rollover's zero as a
- *     measurement. `lines.js` draws the gap mark for it.
+ *   * `row` -- the project's row (`row.js`), or **`null`** when no row may be
+ *     drawn: the series is broken, the feed is degraded, or nothing has
+ *     arrived. `null` is the rule §10.7 states ("must not draw the zero"): a
+ *     sighting of a new day before its counter has been heard is a **gap**, not
+ *     a spend of zero, and a screen that drew the document anyway would print
+ *     the rollover's zero as a measurement. `lines.js` draws the gap mark for
+ *     it.
+ *   * `broken` -- **§10.7's break and nothing else**: the feed's own word,
+ *     carried unchanged. A degraded feed is **not** broken (§10.8 is its own
+ *     state, and `view.js` reports `broken: false` beside `degraded: true`), so
+ *     folding the two together here would put "break" on a screen whose feed
+ *     never said its series broke. What the two share is that neither can draw
+ *     a row, and that is `row === null` -- one flag for the screen's word, one
+ *     for the drawing, and no claim smuggled between them.
  *   * `heartbeat` -- P3.6's reading, always present, in five words
  *     (`fields.js`). It is a different family and a different stream from the
  *     spend the row carries, so a broken series does not blank it.
  *   * `connection` -- the feed's own liveness word, carried unchanged. This
  *     module does not interpret it: silence reaching `stale` and stopping there
  *     is `view.js`'s rule, and there is no word here for a dead process.
- *   * `day`, `dayChanged`, `broken`, `degraded`, `note` -- the feed's, carried
- *     for a screen that draws them.
+ *   * `project`, `day`, `dayChanged`, `note` -- what the document is about, and
+ *     the feed's own fields. §10.8's degraded document names the project and
+ *     carries the CLI's static `notice`, and both are on this list for a
+ *     degraded feed: the document is the only thing that has them (the view's
+ *     `note` belongs to a skipped or refused line, and a successful ingest
+ *     clears it), so dropping them would print `Project: not known` for a
+ *     project the document names and lose §10.8's sentence entirely.
  */
 export function jobList({ snapshot, presence } = {}) {
   const judged = checkSnapshot(snapshot);
@@ -115,24 +128,33 @@ export function jobList({ snapshot, presence } = {}) {
   const heartbeat = heartbeatRow(presence);
   if (heartbeat.ok === false) return heartbeat;
   const document = judged.document;
-  // A degraded feed has no figures at all, and a feed that has sent nothing
-  // has said nothing about the day. Both draw no row, and neither is a zero.
-  const broken = judged.broken || judged.degraded || document === null;
+  // `broken` is the feed's word and stays the feed's word (§10.7). A degraded
+  // feed and a feed that has sent nothing draw no row either, and that is the
+  // second question -- `drawable` is this function's own and is not carried
+  // out: `row === null` already says it, and a flag that meant two things is
+  // what put "break" on a degraded screen.
+  const drawable = !judged.broken && !judged.degraded && document !== null;
   let row = null;
-  if (!broken) {
+  if (drawable) {
     const built = projectRow(document);
     if (!built.ok) return built;
     row = built.row;
   }
+  // §10.8's document is the only place the project and the CLI's notice live
+  // when the read is degraded: the view's `note` is about a skipped or refused
+  // line and a successful ingest clears it. Read as strings and no further --
+  // the document's own `text()` bound already applied -- because a hand-made
+  // document is not one this app validated.
+  const degradedDocument = judged.degraded && document !== null && document.degraded === true;
   return Object.freeze({
     ok: true,
-    project: judged.degraded || document === null ? null : document.project,
+    project: document !== null && typeof document.project === 'string' ? document.project : null,
     day: judged.day,
     dayChanged: judged.dayChanged,
     connection: judged.liveness,
-    broken,
+    broken: judged.broken,
     degraded: judged.degraded,
-    note: judged.note,
+    note: degradedDocument && typeof document.notice === 'string' ? document.notice : judged.note,
     row,
     heartbeat,
   });

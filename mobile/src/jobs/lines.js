@@ -38,10 +38,16 @@
 import { GAP_MARK, isEmpty, isFigure, shown } from '../feed/index.js';
 import { HEARTBEAT_STATES, JOB_FIELDS, KILL_STATES, NOTHING } from './fields.js';
 
-/** What the screen says about a series that has broken: §10.7's break, in the
- * list's own word. Not a figure and not an availability state -- it is the
- * series, not a number, that is broken. */
-export const SERIES = Object.freeze({ BROKEN: 'break', OK: 'ok' });
+/** What the screen says about the series: §10.7's break, §10.8's degraded read,
+ * or neither, in the list's own words. Not a figure and not an availability
+ * state -- it is the series, not a number, that is broken or degraded.
+ *
+ * **Three words, and the third is why.** A degraded feed is not a broken
+ * series: §10.8 is its own state, the feed's view reports `broken: false`
+ * beside `degraded: true`, and a screen that drew "break" for it would tell the
+ * reader the day's counter was missed when the truth is that part of the tree
+ * could not be read. Both draw no row; only one is a break. */
+export const SERIES = Object.freeze({ BROKEN: 'break', DEGRADED: 'degraded', OK: 'ok' });
 
 /** What the screen says about a rate that cannot speak yet. The plan's own
  * phrase: "a recomputed burn rate ... is either correct against a fixture or
@@ -111,7 +117,9 @@ export function lines(list) {
   const drawn = [
     { label: 'Project', text: list.project ?? NOTHING },
     { label: 'Day', text: list.day ?? NOTHING },
-    { label: 'Series', text: list.broken ? SERIES.BROKEN : SERIES.OK },
+    // Degraded first: a degraded feed is not a break (§10.8), and the feed's
+    // own view says so -- `broken: false` beside `degraded: true`.
+    { label: 'Series', text: list.degraded ? SERIES.DEGRADED : list.broken ? SERIES.BROKEN : SERIES.OK },
     { label: 'Connection', text: list.connection },
   ];
   for (const field of JOB_FIELDS) {

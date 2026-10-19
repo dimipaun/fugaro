@@ -430,11 +430,22 @@ itself** is absent: the day, the project. Three absences, three different
 strings — a test holds them apart, because two of them spelled the same would be
 a screen a reader has to guess at. A `0` is a measurement and appears only where
 a counter measured zero.
+
 That difference is the whole of §10.7's "must not draw the zero": on a day
 break the reader assembles the new day's document, which carries a zero counter,
 and `jobList` draws `row: null` for it — so the zero cannot reach a screen that
-forgot to check. A degraded feed (§10.8) is the same: it renders as degraded,
-never as a spend of zero.
+forgot to check. A degraded feed (§10.8) draws no row either, and never a spend
+of zero.
+
+**A degraded feed is not a broken series.** §10.8's state is its own: the feed's
+view reports `broken: false` beside `degraded: true`, and the Series line has a
+third word, `degraded`. What the two share is that neither can draw a row — that
+is `row === null`, one flag for the screen's word and one for the drawing, and
+folding them together is how "break" reached a screen whose feed never said its
+series broke. A degraded document is also the one thing that names its project
+and carries the CLI's static `notice`, and both are on the list: the view's
+`note` belongs to a skipped or refused line and a successful ingest clears it,
+so the sentence would otherwise be lost between the document and the screen.
 
 ### What the list deliberately does not show
 
@@ -491,7 +502,7 @@ so a mistyped pattern cannot pass for a clean tree, and with test files exempt
 | `pr_url`, `prUrl`, `pr_number`, `prNumber`, `Linking`, `openURL`, `openExternal`, `WebBrowser` | the runs bucket's fields, and every way of opening a link |
 | `../feed/` other than `../feed/index.js` | the feed is reached through its **door**: `paths.js`'s gate and `nodes.js`'s raw readers are the feed's business, and a screen that composed a path would be composing a read |
 
-One rule is not a token rule: the door's surface is asserted as an **exact set**
+Two rules are not token rules. The door's surface is asserted as an **exact set**
 (the rule P3.2's `index.test.js` gives) and **no name on it may be dead** — used
 nowhere. The first version of that rule counted a name's own declaration as a use
 and the scan file's own enumeration of the names as another, so it could not fail
@@ -500,6 +511,13 @@ behind it. The declarations are stripped before the search now, the scan file is
 excluded from it, and the rule's three controls are the two shapes a dead export
 has (declared-and-unused, and declared nowhere) and the shape that must not be
 flagged (declared and used).
+
+The second walks the **members of an exported vocabulary** rather than the door's
+names, which is the gap `LIST_CODES.BAD_NOW` shipped through: a refusal code
+declared beside the five that are used, exported on the door as part of
+`LIST_CODES`, and produced by no code path here -- the clock refusal a caller
+actually sees is `reader.js`'s own `READER_CODES.BAD_NOW`. A member nothing
+produces is a member a reader has to check is still true.
 
 ### The job list's mutations
 
@@ -532,6 +550,12 @@ planted dead export, that being the finding that the rule could not fail.
 | the caption mark becomes the gap mark | `the three absences are three different strings` |
 | the door re-exports a name nothing uses | `the door carries the module's surface, and no dead name` |
 | a declared-and-unused export on the door survives the rule | the same test, whose control asserts the two shapes are flagged |
+| a degraded feed is folded back into `broken` | `a degraded feed is degraded, and not a broken series` |
+| the Series line has no word for a degraded read | the same test |
+| a degraded read draws a row after all | the same test |
+| the degraded document's project is discarded | `a degraded read still says which project it is about, and why` |
+| the degraded document's notice is discarded | the same test |
+| a refusal code nothing produces is declared again (`BAD_NOW`) | `every member of an exported vocabulary is produced somewhere` |
 
 ## Which files may write a credential
 

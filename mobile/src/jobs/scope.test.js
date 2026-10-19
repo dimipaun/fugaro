@@ -62,6 +62,10 @@ function moduleFiles() {
 
 const isTest = (file) => file.endsWith('.test.js');
 
+/** An `export const NAME = Object.freeze({ … })` block: the module's
+ * vocabularies, whose **members** are what a menu of refusal codes is made of. */
+const VOCABULARY = /export\s+const\s+(\w+)\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/;
+
 /** The code of a file, without its comments: the rules are about code paths,
  * and every file here explains them in prose. Not a parser, and the limitation
  * is P3.1's `boundary.test.js`'s: a `//` inside a string literal would strip the
@@ -256,6 +260,71 @@ function deadNames(names, files, { door = 'src/jobs/index.js', self = SELF } = {
   const rest = [...files].filter(([file]) => file !== door && file !== self);
   return names.filter((name) => !rest.some(([, text]) => uses(name, text)));
 }
+
+/** The members of every `export const NAME = Object.freeze({ A: … })` in a
+ * file: the app's vocabulary objects (`LIST_CODES`, `SERIES`). */
+function vocabularyMembers(text) {
+  const found = [];
+  for (const block of code(text).matchAll(new RegExp(VOCABULARY.source, 'g'))) {
+    for (const entry of block[2].split(',')) {
+      const key = entry.split(':')[0].trim();
+      if (/^[A-Za-z_$][\w$]*$/.test(key)) found.push(key);
+    }
+  }
+  return found;
+}
+
+/** A file's code with every vocabulary declaration taken out. A member is named
+ * in the block that declares it, so a member no code path produces appears
+ * there and nowhere else. */
+function withoutVocabularies(text) {
+  return code(text).replace(new RegExp(VOCABULARY.source, 'g'), '');
+}
+
+/** The members of the module's vocabularies that nothing else names. */
+function unproducedMembers(files, self = SELF) {
+  const members = files.flatMap(([file, text]) => vocabularyMembers(text).map((member) => [file, member]));
+  return members
+    .filter(([, member]) => !files.some(([other, text]) => other !== self
+      && new RegExp(`\\b${member}\\b`).test(withoutVocabularies(text))))
+    .map(([, member]) => member);
+}
+
+test('every member of an exported vocabulary is produced somewhere', () => {
+  // The dead-name rule above walks the **door's names**; this one walks the
+  // **members of an exported vocabulary**, which is the gap `LIST_CODES.BAD_NOW`
+  // shipped through: a code declared beside the five that are used, exported on
+  // the door as part of `LIST_CODES`, and produced by no code path in this
+  // module -- the clock refusal a caller actually sees is `reader.js`'s own
+  // `READER_CODES.BAD_NOW`. A member nobody produces is a member a reader has to
+  // check is still true, and two vocabularies that disagree about what a refusal
+  // is called is what one `LIST_CODES` exists to prevent.
+  //
+  // "Produced" is read as **named somewhere other than its own declaration**:
+  // the members are values read through their object (`LIST_CODES.BAD_ROW`,
+  // `SERIES.DEGRADED`), so one that is not produced is a name that appears once,
+  // in the block that declares it -- which is stripped before the search.
+  const files = sources();
+  const members = files.flatMap(([, text]) => vocabularyMembers(text));
+  assert.ok(members.length >= 7, `expected the module's vocabularies, found ${members.length} members`);
+
+  // A positive control, before the rule is applied to the module: a vocabulary
+  // whose member is read is fine, and one whose member is not is flagged.
+  const planted = new Map([
+    ['src/jobs/fields.js', "export const CODES = Object.freeze({\n  USED: 'used',\n  ORPHAN: 'orphan',\n});\n"],
+    ['src/jobs/list.js', "return refuse(CODES.USED, 'x');\n"],
+  ]);
+  assert.deepEqual(unproducedMembers([...planted]), ['ORPHAN']);
+  // ... and the same control for the vocabulary this module really carries,
+  // which is the `BAD_NOW` case the review found.
+  const regressed = new Map([
+    ['src/jobs/fields.js', "export const LIST_CODES = Object.freeze({\n  BAD_ROW: 'bad-row',\n  BAD_NOW: 'bad-now',\n});\n"],
+    ['src/jobs/list.js', "return refuse(LIST_CODES.BAD_ROW, 'x');\n"],
+  ]);
+  assert.deepEqual(unproducedMembers([...regressed]), ['BAD_NOW']);
+
+  assert.deepEqual(unproducedMembers(files), []);
+});
 
 test('the door carries the module\'s surface, and no dead name', () => {
   // The door's surface as an **exact set**, the rule P3.2's `index.test.js`

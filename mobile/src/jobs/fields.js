@@ -61,8 +61,6 @@ export const LIST_CODES = Object.freeze({
   BAD_LIVENESS: 'bad-liveness',
   /** The presence reading is not one P1.4/P3.6 can produce. */
   BAD_PRESENCE: 'bad-presence',
-  /** The clock is not an instant this app can render. */
-  BAD_NOW: 'bad-now',
 });
 
 /**
