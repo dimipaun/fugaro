@@ -596,19 +596,25 @@ const BACKSLASH_RE = /\\/
  * this scan was added for (review M1, second pass).
  *
  * **The body is bounded by the newline, and the bound is load-bearing twice
- * over** (review M1, left open by #701: this is why the one target below that
+ * over** (review M1, left open by #701: it is why the one spelling below that
  * carries a raw LF is `url()`'s and not this scan's). A raw newline is what ends
  * a CSS `<string>` -- the tokenizer calls the whole thing a `<bad-string-token>`
  * and the declaration is dropped before any URL is resolved -- and a body that
  * crossed one would pair an **unbalanced** quote with the next quote of its mark
- * wherever that is: both theme files hold an apostrophe in their prose, so a `'`
- * opening a comment's aside would pair with the `'` of a remote URL further down
- * and the scan would read the prose instead of the URL. Widening it was tried
- * and reverted for exactly that: the string a refusal names stopped being a
- * string. So a scheme behind a raw LF *inside* a string is not refused here; it
- * is a declaration no browser resolves, and reaching it would cost the scan the
- * quotes it does see. Every other byte the URL parser strips -- space, tab, CR,
- * FF -- is in this body already. */
+ * wherever that is. Both theme files hold an apostrophe in their prose, so a `'`
+ * opening a comment's aside pairs with the `'` of a remote URL further down, and
+ * the scan then reads the prose instead of the URL.
+ *
+ * **That is measured, not argued**: with the body widened to `[\s\S]`,
+ * `image-set('http://cdn.example/x.png' 1x)` and
+ * `-webkit-image-set('//cdn.example/a"b.png' 2x)` planted after `tokens.css` are
+ * both **admitted** -- the mutant is caught by the two cases in `bundle.test.ts`
+ * that plant exactly those. So the widening buys one spelling the CSS tokenizer
+ * drops anyway and pays for it with two that resolve, which is why it was tried,
+ * observed and reverted rather than kept. The `url()` scan, whose quoted body is
+ * not bounded by the newline, refuses the LF spelling; `bundle.test.ts`'s probe
+ * states both halves. Every other byte the URL parser strips -- space, tab, CR,
+ * FF -- is in this body already, and `urlParserTarget` strips all of them. */
 const QUOTED_STRING_RE = /(["'])((?:(?!\1)[^\n])*)\1/g
 
 /**

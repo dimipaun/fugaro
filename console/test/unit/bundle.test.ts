@@ -1124,6 +1124,10 @@ describe('the stylesheet step', () => {
       'url("\nhttps://cdn.example/x.woff2")',
       'url("\rhttps://cdn.example/x.woff2")',
       'url(" //cdn.example/x.png")',
+      // And the same rule's other half, which a leading-byte case would not
+      // reach: the parser removes tab and newline wherever they are, so this is
+      // the protocol-relative `//` with a tab between its two slashes.
+      'url("/\t/x.png")',
     ]) {
       withPlantedStylesheet({ ...themeFiles(), [name]: `${real}\n.a { background: ${remote}; }\n` }, (options) => {
         expect(() => {
@@ -1170,6 +1174,11 @@ describe('the stylesheet step', () => {
     // still a path, and one in front of `data:` is still a byte string.
     expect(remoteUrlIn('a { background: url(" ./y.png"); }')).toBeNull()
     expect(remoteUrlIn('a { background: url(" data:image/png;base64,iVBORw0KGgo="); }')).toBeNull()
+    // The other half of the parser's rule, and the half a leading-byte case
+    // would not reach: tab and newline are removed **wherever** they are, not
+    // only at the ends. So this is the protocol-relative `//` with a tab between
+    // its two slashes -- a leading-strip-only fix answers `null` here.
+    expect(remoteUrlIn('a { background: url("/\t/x/y.png"); }')).toBe('url("/\t/x/y.png")')
     expect(themeStylesheetSources(THEME_DIR).map((source) => source.name)).toEqual([...THEME_STYLESHEETS])
     // The quoted-string scan, which the cases above are only about `image-set()`
     // if these answer what they say they answer: it reads a string's whole
