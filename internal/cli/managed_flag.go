@@ -15,6 +15,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	// The managed-mode package of internal/managed, aliased because this file
+	// already imports internal/infra/managed as managed: the state bucket's
+	// derived name is its own (managedmode.InstallationsStateBucket), the same
+	// function init's check and the inventory's read use.
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -219,6 +224,24 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	if got := lc.RunsBucketName(); got != bucket {
 		return userErr("project %s names the runs bucket %q, and a managed project's marker lives in %s: the managed read locates the project's runs bucket by that name, so a marker written into another bucket would be read by nobody. Check runs_bucket in the project config",
 			safetext.Field(lc.Name), safetext.Field(got), safetext.Field(bucket))
+	}
+	// And the installation's own state bucket, by the same rule and for the
+	// same reason: the managed apply's inventory reads the installation's state
+	// out of gs://fugaro-tfstate-<gcp_project> by that derived name
+	// (managedAccounted, and Inventory.installationCreated on the other half of
+	// the comparison), so a project whose state lives in another bucket is one
+	// whose state read fails (CauseStateUnread) and whose every apply falls back
+	// to the typed confirmation this command exists to take away — the very
+	// thing flagging gives up (D55, printed below). This command has no
+	// --state-bucket of its own: what a project created with `fugaro init
+	// --state-bucket <other>` recorded is the local config's
+	// terraform.state_bucket, which is what infra.Installation resolves for it
+	// and what is left to check here. The refusal is the rule fugaro restore
+	// already keeps about the same field.
+	stateBucket := managedmode.InstallationsStateBucket(lc.GCPProject)
+	if got := lc.Terraform.StateBucket; got != "" && got != stateBucket {
+		return userErr("nothing was written: project %s records the Terraform state bucket %q, and a managed project's installation state must live in %s: the managed apply reads the installation's state out of that bucket by its derived name — a function of the GCP project, never of a flag or of the project's config — so state kept anywhere else reads as state that could not be read at all, and every managed apply of %s would fall back to the typed confirmation this command exists to take away. A project whose installation state is in another bucket cannot be managed: move the state to %s, or leave this project unmanaged",
+			safetext.Field(lc.Name), safetext.Field(got), safetext.Field(stateBucket), safetext.Field(lc.Name), safetext.Field(stateBucket))
 	}
 	c, err := newInitClients(ctx, lc)
 	if err != nil {

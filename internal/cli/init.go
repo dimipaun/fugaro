@@ -1163,7 +1163,56 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	if err != nil {
 		return infra.InstallationSpec{}, initErr(err)
 	}
+	if o.managed {
+		// The managed creation's one rule about the state bucket, checked on
+		// the RESOLVED name: the flag and the project config are both inputs to
+		// it (infra.Installation's firstOf), so the check is here rather than on
+		// --state-bucket alone.
+		if err := checkManagedStateBucket(spec); err != nil {
+			return infra.InstallationSpec{}, err
+		}
+	}
 	return spec, nil
+}
+
+// checkManagedStateBucket refuses a managed creation whose installation state
+// would live anywhere but gs://fugaro-tfstate-<gcp-project>.
+//
+// Why a managed creation may not choose its state bucket (Task 4.5, design
+// D59): the managed apply reads what the installation's own Terraform accounts
+// for out of that bucket BY ITS DERIVED NAME — managedAccounted lists
+// fugaro-tfstate-<gcp_project> and D77's fugaro-managed-tfstate-<gcp_project>,
+// and neither is taken from a flag or from the project's config, because a
+// bucket a caller could name is a bucket this program would believe instead of
+// the project's own. The whole-project inventory compares that read against
+// what the project holds, and a state it cannot read is CauseStateUnread: every
+// managed apply of the project would fall back to the typed confirmation it
+// was created to be free of, and an agent's run would stop there rather than
+// apply. So a managed project whose state sits in a bucket the read does not
+// name is a project whose managed case never happens, and the run that would
+// create one is refused here, before anything is created, rather than left to
+// be discovered by an apply that always asks.
+//
+// The refusal covers both spellings of the same decision — --state-bucket on
+// the command line and terraform.state_bucket in the project's config — because
+// it reads the resolved spec, which is the value the creation would actually
+// use, and it says so: the fix is where the value comes from, and not
+// "create the project unmanaged instead". An unmanaged creation resolves
+// terraform.state_bucket from the same config, so its state would sit in the
+// same bucket, and the managed flag of it is refused for it (managedFlag's own
+// check, added with this one) — a run told to take the long way round would
+// arrive at the same refusal one command later, with a project created in the
+// meantime. It is the rule the neighbouring managed paths keep: `fugaro managed
+// flag` refuses a project whose runs bucket or whose state bucket is not the
+// derived name, and `fugaro restore` refuses to restore into a state bucket
+// that is not this project's own.
+func checkManagedStateBucket(spec infra.InstallationSpec) error {
+	want := managedmode.InstallationsStateBucket(spec.Project)
+	if spec.StateBucket == want {
+		return nil
+	}
+	return userErr("a managed project's Terraform state must live in gs://%s, and this creation would put it in gs://%s: the managed apply reads the installation's state out of that bucket by its derived name — the name is a function of the GCP project and is never taken from a flag or from the project's config — so state kept anywhere else reads as state that could not be read at all, and every managed apply of %s would fall back to the typed confirmation the project was created to be free of. Fix it where the value comes from: drop --state-bucket, and terraform.state_bucket from the project config, which is what a creation that passes no flag resolves (fugaro managed flag refuses a project whose config records another bucket, for the same reason)",
+		want, spec.StateBucket, spec.FugaroProject)
 }
 
 // initErr maps an error of infra: a *infra.UserError (a refusal, an
