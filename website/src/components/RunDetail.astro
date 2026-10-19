@@ -300,9 +300,12 @@ function slug(name: string): string {
     line-height: 1;
   }
 
-  /* What the step says. `min-height` is the marker's own box, so the name's first line sits on
-     the marker's centre whatever the step's line below it does, and `align-content: start`
-     packs the two from the top of a step the grid may have stretched. */
+  /* What the step says: the name over its line, packed from the top of the column the grid
+     gives them — `align-content: start`, because a step the grid has stretched would centre
+     the two against a height they do not have — and `min-width: 0`, so the column may shrink
+     below its longest unbreakable word the way `base.css` lets every box in `main` do. The
+     name's own box is the next rule's: its `min-height` is the marker's, which is what puts
+     the first line of a step on the marker's centre. */
   .run-step-body {
     display: grid;
     align-content: start;

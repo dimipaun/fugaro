@@ -162,14 +162,17 @@ added or removed without this sentence moving fails there:
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 976,349 with the flag off to 977,921 with it on:
-    the console option's own markup on the three pages that render it — the console page's
-    downloads section (each artifact's checksum beside its link, and the verification command)
-    1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
-    the **page weight not at all**: the heaviest page is the docs hub, which renders no install
-    option, no download and no hero. The copy the gates build of the unreleased state is
-    therefore the smaller of the two, and that is the direction a reader of this list needs:
-    the flag's round is the one that added the bytes;
+    moves the **site figure** and nothing else: what it adds is the console option's own markup
+    on the three pages that render it — the console page's downloads section (each artifact's
+    checksum beside its link, and the verification command), Getting Started's option and the
+    homepage's call to action. It moves the **page weight not at all**: the heaviest page is the
+    docs hub, which renders no install option, no download and no hero. The copy the gates build
+    of the unreleased state is therefore the smaller of the two, and that is the direction a
+    reader of this list needs: the flag's round is the one that added the bytes. **How many
+    bytes is not written here**: the three budget figures below are the only ones a test derives
+    and holds, and `test/budget.mjs` reads them out of this file and re-derives each over the
+    gates' own build — a number written in a list like this one is a number nothing measures, and
+    it drifts the moment the artifact moves;
   - the script and the pages that follow are the figures' own subject, and each moved them in
     the commit that shipped it (D192).
 
@@ -244,23 +247,22 @@ added or removed without this sentence moving fails there:
     script and the stylesheet both, 267,095 → **266,926**: the docs hub inlines the stylesheet
     (−278) and fetches the script (+109). Nothing else in the artifact moved in that round —
     the console's link was behind a flag that build had off.
-  - **The console's release turned the flag on** (W3.1), and moved the site figure alone,
-    976,349 → **977,921**, by the **1,572 bytes** the list above names: the console page's
-    downloads section, Getting Started's console option and the hero's link to the console.
-    The page weight and the script did not move: the heaviest page is the docs hub, which
-    renders none of the three.
+  - **The console's release turned the flag on** (W3.1), and moved the site figure alone: the
+    console page's downloads section, Getting Started's console option and the hero's link to
+    the console. The page weight and the script did not move: the heaviest page is the docs hub,
+    which renders none of the three. The bytes are the ones the three figures below are derived
+    from, and `test/budget.mjs` measures them; the rule is what this list carries.
   - **The run under the picture became one vertical timeline** (the owner's feedback of
-    2026-10-19), and moved the site figure alone, 977,921 → **978,970**, by **1,049 bytes**.
-    The five steps were a `repeat(auto-fit, minmax(18rem, 1fr))` grid of cards — three beside
-    two on a desktop, two-by-two on a tablet — and the owner read the section and said it
-    "does not look good". They are now one column at every width, each step a numbered marker
-    on a rail joined by a one-pixel line, with the step's name and its line beside it: the
-    page that renders them grows by the rail, the connector, the rule that stops it at the
-    last step and the markup that places them — How It Works is 25,714 bytes against 24,665 —
-    and the other ten pages, which render no run, are unmoved. The page weight and the script
-    did not move either: the heaviest page is still the docs hub. The shape is held by
-    `test/base-styles.mjs`'s `runTimelineFailures`, which reads the layout in force at 360,
-    768 and 1280, the connector's own extent and width, and every width or `nowrap` in the
+    2026-10-19), and moved the site figure alone. The five steps were a
+    `repeat(auto-fit, minmax(18rem, 1fr))` grid of cards — three beside two on a desktop,
+    two-by-two on a tablet — and the owner read the section and said it "does not look good".
+    They are now one column at every width, each step a numbered marker on a rail joined by a
+    one-pixel line, with the step's name and its line beside it: the page that renders them
+    grows by the rail, the connector, the rule that stops it at the last step and the markup
+    that places them, and the other ten pages, which render no run, are unmoved. The page weight
+    and the script did not move either: the heaviest page is still the docs hub. The shape is
+    held by `test/base-styles.mjs`'s `runTimelineFailures`, which reads the layout in force at
+    360, 768 and 1280, the connector's own extent and width, and every width or `nowrap` in the
     section against the phone's content box.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,

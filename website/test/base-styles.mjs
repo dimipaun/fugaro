@@ -1775,6 +1775,19 @@ test('every timeline refusal fires on the defect it names', () => {
     ['a line beside the rail', change('left:calc(var(--space-lg) / 2)', 'left:0'), /misses the marker/],
     // A line with no paint: the rule is here and a reader sees nothing.
     ['a line with no paint', change('background:var(--border);position:absolute}', 'position:absolute}'), /declares no `background`/],
+    // A line painted in a colour no palette moves: the one declaration on the connector that is
+    // not geometry, and the reason the colour rule is read at all.
+    ['a line drawn in a literal', change('background:var(--border)', 'background:#fff'), /is drawn in `background: #fff`/],
+    // A place on the rail the check cannot measure: `NaN` would pass every comparison below it,
+    // so an unreadable `left` is refused rather than assumed to be somewhere.
+    ['a line placed in a shape nothing reads', change('left:calc(var(--space-lg) / 2)', 'left:half'), /cannot turn into pixels/],
+    // A rail with no width to land on: the marker's own box is what the line's `left` is half
+    // of, and without it where the line has to land is unknown.
+    [
+      'a rail with no declared width',
+      change('width:var(--space-lg);height:var(--space-lg)', 'height:var(--space-lg)'),
+      /the step's number declares `width: \(nothing\)`/,
+    ],
     // The line drawn by every step, which hangs off the end of the run.
     [
       'a line drawn by the last step too',
@@ -1815,6 +1828,25 @@ test('every timeline refusal fires on the defect it names', () => {
       `${what}: the refusal did not fire, and this is what it said instead`,
     )
   }
+
+  // The connector's own width, which cannot go in the list above: an unreadable width is
+  // refused by **two** readers of the same declaration — the connector's own and the phone's,
+  // which reads every `width` in the section — so the set-shaped assertion in the loop cannot
+  // tell "both refused it" from "one of them did", and the line this case is about is the one
+  // that has to be named. Read by name, both: the connector's guard is `thin > …`'s other half,
+  // and `NaN` passes that comparison.
+  const unreadableWidth = runTimelineFailures(change('width:var(--border-width);margin-left:', 'width:thin;margin-left:'))
+  assert.equal(
+    unreadableWidth.filter((line) => /the run's line is `width: thin`, which this check cannot turn into pixels/.test(line)).length,
+    1,
+    'a connector width this check cannot measure passes: the rule is read, its width is `NaN`, and `NaN` is smaller than every ceiling the check compares it to',
+  )
+  assert.deepEqual(
+    unreadableWidth.filter((line) => /is `width: thin`, which this check cannot turn into pixels/.test(line) && !/the run's line is/.test(line)).length,
+    1,
+    'the phone-side reading of the same unreadable width did not fire: the two are one edit apart and only one of them is the connector\'s',
+  )
+
   // The control: the page as it is built passes every one of them.
   assert.deepEqual(runTimelineFailures(css), [], 'the built run does not pass the shape its own cases are drawn from')
 })
