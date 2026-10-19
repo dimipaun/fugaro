@@ -3856,3 +3856,44 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsDesktopConsoleContractCitesRunsStatsBySymbol: the contract's
+// `runs stats --json` section (6.10) cites the code it describes by SYMBOL, not
+// by line. The line numbers it used to carry (`runs_stats.go:69`, `:467`,
+// `:181`) each pointed at something else as soon as anything was inserted above
+// them — the one this test was written for went stale inside the same pull
+// request that added the section, when a review fix moved `writeUserStats` from
+// :467 to :493 — and a console author who follows a line number that now lands
+// on an unrelated statement reads the wrong shape off it. The symbols are what
+// the console reads the document for, so the section names them and a line
+// number cannot come back.
+//
+// Mutation (verified, run and restored): put `runs_stats.go:467` back beside
+// the section's `writeUserStats` — this fails naming the line citation.
+func TestDocsDesktopConsoleContractCitesRunsStatsBySymbol(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	start := strings.Index(doc, "### 6.10 `fugaro runs stats --json`")
+	end := strings.Index(doc, "## 7. The CLI gaps")
+	if start < 0 || end <= start {
+		t.Fatalf("%s's runs stats section was renamed or reordered; update this test's markers", path)
+	}
+	section := doc[start:end]
+	// The three symbols the section describes, each of which exists in the file
+	// it names (read from the source, so a rename cannot leave the contract
+	// pointing at a function that is gone).
+	src := readDoc(t, "internal/cli/runs_stats.go")
+	for _, sym := range []string{"newRunsStatsCmd", "runRunsStats", "userStatsDoc", "writeUserStats"} {
+		if !strings.Contains(section, "`"+sym+"`") {
+			t.Errorf("%s's runs stats section does not name `%s`: the console reads this document to learn the shape, and a symbol is what stays true", path, sym)
+		}
+		if !strings.Contains(src, "func "+sym+"(") && !strings.Contains(src, "type "+sym+" ") {
+			t.Errorf("%s names `%s`, and internal/cli/runs_stats.go no longer declares it", path, sym)
+		}
+	}
+	// No line citation in the section: one that is right today is wrong at the
+	// next insertion above it, and the console cannot tell the two apart.
+	if m := regexp.MustCompile(`runs_stats\.go:\d+`).FindString(section); m != "" {
+		t.Errorf("%s's runs stats section cites %s instead of a symbol: a line number here rots the moment anything is inserted above the symbol it means", path, m)
+	}
+}

@@ -224,10 +224,15 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		"`project-account-stored`",
 		"`claude-accounts-stored`",
 		"`oauth-token-allowed`",
-		// Where this release stops: the released CLI, and the shared-job stop
-		// the account gates do not lift.
+		// Where this release stops: the released CLI, and what a shared job
+		// does and does not carry (see
+		// TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue for the same
+		// claims tied to the code that makes them true).
 		"**0.8.6 does not read any of it.**",
-		"**A GitHub OAuth run on a shared job is admitted by these gates and still stops later.**",
+		"**A GitHub run on a shared job reaches its provider, and it is still not a per-repository job.**",
+		"`FUGARO_GITHUB_APP_ID`",
+		"`projectJobGitHubAppID`",
+		"`cloneShipped`",
 		"#which-runs-work-on-a-shared-job-today",
 	} {
 		if !strings.Contains(doc, want) {
@@ -415,6 +420,121 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 	// condition the CLI actually applies (projectWideAccepted).
 	if strings.Contains(doc, "the only scope that name has by default") {
 		t.Errorf("docs/gcp-setup.md still says claude-oauth-token's repository copy is \"the only scope that name has by default\", and the CLI stores that name project-wide whenever project_secrets lists it (internal/cli/secrets.go's projectWideAccepted)")
+	}
+}
+
+// TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue: the guide's §11 limits,
+// and the two other pages that state the same thing about a shared job, say
+// what the code does — checked here rather than trusted, because §11 is where
+// an operator decides whether a repository can move onto a shared job at all.
+//
+// The claim this test was written for: the guide said a project job's
+// environment "carries no GitHub App ID", so a GitHub run on a shared job
+// "stops at the provider". That was true when projectJobEnv was the whole of a
+// project job's environment, and it stopped being true when the owner's ruling
+// of 2026-10-17 (plan task 3.5 step 4) added the App's ID to every github
+// project job — projectJobGitHubAppID resolves it from the installation's local
+// config and ProjectJobs sets providers.EnvGitHubAppID, which is exactly the
+// variable internal/gitprov/providers' github arm refuses to build without.
+// docs/project-layer.md and docs/git-providers.md carried the same stale
+// sentence, and a reader sent to either for the detail would have been told the
+// opposite of the guide.
+//
+// What is *still* true is the other half, and it is pinned too: a shared job
+// carries no FUGARO_CHECKOUT, so the run clones in full and installs no mise
+// tools, and it carries none of the per-repository settings
+// docs/project-layer.md's table lists. And no live check has been run for a
+// shared job end to end (the plan's own, task 3.7), so the guide must not claim
+// one has.
+//
+// Mutation (verified, run and restored): put "carries no GitHub App ID" back
+// into the guide's §11 — this fails naming it. Flipping cloneShipped to false
+// fails it too, which is the other half: the pages say a clone workflow reaches
+// a shared job in this release, and the constant is what makes that true.
+func TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue(t *testing.T) {
+	guide := readDoc(t, projectClaudeAccountsDoc)
+	layer := readDoc(t, "docs/project-layer.md")
+	providers := readDoc(t, "docs/git-providers.md")
+	// The stale sentence, in the three shapes it was written in, and the
+	// "skipped" doctor line the check never prints.
+	for _, tc := range []struct{ path, doc, banned string }{
+		{projectClaudeAccountsDoc, guide, "carries no GitHub App ID"},
+		{projectClaudeAccountsDoc, guide, "stops at the provider"},
+		{projectClaudeAccountsDoc, guide, "reports `skipped`"},
+		{"docs/project-layer.md", layer, "GitHub repositories stop at the provider"},
+		{"docs/project-layer.md", layer, "None, end to end, in this release"},
+		{"docs/git-providers.md", providers, "It is not in the tree yet"},
+	} {
+		if strings.Contains(tc.doc, tc.banned) {
+			t.Errorf("%s still says %q: a job of a github profile carries the App's ID in its environment (internal/infra/projectjobs.go's projectJobGitHubAppID sets providers.EnvGitHubAppID on every one of them), and doctor prints no line at all when the installation serves no account job", tc.path, tc.banned)
+		}
+	}
+	// Each page states the true half, and names the symbol an operator can read
+	// it out of.
+	for _, tc := range []struct {
+		path string
+		doc  string
+		want []string
+	}{
+		{projectClaudeAccountsDoc, guide, []string{
+			"**A GitHub run on a shared job reaches its provider, and it is still not a per-repository job.**",
+			"`FUGARO_GITHUB_APP_ID`",
+			"`projectJobGitHubAppID`",
+			"was not in the released\n  0.8.x, where a clone launch is refused",
+			"no live check has proved one end to end on a shared",
+			"the check that would (the plan's own, `docs/plans/2026-10-14-project-centric.md` Task 3.7)\n  has not been run",
+			// The other half: what the job does not carry.
+			"no `FUGARO_CHECKOUT` (a full clone rather than a blobless one, and no `mise install`)",
+			"only the profile's project-wide ones",
+		}},
+		{"docs/project-layer.md", layer, []string{
+			"**The provider stop is gone (`projectJobGitHubAppID`).**",
+			"`FUGARO_GITHUB_APP_ID`",
+			"internal/infra/projectjobs.go",
+		}},
+		{"docs/git-providers.md", providers, []string{
+			"`projectJobGitHubAppID`",
+			"is refused at `fugaro init` rather than deployed as a job whose every run would halt when it opened its provider",
+		}},
+	} {
+		for _, want := range tc.want {
+			if !strings.Contains(tc.doc, want) {
+				t.Errorf("%s does not say %q: §11 is where an operator decides whether a repository can move onto a shared job", tc.path, want)
+			}
+		}
+	}
+	// The code ties. The App's ID is set by ProjectJobs, from a function that
+	// resolves it out of the local config, and the pages may only say so while
+	// both are there.
+	jobs := readDoc(t, "internal/infra/projectjobs.go")
+	for _, want := range []string{"func projectJobGitHubAppID(", "providers.EnvGitHubAppID", "env[providers.EnvGitHubAppID] = appID"} {
+		if !strings.Contains(jobs, want) {
+			t.Errorf("docs/project-claude-accounts.md tells an operator a shared job carries the App's ID, and internal/infra/projectjobs.go no longer has %q", want)
+		}
+	}
+	// The provider is built from it and refuses without it: that refusal is why
+	// the ID's absence was a stop, and why its presence is not.
+	gp := readDoc(t, "internal/gitprov/providers/providers.go")
+	if !strings.Contains(gp, "EnvGitHubAppID") || !strings.Contains(gp, "the github provider needs the GitHub App's ID") {
+		t.Errorf("the pages say the github provider is built from the App's ID (providers.EnvGitHubAppID), and internal/gitprov/providers/providers.go no longer refuses without it")
+	}
+	// The other half of the same sentence: the pages say a shared job carries
+	// no FUGARO_CHECKOUT, so the run clones in full and installs no mise tools
+	// (internal/runner's cloneJob, which is false without it). If a project job
+	// ever sets it, that is a real change to what a shared job does and both
+	// pages have to be rewritten with it.
+	if strings.Contains(jobs, "runner.CheckoutEnv") {
+		t.Errorf("docs/project-claude-accounts.md and docs/project-layer.md say a shared job carries no FUGARO_CHECKOUT, and internal/infra/projectjobs.go now sets runner.CheckoutEnv on one: what the run does at bootstrap changed with it")
+	}
+	// And `checkout: clone` really is shipped in this release, which is what
+	// makes the pages' "reaches a shared job" a statement about this tree.
+	if !cloneShipped {
+		t.Errorf("docs/project-claude-accounts.md and docs/project-layer.md say a checkout: clone launch reaches a shared job in this release, and cloneShipped is false")
+	}
+	for _, want := range []string{"cloneShipped", "cloneSince"} {
+		if !strings.Contains(readDoc(t, "internal/cli/recipes_skew.go"), want) {
+			t.Errorf("the pages name %s for the clone gate, and internal/cli/recipes_skew.go no longer carries it", want)
+		}
 	}
 }
 

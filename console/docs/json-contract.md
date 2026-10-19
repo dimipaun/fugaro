@@ -693,8 +693,10 @@ shows the CLI's refusal sentence rather than a graph.
 ### 6.10 `fugaro runs stats --json` (**CLI 0.9.0**)
 
 **Command:** `internal/cli/runs_stats.go` `newRunsStatsCmd` / `runRunsStats`.
-**Document:** `userStatsDoc` (`runs_stats.go:69`), indented (`writeUserStats`,
-`runs_stats.go:467`). This is the one command in this document the console
+**Document:** `userStatsDoc`, indented (`writeUserStats`), both in
+`internal/cli/runs_stats.go` — cited by symbol, not by line: an indented
+document is written by one function and a line number here rots at the next
+insertion above it. This is the one command in this document the console
 **does not spawn yet**: it is the data behind the Spend screen's by-person
 view (CLI 0.9.0), and the section is here so the screen that follows has a
 shape read off the code rather than assumed from a design. It is read-only —
@@ -767,7 +769,7 @@ behind **both** `rows` and `totals`; the counts are an embedded `Counts`
 | `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
 | `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
 
-**Flags** (`runs_stats.go:181`): `--by`, `--repo`, `--all`, `--since`,
+**Flags** (`newRunsStatsCmd`): `--by`, `--repo`, `--all`, `--since`,
 `--max-runs`, `--all-users`, `--json`, plus the cloud flags.
 
 ## 7. The CLI gaps, settled against the code

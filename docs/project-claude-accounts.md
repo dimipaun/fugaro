@@ -365,7 +365,8 @@ Per repository checkout, `fugaro doctor` carries three checks for this feature:
   `claude setup-token; fugaro secrets set claude-oauth-token-<name> --project-wide`. The OK line
   lists each account job with the repositories its token may be used by, and says that the mount is
   static — so the container holds the *project-wide* copy, and a repository copy does not reach it.
-  It reports `skipped` when the installation serves no account job, and a warning when the
+  It prints **no line at all** when the installation serves no account job — there is nothing to
+  check, so the check returns nothing rather than a line saying so — and a warning when the
   project's secrets could not be listed at all.
 - **`claude-accounts-stored`** — every named account this repository may choose has a stored token,
   in either scope (the repository's own copy if it has one, the project's otherwise). It is silent
@@ -401,13 +402,24 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
 - **0.8.6 does not read any of it.** The profile field, the `accounts` block and the jobs ship in
   0.9.0; an older binary meeting a version-3 policy refuses it and says which release reads it
   (§5).
-- **A GitHub OAuth run on a shared job is admitted by these gates and still stops later.** A
-  project job's environment carries no GitHub App ID, so a `checkout: clone` run of a GitHub
-  repository that reaches a shared job stops at the provider — the same stop every shared-job run
-  has today, account or not
-  ([project-layer.md §"Which runs work on a shared job today"](project-layer.md#which-runs-work-on-a-shared-job-today)).
-  **The account gates are not what admits it, and passing them does not make that run work end to
-  end.** A Bitbucket repository never reaches a shared job at all.
+- **A GitHub run on a shared job reaches its provider, and it is still not a per-repository job.**
+  Every job of a **github** profile carries the App's **ID** in its environment —
+  `FUGARO_GITHUB_APP_ID` (`providers.EnvGitHubAppID`), resolved from the installation's local config
+  by `projectJobGitHubAppID` ([`internal/infra/projectjobs.go`](../internal/infra/projectjobs.go),
+  owner ruling of 2026-10-17, plan task 3.5 step 4) — and the key is the profile's project-wide
+  `github-app-key` mount, so the provider the run opens has both halves of the credential it is
+  built from; `fugaro init` refuses a config that records no App ID, or two different ones, rather
+  than deploy a job whose runs would halt. `checkout: clone` is **shipped in 0.9.0** (`cloneShipped`,
+  [`internal/cli/recipes_skew.go`](../internal/cli/recipes_skew.go)) and was not in the released
+  0.8.x, where a clone launch is refused — so on the released CLI no clone run reaches a shared job
+  at all. What a shared job still does not carry is the table in
+  [project-layer.md §"Which runs work on a shared job today"](project-layer.md#which-runs-work-on-a-shared-job-today):
+  no `FUGARO_CHECKOUT` (a full clone rather than a blobless one, and no `mise install`), no
+  owner-configured model providers, no local compute-price override, the default budget grace, and
+  no repository-level `workflows.<n>.secrets` — only the profile's project-wide ones. **The account
+  gates are not what admits such a run, and no live check has proved one end to end on a shared
+  job:** the check that would (the plan's own, `docs/plans/2026-10-14-project-centric.md` Task 3.7)
+  has not been run. A Bitbucket repository never reaches a shared job at all.
 - **No per-account budget dimension.** The budget schema is keyed by model, repository, project and
   person, never by credential: an OAuth run adds to the notional (subscription, unbilled) counters,
   and the account's own limits are Anthropic's, not Fugaro's
