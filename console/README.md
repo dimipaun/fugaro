@@ -147,13 +147,31 @@ checksum are hand-bumped and documented rather than floated (design section
 5.2) — but with `--ignore-scripts` the download simply happens later: Electron
 44.7.2 fetches its runtime on the first `require('electron')` (its `index.js`
 spawns `install.js` when `path.txt` and `dist/` are missing, printing
-`Downloading Electron binary...`), which is what Playwright's `electron.launch`
-does in Task 1.1's e2e specs. Verified on this tree: `npm ci
+`Downloading Electron binary...`). Verified on this tree: `npm ci
 --ignore-scripts --no-audit --no-fund`, then `require('electron')`, downloads
 and resolves `node_modules/electron/dist/electron`. So the e2e path works with
 scripts ignored, the runtime arrives on the machine that runs the tests rather
 than on the machine that installs, and by packaging time (Task 4.1) it is
 already on disk.
+
+**That lazy fetch is a writer, and it has to finish before anything execs what
+it writes.** `install.js` unpacks the archive into `node_modules/electron/dist`
+as it goes, so a launch that reaches the executable while the unpack is still
+running finds a file open for writing: Linux refuses that with ETXTBSY (and a
+launch that gets there before the file exists at all gets ENOENT). Two
+Playwright workers on a cold `node_modules` did exactly that, which is what made
+the `console (ubuntu-latest)` check — a required check of
+`scripts/release-gate.sh` — fail intermittently (`Error: electron.launch: spawn
+ETXTBSY`, run 39174336894 attempt 1, then a red gate). The fetch is therefore
+**hoisted out of the workers**: `playwright.config.ts` names
+`test/support/globalSetup.ts`, which resolves the binary once in Playwright's
+main process before the first worker is forked, so the writer exits — every
+descriptor closed — before a launch exists to race it. Every spec starts the
+console through `test/support/launch.ts` (`launchConsole`), which resolves the
+binary again on the way into each launch and retries ETXTBSY three times, 250 ms
+apart (`test/support/textFileBusy.ts`); no other launch error is retried, and
+`test/unit/playwright.test.ts` holds both the config line and the rule that no
+spec calls `electron.launch` itself.
 
 ## The hardened window (Task 1.1)
 

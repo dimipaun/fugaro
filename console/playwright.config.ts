@@ -18,6 +18,23 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: 'test/e2e',
   testMatch: /\.spec\.ts$/,
+  // The Electron runtime is fetched lazily -- `require('electron')` spawns the
+  // package's `install.js`, which unpacks the archive into
+  // `node_modules/electron/dist` -- and Playwright's `electron.launch` resolves
+  // that module immediately before it spawns the executable. On a cold
+  // `node_modules` (every `npm ci --ignore-scripts`) two workers therefore
+  // unpack the same archive at once, and one of them execs a file the other is
+  // still writing: `Error: electron.launch: spawn ETXTBSY`, or ENOENT when the
+  // file is not there yet. Both were in the same failed CI job (run
+  // 39174336894, attempt 1, `console (ubuntu-latest)`), and the second is what
+  // failed the release gate's required check.
+  //
+  // `globalSetup` runs once, in this process, before any worker is created, so
+  // resolving the runtime there finishes the download -- writer process gone,
+  // every descriptor closed -- before a launch exists to race it.
+  // `test/support/launch.ts` resolves it again on the way into each launch and
+  // retries ETXTBSY three times, 250 ms apart, as the smaller safety net.
+  globalSetup: './test/support/globalSetup.ts',
   // `false` is Playwright's default, and it is named here because it is a
   // contract with the specs rather than a tuning knob: with `true`, Playwright
   // spreads ONE file's tests across workers, which runs that file's
