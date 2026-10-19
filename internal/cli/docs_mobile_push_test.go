@@ -488,11 +488,79 @@ func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
 		"the sender",
 		// The prohibition that keeps revocation single-act.
 		"never creates the node when `devices/$uid` is absent",
+		// §3.5 (a)'s prose: pairing registers the token, so it is one of the
+		// push node's writers and not only the device node's.
+		"pairing writes both nodes in one act",
 	} {
-		if !strings.Contains(doc, want) {
+		if !strings.Contains(normSpace(doc), normSpace(want)) {
 			t.Errorf("%s lacks %q: the writers table must name every writer and the rule each one obeys", docPath, want)
 		}
 	}
+
+	// The section calls this table its single source of truth, so its own rows
+	// are held against each other and against §3.5 (a) -- not only against a
+	// remembered list of phrases. This is the failure the table shipped with:
+	// the `config/admin/devices/$uid` row had `fugaro pair` "never touches
+	// `push/**`" three lines above the `config/admin/push/$uid` row where that
+	// same command writes the push node, and the push row had pair "never
+	// writes `devices/**`" directly below the device row where pair creates it.
+	// A pair row may scope its prohibition to what the act does NOT do; it may
+	// not deny the write that act makes.
+	rows := writersTableRows(t, doc)
+	if len(rows) == 0 {
+		t.Fatalf("%s's writers table has no rows for this guard to check", docPath)
+	}
+	var pairRows int
+	for _, r := range rows {
+		if !strings.Contains(r.writer, "`fugaro pair`") || strings.Contains(r.writer, "revoke") {
+			continue
+		}
+		pairRows++
+		for _, bad := range []string{"never touches `push/**`", "never writes `devices/**`"} {
+			if strings.Contains(r.never, bad) {
+				t.Errorf("%s's %q writers-table row forbids %q, but §3.5 (a) has pairing write both nodes in one act and the table's own rows say so: %q", docPath, r.writer, bad, r.node)
+			}
+		}
+	}
+	if pairRows != 2 {
+		t.Errorf("%s's writers table has %d `fugaro pair` rows (the device node's and the push node's), want 2", docPath, pairRows)
+	}
+}
+
+// writersTableRow is one data row of §3.4's writers table, the table the design
+// calls its single source of truth: the node, the writer, what it writes and
+// what it must never do.
+type writersTableRow struct{ node, writer, writes, never string }
+
+// writersTableRows reads that table out of the document. Guards over it have to
+// compare one row with another (a writer's prohibition against the same writer's
+// write three lines down), which no phrase list can do.
+func writersTableRows(t *testing.T, doc string) []writersTableRow {
+	t.Helper()
+	var rows []writersTableRow
+	in := false
+	for _, line := range strings.Split(doc, "\n") {
+		line = strings.TrimSpace(line)
+		if !in {
+			in = strings.HasPrefix(line, "| node | writer |")
+			continue
+		}
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		if len(cells) != 4 {
+			t.Fatalf("writers table row %q splits into %d cells, want 4", line, len(cells))
+		}
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		if cells[0] == "---" {
+			continue // the header's rule line
+		}
+		rows = append(rows, writersTableRow{cells[0], cells[1], cells[2], cells[3]})
+	}
+	return rows
 }
 
 // TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR: §8 quoted the plan's
@@ -553,6 +621,92 @@ func TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR(t *testing.T) {
 		if !strings.Contains(norm(plan), norm(q)) {
 			t.Errorf("%s quotes %q, which %s does not say", docPath, q, planPath)
 		}
+	}
+
+	// The plan's own P5.2 block pointed AT ITSELF the wrong way: it said "the
+	// plan's own allocation below is ..." while the allocation it quotes -- the
+	// sentence §8 leans on -- is stated near the top of the same document, above
+	// the task block. A direction word is checkable, so it is checked.
+	if strings.Contains(plan, "the plan's own allocation below") {
+		t.Errorf("%s's P5.2 block says the allocation is %q, but the plan states it above (\"checks 80 and 83–88 by P4.2\" is near the top, not below this block)", planPath, "below")
+	}
+	if !strings.Contains(plan, "the plan's own allocation above") {
+		t.Errorf("%s's P5.2 block no longer says where the plan states the allocation", planPath)
+	}
+}
+
+// TestDocsMobilePushPlanRecordsTheDesignsPrerequisites: the design makes two
+// tasks hard prerequisites of push and says so twice -- Q2's "push cannot ship
+// before P6.4" (the rules generation the sibling node hangs off) and §3.4/§3.5
+// naming P6.6 as the command that writes and deletes both nodes -- but the
+// plan's Cross-task dependencies table recorded the whole P5.1-P5.3 group as
+// depending on nothing (`| P5.1–P5.3 | — | D115, D121, D123 |`). A reader
+// scheduling from that table would schedule the sender before the node and the
+// command it needs exist. The prerequisites are recorded the way P3.6's row
+// names P6.3: in the "Depends on" cell, marked proposed and NOT APPROVED.
+func TestDocsMobilePushPlanRecordsTheDesignsPrerequisites(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	const planPath = "docs/mobile/implementation-plan.md"
+	doc := readDoc(t, docPath)
+	plan := readDoc(t, planPath)
+
+	// The design's own statement of the prerequisite, so this guard fails if
+	// either side drops it rather than pinning a plan row to nothing.
+	if !strings.Contains(normSpace(doc), normSpace("push cannot ship before P6.4")) {
+		t.Errorf("%s no longer states that push cannot ship before P6.4, the prerequisite this guard holds the plan to", docPath)
+	}
+
+	row := ""
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "| P5.2 ") {
+			row = strings.TrimSpace(line)
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no P5.2 row in its Cross-task dependencies table", planPath)
+	}
+	cells := strings.Split(strings.Trim(row, "|"), "|")
+	if len(cells) != 3 {
+		t.Fatalf("%s's P5.2 dependency row %q splits into %d cells, want 3", planPath, row, len(cells))
+	}
+	depends := strings.TrimSpace(cells[1])
+	if depends == "—" || depends == "-" {
+		t.Errorf("%s records P5.2 as depending on nothing (%q), though the design's Q2 makes P6.4 a prerequisite and §3.4 makes P6.6 the command that writes both nodes", planPath, depends)
+	}
+	for _, want := range []string{"**P6.4**", "**P6.6**", "proposed, NOT APPROVED"} {
+		if !strings.Contains(depends, want) {
+			t.Errorf("%s's P5.2 dependency row does not name %q: %s", planPath, want, depends)
+		}
+	}
+	// The task block's own "Depends on." paragraph has to name them too: the
+	// block and the table are read by different readers (one reads the task,
+	// the other schedules the phase), and the block is where the owner's "later
+	// yes" sits, so a prerequisite recorded in only one of them is the same
+	// split the finding was about.
+	block := ""
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(line, "**Depends on.** The owner's **later, separate yes to push**") {
+			block = line
+			break
+		}
+	}
+	if block == "" {
+		t.Fatalf("%s's P5.2 block no longer opens its Depends-on paragraph with the owner's later yes", planPath)
+	}
+	// "**P6.4**", not "P6.4": the block also quotes the design's own sentence
+	// ("push cannot ship before P6.4"), so the bare string would pass a block
+	// whose prerequisite list had lost the task.
+	for _, want := range []string{"**P6.4**", "**P6.6**", "NOT APPROVED"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("%s's P5.2 block does not name %q in its Depends-on paragraph: %s", planPath, want, block)
+		}
+	}
+
+	// P3.6's row is the model: a proposed prerequisite named in the cell with
+	// its state, not silently assumed.
+	if !strings.Contains(plan, "| P3.6 | ") || !strings.Contains(plan, "**P6.3** (signing; proposed, NOT APPROVED)") {
+		t.Errorf("%s's P3.6 row no longer names P6.3 the way this test says a prerequisite is recorded; update the guard's model", planPath)
 	}
 }
 
@@ -778,5 +932,18 @@ func TestDocsMobilePushBranchOnlyCitationsAreAttributed(t *testing.T) {
 			!strings.Contains(near, "sibling design #") {
 			t.Errorf("%s cites %q, which is not in this branch's tree, without naming the branch, PR or commit it lives on within %d characters", docPath, cited, window)
 		}
+	}
+
+	// ...and it must say WHICH tree lacks it. The first wording, "not in this
+	// branch's tree", is false of the tree this document is read in after the
+	// merge -- the catalogue file is on `main`, so a reader there finds it and
+	// the sentence reads as a mistake. The repo's own idiom for this is "this
+	// branch's base (`<sha>`)", as docs/website/redesign/reconciliation.md uses
+	// it; the design names the base commit instead.
+	if strings.Contains(doc, "not in this branch's tree") {
+		t.Errorf("%s still says a cited file is %q; it is on `main`, so name this branch's base (`82ba600`) the way docs/website/redesign/reconciliation.md does", docPath, "not in this branch's tree")
+	}
+	if !strings.Contains(doc, "this branch's base (`82ba600`)") {
+		t.Errorf("%s no longer names this branch's base for the citations its own tree does not carry", docPath)
 	}
 }

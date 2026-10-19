@@ -111,8 +111,8 @@ answered.
   nowhere else**: `deploy/terraform/testdata/custom-role-permissions.txt` lists
   `firebasecloudmessaging.messages.create` and its siblings among the permissions this
   repository knows the names of *(that file is on `origin/main` — read at `90ba554` on
-  2026-10-19 — and **not in this branch's tree**, which is based on an earlier `main` where the
-  catalogue did not exist; a reader on this branch will not find it)*, but that file is a **permission catalogue**, not a
+  2026-10-19 — and **not yet in this branch's base (`82ba600`)**, which predates the catalogue;
+  it is in the tree this document lands on)*, but that file is a **permission catalogue**, not a
   dependency — **no code, no manifest and no Terraform resource uses any of them**, and no
   role in `deploy/terraform/` grants one. On `origin/main` before this document, every occurrence of the phrase "push token" is the **git**
   credential (comments in `internal/runner/provision.go` around `provisionGitToken`, and in
@@ -415,18 +415,21 @@ There are two deletion paths, and they are not alternatives:
 **Who writes which node, in one table, so no section has to be read for it.** The design names
 three writers besides pairing — §3.5's re-registration principal (Q3's recommendation (b)), §3.8's
 preferences writer (which is (b) again), and the sender (§3.6) — and they all write the
-**sibling**. The device node has exactly one pair of writers, and they are the same command:
+**sibling**. The device node has exactly one pair of writers, and they are the same command — and
+**pairing writes both nodes in one act** (§3.5 (a)): the device node as the admission the rules
+consult, the push node as the home of the registration it just took. So neither of pairing's two
+rows may forbid the other's write, and neither does:
 
 | node | writer | what it writes | what it must never do |
 | --- | --- | --- | --- |
-| `config/admin/devices/$uid` | **`fugaro pair`** (D165/P6.6) | creates the node, with the pairing's own fields | never touches `push/**`, never re-creates a node `pair revoke` deleted |
+| `config/admin/devices/$uid` | **`fugaro pair`** (D165/P6.6) | creates the node, with the pairing's own fields | never re-creates a node `pair revoke` deleted (only a fresh, typed-code pairing does); its `push/**` write is **row 3's, in this same act** — pairing makes no other `push/**` write, and no later one |
 | `config/admin/devices/$uid` | **`fugaro pair revoke`** (D166/P6.6) | **deletes** the node — the one revocation act | never writes anything before deleting |
-| `config/admin/push/$uid` (token, platform, updated_at) | **`fugaro pair`** | the registration the pairing session itself has (§3.5 (a)) | never writes `devices/**` |
+| `config/admin/push/$uid` (token, platform, updated_at) | **`fugaro pair`** | the registration the pairing session itself has (§3.5 (a)) | writes `devices/$uid` **only in row 1's same act** — never a push node for a device it did not just pair, and never a *re*-registration (that is the next row's) |
 | `config/admin/push/$uid` (token, platform, updated_at) | **the registration principal** — §3.5 (b), Q3's recommendation: the principal that applies the app's mailbox re-registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message | **never creates the node when `devices/$uid` is absent**; never writes a MAC-less or unvalidated token; never writes `devices/**` |
 | `config/admin/push/$uid/prefs` | **the same registration principal** (§3.8: the controls are written the same way, through the mailbox and (b)) | the per-category switches and the quiet-hours zone name and window | never writes a switch the app did not ask for, and never `devices/**` |
 | `config/admin/push/$uid/ledger` | **the sender** (§3.6, §3.7) — its **only** write to either node | the dedupe key of an event it has sent, the cap window's timestamps, and the pending intent it will retry (§6) | never writes a token, a platform or a pref, never writes **content** (§3.6: a device, a category, a timestamp, a state-change key), never `devices/**`, and never **creates** a node whose `devices/$uid` is absent |
 | `config/admin/push/$uid` | **the sender** (§3.6) | **deletes** a stale token entry, and deletes the whole node when it is empty or orphaned | never writes a marker, never writes a token, never **creates** a node (§3.4 "reaping deletes; it never marks") |
-| `config/admin/push/$uid` | **`fugaro pair revoke`** | **deletes** the whole node in the same act as `devices/$uid` | — |
+| `config/admin/push/$uid` | **`fugaro pair revoke`** | **deletes** the whole node in the same act as `devices/$uid` | never writes anything before deleting — like row 2, it deletes and does nothing else |
 | **both nodes** | **no client, no run account, no app** | — | any write at all: the rules deny `config/admin` to every client token (§3.4 rule 1, `rules.json.tmpl`) |
 
 **Read off the table, the three sentences every section has to agree with:** *the device node is
@@ -589,7 +592,7 @@ The candidates, priced:
     **`firebasecloudmessaging.messages.create`**, granted through a **custom role** on the
     Firebase project — not `roles/firebasecloudmessaging.admin`, which carries topic and
     subscription management this sender never needs (`deploy/terraform/testdata/custom-role-permissions.txt`,
-    on `origin/main` at `90ba554` — see §2's note on why this branch's tree does not carry it —
+    on `origin/main` at `90ba554` — see §2's note on why this branch's base (`82ba600`) does not carry it —
     is the permission catalogue the custom roles are read against, and it lists
     `firebasecloudmessaging.messages.create` beside the `topicSubscriptions.*` set the design
     does not want). The **FCM API must be enabled** on the project
