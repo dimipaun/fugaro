@@ -139,11 +139,40 @@ added or removed without this sentence moving fails there:
   that moves them; the gate refuses a derivation that names a build other than the one it can
   measure, so the figures cannot drift down as pages grow.
 
+  **The build the three numbers are derived from is the build the gates make themselves**, and
+  that is the correction of 2026-10-19 (this section's figures are re-derived below it). It is
+  *not* `website/dist`, which is what the derivation named until then: the site's own build
+  depends on the git state of the checkout the gates run in. The changelog renders each release
+  file's **"not yet released"** state wherever `git tag --list` finds no tag
+  (`src/lib/changelog.mjs`), so the same commit builds to **845,103 bytes in a checkout with no
+  tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
+  deployed site is — and to **843,588 bytes with the tags this repository's own clone carries**,
+  the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
+  of those two builds is refused by the other, which is what happened: the gate could not
+  measure the build the README named and `website-preview` could not deploy. So the derivation
+  is read over **the gates' own build of the site**: a copy of the repository in a temp
+  directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`, which
+  carries no `.git` at all and so gives every checkout the same three numbers. The site's own
+  `dist/` — whichever of the two shapes it takes — is held to the ceilings below like any other
+  artifact, and being the *smaller* of the two builds it passes.
+
+  **What each cause really moves**, measured on that build rather than argued:
+
+  - the **1,515 bytes** between the two shapes of the site build are the changelog page's own
+    "not yet released" labels, which a checkout with no tags prints for every release file;
+  - flipping **`features.console_downloads`** — the flag `test/console-option.mjs` flips to
+    prove the released console is safe — moves the **site figure by 536 bytes**, the console
+    option's own markup on the two pages that render it, and moves the **page weight not at
+    all**: the heaviest page is the docs hub, which renders no install option;
+  - the script and the pages that follow are the figures' own subject, and each moved them in
+    the commit that shipped it (D192).
+
   **The build of 2026-10-19 is the merged one, and this is one account of it.** The redesign
   branch merged `main` into it, so the artifact carries both halves at once — `main`'s site,
   which is the one script the site ships and the behaviour it holds, and this branch's
-  redesigned pages on top of it — and neither half's own account of the figures is the whole
-  story any more. What carries those numbers is, in one list:
+  redesigned pages on top of it, with the wording change of the changes spec's item 2 — and
+  neither half's own account of the figures is the whole story any more. What carries those
+  numbers is, in one list:
 
   - `main`'s script: the copy control of P6 and D183; the menu's Escape/outside-click close
     of P3; W3.2's consent banner and analytics gate, which moved out of the markup and into
@@ -209,8 +238,9 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,001,607 bytes. Three times 333,869: the heaviest page, the
     docs hub, at 267,095 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,163,455 bytes. Three times 1,054,485 (every file in `dist/`, 843,588
-    bytes across 21 files, plus 25 %).
+  - **Whole site:** 3,169,137 bytes. Three times 1,056,379 (every file in `dist/`, 845,103
+    bytes across 21 files, plus 25 %) — the gates' own build of the site, which is the build
+    with no tags, 1,515 bytes above the one a full clone makes (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
@@ -290,7 +320,8 @@ added or removed without this sentence moving fails there:
   between a line a reader reads and a note in the markup.
 - `test/wording.mjs` — the retired word (changes spec of 2026-10-18, item 2): `worker` and
   `workers` are refused in three places — every built page's text and head, the site's own
-  sources (`src/`, `data/`, `public/`), and `README.md`. A run's unit of work is a **job** in
+  sources (the four directories `siteSources()` walks: `src/`, `data/`, `public/` and the
+  generated documents under `content/`), and `README.md`. A run's unit of work is a **job** in
   the product's own vocabulary, so the word is retired rather than replaced one sentence at a
   time, and the gate is the reason no page can quietly reintroduce the old tagline. Three
   pages are exempt — `/docs/`, `/security/` and `/changelog/`, D188's own list — because each
@@ -508,8 +539,10 @@ them there.
   own request in the hero's chat is item 3's example of one, quoted from the ruling that
   asked for the chat (`src/components/AgentChat.astro`).
 - **The two skills the agent reads**, `plugin/skills/parallelism/SKILL.md` and
-  `plugin/skills/working/SKILL.md` — the agent's two answers in that chat, the launch it
-  runs, and the line about what the watch screen shows. Item 3's acceptance is that the
+  `plugin/skills/working/SKILL.md` — the agent's two answers in that chat, and the line about
+  what the watch screen shows. The launch status line is *not* one of them: it is the
+  illustration's own label, and the build refuses it if it turns out to be a sentence of the
+  skill its turn cites (`AgentChat.astro`). Item 3's acceptance is that the
   agent's lines "show the real shape of the skills' behaviour", and every line a turn of the
   illustration *speaks* is a line of the document it cites, so the build reads those files and
   stops, naming the file, when a line is not in one of them. (The three `Pull request n of 3`

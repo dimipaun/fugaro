@@ -126,10 +126,13 @@ here.
   and the case fails in both directions, so a second generated document that starts carrying
   the word is refused and the exception cannot outlive the 0.9.0 change that removes the need
   for it.
-- **The spec's `fugaro update` means `fugaro upgrade`.** There is no `update` command; the
-  command that pins the plugin and moves the job images onto a release's base image is
-  `fugaro upgrade` (`README.md` `## Upgrading`). Where the spec writes `update`, this work
-  writes `upgrade`.
+- **The command this work renders is `fugaro upgrade`, because that is the command.** There
+  is no `fugaro update`: the command that pins the plugin and moves the job images onto a
+  release's base image is `fugaro upgrade` (`README.md` `## Upgrading`), which is the name
+  the changes spec already uses ("except commands like `fugaro watch` or `fugaro upgrade`")
+  and the one the pages this run touches render (`website/data/install.yaml`'s
+  `fugaro upgrade --local`, `website/src/pages/getting-started.astro`). No wording was
+  changed to arrive at it.
 
 ## Implementing items 2, 3 and 4: what those three items settle
 
@@ -227,7 +230,8 @@ here goes stale the way the byte budgets did before D192.
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
   **page weight per page 1,001,607** (three times 333,869; the docs hub 267,095 bytes) and
-  **whole site 3,163,455** (three times 1,054,485; 843,588 bytes across 21 files). The fix
+  **whole site 3,169,137** (three times 1,056,379; the gates' own build of the site, 845,103
+  bytes across 21 files). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
@@ -252,11 +256,22 @@ here goes stale the way the byte budgets did before D192.
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site
   figures drifting down as pages grow (they had — page weight and whole site still named the
-  build of 2026-10-18 after four parts added bytes to it). That measurement is taken over
-  `website/dist`, the build the site's own checkout makes, and not over whatever artifact a run
-  was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs the artifact gates over
-  a copy with the console's flag flipped, and that copy is a different build — 2,051 bytes
-  larger at the site figure — rather than another copy of this one.
+  build of 2026-10-18 after four parts added bytes to it).
+  **Which build that is, is the 2026-10-19 correction**: the figures are derived over the
+  gates' own build of the site — a copy of the repository in a temp directory, built with the
+  site's Astro by `test/lib/build.mjs`'s `buildCopy`, which carries no `.git` — and not over
+  `website/dist`, which is the checkout's own build. The reason is that one page of the site
+  reads the checkout's git state: the changelog renders each release file's "not yet released"
+  state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
+  to **845,103 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **843,588 with the tags this repository's clone carries**,
+  the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
+  refused by the other, which is what happened: the gate could not measure the build `main`'s
+  README named, and `website-preview` could not deploy. A derivation is likewise not held to
+  whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
+  the artifact gates over a copy with the console's flag flipped, and that copy is a different
+  build — **536 bytes larger at the site figure**, measured, and the page weight where it was —
+  rather than another copy of this one.
 - **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
   acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
   `fugaro run` transcript the homepage carried (`Terminal.astro`, D184) is removed from it —
@@ -267,12 +282,14 @@ here goes stale the way the byte budgets did before D192.
   it. Item 5's screenshot is a separate task: this pull request leaves
   `[data-slot="watch-screenshot"]` right after the chat and commits **no image**, and
   `website/test/home.mjs` holds that slot to being empty and the homepage to its one picture
-  (the wordmark). **The watch bar is the site's one command block that puts its control beside
-  its command rather than above it**, and the fix round gave it `flex-direction: row-reverse`
-  to do it: the control comes first in the shared markup (`src/lib/copy-control.mjs`), so a
-  plain row drew it at the left of the command it belongs to — the other way round from
-  `base.css`'s rule and from every other block. `website/test/base-styles.mjs` reads every
-  `[data-copy]` block's own rules and refuses one whose control is laid out first.
+  (the wordmark). **The watch bar is a command block like every other one on the site, and the
+  control sits beside the command rather than above it** — which the third fix round made the
+  rule for the whole site rather than this block's exception: `base.css` lays every
+  `[data-copy]` block out as one reversed row (`flex-direction: row-reverse`, the command
+  taking the width the control leaves), the control comes first in the shared markup
+  (`src/lib/copy-control.mjs`), and the watch bar's own row rule is gone (item 3c, below).
+  `website/test/base-styles.mjs` reads every `[data-copy]` block's own rules and refuses one
+  whose control is laid out first or wrapped above the command.
 - **The second fix round is where the homepage became the page item 4 asks for.** The first
   fix round was about claims (the caption, the arrows, the watch bar's control); the second
   is the one an independent review of the built site asked for, and it changed the look, not
@@ -322,9 +339,12 @@ here goes stale the way the byte budgets did before D192.
     by the accent's own left border. The caption moved out from under "Watch it run" to
     directly under the conversation, and the whole watch block — heading, item 5's slot, the
     command bar, the note — is now a sibling of the figure rather than inside it, so the
-    caption can be the figure's last child. `chatConversationFailures` reads the card, the
-    speaker column and the caption's place; `website/test/home.mjs` reads the slot as the
-    element after the watch heading.
+    caption can be the figure's last child. What reads that markup is `website/test/home.mjs`,
+    not the stylesheet gate: it reads the caption as the figure's last child, the caption's
+    words (`chat-caption`, an illustration and not a recording), and the slot as the element
+    after the watch heading. `chatConversationFailures` reads the stylesheet — the one-column
+    turn list, the card, the measure's cap, the speaker column and the two speakers' sides —
+    and nothing about the caption.
   - **the empty slot takes no page** (item 3b). `[data-slot="watch-screenshot"]` with no rule
     of its own was a box of blank page between the conversation and the command bar, which is
     the ~140 px the review measured. `.chat-shot:empty { display: none }` takes it out until

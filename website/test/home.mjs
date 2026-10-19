@@ -52,14 +52,19 @@
 //
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file:
 // the check is a statement about the artifact a reader receives, and every fact it holds a
-// page to is read from the repository rather than from the page's own sources.
+// page to is read from the repository rather than from the page's own sources. One case in
+// the promise section is the exception, and it is the one that has to be: whether a README
+// of the wrong *shape* stops the build cannot be asked of an artifact that was built from
+// the right one, so it builds a mutated copy of the repository (`test/lib/build.mjs`) and
+// reads the build's refusal rather than a page.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findAll, parse, textOf, walk } from './lib/html.mjs'
+import { buildCopy } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -601,6 +606,32 @@ test("the hero's subline is README.md's subline, byte for byte", () => {
     normalize(repoFile('README.md')).includes(normalize(lead)),
     `the hero's lead sentence ${JSON.stringify(lead)} is not a sentence of README.md: every sentence on the site is traceable to a document (D102, W1.4 step 1)`,
   )
+})
+
+test('a README whose promise is markdown structure stops the build, naming the file', (t) => {
+  // `website/src/content.ts` reads the two lines **positionally** — the first two non-empty
+  // lines under the title — so a README that reorganises its opening is the way the read is
+  // handed a line that is not the promise at all. What it may not do is render it: a README
+  // that opens with its headline and then a section heading would put `## Install` under the
+  // hero's headline, on the site's first screen. It stops the build naming the file instead,
+  // and this case is the check on that: a read whose failure mode nobody has exercised is a
+  // read whose failure mode nobody knows (changes spec item 2, F48, D102).
+  const built = buildCopy(t, ({ root }) => {
+    const file = path.join(root, 'README.md')
+    const lines = readFileSync(file, 'utf8').split('\n')
+    const title = lines.findIndex((line) => line.trim() === '# Fugaro')
+    assert.notEqual(title, -1, 'the copy\'s README.md carries no "# Fugaro" title')
+    const under = []
+    for (let i = title + 1; i < lines.length && under.length < 2; i++) if (lines[i].trim() !== '') under.push(i)
+    assert.equal(under.length, 2, 'the copy\'s README.md carries fewer than two non-empty lines under its title')
+    // The tagline stays; the line under it becomes structural markdown.
+    lines[under[1]] = '## Install'
+    writeFileSync(file, lines.join('\n'))
+  })
+
+  assert.notEqual(built.status, 0, 'a README whose subline is a markdown heading was built: the site would print "## Install" under the hero\'s headline')
+  assert.match(built.output, /README\.md/, `the build that stopped names no file, and a reader has to be told which one to fix:\n${built.output}`)
+  assert.match(built.output, /markdown structure/, `the build stopped for a reason other than the shape of the two promise lines:\n${built.output}`)
 })
 
 test('the homepage names the promise in its title, its description and its cards', () => {

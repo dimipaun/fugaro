@@ -911,6 +911,14 @@ function loadCosts(minRuns: number): CostsFacts | null {
  * line, or by none, stops the build naming the file rather than rendering a page with a
  * hole in its first screen.
  *
+ * The same goes for the *shape* of the two lines, and it is checked rather than assumed:
+ * the README is markdown and what a page renders is text, so a promise that is a line of
+ * markdown *structure* — a heading, a list item, a quote, a table row, a rule or a fence,
+ * an image or a raw tag — would print its own markers on the first screen. Either line
+ * being one stops the build naming the file, which is the behaviour
+ * `website/test/home.mjs` holds to a case (a README that puts its promise under the title
+ * as `## Install` fails the build rather than rendering "## Install" under the headline).
+ *
  * The markdown emphasis is not part of either sentence, so the `**` that makes the tagline
  * bold in the README is stripped: what a page renders is the text a reader reads. The
  * subline is the whole of the line: it is one sentence, and a second one on the same line
@@ -929,6 +937,9 @@ function loadPromiseLines(): { tagline: string; subline: string } {
   }
 
   const unemphasized = (line: string) => line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
+  // Markdown that organises a document rather than saying something. Both lines are rendered
+  // as plain text, so one of these would print its own markers on the first screen.
+  const STRUCTURE = /^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s?|\||`{3,}|<|={3,}|-{3,}$)/
   const under = lines.slice(title + 1).filter((candidate) => candidate.trim() !== '')
   if (under.length < 2) {
     throw new Error(
@@ -940,6 +951,16 @@ function loadPromiseLines(): { tagline: string; subline: string } {
   const subline = unemphasized(under[1])
   if (tagline === '' || subline === '') {
     throw new Error(`${file}: one of the two lines under the "# Fugaro" title is empty, and the site renders both (F48, D102; changes spec item 2).`)
+  }
+  for (const [what, line] of [
+    ['tagline', tagline],
+    ['subline', subline],
+  ] as const) {
+    if (STRUCTURE.test(line)) {
+      throw new Error(
+        `${file}: the ${what} is ${JSON.stringify(line)}, which is markdown structure — a heading, a list item, a quote, a table row, a rule or fence, an image or a tag — rather than the sentence the site renders as plain text: the markers would be printed on the first screen, where the promise is. The two lines are the README's opening under its "# Fugaro" title: one line saying what the product is, and the sentence under it (changes spec item 2, F48, D102).`,
+      )
+    }
   }
   return { tagline, subline }
 }
