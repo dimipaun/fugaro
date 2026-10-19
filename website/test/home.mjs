@@ -506,14 +506,16 @@ function runDetailOf(html) {
     out.note = inside(section, 'run-note')
     for (const el of walk(section)) {
       if (el.name !== 'li' || !classes(el).includes('run-step')) continue
-      // The heading carries the step's number as decoration beside its name, and the name is
-      // what the section writes: the number is dropped here for the same reason the component
-      // hides it from a screen reader.
-      const heading = inside(el, 'run-step-name')
+      // The heading is the step's name and nothing else. The number is a sibling of it — a
+      // column of the step's own grid, the rail the line is drawn down — and the section's name
+      // is what the heading has to carry. This used to strip a leading `3 ` back off the
+      // heading, because the old markup put the number inside it; the strip is gone with that
+      // markup, so a heading that swallowed its number again reads as the heading it is rather
+      // than as the step's name, and is refused below.
       out.steps.push({
         name: el.attrs.get('data-step') ?? '',
         source: el.attrs.get('data-source') ?? '',
-        heading: heading.replace(/^\d+\s*/, ''),
+        heading: inside(el, 'run-step-name'),
         line: inside(el, 'run-step-line'),
       })
     }
@@ -612,12 +614,16 @@ function fixtureDetailSteps() {
   return howItWorksSteps().map((step) => ({ name: step.name, line: lines[step.name] }))
 }
 
-/** A page carrying nothing but a detail section, for the refusals above. */
+/**
+ * A page carrying nothing but a detail section, for the refusals above. The markup is the one
+ * `RunDetail.astro` renders: the number a sibling of the heading and the heading's own line in
+ * the column beside it, so the fixture the refusals are proved on is the page they are about.
+ */
 function runDetailPage(steps, note) {
   const body = steps
     .map(
       (step, index) =>
-        `<li class="run-step" data-step="${slug(step.heading ?? step.name)}" data-source="${HOW_IT_WORKS_SOURCE}"><h3 class="run-step-name"><span class="run-step-number" aria-hidden="true">${index + 1}</span>${step.heading ?? step.name}</h3><p class="run-step-line">${step.line}</p></li>`,
+        `<li class="run-step" data-step="${slug(step.heading ?? step.name)}" data-source="${HOW_IT_WORKS_SOURCE}"><span class="run-step-number" aria-hidden="true">${index + 1}</span><div class="run-step-body"><h3 class="run-step-name">${step.heading ?? step.name}</h3><p class="run-step-line">${step.line}</p></div></li>`,
     )
     .join('')
   return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><section class="run-detail" aria-labelledby="run-detail-title"><h2 class="run-detail-title" id="run-detail-title">The run, step by step</h2><ol class="run-steps">${body}</ol><p class="run-note">${note}</p></section></main></body></html>`
@@ -1767,6 +1773,15 @@ test('the detail refusals fire on the defect each one names', () => {
   assert.ok(
     failing(elsewhere).some((line) => /is not a line of README\.md's "## How it works"/.test(line)),
     'a heading the section does not write passes the check: a step named for the page is not a step of the section',
+  )
+
+  // The number sits beside the heading rather than in it. The old markup carried it inside the
+  // heading and `runDetailOf` stripped it back off, so a reader saw "3 Loop" and this file saw
+  // "Loop"; the fixture below is that markup, and it is refused rather than stripped.
+  const numbered = steps.map((step, i) => (i === 2 ? { ...step, heading: `${i + 1}${step.name}` } : step))
+  assert.ok(
+    failing(numbered).some((line) => /is headed .*and README\.md names step 3/.test(line)),
+    'a step whose heading carries its own number passes the check: the number is decoration beside the heading, and a heading that swallowed it is not the name the section gives the step',
   )
 
   const invented = 'The container is the trust boundary.'

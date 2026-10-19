@@ -13,7 +13,9 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
+	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The whole-project inventory (Task 4.1, design D59).
@@ -76,9 +78,10 @@ const ServiceCloudAsset = "cloudasset.googleapis.com"
 // a read made under the deployer's credential answers CauseRoleMissing and
 // falls the run back to its confirmations, which is the fail-closed direction
 // (the fallback a call that fails for any reason takes) rather than a clean
-// read. Which credential the caller makes the read with is the caller's to
-// decide: Task 4.4 wires this check into the apply, and this paragraph is the
-// constraint it has to meet.
+// read. The credential the caller makes the read with is the operator's own,
+// which is the identity the installation grants this role to: internal/cli's
+// managed apply makes the read before it assumes the deployer, and hands the
+// answer in (Task 4.5).
 const RoleCloudAssetReader = tf.CloudAssetRole
 
 // inventoryPageSize is how many assets the read asks for per page. The read
@@ -225,6 +228,14 @@ const (
 	// CauseNoReader is no read at all: none was given, or there is no project
 	// to read.
 	CauseNoReader Cause = "there is no whole-project read to make"
+	// CauseStateUnread is the installation's own state not being readable
+	// (Unread, Task 4.5): the accounted side of the comparison could not be
+	// built, so nothing is accounted for and the run keeps its confirmations.
+	// It is the same direction as a read that failed, and it is a cause of its
+	// own because what an operator does about it is different — the state
+	// bucket's objects are what could not be listed or parsed, not the
+	// project's assets.
+	CauseStateUnread Cause = "the installation's own state could not be read"
 )
 
 // Decision is what the inventory decided — a decision rather than an error on
@@ -276,22 +287,116 @@ func (in Inventory) Check(ctx context.Context) Decision {
 
 // fallback is a decision that keeps the run's confirmations, with the project,
 // the cause and what happens next in one sentence.
+//
+// The detail is one bounded field before it goes in, for the reason the
+// warning's names are (foreignWhy): it is an API's error text or a caller's
+// own words about a read that failed, and the sentence is printed.
 func (in Inventory) fallback(cause Cause, detail string) Decision {
 	return Decision{Fallback: true, Cause: cause,
 		Why: fmt.Sprintf("the whole-project inventory of %s could not be checked: %s (%s); this run falls back to confirmations, and nothing is deleted (D59)",
-			in.what(), cause, detail)}
+			in.what(), cause, safetext.Field(detail))}
 }
 
-// foreign is the listed assets the state does not account for — and that GCP
-// did not create itself — in the order the read returned them.
+// foreign is the listed assets nothing about this installation can claim — not
+// the state (accounted), not GCP itself (gcpCreated), and not the owner-run
+// commands that made the project Fugaro's own (installationCreated) — in the
+// order the read returned them.
 func (in Inventory) foreign(listed []Asset) []Asset {
 	var out []Asset
 	for _, a := range listed {
-		if !in.gcpCreated(a) && !in.accounted(a) {
+		if !in.gcpCreated(a) && !in.installationCreated(a) && !in.accounted(a) {
 			out = append(out, a)
 		}
 	}
 	return out
+}
+
+// installationCreated is the third thing that is not foreign: a resource
+// Fugaro's own owner-run commands created and NO Terraform state accounts for.
+//
+// Why it is needed, and why it is not Accounted: the resources the
+// installation makes without Terraform. Its own state buckets are created by
+// infra.CreateStateBucket (the installation's fugaro-tfstate-<gcp-project> and
+// D77's fugaro-managed-tfstate-<gcp-project>) and the managed creation's own
+// step, and the Firebase project is added by infra.AddFirebase, which is an
+// API call and no root's plan — the Firestore default database Firebase
+// provisions with it is in no state either.
+//
+// The Firebase project is the one a creating run always adds and a root only
+// sometimes declares: `fugaro init --create-project` adds Firebase to every
+// project it makes (init_project.go's addFirebase), while the Firebase ROOT —
+// which holds google_firebase_project, the resource a state would account for
+// — runs only under --firebase (init_stages.go). So a managed project created
+// without --firebase holds a Firebase project no state has ever seen, and an
+// inventory that did not name it here would read every such project as
+// foreign and keep the confirmations of every apply forever. The
+// whole-project read lists all of them, so without this the accounted side
+// could never cover them, every real managed project would fall back, and the
+// agent apply the budget gate opens would ask for a confirmation on every run
+// (Check 67a's "no fallback" step). They are not Accounted entries because
+// nothing in the state says a word about them: calling them accounted would
+// make the state read out to be something it is not, and the caller builds
+// Accounted out of the state alone.
+//
+// The match is by the exact names these resources carry, which are functions
+// of this project's id — the same functions the rest of the program creates
+// them with (InstallationsStateBucket, ManagedStateBucketName) — and never by
+// a prefix or by type alone:
+//
+//   - a bucket called fugaro-tfstate-<this id> or
+//     fugaro-managed-tfstate-<this id>. Bucket names are globally unique, so
+//     there is exactly one of each and an agent cannot make a second under
+//     that name; a bucket called fugaro-tfstate-<another id> is another
+//     project's and stays foreign.
+//   - the Firebase project AddFirebase added to this one,
+//     firebase.googleapis.com/FirebaseProject at "projects/<this id>". A
+//     Firebase project is named by the GCP project it belongs to, so there is
+//     exactly one of this project's; another project's is another project's
+//     and stays foreign. The path is compared whole, like the database's: a
+//     resource filed deeper under this project is not the project itself.
+//   - the DEFAULT Firestore database of this project,
+//     firestore.googleapis.com/Database at "projects/<this id>/databases/(default)".
+//     Any other database in the project is one somebody created and stays
+//     foreign.
+//   - the two objects the creating run writes into the runs bucket itself,
+//     storage.googleapis.com/Object at
+//     "projects/_/buckets/fugaro-runs-<this id>/objects/fugaro/managed.json"
+//     and ".../fugaro/allow-delete.json". They are Fugaro's own records and
+//     not a run's output: the marker is the creation fact
+//     (internal/infra/managed.MarkerObject, written by the run that created
+//     the project) and the list is the owner's own approval of the deletes
+//     (AllowDeleteObject). Both are named by key under the runs bucket this
+//     program derives from the project id — the same bucket
+//     internal/infra/managed reads them back from (its runsBucketName), which
+//     is what makes the name a fact about this project and not a guess. Every
+//     other object stays foreign, including every other key under fugaro/ and
+//     a run's own records under runs/.
+//
+// Anything else is foreign, and a project is single-purpose (D59) whatever
+// else it holds. What this still cannot claim, because no name identifies it,
+// is listed where the check's own limits are: the records a run writes into
+// the runs bucket, which is itself accounted for by the installation's state.
+func (in Inventory) installationCreated(a Asset) bool {
+	if in.GCPProject == "" {
+		return false
+	}
+	switch a.Type {
+	case "storage.googleapis.com/Bucket":
+		name := lastSegment(a.Name)
+		return name == InstallationsStateBucket(in.GCPProject) || name == ManagedStateBucketName(in.GCPProject)
+	case "firebase.googleapis.com/FirebaseProject":
+		return assetPath(a.Name) == "projects/"+in.GCPProject
+	case "firestore.googleapis.com/Database":
+		return assetPath(a.Name) == "projects/"+in.GCPProject+"/databases/(default)"
+	case "storage.googleapis.com/Object":
+		root := "projects/_/buckets/fugaro-runs-" + in.GCPProject + "/objects/"
+		key, ok := strings.CutPrefix(assetPath(a.Name), root)
+		if !ok {
+			return false
+		}
+		return key == inframanaged.MarkerObject || key == inframanaged.AllowDeleteObject
+	}
+	return false
 }
 
 // gcpCreated is the second half of what a clean project is, and it is the
@@ -527,10 +632,18 @@ func assetPath(name string) string {
 // foreignWhy is the warning: the project, how many resources the state does
 // not account for, the first few of them with their types, and what happens
 // next.
+//
+// Each name and type is one bounded field (safetext.Field) before it is joined
+// into the sentence, and that is not decoration: this sentence is printed —
+// by the managed apply, whose reader is the session that applied — and a
+// resource name is a string the project's own API answered with, so a name
+// carrying an escape sequence, a line break or ten thousand characters would
+// be this program printing text of someone else's choosing, in text its reader
+// acts on. The count is the sentence's own and is not bounded.
 func (in Inventory) foreignWhy(foreign []Asset) string {
 	named := make([]string, 0, inventoryNamed)
 	for _, a := range foreign[:min(len(foreign), inventoryNamed)] {
-		named = append(named, a.Name+" ("+a.Type+")")
+		named = append(named, safetext.Field(a.Name)+" ("+safetext.Field(a.Type)+")")
 	}
 	more := ""
 	if n := len(foreign) - len(named); n > 0 {
@@ -541,15 +654,17 @@ func (in Inventory) foreignWhy(foreign []Asset) string {
 }
 
 // what names the project in the warning, in the shape the gate's own refusals
-// use.
+// use. Both halves are bounded: the warning is printed, and the inventory's
+// project reaches it from the caller's configuration and, through the marker,
+// from a cloud object.
 func (in Inventory) what() string {
 	switch {
 	case in.Project != "" && in.GCPProject != "":
-		return in.Project + " (" + in.GCPProject + ")"
+		return safetext.Field(in.Project) + " (" + safetext.Field(in.GCPProject) + ")"
 	case in.Project != "":
-		return in.Project
+		return safetext.Field(in.Project)
 	case in.GCPProject != "":
-		return in.GCPProject
+		return safetext.Field(in.GCPProject)
 	}
 	return "this project"
 }
@@ -628,7 +743,7 @@ type CloudAssets struct {
 func NewCloudAssets(ctx context.Context, opts ...option.ClientOption) (*CloudAssets, error) {
 	svc, err := cloudasset.NewService(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to the %s API: %w", ServiceCloudAsset, err)
+		return nil, fmt.Errorf("connecting to the %s API: %w", ServiceCloudAsset, safetext.FieldErr(err))
 	}
 	return &CloudAssets{svc: svc}, nil
 }
@@ -647,7 +762,7 @@ func (c *CloudAssets) List(ctx context.Context, gcpProject string) ([]Asset, err
 	ctx, cancel := withInventoryDeadline(ctx)
 	defer cancel()
 	fail := func(err error) ([]Asset, error) {
-		return nil, fmt.Errorf("reading project %s through the %s API: %w", gcpProject, ServiceCloudAsset, err)
+		return nil, fmt.Errorf("reading project %s through the %s API: %w", safetext.Field(gcpProject), ServiceCloudAsset, safetext.FieldErr(err))
 	}
 	call := c.svc.V1.SearchAllResources("projects/" + gcpProject).PageSize(inventoryPageSize)
 	var out []Asset
@@ -674,7 +789,7 @@ func (c *CloudAssets) List(ctx context.Context, gcpProject string) ([]Asset, err
 		case token == "":
 			return out, nil
 		case seen[token]:
-			return fail(fmt.Errorf("the server repeated page token %q after %d pages", token, pages))
+			return fail(fmt.Errorf("the server repeated page token %q after %d pages", safetext.Field(token), pages))
 		case pages >= inventoryMaxPages:
 			return fail(fmt.Errorf("the listing runs past %d pages", inventoryMaxPages))
 		}

@@ -288,8 +288,13 @@ func lockBlocks(src string) (map[string]string, error) {
 
 // CopyRoot prepares dir as the workdir of an agent-authored root read from
 // src: the root's files are copied into dir/root afresh, so no file of an
-// earlier run (or an older fugaro) is planned, and terraform's data directory
-// (dir/root/.terraform) is kept, as PrepareWorkdir keeps it.
+// earlier run (or an older fugaro) is planned, and a .terraform directory
+// already there is left alone rather than deleted, as PrepareWorkdir leaves
+// the one beside its root. (That is not terraform's data directory here:
+// TF_DATA_DIR is <workdir>/.terraform — internal/infra/tf/env.go — and the
+// managed apply passes the workdir itself as that workdir while running
+// terraform in the root, so the directory this keeps is not the one terraform
+// reads.)
 //
 // The copy is not a convenience: the checkout belongs to the agent and to the
 // user, and terraform writes into the directory it runs in (a plan file, a
@@ -299,9 +304,9 @@ func lockBlocks(src string) (map[string]string, error) {
 //
 // What it refuses: src that is not a directory, a symlink in src (a file or a
 // directory — a managed apply reads the root's own tree, and a link out of it
-// is not that), and a src inside dir. What it does not do: it does not read
-// src's files, so what they contain is the preflight's question and not this
-// function's.
+// is not that), and a dir inside src — a workdir the copy would write while it
+// reads the root. What it does not do: it does not read src's files, so what
+// they contain is the preflight's question and not this function's.
 func CopyRoot(dir, src string) (*Workdir, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, fmt.Errorf("the workdir %s is not an absolute path", dir)
@@ -327,9 +332,13 @@ func CopyRoot(dir, src string) (*Workdir, error) {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, err
 	}
-	// The root's own directory is replaced, and terraform's data directory in
-	// it is kept: re-downloading every provider for every apply of the same
-	// root is minutes of a run's time for nothing.
+	// The root's own directory is replaced, and a .terraform directory in it is
+	// kept rather than deleted with the rest. It is not what saves the provider
+	// downloads: terraform consults TF_DATA_DIR, which this workdir's own
+	// directory is (the doc comment above), and the plugin cache the CLI config
+	// names (tf.terraformrc) is what reuses providers across applies. The skip
+	// is left as it stands, so this is the honest description of it rather than
+	// a reason.
 	data := filepath.Join(root, ".terraform")
 	if err := os.MkdirAll(data, 0o700); err != nil {
 		return nil, err

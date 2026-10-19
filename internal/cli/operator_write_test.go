@@ -28,7 +28,7 @@ func TestOperatorWriteErr(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d", ExitCode(err))
 	}
-	for _, want := range []string{"fugaro/recipes/review.yaml", "gs://fugaro-runs-acme", "operator role", "since 0.7.0", "fugaro init --operator"} {
+	for _, want := range []string{"fugaro/recipes/review.yaml", "gs://fugaro-runs-acme", "operator role", "since 0.7.0", "write only runs/, and since 0.9.0 tokens/", "fugaro init --operator"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal lacks %q: %v", want, err)
 		}

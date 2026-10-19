@@ -5,18 +5,29 @@
 // The plan names four checks for the caps-and-costs page, and each of them is a
 // mechanical form of a rule this work is held to:
 //
-//   1. **Every number on the page appears in costs.json.** This is "publish the
-//      measurement, not the anecdote": the figures come from the owner-run
-//      aggregation (W0.3) and nothing on the page may carry a figure it did not
-//      produce — which is why the spec's "~2 h" sentence never appears here
-//      (finding 33, D97).
-//   2. **The "not a promise" line is present**, rendered from the aggregation's
+//   1. **Every figure on the page is the one its own source carries.** This is
+//      "publish the measurement, not the anecdote", and the page has two sources
+//      since the owner's brief of 2026-10-19: `website/data/typical-costs.yaml`,
+//      the owner's own measurement of this project's development runs, which the
+//      table above the fold renders, and `website/content/costs.json`, the
+//      owner-run aggregation's output (W0.3), which the per-recipe ranges render.
+//      Neither half may carry a figure its own file did not produce — which is why
+//      the spec's "~2 h" sentence never appears here (finding 33, D97) — and the
+//      caps between them carry no figure at all: the reference's own usage lines
+//      and one-line descriptions are the whole of what is rendered there.
+//   2. **The data file is rendered exactly.** Every figure
+//      `website/data/typical-costs.yaml` carries is on the page, in the column the
+//      field is for, and no figure on the page is one the file does not carry — so
+//      a refresh of the figures is an edit to the file and never to a page, and a
+//      field added to the file with no column to land in fails here rather than
+//      going unrendered.
+//   3. **The "not a promise" line is present**, rendered from the aggregation's
 //      own output rather than written beside it (D97).
-//   3. **A group below `min_runs` is absent from the page.** The aggregation
+//   4. **A group below `min_runs` is absent from the page.** The aggregation
 //      suppresses a thin group and the content pipeline (W1.3) refuses a file
 //      that carries one anyway, so the page renders exactly the groups the JSON
 //      carries and no group it does not (D96's answer fixes the minimum at 20).
-//   4. **The `fugaro budget` invocations match the CLI reference.** The caps
+//   5. **The `fugaro budget` invocations match the CLI reference.** The caps
 //      guide prints the command tree's own usage lines (W0.4's generated
 //      reference) and carries no budget command of its own, so a flag can only
 //      drift if the page stopped rendering the reference — which is what the
@@ -48,18 +59,78 @@
 // network-free and nothing here starts anything but the site's own Astro.
 //
 // **Red step** (the plan's own, recorded here as the plan requires — the exact
-// line this file's first case printed before the page existed): with
+// line this file's aggregation case printed before the page existed): with
 // `caps-and-costs.astro` holding the spec's own sentence —
-// `<p>Tasks with review often run ~2 h, not 30 min.</p>` — and this case run
-// against it, `node --test --test-name-pattern='every number on the page'
+// `<p>Tasks with review often run ~2 h, not 30 min.</p>` — and that case run
+// against it, `node --test --test-name-pattern='renders the costs.json field'
 // test/caps-and-costs.mjs` said
 //
 //   Expected: FAIL — the page states "Tasks with review often run ~2 h, not 30 min.",
-//   which costs.json does not carry
+//   which is not the costs.json field it is rendered for
 //
-// The sentence was removed rather than the case: the defect is a page that
+// (the case was called "every number on the page appears in costs.json" then, and
+// the brief of 2026-10-19 gave the page a second source and the case its second
+// half). The sentence was removed rather than the case: the defect is a page that
 // prints a figure the aggregation did not produce, which is finding 33 and the
 // reason the plan's §5 review row lists this page (F50, D97).
+//
+// **And the red steps for the second source** (the owner's brief of 2026-10-19,
+// recorded here the way the plan asks for the first). The case that holds the table
+// to `website/data/typical-costs.yaml` was written, and then each defect it exists
+// for was planted in `src/components/CapsCosts.astro` and the case run against it:
+//
+//   - `money()` rounded to the whole dollar (`$${Math.round(value)}`) — the case
+//     failed with "the page's note does not state $10.00, which
+//     website/data/typical-costs.yaml carries", the file's `10` printed as `$10`;
+//   - one cell given a figure of its own (`{'$1.00'}` for the nine-in-ten column) —
+//     "row task: … | $1.00 | … (the file carries … | $1.27 | …)", two rows named;
+//   - the middle-half column dropped (`{'—'}` in place of the range) — "row task:
+//     … | — | … (the file carries … | $0.15–$0.68 | …)";
+//   - the note paragraph deleted — "the page does not state where its figures come
+//     from, or over what window".
+//
+// Each was removed and the case passed again. The same rule the aggregation's half
+// is held to is the one these hold: a figure the page writes of its own is a figure
+// no file behind it carries, and this page has two files.
+//
+// The two cases the second source changed were proved the same way: a typed "A run
+// costs 2 USD." in the page's lead failed the aggregation case, whose first half now
+// reads the whole page outside the aggregation's section rather than the costs
+// section's own remainder; and a literal `$9.99` written into the note in place of
+// the file's cap failed the absent-file case, which is the one that says a page with
+// no `costs.json` behind it prints the data file's figures and nothing else.
+//
+// **The review of that rework moved three things here, and none of them is a rule of
+// this file's.** The note says *whose* cap it prints ("our per-run cap is $10.00"):
+// `--per-run` defaults to 0, which sets no cap, and an enforcing project with no
+// per-run cap anywhere refuses every lease, so the figure is Fugaro's installation's
+// and not something `fugaro` ships — the same correction `data/typical-costs.yaml`'s
+// header and `src/content.ts`'s field doc now carry. The table sits in its own
+// `overflow-x: auto` box, so six nowrap columns scroll rather than widening the
+// document on a phone, and the lead the page writes is the `.lede` `community.astro`
+// and `faq.astro` carry, which Astro's per-file scoping means this page must restate.
+// The refusals the figures' reader owes are `layout.mjs`'s subject rather than this
+// file's: they are shapes of the data file, and that file is where they are planted.
+// The cases here were unchanged by all three, and the page's word count is 249 of
+// D188's 250 — the note's own sentence was kept to the word the ceiling had left.
+//
+// **The second review's finding, and the red step behind the change it made.** The page
+// prints a figure to the cent with `toFixed(2)`, the loader accepted any finite number,
+// and `money()` below rounded the file's figure the same way — so a file carrying a third
+// decimal was rounded on the page and passed *both* directions of this case, against the
+// file's own promise that a figure is never rounded there. Planted, with `median_usd: 0.36`
+// written `0.365` in `website/data/typical-costs.yaml`:
+//
+//   $ node --test --test-name-pattern='renders exactly website/data/typical-costs.yaml' test/caps-and-costs.mjs
+//   ✔ the page renders exactly website/data/typical-costs.yaml, in the field each figure is for
+//   ℹ pass 1   ℹ fail 0
+//
+// — green, with the page printing `$0.36` for the file's `0.365` (`(0.365).toFixed(2)` is
+// `"0.36"`). The fix is at the source rather than at the print: `src/content.ts`'s `asCents`
+// refuses a figure that is not a whole number of cents, so `money()` in the page can only
+// pad, and the `money()` here prints the digits the file itself carries instead of rounding
+// them. With the same fixture planted the build refuses the row, which is what the change
+// to `layout.mjs`'s refusal cases holds.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -245,22 +316,167 @@ function numbersIn(text) {
   return [...String(text).matchAll(NUMBER)].map((match) => match[0])
 }
 
-/** The costs section of a built page, split from the rest of it. */
-function splitCosts(page) {
-  const match = /<section id="costs"[\s\S]*?<\/section>/.exec(page)
-  assert.ok(match, 'the page has no costs section')
-  return { costs: match[0], rest: page.replace(match[0], ' ') }
+/** The built page split into the regions the page's own two sources fill. */
+function splitPage(page) {
+  const section = (id) => {
+    const match = new RegExp(`<section id="${id}"[\\s\\S]*?</section>`).exec(page)
+    assert.ok(match, `the page has no ${id} section`)
+    return match[0]
+  }
+  const typical = section('typical-costs')
+  const caps = section('caps')
+  const costs = section('costs')
+  return {
+    typical,
+    caps,
+    costs,
+    // Everything else: the page's own heading and its lead, which write no figure at all.
+    rest: page.replace(typical, ' ').replace(caps, ' ').replace(costs, ' '),
+  }
 }
 
-test('every number on the page appears in costs.json, in the field it is rendered for', async (t) => {
+/**
+ * `website/data/typical-costs.yaml`, read the way the page's own reader reads it: the
+ * window's two dates and its count, one entry per job with the fields the table renders, and
+ * the per-run cap. The reader is deliberately literal — it is this gate's, and a field the
+ * file renames is a field the case below stops finding.
+ */
+function readTypicalCosts() {
+  const out = { window: {}, jobs: [], perRunCap: null }
+  let job = null
+  for (const line of repoFile('website/data/typical-costs.yaml').split('\n')) {
+    if (line.trim() === '' || line.trim().startsWith('#')) continue
+    let match
+    if ((match = /^ {2}(from|to|runs): (\S+)$/.exec(line))) out.window[match[1]] = match[2]
+    else if ((match = /^ {2}- id: (\S+)$/.exec(line))) out.jobs.push((job = { id: match[1] }))
+    else if ((match = /^ {4}([a-z_]+): (.+)$/.exec(line))) job[match[1]] = match[2].trim()
+    else if ((match = /^per_run_cap_usd: (\S+)$/.exec(line))) out.perRunCap = match[1]
+  }
+  assert.ok(out.jobs.length > 0, 'website/data/typical-costs.yaml carries no job for the page to render')
+  assert.ok(out.window.from && out.window.to && out.window.runs, 'website/data/typical-costs.yaml carries no window for the page to print')
+  assert.ok(out.perRunCap !== null, 'website/data/typical-costs.yaml carries no per-run cap for the page to print')
+  return out
+}
+
+/**
+ * A figure as the page prints it: the digits `website/data/typical-costs.yaml` itself carries,
+ * padded to cents and never rounded. Padding is all the page does with them — the loader
+ * refuses a figure that is not a whole number of cents (`asCents` in `src/content.ts`), so a
+ * figure this function had to round would be one the page cannot print — and re-applying the
+ * page's own rounding here would be the gate agreeing with the defect it exists for: a file
+ * carrying `0.365` printed as `$0.36` passed both directions while this function rounded too.
+ */
+function money(value) {
+  const [whole, fraction = ''] = String(value).trim().split('.')
+  assert.ok(
+    /^\d+$/.test(whole) && fraction.length <= 2,
+    `website/data/typical-costs.yaml carries ${value}, which is not a whole number of cents for the page to print without rounding it`,
+  )
+  return `$${whole}.${fraction.padEnd(2, '0')}`
+}
+
+/** The middle half as the page prints it: a range, or a dash where the file carries none. */
+function middleHalf(value) {
+  if (value === undefined) return '—'
+  const [low, high] = value
+    .replace(/^\[|\]$/g, '')
+    .split(',')
+    .map((part) => part.trim())
+  return `${money(low)}–${money(high)}`
+}
+
+/**
+ * Every figure `website/data/typical-costs.yaml` carries, spelled the way the page prints it:
+ * the window's two dates and its count, the per-run cap, and each job's sample, median,
+ * middle half and worst. A figure the page prints that is not in this set is one the file does
+ * not carry, which is the direction that makes a refresh an edit to the file and never to a
+ * page (D96, D97).
+ */
+function figuresOf(file) {
+  const allowed = new Set()
+  const allow = (text) => numbersIn(text).forEach((number) => allowed.add(number))
+  for (const value of [file.window.from, file.window.to, file.window.runs]) allow(value)
+  allow(`${file.perRunCap} ${money(file.perRunCap)}`)
+  for (const job of file.jobs) {
+    allow(`${job.runs} ${money(job.median_usd)} ${money(job.nine_in_ten_under_usd)}`)
+    if (job.middle_half_usd !== undefined) allow(middleHalf(job.middle_half_usd))
+    if (job.worst_usd !== undefined) allow(money(job.worst_usd))
+  }
+  return allowed
+}
+
+test('the page renders exactly website/data/typical-costs.yaml, in the field each figure is for', async (t) => {
   const built = buildWith(t, publish(FIGURES))
   const page = builtPage(built, '/caps-and-costs/')
-  const { costs, rest } = splitCosts(page)
+  const { typical } = splitPage(page)
+  const file = readTypicalCosts()
   const strays = []
 
-  // Outside the costs section no figure is written at all: a typed "Runs often cost 2 USD."
-  // there would pass a check that allowed any number the fixture holds anywhere.
-  for (const block of blocksOf(rest)) {
+  // One row per job the file holds, in the file's own order, and every cell the field its
+  // column names: a figure the page rounds, drops or invents is a cell that does not match,
+  // and so is a job the file carries with no row to render it.
+  const rows = [...typical.matchAll(/<tr data-job="([^"]+)"[\s\S]*?<\/tr>/g)]
+  assert.deepEqual(
+    rows.map((row) => row[1]),
+    file.jobs.map((job) => job.id),
+    'the page does not render the jobs website/data/typical-costs.yaml carries, in the file\'s own order',
+  )
+  rows.forEach((row, index) => {
+    const job = file.jobs[index]
+    const cells = [...row[0].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)].map((match) => collapse(textOf(match[1])))
+    const expected = [
+      job.name,
+      job.runs,
+      money(job.median_usd),
+      middleHalf(job.middle_half_usd),
+      money(job.nine_in_ten_under_usd),
+      job.worst_usd === undefined ? '—' : money(job.worst_usd),
+    ]
+    if (JSON.stringify(cells) !== JSON.stringify(expected)) {
+      strays.push(`row ${job.id}: ${cells.join(' | ')} (the file carries ${expected.join(' | ')})`)
+    }
+  })
+
+  // The note under the table states how old the figures are and what stops a run that
+  // loops: the window's two dates, the number of runs behind them and the per-run cap, each
+  // one a value the file carries rather than a sentence written beside it.
+  const note = blocksOf(typical)
+    .map(collapse)
+    .find((block) => block.startsWith("Fugaro's own runs"))
+  assert.ok(note, 'the page does not state where its figures come from, or over what window')
+  for (const value of [file.window.from, file.window.to, file.window.runs, money(file.perRunCap)]) {
+    assert.ok(note.includes(value), `the page's note does not state ${value}, which website/data/typical-costs.yaml carries`)
+  }
+
+  // And no figure in the region is one the file does not carry — the direction that makes a
+  // refresh an edit to the file: the table's head is a label row rather than a figure ("9 in
+  // 10 under" names the statistic), so it comes off before the figures are read, and the rows
+  // above are compared cell by cell in any case.
+  const allowed = figuresOf(file)
+  const withoutHead = typical.replace(/<thead[\s\S]*?<\/thead>/g, ' ')
+  for (const block of blocksOf(withoutHead).map(collapse)) {
+    if (numbersIn(block).some((number) => !allowed.has(number))) strays.push(block)
+  }
+
+  assert.deepEqual(
+    [...new Set(strays)],
+    [],
+    `the page states ${[...new Set(strays)].map((s) => JSON.stringify(s)).join(', ')}, which is not what website/data/typical-costs.yaml carries (D97: the page publishes the measurement, and no figure of its own)`,
+  )
+})
+
+test('the aggregation\'s section renders the costs.json field each figure is for, and the page writes no figure of its own', async (t) => {
+  const built = buildWith(t, publish(FIGURES))
+  const page = builtPage(built, '/caps-and-costs/')
+  const { caps, costs, rest } = splitPage(page)
+  const strays = []
+
+  // Outside the aggregation's section — the page's own lead, and the caps, where the
+  // reference's usage lines are the whole of what is rendered — no figure is written at all:
+  // a typed "Runs often cost 2 USD." there would pass a check that allowed any number the
+  // fixture holds anywhere. (The table above the fold belongs to the other source, and the
+  // case above holds it to its own file.)
+  for (const block of [...blocksOf(caps), ...blocksOf(rest)]) {
     if (numbersIn(block).length > 0) strays.push(collapse(block))
   }
 
@@ -316,7 +532,7 @@ test('the costs section states the empty state when there is no group to render'
   const none = buildWith(t, publish({ ...FIGURES, recipes: [] }))
   const page = builtPage(none, '/caps-and-costs/')
   assert.match(collapse(textOf(page)), /not enough runs/, 'a costs.json with recipes: [] does not render the empty state')
-  assert.ok(!/<table\b/.test(splitCosts(page).costs), 'a costs.json with no group renders an empty table')
+  assert.ok(!/<table\b/.test(splitPage(page).costs), 'a costs.json with no group renders an empty table')
 
   // Every group under the minimum is refused by the content pipeline: the build stops,
   // naming the file, rather than rendering a table of nothing.
@@ -427,18 +643,41 @@ test('the caps guide covers every budget subcommand the CLI reference carries', 
 test('the caps page states the empty state while the aggregation has not been run', async (t) => {
   // The costs file is absent from this checkout, which is the honest day-one
   // state: the aggregation is owner-run and no run may read an installation's
-  // records (D96, Global Constraint 10). A page that rendered a figure anyway,
-  // or that fell silent about it, would be the failure this arrangement exists
-  // to prevent.
+  // records (D96, Global Constraint 10). A page that rendered an aggregation
+  // figure anyway, or that fell silent about it, would be the failure this
+  // arrangement exists to prevent. The figures the page does render are the data
+  // file's, which is a different source with a different life — hand-written,
+  // always present, and held to the case above — so the check here is that the
+  // absent file is the whole of what the aggregation's section says and that no
+  // figure anywhere on the page is one the data file does not carry.
   const built = buildWith(t, () => {
     const file = path.join(REPO, 'website', 'content', 'costs.json')
     assert.ok(!existsSync(file), 'website/content/costs.json is committed: it is the owner-run aggregation\'s own output and W2.3 is the task that publishes it with check 69c')
   })
   const page = builtPage(built, '/caps-and-costs/')
   const text = collapse(textOf(page))
+  const { costs } = splitPage(page)
 
   assert.match(text, /not enough runs/, 'the page does not say the aggregation has not been run')
-  assert.deepEqual(text.match(/(?<![\w.])\d+(?:\.\d+)?/g) ?? [], [], 'the page renders a number with no costs file behind it')
+  assert.deepEqual(
+    numbersIn(textOf(costs)),
+    [],
+    'the page renders an aggregation figure with no costs file behind it',
+  )
+
+  // The table's head is a label row rather than a figure ("9 in 10 under" names the
+  // statistic), so it comes off before the page's figures are read; everything else a reader
+  // reads has to be a figure website/data/typical-costs.yaml carries.
+  const allowed = figuresOf(readTypicalCosts())
+  const withoutHeads = page.replace(/<thead[\s\S]*?<\/thead>/g, ' ')
+  const strays = [...new Set(blocksOf(withoutHeads).map(collapse))].filter((block) =>
+    numbersIn(block).some((number) => !allowed.has(number)),
+  )
+  assert.deepEqual(
+    strays,
+    [],
+    `the page writes ${strays.map((s) => JSON.stringify(s)).join(', ')}, which no file behind this page carries: with no costs.json the only figures on it are website/data/typical-costs.yaml's`,
+  )
 })
 
 test('getting started renders the install commands from install.yaml, and no command of its own', async (t) => {
@@ -462,6 +701,40 @@ test('getting started renders the install commands from install.yaml, and no com
 
   const printed = [...page.matchAll(/<pre[^>]*>([\s\S]*?)<\/pre>/g)].map((match) => collapse(decode(match[1].replace(/<[^>]+>/g, ''))))
   assert.deepEqual(printed, commands, 'the commands the page prints are not exactly install.yaml\'s, in its own order')
+})
+
+test('the setup steps print the plugin commands install.yaml carries, and no spelling of their own', async (t) => {
+  // The `#setup` band's last two steps tell a reader to run `fugaro init` and `/fugaro:setup`,
+  // which are the plugin path's own commands in install.yaml — the file the page renders every
+  // other command from. A step is one line of prose and the commands in it looked like prose,
+  // so they were typed into the page until this case existed: a rename in install.yaml moved
+  // #details' plugin path and left the steps above it telling a reader to run a command the
+  // file no longer carries. The page renders them from the path now, and this is what holds
+  // the two together — every `<code>` in the band, in order, is install.yaml's own text.
+  const built = buildWith(t, () => {})
+  const page = builtPage(built, '/getting-started/')
+
+  const install = repoFile('website/data/install.yaml')
+  const plugin = install.slice(install.indexOf('- id: plugin'))
+  const commands = [...plugin.matchAll(/- \|-\n((?: {8}[^\n]*\n?)+)/g)].map((match) =>
+    collapse(
+      match[1]
+        .split('\n')
+        .map((line) => line.slice(8))
+        .join('\n'),
+    ),
+  )
+  assert.ok(commands.length >= 2, `install.yaml's plugin path carries ${commands.length} command(s), which is too few to be the two the setup steps name`)
+  const [initCommand, setupCommand] = commands
+
+  const band = /<section id="setup"[\s\S]*?<\/section>/.exec(page)
+  assert.ok(band, 'Getting Started carries no `#setup` section, and the page is three bands (the owner\'s brief of 2026-10-19)')
+  const printed = [...band[0].matchAll(/<code[^>]*>([\s\S]*?)<\/code>/g)].map((match) => collapse(decode(match[1].replace(/<[^>]+>/g, ''))))
+  assert.deepEqual(
+    printed,
+    [initCommand, setupCommand, initCommand],
+    `the setup steps print ${JSON.stringify(printed)} where install.yaml's plugin path carries ${JSON.stringify(commands)}: the steps render the file's own commands, so a command renamed there moves the steps with it, and a step that spells one itself is the fourth copy of the install instructions this page refuses (Global Constraint 6)`,
+  )
 })
 
 test('getting started promises commands only where install.yaml carries them', async (t) => {
