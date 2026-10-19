@@ -169,8 +169,12 @@ describe('the scrub: the verify line verify.go writes', () => {
 
   it('refuses a line the writer cannot produce', () => {
     for (const line of [
-      // the review's own case: a kind that is not one of verify.go's three
-      'fugaro verify acme-payroll #5: passed',
+      // the review's own case: a kind that is not one of verify.go's three,
+      // complete line and all -- the kind is the whole guard, so a head that
+      // took `[a-z][a-z-]*` would accept a verify nobody can run
+      'fugaro verify acme-payroll #5: passed (exit 0)',
+      'fugaro verify tests #5: passed (exit 0)',
+      'fugaro verify Test #5: passed (exit 0)',
       'fugaro verify test #5: passed', // no exit code, no parens
       'fugaro verify test #5: failed (exit 0, 1 tests, 0 failures)', // lower-case failure word
       'fugaro verify test #5: passed (exit zero)',
