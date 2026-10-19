@@ -830,6 +830,15 @@ func TestInventoryNeverIgnoresAnAccountUnderTheProjectsOwnDomain(t *testing.T) {
 //
 // Each is asserted on its own, with the project's accounted runs bucket beside
 // it, so the listing is otherwise clean.
+//
+// The names are spelled out rather than built with the functions
+// installationCreated calls (InstallationsStateBucket, ManagedStateBucketName):
+// a fixture the code's own helper produced is the helper agreeing with itself,
+// and it cannot catch a derivation that stopped naming what GCP actually holds.
+// `fugaro-tfstate-`, `fugaro-managed-tfstate-` and `fugaro-runs-` are the names
+// the documents state (internal/managed/statebucket.go, internal/infra), so a
+// change to one of them has to move this test — that is the point of writing
+// them here.
 func TestInventoryIgnoresWhatTheInstallationItselfCreated(t *testing.T) {
 	runs := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
 	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + gcpProject
@@ -839,9 +848,9 @@ func TestInventoryIgnoresWhatTheInstallationItselfCreated(t *testing.T) {
 		asset Asset
 	}{
 		{"the installation's own state bucket",
-			listed("//storage.googleapis.com/"+InstallationsStateBucket(gcpProject), "storage.googleapis.com/Bucket")},
+			listed("//storage.googleapis.com/fugaro-tfstate-"+gcpProject, "storage.googleapis.com/Bucket")},
 		{"D77's managed state bucket",
-			listed("//storage.googleapis.com/"+ManagedStateBucketName(gcpProject), "storage.googleapis.com/Bucket")},
+			listed("//storage.googleapis.com/fugaro-managed-tfstate-"+gcpProject, "storage.googleapis.com/Bucket")},
 		{"the default Firestore database Firebase provisions",
 			listed("//firestore.googleapis.com/projects/"+gcpProject+"/databases/(default)", "firestore.googleapis.com/Database")},
 		{"the Firebase project infra.AddFirebase adds to every created project",
@@ -865,15 +874,23 @@ func TestInventoryIgnoresWhatTheInstallationItselfCreated(t *testing.T) {
 	// the direction a caller that did not read the id must take (Check refuses
 	// such an inventory before it lists anything, so this is asserted on the
 	// rule itself).
+	//
+	// The fixtures are the names the derivation produces WHEN there is no id —
+	// the empty suffixes — because that is the only fixture that can catch the
+	// guard's removal: a name carrying proj-1234 matches nothing the derivation
+	// builds from "", so these six assertions passed whether or not
+	// installationCreated began with its `GCPProject == ""` line, which is a
+	// guard no test held. With the guard gone each of these is claimed, and the
+	// failure below is what says so.
 	none := Inventory{Project: project}
 	for _, asset := range []Asset{
-		listed("//storage.googleapis.com/"+InstallationsStateBucket(gcpProject), "storage.googleapis.com/Bucket"),
-		listed("//storage.googleapis.com/"+ManagedStateBucketName(gcpProject), "storage.googleapis.com/Bucket"),
-		listed("//firestore.googleapis.com/projects/"+gcpProject+"/databases/(default)", "firestore.googleapis.com/Database"),
-		listed("//firebase.googleapis.com/projects/"+gcpProject, "firebase.googleapis.com/FirebaseProject"),
-		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/managed.json",
+		listed("//storage.googleapis.com/fugaro-tfstate-", "storage.googleapis.com/Bucket"),
+		listed("//storage.googleapis.com/fugaro-managed-tfstate-", "storage.googleapis.com/Bucket"),
+		listed("//firestore.googleapis.com/projects//databases/(default)", "firestore.googleapis.com/Database"),
+		listed("//firebase.googleapis.com/projects/", "firebase.googleapis.com/FirebaseProject"),
+		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-/objects/fugaro/managed.json",
 			"storage.googleapis.com/Object"),
-		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/allow-delete.json",
+		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-/objects/fugaro/allow-delete.json",
 			"storage.googleapis.com/Object"),
 	} {
 		if none.installationCreated(asset) {

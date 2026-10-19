@@ -363,18 +363,68 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
-		// §6.10: the by-person aggregate behind runs stats --json, and the
-		// counts it embeds (CLI 0.9.0).
-		reflect.TypeOf(userStatsDoc{}),
-		reflect.TypeOf(userstats.Row{}),
-		reflect.TypeOf(userstats.Counts{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
 			t.Errorf("%s never names the json field %q, which the shape it documents carries", path, name)
 		}
 	}
+
+	// §6.10 is held to its OWN field tables instead of to the whole document,
+	// and the difference is the test: `project`, `by`, `rows` and `totals` are
+	// words this contract uses in a dozen other sections, so a Contains over
+	// all 1100 lines passes for a field §6.10 never lists — which is exactly
+	// the drift this test exists to catch. The section's two tables are the
+	// document shape and the row shape the counts are flattened into
+	// (userstats.Row embeds Counts), and the comparison is set EQUALITY in both
+	// directions: a Go key the section does not list fails, and a field row the
+	// section lists and the code no longer has fails too — the sibling below
+	// refuses invented names document-wide, and this is the same rule where the
+	// runs stats shapes are described.
+	const stats = "### 6.10 "
+	body := section(t, doc, stats, "\n## 7. ")
+	listed := map[string]bool{}
+	for _, header := range []string{
+		"| Field | Type | omitempty | Availability state |",
+		"| Field | Type | omitempty | Note |",
+	} {
+		for _, row := range docTableAfter(t, path, body, header) {
+			// A row's first cell can name several fields at once — the four
+			// settled counts share one row (`succeeded`, `failed`, `halted`,
+			// `infra_error`) — so every backticked name in it is one field of
+			// the shape, not the cell's whole text.
+			for _, m := range jsonCellRE.FindAllStringSubmatch(row[0], -1) {
+				listed[m[1]] = true
+			}
+		}
+	}
+	statsShapes := []reflect.Type{
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
+	}
+	keys := jsonTagNames(t, namedTypes(statsShapes...), statsShapes...)
+	for _, name := range keys {
+		if !listed[name] {
+			t.Errorf("%s's §6.10 tables never list the json field %q, which the shape it documents carries", path, name)
+		}
+	}
+	inGo := map[string]bool{}
+	for _, name := range keys {
+		inGo[name] = true
+	}
+	for _, row := range docTableAfter(t, path, body, "| Field | Type | omitempty | Availability state |") {
+		for _, m := range jsonCellRE.FindAllStringSubmatch(row[0], -1) {
+			if !inGo[m[1]] {
+				t.Errorf("%s's §6.10 document table lists %q, which no field of userStatsDoc carries", path, m[1])
+			}
+		}
+	}
 }
+
+// jsonCellRE is a backticked identifier in a field table's first cell: the
+// field names of one row, one or more of them.
+var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
 // TestDocsDesktopConsoleContractNamesNoInventedField is the other direction,
 // and it is the one a review found missing: every backticked name in the

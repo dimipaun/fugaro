@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, unreleased.** The released Fugaro is 0.8.6, and nothing on this page works on it:
+Status: **0.9.0, unreleased.** The released Fugaro is 0.8.7, and nothing on this page works on it:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)). The page is kept out
@@ -443,7 +443,7 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
 
 ## 11. Limits of this release
 
-- **0.8.6 does not read any of it.** The profile field, the `accounts` block and the jobs ship in
+- **0.8.7 does not read any of it.** The profile field, the `accounts` block and the jobs ship in
   0.9.0; an older binary meeting a version-3 policy refuses it and says which release reads it
   (§5).
 - **A GitHub run on a shared job reaches its provider, and it is still not a per-repository job.**

@@ -109,22 +109,27 @@ func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 }
 
 // The line a person reads: the launcher reach is an *info* line and it is
-// printed. A check that is OK and carries no Severity is the one
-// printDoctorChecks skips (doctor's own bookkeeping), so the surface the owner
-// checks after a migration existed only in --json — the human output said
-// nothing about the jobs a launcher can start.
+// printed. printDoctorChecks prints every check that is not OK, and an OK one
+// too when it carries a Severity; what it prints nothing for is an OK check
+// with no Severity, which is doctor's own bookkeeping (`if c.OK &&
+// c.Severity == "" { continue }`, doctor.go). So this check is *not ok* and
+// Severity "info": it prints for the owner's eyes, and checksFail's "info" arm
+// keeps it out of the exit code. An earlier shape of this check (OK with the
+// Problem) was skipped by the printer as it stood then, and that is why the
+// check looks the way it does — but the printer's rule has moved, and an OK
+// check carrying a Severity would print today.
 //
 // It also has to leave doctor's summary line alone: an info check reports what
 // doctor *measured*, and counting it as a failure (printDoctorChecks' failed
 // flag) printed the reach while saying nothing at all about everything else —
-// "everything checked is ok" never came out on a healthy installation, which is
-// what the two assertions below are for.
+// "everything checked is ok" never came out on a healthy installation.
 //
-// Mutation (run, restore): drop Severity "info" from the check
-// (doctorLauncherReach) — the line loses its Severity, so it fails doctor's
-// exit code (checksFail's default arm) and the caller's doctor reports a
-// failure. The other half, the check not holding back doctor's summary line,
-// is TestDoctorInfoChecksDoNotHoldBackTheSummary's subject.
+// Mutation (run, restore): drop the Severity from doctorLauncherReach (leaving
+// it not ok) — the line still prints, but Severity "" is the arm checksFail
+// fails on, so doctor exits non-zero and the ExitCode assertion below is what
+// catches it. Setting OK: true alone no longer changes what is printed. The
+// other half, the check not holding back doctor's summary line, is
+// TestDoctorInfoChecksDoNotHoldBackTheSummary's subject.
 func TestDoctorPrintsTheLauncherReach(t *testing.T) {
 	r := newDoctorRig(t)
 	r.withLaunchers(t)
