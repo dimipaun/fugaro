@@ -99,6 +99,20 @@
 // section's own remainder; and a literal `$9.99` written into the note in place of
 // the file's cap failed the absent-file case, which is the one that says a page with
 // no `costs.json` behind it prints the data file's figures and nothing else.
+//
+// **The review of that rework moved three things here, and none of them is a rule of
+// this file's.** The note says *whose* cap it prints ("our per-run cap is $10.00"):
+// `--per-run` defaults to 0, which sets no cap, and an enforcing project with no
+// per-run cap anywhere refuses every lease, so the figure is Fugaro's installation's
+// and not something `fugaro` ships — the same correction `data/typical-costs.yaml`'s
+// header and `src/content.ts`'s field doc now carry. The table sits in its own
+// `overflow-x: auto` box, so six nowrap columns scroll rather than widening the
+// document on a phone, and the lead the page writes is the `.lede` `community.astro`
+// and `faq.astro` carry, which Astro's per-file scoping means this page must restate.
+// The refusals the figures' reader owes are `layout.mjs`'s subject rather than this
+// file's: they are shapes of the data file, and that file is where they are planted.
+// The cases here were unchanged by all three, and the page's word count is 249 of
+// D188's 250 — the note's own sentence was kept to the word the ceiling had left.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'

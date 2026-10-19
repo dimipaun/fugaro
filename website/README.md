@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **978,907 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **979,256 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **977,392 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **977,741 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -162,7 +162,7 @@ added or removed without this sentence moving fails there:
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 976,349 with the flag off to 977,921 with it on:
+    moves the **site figure up by 1,572 bytes**, from 977,684 with the flag off to 979,256 with it on:
     the console option's own markup on the three pages that render it — the console page's
     downloads section (each artifact's checksum beside its link, and the verification command)
     1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
@@ -250,11 +250,13 @@ added or removed without this sentence moving fails there:
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
   - **The caps-and-costs rework** (the owner's brief of 2026-10-19) moved the site figure
-    alone, 977,921 → **978,907**: the **986 bytes** are what that one page gained, net — the
-    table of what a job costs and its provenance note, rendered from
+    alone, 977,921 → **979,256**, **1,339 bytes** on that one page: the **986** the rework
+    itself gained, net — the table of what a job costs and its provenance note, rendered from
     `website/data/typical-costs.yaml`, against the per-command scope sentences the page no
-    longer carries and the `<details>` the commands now sit behind. The page weight and the
-    script did not move: the heaviest page is the docs hub, and the caps page is not it.
+    longer carries and the `<details>` the commands now sit behind — plus the **353** the
+    review of that rework added, the scroll box the table's nowrap columns need on a phone and
+    the page's own rule for its lead. The page weight and the script did not move: the heaviest
+    page is the docs hub, and the caps page is not it.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -282,7 +284,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,670,902 bytes. Three times 1,223,634 (every file in `dist/`, 978,907
+  - **Whole site:** 3,672,210 bytes. Three times 1,224,070 (every file in `dist/`, 979,256
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 

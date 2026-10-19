@@ -24,3 +24,16 @@ import CapsCosts from '../components/CapsCosts.astro'
 
   <CapsCosts />
 </Base>
+
+<style>
+  /* The page's own lead, in the site's tokens (W1.2, D104): no colour is named here. The rule
+     is the one `community.astro` and `faq.astro` carry for their own leads — Astro scopes a
+     component's styles to its own markup, so a `class="lede"` this page writes needs the rule
+     in this page's block or it renders as body text. */
+  .lede {
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+  }
+</style>

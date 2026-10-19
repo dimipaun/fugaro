@@ -760,7 +760,9 @@ export interface TypicalCostsFacts {
   to: string
   runs: number
   jobs: TypicalCostJob[]
-  /** The per-run cap a project inherits: the ceiling a looping run meets. */
+  /** The per-run cap Fugaro's own installation sets, and the cap these runs ran under: the
+   * ceiling a looping run met. Not a CLI default, so it is a fact about the installation the
+   * runs were taken from and never a claim about what `fugaro` ships. */
   perRunCapUSD: number
 }
 

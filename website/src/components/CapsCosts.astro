@@ -46,6 +46,14 @@
  * gained is the table, its provenance note, and the two rules that hold it: the file's
  * figures are the page's figures, and the page's figures are the file's.
  *
+ * **The cap the note prints is the installation's, not the product's.** `fugaro budget
+ * set --per-run N` is what sets a per-run cap: the flag's default is 0, which sets none, and an
+ * enforcing project with no per-run cap on any of the three scopes refuses every lease
+ * (`internal/cli/budget.go`, and "Set caps" in `docs/gcp-setup.md`). So the figure below is
+ * Fugaro's own installation's cap, the one these runs ran under, and a refresh of
+ * `website/data/typical-costs.yaml` confirms it with the installation rather than assuming it.
+ * The note says whose cap it is; it does not read as something `fugaro` ships by default.
+ *
  * **The word ceiling, measured in both states of the aggregation** (recorded here because it is
  * a conflict between two owner rulings rather than a defect of this page, and the number is what
  * the next task needs). D188's ceiling is 250 words for a page, and this page measures **249**
@@ -210,35 +218,37 @@ const windowRecipes = countOf('recipes')
 <section id="typical-costs">
   <h2>What a job costs</h2>
 
-  <table>
-    <thead>
-      <tr>
-        <th scope="col">Job</th>
-        <th scope="col">Runs</th>
-        <th scope="col">Median</th>
-        <th scope="col">Middle half</th>
-        <th scope="col">9 in 10 under</th>
-        <th scope="col">Worst</th>
-      </tr>
-    </thead>
-    <tbody>
-      {typical.jobs.map((job) => (
-        <tr data-job={job.id}>
-          <th scope="row">{job.name}</th>
-          <td>{job.runs}</td>
-          <td>{money(job.medianUSD)}</td>
-          <td>{job.middleHalfUSD === null ? '—' : `${money(job.middleHalfUSD.low)}–${money(job.middleHalfUSD.high)}`}</td>
-          <td>{money(job.nineInTenUnderUSD)}</td>
-          <td>{job.worstUSD === null ? '—' : money(job.worstUSD)}</td>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+            <th scope="col">Job</th>
+          <th scope="col">Runs</th>
+          <th scope="col">Median</th>
+          <th scope="col">Middle half</th>
+          <th scope="col">9 in 10 under</th>
+          <th scope="col">Worst</th>
         </tr>
-      ))}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {typical.jobs.map((job) => (
+          <tr data-job={job.id}>
+            <th scope="row">{job.name}</th>
+            <td>{job.runs}</td>
+            <td>{money(job.medianUSD)}</td>
+            <td>{job.middleHalfUSD === null ? '—' : `${money(job.middleHalfUSD.low)}–${money(job.middleHalfUSD.high)}`}</td>
+            <td>{money(job.nineInTenUnderUSD)}</td>
+            <td>{job.worstUSD === null ? '—' : money(job.worstUSD)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
 
   <p class="note">
     Fugaro's own runs, {typical.from} to {typical.to}: {typical.runs} finished, model plus
     compute, an estimate. Mostly DeepSeek through OpenRouter; a Claude model costs more.
-    Not a quote: the caps below are the safety net; the per-run cap is {money(typical.perRunCapUSD)}.
+    Not a quote: the caps below are the safety net; our per-run cap is {money(typical.perRunCapUSD)}.
   </p>
 </section>
 
@@ -362,8 +372,14 @@ const windowRecipes = countOf('recipes')
   }
 
   /* The first table is six short columns and a phone is 390 px wide: the figures keep their
-     own line rather than wrapping mid-number, and the table scrolls sideways when the two
-     do not fit. */
+     own line rather than wrapping mid-number. Six columns of nowrap figures are wider than
+     such a screen, so the table itself scrolls: `.table-scroll` is the box that does it, and
+     the page body never scrolls sideways. Without that box the widest row would widen the
+     document (only `pre` sets its own `overflow-x` in `base.css`). */
+  .table-scroll {
+    overflow-x: auto;
+  }
+
   #typical-costs td {
     white-space: nowrap;
   }

@@ -32,8 +32,13 @@
 #                           a dash; a made-up range is not.
 #   jobs[].nine_in_ten_under_usd  the figure nine runs in ten stayed under.
 #   jobs[].worst_usd        the most expensive single run of that kind, or nothing at all.
-#   per_run_cap_usd         the per-run cap a project inherits -- the ceiling a looping run
-#                           meets, and the reason the worst figures above are what they are.
+#   per_run_cap_usd         the per-run cap Fugaro's own installation sets, and so the cap
+#                           these runs ran under: the ceiling a looping run meets, and the
+#                           reason the worst figures above are what they are. It is NOT a CLI
+#                           default: `fugaro budget set --per-run N` sets it, and an enforcing
+#                           project with no per-run cap anywhere refuses every lease
+#                           (docs/gcp-setup.md, "Set caps"). A refresh confirms this figure
+#                           with the installation rather than assuming it.
 #
 # A row is never added without a sample behind it, and a figure is never rounded here: the page
 # prints the value in this file, and a value that is not in this file is a page's own invention
@@ -72,7 +77,10 @@ jobs:
     median_usd: 0.11
     nine_in_ten_under_usd: 0.22
 
-# The per-run cap a project inherits (the CLI's own default): the ceiling that stops a run
-# which loops. The daily cap is the other half of the same safety net, and `fugaro budget set`
+# The per-run cap Fugaro's own installation sets, and the cap every figure above ran under: the
+# ceiling that stops a run which loops. It is not a CLI default. The CLI's `--per-run` defaults
+# to 0, which sets no cap, and an enforcing project with no per-run cap anywhere refuses every
+# lease, so the figure below is a property of this installation and is confirmed with it, never
+# assumed. The daily cap is the other half of the same safety net, and `fugaro budget set`
 # changes both.
 per_run_cap_usd: 10
