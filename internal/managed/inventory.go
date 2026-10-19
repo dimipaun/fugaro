@@ -13,6 +13,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
+	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -367,11 +368,24 @@ func (in Inventory) foreign(listed []Asset) []Asset {
 //     firestore.googleapis.com/Database at "projects/<this id>/databases/(default)".
 //     Any other database in the project is one somebody created and stays
 //     foreign.
+//   - the two objects the creating run writes into the runs bucket itself,
+//     storage.googleapis.com/Object at
+//     "projects/_/buckets/fugaro-runs-<this id>/objects/fugaro/managed.json"
+//     and ".../fugaro/allow-delete.json". They are Fugaro's own records and
+//     not a run's output: the marker is the creation fact
+//     (internal/infra/managed.MarkerObject, written by the run that created
+//     the project) and the list is the owner's own approval of the deletes
+//     (AllowDeleteObject). Both are named by key under the runs bucket this
+//     program derives from the project id — the same bucket
+//     internal/infra/managed reads them back from (its runsBucketName), which
+//     is what makes the name a fact about this project and not a guess. Every
+//     other object stays foreign, including every other key under fugaro/ and
+//     a run's own records under runs/.
 //
 // Anything else is foreign, and a project is single-purpose (D59) whatever
-// else it holds. What this cannot claim, because no name identifies it, is
-// listed where the check's own limits are: the objects a run writes into the
-// runs bucket, which is itself accounted for by the installation's state.
+// else it holds. What this still cannot claim, because no name identifies it,
+// is listed where the check's own limits are: the records a run writes into
+// the runs bucket, which is itself accounted for by the installation's state.
 func (in Inventory) installationCreated(a Asset) bool {
 	if in.GCPProject == "" {
 		return false
@@ -384,6 +398,13 @@ func (in Inventory) installationCreated(a Asset) bool {
 		return assetPath(a.Name) == "projects/"+in.GCPProject
 	case "firestore.googleapis.com/Database":
 		return assetPath(a.Name) == "projects/"+in.GCPProject+"/databases/(default)"
+	case "storage.googleapis.com/Object":
+		root := "projects/_/buckets/fugaro-runs-" + in.GCPProject + "/objects/"
+		key, ok := strings.CutPrefix(assetPath(a.Name), root)
+		if !ok {
+			return false
+		}
+		return key == inframanaged.MarkerObject || key == inframanaged.AllowDeleteObject
 	}
 	return false
 }
