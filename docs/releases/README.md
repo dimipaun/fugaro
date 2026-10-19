@@ -6,6 +6,17 @@ It is a required release artifact from 0.4.0 on: `scripts/release.sh X.Y.Z` refu
 
 Commit it to `main` through a PR **before** running `scripts/release.sh`: GoReleaser reads it from the tag's tree, and the script runs from a clean `main`. The procedure is in [../release.md](../release.md) ("Cutting a release"); the `/new-release` skill (`.claude/skills/new-release/SKILL.md`) follows it.
 
+## The end-user summary
+
+The same PR also writes the release's **end-user summary**, one line in [`website/data/release-summaries.yaml`](../../website/data/release-summaries.yaml):
+
+```yaml
+summaries:
+  v0.8.7: A sentence saying what this release gives a user.
+```
+
+The website's changelog page prints that sentence above the entry's Highlights, and the site's build reads one entry per release file and stops, naming the file, when a release file has none (`website/src/content.ts`). So it is a required artifact wherever this file is, from 0.4.0 on, and `scripts/release.sh X.Y.Z` refuses to start when `main` carries no entry for the version being released. What a sentence says, and what it must not: this is the page a user reads before a release note, so it is what the release gives them, not what changed inside the repository — the entry's Highlights, one click below it, are where the details are.
+
 ## Format
 
 Plain Markdown, no title (the release page adds `## Highlights`):

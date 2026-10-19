@@ -16,6 +16,12 @@
 //   - website/data/install.yaml   the install facts (W0.1), pinned to README.md,
 //                                 docs/release.md and .goreleaser.yaml by
 //                                 internal/cli/docs_website_install_test.go.
+//   - website/data/release-summaries.yaml
+//                                 the end-user sentence per release (the owner's brief of
+//                                 2026-10-19), which the changelog page prints above the
+//                                 entry's Highlights: hand-written, one line per release,
+//                                 and the page stops the build when a release file it
+//                                 renders has no line here.
 //   - website/content/*.md        generated documents (W0.4's CLI reference, W0.5's
 //                                 security page), each saying on its first line that it
 //                                 is generated and by what.
@@ -740,6 +746,61 @@ export function loadInstallFacts(): InstallFacts {
     platforms,
     paths,
   }
+}
+
+// ---------------------------------------------------------------------------------------
+// website/data/release-summaries.yaml — the end-user summary of each release (the owner's
+// brief of 2026-10-19).
+//
+// The changelog renders one summary under each release's heading and the release file's own
+// Highlights below it. The summary is a product feature a reader understands rather than an
+// operator step, so it is written for the site and lives beside the site's other facts; the
+// release file stays the source of an entry's full text and is never edited for it.
+// ---------------------------------------------------------------------------------------
+
+/** website/data/release-summaries.yaml, validated: the release's tag, to its summary. */
+export type ReleaseSummaries = { [tag: string]: string }
+
+const SUMMARIES_FILE = 'website/data/release-summaries.yaml'
+
+/** The tag a summary is keyed by, which is the release file's own name without its `.md`. */
+const RELEASE_TAG = /^v\d+\.\d+\.\d+$/
+
+export function loadReleaseSummaries(): ReleaseSummaries {
+  const file = SUMMARIES_FILE
+  const doc = asMap(
+    parseYAML(
+      readBytes(path.join(DATA_DIR, 'release-summaries.yaml'), 'the end-user summary the changelog renders under each release (the owner\'s brief of 2026-10-19)'),
+      file,
+    ),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, ['summaries', 'version'], file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const summaries = asMap(doc.summaries, file, 'summaries')
+  const out: ReleaseSummaries = {}
+  for (const [tag, value] of Object.entries(summaries)) {
+    // A key that is not a release's tag is a summary no entry can render: the changelog looks
+    // a release up by the tag (the filename's own), so a misspelt key is an orphan the reader
+    // of this file has to see rather than a line that silently never appears.
+    if (!RELEASE_TAG.test(tag)) {
+      throw new Error(`${file}: ${tag} is not a release tag, and summaries is keyed by them: vX.Y.Z, as docs/releases/vX.Y.Z.md writes it.`)
+    }
+    const summary = asString(value, file, `summaries.${tag}`)
+    if (summary.trim() === '') {
+      throw new Error(`${file}: summaries.${tag} is empty, and the changelog renders it under the release's heading: an empty summary is a release with nothing said about it (the owner's brief of 2026-10-19).`)
+    }
+    out[tag] = summary
+  }
+  if (Object.keys(out).length === 0) {
+    throw new Error(`${file}: summaries is empty, and the changelog renders one summary per release (the owner's brief of 2026-10-19).`)
+  }
+  return out
 }
 
 // ---------------------------------------------------------------------------------------

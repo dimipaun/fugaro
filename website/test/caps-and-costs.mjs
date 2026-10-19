@@ -201,8 +201,8 @@ function copyOfTheRepository() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
-      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
-      // quotes the skills (website/test/lib/build.mjs).
+      // Which parts of `plugin/` a build reads, and why each one: READ_UNDER_PLUGIN's
+      // own comment (website/test/lib/build.mjs).
       if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true

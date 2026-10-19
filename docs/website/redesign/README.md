@@ -289,6 +289,12 @@ here goes stale the way the byte budgets did before D192.
   commands sit behind — and then the review of that rework, the scroll box the table's nowrap
   columns need on a phone and the page's own rule for its lead. The page weight and the script
   stay where they were, the heaviest page being the docs hub.
+  **And the round after it is the 2026-10-19 changelog brief** (its own section below), which moved the site figure alone:
+  every release now renders its product summary and wraps the release file's own Highlights in
+  a `<details>` block — a summary and a notes label per release onto `/changelog/` — while the
+  "not yet released" labels the tag rule drew in the gates' build and the retired "newest
+  releases" block are gone. The page weight and the script stay where they were: the changelog
+  page is not the heaviest page, and nothing outside it changed.
   **The figures themselves are the ones `website/README.md` writes, and they are written
   there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
   the build it can measure, and a derivation that names another build fails, which is what
@@ -297,16 +303,18 @@ here goes stale the way the byte budgets did before D192.
   **Which build that is, is the 2026-10-19 correction**: the figures are derived over the
   gates' own build of the site — a copy of the repository in a temp directory, built with the
   site's Astro by `test/lib/build.mjs`'s `buildCopy`, which carries no `.git` — and not over
-  `website/dist`, which is the checkout's own build. The reason is that one page of the site
-  reads the checkout's git state: the changelog renders each release file's "not yet released"
-  state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
+  `website/dist`, which is the checkout's own build. The reason was that one page of the site
+  read the checkout's git state: the changelog rendered each release file's "not yet released"
+  state where `git tag --list` found no tag (`src/lib/changelog.mjs`), so the same commit built
   to two site figures a changelog page's own bytes apart — the larger in a checkout with no
   tags, `website-preview.yml`'s default checkout and so the deployed site, and the smaller with
-  the tags this repository's clone carries — and `website/README.md` writes that pair and the
-  page's own bytes as the whole of the difference, with `website/test/budget.mjs` holding the
-  pair to that arithmetic in the one place it is written. A figure derived from one build is
-  refused by the other, which is what happened: the gate could not measure the build `main`'s
-  README named, and `website-preview` could not deploy. A derivation is likewise not held to
+  the tags this repository's clone carries. A figure derived from one was refused by the other,
+  which is what happened: the gate could not measure the build `main`'s README named, and
+  `website-preview` could not deploy. **That dependence is gone** (the changelog brief below:
+  which releases are published is the plugin's own version, not a tag), so `website/README.md`
+  writes the two shapes as one figure and `website/test/budget.mjs` refuses the pair if they
+  part again; the derivation stays where it is all the same — a copy built by the gates is the
+  build they can measure in every environment. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
   the artifact gates over a copy with the console's flag flipped off — the state the checkout
   built until the console's release turned it on — and that copy is a different build rather
@@ -745,3 +753,62 @@ goes stale the way the byte budgets did before D192.
   move: the heaviest page is still the docs hub, which renders no step. The three numbers are
   `website/README.md`'s, re-derived there in this round's commit, and `website/test/budget.mjs`
   holds each to the gates' own build — this document states the rule and not the bytes.
+
+## The 2026-10-19 changelog brief: the released state, and the summaries
+
+The same day's owner feedback about `/changelog/`: *"Changelog: why do I see not yet released?
+Also, the summaries under each release should be more high level, product features that end
+users understand."* Two changes follow from it, and every reading the feedback does not spell
+out is recorded here.
+
+- **A release is published when the plugin's version has reached it.** The page decided that
+  from `git tag --list`, and the deploy build checks out without tags — so the deployed page
+  printed the "not yet released" marker under **every** release. The rule is now a file in this
+  repository: a release file is published when its version is at or below the version in
+  `plugin/.claude-plugin/plugin.json`. The version bump lands on `main` before the tag does, so
+  on `main` the manifest names the newest released version and everything up to it reads as
+  released, while a release file written ahead of its bump keeps the marker — which is what the
+  marker is for. The generator no longer reads the checkout's git state at all, so a shallow
+  clone, a full clone and the deploy build render the same page; that is also what took the
+  git-state builds out of the byte figures (above).
+- **Each release opens with a product summary, and the release file's Highlights are one click
+  away.** The summaries used to be the release files' own first Highlights bullet — the
+  operator-facing line, written for whoever runs Fugaro. The summary is now written for a
+  reader who uses Fugaro: one to three sentences naming what the release gives them, covering
+  every file under `docs/releases/`, from what that file and its release say and nothing else.
+  **The release files are not edited** — they stay the operator's document — and their
+  Highlights are rendered as they are inside a `<details>` block labelled `Highlights`, which
+  opens with no script (D183).
+- **The summaries are a file the site renders, not copy on the page.** D189 put `/changelog/`'s
+  summary in the release files themselves, so that the page went on rendering facts and nothing
+  else; the brief asks for words that are not the release files' — a product summary of a
+  release whose file is written for its operator — and **Global Constraint 6** ("a page never
+  restates a document; it renders it or links it") is what that has to be read against. So the
+  summary is `website/data/release-summaries.yaml`: one line per release, keyed by its tag,
+  read and validated through the content pipeline (`src/content.ts`'s `loadReleaseSummaries`,
+  W1.3) and rendered by `src/components/Changelog.astro`. The page still writes no prose of its
+  own — what it renders is two files' text — and a release file with no entry in the data file
+  **stops the build, naming the file**, rather than rendering an entry with nothing under its
+  heading. `/changelog/` is exempt from D188's whole-page word ceiling (it renders a document of
+  this repository), so the summaries add no ceiling to move; the byte figures moved with them,
+  and are re-derived in the commit that ships them (D192).
+- **The "newest releases" block goes, and that is a reading of the brief rather than a loss.**
+  D189's `/changelog/` summary was "the first Highlights line of the newest few releases" above
+  the list, which is a gist of the newest releases and not of each one. The brief asks for a
+  summary under **each** release, which is what the block was approximating, so keeping both
+  would put the same words on the page twice. The list is unchanged: every release file, newest
+  first, each linked to its GitHub release, no date (D100).
+- **What the gates hold.** `website/test/changelog.mjs` reads the published state from the
+  plugin's version over fixture directories that are not git repositories at all — a tag cannot
+  be the reason for any answer it asserts — and refuses a manifest it cannot read as JSON, a
+  version that is not `x.y.z`, and a version naming no release file.
+  `website/test/changelog-page.mjs` holds the page to both sources: one summary per release in
+  the list's own order, the text the data file carries for that tag, no empty entry and no entry
+  outliving its release file, no internal id or repository path in a summary's words, every
+  release file's lines still rendered (the notes are collapsed, not dropped), and the marker
+  printed for exactly the release files above the version the copy's manifest carries. Both
+  builds run in a copy of the repository with no `.git`, which is the environment that used to
+  make every release read as unpublished.
+- **What is still the owner's check.** Whether the summaries read as product news and whether
+  `/changelog/` looks right is the owner's own reading of the page (70a–70c, D190): this run
+  cannot see a rendered page, and no screenshot is committed here.

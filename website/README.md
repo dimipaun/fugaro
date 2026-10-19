@@ -142,36 +142,37 @@ added or removed without this sentence moving fails there:
   **The build the three numbers are derived from is the build the gates make themselves**, and
   that is the correction of 2026-10-19 (this section's figures are re-derived below it). It is
   *not* `website/dist`, which is what the derivation named until then: the site's own build
-  depends on the git state of the checkout the gates run in. The changelog renders each release
-  file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **1,023,326 bytes in a checkout with no
+  depended on the git state of the checkout the gates run in. The changelog rendered each
+  release file's **"not yet released"** state wherever `git tag --list` found no tag
+  (`src/lib/changelog.mjs`), so the same commit built to two site figures a changelog page's
+  own bytes apart — the larger in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **1,021,811 bytes with the tags this repository's own clone carries**,
-  the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
-  of those two builds is refused by the other, which is what happened: the gate could not
-  measure the build the README named and `website-preview` could not deploy. Only the no-tags
-  build can be measured here, so `test/budget.mjs` holds the pair to each other instead: it
-  reads both figures **where this repository writes them as figures — this paragraph, and
+  deployed site is — and the smaller with the tags this repository's own clone carries, the
+  changelog page's own "not yet released" labels being the whole of the difference. A figure
+  derived from one of those two builds was refused by the other, which is what happened: the
+  gate could not measure the build the README named and `website-preview` could not deploy. So
+  the derivation is read over **the gates' own build of the site**: a copy of the repository in
+  a temp directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`,
+  which carries no `.git` at all and so gives every checkout the same three numbers. The site's
+  own `dist/` is held to the ceilings below like any other artifact.
+
+  **No page of the site depends on the checkout's git state any more** (the owner's brief of
+  2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
+  version rather than from a tag, so the two checkout shapes above are one build now — the same
+  commit builds to **1,028,085 bytes in a checkout with no tags** and to **1,028,085 bytes with the
+  tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
-  place to forget, and this pair was copied in two, which is how the clone figure came to sit
-  the round's bytes behind) — and refuses a pair that is not one changelog page apart: the check
-  the rework of 2026-10-19 needed, when re-deriving the site figure twice in one branch moved
-  this one and left the clone figure behind. So the derivation
-  is read over **the gates' own build of the site**: a copy of the repository in a temp
-  directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`, which
-  carries no `.git` at all and so gives every checkout the same three numbers. The site's own
-  `dist/` — whichever of the two shapes it takes — is held to the ceilings below like any other
-  artifact, and being the *smaller* of the two builds it passes.
+  place to forget, and this pair was once copied in two, which is how a clone figure came to sit
+  a round's bytes behind) and refuses it unless the two are one figure. The derivation stays
+  where it is all the same — a copy of the repository built by the gates is the artifact the
+  gates can measure in every environment, `dist/` or no `dist/`.
 
   **What each cause really moves**, measured on that build rather than argued — and stated as a
   rule rather than as a figure, because a figure here is a figure that has to be re-derived every
-  time the build moves: the numbers the three causes produce are the ones above and in this
+  time the build moves: the numbers the causes produce are the ones above and in this
   paragraph, which `test/budget.mjs` reads and holds to the build it makes itself, and the
   unreleased build's own size is measured by `test/console-option.mjs`:
 
-  - the bytes between the two shapes of the site build are the changelog page's own
-    "not yet released" labels, which a checkout with no tags prints for every release file —
-    this paragraph names that page's own bytes as the whole of the difference;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
     moves the **site figure up** by the console option's own markup on the three pages that
@@ -307,6 +308,16 @@ added or removed without this sentence moving fails there:
     script did not move: the heaviest page is the docs hub, and the caps page is not it. The
     clone figure moved by the same bytes.
 
+  - **The changelog's own round** (the owner's brief of 2026-10-19) moved the site figure
+    alone, 1,023,326 → **1,028,085**, by **4,759 bytes** net, and its causes are the page's own:
+    each release now carries its product summary line and wraps the release file's own
+    Highlights in a `<details>` block, so a summary and a notes label per release arrive, and
+    the page no longer prints a "not yet released" label for every release in the checkout with
+    no tags (which releases are published is the plugin's version now) or the "newest releases"
+    block the summaries replaced. The page weight and the script did not move: the changelog
+    page is not the heaviest page, and nothing outside it changed. It is also the round that
+    made the clone figure the no-tags figure (above).
+
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -333,9 +344,9 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,837,474 bytes. Three times 1,279,158 (every file in `dist/`, 1,023,326
-    bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
-    with no tags, above the one a full clone makes (above).
+  - **Whole site:** 3,855,321 bytes. Three times 1,285,107 (every file in `dist/`, 1,028,085
+    bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
+    now builds alike, tags or no tags (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
@@ -569,10 +580,31 @@ Three things about those commands are worth stating rather than leaving to the t
 
 There is no changelog page file and no changelog JSON in this tree: `src/lib/changelog.mjs`
 reads `docs/releases/vX.Y.Z.md` **during the build** and the changelog page (W1.9) renders
-what it returns. Nothing is written to disk, so a Highlights file that lands on `main`
-before its tag exists leaves no stale copy behind — and no date is taken from a tag,
+what it returns, with each release's product summary read from `data/release-summaries.yaml`
+through the content pipeline beside it. Nothing is written to disk, so a file that lands on
+`main` before its release leaves no stale copy behind — and no date is taken from a tag,
 because a shallow checkout has no tags and the newest entry a reader sees has none yet
-(D100). `website/test/changelog.mjs` holds that.
+(D100).
+
+**Which releases are published is a file in this repository, not a property of the
+checkout** (the owner's brief of 2026-10-19: *"Changelog: why do I see not yet released?"*).
+A release file is published when its version is at or below the version in
+`plugin/.claude-plugin/plugin.json`. The bump lands on `main` before the tag does, so on
+`main` the manifest names the newest released version and everything up to it reads as
+released; a release file written ahead of its bump carries the "not yet released" marker, and
+it is the only thing on the page that says so. `git tag --list` was the rule until this
+change, and the deploy build checks out without tags, which printed the marker under every
+release.
+
+**The release files stay the operator's document.** Their Highlights bullets are written for
+whoever runs Fugaro, so they are rendered as they are, inside a `<details>` block that opens
+with no script (D183); the summary above them is the site's own line for that release, and a
+release file with no entry in `data/release-summaries.yaml` stops the build naming the file
+rather than rendering an entry with nothing under its heading. `website/test/changelog.mjs`
+holds the generator to the files, and `website/test/changelog-page.mjs` holds the page to
+both sources: every release file has a summary entry and none is empty, the page renders the
+entry a release's own summary carries, and the page writes no sentence that is neither a
+release file's nor a summary's.
 
 ## The console's downloads are derived, never written down
 
@@ -766,11 +798,12 @@ them there.
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
+  data/release-summaries.yaml      # each release's product summary, pinned by test/changelog-page.mjs
   data/typical-costs.yaml          # the owner's own measurement of what a job costs, pinned by test/caps-and-costs.mjs
   data/console-screens.yaml        # the console page's slides: hand-written, ships empty
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
-  src/lib/changelog.mjs            # reads docs/releases/ at build time
+  src/lib/changelog.mjs            # reads docs/releases/ and the plugin's version at build time
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
   public/                          # icons, logo.png, site.webmanifest (scripts/gen-brand-icons.py)
   test/*.mjs                       # every one of them runs under `npm run check`
