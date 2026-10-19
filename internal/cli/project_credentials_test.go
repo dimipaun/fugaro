@@ -736,3 +736,36 @@ func TestAdmissionsAreReadBackBeforeTheyAreWritten(t *testing.T) {
 		t.Errorf("the patched child is %s, want the bytes that were read back (%s)", patch[slug], one)
 	}
 }
+
+// TestPolicyPublishSaysHowACredentialsBlockItCarriesOverIsRemoved: the one
+// refused state this release has no CLI way out of, and the sentence has to say
+// so (security review m-1). The node carries credentials.fallback: auto, which
+// D152 allows only while the policy's budget enforces a per-run ceiling; the
+// operator's config changes the budget to observe, and the publish — which
+// carries the node's block over, nothing here writing one — is refused. The
+// refusal sends the operator to 'fugaro validate' for every other cause, and
+// that cannot remove a member the config does not hold: the ways out are the
+// node itself and a fresh policy, and the refusal names both.
+func TestPolicyPublishSaysHowACredentialsBlockItCarriesOverIsRemoved(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"credentials": map[string]any{"fallback": "auto"},
+	})
+	before := nodeJSON(t, f, projectpolicy.PathShared())
+
+	rewriteProjectExtra(t, f, "mode: enforce", "mode: observe")
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the publish wrote a policy whose fallback: auto has no enforcing ceiling:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	for _, want := range []string{"credentials", "fallback", "fugaro validate", "by hand", "--delete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q, so the operator has no way out of it: %v", want, err)
+		}
+	}
+	if now := nodeJSON(t, f, projectpolicy.PathShared()); now != before {
+		t.Errorf("the refused publish changed the node:\n%s", now)
+	}
+}

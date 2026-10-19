@@ -1125,7 +1125,14 @@ func checkPolicyBytes(raw []byte) error {
 	p, found, err := projectpolicy.Decode(raw)
 	switch {
 	case err != nil:
-		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices, the profiles and the allow-list — with 'fugaro validate'", err)
+		// The credentials member, when the refusal names one, can only have come
+		// from the published node: nothing in this release writes a credentials
+		// block (the project layer refuses the key, and the local config has no
+		// field for it), so the block is the carry-over. That matters to the
+		// operator because 'fugaro validate' — which the sentence sends them to
+		// for everything else — cannot remove it: the way out is the node itself,
+		// or a fresh policy. (Security review m-1.)
+		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices, the profiles and the allow-list — with 'fugaro validate'. When the refusal names a credentials member, the block is the one carried over from the published node, which no CLI writes or removes in this release: remove that member from the node by hand, or publish with --delete to drop the policy and write a fresh one", err)
 	case !found || p == nil:
 		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written: check the values it is built from with 'fugaro validate'")
 	}
