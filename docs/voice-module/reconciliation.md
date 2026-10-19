@@ -1,6 +1,6 @@
 # The voice module spec, reconciled against the tree
 
-*Status: 2026-10-19 · owner: Dimi Paun · **reconciliation only; nothing is implemented.** This document reads the owner's [spec.md](spec.md) — the voice module spec of 2026-10-18, committed verbatim and alone in its own commit — against the code, the designs and the open pull requests this repository already carries. It builds nothing, approves nothing, and writes no plan: **the owner's answers to §5 come first and are the gate.***
+*Status: 2026-10-19 · owner: Dimi Paun · **reconciliation only; nothing is implemented.** This document reads the owner's [spec.md](spec.md) — the voice module spec of 2026-10-18, committed verbatim and alone in its own commit — against the code, the designs and the open pull requests this repository already carries. It builds nothing, approves nothing, and writes no plan: **§5's questions were answered by the owner on 2026-10-19, and an answer is not approval — nothing here is built on one.***
 
 Baseline: **`origin/main` at `82ba600d984a420c595cf06417af6d781c18535a`** ("console: frame the golden screenshots on the screen, not the window (#619)", 2026-10-18). Every claim about "the tree" below was checked against that commit; every path exists there and every symbol named was read there. The open pull requests were read from their own branches, which were fetched read-only and **not** modified:
 
@@ -31,11 +31,11 @@ The owner's spec was written **without seeing this repository**, and it shows in
 
 **One ruling of 2026-10-19 decides most of §1 and all of §5a, and it is newer than everything above.** The owner approved a **local/remote evaluation switch** for voice — the same speech, tried through local engines and through remote providers, so the choice is made by using both rather than by reading a table — as **seven numbered points**. It is written in [docs/mobile/design/voice-evaluation-switch.md](../mobile/design/voice-evaluation-switch.md) (⊂ PR #633), quoted verbatim in that document's §1 and in §5a below. **The file was `docs/mobile/design/cloud-stt-tts.md` in its first revision**; the revision of 2026-10-19 renamed it, kept what still holds, and added **§1a**, which amends one ruling — `mobile/implementation-plan.md`'s Global Constraint 12, "the app never stores or uploads audio" — **for the evaluation switch only, and subject to the owner's acknowledgement, which is that document's own Q0**.
 
-**What the ruling is not.** It is **not** D44's second explicit egress decision. *Adopting* remote voice stays untaken, and the design says so in its own status line and again in its closing section. What is permitted is an **evaluation**: the switch, its indicator, its allow-list and its hop may be built and used, and nothing may be built before Q0 is answered. §1 reconciles this document with that state rather than silently picking one, and §5a records the answer to this document's Q1.
+**What the ruling is not.** It is **not** D44's second explicit egress decision. *Adopting* remote voice stays untaken, and the design says so in its own status line and again in its closing section. What is permitted is an **evaluation**: the switch, its indicator, its allow-list and its hop may be built and used, and nothing may be built before Q0 is answered. §1 reconciles this document with that state rather than silently picking one, and §5a records the answers to this document's Q1–Q13.
 
 **How the claims were checked.** Every finding cites a **path and a symbol** (a Go function, a TypeScript export, a constant, a decision number), never a bare line number, and each was read at the baseline above. The provider claims in the spec's *Speech-to-text* and *Keys and security* sections were checked against the **providers' own public documentation on 2026-10-19**, read-only and with no credential of any kind: the result is §6's verification table, and it changes three of the spec's sentences. **Anything not verifiable is marked UNVERIFIED and is never asserted** (§7).
 
-**Nothing here is approved, and nothing here is a plan.** There is no task list, no phase, no check written and no number allocated. §5's questions are the gate.
+**Nothing here is approved, and nothing here is a plan.** There is no task list, no phase, no check written and no number allocated. §5's questions were answered by the owner on 2026-10-19, and an answer is not approval: what follows them is a separate document.
 
 ## 1. How this spec and the evaluation switch unify — one decision, two documents
 
@@ -57,7 +57,7 @@ The design's open questions are now **Q0–Q4** — it renamed its file, kept Q1
 
 **One condition in the design is not one of its questions, and the spec is silent on it too: the register.** §4.3's allow-list carries a **register** — one row per named provider, with its retention and training terms and the date the owner read them — and the design keeps it **with the hop**, so a name with no row is refused. The spec records no such reading anywhere, and its *Keys and security* section assumes a governance layer that does not exist: `allow_data_to` governs model providers receiving **code**, not a conversation leaving to a speech vendor (#26), and the credentials service's scope is **jobs**, not clients (#28). The register is therefore a **condition on every cloud row in §2**, not an option, and §6 is this document's own instance of it.
 
-**Consequence for the folder.** `docs/voice-module/` does not restate the seven points; it cites them. A reader who wants the conditions reads `voice-evaluation-switch.md`; a reader who wants to know what the module does reads this document. §5a is where the owner's answer to this document's Q1 is recorded.
+**Consequence for the folder.** `docs/voice-module/` does not restate the seven points; it cites them. A reader who wants the conditions reads `voice-evaluation-switch.md`; a reader who wants to know what the module does reads this document. §5a is where the owner's answers to this document's questions are recorded: Q1 in full, and Q2–Q13 in one table.
 
 ## 2. The table: what the spec asks for, and what the tree already has
 
@@ -102,7 +102,7 @@ Each finding is classified **Wrong** (the spec, or a document here, says somethi
 
 [voice-spec.md](../design/voice-spec.md) is the owner's voice spec of 2026-10-15, committed verbatim; [voice.md](../design/voice.md) reads it against the console and the mobile work and carries **F1–F38** and **D39–D54b**, every one answered by the owner on 2026-10-16. The shared text is substantial: both have the goal ("hands-free"), both name the pipeline and reject speech-to-speech, both list multi-user voice and voice-driven code editing as non-goals, and `voice-spec.md` §4's component table (`AudioIn`, `SpeechToText`, `TextToSpeech`, `AgentBridge`, `Summarizer`, `EventDigester`, `VoiceController`) is the architecture the new text describes in prose. **What the new text changes** is the vendor list, the runtime engine toggle, the wake word (a non-goal in 2026-10-15, in scope in 2026-10-18), and the divorce of the interfaces from the `AgentBridge` naming.
 
-**Consequence.** The two texts must not both be authoritative. This document treats the 2026-10-18 spec as the **later** one for what the module *does*, and voice.md's D39–D54b as standing until the owner supersedes a row of it — the way mobile D129 requires supersessions to be recorded. **Nothing in voice.md is reversed here**; §5 Q9 asks the owner for the rule.
+**Consequence.** The two texts must not both be authoritative. This document treats the 2026-10-18 spec as the **later** one for what the module *does*, and voice.md's D39–D54b as standing until the owner supersedes a row of it — the way mobile D129 requires supersessions to be recorded. **Nothing in voice.md is reversed here**; §5 Q9 asked the owner for the rule, and the owner answered it on 2026-10-19 — option (1), with the amendment left to a separate docs-only change.
 
 **#2 — "One common interface per direction" already exists, twice, and the two disagree about how many ports there are. (Exists)**
 
@@ -120,19 +120,19 @@ The spec's first sentence — "starting as a separable module in the Electron co
 
 **#4 — "Stays in the foreground, no background listening" collides with the mobile work's background audio mode. (Open)**
 
-The spec's *Goal* states it twice ("App stays in the foreground while talking (no background listening)"). The mobile plan's **Check 86** is "Hands-free audio: **the background mode**, the microphone ask, Bluetooth, and barge-in", reserved for P3.5/P4.2, and `mobile/reconciliation.md`'s **U7** asks *"Whether the OS grants background audio with barge-in on both platforms"* — i.e. the tree assumes a background audio mode the spec's sentence excludes. On iOS "background mode" and "stays in the foreground" are not the same axis, so the two can be reconciled — but not by a reader guessing. §5 Q4 asks.
+The spec's *Goal* states it twice ("App stays in the foreground while talking (no background listening)"). The mobile plan's **Check 86** is "Hands-free audio: **the background mode**, the microphone ask, Bluetooth, and barge-in", reserved for P3.5/P4.2, and `mobile/reconciliation.md`'s **U7** asks *"Whether the OS grants background audio with barge-in on both platforms"* — i.e. the tree assumes a background audio mode the spec's sentence excludes. On iOS "background mode" and "stays in the foreground" are not the same axis, so the two can be reconciled — but not by a reader guessing. §5 Q4 asked it, and the owner answered on 2026-10-19 — option (1), foreground only.
 
 **#5 — The Swift helper the spec asks for has no carrier, and the console is built to have exactly one child. (Gap)**
 
 `console/src/main/spawn.ts` opens: *"The console spawns exactly one binary — the installed `fugaro` — and never reads a database, a config file or a credential itself."* `console/package.json`'s `build.files` lists `dist/main/**`, two preload files, `dist/shared/**`, `dist/source/**` and five `dist/bundle/` files — **no second executable** — and there is no `extraResources`, `extraFiles`, `asarUnpack` or `binaries` key (asserted absent by the console's own tests). The design's answer to "the app needs a process" already exists though, and it is not the console's own: `voice.md` **D40** puts the Agent SDK in a **separate helper process outside main and renderer**, supervised by the console, using the operator's own Claude login. The spec's Swift helper is the same shape for a different job.
 
-**Consequence.** A Swift audio helper is a **nested, separately signed, separately notarised binary inside the bundle** — a new packaging and release surface, not a new file. See #23 for what that costs and §5 Q6 for whether it should be a second helper or the same one.
+**Consequence.** A Swift audio helper is a **nested, separately signed, separately notarised binary inside the bundle** — a new packaging and release surface, not a new file. See #23 for what that costs and §5 Q6 for whether it should be a second helper or the same one — the owner's answer of 2026-10-19 is one helper, extended (option (1)).
 
 **#6 — The spec's cloud engines presuppose the one decision the tree has deliberately not taken. (Rule)**
 
 `voice.md` **D44** is answered, verbatim: *"**Local-only for v1** … Cloud STT/TTS is out of v1; it happens only by a **second, explicit owner decision**"*, with *"absent means nothing leaves the machine"* and a default-deny allow-list whose defaults are *"the opposite of `allow_data_to`'s"*. ⊂ **PR #633** is the design of that second decision, written and not built. Its current revision states the decision as **still owed and still untaken** rather than as one of its questions — *"the owner's ruling of 2026-10-19 permits the app to carry the switch **so that the decision can be taken by use**; it is not that decision"* — and puts its own gate on a different question, **Q0**, the acknowledgement of its §1a amendment to `mobile/implementation-plan.md`'s Global Constraint 12.
 
-**Consequence.** The spec's *Speech-to-text*, *Text-to-speech* and *Engine toggle* sections are **conditioned on a decision that has not been taken**. This document does not take it, and does not read the spec as taking it. §5 Q1.
+**Consequence.** The spec's *Speech-to-text*, *Text-to-speech* and *Engine toggle* sections are **conditioned on a decision that has not been taken**. This document does not take it, and does not read the spec as taking it. §5 Q1, answered by the owner on 2026-10-19 (§5a): the evaluation switch, not the egress decision.
 
 **#7 — The wake word already exists as a transcript prefix test, not an acoustic engine. (Exists / Rule)**
 
@@ -140,13 +140,13 @@ The spec asks for an acoustic detector (openWakeWord or Porcupine) that "routes 
 
 Note the cost the tree already recorded: the reconciliation found that the spec's **"never misroutes"** claim **is not true**, which is why the recognition rate is proposed live Check 102.
 
-**Consequence.** Two different mechanisms wearing one word. An acoustic engine firing on the wake word is a **second, independent** trigger whose failures are not the transcript test's failures — and it would necessarily run before any transcript exists, which is exactly the audio path #21 says has no carrier. §5 Q5.
+**Consequence.** Two different mechanisms wearing one word. An acoustic engine firing on the wake word is a **second, independent** trigger whose failures are not the transcript test's failures — and it would necessarily run before any transcript exists, which is exactly the audio path #21 says has no carrier. §5 Q5, answered by the owner on 2026-10-19: option (1), no acoustic engine.
 
 **#8 — A runtime "cloud icon" is not the same object as the allow-list, and the tree has rules about both. (Rule / Open)**
 
 The spec's *Engine toggle* section — "Cloud icon on the voice screen switches local/cloud (three-way on Mac: Apple, whisper.cpp, cloud)" — is a **per-session choice by a person**. ⊂ **PR #633** separates three things that the spec's one icon merges: the **allow-list** (§4.3: admitted *by name*, "not by URL", default-deny, *"absent, empty, malformed, or unreadable all mean local only"*), the **persistent indicator** (§4.2: *"an always-visible indicator, and it must not be dismissible"*, three states — local / cloud / **cloud requested but refused**), and the **fail-closed ladder** (§4.5: *"Every one of these is fail-closed to local"*, including *"the network is down | local only; nothing is queued for later, because a queued utterance is a recording"*).
 
-**Consequence.** A toggle that a person can flip to cloud is exactly the "cloud requested but refused" state's reason to exist: it may only ever **narrow** what the allow-list permits, never widen it. The spec's three-way distinction on Mac also implies the toggle must name *which* local engine, which the allow-list's shape (a list of provider names) does not express. §5 Q3.
+**Consequence.** A toggle that a person can flip to cloud is exactly the "cloud requested but refused" state's reason to exist: it may only ever **narrow** what the allow-list permits, never widen it. The spec's three-way distinction on Mac also implies the toggle must name *which* local engine, which the allow-list's shape (a list of provider names) does not express. §5 Q3, answered by the owner on 2026-10-19: option (1), the allow-list decides and the toggle may only narrow.
 
 **#9 — The classifier the spec asks for exists, with a different and sharper taxonomy. (Exists)**
 
@@ -164,7 +164,7 @@ The spec's *Engine toggle* section — "Cloud icon on the voice screen switches 
 
 `voice-spec.md` §6: *"Model: a fast, cheap model (Haiku-class), configurable"*, with a config shape `summarizer: { model: <haiku-class>, max_sentences: 3 }` at **§10 Configuration** (line 137). `voice.md` **D45** is the answer that matters: the summariser's model call is **spend on the operator's own login** — D40's mechanism — and *"`fugaro budget show` will not show it and no Fugaro cap bounds it."* No `Summarizer` symbol exists in `internal/`, `shared/`, `console/src` or `mobile/src`. The word "haiku" does appear in the tree — as a **model alias** the runner and the config layer carry: `internal/config/providers.go`, `internal/config/pins.go`, `internal/pricing/alias.go`, `internal/pricing/canonical.go`, `internal/pricing/table.go`, `internal/runner/gateway.go`, `internal/runstore/runstore.go` and `internal/config/example.yaml` all name it, and `internal/agent/env.go` sets `ANTHROPIC_DEFAULT_HAIKU_MODEL` from the per-repo `background` model. Every one of those is a **run-time model choice**, not the voice summariser: no symbol summarises a turn.
 
-**Consequence.** "Whose credential, capped how" has an answer already: **the operator's, and not capped** — disclosed by D45 and by mobile **D116** (the summariser's spend is disclosed but sits outside Fugaro's caps). The spec's *Keys and security* section must not be read as proposing a Fugaro-managed summariser key; see #28 for why the credentials service cannot become one, and §5 Q7 for whether the owner wants an app-side cap anyway.
+**Consequence.** "Whose credential, capped how" has an answer already: **the operator's, and not capped** — disclosed by D45 and by mobile **D116** (the summariser's spend is disclosed but sits outside Fugaro's caps). The spec's *Keys and security* section must not be read as proposing a Fugaro-managed summariser key; see #28 for why the credentials service cannot become one, and §5 Q7 — where the owner answered on 2026-10-19 that there is no app-side cap (option (1)), only a running count.
 
 **#12 — The interrupt switch exists, with three positions rather than two. (Exists)**
 
@@ -208,7 +208,7 @@ The comment above it is explicit: *"`connect-src 'none'` is the load-bearing one
 
 `console/package.json`: `"package": "npm run build && electron-builder --mac --universal --publish never"`; `mac.hardenedRuntime: true`; `mac.entitlements` and `mac.entitlementsInherit` both `entitlements.mac.plist`; `appId io.github.dimipaun.fugaro-console`, `asar: true`. There is **no** `afterSign`, `notarize`, `extraResources` or `binaries` key — signing and notarisation live in `.github/workflows/console-release.yml`, and that file is **applied, not staged**: the owner copied the staged file in as plan Task 4.5 (`7fdfa61`, "Add console release workflow", 2026-10-17), and `main` carries the revision merged as `9b61d881` (PR #626), whose first tag is `v0.8.7` (`90ba554` — `v0.8.6` does not contain #626). The copy under `docs/pending-workflows/` is kept on purpose, not because it is still pending: `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` reads it and asserts the applied file is byte-identical to it ("while both files exist, they are the same file"), which is also why the applied file's own header still opens with the staging note it was written with — that note is a leftover of the copy-in convention, and `docs/pending-workflows/README.md` states the status in words: *"staged by Task 4.2 … and applied by the owner as Task 4.5"*. **The revision matters here**: this document's baseline (`82ba600d`) predates #626, so the notarisation script below is named from the revision `main` carries now, as of 2026-10-19.
 
-**Consequence.** A nested Swift helper must be **built for both arm64 and x86_64** (the app is universal), **signed with its own entitlements**, and **covered by the notarisation of the app** — and nothing in the pipeline does that for it. The workflow's own `codesign --sign` is on the `.dmg` alone; the bundle is signed by the packer, which the signing step hands `CSC_NAME` and `CSC_KEYCHAIN` with the hardened runtime on and `entitlements.mac.plist` as both `entitlements` and `entitlementsInherit`. Notarisation is **whole-bundle and once**: `console/scripts/notarize-and-staple.sh` (added by #626, and the reason both packs run with `-c.mac.notarize=false`) zips the `.app` with `ditto -c -k --keepParent` and submits *that* a single time — so a nested binary is covered only by being signed and inside the bundle when the bundle is submitted; a helper that is unsigned, or that the packer leaves outside the bundle, is covered by no ticket this pipeline staples. Only the `xcrun stapler` calls are retried (five attempts, 15/30/60/90 s via `retry_apple_network`: the script's staple and validate, and the verification step's own validates, character for character the same helper); the submission is never retried, and neither is anything else. What the workflow checks about nested code is downstream of the submission and is what a helper has to survive: `codesign --verify --deep --strict` — `--deep` is what reaches the nested binary — plus `codesign -d --entitlements -`, `spctl --assess` and a `xcrun stapler validate` on the bundle **inside each shipped artifact** (the mounted `.dmg` and the extracted `.zip`), because the loose `.app` the packer left is in neither. That is a real, unpriced piece of work, and §5 Q6 asks whether it is worth buying. And `docs/pending-workflows/` remains the only place a workflow change may be written from here (`.github/workflows/` may not be edited by an agent in this repository) — staged for the owner to copy in, as this one was.
+**Consequence.** A nested Swift helper must be **built for both arm64 and x86_64** (the app is universal), **signed with its own entitlements**, and **covered by the notarisation of the app** — and nothing in the pipeline does that for it. The workflow's own `codesign --sign` is on the `.dmg` alone; the bundle is signed by the packer, which the signing step hands `CSC_NAME` and `CSC_KEYCHAIN` with the hardened runtime on and `entitlements.mac.plist` as both `entitlements` and `entitlementsInherit`. Notarisation is **whole-bundle and once**: `console/scripts/notarize-and-staple.sh` (added by #626, and the reason both packs run with `-c.mac.notarize=false`) zips the `.app` with `ditto -c -k --keepParent` and submits *that* a single time — so a nested binary is covered only by being signed and inside the bundle when the bundle is submitted; a helper that is unsigned, or that the packer leaves outside the bundle, is covered by no ticket this pipeline staples. Only the `xcrun stapler` calls are retried (five attempts, 15/30/60/90 s via `retry_apple_network`: the script's staple and validate, and the verification step's own validates, character for character the same helper); the submission is never retried, and neither is anything else. What the workflow checks about nested code is downstream of the submission and is what a helper has to survive: `codesign --verify --deep --strict` — `--deep` is what reaches the nested binary — plus `codesign -d --entitlements -`, `spctl --assess` and a `xcrun stapler validate` on the bundle **inside each shipped artifact** (the mounted `.dmg` and the extracted `.zip`), because the loose `.app` the packer left is in neither. That is a real, unpriced piece of work, and §5 Q6's answer — one helper, extended — is the one that has to buy it. And `docs/pending-workflows/` remains the only place a workflow change may be written from here (`.github/workflows/` may not be edited by an agent in this repository) — staged for the owner to copy in, as this one was.
 
 **#18 — The console's write fence is unchanged by a talking interface, and it bites the moment the module acts. (Rule)**
 
@@ -242,7 +242,7 @@ Separately, **no STT or TTS engine is chosen anywhere**: mobile **D123** prescri
 
 Mobile **D118**, answered: *"**The app never stores or uploads audio** — STT is on-device (D44), so the audio never leaves the device."* `voice.md` **F32**: audio fixtures are *"**synthesised, not captured**"*. ⊂ PR #633 §4.5 applies the same rule to a queue: *"nothing is queued for later, because a queued utterance is a recording (D118: no audio is stored)."*
 
-**Consequence.** The spec's *Engine toggle and experiments* bullet — "Record raw session audio to replay the same clips through each engine" — is not a small experiment; it is the one thing two documents forbid, and it is the only way to run the bake-off the spec wants. A bake-off needs **comparable inputs**: without recorded audio every engine is measured on different utterances. That tension is real and §5 Q8 asks the owner to resolve it, with synthesised clips as the default answer F32 already gives.
+**Consequence.** The spec's *Engine toggle and experiments* bullet — "Record raw session audio to replay the same clips through each engine" — is not a small experiment; it is the one thing two documents forbid, and it is the only way to run the bake-off the spec wants. A bake-off needs **comparable inputs**: without recorded audio every engine is measured on different utterances. That tension is real; §5 Q8 asked the owner to resolve it, and the answer of 2026-10-19 is option (1) — no recording, synthesised clips as F32 already gives them.
 
 **#23 — Where "text in / text out" attaches, in both directions. (Exists / Gap)**
 
@@ -277,13 +277,13 @@ From `internal/watch/json.go` and the run store:
 
 The only artifact that ever named a producer for this is `voice.md` **D54**'s `onAwaitingInput` — the Agent SDK's permission callback, implemented *"only if U7 finds it can surface a prompt"*, otherwise *"`onAwaitingInput` has no implementation"*. No such symbol exists.
 
-**Consequence.** The spec's most useful urgent trigger is the one with no producer on the console side. It is a legitimate thing to want; it needs a **producer decision**, and §5 Q10 asks for it rather than assuming one.
+**Consequence.** The spec's most useful urgent trigger is the one with no producer on the console side. It is a legitimate thing to want; it needs a **producer decision**, and §5 Q10 asked for it rather than assuming one — answered 2026-10-19 as option (1): no new producer.
 
 **#26 — What the summariser sees is run titles and task text leaving to a model provider, and the tree has no key that governs it. (Rule)**
 
 `voice.md` **F9** is the finding: `allow_data_to` is a real, enforced key — `config.ModelProvider.AllowDataTo []string` (`internal/config/providers.go`), validated by `config.ValidateModelProviders` and mounted per repository — but it *"governs model providers and the OAuth accounts and project secrets that ride with them — nothing else."* `voice.md` line 151 puts the question exactly: *"there is no `allow_data_to`-shaped answer to 'may this repository's conversation go to Deepgram'"*, because the unit is wrong twice. `voice.md` **F23** records the consequence: voice's STT/TTS providers are not model providers, so no existing key covers them.
 
-**Consequence.** The spec's *Keys and security* section assumes a governance layer for provider egress that does not exist, and ⊂ PR #633 §4.3 designs the nearest thing (a **named** allow-list with a register of retention and training terms, *"It records a reading, and it does not verify it"*). **That register is the instrument §6 exercises.** §5 Q3 asks where the allow-list lives; Q11 asks whether the summariser's own egress is governed by it or by `allow_data_to`.
+**Consequence.** The spec's *Keys and security* section assumes a governance layer for provider egress that does not exist, and ⊂ PR #633 §4.3 designs the nearest thing (a **named** allow-list with a register of retention and training terms, *"It records a reading, and it does not verify it"*). **That register is the instrument §6 exercises.** §5 Q3 asked where the allow-list lives; Q11 asked whether the summariser's own egress is governed by it or by `allow_data_to`. Both were answered on 2026-10-19, each as option (1).
 
 **#27 — Redaction exists, is ported, and is applied before the MAC — but it is best-effort. (Exists / Rule)**
 
@@ -320,7 +320,7 @@ Nothing mints a Deepgram, AssemblyAI or Cartesia token. What the tree *does* min
 
 And one refusal worth reading first: `docs/design/m9-budget-and-dashboard.md` records that mint-on-start was considered and rejected, because making it safe *"needs **a minting endpoint that checks the caller's ID token and execution**, which is exactly the budget service D1 rejected."*
 
-**Consequence.** The spec's minting idea is **architecturally familiar here and concretely absent**, and its safety hinges on the one thing the tree refused once already: a minting endpoint that authenticates a caller. The credentials-service work gives that caller a shape for **jobs** (**D134**: the run's existing budget identity; **D135**: reached through the in-runner gateway with a Cloud Run IAM invoker token for the service) — but **not for a laptop or a phone**. §5 Q12 asks which identity a voice client would mint as; it is the question D134/D135 deliberately did not answer.
+**Consequence.** The spec's minting idea is **architecturally familiar here and concretely absent**, and its safety hinges on the one thing the tree refused once already: a minting endpoint that authenticates a caller. The credentials-service work gives that caller a shape for **jobs** (**D134**: the run's existing budget identity; **D135**: reached through the in-runner gateway with a Cloud Run IAM invoker token for the service) — but **not for a laptop or a phone**. §5 Q12 asked which identity a voice client would mint as — the question D134/D135 deliberately did not answer — and the owner's answer of 2026-10-19 is that **nothing is minted**: the cloud half waits for that identity to be designed.
 
 **#31 — The provider temporary tokens are real, and they are materially weaker per-session credentials than the spec implies. (Verified — see §6)**
 
@@ -330,7 +330,7 @@ All three providers support what the spec claims, and the details change the des
 - **AssemblyAI** — `GET /v3/token` takes **two** separate parameters whose distinction the spec's "per session" elides: `expires_in_seconds` (1–600) is the *"Token redemption window … the time the client has to use this token to open a WebSocket"*, and `max_session_duration_seconds` (60–10800, default 10800) *"does NOT cap the duration of the resulting streaming session"* — that is what does. And it is **not single-use**: *"until this window elapses, the same token can open multiple sessions, including concurrent sessions."*
 - **Cartesia** — `POST /access-token` with granular **grants** (`tts`, `stt`, `agent`), each mapping to named endpoints, and `expires_in` **capped at one hour** (*"The maximum is 1 hour (3600 seconds)"*), generated server-side from an API key, with the client passing it as a query parameter on the browser WebSocket.
 
-**Consequence.** Four things the spec's *Keys and security* section should say and does not: a token's **TTL is short (30 s to 1 h), not session-length**, so a long conversation re-mints and the client must handle the exchange mid-session; AssemblyAI's token is **reusable within its window**, so "one session" is a property of the *session duration parameter*, not of the token; the **scope is per-capability**, so the minter must grant `tts` and not `stt` to a client that only speaks; and **minting requires a powerful credential** (Deepgram demands Member or higher), which is precisely the long-lived key the spec says must never be on a device — so the minter is a service that *holds* it. §5 Q12.
+**Consequence.** Four things the spec's *Keys and security* section should say and does not: a token's **TTL is short (30 s to 1 h), not session-length**, so a long conversation re-mints and the client must handle the exchange mid-session; AssemblyAI's token is **reusable within its window**, so "one session" is a property of the *session duration parameter*, not of the token; the **scope is per-capability**, so the minter must grant `tts` and not `stt` to a client that only speaks; and **minting requires a powerful credential** (Deepgram demands Member or higher), which is precisely the long-lived key the spec says must never be on a device — so the minter is a service that *holds* it. §5 Q12, answered by the owner on 2026-10-19: option (1), nothing minted.
 
 **#32 — The interim the brief asks about is not free, and the tree has already refused its closest shape once. (Rule)**
 
@@ -341,7 +341,7 @@ The brief asks "what happens with **no** security service yet: an interim: a Sec
 - `docs/design/project-named-oauth-tokens.md` (⊂ PR #584, and on neither that branch's base nor `main`) calls the current carrier exactly that: *"**The carrier is a stopgap** … *because it is temporary*: it will be replaced by the planned **security service**."*
 - `docs/design/m9-budget-and-dashboard.md` §592 records that a naive minting endpoint was **considered and rejected**.
 
-**Consequence.** A small minting function is not a neutral placeholder: it holds a **Member-or-higher provider key** in a new service, is **always-on** (a Deepgram token lasts 30 seconds, so the function must be reachable at every connect), and needs the caller authentication D134/D135 defined for jobs and not for clients. §5 Q12 offers the thinner interim — **no cloud voice at all until the decision is taken** — as the recommended option, because it is the option that adds no credential.
+**Consequence.** A small minting function is not a neutral placeholder: it holds a **Member-or-higher provider key** in a new service, is **always-on** (a Deepgram token lasts 30 seconds, so the function must be reachable at every connect), and needs the caller authentication D134/D135 defined for jobs and not for clients. §5 Q12 offered the thinner interim — **no cloud voice at all until the decision is taken** — as the recommended option, because it is the option that adds no credential; that is the option the owner took on 2026-10-19.
 
 ### (f) Engines and licences
 
@@ -363,7 +363,7 @@ Apple's own documentation for `SpeechAnalyzer` (the framework's `Speech` module)
 
 **openWakeWord is the trap the brief warned about, and it is confirmed verbatim in the project's own README:** *"All of the code in this repository is licensed under the **Apache 2.0** license. All of the included pre-trained models are licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International] license due to the inclusion of datasets with unknown or restrictive licensing as part of the training data. If you are interested in pre-trained models with more permissive licensing, please raise an issue and we will try to add them to a future release."*
 
-**Consequence for an MIT tool.** Fugaro's `LICENSE` is **MIT** (`Copyright (c) 2026 Dimi Paun`), and it ships under that in its release archives (`.goreleaser.yaml` bundles `LICENSE` and `README.md`). Shipping an openWakeWord **pre-trained** model would put a non-commercial-licensed artifact in a permissively licensed product — and, separately, **the pre-trained set contains no "Fugaro" model anyway** (the shipped set is `alexa`, `hey mycroft`, `hey jarvis`, `hey rhasspy`, `current weather`, `timers`), so the project would have to **train its own** from synthetic speech on the frozen feature backbone (which is a Google TFHub model under Apache-2.0, re-implemented). A model the project trains and owns is a different object from the shipped set — so the route exists, and it is a **training project**, not an integration. §5 Q5.
+**Consequence for an MIT tool.** Fugaro's `LICENSE` is **MIT** (`Copyright (c) 2026 Dimi Paun`), and it ships under that in its release archives (`.goreleaser.yaml` bundles `LICENSE` and `README.md`). Shipping an openWakeWord **pre-trained** model would put a non-commercial-licensed artifact in a permissively licensed product — and, separately, **the pre-trained set contains no "Fugaro" model anyway** (the shipped set is `alexa`, `hey mycroft`, `hey jarvis`, `hey rhasspy`, `current weather`, `timers`), so the project would have to **train its own** from synthetic speech on the frozen feature backbone (which is a Google TFHub model under Apache-2.0, re-implemented). A model the project trains and owns is a different object from the shipped set — so the route exists, and it is a **training project**, not an integration. §5 Q5, answered by the owner on 2026-10-19: option (1), no acoustic engine — so no such training project.
 
 **#35 — Porcupine needs a per-developer AccessKey and a vendor-trained keyword. (Rule / UNVERIFIED)**
 
@@ -371,7 +371,7 @@ Picovoice's own documentation states the requirement without a tier attached: *"
 
 **UNVERIFIED:** Picovoice's **plan tiers, usage limits and commercial terms** could not be read — `picovoice.ai/pricing/` serves a JavaScript-only page (1.2 kB of HTML, no readable terms) and the docs pages carry no tier table. **The free plan's commercial-use status is therefore UNVERIFIED and must not be assumed either way** (§7).
 
-**Consequence.** Even on the permissive reading, the shape is: **a secret AccessKey per developer** and a **keyword file trained by a vendor's service** — in a repository that ships no keys, mounts no credential into a client, and whose console *"never reads a database, a config file or a credential itself"*. §5 Q5.
+**Consequence.** Even on the permissive reading, the shape is: **a secret AccessKey per developer** and a **keyword file trained by a vendor's service** — in a repository that ships no keys, mounts no credential into a client, and whose console *"never reads a database, a config file or a credential itself"*. §5 Q5, answered by the owner on 2026-10-19: option (1), no acoustic engine — so no AccessKey and no vendor-trained keyword file.
 
 **#36 — There is no dependency-licence policy to hang any of this on. (Gap)**
 
@@ -423,7 +423,7 @@ There is no metrics sink for the module. What exists to constrain one: the conso
 | Network handoffs; reconnect cloud streams or fall back to local mid-conversation | ⊂ PR #633 §4.5, verbatim: *"Every one of these is fail-closed to local"*; *"the network is down \| local only; nothing is queued for later"* | covered, and stricter than the spec — the design **refuses** to reconnect a cloud stream rather than risking a queued recording |
 | Model size; download on demand rather than bundling | ⊂ PR #633 §4.7 makes Check 85 the bake-off through **both** engines, so no engine is chosen before it runs; the app's release path is **D120**/EAS, and Check 89 is unwritten | **Gap**, with a named owner (release path) |
 
-**Consequence.** Of the spec's five phone bullets, three are already designed, one has no home at all (the wake lock), and one is a release-path decision. §5 Q4 covers the foreground/background tension; the wake lock needs no decision, only a task, so §4 records it as a resolution.
+**Consequence.** Of the spec's five phone bullets, three are already designed, one has no home at all (the wake lock), and one is a release-path decision. §5 Q4 covers the foreground/background tension (answered 2026-10-19: foreground only); the wake lock needs no decision, only a task, so §4 records it as a resolution.
 
 ### (i) The confirmation boundary
 
@@ -437,7 +437,7 @@ There is no metrics sink for the module. What exists to constrain one: the conso
 
 The register `docs/gcp-live-checklist.md` states the discipline: *"a reserved number is never reused or renumbered."* For this work: **64** (console voice, owner-run, written by V8.2 — **not run**), **65** (signed-build microphone check, held), **66** (the cloud-provider check, *"that can exist only if the owner takes the second egress decision"*, held), **85** (the on-device STT/TTS bake-off — *"not run, and its text is not in the register"*, written by P4.2), **86** (background audio and barge-in), **102** (wake-word recognition rate, proposed, Phase 6 not approved), **103** (a spoken cancel and merge on the sandbox repository). Checks 90–99 belong to the credentials service Slice 0 (⊂ PR #584, written and not run); ⊂ PR #633 names **110** as the next free number.
 
-**Consequence.** A **console** voice bake-off has no number, and D44's "test both" cannot be recorded against 66 without the egress decision (66 is held *for* that decision) or 85 (85 is on-device, phone). This document **allocates nothing** — §5 Q13 asks whether the console's multi-engine comparison joins 66, joins 85, or takes a new number, because the owner owns the register.
+**Consequence.** A **console** voice bake-off has no number, and D44's "test both" cannot be recorded against 66 without the egress decision (66 is held *for* that decision) or 85 (85 is on-device, phone). This document **allocates nothing** — §5 Q13 asked whether the console's multi-engine comparison joins 66, joins 85, or takes a new number, because the owner owns the register; the owner answered on 2026-10-19 with option (1), a table in this folder's design and no register entry yet.
 
 ## 4. Resolutions
 
@@ -469,9 +469,11 @@ Findings with one defensible answer. They need no decision from the owner; they 
 
 **R13 — The wake word never confirms, and the module speaks no cue that invites a "yes".** Two closed sets must stay disjoint and neither may be widened: `shared/command`'s `WAKE_ALIASES` (`['fugaro', 'figaro']`) wakes the app, and `CONFIRMATION_PHRASES` — re-exported by `shared/confirm` as `CONFIRM_PHRASES` *"so the router and this module cannot disagree"* — confirms an action. `shared/confirm`'s four properties are the rule: a confirmation is a **separate utterance** carrying the **fixed phrase**, it is **time-bounded**, it authorises **exactly one** action, and *"the utterance that issued a command can never confirm it"*. So a spoken "Fugaro, cancel it" may never double as its own confirmation, an acoustic wake word may never be read as one (#7), and this module's barge-in and interrupt paths must not *appear* to confirm. The only sentence the module may speak about confirming is the cue itself — `CONFIRM_CUE = 'Say "Fugaro, confirm" to confirm.'` — and ⊂ PR #633 §5 rule 3 keeps the read-back and the confirmation **entirely local**, so even under the switch the confirming utterance is never transcribed remotely. (#7, #43)
 
-## 5. Open for the owner
+## 5. The owner's questions — all thirteen answered on 2026-10-19
 
-Each question has 2–4 options, with the recommendation first and why, then its consequences, then the part of the spec it changes. **No D-numbers are allocated here**: this repository's decision numbers are an allocation the owner makes (§1 of mobile/README.md's numbering rule). **None of these is answered by this document, with one exception: the owner answered Q1 on 2026-10-19, and §5a records the answer. No other question is answered here, and none is a plan.**
+Each question has 2–4 options, with the recommendation first and why, then its consequences, then the part of the spec it changes. **No D-numbers are allocated here**: this repository's decision numbers are an allocation the owner makes (§1 of mobile/README.md's numbering rule).
+
+**The owner answered all thirteen on 2026-10-19** — Q1 in its own words (§5a), and Q2–Q13 each taking the option this document recommended — and each heading below carries the marker in place, with the consequence the option itself states. §5a holds the answers together in one table. **An answer is not approval of a plan or of any code**: no task, phase, file or ordering follows from these answers here, nothing is built on them, and the options are kept below as the record of what was asked — verbatim, including the ones whose own text says a question "stays open", which was true when they were written and is not now.
 
 ### Q1 — Does this spec take the second explicit egress decision? *Answered by the owner on 2026-10-19 — see §5a.*
 
@@ -483,7 +485,9 @@ Each question has 2–4 options, with the recommendation first and why, then its
 - **(2) Yes, for TTS only (Cartesia), because a voice that cannot speak is not a voice.** The design's §4.7 now runs Check 85 through **both** engines instead of making it the gate on either, so this option is a **narrowing of the switch** — TTS remote, STT local — and not a shape the design already contains. **Consequence:** one provider credential, one grant (`tts` only, per #31), and the confirmation path stays entirely local — which is what makes this the least-bad cloud option. **Changes:** *Text-to-speech*, *Keys and security*; leaves recognition local.
 - **(3) Yes, both directions.** **Consequence:** microphone audio leaves the machine; #31's four corrections all become live (30-second re-minting, a reusable AssemblyAI token, per-capability grants, a Member-or-higher key in a new service); and ⊂ PR #633 §5's rules 1–6 must hold, including *"nothing at all while a confirmation is pending."* **Changes:** all four cloud-adjacent sections.
 
-### Q2 — Where do microphone frames and the echo canceller live, given D43 and `connect-src 'none'`?
+### Q2 — Where do microphone frames and the echo canceller live, given D43 and `connect-src 'none'`? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the spec's *"Chromium WebRTC `echoCancellation` in Electron"* is **not** what gets built — the helper uses the OS's AEC instead (#38) — and the voice screen becomes a **display** of state that the helper owns, which is also what ⊂ PR #633 §4.2's non-dismissible indicator wants. The options below are kept as the record of what was asked.
 
 The spec's `echoCancellation` design needs the canceller to see the microphone and the loudspeaker; D43 puts capture outside the renderer (#15), and the renderer's CSP is `connect-src 'none'` with no `media-src` and no `wasm-unsafe-eval` (#14, #39).
 
@@ -491,9 +495,11 @@ The spec's `echoCancellation` design needs the canceller to see the microphone a
 - **(2) Add the named provider origins to `connect-src` and run capture in the renderer.** **Consequence:** two CSP loosenings in the hardened window (provider origins, and `'wasm-unsafe-eval'` if Kokoro runs there), a reversal of D43 that the owner explicitly refused on 2026-10-16, and the console's own frozen CSP tests must be rewritten to permit it. **Changes:** *Barge-in*, *Keys and security*, and the console's security posture.
 - **(3) Keep capture in a helper but let the provider socket live in the renderer.** **Consequence:** the canceller still works, but the CSP is loosened anyway, so it buys nothing over (1) and splits the credential surface. **Changes:** *Keys and security* only.
 
-**Q1's answer constrains this:** yes, and it sharpens it. Remote audio leaves the device only under point 5's hop, so the shape that keeps the provider credential out of the app is the shape the answer already chose, and point 6's fail-closed-to-local means the local capture path must exist and work whatever happens to the remote one. It settles nothing about *where frames live*: option (1) is compatible with the hop, and *"the app holds only its mailbox identity"* is the sentence it has to satisfy.
+**Q1's answer constrains this:** yes, and it sharpens it. Remote audio leaves the device only under point 5's hop, so the shape that keeps the provider credential out of the app is the shape the answer already chose, and point 6's fail-closed-to-local means the local capture path must exist and work whatever happens to the remote one. It settles nothing about *where frames live* on its own: option (1), which is the option the owner took on 2026-10-19, is compatible with the hop, and *"the app holds only its mailbox identity"* is the sentence it has to satisfy.
 
-### Q3 — What is the relationship between the allow-list, the toggle, and the indicator?
+### Q3 — What is the relationship between the allow-list, the toggle, and the indicator? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the icon's cloud state **can be refused**, and the spec's "three-way on Mac" becomes "the local engine the allow-list names, or local-only" — the third arm needs a way to **name a local engine**, which the allow-list's shape does not currently express. The options below are kept as the record of what was asked.
 
 ⊂ PR #633 already designs three objects (#8); the spec adds a person-operable icon that can select cloud.
 
@@ -503,14 +509,18 @@ The spec's `echoCancellation` design needs the canceller to see the microphone a
 
 **Q1's answer constrains this:** yes. The answer is **two per-direction settings, default local** — which is option (1)'s shape — so the toggle may only **narrow** what the allow-list admits, and the always-visible indicator is the design's §4.2 rather than the spec's icon. What the answer does not settle is the project's ability to force local, which is the design's own Q3 and still open.
 
-### Q4 — "Foreground only" or the background audio mode Check 86 measures?
+### Q4 — "Foreground only" or the background audio mode Check 86 measures? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: **Check 86 must be edited when it is written** (it is unwritten), and the mobile work **loses** the "keep talking while the phone is in your pocket" case — called out explicitly rather than by accident. The options below are kept as the record of what was asked.
 
 - **(1) Foreground only, as the spec says; Check 86 measures the app's *audio session* behaviour while the app is open, and its "background mode" item is dropped or reworded.** *(Recommended.)* It is what the spec's *Goal* says twice, it removes a whole class of privacy and battery risk, and it makes Check 86's question smaller and answerable. **Consequence:** Check 86 must be edited when it is written (it is unwritten), and the mobile work loses the "keep talking while the phone is in your pocket" case — call it out explicitly rather than by accident. **Changes:** *Goal* — it becomes a stated limitation.
 - **(2) Background audio allowed while a voice session is open, as Check 86 assumes.** **Consequence:** contradicts the spec's sentence, needs a mode entitlement on both platforms, and reopens `mobile/reconciliation.md`'s U7. **Changes:** *Goal* and *Phone-specific considerations*.
 
-**Q1's answer constrains this:** no. The answer is about which engine hears and speaks, not about whether the app may listen while it is backgrounded; both options here are compatible with it, and neither is settled by it.
+**Q1's answer constrains this:** no. The answer is about which engine hears and speaks, not about whether the app may listen while it is backgrounded; both options here were compatible with it, and neither was settled by it — Q4 was answered on its own terms on 2026-10-19, as option (1).
 
-### Q5 — Which wake word, given that one already exists and the acoustic ones have licence strings attached?
+### Q5 — Which wake word, given that one already exists and the acoustic ones have licence strings attached? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the spec's openWakeWord/Porcupine bullet is **dropped**, one planned live check (102, recognition rate) keeps its meaning, and the module gains **no false-accept surface**. The options below are kept as the record of what was asked.
 
 - **(1) Keep the transcript prefix test (`shared/command`'s `WAKE_ALIASES`) as the only wake word; do not add an acoustic engine.** *(Recommended.)* It is merged, tested, pinned by P6.1's verification (including *"a test pins that 'yes' is not an alias of 'confirm'"*), needs no model, no AccessKey and no licence policy, and adds no audio-processing path before capture — which is what #21 says does not exist. **Consequence:** the spec's openWakeWord/Porcupine bullet is dropped, one planned live check (102, recognition rate) keeps its meaning, and the module gains no false-accept surface. **Changes:** *Speech-to-text*'s last bullet.
 - **(2) Add openWakeWord, training a project-owned "Fugaro" model from synthetic speech.** **Consequence:** avoids the CC-BY-NC-SA trap (#34) but buys a training project, a new binary/weights surface (#36) and a *second* wake path whose false accepts are independent of the alias set's — two ways to wake a device that must agree about what "confirm" means. **Changes:** *Speech-to-text*; adds a licence policy (R11).
@@ -518,7 +528,9 @@ The spec's `echoCancellation` design needs the canceller to see the microphone a
 
 **Q1's answer constrains this:** yes. The design refuses a **remote wake word** — §3, §10's A4, and §5 rule 5's *"no remote wake word"* — so an acoustic detector may never become an egress, and point 7's bake-off measures the engines, not the wake word. Point 1's "default local" also means a wake word that listens before any transcript exists has to justify itself against a switch that is off by default.
 
-### Q6 — One helper process or two?
+### Q6 — One helper process or two? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the helper becomes the app's **largest security surface**, so its permission-callback rules (D54) extend to the audio path, and its failure mode is now "the conversation is gone", not "the summary is gone". The options below are kept as the record of what was asked.
 
 ⊂ **PR #592** and D40 give the console a supervised helper for the Agent SDK; the spec wants a native Swift helper for audio.
 
@@ -526,33 +538,41 @@ The spec's `echoCancellation` design needs the canceller to see the microphone a
 - **(2) Two helpers — one for the SDK (D40), one for audio.** **Consequence:** the audio helper can be signed, entitled and notarised with only what audio needs, but the console now supervises two children, the audio helper needs the provider socket and the extent/redaction boundary crosses a process, and the packaging work doubles. **Changes:** as (1), plus the console's process model.
 - **(3) The Swift helper for Apple only, and whisper.cpp in the existing `fugaro` process for everything else.** **Consequence:** narrows Apple's role to the Mac and removes the nested-binary problem for Linux/Windows — but leaves the *first* scan requiring macOS 26 (#33) in the helper anyway, and mixes a capture path into the CLI's process. **Changes:** *Speech-to-text*.
 
-**Q1's answer constrains this:** yes. Point 5 says the **app** holds no provider credential and the hop holds it, so no helper process may hold one either; and point 4's never-send rule means whichever process can see that a confirmation is pending must be the one that can refuse the remote route. That is an argument for one helper (option 1) and fatal to none of the three.
+**Q1's answer constrains this:** yes. Point 5 says the **app** holds no provider credential and the hop holds it, so no helper process may hold one either; and point 4's never-send rule means whichever process can see that a confirmation is pending must be the one that can refuse the remote route. That is an argument for one helper (option 1) — the option the owner took on 2026-10-19 — and fatal to none of the three.
 
-### Q7 — Should the summariser's spend have an app-side cap, given D45 says nothing bounds it?
+### Q7 — Should the summariser's spend have an app-side cap, given D45 says nothing bounds it? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the spec's *Keys and security* section must say plainly that the summariser is **not a Fugaro-managed credential** and is **not in `fugaro budget show`**. The options below are kept as the record of what was asked.
 
 - **(1) Keep D45 as it is — the operator's own login, disclosed, unbounded — and make the app show a running count of the summaries it has asked for.** *(Recommended.)* D45 is an answered decision; the honest fix for "uncapped" is **visibility**, not a new mechanism, and a count is a metric (R5) the module already needs. **Consequence:** the spec's *Keys and security* section must say plainly that the summariser is not a Fugaro-managed credential and is not in `fugaro budget show`. **Changes:** *Filtering and summarising* §3, *Keys and security*.
 - **(2) Add a local per-session cap the app enforces (N summaries, then on-demand only).** **Consequence:** bounded cost, but a new local policy, a new failure mode mid-conversation, and a knob whose default nobody knows. **Changes:** *Filtering and summarising* §3.
 - **(3) Move the summariser behind the credentials service.** **Consequence:** contradicted today — the service is plan-only and **jobs-scoped** (#28), and D143 refuses fallbacks; this would be a new scope for it. **Changes:** *Keys and security* — and the credentials-service documents.
 
-**Q1's answer constrains this:** yes, and it narrows the question rather than answering it. The answer covers **STT and TTS only** — the switch has exactly two settings and neither is the summariser — so the summariser stays a **third egress outside the switch**, which is what keeps this question, and Q11, live.
+**Q1's answer constrains this:** yes, and it narrowed the question rather than answering it. The answer covers **STT and TTS only** — the switch has exactly two settings and neither is the summariser — so the summariser stays a **third egress outside the switch**, which is why this question, and Q11, had to be answered on their own terms; the owner took option (1) for both on 2026-10-19.
 
-### Q8 — The "record raw session audio" experiment, against D118 and F32.
+### Q8 — The "record raw session audio" experiment, against D118 and F32. *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: an **owner-run procedure** (a fixed script, four engines, the same microphone and room) rather than an in-app recorder, and the spec's "record raw session audio" bullet is **rewritten**. The options below are kept as the record of what was asked.
 
 - **(1) No recording: run the bake-off on synthesised clips (F32's existing rule) plus live owner-run comparisons of the same read script.** *(Recommended.)* It keeps D118's answer intact, needs no storage decision, and still gives the bake-off *comparable* inputs — a recorded script played aloud is comparable without the module storing anything. **Consequence:** an owner-run procedure (a fixed script, four engines, the same microphone and room) rather than an in-app recorder; the spec's "record raw session audio" bullet is rewritten. **Changes:** *Engine toggle and experiments*.
 - **(2) A local-only, dev-only switch on the console that records to a scratch directory, never in the repo, never in a bucket, deleted at session end, never backed up, documented in the register.** **Consequence:** the most faithful measurement, and the first recording in a tree that forbids them — it needs a written decision, an owner-run check, an exclusion from every backup path, and a rule that the console's own processes cannot read it (the console "never reads a … credential itself" is a posture worth extending to audio). **Changes:** *Engine toggle and experiments*; adds a check.
 - **(3) Record on the phone.** **Consequence:** directly contradicts D118's *"the app never stores or uploads audio"* and ⊂ PR #633 §4.5's *"a queued utterance is a recording"*. **Not recommended.**
 
-**Q1's answer constrains this:** yes, and it is a refusal. §1a keeps the raw-session-recording experiment **separate and local-only** and amends nothing for it, so the answer does not license the spec's recorder; option (1), which needs no further ruling, is the only one the answer leaves untouched.
+**Q1's answer constrains this:** yes, and it is a refusal. §1a keeps the raw-session-recording experiment **separate and local-only** and amends nothing for it, so the answer does not license the spec's recorder; option (1), which needs no further ruling, is the only one the answer leaves untouched — and it is the option the owner took on 2026-10-19.
 
-### Q9 — Which document is authoritative, and what happens to voice.md's D39–D54b?
+### Q9 — Which document is authoritative, and what happens to voice.md's D39–D54b? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: a **docs-only follow-up amends `voice.md`'s cells** for the engine list, the module's placement (D50, already amended once by D119) and the wake word — and **this folder changes nothing in `voice.md` today**. The options below are kept as the record of what was asked.
 
 - **(1) This spec supersedes voice.md where it addresses the same question, and P5.3's seven points constrain both; the supersessions are recorded in voice.md keeping its original text visible (mobile D129's rule).** *(Recommended.)* It is the wording the brief recommends, it makes one document authoritative per question instead of two, and it uses the amendment convention this repository already applies to `voice.md` (D40, D42, D49 and D50 were amended that way on 2026-10-17). **Consequence:** a docs-only follow-up amends voice.md's cells for the engine list, the module's placement (D50, already amended once by D119) and the wake word; this folder changes nothing in `voice.md` today. **Changes:** the *whole* spec's status, from "a second opinion" to "authoritative for what is built". Also settles the design's own framing: this spec is **not** the second egress decision — the design states it as still owed, and neither document takes it.
 - **(2) voice.md's D39–D54b stand and this spec is read as commentary on them.** **Consequence:** the vendor list and the wake word have no standing, the folder is documentation rather than design, and the owner must answer the same questions twice. **Changes:** nothing binding.
 - **(3) Neither supersedes: the owner re-decides the contested rows fresh.** **Consequence:** cleanest for the two documents that now disagree twice (`AudioOut`/port count #2, wake word #7), at the cost of re-opening rows the owner already answered on 2026-10-16. **Changes:** voice.md's D44, D46, D47, D50, D52.
 
-**Q1's answer constrains this:** yes, and it is why this question now has a named list. §1a names every document that states the old never-upload rule and says **each needs its own sentence amended once Q0 is acknowledged** — `voice.md`'s D44 among them — which is the supersession this asks about. The answer does not decide it: which document is authoritative is still the owner's.
+**Q1's answer constrains this:** yes, and it is why this question now has a named list. §1a names every document that states the old never-upload rule and says **each needs its own sentence amended once Q0 is acknowledged** — `voice.md`'s D44 among them — which is the supersession this asks about. The answer did not decide it — which document is authoritative was still the owner's to say — and Q9's own answer of 2026-10-19 is that ruling: option (1), with the amendments to `voice.md` left to a separate docs-only change.
 
-### Q10 — "Agent asking a question" needs a producer. Does the owner want one?
+### Q10 — "Agent asking a question" needs a producer. Does the owner want one? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the console **cannot speak** "the agent is asking you something" at all — it must say so **on screen**, where the question actually lives. The options below are kept as the record of what was asked.
 
 D48 dropped this trigger *"until something defines it"* (#25); ⊂ PR #602 now holds questions **inside a local queue** and nothing puts one in the feed.
 
@@ -562,7 +582,9 @@ D48 dropped this trigger *"until something defines it"* (#25); ⊂ PR #602 now h
 
 **Q1's answer constrains this:** no, directly. The answer says nothing about producers; it does put an always-listening detector on the wrong side of point 4, because a producer that listens continuously is an egress with no confirmation boundary anywhere near it.
 
-### Q11 — Is the summariser's egress governed by the voice allow-list or by `allow_data_to`?
+### Q11 — Is the summariser's egress governed by the voice allow-list or by `allow_data_to`? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the **provider register** (⊂ PR #633 §4.3) gains the summariser's endpoint as a row **with terms and a date read**, and the answer to "what data does it see" becomes a written sentence rather than an inference. The options below are kept as the record of what was asked.
 
 - **(1) The voice allow-list of ⊂ PR #633, extended to name the summariser's model endpoint when it is not the operator's own login; `allow_data_to` keeps governing *runs* and is not stretched to cover voice.** *(Recommended.)* `allow_data_to`'s unit is `<owner>/<repo>` and its subject is model providers receiving **code** (voice.md F9); voice's subject is a **conversation**, and voice.md already recorded that no `allow_data_to`-shaped answer exists for it (#26). **Consequence:** the provider register (⊂ PR #633 §4.3) gains the summariser's endpoint as a row with terms and a date read; and the answer to "what data does it see" becomes a written sentence rather than an inference. **Changes:** *Filtering and summarising* §3, *Keys and security*.
 - **(2) Stretch `allow_data_to` to cover the conversation, per repository.** **Consequence:** reuses an enforced key, but the unit is wrong twice (there is no repository for a laptop conversation), and it would change a validated config key's meaning in `internal/config/providers.go`. **Changes:** the config layer, plus the spec.
@@ -570,7 +592,9 @@ D48 dropped this trigger *"until something defines it"* (#25); ⊂ PR #602 now h
 
 **Q1's answer constrains this:** yes, in the same way as Q7. The switch covers two directions and the summariser is neither, so the allow-list does not reach it by itself; option (1) extends the register to name the summariser's endpoint, which is the only option consistent with point 3's *"terms recorded"*.
 
-### Q12 — With no security service, what is acceptable for a provider credential?
+### Q12 — With no security service, what is acceptable for a provider credential? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the **cloud half of the spec is deferred** behind a design that must be written, and ⊂ PR #633 Q2 stays open. The options below are kept as the record of what was asked.
 
 #32 records the tree's refusals; #31 records that minting needs a Member-or-higher key.
 
@@ -578,9 +602,11 @@ D48 dropped this trigger *"until something defines it"* (#25); ⊂ PR #602 now h
 - **(2) An interim: a Secret Manager secret plus a small token-minting function on Cloud Run, reached by an authenticated console/phone identity.** **Consequence:** it works, and it is a **new always-on service holding a powerful provider key** — a Deepgram token lives 30 seconds, so the function must be reachable at every connect; the caller identity must be invented (D134/D135 defined one for jobs, not clients); and M9 §592's recorded rejection of a minting endpoint applies. **Changes:** *Keys and security*; and a new Terraform/deploy surface, which is a task this document does not write.
 - **(3) A provider key in the client's secure storage, on the phone only.** **Consequence:** the third exception to "never a key on the device", and ⊂ PR #633 §5 rule 9 names it as exactly that; it also contradicts the spec's own *"No long-lived keys on devices"*. **Not recommended.**
 
-**Q1's answer constrains this:** yes, and it is the sharpest constraint in this section. Point 5 settles the **shape** — a server-side hop, and never a credential in the binary — so option (3) is refused by the answer itself, and what is left is *which* service holds the key and *who* the caller is: the design's own Q2, and this question.
+**Q1's answer constrains this:** yes, and it is the sharpest constraint in this section. Point 5 settles the **shape** — a server-side hop, and never a credential in the binary — so option (3) is refused by the answer itself, and what was left is *which* service holds the key and *who* the caller is: the design's own Q2, which is still open, and this question, which the owner answered on 2026-10-19 as option (1) — nothing is minted, and the cloud half waits for that identity to be designed.
 
-### Q13 — Where does the console's multi-engine comparison get recorded?
+### Q13 — Where does the console's multi-engine comparison get recorded? *Answered by the owner on 2026-10-19 — option (1), the recommended one; see §5a.*
+
+**Answered, 2026-10-19: option (1).** Consequence, as the option states it: the spec's "test both … Decide on accuracy and latency" gets a **procedure in this folder** and **no register entry until it needs one**. The options below are kept as the record of what was asked.
 
 #44 records that 66 is held for the cloud decision, 85 is the on-device bake-off and 110 is ⊂ PR #633's next free number.
 
@@ -588,9 +614,11 @@ D48 dropped this trigger *"until something defines it"* (#25); ⊂ PR #602 now h
 - **(2) The console's comparison joins Check 85.** **Consequence:** 85 is written by P4.2 as the phone's on-device bake-off; folding the console in makes one check span two platforms and two artifact trees, which is the shape the register avoids elsewhere. **Changes:** *Speech-to-text*; the mobile plan.
 - **(3) Take 110 now, for the console.** **Consequence:** ⊂ PR #633 already names 110 for the phone's cloud half; two claims on one number is exactly what the register's rule forbids. **Not recommended.**
 
-**Q1's answer constrains this:** yes. Point 7 makes Check 85 **the bake-off through both engines**, so the console's comparison and the phone's are now one measurement with two surfaces; the design's own Q4 asks whether the remote half takes 66 or 110, and this question is its console-side twin.
+**Q1's answer constrains this:** yes. Point 7 makes Check 85 **the bake-off through both engines**, so the console's comparison and the phone's are now one measurement with two surfaces; the design's own Q4 asks whether the remote half takes 66 or 110, and is still open; this question, its console-side twin, was answered on 2026-10-19 as option (1) — a table in this folder's design, and no register entry until the egress decision is taken.
 
 ## 5a. Owner's answers
+
+**All thirteen questions in §5 were answered on 2026-10-19.** Q1 is recorded here in full, because its answer is not one of the options it was asked with; Q2–Q13 each took the option §5 recommended, and their table follows Q1's answer.
 
 **Q1 — answered 2026-10-19: the local/remote evaluation switch, both directions (STT and TTS), under the seven points.**
 
@@ -606,6 +634,27 @@ The owner approved **an in-app switch between local and remote speech-to-text an
 
 **What the answer is.** An **evaluation**, not an adoption. The design's own sentence is the one to read: *"the owner's ruling of 2026-10-19 permits the app to carry the switch **so that the decision can be taken by use**; it is not that decision."* D44's second explicit egress decision — whether remote voice **ships** — is still owed and still untaken.
 
+### The answers to Q2–Q13, 2026-10-19
+
+**The owner answered every remaining question the same day, and each takes the option this document recommended.** §5 carries the same marker in place, at the question it belongs to; this table is the one place they are read together. Each consequence column repeats what the option itself states, and nothing else is added to it.
+
+| Question | The answer | The consequence the option states |
+|---|---|---|
+| **Q2** — where microphone frames and the echo canceller live | **Option (1)**: both capture and playback in the helper process; the renderer is not in the audio path at all | The spec's "Chromium WebRTC `echoCancellation` in Electron" is **not** what gets built — the helper uses the OS's AEC instead (#38) — and the voice screen becomes a **display** of state the helper owns, which is also what ⊂ PR #633 §4.2's non-dismissible indicator wants |
+| **Q3** — the allow-list, the toggle and the indicator | **Option (1)**: the allow-list decides; the toggle may only narrow; the indicator is always visible and must not be dismissible | The icon's cloud state **can be refused**, and the spec's "three-way on Mac" becomes "the local engine the allow-list names, or local-only" — the third arm needs a way to **name a local engine**, which the allow-list's shape does not express |
+| **Q4** — "foreground only", or the background audio mode Check 86 measures | **Option (1)**: foreground only, as the spec says; Check 86's "background mode" item is dropped or reworded | Check 86 must be edited when it is written (it is unwritten), and the mobile work **loses** the "keep talking while the phone is in your pocket" case — called out explicitly rather than by accident |
+| **Q5** — which wake word | **Option (1)**: keep the transcript prefix test (`shared/command`'s `WAKE_ALIASES`) as the only wake word; add no acoustic engine | The spec's openWakeWord/Porcupine bullet is **dropped**, the planned check 102 keeps its meaning, and the module gains **no false-accept surface** |
+| **Q6** — one helper process or two | **Option (1)**: one helper, extended — the Agent SDK and the audio in the same supervised process | The helper becomes the app's **largest security surface**, so D54's permission-callback rules extend to the audio path, and its failure mode is "the conversation is gone", not "the summary is gone" |
+| **Q7** — an app-side cap on the summariser's spend | **Option (1)**: keep D45 as it is — the operator's own login, disclosed, unbounded — and show a running count of the summaries asked for | The spec's *Keys and security* section must say plainly that the summariser is **not a Fugaro-managed credential** and is **not in `fugaro budget show`** |
+| **Q8** — the "record raw session audio" experiment | **Option (1)**: no recording — synthesised clips (F32's existing rule) plus live owner-run comparisons of the same read script | An **owner-run procedure** (a fixed script, four engines, the same microphone and room) rather than an in-app recorder, and the spec's bullet is **rewritten** |
+| **Q9** — which document is authoritative | **Option (1)**: this spec supersedes `voice.md` where it addresses the same question, and P5.3's seven points constrain both; the supersessions are recorded in `voice.md` with its original text kept visible (D129's rule) | A **docs-only follow-up amends `voice.md`'s cells** for the engine list, the module's placement (D50, already amended once by D119) and the wake word; **this folder changes nothing in `voice.md` today** |
+| **Q10** — the "agent asking a question" producer | **Option (1)**: no new producer for now — speak a question only when the phone's prompt queue raises `INTERRUPT.PROMPT` (⊂ PR #602), and leave the console's feed unchanged | The console **cannot speak** "the agent is asking you something" at all — it must say so **on screen**, where the question actually lives |
+| **Q11** — the summariser's egress | **Option (1)**: the voice allow-list of ⊂ PR #633, extended to name the summariser's endpoint when it is not the operator's own login; `allow_data_to` keeps governing runs | The **provider register** (⊂ PR #633 §4.3) gains the summariser's endpoint as a row **with terms and a date read**, and "what data does it see" becomes a written sentence rather than an inference |
+| **Q12** — what is acceptable for a provider credential | **Option (1)**: nothing — cloud voice stays unbuilt until a minter exists, designed as a sibling service with a caller identity (D134/D135's shape for clients, which does not exist yet) | The **cloud half of the spec is deferred** behind a design that must be written, and ⊂ PR #633 Q2 stays open |
+| **Q13** — where the console's multi-engine comparison is recorded | **Option (1)**: a table in this folder's design, and a live check written only once the owner takes the egress decision — joining 66 if it covers both platforms, or taking 110 for the phone half | The spec's "test both … Decide on accuracy and latency" gets a **procedure in this folder** and **no register entry until it needs one** |
+
+**What these answers are, and what they are not.** They are the owner's answers of 2026-10-19 to the questions this document asked, each taking the option it recommended, and they are recorded rather than designed: nothing here goes beyond the consequence the option itself states. They are **not approval of a plan or of any code** — no task, phase, file or ordering follows from them, in this folder or any other — and they allocate **nothing**: no D-number (this document allocates none at all, §5), no live-check number (Q13), no schedule. The two gates that stood before them stand after them: ⊂ PR #633's **Q0** is still unanswered and still gates the build, and **D44's second explicit egress decision is still untaken** (Q1).
+
 ### What it changes in this spec's sections
 
 | The spec's section | Read before the answer | Read after it |
@@ -614,14 +663,14 @@ The owner approved **an in-app switch between local and remote speech-to-text an
 | *Text-to-speech* | "Cartesia (low-latency streaming)", ElevenLabs "possible later" | The same: **candidates under the switch**. Point 7 is what decides between them, and Check 85's table is where the numbers land. |
 | *Engine toggle and experiments* | A per-session cloud icon on the voice screen | The switch is **two per-direction settings** (`stt`, `tts`), device-local, **default local** — the design's §4.1 and §4.6 — and the icon becomes the **persistent, non-dismissible indicator** of §4.2, which may only **narrow** what the allow-list admits. The spec's *"record raw session audio"* experiment is **not** covered: §1a keeps it separate and local-only. |
 | *Keys and security* | "Security service mints short-lived temporary tokens per session … clients stream directly to providers" | The credential shape is now **point 5's server-side hop**: the app holds only its mailbox identity and the provider key lives in the installation's Secret Manager. The spec's direct-streaming shape is the one the design's §4.4 replaces. Whether the hop reuses the budget gateway or is a new minimal proxy is the design's **Q2**, still open. |
-| *Filtering and summarising* (adjacent) | — | **Unchanged by the answer.** The switch covers STT and TTS only; the summariser is a **third egress** and its governance is Q7 and Q11 below. |
+| *Filtering and summarising* (adjacent) | — | **Unchanged by this answer.** The switch covers STT and TTS only; the summariser is a **third egress**, and its governance is Q7 and Q11 — both answered on 2026-10-19, in the table above. |
 
 ### What the answer does not do
 
 - **It does not take D44's second explicit egress decision.** Adoption stays untaken, and this document does not read the answer as taking it (§1's authority rule).
 - **It does not amend Global Constraint 12.** The amendment is the design's §1a, and it is **asked for, not asserted**: until ⊂ PR #633's **Q0** — the owner's acknowledgement — is answered, the constraint on `main` stands and **nothing is built**: no hop, no provider client, no settings, no rules node.
 - **It does not allocate anything.** No D-number, no live-check number (Q13), no task, no phase. The design's Phase 5 stays **UNSCHEDULED**.
-- **It does not answer Q2–Q13.** Each of those carries its own line saying what the answer does to it; in one sentence, the answer **fixes the frame** — two directions, default local, a hop, an indicator, a register, fail-closed — and leaves every question *inside* that frame open.
+- **It did not answer Q2–Q13.** Each of those carried its own line saying what this answer does to it; in one sentence, the answer **fixes the frame** — two directions, default local, a hop, an indicator, a register, fail-closed — and left every question *inside* that frame to be answered on its own terms. **The owner answered them the same day**, each taking the option §5 recommended: the table above is that record, and §5 carries the marker at each question.
 
 ## 6. Verification: the providers' public documentation, 2026-10-19
 
@@ -656,10 +705,10 @@ Asserted nowhere above; listed so nothing is mistaken for a checked claim.
 
 ## 8. What this document does not do
 
-- **No plan.** No task, phase, file, ordering or dependency. §5's answers are the gate, and what follows them is a separate document.
-- **No decision.** No D-number is allocated, none is answered, and nothing here supersedes a decision row. §5 Q9 is the question about supersession, not the supersession.
+- **No plan.** No task, phase, file, ordering or dependency. §5's questions are answered, and an answer is not approval: what would follow one is a separate document.
+- **No decision.** No D-number is allocated, none is answered, and nothing here supersedes a decision row. §5 Q9's answer of 2026-10-19 is the ruling about supersession; the amendment it calls for is not made here.
 - **No number allocated** in the live-check register (#44, Q13).
-- **No file changed outside this folder.** `docs/design/voice.md`, `docs/mobile/`, `docs/credentials-service/` and `console/` are cited and not touched; the amendment of `voice.md` that Q9 might take is a **separate, owner-approved, docs-only change** — which is mobile D129's own rule.
+- **No file changed outside this folder.** `docs/design/voice.md`, `docs/mobile/`, `docs/credentials-service/` and `console/` are cited and not touched; the amendment of `voice.md` that Q9's answer calls for is a **separate, owner-approved, docs-only change** — which is mobile D129's own rule.
 - **No claim about the code without a commit.** Everything is against `82ba600d…` and the seven branches of §0's table; where a fact lives only on a branch, the finding says "⊂ PR #n" and never reads it as `main`.
 
 ## 9. Related

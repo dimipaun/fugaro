@@ -2,18 +2,18 @@
 
 *Status: **reconciliation only; nothing is implemented.** · Owner: Dimi Paun · 2026-10-19.*
 
-*Questions: **Q1 answered by the owner on 2026-10-19** — the local/remote evaluation switch, both directions, under the seven points ([reconciliation.md](reconciliation.md) §5a) — and **Q2–Q13 still open**, unanswered, and not to be built on.*
+*Questions: **all thirteen answered by the owner on 2026-10-19** — Q1 as the local/remote evaluation switch, both directions, under the seven points, and Q2–Q13 each taking the option [reconciliation.md](reconciliation.md) §5 recommended, with the answers recorded in its §5a — and **an answer is not approval of a plan or of any code**: nothing is built on them.*
 
 The owner's voice module spec of 2026-10-18, committed verbatim, and its reconciliation against the code this repository already has, the voice work already decided, and the pull requests in flight.
 
-**No code, no Terraform, no workflow and no plan lives here.** The spec's open questions are answered by the owner first; that answer is the gate, and what follows it is a separate document.
+**No code, no Terraform, no workflow and no plan lives here.** The spec's questions were answered by the owner on 2026-10-19, and an answer is not approval: what would follow one is a separate document, and this folder carries none of it.
 
 ## Contents
 
 | File | What it is |
 |---|---|
 | [spec.md](spec.md) | The owner's spec, **verbatim** — the owner's text copied unchanged, and nothing else. Committed alone in its own commit (`eea279f1`). |
-| [reconciliation.md](reconciliation.md) | What the spec asks for, read against `origin/main` and the open pull requests. Findings, resolutions, and the questions that need the owner. |
+| [reconciliation.md](reconciliation.md) | What the spec asks for, read against `origin/main` and the open pull requests. Findings, resolutions, and the owner's questions with the answers of 2026-10-19. |
 
 ## Status of the spec
 
@@ -48,6 +48,6 @@ The delimiter lines that framed the text in the request that carried it are that
 1. [spec.md](spec.md) — the owner's text, unchanged.
 2. [reconciliation.md](reconciliation.md) §1 — how this spec and the evaluation switch are one subject.
 3. [reconciliation.md](reconciliation.md) §2 — the table: what the spec asks for, and what the tree already has.
-4. [reconciliation.md](reconciliation.md) §5 — the owner's questions: Q1–Q13, each with the options, a recommendation and what it changes.
-5. [reconciliation.md](reconciliation.md) §5a — **Owner's answers**: Q1, answered 2026-10-19 (the evaluation switch and its seven points), what it changes in the spec's sections, and what it does not do. Q2–Q13 stay open.
+4. [reconciliation.md](reconciliation.md) §5 — the owner's questions, Q1–Q13, each with its options, its recommendation, and the answer of 2026-10-19 marked in place.
+5. [reconciliation.md](reconciliation.md) §5a — **Owner's answers**: Q1 in full (the evaluation switch and its seven points), the table of the Q2–Q13 answers, what Q1's answer changes in the spec's sections, and what it does not do.
 6. [reconciliation.md](reconciliation.md) §7 — what is **UNVERIFIED**, so nothing here is mistaken for a checked fact.

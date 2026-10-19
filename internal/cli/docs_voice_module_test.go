@@ -31,6 +31,10 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 		"[spec.md](spec.md)",
 		"[reconciliation.md](reconciliation.md)",
 		"eea279f1",
+		// The owner's answers of 2026-10-19, and the rule that goes with them:
+		// an answer is not approval, and nothing is built on one.
+		"all thirteen answered by the owner on 2026-10-19",
+		"an answer is not approval of a plan or of any code",
 		// The verdict on the text: the owner's spec needed no correction.
 		"## Typographical corrections",
 		"**None.**",
@@ -47,6 +51,18 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 	for _, banned := range []string{"SPEC TEXT", "==="} {
 		if strings.Contains(readme, banned) {
 			t.Errorf("docs/voice-module/README.md claims the spec carries %q; spec.md has no marker line and the index must describe the file it indexes", banned)
+		}
+	}
+	// And it must not still be asking for answers it has: the owner answered all
+	// thirteen on 2026-10-19, and the index is what a reader sees first.
+	for _, banned := range []string{
+		"Q2–Q13 still open",
+		"Q2–Q13 stay open",
+		"The spec's open questions",
+		"not to be built on",
+	} {
+		if strings.Contains(readme, banned) {
+			t.Errorf("docs/voice-module/README.md still says a question is open: %q", banned)
 		}
 	}
 
@@ -102,13 +118,15 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 		// The sections the brief names, by their headings.
 		"## 2. The table: what the spec asks for, and what the tree already has",
 		"## 4. Resolutions",
-		"## 5. Open for the owner",
+		"## 5. The owner's questions — all thirteen answered on 2026-10-19",
 		// The owner's answer of 2026-10-19, right after the questions it
 		// answers, and the two things it has to state.
 		"## 5a. Owner's answers",
+		"### The answers to Q2–Q13, 2026-10-19",
 		"### What it changes in this spec's sections",
 		"### What the answer does not do",
 		"**Q1 — answered 2026-10-19",
+		"**An answer is not approval of a plan or of any code**",
 		"## 6. Verification: the providers' public documentation, 2026-10-19",
 		"## 7. UNVERIFIED",
 		// The five classifications, and the standing of the unverifiable ones.
@@ -236,6 +254,210 @@ func TestDocsVoiceModuleReconciliationAllocatesNoDecisions(t *testing.T) {
 		}
 		if !strings.Contains(bullet, "*(Recommended.)*") {
 			t.Errorf("%s: %s does not recommend first: its first option bullet lacks %q", path, heading, "*(Recommended.)*")
+		}
+	}
+}
+
+// optionMentionRE reads an option by the name the document gives it in prose:
+// "option (1)". It is deliberately not the bullets' own "**(1)" form -- the
+// answer paragraphs and §5a's table cells say "option (N)", and the bullets are
+// the options themselves.
+var optionMentionRE = regexp.MustCompile(`(?i)option \((\d+)\)`)
+
+// optionNumbers lists the options a piece of prose names, in reading order.
+func optionNumbers(s string) []int {
+	var out []int
+	for _, m := range optionMentionRE.FindAllStringSubmatch(s, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// TestDocsVoiceModuleReconciliationRecordsEveryAnswer: the owner answered all
+// thirteen questions on 2026-10-19, and each answer is the option the question
+// recommended, recorded rather than designed. The same fact is written in three
+// places, so all three are read and compared:
+//
+//   - the question's own heading in §5 carries the marker with the date;
+//   - the answer paragraph under it names the option;
+//   - §5a's table carries one row per question, naming the same option.
+//
+// A question that loses its marker, an answer that names an option the question
+// does not recommend, and a §5a row that disagrees with the question it
+// summarises are three different drifts, and each fails here. So does an answer
+// that cites a finding the option it records does not cite: the answers are the
+// owner's, not new design, and a new finding number in one would be new design.
+//
+// Q1 is exempt from the option check, and the exemption is the point: its
+// answer is not one of the options it was asked with -- the owner approved the
+// evaluation switch instead -- so its marker names no option and the check
+// would have nothing to compare.
+func TestDocsVoiceModuleReconciliationRecordsEveryAnswer(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+
+	// Whatever the heading or the paragraph claims, the document may not go
+	// back to saying these questions are open. Each string below is a sentence
+	// that was true before the answers of 2026-10-19 and false after them.
+	for _, banned := range []string{
+		"§5's questions are the gate",
+		"come first and are the gate",
+		"No other question is answered here",
+		"It does not answer Q2–Q13",
+		"leaves every question *inside* that frame open",
+		"§5 Q9 is the question about supersession",
+		"§5 Q6 asks whether it is worth buying",
+		"§5 Q12 asks which identity",
+		"still open, unanswered",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s still says a question is open: %q", path, banned)
+		}
+	}
+	if regexp.MustCompile(`§5 Q\d+ asks`).MatchString(recon) {
+		t.Errorf("%s still has a finding pointing at §5 in the present tense (\"§5 Qn asks\"): the questions are answered, and a pointer that says otherwise sends a reader to look for an answer that is already there", path)
+	}
+
+	questions := regexp.MustCompile(`(?m)^### Q(\d+) — .*$`).FindAllStringIndex(recon, -1)
+	if len(questions) == 0 {
+		t.Fatal("no owner question headings found: the parse or the document changed shape")
+	}
+	answeredWith := map[int]int{}
+	for i, q := range questions {
+		heading := recon[q[0]:q[1]]
+		block := recon[q[1]:]
+		if i+1 < len(questions) {
+			block = recon[q[1]:questions[i+1][0]]
+		} else if j := strings.Index(block, "\n## "); j >= 0 {
+			block = block[:j]
+		}
+		m := regexp.MustCompile(`^### Q(\d+)`).FindStringSubmatch(heading)
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("%s: unparsable question number in %q", path, heading)
+		}
+		if !strings.Contains(heading, "*Answered by the owner on 2026-10-19") || !strings.HasSuffix(heading, "*") {
+			t.Errorf("%s: Q%d's heading does not carry the answered marker: it must name the date the owner answered and where the answer is recorded", path, n)
+		}
+
+		// The question's own recommendation, read from its bullets.
+		recommended, recommendedText := 0, ""
+		for _, piece := range strings.Split(block, "\n- **(")[1:] {
+			cut := strings.Index(piece, ")")
+			if cut < 0 {
+				continue
+			}
+			num, err := strconv.Atoi(piece[:cut])
+			if err != nil {
+				continue
+			}
+			if strings.Contains(piece, "*(Recommended.)*") {
+				if recommended != 0 {
+					t.Errorf("%s: Q%d marks two options *(Recommended.)*: (%d) and (%d)", path, n, recommended, num)
+				}
+				recommended, recommendedText = num, piece
+			}
+		}
+		if recommended == 0 {
+			t.Errorf("%s: Q%d has no option marked %q, so there is no recommendation to answer with", path, n, "*(Recommended.)*")
+		}
+
+		mi := strings.Index(block, "**Answered, 2026-10-19:")
+		if mi < 0 {
+			t.Errorf("%s: Q%d has no answer paragraph: every answered question carries %q under its heading", path, n, "**Answered, 2026-10-19: ...**")
+			continue
+		}
+		para := block[mi:]
+		if j := strings.Index(para, "\n\n"); j >= 0 {
+			para = para[:j]
+		}
+		got := optionNumbers(para)
+		if n == 1 {
+			if len(got) != 0 {
+				t.Errorf("%s: Q1's answer names option (%d), but its answer is not one of the options it was asked with", path, got[0])
+			}
+		} else {
+			switch {
+			case len(got) == 0:
+				t.Errorf("%s: Q%d's answer names no option: it must record which of the options below the owner took", path, n)
+			case len(got) > 1:
+				t.Errorf("%s: Q%d's answer names %d options %v: an answer is one option, not a range", path, n, len(got), got)
+			case got[0] != recommended:
+				t.Errorf("%s: Q%d's answer is option (%d); the question recommends option (%d)", path, n, got[0], recommended)
+			default:
+				answeredWith[n] = got[0]
+			}
+		}
+
+		// The answer is the option recorded, not a new design: a finding the
+		// answer cites has to be one the option itself cites. Three-digit
+		// numbers are pull requests (the convention the rest of this file uses).
+		for _, m := range regexp.MustCompile(`#(\d+)`).FindAllStringSubmatch(para, -1) {
+			cite, err := strconv.Atoi(m[1])
+			if err != nil || cite >= 100 {
+				continue
+			}
+			if !strings.Contains(recommendedText, "#"+m[1]) {
+				t.Errorf("%s: Q%d's answer cites #%d, which the option it records does not cite: the answer records the option, it does not extend it", path, n, cite)
+			}
+		}
+	}
+
+	// §5a's table: the answers read together, one row per question.
+	i := strings.Index(recon, "### The answers to Q2–Q13, 2026-10-19")
+	if i < 0 {
+		t.Fatal("docs/voice-module/reconciliation.md has no §5a table of the Q2–Q13 answers")
+	}
+	table := recon[i:]
+	if j := strings.Index(table, "\n### "); j >= 0 {
+		table = table[:j]
+	}
+	rows, seen := 0, map[int]bool{}
+	for _, line := range strings.Split(table, "\n") {
+		if !strings.HasPrefix(line, "| **Q") {
+			continue
+		}
+		rows++
+		cells := markdownTableCells(line)
+		if len(cells) < 2 {
+			t.Errorf("%s: the §5a row %q has %d cells, so it has no answer cell", path, strings.TrimSpace(line), len(cells))
+			continue
+		}
+		m := regexp.MustCompile(`\*\*Q(\d+)\*\*`).FindStringSubmatch(cells[0])
+		if m == nil {
+			t.Errorf("%s: the §5a row %q does not start with a question number", path, strings.TrimSpace(cells[0]))
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("%s: unparsable question number in the §5a row %q", path, strings.TrimSpace(cells[0]))
+		}
+		if seen[n] {
+			t.Errorf("%s: §5a has two rows for Q%d", path, n)
+		}
+		seen[n] = true
+		if n < 2 || n > 13 {
+			t.Errorf("%s: §5a's table carries Q%d; it is the table of the Q2–Q13 answers", path, n)
+		}
+		got := optionNumbers(cells[1])
+		if len(got) != 1 {
+			t.Errorf("%s: the §5a row for Q%d names %d options %v, want exactly 1", path, n, len(got), got)
+			continue
+		}
+		if want, ok := answeredWith[n]; ok && got[0] != want {
+			t.Errorf("%s: §5a says Q%d took option (%d); §5's own answer for it says option (%d)", path, n, got[0], want)
+		}
+	}
+	if want := len(questions) - 1; rows != want {
+		t.Errorf("%s: §5a's table has %d rows and §5 has %d questions besides Q1: every answer must be in both places", path, rows, want)
+	}
+	for n := 2; n <= 13; n++ {
+		if !seen[n] {
+			t.Errorf("%s: §5a's table has no row for Q%d", path, n)
 		}
 	}
 }
@@ -727,7 +949,28 @@ func sortedCheckNumbers(set map[string]bool) []string {
 	return out
 }
 
-// Mutation (verified, run and restored): eighteen, all run and restored.
+// Mutation (verified, run and restored): twenty-four, all run and restored.
+// (25) Stripping the answered marker from Q7's heading ("### Q7 — ... D45 says
+// nothing bounds it?") fails
+// TestDocsVoiceModuleReconciliationRecordsEveryAnswer with `Q7's heading does
+// not carry the answered marker`: the thirteen headings are what a reader scans,
+// so a question whose marker went missing reads as one still waiting.
+// (26) Changing Q4's answer paragraph to "option (2)" fails it with `Q4's
+// answer is option (2); the question recommends option (1)` -- the answer and
+// the option it records are compared, so an answer cannot silently take a
+// different option from the one the question recommended. (27) Writing "§5's
+// questions are the gate" back into §0 fails it with `still says a question is
+// open: "§5's questions are the gate"`. (28) Renaming §5a's Q9 table row so it
+// no longer starts with a question number fails it twice: `§5a's table has 11
+// rows and §5 has 12 questions besides Q1: every answer must be in both places`
+// and `§5a's table has no row for Q9`. (29) Adding an invented citation to Q5's
+// answer ("the spec's openWakeWord/Porcupine bullet is **dropped** (#33)") fails
+// it with `Q5's answer cites #33, which the option it records does not cite:
+// the answer records the option, it does not extend it` -- #33 is a finding
+// that exists, which is why only a per-answer comparison catches it. (30)
+// Putting "Q2–Q13 stay open" back into the README's question line fails
+// TestDocsVoiceModuleFolderIsWritten with `docs/voice-module/README.md still
+// says a question is open: "Q2–Q13 stay open"`.
 // (20) Writing the pipe in finding #42's quoted sentence unescaped again ("the
 // network is down | local only") fails
 // TestDocsVoiceModuleFolderTablesAreWellFormed with `the row has 4 cells and
