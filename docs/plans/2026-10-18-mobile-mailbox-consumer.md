@@ -1384,9 +1384,13 @@ and P6.13 own, and the corpus's known gap.
    mobile plan mints a `CONSUMER` one?**
    **The plan's answer, and the owner is asked to confirm it: the operator's ADC, for both halves** —
    and the reason is read off the merged rules rather than chosen for convenience. In the mailbox
-   subtree **`CONSUMER` appears in no `.read`**: the heartbeat's only read grant is `MAILBOX` and the
-   inbox's is `MAILBOX` (`userClaim`), so the consumer's own ETag read and its inbox read **cannot**
-   be made with a `CONSUMER`-claimed token at all; and the `CONSUMER` grant that shapes the writes
+   subtree **`CONSUMER` appears in no `.read`**, and the inbox's absence is stronger than that: the
+   merged template gives `mailbox/$mb/inbox/$msg` **no `.read` at all** — not `MAILBOX`, not
+   `userClaim`, nothing — so **no credential is admitted to the inbox**, while the heartbeat's only
+   read grant is `MAILBOX` (the phone's, through `userClaim`). The consumer's own ETag read and its
+   inbox read therefore **cannot** be made with any token it could hold — the inbox read is
+   out of band for *every* client, which is what makes the ADC the only answer — and the
+   `CONSUMER` grant that shapes the writes
    binds a token **carrying `mc == $mb`, which no approved task mints** — P6.6 mints `p~` and the
    phone's `m~`, P6.4 writes the device and pairing nodes, and the template's own comment says the
    claim "is minted the same way" without naming the task. **What that means, said plainly** (and

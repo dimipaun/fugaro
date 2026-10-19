@@ -186,7 +186,7 @@ var planWillCreate = map[string]string{
 	// The parity corpora the shared modules' own test files will write; the
 	// merged modules' index.test.js files exist today, these do not (§13's
 	// "no merged module changes" — test files only).
-	"shared/mailbox/parity.test.js": "T1",
+	"shared/mailbox/parity.test.js": "T8",
 	"shared/lease/parity.test.js":   "T3",
 }
 
@@ -661,6 +661,26 @@ func TestMailboxPlanMatchesTheMergedGrants(t *testing.T) {
 		if !strings.Contains(m8, want) {
 			t.Errorf("%s's M8 no longer says %q: what the P4.1 sweeper may delete, and what it must refuse, is the finding a review of this plan raised", mailboxPlan, want)
 		}
+	}
+
+	// §15 decision 1 is the owner-facing half of the same argument, so it has to
+	// make the same claim about the inbox read — and a review found it stating
+	// the opposite one ("the heartbeat's only read grant is MAILBOX and the
+	// inbox's is MAILBOX (userClaim)") while §2 said the true thing twice and the
+	// template has no `.read` under the inbox at all. Section 2 is where the
+	// grant analysis lives, which is why this slip survived: nothing checked the
+	// section the owner actually reads when deciding.
+	s15 := planSection(t, doc, "## 15. Owner decisions")
+	// Decision 1 alone: decision 2 opens with its own numbered item, and the
+	// sections after decision 1 must not be able to satisfy this check.
+	if j := strings.Index(s15, "\n2. **"); j >= 0 {
+		s15 = s15[:j]
+	}
+	if !strings.Contains(s15, "no `.read` at all") {
+		t.Errorf("%s's §15 decision 1 no longer says the inbox has no .read grant at all: the merged template grants none (the walk above is the evidence), and the ADC recommendation rests on it", mailboxPlan)
+	}
+	if strings.Contains(s15, "inbox's is `MAILBOX`") {
+		t.Errorf("%s's §15 decision 1 says the inbox's read grant is MAILBOX again: the merged template gives the inbox no .read at all, so the sentence recommends a credential on a grant that does not exist", mailboxPlan)
 	}
 }
 
