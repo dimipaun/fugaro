@@ -4024,7 +4024,7 @@ git log -1 --format='the tree is at %h %s'   # the commit the deployed site shou
    curl -sSI -o /dev/null -w '%{http_code} %{url_effective}\n' '<the URL>'
    ```
 
-   **FACT:** every download URL and the status it answered with, and the checksum the page printed beside it (compare it with the release's own `console-sha256sums.txt` if you want that half too: the site's copy of the checksum is a fact about bytes, and no hermetic test can check it against the release).
+   **FACT:** every download URL and the status it answered with, and the checksum the page printed beside it (compare it with the release's own `console-sha256sums.txt` if you want that half too: the site's copy of the checksum is a fact about bytes, and no hermetic test can check it against the release). **Read that sums file by hand rather than with `shasum -c`**: it names the artifacts the way the *workflow* wrote them, with a space, and GitHub serves them with a dot, so `shasum -a 256 -c` on it fails with `FAILED open or read` for anyone who downloads it from the release page. That is a defect on the release side, not on the site's, and the site's own copy of the file is the one the build reads.
 
 4. **Every link the page carries resolves.**
 
