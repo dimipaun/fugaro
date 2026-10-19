@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,8 +21,9 @@ import (
 // registry test over docs/ in this package: nothing pins the set of docs folders
 // and nothing pins a folder's documents on its behalf, so a folder that wants
 // its documents pinned writes its own file — this one.
-// That is the convention and not a guarantee: docs/mobile/'s six documents are
-// pinned by nothing — this file names the folder only to say so — and
+// That is the convention and not a guarantee: docs/mobile/'s documents are
+// pinned by the test files that name them — docs_mobile_plan_test.go for the
+// plan's Phase 6 approval, docs_voice_switch_test.go for the P5.3 design — and
 // docs/releases/ only through the release-note precondition
 // scripts/release_test.go exercises, not by a pin of its documents.
 const (
@@ -34,6 +36,23 @@ const (
 	// work claims none, so the file must name neither this folder nor the spec.
 	gcpLiveChecklist = "docs/gcp-live-checklist.md"
 )
+
+// docsMobileNamingExceptions are the _test.go files outside the docs_* naming
+// convention that may name docs/mobile — the exceptions
+// TestDocsInJobReviewPinningClaimNamesItsExceptions lists rather than asserts
+// away. The list is deliberately tiny: a test of another subject naming the
+// folder in passing is what would make the index's "pinned by the test files
+// that name them" sentence false, and an entry here is a decision that this one
+// mention is deliberate. emulator_mailbox_test.go is the file that has done so:
+// its comment cited docs/mobile/functional-spec-reconciliation.md until P6.4
+// (#601, 371038f) reworded it to "mobile reconciliation G13", so it names the
+// folder nowhere today and the entry is currently unexercised — it stays listed
+// because the comment is about that document and may cite it again. Every entry
+// has to be a path that exists, so the list cannot rot into a stale name; the
+// test checks that.
+var docsMobileNamingExceptions = []string{
+	"internal/budget/rules/emulator_mailbox_test.go",
+}
 
 // TestDocsInJobReviewIsWritten: the folder exists with its index and both
 // documents, the index carries the brief's status line word for word and
@@ -755,20 +774,62 @@ func TestDocsInJobReviewNamesEveryTaskOverride(t *testing.T) {
 }
 
 // TestDocsInJobReviewPinningClaimNamesItsExceptions: the index says how this
-// folder is pinned, and the first version of that sentence claimed "each docs
-// package is pinned by its own file" — false: docs/mobile/'s six documents are
-// pinned by nothing, and docs/releases/ only through the release-note
-// precondition scripts/release_test.go exercises. The true half — no registry
-// test over docs/ in internal/cli, so nothing pins the folder set or a folder's
-// documents on its behalf — is what justifies this pin and has to stay, and the
+// folder is pinned, and that sentence has been wrong twice, in opposite
+// directions. Its first version claimed "each docs package is pinned by its own
+// file" — false: docs/releases/ is covered only through the release-note
+// precondition scripts/release_test.go exercises, and no registry test over
+// docs/ in internal/cli pins the folder set or a folder's documents on its
+// behalf. That true half is what justifies this pin and has to stay, and the
 // folders the claim does not cover have to be named rather than implied.
 //
-// The mobile half was itself wrong once this pin existed: it said the only
-// mention of the folder in a _test.go was a passing comment in
-// emulator_mailbox_test.go, and this file's own docstring and strings name it
-// too. The parenthetical now says what is true — the folder is named only as
-// text — and the set of _test.go files that name it is asserted here, so a
-// third one fails rather than quietly falsifying the sentence.
+// Its mobile half then said the folder's documents were pinned by nothing,
+// naming one passing comment in emulator_mailbox_test.go and this pin as the
+// only _test.go files mentioning it. That was true when it was written and P6.1
+// (docs_mobile_plan_test.go) and P5.3 (docs_voice_switch_test.go) have since
+// falsified it: the folder does have per-document pins. The sentence says so now
+// — "pinned by the test files that name them" — and the forms it replaces are
+// refused here so neither can come back.
+//
+// The claim is scoped to the documents that carry pins, because a claim about
+// the folder would be false in the other direction: docs/mobile/spec.md and
+// docs/mobile/functional-spec-v0.1.md are named by no _test.go in the module, so
+// they are pinned by nothing, and the paragraph says so — "the folder is pinned
+// one document at a time and not as a whole, so a document there that no pin
+// names is a document nothing pins", with those two documents named and the
+// claim dated ("as of this writing") rather than asserted. That dating is
+// deliberate: the two are unpinned today and a pin for either is a file this
+// pin's rule below accepts, so a claim of the form "no _test.go names them"
+// would go stale silently, while a dated one is rewritten by whoever lands the
+// pin. The half that is asserted is the positive one: the two files the index
+// names as the folder's pins each name a path into docs/mobile.
+//
+// The tree half is asked of the tree, and is a rule rather than an enumeration
+// so that it cannot rot: every _test.go naming docs/mobile has to be a
+// docs_*_test.go file — the naming convention a per-document pin follows in
+// this module (docs_mobile_plan_test.go, docs_voice_switch_test.go,
+// docs_desktop_console_test.go, internal/runner/docs_checkpoint_internal_test.go
+// ...) — or one of the docsMobileNamingExceptions. The rule's first version
+// asserted the exact pair of naming files and went red the moment a third
+// landed; under the rule a new docs_* pin for the folder passes, a pin for
+// something else that names the folder in passing fails, and the folder is
+// required to keep a docs_* naming file other than this one, which names it only
+// to describe that — an exception names the folder without pinning anything, so
+// it does not count as one. The exception list itself is held to the index's
+// wording: it says emulator_mailbox_test.go is "the one" such file, so the list
+// is required to hold exactly one entry, and every entry to be a path that
+// exists.
+//
+// Mutation (verified, each planted and reverted): put "docs/mobile/'s six
+// documents are pinned by nothing" back into the README; drop "pinned by the
+// test files that name them" from it; drop "a document there that no pin names
+// is a document nothing pins" from it, which is what keeps the claim from being
+// read as covering the folder whole; add a non-docs _test.go naming docs/mobile
+// (internal/cli/mutation_probe_test.go); delete internal/cli/docs_mobile_plan_test.go
+// and internal/cli/docs_voice_switch_test.go while a non-docs file names the
+// folder as a listed exception, which is the pair the pins counter used to
+// accept; add a second entry to docsMobileNamingExceptions; empty one of the two
+// pin files of its docs/mobile path; or list a path that is not in the tree in
+// docsMobileNamingExceptions — each fails this test.
 func TestDocsInJobReviewPinningClaimNamesItsExceptions(t *testing.T) {
 	readme := readDoc(t, inJobReviewREADME)
 	for _, want := range []string{
@@ -776,37 +837,85 @@ func TestDocsInJobReviewPinningClaimNamesItsExceptions(t *testing.T) {
 		"docs/mobile/",
 		"docs/releases/",
 		"scripts/release_test.go",
-		// The corrected parenthetical: named as text, never read.
-		"never by a test that reads or asserts those documents",
+		// The corrected mobile half: the folder's pinned documents are pinned by
+		// the files that name them, and the sentence is scoped to them rather
+		// than to the folder — a document no pin names is named as pinned by
+		// nothing, so the paragraph cannot be read as covering the folder whole.
+		"pinned by the test files that name them",
+		"a document there that no pin names is a document nothing pins",
+		"internal/cli/docs_mobile_plan_test.go",
+		"internal/cli/docs_voice_switch_test.go",
+		// The folder's two unpinned documents, named rather than implied, with
+		// the claim dated: a pin for either rewrites this sentence.
+		"`spec.md` and `functional-spec-v0.1.md` carry no pin as of this writing",
+		// The one exception, which the length check below holds to "the one".
+		"internal/budget/rules/emulator_mailbox_test.go",
 	} {
 		if !strings.Contains(readme, want) {
-			t.Errorf("%s lacks %q: the pinning claim has to keep the half that justifies this pin, and name the folders it does not cover",
+			t.Errorf("%s lacks %q: the pinning claim has to keep the half that justifies this pin, name the folders it does not cover, and say what is true of the ones it does",
 				inJobReviewREADME, want)
 		}
 	}
 	for _, absent := range []string{
 		"each docs package is pinned by its own file",
-		// The retracted parenthetical, falsified by this pin's own text.
+		// The retracted remark about the folder, falsified by this pin's own
+		// text and then by the per-document pins that landed.
 		"the only mention of the folder in a `_test.go`",
+		// The retracted mobile half: P6.1 and P5.3 pin documents in the folder.
+		"pinned by nothing",
+		"never by a test that reads or asserts those documents",
 	} {
 		if strings.Contains(readme, absent) {
-			t.Errorf("%s carries %q, a form this work retracted: docs/mobile/'s six documents have no pin, and docs/releases/ has no pin of its documents, so neither claim may come back",
+			t.Errorf("%s carries %q, a form this work retracted: docs/mobile/'s documents are pinned by the test files that name them, and docs/releases/ has no pin of its documents, so no form of the old claim may come back",
 				inJobReviewREADME, absent)
 		}
 	}
 
-	// "Pinned by nothing" is a claim about this tree, so the tree is asked: the
-	// _test.go files naming the folder are the one passing comment and this pin,
-	// which names it only to say that nothing pins it. A third file means the
-	// sentence has to be rewritten, which is what happened to its first version.
-	named := testFilesNaming(t, "docs/mobile")
-	want := []string{
-		"internal/budget/rules/emulator_mailbox_test.go",
-		"internal/cli/docs_in_job_review_test.go",
+	// The naming set, as a rule rather than a list: a docs_* test file is a pin
+	// by the module's convention, an entry of docsMobileNamingExceptions is a
+	// deliberate exception, and anything else naming the folder is the case that
+	// makes the sentence above false.
+	const thisPin = "internal/cli/docs_in_job_review_test.go"
+	pins := 0
+	for _, path := range testFilesNaming(t, "docs/mobile") {
+		isPin := strings.HasPrefix(filepath.Base(path), "docs_")
+		if !isPin && !slices.Contains(docsMobileNamingExceptions, path) {
+			t.Errorf("%s names docs/mobile but is neither a docs_*_test.go file nor one of docsMobileNamingExceptions (%s): %s says the folder's pinned documents are pinned by the test files that name them, and a test of another subject naming the folder is what makes that sentence false — add the path to docsMobileNamingExceptions and this sentence's \"one\" wording if the mention is deliberate",
+				path, strings.Join(docsMobileNamingExceptions, ", "), inJobReviewREADME)
+		}
+		// Only the docs_* files are pins: an exception names the folder without
+		// pinning anything, so it must not stand in for a pin that has gone.
+		if isPin && path != thisPin {
+			pins++
+		}
 	}
-	if got := strings.Join(named, ", "); got != strings.Join(want, ", ") {
-		t.Errorf("the _test.go files naming docs/mobile are [%s], want [%s]: %s says the folder is named only in a passing comment and in this pin, so a third file means the sentence is stale",
-			got, strings.Join(want, ", "), inJobReviewREADME)
+	if pins == 0 {
+		t.Errorf("no docs_*_test.go other than this pin names docs/mobile: %s says the folder's pinned documents are pinned by the test files that name them, and this file names the folder only to describe that, so the pins it describes are gone",
+			inJobReviewREADME)
+	}
+	// The README names the two files that pin the folder, so each is asked for a
+	// path into docs/mobile: a document is pinned by the test file that names it,
+	// and a file that names no path into the folder pins nothing there.
+	for _, pin := range []string{
+		"internal/cli/docs_mobile_plan_test.go",
+		"internal/cli/docs_voice_switch_test.go",
+	} {
+		if !strings.Contains(readDoc(t, pin), `"docs/mobile/`) {
+			t.Errorf("%s names no path into docs/mobile: %s names it as one of the folder's pins, and a pin names the document it reads",
+				pin, inJobReviewREADME)
+		}
+	}
+	// "The one _test.go outside the docs_* convention" is a claim about the list's
+	// length, so the list is held to it — and every entry has to be a file, since
+	// an exception that is not one is a permission nothing asks for.
+	if len(docsMobileNamingExceptions) != 1 {
+		t.Errorf("docsMobileNamingExceptions holds %d entries (%s), want 1: %s says internal/budget/rules/emulator_mailbox_test.go is the one _test.go outside the docs_* convention that may name the folder, so a second entry has to rewrite that sentence",
+			len(docsMobileNamingExceptions), strings.Join(docsMobileNamingExceptions, ", "), inJobReviewREADME)
+	}
+	for _, path := range docsMobileNamingExceptions {
+		if _, err := os.Stat(filepath.Join("..", "..", filepath.FromSlash(path))); err != nil {
+			t.Errorf("docsMobileNamingExceptions lists %s, which is not in the tree: %v", path, err)
+		}
 	}
 }
 
