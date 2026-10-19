@@ -213,6 +213,76 @@ func TestStateAssetTypesCoverTheModules(t *testing.T) {
 	}
 }
 
+// The header comment's count of the compute root's entries, held to the table
+// it introduces. The comment says the compute root's two project assets "are
+// the last two before the empty ones" and that the third type is in
+// stateAssetTypesUndecided; the review of this branch found the comment still
+// saying "three … the last three before the empty ones" after the NAT entry had
+// moved out, which is exactly the kind of sentence a table change leaves behind
+// — there was nothing holding the two together.
+//
+// So the numbers are read out of the source rather than trusted: the table's
+// own lines give the trailing run of entries that are not the empty-string
+// answer, and that run has to be the two compute entries and nothing else. A
+// third entry added there (the NAT back, say) fails here by name, and so does a
+// comment that renumbers itself without the table moving.
+func TestStateAssetTypesHeaderCountsTheComputeEntries(t *testing.T) {
+	src, err := os.ReadFile("stateaccounts.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	i := strings.Index(s, "var stateAssetTypes = map[string]string{")
+	if i < 0 {
+		t.Fatalf("stateaccounts.go no longer has the stateAssetTypes table: this test reads the header's count out of it")
+	}
+	j := strings.Index(s[i:], "\n}\n")
+	if j < 0 {
+		t.Fatalf("stateaccounts.go's stateAssetTypes table has no closing brace: this test cannot find its end")
+	}
+	table := s[i : i+j]
+	entry := regexp.MustCompile(`(?m)^\t"([a-z0-9_]+)":\s+(".*"|""),$`)
+	// The entries before the first empty-string one, in source order: the
+	// comment says the compute root's two are the last of them.
+	var nonEmpty []string
+	for _, m := range entry.FindAllStringSubmatch(table, -1) {
+		if m[2] == `""` {
+			break
+		}
+		nonEmpty = append(nonEmpty, m[1])
+	}
+	want := []string{"google_compute_firewall", "google_compute_router"}
+	if len(nonEmpty) < len(want) || !equalStrings(nonEmpty[len(nonEmpty)-len(want):], want) {
+		t.Fatalf("stateAssetTypes' trailing entries that map to a Cloud Asset type are %v, want them to end with %v: the compute module's two project assets are what the file's header comment counts, and the NAT is decided in stateAssetTypesUndecided instead", nonEmpty, want)
+	}
+	// And the comment's own numbers match that: two, the NAT named as
+	// undecided, and no "three".
+	head := s[:strings.Index(s, "// AccountsOfState decodes")]
+	for _, refuse := range []string{"its three resources are in the table", "the last three before the empty ones"} {
+		if strings.Contains(head, refuse) {
+			t.Errorf("stateaccounts.go's header comment still says %q while the table holds two compute entries and the NAT is in stateAssetTypesUndecided: the comment and the table have to agree, which is what the review of this branch found they did not", refuse)
+		}
+	}
+	for _, must := range []string{"the last two before the empty ones", "stateAssetTypesUndecided"} {
+		if !strings.Contains(head, must) {
+			t.Errorf("stateaccounts.go's header comment no longer says %q: it is where a reader learns which of the compute root's three resources the table decides and where the third is recorded", must)
+		}
+	}
+}
+
+// equalStrings compares two short type lists by element.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // The two halves of Task 4.5 meet here: what AccountsOfState reads out of a
 // state is what Inventory.Check accounts for. A state holding a bucket, a
 // secret and a marker object leaves exactly those three out of the warning,
