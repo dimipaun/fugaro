@@ -23,9 +23,13 @@ import (
 // merged into this branch, and attributed the kind check to PARENTKIND when the
 // rules validate it inline; §5 rule 4 promised a redaction gate on the STT path
 // that §3's own table says cannot exist; §4.5 said the redactor stops the
-// text, when it substitutes and hands it on; and §13 attributed its own count
+// text, when it substitutes and hands it on; §13 attributed its own count
 // of the row run to the register ("the register says so of itself"), which the
-// register never says of itself.
+// register never says of itself; and §13 gave a quoted convention to the
+// register ("the phase that ships the check writes them") when the sentence is
+// voice.md's, the register contains it nowhere, and both of §13's claims about
+// a number whose body lives elsewhere (67a/67b/68 reserved, 57's section in
+// compute-backend.md §7.2) had only one half pinned.
 //
 // The register half is two-sided and both-halved, the way
 // TestWebsiteChecklistHasCheck69aAnd69b is: every number the design names as
@@ -35,6 +39,10 @@ import (
 // neither (a design that invents a section it did not write is the bug this
 // pins). Both halves are read from the register's own summary table and
 // headings, so deleting a row or renaming a heading fails here.
+//
+// Part 7 is the same rule for prose: every quotation the design gives to
+// another file is checked against that file AND against the design, so a
+// quotation cannot be re-attributed by editing one side of the pair.
 //
 // The list of numbers is deliberately the design's own claims rather than "every
 // number in the register": a later check written elsewhere in the repository
@@ -51,8 +59,12 @@ import (
 // restore §2's "rules.go:583-590"; rename a `## Check 49:` heading; delete a
 // `| 49 |`, `| 57 |` or `| 11b |` summary row; rename `## Check 19:`; add a
 // `| 48 |` row or a `## Check 69c` section; restore §13's "the register says so
-// of itself"; or drop "11 also carries **11b**" from §13's run — each fails
-// this test.
+// of itself"; drop "11 also carries **11b**" from §13's run; add a `| 67a |`
+// row, a `## Check 68:` section or a `## Check 57:` section; stop the `| 57 |`
+// row pointing at compute-backend.md §7.2; restore "The convention is the
+// register's and the mobile plan's"; drop the §5.3 attribution or lowercase the
+// plan's quoted sentence; reword a quoted sentence in its source file; or
+// delete a quotation from §13 — each fails this test.
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
 	const checklistPath = "docs/gcp-live-checklist.md"
@@ -184,10 +196,43 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 
 	// 2. The reservation the review round corrected: 67 is reserved as 67a
 	// and 67b, 68 is the deployer account's live IAM check, and neither plan
-	// has written them into the register yet.
+	// has written them into the register yet — in EITHER half, which is what
+	// §13's "reserved, and neither is in the register yet" means: a `## Check`
+	// section or a summary row for one of them makes that row stale.
 	for _, n := range []string{"67a", "67b", "68"} {
 		if strings.Contains(checklist, "## Check "+n+":") {
 			t.Errorf("%s carries a `## Check %s:` section, but %s §13 says the managed-projects numbers are reserved and unwritten; the design's row must be updated to the register as it stands", checklistPath, n, designPath)
+		}
+		if rows[n] {
+			t.Errorf("%s carries a `| %s |` summary row, but %s §13 says the managed-projects numbers are reserved and unwritten — and a row is the half a reader sees first", checklistPath, n, designPath)
+		}
+	}
+	// 2b. §13's other "where the body lives" claim: **57 is a summary row whose
+	// section is not in the register** — it is in compute-backend.md §7.2. Both
+	// halves again: the row here, the pointed-to body there, and no `## Check
+	// 57:` section in this file.
+	if !rows["57"] {
+		t.Errorf("%s's summary table has no `| 57 |` row, but %s §13 says 57 is a summary row", checklistPath, designPath)
+	}
+	if strings.Contains(checklist, "## Check 57:") {
+		t.Errorf("%s now has a `## Check 57:` section, but %s §13 says 57's section lives in docs/design/compute-backend.md §7.2", checklistPath, designPath)
+	}
+	row57 := ""
+	for _, line := range strings.Split(checklist, "\n") {
+		if strings.HasPrefix(line, "| 57 |") {
+			row57 = line
+		}
+	}
+	if row57 == "" {
+		t.Fatalf("%s's §13 names 57 as a written row and this test's marker `| 57 |` found none; update the marker", checklistPath)
+	}
+	if want := `See "Check 57" in ` + "`docs/design/compute-backend.md` §7.2"; !strings.Contains(row57, want) {
+		t.Errorf("%s's `| 57 |` row does not point at %q, so it no longer says where the check's body is: %s", checklistPath, want, row57)
+	}
+	compute := readDoc(t, "docs/design/compute-backend.md")
+	for _, want := range []string{"### 7.2 The check", "Check 57: the compute-instance Docker backend"} {
+		if !strings.Contains(compute, want) {
+			t.Errorf("docs/design/compute-backend.md does not carry %q, so %s §13's sentence that 57's section lives in its §7.2 is stale", want, designPath)
 		}
 	}
 	row := ""
@@ -322,6 +367,66 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	if !strings.Contains(rules, "it masks, it does not block") {
 		t.Errorf("%s's §5 rule 4 no longer says the redactor masks rather than blocks", designPath)
 	}
+
+	// 7. Every quotation the design gives to another file, against that file.
+	// An earlier revision attributed "the phase that ships the check writes
+	// them" to the register, which does not contain it (it is voice.md's), and
+	// gave a second quotation the register's name too; the sweep that fixed it
+	// checked the rest, and this pins them. Each pair is the words as the
+	// SOURCE writes them (emphasis and line wrapping aside — see flat) and the
+	// file the design attributes them to.
+	for _, q := range []struct{ quote, src string }{
+		{"the phase that ships the check writes them", "docs/design/voice.md"},
+		{"A check is never run before its text is in the register", "docs/mobile/implementation-plan.md"},
+		{"The app never stores or uploads audio", "docs/mobile/implementation-plan.md"},
+		{"so the audio never leaves the device", "docs/mobile/reconciliation.md"},
+		{"it must be stated as a rule rather than left as an implication", "docs/mobile/reconciliation.md"},
+		{"local-only for v1", "docs/design/voice.md"},
+		{"Your machine stays your business", "docs/design/desktop-console.md"},
+		{"Audio fixtures are synthesised (Task V4.3)", "docs/plans/2026-10-16-voice.md"},
+		{"v1's whole provider path is local-only", "docs/plans/2026-10-16-voice.md"},
+		{"TOKEN && auth.token.fs == $slug", "internal/budget/rules/rules.json.tmpl"},
+		{"read-back text is built from the resolved target and from nothing", "shared/confirm/index.js"},
+		{"a confirmation is a separate utterance", "shared/confirm/index.js"},
+		{"An answer to a destructive prompt is accepted only as a MAC-verified action record", "docs/mobile/functional-spec-reconciliation.md"},
+		{"any launcher can mint a token for any mu or mc", "docs/mobile/functional-spec-reconciliation.md"},
+		{"the service stays secrets-only", "docs/credentials-service/spec.md"},
+		{"reserved for this work's owner-run checks", "docs/credentials-service/README.md"},
+		{"Checks 70–79 are unused and deliberately not taken", "docs/mobile/README.md"},
+	} {
+		if !strings.Contains(strings.ToLower(flat(design)), strings.ToLower(flat(q.quote))) {
+			t.Errorf("%s no longer carries %q, which it attributes to %s; this pair is stale and should be re-pointed or dropped", designPath, q.quote, q.src)
+		}
+		if !strings.Contains(strings.ToLower(flat(readDoc(t, q.src))), strings.ToLower(flat(q.quote))) {
+			t.Errorf("%s gives %q to %s, and that file does not carry it: cite the file the words are in, or quote what it says", designPath, q.quote, q.src)
+		}
+	}
+	// The two halves of the attribution itself: each quotation named with the
+	// file it is in, and neither given to the register.
+	for _, want := range []string{
+		"[voice.md](../../design/voice.md) **§5.3**",
+		`[implementation-plan.md](../implementation-plan.md), the block "Check numbers this plan takes (80–89)"`,
+		`"**A check is never run before its text is in the register**"`,
+	} {
+		if !strings.Contains(checks, want) {
+			t.Errorf("%s's §13 does not attribute its quoted convention with %q", designPath, want)
+		}
+	}
+	if strings.Contains(design, "The convention is the register's and the mobile plan's") {
+		t.Errorf("%s gives the convention to the register, and the register contains neither sentence of it", designPath)
+	}
+	if strings.Contains(checklist, "the phase that ships the check writes them") {
+		t.Errorf("%s now carries %q, so it has become a source for it; attribute the quotation to the file it is in", checklistPath, "the phase that ships the check writes them")
+	}
+}
+
+// flat reduces markdown emphasis and line wrapping so a quotation can be
+// compared with the file it is attributed to: the sources wrap their sentences
+// across lines and emphasise words inside the quoted span, neither of which
+// changes the words quoted.
+func flat(s string) string {
+	s = strings.NewReplacer("**", "", "`", "", "*", "").Replace(s)
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // summaryRows returns the check numbers the checklist's summary table carries
