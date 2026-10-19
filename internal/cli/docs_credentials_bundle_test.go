@@ -146,6 +146,29 @@ func TestDocsCredentialsServiceKeepsOneBundleSecret(t *testing.T) {
 	}
 }
 
+// credsTask25 returns the plan's C1.25 section: from its heading to the next
+// task's heading.
+//
+// The two rules below are asserted against this slice and not against the whole
+// document on purpose. The plan's status line cites the same two rules in
+// passing, so a whole-file Contains would keep passing after the task itself
+// lost a rule — the pin would be held by the sentence that summarises the task
+// rather than by the task. Slicing the section is what makes the failure land on
+// the task a reader has to find.
+func credsTask25(t *testing.T, plan string) string {
+	t.Helper()
+	const heading = "### Task C1.25:"
+	start := strings.Index(plan, heading)
+	if start < 0 {
+		t.Fatal("implementation-plan.md has no `### Task C1.25:` heading: the bundle's command task is the one these two rules belong to")
+	}
+	rest := plan[start+len(heading):]
+	if end := strings.Index(rest, "\n### Task "); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
 // TestDocsCredsTaskKeepsTheBundleInMemory pins the first of the two rules the
 // owner asked for on 2026-10-19, in the brief for the bundle's command task
 // (C1.25) that the Q6 ruling created.
@@ -185,6 +208,7 @@ func TestDocsCredsTaskKeepsTheBundleInMemory(t *testing.T) {
 		return string(data)
 	}
 	reconciliation, implementationPlan := read(recon), read(plan)
+	task := credsTask25(t, implementationPlan)
 
 	// The rule itself, at the top of the task the command is specified in.
 	for _, want := range []string{
@@ -194,7 +218,7 @@ func TestDocsCredsTaskKeepsTheBundleInMemory(t *testing.T) {
 		"no value reaches a log line, a crash report or an error message",
 		"zeroes its buffers best-effort before it exits",
 	} {
-		if !strings.Contains(implementationPlan, want) {
+		if !strings.Contains(task, want) {
 			t.Errorf("%s's C1.25 no longer says %q: the bundle's command has to keep the value off the disk, out of every log and out of every error", plan, want)
 		}
 	}
@@ -204,7 +228,7 @@ func TestDocsCredsTaskKeepsTheBundleInMemory(t *testing.T) {
 		"TestCredsSetWritesNoFile",
 		"`HOME` and `TMPDIR`",
 	} {
-		if !strings.Contains(implementationPlan, want) {
+		if !strings.Contains(task, want) {
 			t.Errorf("%s's C1.25 no longer carries %q: a rule with no test that would catch a temp file left behind is a rule nothing enforces", plan, want)
 		}
 	}
@@ -250,6 +274,7 @@ func TestDocsCredsTaskShowsOnlyThePromptAndOneLine(t *testing.T) {
 		return string(data)
 	}
 	reconciliation, implementationPlan := read(recon), read(plan)
+	task := credsTask25(t, implementationPlan)
 
 	// The rule itself, and the three lines it fixes word for word.
 	for _, want := range []string{
@@ -260,13 +285,13 @@ func TestDocsCredsTaskShowsOnlyThePromptAndOneLine(t *testing.T) {
 		"replaced NAME (bundle version N)",
 		"removed NAME (bundle version N)",
 	} {
-		if !strings.Contains(implementationPlan, want) {
+		if !strings.Contains(task, want) {
 			t.Errorf("%s's C1.25 no longer says %q: the command's whole output is the prompt and one line, and the line is fixed word for word", plan, want)
 		}
 	}
 
 	// The test that holds it, in the task's own test list.
-	if !strings.Contains(implementationPlan, "TestCredsCommandsPrintOnlyTheFinalLine") {
+	if !strings.Contains(task, "TestCredsCommandsPrintOnlyTheFinalLine") {
 		t.Errorf("%s's C1.25 no longer carries TestCredsCommandsPrintOnlyTheFinalLine: an output rule with no test of the exact lines is a rule a progress line can quietly break", plan)
 	}
 
