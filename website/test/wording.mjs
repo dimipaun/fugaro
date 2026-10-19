@@ -41,21 +41,14 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DIST, SITE, builtPages, parse, textOf } from './lib/html.mjs'
+import { DIST, REPO, SITE, builtPages, parse, textOf } from './lib/html.mjs'
+import { DOCUMENT_PAGES, RECONCILIATION, documentPagesNamedIn, readReconciliation } from './lib/exempt.mjs'
 
 /**
  * The retired word, as a word: `worker` and `workers`, and not `workered` or a substring of
  * a longer word. Case is not a distinction a reader makes.
  */
 export const RETIRED = /\bworkers?\b/i
-
-/**
- * The pages that render a document of this repository and are therefore exempt from part 1:
- * D188's own list, which is also the list the word ceiling exempts. The exemption is checked
- * rather than assumed — `exemptPages` below refuses to skip a page that is not one of these,
- * so the rule cannot quietly widen.
- */
-export const DOCUMENT_PAGES = new Set(['/docs/', '/security/', '/changelog/'])
 
 /**
  * The head's text that a reader meets outside the page: the `<title>`, the description and
@@ -155,6 +148,22 @@ test("the site's own sources carry no retired word", () => {
 test('README.md carries no retired word', () => {
   const failures = sourceWordingFailures({ 'README.md': readFileSync(path.join(SITE, '..', 'README.md'), 'utf8') })
   assert.deepEqual(failures, [], `README.md carries the retired wording:\n  ${failures.join('\n  ')}`)
+})
+
+test('the pages this rule skips are D188’s own list, and no wider', () => {
+  // The exemption (`DOCUMENT_PAGES`, shared with the word ceiling through
+  // `test/lib/exempt.mjs`) is the one place this gate looks away, so it is the one place a
+  // defect could hide: a page added here is a page whose words nobody checks. It is held
+  // equal to the pages the ruling names rather than trusted, so widening it means editing
+  // D188's row in the same commit — and taking a page out of the ruling fails this too,
+  // because the gates would then be exempting a page the ruling no longer does.
+  const named = documentPagesNamedIn(readReconciliation())
+  assert.ok(named.length > 0, `${RECONCILIATION}'s D188 row names no page and the exemption is read from it (website/test/lib/exempt.mjs)`)
+  assert.deepEqual(
+    [...DOCUMENT_PAGES].sort(),
+    named.sort(),
+    `the pages this rule skips, ${JSON.stringify([...DOCUMENT_PAGES].sort())}, are not the pages ${RECONCILIATION}'s D188 row names, ${JSON.stringify(named.sort())}: the exemption is that ruling's list, and the ceiling in test/budget.mjs reads the same set (D188)`,
+  )
 })
 
 // ---- the refusals, kept -----------------------------------------------------------------

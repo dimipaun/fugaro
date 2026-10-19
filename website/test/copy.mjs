@@ -23,9 +23,11 @@
 //     screen-reader user cannot find by the word they can see (WCAG 2.5.3). The name is
 //     resolved the way a browser resolves one — `aria-label`, then `aria-labelledby`, then the
 //     button's text — which is also how `website/test/a11y.mjs` resolves the first two.
-//   - **What the script would copy is the command it sits on.** The script copies the
-//     block's `[data-copy-source]` when there is one and its first `pre`/`code` otherwise,
-//     so that is what this file resolves — for every block, and for every page.
+//   - **What the script would copy is the command it sits on.** The script copies the block's
+//     first `pre`/`code` — the element the command is written in — so that is what this file
+//     resolves, for every block and for every page. There is no marker for a block to name a
+//     source of its own: every command the site prints is the whole of what its block copies,
+//     and decoration drawn beside a command (a prompt) is what this file refuses below.
 //
 // Every refusal below is a fixture, run on every check: the rule is only worth stating if
 // the check that enforces it refuses the defect it names. `FUGARO_GATES_DIST` points the
@@ -85,8 +87,7 @@ function nameOf(el, byId) {
 
 /** The element the script would copy out of a block, by the rule it uses. */
 function sourceOf(block) {
-  const inside = [...walk(block)]
-  return inside.find((el) => el.attrs.has('data-copy-source')) ?? inside.find((el) => el.name === 'pre' || el.name === 'code') ?? null
+  return [...walk(block)].find((el) => el.name === 'pre' || el.name === 'code') ?? null
 }
 
 /** A node's text with the layout taken out of it, which is how two renderings compare. */
@@ -173,14 +174,13 @@ export function copyFailures(html, rel) {
     if (text === '') {
       fail('a command block holds no text: the command is in the markup in full, and a block whose text is somewhere else is one the script copies empty')
     } else if (!source || !text.includes(words(source))) {
-      fail(`the copy control would copy ${JSON.stringify(source ? words(source).slice(0, 60) : '')}, which is not part of the command it sits on (${JSON.stringify(text.slice(0, 60))}): the script copies the block's [data-copy-source] or its first pre/code, and the control has to be on the command it copies`)
+      fail(`the copy control would copy ${JSON.stringify(source ? words(source).slice(0, 60) : '')}, which is not part of the command it sits on (${JSON.stringify(text.slice(0, 60))}): the script copies the block's first pre/code, and the control has to be on the command it copies`)
     }
-    // And nothing inside what it copies may be decoration either: a prompt drawn beside a
-    // command is aria-hidden drawing, and a source that holds one — the `<pre>` when the
-    // command loses its own marker — puts the prompt, and every line after the command, on
-    // the clipboard.
+    // And nothing inside what it copies may be decoration either: the copied element is the
+    // command, so a prompt drawn beside one would go on the clipboard with it — and every line
+    // after the command too, if the prompt shares the block's `<pre>`.
     if (source && [...walk(source)].some((el) => el.attrs.get('aria-hidden') === 'true' && textOf(el).trim() !== '')) {
-      fail(`the copy control copies ${JSON.stringify(words(source).slice(0, 60))}, which holds decoration the page marks aria-hidden (a prompt): mark the command itself with data-copy-source`)
+      fail(`the copy control copies ${JSON.stringify(words(source).slice(0, 60))}, which holds decoration the page marks aria-hidden (a prompt): what the block copies is the command, so the decoration belongs outside the block the control sits on`)
     }
     if (source && ariaHidden(source)) {
       fail('the copy control copies text inside aria-hidden: the script puts that text on the clipboard, and the page tells a screen reader it is decoration — a prompt beside a command is marked this way, and the source is the command beside it rather than the prompt')
@@ -279,8 +279,9 @@ test('every copy-control refusal fires on the defect it names', () => {
     ['a status that interrupts', page(block({ status: ' aria-live="assertive"' })), /announced politely/],
     ['no status line at all', page(block().replace('<span class="copy-status" data-copy-status role="status" aria-live="polite"></span>', '')), /holds 0 status lines/],
     ['a control inside aria-hidden', page(block().replace('<div class="command-block" data-copy>', '<div class="command-block" data-copy aria-hidden="true">')), /inside aria-hidden/],
-    ['a control that copies decoration', page(block({ command: '<pre><code><span aria-hidden="true">$ </span><span aria-hidden="true" data-copy-source>fugaro run</span></code></pre>' })), /copies text inside aria-hidden/],
-    ['a block whose control copies something else', page(block({ command: '<pre><code>fugaro run</code></pre><span data-copy-source>a different command</span>' })), /is not part of the command it sits on/],
+    ['a control that copies decoration', page(block({ command: '<pre><code><span aria-hidden="true">$ </span>fugaro run</code></pre>' })), /holds decoration the page marks aria-hidden/],
+    ['a command the page tells a screen reader is not there', page(block().replace('<pre>', '<pre aria-hidden="true">')), /copies text inside aria-hidden/],
+    ['a block whose first code element is not its command', page(block({ command: '<code>a stray span</code><pre><code>fugaro run</code></pre>' })), /is not part of the command it sits on/],
   ]
   for (const [what, html, expected] of cases) {
     const failures = failuresOf(html)
@@ -619,7 +620,7 @@ test('site.js reveals every control and copies exactly the command each one sits
     for (const block of blocks) {
       const button = block.querySelector('[data-copy-button]')
       assert.equal(button.hidden, false, `${rel}: site.js left a copy control hidden on a browser with a clipboard`)
-      const command = block.querySelector('[data-copy-source]') ?? block.querySelector('pre, code')
+      const command = block.querySelector('pre, code')
       const before = page.written.length
       button.dispatch('click')
       await flush()

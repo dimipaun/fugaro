@@ -54,6 +54,7 @@ import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, SITE, builtPages, filesUnder, find, parse, servedFile, walk } from './lib/html.mjs'
+import { DOCUMENT_PAGES } from './lib/exempt.mjs'
 
 // ---- the numbers, from the README ------------------------------------------------------
 
@@ -151,7 +152,11 @@ export function budgetFailures(dist, budgets) {
 // exempt from the **page** ceiling because each renders a document of this repository
 // rather than a page of the site; their leads are still held to the lead ceiling, since a
 // lead is a page's own and every page has one.
-const PAGE_EXEMPT = new Set(['/docs/', '/security/', '/changelog/'])
+//
+// The list itself is not written here: it is `test/lib/exempt.mjs`'s `DOCUMENT_PAGES`, which
+// `test/wording.mjs` skips for the same reason and holds equal to D188's own row. Two lists
+// would be two rules, and the page that ends up on one of them is exempt from a ceiling and
+// held to a wording rule — or the reverse — with both gates green.
 
 /** The words of a piece of text, the way a reader counts them. */
 function words(text) {
@@ -291,8 +296,8 @@ export function wordFailures(dist, budgets) {
     if (counts.lead > budgets.lead) {
       out.push(`${page.rel} opens with a ${counts.lead}-word lead; the ceiling is ${budgets.lead} words in a page's lead (website/README.md)`)
     }
-    if (!PAGE_EXEMPT.has(page.url) && counts.words > budgets.words) {
-      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...PAGE_EXEMPT].join(', ')}`)
+    if (!DOCUMENT_PAGES.has(page.url) && counts.words > budgets.words) {
+      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...DOCUMENT_PAGES].join(', ')}`)
     }
   }
   return out

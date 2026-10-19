@@ -1,16 +1,20 @@
 # Website redesign
 
-**Status: plan only, except items 2, 3 and 4 of
-[the changes spec](changes-spec-2026-10-18.md), which are implemented — the plan's own
-parts (`P1`–`P9`) are not.**
+**Status: the plan is implemented but for its last part, and items 2, 3 and 4 of
+[the changes spec](changes-spec-2026-10-18.md) are implemented in this branch's pull
+request.** Eight of the plan's nine parts are merged on `main` — `P1` and `P2` (#568), `P4`
+(#572), `P3`, `P6` and `P7` (#575), `P8` (#574) and `P5` (#603) — and **`P9`**, the design
+record and the "after" set, is the one still to do. This branch's pull request is later than
+all of them, and it changes what they built — the hero's headline and its example, and the
+four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
-The site itself, however, **is** built: `website/` holds an eleven-route Astro site whose
-hermetic gates pass (179 tests, `npm run check`, measured 2026-10-18). The three
-documents of the first line of work — [`../README.md`](../README.md) `:3` and `:5`,
+The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
+gates pass (252 tests, `npm run check`, measured 2026-10-19). The three documents of the
+first line of work — [`../README.md`](../README.md) `:3` and `:5`,
 [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — still say the opposite,
 in the present tense; correcting them is the first part of this line of work
-(reconciliation finding **RF1**).
+(reconciliation finding **RF1**, and `P1` did it for the three lines it names).
 
 Owner: **@Dimi**. Date: **2026-10-18**. Source: the brief as given to this line of work,
 committed alone in this branch's first commit.
