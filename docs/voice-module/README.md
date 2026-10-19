@@ -35,7 +35,7 @@ And one in-flight design is the same subject seen from the module's side: **[doc
 | **Branches read** | PR #584, #590, #592, #602, #604, #633, #634 — fetched read-only, never modified |
 | **Rules** | every finding cites a path and a symbol, never a bare line number; provider claims are checked against the providers' own public documentation and anything unverifiable is marked **UNVERIFIED** and never asserted |
 
-The checks this module touches are allocated in the [live check register](../gcp-live-checklist.md): **64, 65 and 66** to the voice and console lines, and **85 and 86** to the mobile work's 80–89 block. The phone's Phase 6 **proposes** 102 (the wake-word recognition rate) and 103 (a spoken cancel and merge on the sandbox repository, proposed in [functional-spec-reconciliation.md](../mobile/functional-spec-reconciliation.md)'s U4), and ⊂ PR #633 names **110** as the next free number for the remote half. **None of them is written, run or claimed here** — the full reading is finding #44.
+The checks this module touches are allocated in the [live check register](../gcp-live-checklist.md): **64, 65 and 66** to the voice and console lines, and **85 and 86** to the mobile work's 80–89 block. The phone's Phase 6 **proposes 102** (the wake-word recognition rate) and **103** (a spoken cancel and merge on the sandbox repository, proposed in [functional-spec-reconciliation.md](../mobile/functional-spec-reconciliation.md)'s U4), and ⊂ PR #633 names **110** as the next free number for the remote half. **None of them is written, run or claimed here** — the full reading is finding #44.
 
 ## Typographical corrections
 

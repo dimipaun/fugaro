@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"regexp"
 	"slices"
@@ -14,7 +16,8 @@ import (
 // The README must carry the status, the owner, the date and the verdict on
 // typographical corrections; spec.md must be the owner's text, so the
 // sentences below are asserted verbatim (a paraphrase, an editor's tidy-up or
-// a dropped bullet fails here); the reconciliation must carry the table, the
+// a dropped bullet fails here) and the whole file is pinned by its SHA-256,
+// which is what "byte-for-byte" means; the reconciliation must carry the table, the
 // findings, the resolutions, the owner questions and the verification
 // sections, and must name the commit it was checked against.
 func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
@@ -77,6 +80,19 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 			t.Errorf("docs/voice-module/spec.md carries the delimiter line %q: the quoting markers belong to the request that carried the text, not to the document", strings.TrimSpace(line))
 		}
 	}
+	// "Byte-for-byte" is not a figure of speech. The README promises spec.md is
+	// exactly the owner's text and names the commit (eea279f1) that carried it,
+	// and no list of sentences can keep that promise: an edit to any other line
+	// of the 61-line file would pass the checks above. So the whole file is
+	// pinned by its SHA-256. The checks above stay because they say *what* the
+	// spec has to say when they fail; this one says the file was touched at all.
+	// Changing spec.md means the owner's text changed: re-read it, update the
+	// constant, and record in the reconciliation what changed and why.
+	const specSHA256 = "26a2e8843b0a195657c2785cff586f86cd520003c788fc7a17649e64a13e96dd"
+	specSum := sha256.Sum256([]byte(spec))
+	if got := hex.EncodeToString(specSum[:]); got != specSHA256 {
+		t.Errorf("docs/voice-module/spec.md is not the text committed verbatim at eea279f1 (sha256 %s, want %s): the README promises it is byte-for-byte the owner's, so an edit here needs the owner", got, specSHA256)
+	}
 
 	recon := readDoc(t, "docs/voice-module/reconciliation.md")
 	for _, want := range []string{
@@ -111,10 +127,13 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 	}
 
 	// The README's list of the checks this module touches and finding #44's must
-	// be the same list -- the index says what the document says, and a check
-	// that appears in one and not the other is how "103" went missing from the
-	// index. #44 states its list in bold, so the numbers are read from the
-	// document rather than repeated here.
+	// be the same list, in both directions: the index says what the document
+	// says, and a check in one and not the other is how "103" went missing from
+	// the index -- while a README naming a check #44 does not list is the other
+	// half of the same drift, and is asserted here too. Both lists are read out
+	// of the documents rather than repeated here: #44 states its checks in bold
+	// and so does the README's sentence, so a number is matched as a whole token
+	// and never as a substring of another number or of a date.
 	i := strings.Index(recon, "**#44 —")
 	if i < 0 {
 		t.Fatal("docs/voice-module/reconciliation.md has no finding #44 to read the check list from")
@@ -123,13 +142,33 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 	if j := strings.Index(finding44, "\n## "); j >= 0 {
 		finding44 = finding44[:j]
 	}
-	checks := regexp.MustCompile(`\*\*(\d+)\*\*`).FindAllStringSubmatch(finding44, -1)
-	if len(checks) < 5 {
-		t.Fatalf("finding #44 names only %d checks in bold; the parse or the document changed shape", len(checks))
+	// Drop the heading line, whose own bold run carries the finding's number.
+	if j := strings.Index(finding44, "\n"); j >= 0 {
+		finding44 = finding44[j:]
 	}
-	for _, m := range checks {
-		if !strings.Contains(readme, m[1]) {
-			t.Errorf("docs/voice-module/README.md does not list check %s, which finding #44 lists for this work", m[1])
+
+	j := strings.Index(readme, "The checks this module touches")
+	if j < 0 {
+		t.Fatal("docs/voice-module/README.md has no sentence saying which checks this module touches")
+	}
+	readmeChecks := readme[j:]
+	if k := strings.Index(readmeChecks, "\n\n"); k >= 0 {
+		readmeChecks = readmeChecks[:k]
+	}
+
+	inFinding := boldCheckNumbers(finding44)
+	inReadme := boldCheckNumbers(readmeChecks)
+	if len(inFinding) < 5 {
+		t.Fatalf("finding #44 names only %d checks in bold; the parse or the document changed shape", len(inFinding))
+	}
+	for _, n := range sortedCheckNumbers(inFinding) {
+		if !inReadme[n] {
+			t.Errorf("docs/voice-module/README.md does not list check %s, which finding #44 lists for this work", n)
+		}
+	}
+	for _, n := range sortedCheckNumbers(inReadme) {
+		if !inFinding[n] {
+			t.Errorf("docs/voice-module/README.md lists check %s, which finding #44 does not: the index and the document have drifted apart", n)
 		}
 	}
 }
@@ -469,7 +508,33 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): eight, all run and restored.
+// boldCheckNumbers returns the check numbers a document states in bold, one
+// entry per whole number. The bold runs are the tokens, so "**64, 65 and 66**"
+// yields 64, 65 and 66, while a number written plainly -- a date, a "Phase 6",
+// a range like "80–89" -- is not read, and no number is matched as a substring
+// of another ("64" cannot be satisfied by "164").
+func boldCheckNumbers(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\*\*([^*]+)\*\*`).FindAllStringSubmatch(s, -1) {
+		for _, n := range regexp.MustCompile(`\d+`).FindAllString(m[1], -1) {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// sortedCheckNumbers lists a set from boldCheckNumbers in a stable order, so a
+// failure names the first drifted check rather than a map iteration order.
+func sortedCheckNumbers(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// Mutation (verified, run and restored): ten, all run and restored.
 // (7) Pointing §2's Haiku row at #33 (Apple's OS 26 floor) instead of #26 fails
 // TestDocsVoiceModuleReconciliationFindingsResolve with `the §2 row " A small
 // fast LLM (Haiku) turns a batch into one spoken line " cites [11 33]; the
@@ -487,13 +552,22 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 // `docs/voice-module/README.md does not list check 103`. (14) Reverting every
 // `voice-evaluation-switch.md` link to `cloud-stt-tts.md` fails
 // TestDocsVoiceModuleReconciliationCitationsExist with `does not disclose its
-// branch-only citations`.
+// branch-only citations`. (15) Adding "and **111** to the console line" to the
+// README's sentence fails TestDocsVoiceModuleFolderIsWritten the other way
+// round, with `docs/voice-module/README.md lists check 111, which finding #44
+// does not: the index and the document have drifted apart` -- the direction the
+// old substring loop could not see. (16) Editing a line of spec.md that no
+// verbatim check covers ("Log latency to first partial" -> "Log the latency to
+// first partial") fails it with `docs/voice-module/spec.md is not the text
+// committed verbatim at eea279f1 (sha256 b82c8f84..., want 26a2e884...)`: the
+// whole file is pinned, which is what the README's "byte-for-byte" means.
 //
-// And six older ones, all run and restored.
+// And three older ones, all run and restored.
 // (4) Putting the marker claim back into the README ("the text between the
 // `=== SPEC TEXT ===` markers") fails TestDocsVoiceModuleFolderIsWritten twice,
 // once for each banned string. (5) Wrapping spec.md in "=== SPEC TEXT ===" and
-// "=== END OF SPEC TEXT ===" lines fails it once per delimiter line. (6)
+// "=== END OF SPEC TEXT ===" lines fails it once per delimiter line, and the
+// SHA-256 pin too (the spec is no longer the text committed at eea279f1). (6)
 // Writing "Two paths cited below are not on `main`" back into the
 // reconciliation fails TestDocsVoiceModuleReconciliationCitationsExist.
 //
@@ -501,7 +575,9 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 // (1) Paraphrasing "App stays in the foreground while talking (no background
 // listening)." in spec.md fails TestDocsVoiceModuleFolderIsWritten with
 // `docs/voice-module/spec.md lacks "App stays in the foreground while talking
-// (no background listening)." (the spec must be verbatim)`. (2) Renumbering
+// (no background listening)." (the spec must be verbatim)` -- and with the
+// SHA-256 pin, which reports the same edit as a whole-file mismatch rather than
+// as one missing sentence. (2) Renumbering
 // reconciliation.md's last owner question, "### Q13 —" to "### Q14 —", fails
 // TestDocsVoiceModuleReconciliationAllocatesNoDecisions twice -- Q13 missing,
 // Q14 present. (3) Renaming docs/design/voice.md on disk fails
