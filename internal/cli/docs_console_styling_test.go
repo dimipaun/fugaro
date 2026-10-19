@@ -2412,9 +2412,13 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 		"### Task 6.5: The theme switch",
 		"### Task 6.6: The golden frames",
 		"## Cross-task dependencies")
+	// The emphasis markers are read through rather than around: the clause bolds
+	// the count, so a guard on the bare phrase reads straight past the wording
+	// the three clauses actually carried ("**thirteen** hooks").
+	thirteenHooks := regexp.MustCompile(`\bthirteen\**\s+hooks\b`)
 	for _, d := range []struct{ path, text string }{{path, doc}, {planPath, planDoc}} {
-		if flat := mdFlat(d.text); strings.Contains(flat, "thirteen hooks") {
-			t.Errorf("%s: the document sends the selector scan after \"thirteen hooks\"; the tree's thirteen are elements and the hooks are twelve (§2.1, and the count read off the fence above), so a scan written against thirteen styles a class nothing emits", d.path)
+		if m := thirteenHooks.FindString(mdFlat(d.text)); m != "" {
+			t.Errorf("%s: the document sends the selector scan after %q; the tree's thirteen are elements and the hooks are twelve (§2.1, and the count read off the fence above), so a scan written against thirteen styles a class nothing emits", d.path, m)
 		}
 	}
 	for _, d := range []struct{ path, label, section string }{
