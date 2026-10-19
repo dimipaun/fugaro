@@ -719,6 +719,68 @@ a pipe that never closes. A torn last line is dropped rather than
 recorded as garbage, while a last line that is a whole JSON document — a CLI
 that wrote its final frame without a newline — is recorded like any other.
 
+### The `normal` fixture: the real CLI's shape, every value invented
+
+`test/fixtures/normal.ndjson` is the one fixture of the eight that exists. The
+owner ruled on 2026-10-19 "record from the real installation, scrub by hand". One
+snapshot (`fugaro watch --json --once`) was read from a real installation with
+the 0.8.6 CLI (header `cli: 0.8.6`), outside this repository, and
+`tools/scrub-fixture/` replaced every value that could identify it. **The shape
+is the real CLI's** (every key, its type, its order, which optional keys are
+present); **every value in the file is invented**, so the header says
+`synthetic: true` and its note says every value is invented (the two agree: no
+installation produced these values). The raw recording is never committed and is
+deleted after the scrub. **It is not reproducible from this repository, by
+design:** the committed fixture is the only artefact, and nothing is kept that
+could lead back to a removed value (no list, no hash, no salt).
+
+```
+node node_modules/typescript/bin/tsc -p tsconfig.record-fixture.json
+node .record-fixture/tools/scrub-fixture/index.js --in <raw.json, outside the repo> \
+  --out test/fixtures/normal.ndjson --cli 0.8.6
+```
+
+The command prints the COUNT of values it replaced and nothing else. A file of
+hashes of the removed values was in the first push of this branch and was removed:
+a bare hash of a low-entropy value (a small integer, a dollar amount, a repo-style
+name) is recovered by a dictionary, so such a list leaks what it hides. The test
+instead gets the removed values in memory, through a callback the scrub run is
+given, on a scrub of a synthetic input; nothing derived from a removed value is
+written anywhere.
+
+The scrub (`scrub.ts`) is deterministic and fail-closed: an unknown key is a
+refusal, and every key it copies has its own typed rule (numbers are copied; an
+enum is copied only if the value is in the CLI's vocabulary; a free string is
+refused unless the key has an explicit replacement). It replaces the project,
+repo, slug, run ID, title (`# Task: example task N`), models, requester and kill
+actor, PR URL, workflow, recipe and every dollar amount, and **shifts the whole
+clock by a fixed offset** (`now`, `day`, the header's `recorded`, `kill.at`, and
+the run IDs' timestamps, which are the shifted `now` minus the run's own age, so
+every `age_seconds` stays consistent). Totals, percentages, `runs` and
+`run_hours` are recomputed from the invented rows so the document's invariants
+hold. The result then goes through the console's redactor with a public key (as
+`synthetic.ndjson` does), which is why the repo and slug read as pseudonyms
+(`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
+them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,
+`VERIFY_SHAPE`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
+verify, connection state, `queued_note`, and the ages and burn numbers.
+
+**Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
+`repo-at-cap` (they need cloud writes), and the other cases still await a
+recording. `normal` is one snapshot: no `finished`, `ready` or queued runs (the
+runs bucket did not answer within 3 s on that read), so those shapes are covered
+by `synthetic.ndjson` and the Go types, not by this file.
+
+**No spec consumes `normal.ndjson` yet**: only its own tests
+(`test/unit/normal-fixture.test.ts`, the Go
+`TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes`) and the recorder tests
+read it.
+
+Held by `test/unit/normal-fixture.test.ts`: the shape, the invariants, a scan of
+every decoded key and string value (after NFKC, case and zero-width folding)
+against forbidden substrings and a positive allow-list of shapes, and the scrub's
+refusals, each mutation-proven.
+
 ### The eight recordings, and why seven of them are missing
 
 Design §9.1 asks for eight cases, one recording each, and `FIXTURE_CASES` in
