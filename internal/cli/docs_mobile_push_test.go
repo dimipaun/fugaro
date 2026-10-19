@@ -752,6 +752,10 @@ func TestDocsMobilePushRegistrationTokenHasACarrier(t *testing.T) {
 		// ...and the bounded field the design asks for instead, with the plan
 		// recording it as a prerequisite.
 		"The design's recommendation is a bounded field instead — a registration kind with a required `token`",
+		// The same bounded message carries §3.8's switches, which had the same
+		// problem: a quiet-hours zone has no field in the inbox either.
+		"the kind this design asks for is the app's **registration-and-preferences**",
+		"§3.8's controls stand under the same prerequisite",
 		"the plan's P5.2 dependency row records it",
 		// The reason the design does not simply add the field to the pairing
 		// request instead: a rules change that buys shape (a) alone.

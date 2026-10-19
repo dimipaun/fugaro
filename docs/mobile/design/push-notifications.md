@@ -626,7 +626,11 @@ app-data clear, and occasionally otherwise, and FCM reports a stale token back a
   formality: "the field set IS the version", and a message from a future protocol carrying an
   extra field "is refused by the rules **and** here rather than silently accepted". This
   design asks for exactly that deliberate change, rather than smuggling a token through
-  `text`.)* **The premise is conditional and
+  `text`.)* **And the same bounded field carries §3.8's switches**, which are written the same
+  way (§3.5 (b), again): one message from the app carries the token, the platform and the
+  prefs, so the kind this design asks for is the app's **registration-and-preferences**
+  message, and §3.8's controls stand under the same prerequisite rather than pretending a
+  quiet-hours zone fits in `text` either. **The premise is conditional and
   this document states it as such rather than as a fact:** §3.4 records that, per
   `deploy/terraform/gcp/modules/firebase/iam.tf`, `roles/firebasedatabase.admin` is held by
   **`admins` and `budget_admins` only** — the very reason reconciliation G13 and D166 call
@@ -830,6 +834,10 @@ principal holding `roles/firebasedatabase.admin` (§3.5's (b), **conditional on 
 exactly as (b) is**). **Recommendation: (b) again** — the mailbox is the app's only write
 path, and this design does not add a second one; where the role is not held, the switch is an
 admin act like pairing, and this document does not pretend a toggle in the app is free of it.
+**The message is §3.5 (b)'s bounded registration-and-preferences kind, not a new one**: the
+controls, the quiet-hours zone and the platform ride back with the token, so this section
+inherits §3.5 (b)'s prerequisite (the rules and schema change that gives the message its
+field) instead of assuming a field the inbox does not have.
 **Every one of these writes lands on `config/admin/push/$uid` and never on `devices/**`**
 (§3.4 rule 1).
 
