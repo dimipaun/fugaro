@@ -507,7 +507,10 @@ func TestRolePinsAreTheModules(t *testing.T) {
 	strRE := regexp.MustCompile(`"([^"]+)"`)
 	// resource name -> the role ID the modules give it (names.role_ids and the
 	// literals in history.tf and the Firebase module's names.minter_role_id).
-	ids := map[string]string{"launcher": "fugaroLauncher", "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "fugaro_deployer_scoped": DeployerScopedRole}
+	ids := map[string]string{"launcher": "fugaroLauncher", "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole}
+	for role, label := range deployerRoleLabel {
+		ids[label] = role
+	}
 	seen := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".tf") {
@@ -568,15 +571,15 @@ func TestRolePinsAreTheModules(t *testing.T) {
 		for id, ps := range RolePermissions {
 			if slices.Contains(ps, never) {
 				// One exception, and it is the owner's answer of 2026-10-16
-				// (D75, amended the same day): the scoped deployer role holds
-				// actAs, because a managed job or schedule must run as an
-				// account of the plan's own. The bound on it is the condition
-				// on the single binding of that role (the prefix fence, which
-				// admits no account the plan did not create) and
-				// TestDeployerRolesHoldOnlyWhatD75Names below — not this list,
-				// which is about roles a Fugaro run holds. The other five stay
-				// forbidden for both deployer roles.
-				if id == DeployerScopedRole && never == "iam.serviceAccounts.actAs" {
+				// (D75, amended the same day): the conditioned deployer role
+				// for service accounts holds actAs, because a managed job or
+				// schedule must run as an account of the plan's own. The bound
+				// on it is the condition on the single binding of that role
+				// (the prefix fence, which admits no account the plan did not
+				// create) and TestDeployerRolesHoldOnlyWhatD75Names below — not
+				// this list, which is about roles a Fugaro run holds. The other
+				// five stay forbidden for every deployer role.
+				if id == DeployerAccountRole && never == "iam.serviceAccounts.actAs" {
 					continue
 				}
 				t.Errorf("%s pins %s", id, never)
@@ -778,16 +781,42 @@ var deployerRoleGolden = map[string][]string{
 		"serviceusage.services.enable", "serviceusage.services.get", "serviceusage.services.list",
 		"storage.buckets.create",
 	},
-	DeployerScopedRole: {
-		"apikeys.keys.delete", "apikeys.keys.update",
-		"artifactregistry.repositories.delete", "artifactregistry.repositories.setIamPolicy", "artifactregistry.repositories.update",
-		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
-		"iam.serviceAccounts.actAs", "iam.serviceAccounts.delete", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
-		"run.jobs.delete", "run.jobs.run", "run.jobs.runWithOverrides", "run.jobs.setIamPolicy", "run.jobs.update",
-		"secretmanager.secrets.delete", "secretmanager.secrets.setIamPolicy", "secretmanager.secrets.update",
+	DeployerStorageRole: {
 		"storage.buckets.delete", "storage.buckets.get", "storage.buckets.setIamPolicy", "storage.buckets.update",
 		"storage.objects.create", "storage.objects.delete", "storage.objects.get", "storage.objects.list", "storage.objects.update",
 	},
+	DeployerSecretRole: {
+		"secretmanager.secrets.delete", "secretmanager.secrets.setIamPolicy", "secretmanager.secrets.update",
+	},
+	DeployerAccountRole: {
+		"iam.serviceAccounts.actAs", "iam.serviceAccounts.delete", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
+	},
+	DeployerAPIKeyRole: {
+		"apikeys.keys.delete", "apikeys.keys.update",
+	},
+	DeployerRepositoryRole: {
+		"artifactregistry.repositories.delete", "artifactregistry.repositories.setIamPolicy", "artifactregistry.repositories.update",
+	},
+	DeployerRunJobRole: {
+		"run.jobs.delete", "run.jobs.run", "run.jobs.runWithOverrides", "run.jobs.setIamPolicy", "run.jobs.update",
+	},
+	DeployerSchedulerRole: {
+		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
+	},
+}
+
+// deployerRoleLabel is each conditioned role's Terraform resource label in
+// deployer.tf. The module's names and the roles are one list: the module-pin
+// test reads the condition local deployer_condition_<suffix> off the role ID,
+// and this says which resource carries that role's permissions and binding.
+var deployerRoleLabel = map[string]string{
+	DeployerStorageRole:    "fugaro_deployer_storage",
+	DeployerSecretRole:     "fugaro_deployer_secret",
+	DeployerAccountRole:    "fugaro_deployer_account",
+	DeployerAPIKeyRole:     "fugaro_deployer_apikey",
+	DeployerRepositoryRole: "fugaro_deployer_repository",
+	DeployerRunJobRole:     "fugaro_deployer_run_job",
+	DeployerSchedulerRole:  "fugaro_deployer_scheduler_job",
 }
 
 // permVerb is a permission's last segment: the verb of service.resource.verb.
@@ -837,10 +866,12 @@ func TestUnconditionedDeployerCheckCatchesEveryScopedVerb(t *testing.T) {
 	if got := unconditionedDeployerViolations(deployerRoleGolden[DeployerRole]); len(got) != 0 {
 		t.Fatalf("the real unconditioned role is refused: %v", got)
 	}
-	for _, p := range deployerRoleGolden[DeployerScopedRole] {
-		moved := append(slices.Clone(deployerRoleGolden[DeployerRole]), p)
-		if got := unconditionedDeployerViolations(moved); len(got) == 0 {
-			t.Errorf("moving %s into %s is not caught", p, DeployerRole)
+	for _, id := range DeployerServiceRoles() {
+		for _, p := range deployerRoleGolden[id] {
+			moved := append(slices.Clone(deployerRoleGolden[DeployerRole]), p)
+			if got := unconditionedDeployerViolations(moved); len(got) == 0 {
+				t.Errorf("moving %s out of %s into %s is not caught", p, id, DeployerRole)
+			}
 		}
 	}
 	if got := unconditionedDeployerViolations([]string{"cloudscheduler.jobs.enable"}); len(got) == 0 {
@@ -848,13 +879,12 @@ func TestUnconditionedDeployerCheckCatchesEveryScopedVerb(t *testing.T) {
 	}
 }
 
-// The deployer's two roles hold exactly the lists D75 names, and the split
-// between them is the decision: every verb that changes or reaches an existing
-// resource — update, delete, run, pause, resume (cloudscheduler.jobs.enable),
-// setIamPolicy — and actAs
-// itself are in the scoped role alone, which is bound once and only under the
-// managed-prefix condition. The other role creates, reads and enables, and
-// nothing else.
+// The deployer's eight roles hold exactly the lists D75 names, and the split is
+// the decision: every verb that changes or reaches an existing resource —
+// update, delete, run, pause, resume (cloudscheduler.jobs.enable), setIamPolicy
+// — and actAs itself are in the conditioned roles alone, each bound once and
+// only under its own managed-prefix condition. The other role creates, reads
+// and enables, and nothing else.
 func TestDeployerRolesHoldOnlyWhatD75Names(t *testing.T) {
 	for id, want := range deployerRoleGolden {
 		got := slices.Clone(RolePermissions[id])
@@ -864,8 +894,8 @@ func TestDeployerRolesHoldOnlyWhatD75Names(t *testing.T) {
 			t.Errorf("%s pins %v, want %v", id, got, want)
 		}
 	}
-	// A wildcard is never a permission, and neither role may reach project IAM
-	// or an IAM role: an account holding either could grant itself object
+	// A wildcard is never a permission, and no deployer role may reach project
+	// IAM or an IAM role: an account holding either could grant itself object
 	// access to the runs bucket and forge the marker.
 	for id, ps := range deployerRoleGolden {
 		for _, p := range ps {
@@ -887,34 +917,238 @@ func TestDeployerRolesHoldOnlyWhatD75Names(t *testing.T) {
 	for _, why := range unconditionedDeployerViolations(RolePermissions[DeployerRole]) {
 		t.Error(why)
 	}
-	// The scoped role: exactly the nine storage permissions of D75, and no
-	// secretmanager.versions.*, which would make a secret value readable.
+	// The conditioned roles together: exactly the nine storage permissions of
+	// D75, and no secretmanager.versions.*, which would make a secret value
+	// readable.
 	var storage []string
-	for _, p := range RolePermissions[DeployerScopedRole] {
-		if strings.HasPrefix(p, "storage.") {
-			storage = append(storage, p)
-		}
-		if strings.HasPrefix(p, "secretmanager.versions.") {
-			t.Errorf("%s holds %s: a managed plan creates a container and never reads a version", DeployerScopedRole, p)
+	for _, id := range DeployerServiceRoles() {
+		for _, p := range RolePermissions[id] {
+			if strings.HasPrefix(p, "storage.") {
+				storage = append(storage, p)
+			}
+			if strings.HasPrefix(p, "secretmanager.versions.") {
+				t.Errorf("%s holds %s: a managed plan creates a container and never reads a version", id, p)
+			}
 		}
 	}
 	want := []string{"storage.buckets.delete", "storage.buckets.get", "storage.buckets.setIamPolicy", "storage.buckets.update",
 		"storage.objects.create", "storage.objects.delete", "storage.objects.get", "storage.objects.list", "storage.objects.update"}
 	slices.Sort(storage)
 	if !slices.Equal(storage, want) {
-		t.Errorf("%s holds the storage permissions %v, want the nine D75 names %v", DeployerScopedRole, storage, want)
+		t.Errorf("the conditioned roles hold the storage permissions %v, want the nine D75 names %v", storage, want)
 	}
 }
 
-// The condition is the whole fence, so it is tested as one: every clause names
-// the resource type it admits (a clause with no type term applies to every type
-// the role reaches) and tests the managed prefix, and no clause can match one
-// of Fugaro's own resources or the two state buckets.
-func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
-	cls := DeployerConditionClauses()
-	if len(cls) < 5 {
-		t.Fatalf("the condition has %d clauses, want one per service the role reaches", len(cls))
+// d75ScopedPermissions is D75's scoped list, spelled out here independently of
+// the seven roles: the redesign partitions this list, it does not rewrite it.
+var d75ScopedPermissions = []string{
+	"apikeys.keys.delete", "apikeys.keys.update",
+	"artifactregistry.repositories.delete", "artifactregistry.repositories.setIamPolicy", "artifactregistry.repositories.update",
+	"cloudscheduler.jobs.delete", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
+	"iam.serviceAccounts.actAs", "iam.serviceAccounts.delete", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
+	"run.jobs.delete", "run.jobs.run", "run.jobs.runWithOverrides", "run.jobs.setIamPolicy", "run.jobs.update",
+	"secretmanager.secrets.delete", "secretmanager.secrets.setIamPolicy", "secretmanager.secrets.update",
+	"storage.buckets.delete", "storage.buckets.get", "storage.buckets.setIamPolicy", "storage.buckets.update",
+	"storage.objects.create", "storage.objects.delete", "storage.objects.get", "storage.objects.list", "storage.objects.update",
+}
+
+// deployerServiceAPI is each conditioned role's own API: every permission of
+// the role starts with it, and no other role's does. This is what keeps a
+// condition that is too wide for one service from reaching another service's
+// permissions — the roles are the boundary the conditions cannot cross.
+var deployerServiceAPI = map[string]string{
+	DeployerStorageRole:    "storage.",
+	DeployerSecretRole:     "secretmanager.",
+	DeployerAccountRole:    "iam.",
+	DeployerAPIKeyRole:     "apikeys.",
+	DeployerRepositoryRole: "artifactregistry.",
+	DeployerRunJobRole:     "run.",
+	DeployerSchedulerRole:  "cloudscheduler.",
+}
+
+// The seven conditioned roles partition D75's 31 scoped permissions: each in
+// exactly one of them, none added, none dropped, none also in the unconditioned
+// role, and every role holding one service's API and no other's. This is what
+// makes the redesign a change of SHAPE and not a change of what the deployer
+// may do — and it is the test that fails when a permission is moved between
+// services to make one condition easier to write.
+func TestDeployerScopedRolesAreD75Partitioned(t *testing.T) {
+	if len(deployerServiceAPI) != len(DeployerServiceRoles()) {
+		t.Fatalf("deployerServiceAPI names %d roles, the deployer has %d", len(deployerServiceAPI), len(DeployerServiceRoles()))
 	}
+	owner := map[string]string{}
+	for _, id := range DeployerServiceRoles() {
+		api, ok := deployerServiceAPI[id]
+		if !ok {
+			t.Errorf("%s has no API this test knows", id)
+			continue
+		}
+		for _, p := range deployerRoleGolden[id] {
+			if !strings.HasPrefix(p, api) {
+				t.Errorf("%s holds %s, which is not one of its own API's permissions (%s)", id, p, api)
+			}
+			if prev, dup := owner[p]; dup {
+				t.Errorf("%s and %s both hold %s: a permission in two roles is a permission under two conditions, and only one of them was reasoned about", prev, id, p)
+				continue
+			}
+			owner[p] = id
+		}
+	}
+	for _, p := range d75ScopedPermissions {
+		if _, ok := owner[p]; !ok {
+			t.Errorf("D75 gives the conditioned half %s, and no role holds it", p)
+		}
+	}
+	for p, id := range owner {
+		if !slices.Contains(d75ScopedPermissions, p) {
+			t.Errorf("%s holds %s, which is not in D75's scoped list", id, p)
+		}
+		if slices.Contains(RolePermissions[DeployerRole], p) {
+			t.Errorf("%s holds %s and so does %s: a permission the fence is meant to limit cannot also be granted with no condition", DeployerRole, p, id)
+		}
+	}
+}
+
+// deployerOperators is the number of logical operators IAM counts in a
+// condition expression: every && and every || is one. IAM allows 12, and the
+// 0.8.6 shape had 17 — TestDeployerOperatorCountMatchesTheRecordedDefect pins
+// this count to that recorded number, so a change of counting shows up as a
+// failure here rather than silently making the limit easier to pass.
+func deployerOperators(expr string) int {
+	return strings.Count(expr, " && ") + strings.Count(expr, " || ")
+}
+
+// deployerOldCondition is the 0.8.6 expression, clause for clause: the one
+// deployer.tf's header records as having 17 logical operators, a
+// resource.name.contains() and five types resource.name does not support. It is
+// here to be counted, not to be used.
+var deployerOldCondition = strings.Join([]string{
+	`(resource.type == "storage.googleapis.com/Bucket" && resource.name.startsWith("projects/_/buckets/fmgd-"))`,
+	`(resource.type == "storage.googleapis.com/Object" && resource.name.startsWith("projects/_/buckets/fmgd-"))`,
+	`(resource.type == "secretmanager.googleapis.com/Secret" && resource.name.contains("/secrets/fmgd-"))`,
+	`(resource.type == "secretmanager.googleapis.com/SecretVersion" && resource.name.contains("/secrets/fmgd-"))`,
+	`(resource.type == "artifactregistry.googleapis.com/Repository" && resource.name.contains("/repositories/fmgd-"))`,
+	`(resource.type == "run.googleapis.com/Job" && resource.name.contains("/jobs/fmgd-"))`,
+	`(resource.type == "cloudscheduler.googleapis.com/Job" && resource.name.contains("/jobs/fmgd-"))`,
+	`(resource.type == "iam.googleapis.com/ServiceAccount" && resource.name.contains("/serviceAccounts/fmgd-"))`,
+	`(resource.type == "apikeys.googleapis.com/Key" && resource.name.contains("/keys/fmgd-"))`,
+}, " || ")
+
+func TestDeployerOperatorCountMatchesTheRecordedDefect(t *testing.T) {
+	if n := deployerOperators(deployerOldCondition); n != 17 {
+		t.Fatalf("the 0.8.6 condition counts as %d logical operators, and deployer.tf's header records 17: this count is what the split is measured against", n)
+	}
+}
+
+// deployerNameFunctions are the resource.name functions IAM supports.
+// resource.name.contains() is not one of them, and neither is any other call.
+var deployerNameFunctions = []string{"startsWith", "endsWith", "extract"}
+
+// Every one of the seven conditions is inside what IAM accepts, structurally:
+// at most 12 logical operators, only supported resource.name functions, no
+// contains() anywhere, a resource.type term in every clause, and exactly the
+// nine types D75's permissions reach — each fenced by one service and no other.
+// The module's own text is pinned to these clauses by
+// TestDeployerBindingsAreTheModules, so a loosening here is a loosening there.
+func TestDeployerConditionsAreWithinWhatIAMAccepts(t *testing.T) {
+	svcs := deployerServices(testDeployerProject)
+	if len(svcs) != 7 {
+		t.Fatalf("the deployer has %d conditioned roles, want one per service", len(svcs))
+	}
+	// The eight types D75's scoped permissions reach: no more, no fewer, and
+	// each in exactly one service's condition. Secret Manager's VERSION type is
+	// not one of them: every secretmanager permission in the deployer is on a
+	// secret, and secretmanager.versions.* is nowhere in it (the role pin
+	// refuses it), so a version type would be a clause no permission could use.
+	d75Types := []string{
+		"storage.googleapis.com/Bucket", "storage.googleapis.com/Object",
+		"secretmanager.googleapis.com/Secret",
+		"artifactregistry.googleapis.com/Repository",
+		"run.googleapis.com/Job", "cloudscheduler.googleapis.com/Job",
+		"iam.googleapis.com/ServiceAccount", "apikeys.googleapis.com/Key",
+	}
+	seen := map[string]string{}
+	fnRE := regexp.MustCompile(`resource\.name\.([a-zA-Z]+)\(`)
+	for _, s := range svcs {
+		if len(s.Clauses) == 0 {
+			t.Errorf("%s has no clause, so its condition admits nothing or is not written", s.Role)
+			continue
+		}
+		expr := s.Expression()
+		if n := deployerOperators(expr); n > 12 {
+			t.Errorf("%s: %d logical operators in %q, and IAM allows 12", s.Role, n, expr)
+		}
+		if strings.Contains(expr, "contains(") {
+			t.Errorf("%s: the condition calls contains(), which is not a resource.name function IAM supports: %q", s.Role, expr)
+		}
+		for _, m := range fnRE.FindAllStringSubmatch(expr, -1) {
+			if !slices.Contains(deployerNameFunctions, m[1]) {
+				t.Errorf("%s: the condition calls resource.name.%s(), which is not one of %v: %q", s.Role, m[1], deployerNameFunctions, expr)
+			}
+		}
+		for _, c := range s.Clauses {
+			if c.Type == "" || !strings.Contains(c.Type, "/") {
+				t.Errorf("%s: clause %+v carries no resource.type, so it applies to every type the role reaches", s.Role, c)
+			}
+			if !slices.Contains(d75Types, c.Type) {
+				t.Errorf("%s: clause %+v names a type D75's scoped permissions do not reach", s.Role, c)
+			}
+			if prev, dup := seen[c.Type]; dup {
+				t.Errorf("%s and %s both fence %s: one type, one condition, or a clause can reach another service's resources", prev, s.Role, c.Type)
+			}
+			seen[c.Type] = s.Role
+			switch c.Op {
+			case "startsWith":
+				if c.Starts != "" {
+					t.Errorf("%s: startsWith clause %+v carries an extract-only field", s.Role, c)
+				}
+			case "extract":
+				if c.Value == "" || c.Starts == "" {
+					t.Errorf("%s: extract clause %+v has no template or nothing to test the extracted segment with", s.Role, c)
+				}
+			default:
+				t.Errorf("%s: clause %+v uses the operator %q, and the split fence uses startsWith or extract", s.Role, c, c.Op)
+			}
+		}
+	}
+	for _, typ := range d75Types {
+		if _, ok := seen[typ]; !ok {
+			t.Errorf("no condition fences %s, and D75's scoped permissions reach it", typ)
+		}
+	}
+}
+
+// extractSegment is what resource.name.extract(template) returns for name: the
+// resource's own last segment when the name has the template's shape, and ""
+// when it does not — which the condition reads as false. That reading is
+// Google's behaviour and not something this repository can check, which is why
+// it is UNVERIFIED in the design and why Check 68 measures a non-matching name
+// per service.
+func extractSegment(template, name string) string {
+	ts, ns := strings.Split(template, "/"), strings.Split(name, "/")
+	if len(ts) != len(ns) || len(ts) < 2 {
+		return ""
+	}
+	for i, part := range ts {
+		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
+			if ns[i] == "" {
+				return ""
+			}
+			continue
+		}
+		if part != ns[i] {
+			return ""
+		}
+	}
+	return ns[len(ns)-1]
+}
+
+// The conditions are the whole fence, so they are tested as one, service by
+// service: every clause names the resource type it admits and tests the managed
+// prefix at the resource's own name, and no clause — under either form — can
+// match one of Fugaro's own resources or the two state buckets.
+func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
+	svcs := deployerServices(testDeployerProject)
 	// Fugaro's own names: what the fence must not admit, whatever a plan does.
 	forbidden := []string{
 		"projects/_/buckets/fugaro-runs-proj-1", "projects/_/buckets/fugaro-runs-proj-1/objects/fugaro/managed.json",
@@ -932,72 +1166,162 @@ func TestDeployerConditionFencesOnlyTheManagedPrefix(t *testing.T) {
 		"projects/_/buckets/fugaro-runs-proj-1/objects/runs/fmgd-y/state.json",
 		"projects/_/buckets/fugaro-tfstate-proj-1/objects/fmgd-/default.tfstate",
 		"projects/_/buckets/x-fmgd-/objects/a",
+		// A name whose segment merely CONTAINS the prefix, in the services that
+		// test a segment: the prefix is what the segment begins with.
+		"projects/12/secrets/x-fmgd-y", "projects/12/locations/us-east5/jobs/x-fmgd-y",
+		"projects/12/locations/us-east5/repositories/fugaro-fmgd-y",
+		"projects/12/serviceAccounts/x-fmgd-y@proj-1.iam.gserviceaccount.com",
+		"projects/12/locations/global/keys/fugaro-fmgd-y",
+		// A name the extract template does not match at all, offered to the
+		// templates that would otherwise reach into it: a non-match has to read
+		// as false, and a template that matched a longer or shorter path would
+		// hand the last segment of the wrong name to the prefix test.
+		"projects/12/locations/us-east5/jobs/fmgd-x/executions/e1",
+		"projects/12/secrets/fmgd-x/versions/1",
+		"projects/12/locations/us-east5/repositories/fmgd-x/packages/p",
+		"projects/12/locations/global/keys/fmgd-x/restrictions",
 	}
+	// admits is the clause as the condition reads it: the name test the clause
+	// names, on the name the clause's own shape produces.
 	admits := func(c DeployerClause, name string) bool {
 		switch c.Op {
 		case "startsWith":
 			return strings.HasPrefix(name, c.Value)
-		default:
-			return strings.Contains(name, c.Value)
+		case "extract":
+			seg := extractSegment(c.Value, name)
+			return seg != "" && strings.HasPrefix(seg, c.Starts)
 		}
+		return true
 	}
-	for _, c := range cls {
-		if c.Type == "" || !strings.Contains(c.Type, "/") {
-			t.Errorf("clause %+v carries no resource type: it would apply to every type the role reaches", c)
-		}
-		if !strings.Contains(c.Value, ManagedPrefix) {
-			t.Errorf("clause %+v does not test the managed prefix %q", c, ManagedPrefix)
-		}
-		if !strings.HasSuffix(c.Value, "/"+ManagedPrefix) {
-			t.Errorf("clause %+v does not end at the prefix after a path separator: a name such as x-%s would match it", c, ManagedPrefix)
-		}
-		// The value is never the prefix alone (DeployerClause's doc comment):
-		// a value that admitted any name containing the prefix would admit a
-		// fugaro-* object in a bucket whose object name carries it.
-		if c.Value == ManagedPrefix || c.Value == "/"+ManagedPrefix {
-			t.Errorf("clause %+v tests the prefix alone", c)
-		}
-		// Cloud Storage names put the bucket at the front, so a storage clause
-		// tests the bucket's name with startsWith, on the bucket resource path.
-		if strings.HasPrefix(c.Type, "storage.googleapis.com/") && (c.Op != "startsWith" || c.Value != "projects/_/buckets/"+ManagedPrefix) {
-			t.Errorf("storage clause %+v is not startsWith(\"projects/_/buckets/%s\")", c, ManagedPrefix)
-		}
-		switch c.Op {
-		case "startsWith":
-		case "contains":
-		default:
-			t.Errorf("clause %+v has an operator the condition does not use", c)
-		}
-		for _, name := range forbidden {
-			if admits(c, name) || strings.Contains(name, c.Value) {
-				t.Errorf("clause %+v admits %s", c, name)
+	for _, s := range svcs {
+		for _, c := range s.Clauses {
+			// The prefix is tested at the resource's own name, and never as a
+			// bare substring: a value that admitted any name containing
+			// "fmgd-" would admit a fugaro-* resource in a container whose name
+			// carries it. The two forms test it in the two places the name has
+			// it — after a path separator for startsWith, at the start of the
+			// extracted segment for extract — and "x-fmgd-y" matches neither.
+			switch c.Op {
+			case "startsWith":
+				if !strings.HasSuffix(c.Value, "/"+ManagedPrefix) {
+					t.Errorf("%s: clause %+v does not end at %q after a path separator, so a name such as x-%s would match it", s.Role, c, ManagedPrefix, ManagedPrefix)
+				}
+			case "extract":
+				if c.Starts != ManagedPrefix {
+					t.Errorf("%s: extract clause %+v tests the segment with %q, want exactly the reserved prefix %q at the start of the segment", s.Role, c, c.Starts, ManagedPrefix)
+				}
+			}
+			// Cloud Storage names put the bucket at the front, so a storage
+			// clause tests the bucket's name with startsWith, on the bucket
+			// resource path — the form Check 32 proved.
+			if strings.HasPrefix(c.Type, "storage.googleapis.com/") && (c.Op != "startsWith" || c.Value != "projects/_/buckets/"+ManagedPrefix) {
+				t.Errorf("%s: storage clause %+v is not startsWith(\"projects/_/buckets/%s\")", s.Role, c, ManagedPrefix)
+			}
+			// The account clause names the project, because var.project is a
+			// plan-time literal and a clause that omitted it would admit an
+			// account in any project the binding were ever moved to.
+			if c.Type == "iam.googleapis.com/ServiceAccount" && (c.Op != "startsWith" || c.Value != "projects/"+testDeployerProject+"/serviceAccounts/"+ManagedPrefix) {
+				t.Errorf("%s: the service-account clause %+v is not startsWith(\"projects/%s/serviceAccounts/%s\")", s.Role, c, testDeployerProject, ManagedPrefix)
+			}
+			for _, name := range forbidden {
+				if admits(c, name) {
+					t.Errorf("%s: clause %+v admits %s", s.Role, c, name)
+				}
 			}
 		}
 	}
-	// One expression, both halves of it: the clauses in order, joined, and the
-	// module's own text is pinned against it in TestDeployerBindingsAreTheModules.
-	expr := DeployerConditionExpression()
-	for _, c := range cls {
-		if !strings.Contains(expr, c.String()) {
-			t.Errorf("the expression does not carry the clause %q", c.String())
+	// And what each condition must admit: its own service's prefixed resource,
+	// in that service's own name shape, so a fence that admits nothing cannot
+	// pass this test by refusing everything. The project is the NUMBER for the
+	// services whose names carry one, and the location is not the
+	// installation's — a managed plan chooses it.
+	admitted := map[string][]string{
+		DeployerStorageRole: {"projects/_/buckets/fmgd-x", "projects/_/buckets/fmgd-x/objects/o"},
+		// The container alone: a version's name does not match the secret's
+		// template, so no clause admits a version — and no permission of this
+		// role acts on one (secretmanager.versions.* is nowhere in the deployer,
+		// and the role pin refuses it).
+		DeployerSecretRole:     {"projects/12/secrets/fmgd-x"},
+		DeployerAccountRole:    {"projects/" + testDeployerProject + "/serviceAccounts/fmgd-x@" + testDeployerProject + ".iam.gserviceaccount.com"},
+		DeployerAPIKeyRole:     {"projects/12/locations/global/keys/fmgd-x"},
+		DeployerRepositoryRole: {"projects/12/locations/europe-west1/repositories/fmgd-x"},
+		DeployerRunJobRole:     {"projects/12/locations/europe-west1/jobs/fmgd-x"},
+		DeployerSchedulerRole:  {"projects/12/locations/us-east4/jobs/fmgd-x"},
+	}
+	for _, s := range svcs {
+		names, ok := admitted[s.Role]
+		if !ok {
+			t.Errorf("%s: this test names no resource the condition must admit", s.Role)
+			continue
+		}
+		for _, name := range names {
+			ok := false
+			for _, c := range s.Clauses {
+				if admits(c, name) {
+					ok = true
+				}
+			}
+			if !ok {
+				t.Errorf("%s: no clause admits %s, which is the service's own prefixed resource", s.Role, name)
+			}
 		}
 	}
-	if strings.Count(expr, " || ") != len(cls)-1 {
-		t.Errorf("the expression %q is not the clauses joined", expr)
+	// Each condition is its own clauses in order, joined, and nothing else: a
+	// widened expression is not something the plan review could tell from a
+	// narrowed one, so the string is pinned whole.
+	for _, s := range svcs {
+		expr := s.Expression()
+		for _, c := range s.Clauses {
+			if !strings.Contains(expr, c.String()) {
+				t.Errorf("%s: the expression does not carry the clause %q", s.Role, c.String())
+			}
+		}
+		if strings.Count(expr, " || ") != len(s.Clauses)-1 {
+			t.Errorf("%s: the expression %q is not the clauses joined", s.Role, expr)
+		}
 	}
 	// The clauses are a copy: a caller cannot widen the fence.
-	got := DeployerConditionClauses()
+	got, ok := DeployerConditionClauses(testDeployerProject, DeployerStorageRole)
+	if !ok {
+		t.Fatal("DeployerConditionClauses does not know the storage role")
+	}
 	got[0].Value = "projects/_/buckets/"
-	if DeployerConditionClauses()[0].Value == got[0].Value {
+	again, _ := DeployerConditionClauses(testDeployerProject, DeployerStorageRole)
+	if again[0].Value == got[0].Value {
 		t.Error("DeployerConditionClauses hands out the fence itself, not a copy")
+	}
+	// A role that is not one of the seven has no condition, and the expression
+	// of one that is comes back with it: this is what deployerGrant reads.
+	if _, ok := DeployerConditionExpression(testDeployerProject, DeployerRole); ok {
+		t.Errorf("%s has a condition, and it is bound with none (D75 (1))", DeployerRole)
+	}
+	for _, s := range svcs {
+		expr, ok := DeployerConditionExpression(testDeployerProject, s.Role)
+		if !ok || expr != s.Expression() {
+			t.Errorf("%s: DeployerConditionExpression = %q, %v, want its own expression", s.Role, expr, ok)
+		}
 	}
 }
 
+// testDeployerProject is the project the module-pin test builds the fence for.
+// One clause names a project — the IAM service account's — and the module
+// writes it as ${var.project} where a plan carries the value.
+const testDeployerProject = "proj-1"
+
+// deployerConditionLocal is the module local that holds one role's condition:
+// deployer_condition_<lowercased role suffix>, which is how the module's names
+// and the roles stay in step — a service added on one side and not the other is
+// a missing local rather than a silently uncovered role.
+func deployerConditionLocal(role string) string {
+	return "deployer_condition_" + strings.ToLower(strings.TrimPrefix(role, "fugaroDeployer"))
+}
+
 // The module writes the fence, so the module's text and Go's copy of it must
-// be the same bytes: the clauses one by one, in order, under the same title,
-// and one binding per role — the scoped one conditioned, the other one not.
-// This is what makes the plan review's byte comparison (deployerGrant)
-// check the condition the module actually applies.
+// be the same bytes: one local per service, its clauses one by one, in order,
+// under the same title, and one binding per role — the seven conditioned ones
+// under their own condition, the unconditioned one under none. This is what
+// makes the plan review's byte comparison (deployerGrant) check the condition
+// the module actually applies.
 func TestDeployerBindingsAreTheModules(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"))
 	if err != nil {
@@ -1009,42 +1333,71 @@ func TestDeployerBindingsAreTheModules(t *testing.T) {
 	if m == nil || m[1] != DeployerConditionTitle {
 		t.Errorf("the module's condition title is %v, Go's is %q", m, DeployerConditionTitle)
 	}
-	joinRE := regexp.MustCompile(`(?s)deployer_condition_expression\s*=\s*join\(" \|\| ", \[(.*?)\]\)`)
-	jm := joinRE.FindStringSubmatch(src)
-	if jm == nil {
-		t.Fatal("deployer.tf has no join(\" || \", [...]) expression")
-	}
-	var moduleClauses []string
-	// HCL escapes the expression's own quotes, so each clause is unquoted
-	// before it is compared: the comparison is of the condition's bytes, not
-	// of the file's escaping.
-	for _, c := range regexp.MustCompile(`"((?:[^"\\]|\\.)*resource\.type(?:[^"\\]|\\.)*)"`).FindAllStringSubmatch(jm[1], -1) {
-		clause, err := strconv.Unquote(`"` + c[1] + `"`)
-		if err != nil {
-			t.Fatalf("unquoting the clause %q: %v", c[1], err)
+	locals := map[string][]string{}
+	joinRE := regexp.MustCompile(`(?s)deployer_condition_([a-z0-9_]+)\s*=\s*join\(" \|\| ", \[(.*?)\]\)`)
+	clauseRE := regexp.MustCompile(`"((?:[^"\\]|\\.)*resource\.type(?:[^"\\]|\\.)*)"`)
+	for _, jm := range joinRE.FindAllStringSubmatch(src, -1) {
+		// HCL escapes the expression's own quotes, so each clause is unquoted
+		// before it is compared: the comparison is of the condition's bytes,
+		// not of the file's escaping.
+		var clauses []string
+		for _, c := range clauseRE.FindAllStringSubmatch(jm[2], -1) {
+			clause, err := strconv.Unquote(`"` + c[1] + `"`)
+			if err != nil {
+				t.Fatalf("unquoting the clause %q: %v", c[1], err)
+			}
+			// The one clause that names a project is written as ${var.project}
+			// and Go builds it with the project the cover knows.
+			clauses = append(clauses, strings.ReplaceAll(clause, "${var.project}", testDeployerProject))
 		}
-		moduleClauses = append(moduleClauses, clause)
+		if len(clauses) == 0 {
+			t.Errorf("deployer.tf's local deployer_condition_%s is not a join of clause literals", jm[1])
+		}
+		// jm[1] is the group, the suffix alone: the local's name is the prefix
+		// and the suffix, which is what the module writes and what the bindings
+		// below name.
+		if _, dup := locals["deployer_condition_"+jm[1]]; dup {
+			t.Errorf("deployer.tf declares deployer_condition_%s twice", jm[1])
+		}
+		locals["deployer_condition_"+jm[1]] = clauses
 	}
-	var goClauses []string
-	for _, c := range DeployerConditionClauses() {
-		goClauses = append(goClauses, c.String())
+	svcs := deployerServices(testDeployerProject)
+	for _, s := range svcs {
+		name := deployerConditionLocal(s.Role)
+		got, ok := locals[name]
+		if !ok {
+			t.Errorf("deployer.tf has no local.%s for %s", name, s.Role)
+			continue
+		}
+		delete(locals, name)
+		want := make([]string, 0, len(s.Clauses))
+		for _, c := range s.Clauses {
+			want = append(want, c.String())
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("deployer.tf's %s fence is\n%v\nGo's %s is\n%v", name, got, s.Role, want)
+		}
 	}
-	if !slices.Equal(moduleClauses, goClauses) {
-		t.Errorf("deployer.tf's clauses are\n%v\nGo's are\n%v", moduleClauses, goClauses)
+	for name := range locals {
+		t.Errorf("deployer.tf declares deployer_condition_%s, which is no service's fence", name)
 	}
-	// Exactly one binding of each role in the whole module tree, and the
-	// scoped role's is the conditioned one: a second binding of the scoped
-	// role — under another condition or under none — would widen the account
-	// as much as deleting the condition.
-	for _, tc := range []struct {
+	// Exactly one binding of each of the eight roles in the whole module tree,
+	// the seven conditioned ones under their own condition and the other under
+	// none: a second binding of a conditioned role — under another condition or
+	// under none — would widen the account as much as deleting the condition,
+	// and one carrying another service's condition would fence the wrong
+	// resource type.
+	type binding struct {
 		role      string
-		condition bool
-	}{
-		{DeployerRole, false},
-		{DeployerScopedRole, true},
-	} {
+		condition string // the local the binding's condition must be, "" for none
+	}
+	bindings := []binding{{DeployerRole, ""}}
+	for _, s := range svcs {
+		bindings = append(bindings, binding{s.Role, "local." + deployerConditionLocal(s.Role)})
+	}
+	for _, tc := range bindings {
 		// The closing quote is counted too: fugaroDeployer is a prefix of
-		// fugaroDeployerScoped, and the two bindings must be counted apart.
+		// fugaroDeployerStorage, and the bindings must be counted apart.
 		literal := "projects/${var.project}/roles/" + tc.role + `"`
 		if n := countInModules(t, literal); n != 1 {
 			t.Errorf("the role %s is named %d times in the modules, want exactly its one binding", tc.role, n)
@@ -1056,14 +1409,17 @@ func TestDeployerBindingsAreTheModules(t *testing.T) {
 				continue
 			}
 			found = true
-			if strings.Contains(blk[1], "condition") != tc.condition {
-				t.Errorf("the %s binding's condition is %v, want %v", tc.role, !tc.condition, tc.condition)
+			if strings.Contains(blk[1], "condition") != (tc.condition != "") {
+				t.Errorf("the %s binding's condition is %v, want %q", tc.role, !(tc.condition != ""), tc.condition)
 			}
 			if !strings.Contains(blk[1], "google_service_account.fugaro_deployer.member") {
 				t.Errorf("the %s binding is not on the deployer account: %s", tc.role, blk[1])
 			}
-			if tc.condition && !strings.Contains(blk[1], "local.deployer_condition_expression") {
-				t.Errorf("the %s binding's condition is not the module's expression", tc.role)
+			if tc.condition != "" && !strings.Contains(blk[1], tc.condition) {
+				t.Errorf("the %s binding's condition is not %s", tc.role, tc.condition)
+			}
+			if tc.condition != "" && !strings.Contains(blk[1], "title      = local.deployer_condition_title") {
+				t.Errorf("the %s binding's condition is not under the one fence title", tc.role)
 			}
 		}
 		if !found {
@@ -1126,21 +1482,21 @@ func countInModules(t *testing.T, s string) int {
 	return n
 }
 
-// A plan that creates one of the deployer's roles may not also carry a project
-// grant of a computed role: the computed role could be the scoped one, whose
-// binding carries the fence, and a plan that does not say which role it is
-// cannot be reviewed as if it were the other one.
+// A plan that creates one of the deployer's conditioned roles may not also
+// carry a project grant of a computed role: the computed role could be one of
+// them, whose binding carries that service's fence, and a plan that does not
+// say which role it is cannot be reviewed as if it were the other one.
 func TestDeployerRoleCreationRefusesComputedProjectRoles(t *testing.T) {
 	var perms []any
-	for _, p := range deployerRoleGolden[DeployerScopedRole] {
+	for _, p := range deployerRoleGolden[DeployerStorageRole] {
 		perms = append(perms, p)
 	}
-	deployerRole := customRole(DeployerScopedRole, "proj-1", perms)
+	deployerRole := customRole(DeployerStorageRole, "proj-1", perms)
 	for name, tc := range map[string]struct {
 		changes []ResourceChange
 		covered bool
 	}{
-		"a computed project role beside the scoped role": {[]ResourceChange{deployerRole,
+		"a computed project role beside a conditioned role": {[]ResourceChange{deployerRole,
 			rc("google_project_iam_member", map[string]any{"member": "user:me@example.com"}, map[string]any{"role": true}, "create")}, false},
 		// The control: the same computed project role beside a custom role
 		// that is not one of the deployer's, which is the shape the modules
@@ -1169,13 +1525,14 @@ func TestDeployerRoleCreationRefusesComputedProjectRoles(t *testing.T) {
 }
 
 // The refusal above holds for each of the deployer's roles on its own: a plan
-// that creates only fugaroDeployer, or only fugaroDeployerScoped, with a
-// computed project role beside it is refused — either role being created is a
-// plan in which the scoped role may be the computed one (the two are created
-// together by the module, and a plan that carried one could still bind the
-// other, already existing, under a role nobody can name).
+// that creates only fugaroDeployer, or only one of the seven conditioned roles,
+// with a computed project role beside it is refused — either role being created
+// is a plan in which a conditioned role may be the computed one (the eight are
+// created together by the module, and a plan that carried one could still bind
+// another, already existing, under a role nobody can name).
 func TestDeployerRoleCreationRefusesComputedProjectRolesForEitherRole(t *testing.T) {
-	for _, id := range []string{DeployerRole, DeployerScopedRole} {
+	roles := append([]string{DeployerRole}, DeployerServiceRoles()...)
+	for _, id := range roles {
 		t.Run(id, func(t *testing.T) {
 			var perms []any
 			for _, p := range RolePermissions[id] {

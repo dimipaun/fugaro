@@ -40,13 +40,21 @@ func withCondFor(after map[string]any, typ, role string, person bool) {
 
 // deployerCondFor is the condition a project grant of one of the deployer's
 // roles needs so that deployerGrant never flips a cell this matrix tests
-// only at the table level: binding (2)'s exact condition for the scoped role,
-// which is bound with none for the other one. Every other role needs none.
+// only at the table level: each conditioned role's own condition, which is
+// bound with none for the unconditioned one. Every other role needs none.
 func deployerCondFor(typ, role string) []any {
-	if typ != "google_project_iam_member" || role != "projects/proj-1/roles/"+DeployerScopedRole {
+	if typ != "google_project_iam_member" {
 		return nil
 	}
-	return []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}
+	id, ok := strings.CutPrefix(role, "projects/proj-1/roles/")
+	if !ok || id == DeployerRole {
+		return nil
+	}
+	expr, ok := DeployerConditionExpression("proj-1", id)
+	if !ok {
+		return nil
+	}
+	return []any{map[string]any{"title": DeployerConditionTitle, "expression": expr, "description": nil}}
 }
 
 // deployerGrantAccountFor is the account a grant of role through typ needs so
@@ -388,9 +396,13 @@ func TestDeployerRolesAndAccountAreTheDeployersAlone(t *testing.T) {
 		scheduler = "serviceAccount:fugaro-scheduler@proj-1.iam.gserviceaccount.com"
 		history   = "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com"
 	)
-	scoped := "projects/proj-1/roles/" + DeployerScopedRole
+	// One service's conditioned role stands for the seven in this matrix, which
+	// is about the grant table and not about the conditions: the conditions are
+	// tested one by one, per service, in TestDeployerGrantConditions.
+	scoped := "projects/proj-1/roles/" + DeployerStorageRole
 	plain := "projects/proj-1/roles/" + DeployerRole
-	exact := []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}
+	scopedExpr, _ := DeployerConditionExpression("proj-1", DeployerStorageRole)
+	exact := []any{map[string]any{"title": DeployerConditionTitle, "expression": scopedExpr, "description": nil}}
 	onDeployer := deployerAccountName("proj-1")
 	onScheduler := "projects/proj-1/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com"
 	type tc struct {
@@ -507,7 +519,7 @@ func TestCloudAssetRoleIsTheSearchReadOnly(t *testing.T) {
 func TestOnlyTheDeployerRolesNameTheDeployer(t *testing.T) {
 	for typ, row := range grantRules {
 		for key, w := range row {
-			isDeployerRole := typ == "google_project_iam_member" && (key == customKey+DeployerRole || key == customKey+DeployerScopedRole)
+			isDeployerRole := typ == "google_project_iam_member" && (key == customKey+DeployerRole || slices.Contains(DeployerServiceRoles(), strings.TrimPrefix(key, customKey)))
 			if isDeployerRole && w != toDeployer {
 				t.Errorf("%s %s is held by %d, want the deployer alone", typ, key, w)
 			}
@@ -522,22 +534,27 @@ func TestOnlyTheDeployerRolesNameTheDeployer(t *testing.T) {
 }
 
 // The fence of D75 (Task 1.5 step 5), tested the way it is applied: a project
-// binding of fugaroDeployerScoped is covered only under binding (2)'s exact
-// condition — the managed prefix, per service, byte for byte — and one of
-// fugaroDeployer only with no condition at all. A binding with the condition
+// binding of one of the deployer's conditioned roles is covered only under that
+// role's own condition — the managed prefix for its own service, byte for byte
+// — and one of fugaroDeployer only with no condition at all. A binding carrying
+// ANOTHER service's condition is refused too: it is the wrong fence, and the
+// review cannot tell a mistake from a widening. A binding with the condition
 // removed, with a wider one, with a narrowed one, with a condition known only
 // after apply or with more than one condition hands the deployer every update,
 // delete, setIamPolicy and actAs of the scoped role project-wide, which is the
 // account that could then reach the runs bucket and forge the marker.
 func TestDeployerGrantConditions(t *testing.T) {
 	const account = "serviceAccount:fugaro-deployer@proj-1.iam.gserviceaccount.com"
-	scoped := "projects/proj-1/roles/" + DeployerScopedRole
+	scoped := "projects/proj-1/roles/" + DeployerStorageRole
 	plain := "projects/proj-1/roles/" + DeployerRole
 	cond := func(title, expr string) []any {
 		return []any{map[string]any{"title": title, "expression": expr, "description": nil}}
 	}
-	exact := cond(DeployerConditionTitle, DeployerConditionExpression())
-	first := DeployerConditionClauses()[0].String()
+	scopedExpr, _ := DeployerConditionExpression("proj-1", DeployerStorageRole)
+	otherExpr, _ := DeployerConditionExpression("proj-1", DeployerRunJobRole)
+	exact := cond(DeployerConditionTitle, scopedExpr)
+	cls, _ := DeployerConditionClauses("proj-1", DeployerStorageRole)
+	first := cls[0].String()
 	for name, tc := range map[string]struct {
 		role    string
 		member  string
@@ -548,11 +565,12 @@ func TestDeployerGrantConditions(t *testing.T) {
 	}{
 		"the scoped role under its condition":                  {role: scoped, member: account, after: map[string]any{"condition": exact}, covered: true},
 		"the scoped role with no condition":                    {role: scoped, member: account, covered: false, why: DeployerConditionTitle},
-		"the scoped role under a widened condition":            {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, DeployerConditionExpression()+" || true")}, covered: false, why: DeployerConditionTitle},
+		"the scoped role under a widened condition":            {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, scopedExpr+" || true")}, covered: false, why: DeployerConditionTitle},
+		"the scoped role under another service's condition":    {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, otherExpr)}, covered: false, why: DeployerConditionTitle},
 		"the scoped role under a narrowed condition":           {role: scoped, member: account, after: map[string]any{"condition": cond(DeployerConditionTitle, first)}, covered: false, why: DeployerConditionTitle},
-		"the scoped role under another title":                  {role: scoped, member: account, after: map[string]any{"condition": cond("fugaro-something-else", DeployerConditionExpression())}, covered: false, why: DeployerConditionTitle},
-		"the scoped role with a description":                   {role: scoped, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": "x"}}}, covered: false, why: "description"},
-		"the scoped role with two conditions":                  {role: scoped, member: account, after: map[string]any{"condition": []any{exact[0], map[string]any{"title": DeployerConditionTitle, "expression": DeployerConditionExpression(), "description": nil}}}, covered: false, why: "more than one condition"},
+		"the scoped role under another title":                  {role: scoped, member: account, after: map[string]any{"condition": cond("fugaro-something-else", scopedExpr)}, covered: false, why: DeployerConditionTitle},
+		"the scoped role with a description":                   {role: scoped, member: account, after: map[string]any{"condition": []any{map[string]any{"title": DeployerConditionTitle, "expression": scopedExpr, "description": "x"}}}, covered: false, why: "description"},
+		"the scoped role with two conditions":                  {role: scoped, member: account, after: map[string]any{"condition": []any{exact[0], map[string]any{"title": DeployerConditionTitle, "expression": scopedExpr, "description": nil}}}, covered: false, why: "more than one condition"},
 		"the scoped role with a condition that is not a block": {role: scoped, member: account, after: map[string]any{"condition": []any{"true", "true"}}, covered: false, why: "not a condition block"},
 		"the scoped role with an unknown condition":            {role: scoped, member: account, unknown: map[string]any{"condition": []any{map[string]any{"expression": true}}}, covered: false, why: "not known"},
 		"the scoped role to a person":                          {role: scoped, member: "user:me@example.com", after: map[string]any{"condition": exact}, covered: false, why: "kind of principal"},

@@ -93,12 +93,21 @@ var grantRules = map[string]map[string]who{
 		customKey + "fugaroHistory":        toAccounts,
 		customKey + "fugaroReaper":         toAccounts,
 		customKey + "fugaroPreloadBuilder": toAccounts,
-		// The deployer's two roles, bound to the deployer account and to
-		// nothing else (deployer.tf's two bindings; deployerGrant below is
+		// The deployer's eight roles, bound to the deployer account and to
+		// nothing else (deployer.tf's eight bindings; deployerGrant below is
 		// what checks their member, project and conditions, which grantRules
-		// cannot see).
-		customKey + DeployerRole:       toDeployer,
-		customKey + DeployerScopedRole: toDeployer,
+		// cannot see). A role of the deployer's that is missing from these
+		// rows is refused outright rather than falling through, which is what
+		// makes adding one a deliberate act:
+		// TestEveryDeployerRoleIsBoundAndGranted pins the two lists together.
+		customKey + DeployerRole:           toDeployer,
+		customKey + DeployerStorageRole:    toDeployer,
+		customKey + DeployerSecretRole:     toDeployer,
+		customKey + DeployerAccountRole:    toDeployer,
+		customKey + DeployerAPIKeyRole:     toDeployer,
+		customKey + DeployerRepositoryRole: toDeployer,
+		customKey + DeployerRunJobRole:     toDeployer,
+		customKey + DeployerSchedulerRole:  toDeployer,
 		// The whole-project inventory's read role (Task 4.1a, the owner's
 		// ruling of 2026-10-17): the installation's own custom role, granted
 		// to the operators who run a managed apply. The predefined
@@ -220,10 +229,10 @@ const CloudAssetRole = "fugaroCloudAssetReader"
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) is
-// deliberately NOT among FugaroAccounts: it holds its two roles and nothing
-// else, so it is its own kind of principal (toDeployer).
+// deliberately NOT among FugaroAccounts: it holds its roles and nothing else,
+// so it is its own kind of principal (toDeployer).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, DeployerRole, DeployerScopedRole}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -259,17 +268,31 @@ const (
 	// DeployerRole is the unconditioned role's ID: create permissions, reads
 	// and serviceusage.services.enable.
 	DeployerRole = "fugaroDeployer"
-	// DeployerScopedRole is the conditioned role's ID: every update, delete,
-	// run and pause permission, every *.setIamPolicy and actAs, held only
-	// where DeployerConditionExpression admits the resource. In 0.8.6 the
-	// module creates it, and its binding, only with managed_deployer_scoped,
-	// which nothing sets (deployer.tf's header: the condition is not one IAM
-	// accepts yet). A plan without either has nothing of it to cover; one
-	// with them is covered as before.
-	DeployerScopedRole = "fugaroDeployerScoped"
-	// DeployerConditionTitle is that condition's title. The modules never set
-	// a condition description, and the plan review compares the title and the
-	// expression byte for byte.
+	// The seven conditioned roles' IDs, one per service, each holding that
+	// service's slice of every update, delete, run and pause permission, every
+	// *.setIamPolicy and actAs, and each bound to the deployer account exactly
+	// once under its own condition (deployerServices below). Until 0.9.0 this
+	// was ONE role, fugaroDeployerScoped, under one condition; that condition
+	// could not be applied (17 logical operators where IAM allows 12, a
+	// resource.name.contains() which is not a supported function, and
+	// resource.name unsupported for five of the nine types it named), so the
+	// fence was gated off and redesigned — docs/design/managed-deployer-fence.md.
+	// The module creates them, and their bindings, only with
+	// managed_deployer_scoped, which nothing sets. A plan without them has
+	// nothing of them to cover; one with them is covered binding by binding.
+	DeployerStorageRole    = "fugaroDeployerStorage"
+	DeployerSecretRole     = "fugaroDeployerSecret"
+	DeployerAccountRole    = "fugaroDeployerAccount"
+	DeployerAPIKeyRole     = "fugaroDeployerApiKey"
+	DeployerRepositoryRole = "fugaroDeployerRepository"
+	DeployerRunJobRole     = "fugaroDeployerRunJob"
+	DeployerSchedulerRole  = "fugaroDeployerSchedulerJob"
+	// DeployerConditionTitle is the title of every one of those seven
+	// conditions. It names the fence rather than the service, so the project's
+	// policy listing shows one fence around the deployer; the role is what
+	// says which service a binding fences. The modules never set a condition
+	// description, and the plan review compares the title and the expression
+	// byte for byte.
 	DeployerConditionTitle = "fugaro-managed-prefix"
 	// DeployerTokenCreatorRole is the one role that lets an operator assume
 	// the account (D75's one-time setup, step 2 of Task 1.5). It is granted on
@@ -278,78 +301,191 @@ const (
 	DeployerTokenCreatorRole = "roles/iam.serviceAccountTokenCreator"
 )
 
-// DeployerClause is one clause of the scoped condition: the resource type it
-// admits, and the resource.name test it admits it under. The type term is not
-// optional — a clause with no type term applies to every type the role reaches,
-// so a resource whose name happens to end in the prefix could otherwise reach
-// a permission meant for another service (a bucket named fmgd- is not a
-// service account).
+// DeployerClause is one clause of one service's condition: the resource type
+// it admits, and the resource.name test it admits it under. The type term is
+// not optional — a clause with no type term applies to every type the role
+// reaches, so a resource whose name happens to carry the prefix could
+// otherwise reach a permission meant for another service (a bucket named
+// fmgd- is not a service account).
 //
-// Op is "startsWith" or "contains": Cloud Storage names a bucket
-// projects/_/buckets/<bucket> and an object
-// projects/_/buckets/<bucket>/objects/<object>, so the prefix has to be tested
-// at the front of the name; the other services put the resource's own name at
-// the end of a path whose middle carries the project, the location and the
-// parent, so the prefix is tested as a substring of a segment that begins the
-// resource's own name. "contains" is deliberately used with the segment's
-// leading slash and the trailing dash ("/jobs/fmgd-"), so a resource named
-// x-fmgd- or fugaro-fmgd- is not admitted by it.
+// Op is "startsWith" or "extract", the two forms the split fence uses:
 //
-// Value is spelled with ManagedPrefix in it, and never as a prefix alone: a
-// value that admitted any name containing "fmgd-" would admit a fugaro-*
-// object in a bucket whose name contains the prefix.
+//   - "startsWith" tests the front of the whole resource name, and Value is
+//     that front, with ManagedPrefix spelled into it. Cloud Storage names a
+//     bucket projects/_/buckets/<bucket> and an object
+//     projects/_/buckets/<bucket>/objects/<object>, so
+//     "projects/_/buckets/fmgd-" is a prefix of the name, and this is the one
+//     form the tree has measured live (Check 32, RUN 2026-10-14). An IAM
+//     service account's name is
+//     projects/<project>/serviceAccounts/<account>@<project>
+//     .iam.gserviceaccount.com, whose front is the project — a plan-time
+//     literal (var.project) — so that service takes this form too.
+//   - "extract" tests the resource's own LAST segment: Value is the name's
+//     template, placeholders and all, and Starts is what the extracted segment
+//     must begin with. It is what the remaining five services need, because
+//     the segment before the resource's own name carries a value the module
+//     does not have at plan time: Secret Manager names a secret with the
+//     project NUMBER rather than the id, and Artifact Registry, Cloud Run and
+//     Cloud Scheduler carry the location, which a managed plan chooses and
+//     which is not even constant inside one installation (the installation's
+//     own scheduler runs in another region from its jobs).
+//
+// Value is never ManagedPrefix alone: a value that admitted any name merely
+// containing "fmgd-" would admit a fugaro-* resource in a container whose name
+// contains the prefix.
+//
+// The extract form depends on Google behaviour this repository cannot check:
+// that a name not matching the template makes the condition false rather than
+// true (docs/design/managed-deployer-fence.md, C7). It is used only where
+// startsWith cannot be written, and the live check that measures it per
+// service, both directions, is Check 68.
 type DeployerClause struct {
-	Type, Op, Value string
+	Type, Op, Value, Starts string
 }
 
 // String is the clause as the condition writes it, and as the module writes it
 // byte for byte (TestDeployerConditionIsTheModules pins the two together).
 func (c DeployerClause) String() string {
-	return "(resource.type == " + strconv.Quote(c.Type) + " && resource.name." + c.Op + "(" + strconv.Quote(c.Value) + "))"
+	typ := "resource.type == " + strconv.Quote(c.Type)
+	if c.Op == "extract" {
+		return "(" + typ + " && resource.name.extract(" + strconv.Quote(c.Value) + ").startsWith(" + strconv.Quote(c.Starts) + "))"
+	}
+	return "(" + typ + " && resource.name." + c.Op + "(" + strconv.Quote(c.Value) + "))"
 }
 
-// deployerClauses is the scoped condition, one clause per service the role's
-// permissions reach. Each is written out here as the module writes it in
-// deployer.tf, because the plan review compares the two byte for byte.
+// DeployerService is one service's slice of the deployer's scoped authority:
+// the custom role that holds that service's permissions, and the clauses of
+// the one condition its one binding carries.
 //
-// What is NOT in it, and why: the runs bucket, the installation's state bucket
-// and D77's managed state bucket (whose object access is a bucket-level
-// binding of its own, Task 1.5 (3)), Fugaro's own accounts, jobs, scheduler
-// jobs, secrets and repositories, and the project's default compute account —
-// none of their names carries the prefix, and that is the whole fence.
+// The split is what makes the fence expressible at all (F1 of
+// docs/design/managed-deployer-fence.md): one condition covering all nine
+// types needs nine clauses and 17 logical operators where IAM allows 12, a
+// resource.name.contains() that is not a supported function, and resource.name
+// forms five of those services do not have. One condition per service needs
+// one or two clauses, three operators at most, and a name test written the way
+// that service's own name is shaped. It also shrinks the blast radius of a
+// wrong clause: a clause too wide for Cloud Scheduler cannot widen storage,
+// because storage's permissions are in another role under another binding.
+type DeployerService struct {
+	// Role is the custom role's ID, "fugaroDeployer<Service>".
+	Role string
+	// Clauses are the condition's clauses, in the order the module writes them.
+	Clauses []DeployerClause
+}
+
+// Expression is the service's condition expression: its clauses joined with
+// " || ", the string the module's own local holds and a plan carries.
+func (s DeployerService) Expression() string {
+	parts := make([]string, 0, len(s.Clauses))
+	for _, c := range s.Clauses {
+		parts = append(parts, c.String())
+	}
+	return strings.Join(parts, " || ")
+}
+
+// deployerServices is the scoped half of D75, one entry per service, and the
+// source of every role, clause and expression the cover compares a plan
+// against. The module writes the same strings in deployer.tf
+// (local.deployer_condition_<service>) and TestDeployerConditionIsTheModules
+// pins the two together, byte for byte.
+//
+// What is NOT in any of them, and why: the runs bucket, the installation's
+// state bucket and D77's managed state bucket (whose object access is a
+// bucket-level binding of its own, Task 1.5 (3)), Fugaro's own accounts, jobs,
+// scheduler jobs, secrets, repositories and API key, and the project's default
+// compute account — none of their names carries the prefix, and that is the
+// whole fence.
 //
 // Where GCP does not honour resource.name for one of these types, the
 // permission that needs it is not moved into the unconditioned role: the task
 // that would drop the matching type is Task 1.1's list, and the live check
-// that measures each form is the plan's Check 68. Until it is run, the forms
-// below are what the IAM Conditions documentation says these services name
-// their resources.
-var deployerClauses = []DeployerClause{
-	{"storage.googleapis.com/Bucket", "startsWith", "projects/_/buckets/" + ManagedPrefix},
-	{"storage.googleapis.com/Object", "startsWith", "projects/_/buckets/" + ManagedPrefix},
-	{"secretmanager.googleapis.com/Secret", "contains", "/secrets/" + ManagedPrefix},
-	{"secretmanager.googleapis.com/SecretVersion", "contains", "/secrets/" + ManagedPrefix},
-	{"artifactregistry.googleapis.com/Repository", "contains", "/repositories/" + ManagedPrefix},
-	{"run.googleapis.com/Job", "contains", "/jobs/" + ManagedPrefix},
-	{"cloudscheduler.googleapis.com/Job", "contains", "/jobs/" + ManagedPrefix},
-	{"iam.googleapis.com/ServiceAccount", "contains", "/serviceAccounts/" + ManagedPrefix},
-	{"apikeys.googleapis.com/Key", "contains", "/keys/" + ManagedPrefix},
+// that measures each form is Check 68. Until it is run, the forms below are
+// what the IAM Conditions documentation says these services name their
+// resources.
+//
+// Every role here is bound exactly once, under this expression, and the 31
+// permissions D75 gives the scoped half are partitioned across them with none
+// added, dropped or moved into the unconditioned role
+// (TestDeployerScopedRolesAreD75Partitioned).
+func deployerServices(project string) []DeployerService {
+	saPrefix := "projects/" + project + "/serviceAccounts/" + ManagedPrefix
+	return []DeployerService{
+		{Role: DeployerStorageRole, Clauses: []DeployerClause{
+			{Type: "storage.googleapis.com/Bucket", Op: "startsWith", Value: "projects/_/buckets/" + ManagedPrefix},
+			{Type: "storage.googleapis.com/Object", Op: "startsWith", Value: "projects/_/buckets/" + ManagedPrefix},
+		}},
+		// One clause, the container's own type: a secret VERSION's name does
+		// not match the secret's template, so no clause admits one, and no
+		// permission of this role acts on one — the old shape's
+		// secretmanager.googleapis.com/SecretVersion clause was defensive, and
+		// under extract it would be dead weight rather than a second fence.
+		// secretmanager.versions.* is nowhere in the deployer, and the role pin
+		// refuses it, so a plan that added one would find it unusable rather
+		// than unfenced.
+		{Role: DeployerSecretRole, Clauses: []DeployerClause{
+			{Type: "secretmanager.googleapis.com/Secret", Op: "extract", Value: "projects/{project}/secrets/{secret}", Starts: ManagedPrefix},
+		}},
+		{Role: DeployerAccountRole, Clauses: []DeployerClause{
+			{Type: "iam.googleapis.com/ServiceAccount", Op: "startsWith", Value: saPrefix},
+		}},
+		{Role: DeployerAPIKeyRole, Clauses: []DeployerClause{
+			{Type: "apikeys.googleapis.com/Key", Op: "extract", Value: "projects/{project}/locations/{location}/keys/{key}", Starts: ManagedPrefix},
+		}},
+		{Role: DeployerRepositoryRole, Clauses: []DeployerClause{
+			{Type: "artifactregistry.googleapis.com/Repository", Op: "extract", Value: "projects/{project}/locations/{location}/repositories/{repository}", Starts: ManagedPrefix},
+		}},
+		{Role: DeployerRunJobRole, Clauses: []DeployerClause{
+			{Type: "run.googleapis.com/Job", Op: "extract", Value: "projects/{project}/locations/{location}/jobs/{job}", Starts: ManagedPrefix},
+		}},
+		{Role: DeployerSchedulerRole, Clauses: []DeployerClause{
+			{Type: "cloudscheduler.googleapis.com/Job", Op: "extract", Value: "projects/{project}/locations/{location}/jobs/{job}", Starts: ManagedPrefix},
+		}},
+	}
 }
 
-// DeployerConditionClauses is the scoped condition's clauses, in order, a copy
-// so no caller can widen the fence.
-func DeployerConditionClauses() []DeployerClause { return slices.Clone(deployerClauses) }
-
-// DeployerConditionExpression is binding (2)'s condition expression: the
-// clauses above, joined with " || ". A binding of fugaroDeployerScoped whose
-// expression is not exactly this is not covered (deployerGrant), because
-// the plan review cannot tell a narrowed expression from a widened one.
-func DeployerConditionExpression() string {
-	parts := make([]string, 0, len(deployerClauses))
-	for _, c := range deployerClauses {
-		parts = append(parts, c.String())
+// DeployerServiceRoles are the seven conditioned roles' IDs, in the order the
+// module creates them. An account holding any of them holds it only where that
+// service's condition admits the resource.
+func DeployerServiceRoles() []string {
+	roles := make([]string, 0, len(deployerServices("")))
+	for _, s := range deployerServices("") {
+		roles = append(roles, s.Role)
 	}
-	return strings.Join(parts, " || ")
+	return roles
+}
+
+// deployerService is the service whose role is role, and whether there is one.
+func deployerService(project, role string) (DeployerService, bool) {
+	for _, s := range deployerServices(project) {
+		if s.Role == role {
+			return s, true
+		}
+	}
+	return DeployerService{}, false
+}
+
+// DeployerConditionClauses is the clauses of the conditioned role `role`'s
+// condition in project, in order, a copy so no caller can widen the fence. ok
+// is false when role is not one of the deployer's seven.
+func DeployerConditionClauses(project, role string) ([]DeployerClause, bool) {
+	s, ok := deployerService(project, role)
+	if !ok {
+		return nil, false
+	}
+	return slices.Clone(s.Clauses), true
+}
+
+// DeployerConditionExpression is the condition expression of the conditioned
+// role `role` in project — its clauses joined with " || " — and whether role
+// is one of the deployer's seven. A binding of one of them whose expression is
+// not exactly this is not covered (deployerGrant), because the plan review
+// cannot tell a narrowed expression from a widened one.
+func DeployerConditionExpression(project, role string) (string, bool) {
+	s, ok := deployerService(project, role)
+	if !ok {
+		return "", false
+	}
+	return s.Expression(), true
 }
 
 // DeployerAccount is the email of the deployer account in gcpProject: the
@@ -428,15 +564,18 @@ var RolePermissions = map[string][]string{
 	// else — no write, and no cloudasset.assets.listResource, which belongs to
 	// the wider predefined role this replaced.
 	CloudAssetRole: {"cloudasset.assets.searchAllResources"},
-	// The deployer's two roles (D75, Task 1.5). They are not installation
-	// roles: nothing a run does needs them, and their bound is the split
-	// between them — creation, reads and serviceusage.services.enable here,
-	// and every update, delete, run, pause, *.setIamPolicy and actAs in
-	// fugaroDeployerScoped, which is bound exactly once and only under
+	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.9.0). They
+	// are not installation roles: nothing a run does needs them, and their
+	// bound is the split between them — creation, reads and
+	// serviceusage.services.enable in fugaroDeployer, and every update, delete,
+	// run, pause, *.setIamPolicy and actAs split one role per service across
+	// the seven below, each bound exactly once and only under its own
 	// DeployerConditionExpression (when the installation opts in with
-	// managed_deployer_scoped; off by default in 0.8.6). Widening either list
-	// is a decision:
-	// TestDeployerRolesHoldOnlyWhatD75Names states what each may not hold.
+	// managed_deployer_scoped; off by default in 0.8.6). The seven lists
+	// partition D75's 31 scoped permissions and nothing else: see
+	// TestDeployerScopedRolesAreD75Partitioned. Widening any list is a
+	// decision: TestDeployerRolesHoldOnlyWhatD75Names states what each may not
+	// hold.
 	DeployerRole: {
 		"apikeys.keys.create", "apikeys.keys.get", "apikeys.keys.list",
 		"artifactregistry.repositories.create", "artifactregistry.repositories.get", "artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.list",
@@ -447,15 +586,31 @@ var RolePermissions = map[string][]string{
 		"serviceusage.services.enable", "serviceusage.services.get", "serviceusage.services.list",
 		"storage.buckets.create",
 	},
-	DeployerScopedRole: {
-		"apikeys.keys.delete", "apikeys.keys.update",
-		"artifactregistry.repositories.delete", "artifactregistry.repositories.setIamPolicy", "artifactregistry.repositories.update",
-		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
-		"iam.serviceAccounts.actAs", "iam.serviceAccounts.delete", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
-		"run.jobs.delete", "run.jobs.run", "run.jobs.runWithOverrides", "run.jobs.setIamPolicy", "run.jobs.update",
-		"secretmanager.secrets.delete", "secretmanager.secrets.setIamPolicy", "secretmanager.secrets.update",
+	// The nine storage permissions D75 names for an existing bucket and its
+	// objects, and no other storage permission: storage.buckets.create stays
+	// in the unconditioned role, where creating a bucket cannot touch one that
+	// exists.
+	DeployerStorageRole: {
 		"storage.buckets.delete", "storage.buckets.get", "storage.buckets.setIamPolicy", "storage.buckets.update",
 		"storage.objects.create", "storage.objects.delete", "storage.objects.get", "storage.objects.list", "storage.objects.update",
+	},
+	DeployerSecretRole: {
+		"secretmanager.secrets.delete", "secretmanager.secrets.setIamPolicy", "secretmanager.secrets.update",
+	},
+	DeployerAccountRole: {
+		"iam.serviceAccounts.actAs", "iam.serviceAccounts.delete", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
+	},
+	DeployerAPIKeyRole: {
+		"apikeys.keys.delete", "apikeys.keys.update",
+	},
+	DeployerRepositoryRole: {
+		"artifactregistry.repositories.delete", "artifactregistry.repositories.setIamPolicy", "artifactregistry.repositories.update",
+	},
+	DeployerRunJobRole: {
+		"run.jobs.delete", "run.jobs.run", "run.jobs.runWithOverrides", "run.jobs.setIamPolicy", "run.jobs.update",
+	},
+	DeployerSchedulerRole: {
+		"cloudscheduler.jobs.delete", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.run", "cloudscheduler.jobs.update",
 	},
 }
 
@@ -598,7 +753,7 @@ func planDeployer(p *Plan) deployerPlan {
 			d.accounts[modulePrefix(rc)] = true
 		}
 		if rc.Type == "google_project_iam_custom_role" && !allOf(rc.Change.Actions, "no-op", "read") {
-			if id := str(rc.Change.After["role_id"]); id == DeployerRole || id == DeployerScopedRole {
+			if id := str(rc.Change.After["role_id"]); id == DeployerRole || slices.Contains(DeployerServiceRoles(), id) {
 				d.createsRole = true
 			}
 		}
@@ -821,15 +976,15 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// fence. A condition cannot be checked against a role nobody can
 			// name.
 			//
-			// The type matters, and this is why: only a project binding of the
-			// scoped role carries the fence. A grant of the same role at a
-			// narrower scope (a Cloud Run job, say) grants its permissions on
-			// that one resource, and refusing every computed role on every
-			// *_iam_member type would refuse the job runner's own grant
-			// (history.tf's google_cloud_run_v2_job_iam_member, whose role is
-			// the custom role being created beside it) on every installation
-			// plan that deploys the history job.
-			return "a computed project role in a plan that creates the deployer role " + DeployerScopedRole + ", which could be it: that role is bound only under its managed-prefix condition, and a plan must say which role this is"
+			// The type matters, and this is why: only a project binding of one
+			// of the deployer's conditioned roles carries the fence. A grant of
+			// the same role at a narrower scope (a Cloud Run job, say) grants
+			// its permissions on that one resource, and refusing every computed
+			// role on every *_iam_member type would refuse the job runner's own
+			// grant (history.tf's google_cloud_run_v2_job_iam_member, whose
+			// role is the custom role being created beside it) on every
+			// installation plan that deploys the history job.
+			return "a computed project role in a plan that creates one of the deployer's conditioned roles (" + strings.Join(DeployerServiceRoles(), ", ") + "), which could be it: those roles are bound only under their managed-prefix conditions, and a plan must say which role this is"
 		}
 		if !createsRole {
 			return "a role that is not known and no custom role is created with it"
@@ -943,14 +1098,18 @@ func (c Cover) jobsCondition(ch Change) string {
 //     other grantRules row accepts.
 //
 // The condition rule is the module's own shape, keyed per role: fugaroDeployer
-// is bound with NO condition (binding (1)), fugaroDeployerScoped only under
-// DeployerConditionTitle and exactly DeployerConditionExpression (binding (2)).
-// Anything else is refused — a second binding of the scoped role under another
-// condition would widen the account's authority just as much as an
-// unconditioned one, and a narrowed expression is not something this review
-// could tell from a widened one. A condition known only after apply, a
-// description the modules never set, and more than one condition block are
-// refused the way bucketCondition refuses them.
+// is bound with NO condition (binding (1)); each of the seven conditioned roles
+// only under DeployerConditionTitle and exactly that role's own
+// DeployerConditionExpression — its own, not another service's, because a
+// storage binding carrying the Cloud Scheduler condition would fence objects by
+// a template no bucket name matches, which fails closed here and is a mistake
+// worth refusing rather than debugging later. Anything else is refused — a
+// second binding of one of the seven under another condition would widen the
+// account's authority just as much as an unconditioned one, and a narrowed
+// expression is not something this review could tell from a widened one. A
+// condition known only after apply, a description the modules never set, and
+// more than one condition block are refused the way bucketCondition refuses
+// them.
 func (c Cover) deployerGrant(typ string, ch Change, createsDeployer bool) string {
 	if typ == "google_service_account_iam_member" {
 		if why := c.onDeployer(ch, createsDeployer); why != "" {
@@ -963,7 +1122,13 @@ func (c Cover) deployerGrant(typ string, ch Change, createsDeployer bool) string
 	}
 	role := str(ch.After["role"])
 	key, ok := c.roleKey(role)
-	if !ok || (key != customKey+DeployerRole && key != customKey+DeployerScopedRole) {
+	if !ok {
+		return ""
+	}
+	dp := c.deployerProject()
+	plain := key == customKey+DeployerRole
+	svc, scoped := deployerService(dp, strings.TrimPrefix(key, customKey))
+	if !plain && !scoped {
 		return ""
 	}
 	// The member: this run's deployer account, named, and nothing else. The
@@ -979,14 +1144,12 @@ func (c Cover) deployerGrant(typ string, ch Change, createsDeployer bool) string
 		return "grants " + role + " to " + member + ", which is not " + want + ": the deployer's roles are held by the deployer account and by nothing else (D75)"
 	}
 	// The project: the deployer's own, the role's and the binding's alike.
-	dp := c.deployerProject()
 	if !strings.HasPrefix(role, "projects/"+dp+"/roles/") || unknown(ch, "project") {
 		return "grants " + role + " outside the deployer's own project " + dp
 	}
 	if p := str(ch.After["project"]); p != "" && p != dp {
 		return "grants " + role + " in project " + p + ", which is not the deployer's own project " + dp
 	}
-	scoped := key == customKey+DeployerScopedRole
 	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") || unknownAt(ch.AfterUnknown, "condition", 0, "description") {
 		return "a " + role + " grant whose condition is not known: " + DeployerConditionTitle + " is what fences the deployer, and a condition decided during apply is not one"
 	}
@@ -1011,14 +1174,14 @@ func (c Cover) deployerGrant(typ string, ch Change, createsDeployer bool) string
 		}
 		title, expr = str(conds[0]["title"]), str(conds[0]["expression"])
 	}
-	if !scoped {
+	if plain {
 		if len(conds) != 0 {
 			return "grants " + DeployerRole + " under a condition, which the modules never do: that role is bound with none (D75 (1)), and a condition here would read as narrower than the binding beside it"
 		}
 		return ""
 	}
-	if title != DeployerConditionTitle || expr != DeployerConditionExpression() {
-		return "grants " + DeployerScopedRole + " under a condition that is not " + DeployerConditionTitle + " on the managed prefix: that condition, byte for byte, is the whole fence around the deployer (D75 (2))"
+	if title != DeployerConditionTitle || expr != svc.Expression() {
+		return "grants " + svc.Role + " under a condition that is not " + DeployerConditionTitle + " on the managed prefix: " + svc.Expression() + " is the whole fence around that role, byte for byte (D75 (2), one binding per service since 0.9.0)"
 	}
 	return ""
 }
