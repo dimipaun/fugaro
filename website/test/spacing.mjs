@@ -23,7 +23,7 @@
 // gives `display: block` and a reader therefore sees on its own line rather than glued to the
 // title above it. This file reads each page's inlined stylesheet, collects the classes whose
 // rules set a block-level `display`, and hands that answer to the shared reader. Without it
-// the gate would report the hub's six seams as failures, and a gate that cries wolf on the
+// the gate would report the hub's own seams as failures, and a gate that cries wolf on the
 // design is a gate somebody turns off. The exemption is not a list of names kept here: a class
 // gains it by being `display: block` in the artifact, which is what a reader sees, and the
 // case below proves both halves — a seam the stylesheet lays apart is not refused, and the
