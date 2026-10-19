@@ -47,11 +47,17 @@ func wallRunIDAt(daysAgo int, hhmmss, hex string) string {
 
 // recentRunID is mintRunID against lsNow, with *testing.T's helper reporting.
 // Each window family has its own helper, and a test must use the one whose
-// clock the command under test reads (the guard's mint field says which):
+// clock the command under test reads — the same helper the guard's mint field
+// names when it complains about a fixed ID:
 //
-//	runs ls, runs ls --pr, stats runs   lsNow      recentRunID, runIDAt (runs_test.go)
-//	watch                               watchNow   runID (watch_queued_test.go)
-//	run --pr, run --retry               wall       wallRunID, wallRunIDAt
+//	runs ls, runs ls --pr   lsNow      recentRunID, runIDAt (runs_test.go)
+//	watch                   watchNow   runID (watch_queued_test.go)
+//	run --pr, run --retry,  wall       wallRunID, wallRunIDAt
+//	stats runs
+//
+// stats runs belongs with the wall, not with ls, although the two commands'
+// windows look alike: stats measures statsDefaultSince back from time.Now()
+// itself (stats.go), and pins no clock a test could move.
 //
 // A test whose listing is filtered by recency must mint its run IDs through
 // one of them rather than hard-code a date: a fixed 2026 date passes only
@@ -103,23 +109,29 @@ func TestLsWindowFollowsTheClock(t *testing.T) {
 	}
 }
 
-// TestLsHelpSpellsTheDefaultWindow: lsDefaultSince exists so the default
-// window has one spelling — the guard reads it, and the copy the user reads has
-// to be built from it too, or a change of window leaves the help text (and
-// --since's own default line) advertising a window ls no longer uses.
+// TestLsHelpSpellsTheDefaultWindow: the default window has one number
+// (lsDefaultWindow) and two spellings of it — the flag's "7d" and the help
+// text's "7 days" — so the copy the user reads and the value the flag takes
+// cannot drift from the window ls really uses, or from each other.
 func TestLsHelpSpellsTheDefaultWindow(t *testing.T) {
 	cmd := newLsCmd()
 	f := cmd.Flag("since")
 	if f == nil {
 		t.Fatal("runs ls has no --since flag")
 	}
+	if want := strconv.Itoa(lsDefaultDays) + "d"; lsDefaultSince != want {
+		t.Errorf("lsDefaultSince = %q, want %q: the flag's spelling and the help text's span name two different windows", lsDefaultSince, want)
+	}
 	if f.DefValue != lsDefaultSince {
 		t.Errorf("--since defaults to %q, want lsDefaultSince (%q)", f.DefValue, lsDefaultSince)
 	}
-	for what, text := range map[string]string{"Long description": cmd.Long, "--since usage": f.Usage} {
-		if !strings.Contains(text, lsDefaultSince) {
-			t.Errorf("runs ls's %s does not name the default window %q:\n%s", what, lsDefaultSince, text)
-		}
+	// The help text says the span in days; the flag takes it in --since's own
+	// vocabulary (7d, 36h, 90m) and defaults to exactly this one.
+	if want := strconv.Itoa(lsDefaultDays) + " days"; !strings.Contains(cmd.Long, want) {
+		t.Errorf("runs ls's Long description does not name the default window as %q:\n%s", want, cmd.Long)
+	}
+	if !strings.Contains(f.Usage, lsDefaultSince) {
+		t.Errorf("runs ls's --since usage does not name the default window as %q:\n%s", lsDefaultSince, f.Usage)
 	}
 }
 
@@ -225,31 +237,20 @@ func (i invocation) drives(want ...string) bool {
 	return true
 }
 
-// fixedWindow reports whether the invocation reads a window the test chose
-// rather than one measured back from the clock: no --since at all, or an
-// absolute one. Everything parseSince accepts that is not an instant ("30d",
-// "36h", "90m") is a span off the same clock the default window is, so it
-// leaves the ID just as date-lucky — only the date it ages out on moves.
+// fixedWindow reports whether the invocation reads a window it cannot age out
+// of. Only an ABSOLUTE --since is one: an instant the test chose. Everything
+// else is measured back from the same clock the default window is — no --since
+// at all (the loop below finds nothing and the answer is false), or a span
+// parseSince takes ("30d", "36h", "90m"), which leaves the ID just as
+// date-lucky and only moves the date it ages out on.
 func (i invocation) fixedWindow() bool {
-	for n, a := range i.args {
-		v := ""
-		switch {
-		case a == "--since" && n+1 < len(i.args):
-			v = i.args[n+1]
-		case strings.HasPrefix(a, "--since="):
-			v = strings.TrimPrefix(a, "--since=")
-		default:
-			continue
-		}
-		if !absoluteSince(v) {
-			return false
-		}
-	}
-	return true
+	v := i.sinceValue()
+	return v != "" && absoluteSince(v)
 }
 
-// sinceValue is --since's own value, "" when the invocation passes none: the
-// window the failure message must name when the value is a relative one.
+// sinceValue is --since's own value, "" when the invocation passes none (or
+// passes the flag with nothing after it): the window the failure message must
+// name when the value is a relative one.
 func (i invocation) sinceValue() string {
 	for n, a := range i.args {
 		switch {
@@ -435,14 +436,16 @@ type recencyWindow struct {
 	// pins it. nil when the code reads time.Now() directly: then no test can
 	// put the window under its control, and a fixed ID here is always a bomb.
 	seam *regexp.Regexp
-	// mint names the test helper a test driving this window must mint its IDs
-	// through: the one that reads THIS window's clock (mintRunID's now
-	// argument). Minting through another clock is the cross-clock mistake the
-	// runID doc warns about — the ID then falls outside the window as soon as
-	// that clock is pinned. Empty when nothing mints against this window's
-	// clock (a report test's fixture pins budgetNow and seeds dates it picks).
-	// Each name must be a function declared in this package's tests: the
-	// guard fails if one is renamed away.
+	// mint names the test helper whose clock is this window's clock, the way
+	// the failure message offers it: the helper that reads the time the window
+	// is measured back from (mintRunID's now argument). Minting through another
+	// clock is the cross-clock mistake recentRunID's doc warns about — the ID
+	// then falls outside the window as soon as that clock is pinned. This is
+	// guidance, not a check: the guard does not fail a test for calling another
+	// family's helper, because a test may drive two families. Empty when
+	// nothing mints against this window's clock (a report test's fixture pins
+	// budgetNow and seeds dates it picks). Every name must be a function
+	// declared in this package's tests: the guard fails if one is renamed away.
 	mint []string
 	// since is true when the entry point takes an explicit --since: an
 	// ABSOLUTE one (an instant the test chose) means the clock cannot age the
@@ -475,8 +478,12 @@ var recencyWindows = []recencyWindow{
 	// any other retry reads its task by run ID and reads no window at all.
 	{cmd: "run --retry (of a stored follow-up)", window: followUpLookback.String(), run: []string{"run", "--retry"},
 		needs: regexp.MustCompile(`followUpSpec\(|prRecord\(|\bPR:\s*[1-9]`), mint: []string{"wallRunID", "wallRunIDAt"}},
+	// stats runs measures statsDefaultSince back from time.Now() itself
+	// (stats.go: until := time.Now().UTC()), with no seam to pin: its tests
+	// mint from that same wall clock, not from lsNow, however much the two
+	// entry points look alike.
 	{cmd: "stats runs", window: statsDefaultSince, run: []string{"stats", "runs"},
-		mint: []string{"recentRunID", "runIDAt"}, since: true},
+		mint: []string{"wallRunID", "wallRunIDAt"}, since: true},
 	{cmd: "report", window: reportDefaultSince, run: []string{"report"},
 		seam: regexp.MustCompile(`budgetNow\s*=`), since: true},
 	{cmd: "budget preview", window: previewHistoryWindow.String(), run: []string{"budget", "preview"},

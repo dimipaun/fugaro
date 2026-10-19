@@ -48,11 +48,18 @@ type lsOptions struct {
 // bucket still holds is listed.
 var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
 
-// lsDefaultSince is runs ls's default --since. It is a constant so the test
-// guard (internal/cli: runid_test.go) reads the window it guards instead of
-// spelling "7d" again: change this and the guard's message names the new
-// window, rename it and the guard stops building.
-const lsDefaultSince = "7d"
+// lsDefaultWindow is runs ls's default --since as a span, and the two
+// spellings of it are built from that one number: lsDefaultSince is what the
+// flag takes (parseSince's "Nd" form) and lsDefaultDays is what the help text
+// says ("7 days"). Variables, not constants, for prLookback's reason — they
+// are derived — but nothing writes 7 or "7d" a second time. The test guard
+// (internal/cli: runid_test.go) reads lsDefaultSince, so change the window
+// here and the guard's failure message names the new one.
+var (
+	lsDefaultWindow = 7 * 24 * time.Hour
+	lsDefaultDays   = int(lsDefaultWindow / (24 * time.Hour))
+	lsDefaultSince  = fmt.Sprintf("%dd", lsDefaultDays)
+)
 
 // lsNow is runs ls's clock: --since's window (lsDefaultSince by default) is
 // measured back from it, so which runs a listing shows depends on the day it
@@ -100,7 +107,7 @@ func newLsCmd() *cobra.Command {
 		Use:   "ls",
 		Short: "List runs with their status, stage, cost and PR",
 		Long: "List runs, newest first, joining the runs bucket with what the backend knows.\n\n" +
-			"By default ls shows the last " + lsDefaultSince + " of the local config's repositories (every\n" +
+			"By default ls shows the last " + strconv.Itoa(lsDefaultDays) + " days of the local config's repositories (every\n" +
 			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
 			"only when its result.json says so; an execution that ended without finalizing\n" +
 			"is an infra_error.\n\n" +
