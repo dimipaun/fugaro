@@ -86,12 +86,14 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
   /* A bar at the foot of the window, so the page a visitor asked for is not pushed around by
      a question about measurement. `.consent-banner` deliberately declares no `display`, so
      that the `hidden` attribute keeps it hidden; the rule below says so out loud, because a
-     fixed-position element is exactly the one that grows a `display` later. */
+     fixed-position element is exactly the one that grows a `display` later. Its `z-index` is
+     the scale's chrome layer (tokens.css): the banner is fixed to the window's foot and has to
+     be drawn over the page and over the header, whose own layer is named there too. */
   .consent-banner {
     position: fixed;
     inset-inline: 0;
     bottom: 0;
-    z-index: 20;
+    z-index: var(--z-chrome);
     padding: var(--space-sm) var(--space-md);
     background: var(--surface);
     color: var(--text);

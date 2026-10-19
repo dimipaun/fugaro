@@ -265,12 +265,15 @@ const analyticsEnabled = facts.analytics.enabled
       }
 
       /* The skip link, hidden until it is focused: the first thing a keyboard reaches on
-         every page is the way past the navigation (W1.11 checks the site's anchors). */
+         every page is the way past the navigation (W1.11 checks the site's anchors). Its
+         layer is the chrome's, above the header it skips past (tokens.css names the scale):
+         the header has a layer of its own now, so a skip link without one would be drawn
+         under the row it is about to skip. */
       .skip-link {
         position: absolute;
         left: -9999px;
         top: 0;
-        z-index: 100;
+        z-index: var(--z-chrome);
       }
 
       .skip-link:focus {

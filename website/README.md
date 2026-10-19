@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Ten checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Eleven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **972,415 bytes in a checkout with no tags** and to **972,415 bytes with the
+  commit builds to **973,262 bytes in a checkout with no tags** and to **973,262 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -418,6 +418,16 @@ added or removed without this sentence moving fails there:
     sentence starting the next. The space is written into the line now, **1 byte**, and the
     site figure is 972,414 → **972,415**. The page weight and the script did not move. The
     clone figure moved by the same bytes as each of the security page's rounds.
+  - **The header was put on a layer of its own** (the owner's reading of 2026-10-19: "How it
+    works: menu hidden by the blocks on mobile"), and moved **every page by the same 77
+    bytes**: 972,415 → **973,262** at the site figure and 280,604 → **280,681** at the page
+    weight. The whole of the move is the stylesheet every one of the eleven pages inlines — the
+    scale's two tokens, the header's `z-index`, and the skip link's and the banner's moved onto
+    the scale's names — and the script is untouched, because the fix is CSS and the script was
+    not what covered the menu. That the eleven pages move by the same bytes is the check worth
+    keeping: this round is the chrome, and the chrome is on every page. The clone figure moved by
+    the same bytes.
+
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -441,10 +451,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
-    docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
+    docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,646,557 bytes. Three times 1,215,519 (every file in `dist/`, 972,415
+  - **Whole site:** 3,649,734 bytes. Three times 1,216,578 (every file in `dist/`, 973,262
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -702,6 +712,23 @@ added or removed without this sentence moving fails there:
   privacy statement's own count plus 25 %, the number `website/README.md` states, and every
   other page of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that
   measures it and the byte figures it is a sibling of.
+- `test/stacking.mjs` — the header paints above the page's blocks (the owner's reading of
+  2026-10-19: "How it works: menu hidden by the blocks on mobile"). `tokens.css` names the
+  site's two layers — `--z-header` for the header's row and the panel a group hangs below it,
+  `--z-chrome` for the reader's own chrome above the page — and this gate reads them out of the
+  **built** stylesheets: the header is positioned and carries the header's layer, which is what
+  makes it a stacking context; the skip link and the consent banner carry the chrome's layer
+  and nothing else does; and **no other rule declares a `z-index` at all**, which is the only
+  thing a content component would need to paint over an open menu. The defect it was written
+  for is the diagram: `ArchitectureDiagram.astro`'s steps are `position: relative` — that is
+  what their arrows are placed against — and a positioned box with no `z-index` paints with
+  every other such box in tree order, where the header is the first and a block drawn after it
+  covers the menu on the two pages that carry the drawing. `base.css` gives `.site-header` the
+  header's layer instead, in one rule rather than one per component, and this gate keeps it
+  there. Its refusals are kept the way the others keep theirs: a fixture page carries the scale
+  and the three layered rules, and a case plants each defect — a header with no layer, a header
+  a layer cannot apply to, a content block with a layer of its own — and watches the named
+  refusal come back.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
