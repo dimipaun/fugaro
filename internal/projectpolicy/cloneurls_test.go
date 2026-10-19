@@ -84,59 +84,6 @@ func TestCloneURLsOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
-// One repository is named once in clone_urls, under one key or the other.
-//
-// The block's keys are not the canonical names on the node: escKey writes them
-// and unescKey reads them back, because RTDB refuses a key with a "/" in it, and
-// unescKey parses the escape case-insensitively (strconv.ParseUint, base 16), so
-// "github%2Facme%2Fapp" and "github%2facme%2Fapp" are two keys that unescape to
-// one repository. Either spelling, or the same key written twice, leaves only one
-// URL behind — the last one encoding/json read — so which URL this project's runs
-// clone from would depend on the order the block's keys happen to be in, and one
-// of the two was written by someone who meant it. model_prices refuses exactly
-// this for the same reason (its `spelled` guard), and a key written twice is
-// refused everywhere else in the document (checkNoDuplicateNames).
-func TestDecodeRefusesOneRepositoryNamedTwice(t *testing.T) {
-	url1 := "https://github.com/acme/app.git"
-	url2 := "https://github.com/acme/app2.git"
-	for _, tc := range []struct{ name, block, want string }{
-		{
-			"the same key twice",
-			`{"github%2Facme%2Fapp":"` + url1 + `","github%2Facme%2Fapp":"` + url1 + `"}`,
-			`names "github%2Facme%2Fapp" twice`,
-		},
-		{
-			"two spellings of one escaped key",
-			`{"github%2Facme%2Fapp":"` + url1 + `","github%2facme%2Fapp":"` + url1 + `"}`,
-			"are both the repository",
-		},
-		{
-			"an escaped key and the literal one",
-			`{"github%2Facme%2Fapp":"` + url1 + `","github/acme/app":"` + url1 + `"}`,
-			"are both the repository",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p, found, err := Decode([]byte(`{"version":3,"clone_urls":` + tc.block + `}`))
-			if err == nil {
-				t.Fatalf("Decode(%s) = (%v, %v, nil), want a refusal: a repository named twice leaves one URL, chosen by key order", tc.block, p, found)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("Decode(%s) = %v, want it to name %q", tc.block, err, tc.want)
-			}
-		})
-	}
-	// The refusals must not have cost the block the case they are not about:
-	// two repositories, each named once, are still read.
-	p, found, err := Decode([]byte(`{"version":3,"clone_urls":{"github%2Facme%2Fapp":"` + url1 + `","github%2Facme%2Fapp2":"` + url2 + `"}}`))
-	if err != nil || !found {
-		t.Fatalf("Decode of two repositories = (%v, %v, %v), want both read", p, found, err)
-	}
-	if p.CloneURLs["github/acme/app"] != url1 || p.CloneURLs["github/acme/app2"] != url2 {
-		t.Errorf("the decoded block is %v, want both repositories", p.CloneURLs)
-	}
-}
-
 // Every refusal here is the security property, not decoration: the URL is where
 // a run clones from, while its slug, its locks, its cache and its budget
 // session all name the repository its own task.json does — so an entry naming

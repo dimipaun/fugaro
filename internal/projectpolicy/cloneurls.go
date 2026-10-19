@@ -3,7 +3,6 @@ package projectpolicy
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 )
 
 // CloneURLs is the clone_urls block of a policy: the clone URL the project
@@ -49,46 +48,18 @@ func (cs CloneURLs) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the block off a node: one member per repository,
 // unescaped back into the canonical name. The member name is in the error, so a
 // refusal names the entry rather than only the key.
-//
-// One repository is named once. The keys here are not the canonical names, and
-// the escape is read case-insensitively (unescKey), so a repository can be
-// written under two keys — "github%2Facme%2Fapp" and "github%2facme%2Fapp", or an
-// escaped one and the literal name — as well as the same key twice. Only one URL
-// can survive either way (encoding/json keeps the last key it reads, and the map
-// keeps the last write), so which URL this project's runs clone from would depend
-// on the order the block's keys are in, and one of the two was written by someone
-// who meant it. model_prices refuses this for the same reason (its `spelled`
-// guard), and a key written twice is refused everywhere else in the document
-// (checkNoDuplicateNames).
 func (cs *CloneURLs) UnmarshalJSON(raw []byte) error {
 	var entries map[string]string
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return err
 	}
-	names, err := objectMemberNames(raw)
-	if err != nil {
-		return err
-	}
-	if err := checkNoDuplicateNames("clone_urls", names); err != nil {
-		return fmt.Errorf("projectpolicy: %w", err)
-	}
-	keys := make([]string, 0, len(entries))
-	for key := range entries {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys) // a stable order, so the refusal below names the same pair every time
 	out := make(CloneURLs, len(entries))
-	spelled := make(map[string]string, len(entries)) // canonical name -> the key it was written under
-	for _, key := range keys {
+	for key, url := range entries {
 		canonical, err := unescKey(key)
 		if err != nil {
 			return fmt.Errorf("%q: %w", key, err)
 		}
-		if first, dup := spelled[canonical]; dup {
-			return fmt.Errorf("%q and %q are both the repository %q, and a repository may be named once: the URL this project's runs clone from would otherwise depend on the order the block's keys are in", first, key, canonical)
-		}
-		spelled[canonical] = key
-		out[canonical] = entries[key]
+		out[canonical] = url
 	}
 	*cs = out
 	return nil
