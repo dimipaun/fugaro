@@ -256,6 +256,10 @@ const FULL_ROW: JSONDoc = Object.freeze({
   halt: { by: 'redacted@example.invalid', at: '2026-10-15T11:00:00Z', reason: 'budget kill <project>' },
   batch: '2026-10-15',
   requested_by: 'redacted@example.invalid',
+  // Who started the run, as its own `launch.json` recorded it (0.9.0). The
+  // key the struct's pin caught `RECORD_KEYS` missing: it sits between
+  // `requested_by` and `pr_url`, and a real `runs ls --json` row carries it.
+  launched_by: 'redacted@example.invalid',
   pr_url: 'https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412',
   execution: 'fugaro-20261015-120000-aa01',
   log_url: 'https://example.invalid/logs/20261015-120000-aa01',
@@ -837,6 +841,9 @@ describe('every wire string is classified', () => {
     expect(wireTextClass('repo')).toBe('repository')
     expect(wireTextClass('branch')).toBe('branch')
     expect(wireTextClass('requested_by')).toBe('person')
+    // `launched_by` (0.9.0) is the same kind of value on the same shape: a
+    // launcher's own recorded identity, drawn as a person.
+    expect(wireTextClass('launched_by')).toBe('person')
     expect(wireTextClass('pr_url')).toBe('url')
     expect(wireTextClass('round')).toBe('label')
     expect(wireTextClass('round')).not.toBe('sentence')

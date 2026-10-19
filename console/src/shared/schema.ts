@@ -87,6 +87,11 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   requested_by: 'person',
   // A run record's own fields (`runview.Row`, the degraded shape).
   oauth_account: 'person',
+  // `launched_by` (0.9.0): who started the run, as the run's own `launch.json`
+  // recorded it. A person's address, or the identity an automated launch runs
+  // as -- the same kind of value as `requested_by` above, and the recorder
+  // already classes it `person` by its `_by` suffix (`src/source/redact.ts`).
+  launched_by: 'person',
   branch: 'branch',
   log_url: 'url',
   // A pull request's URL. It is *text* -- design section 4.3's gap 7 is that
@@ -690,10 +695,11 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * console happens to read, and a key the CLI adds in a later version is *still*
  * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
- * list. Keys accepted and not read (`title`, `project_layer`, `config_sha256`,
- * `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`,
- * `pr`, `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`,
- * `stale_draft`, `execution`, `batch`, `halt`, `previous_run`, `base_branch`)
+ * list. Keys accepted and not read (`title`, `launched_by`, `project_layer`,
+ * `config_sha256`, `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`,
+ * `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`, `draft_fallback`,
+ * `pr_status_at`, `stale_draft`, `execution`, `batch`, `halt`, `previous_run`,
+ * `base_branch`)
  * are the ones this screen has no use for yet; they are listed so that a
  * document carrying them is read rather than thrown away.
  *
@@ -712,6 +718,15 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * list without it would turn every 0.8.5 `runs ls --json` document into the
  * skew state. It is accepted and not read: the Runs screen's rows are this
  * document's records, and nothing here renders a record's title yet.
+ *
+ * **`launched_by` arrived with 0.9.0**, between `requested_by` and `pr_url` in
+ * the struct, and is written on every row whose `launch.json` recorded a
+ * launcher -- which is every launched run. This is `title`'s omission again,
+ * and it fails the same way: a list without the key refuses a real
+ * `runs ls --json` document whole, as `runs[0].launched_by`. It is accepted
+ * and not read (no screen draws who launched a run yet), and it is classified
+ * as a person's text in `WIRE_TEXT_CLASSES` -- the class `requested_by`
+ * carries, and the class the recorder already gives it by its `_by` suffix.
  */
 export const RECORD_KEYS = [
   'run',
@@ -729,6 +744,7 @@ export const RECORD_KEYS = [
   'halt',
   'batch',
   'requested_by',
+  'launched_by',
   'pr_url',
   'execution',
   'log_url',
