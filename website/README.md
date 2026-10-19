@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eight checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Nine checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -249,6 +249,14 @@ added or removed without this sentence moving fails there:
     downloads section, Getting Started's console option and the hero's link to the console.
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
+  - **The privacy statement gained its software part** (the owner's request of 2026-10-19),
+    and moved the site figure alone, 977,921 → **980,144**, by the **2,223 bytes** of that
+    page's own markup, and the words ceiling below with it, 250 → **607**. The page is the one
+    the App Store and Play listings link as a privacy policy, so it now carries two named
+    parts — "The website", which is what it always said, and "The software", which covers the
+    CLI, the console and the phone app — and the words the second part needs are what re-derive
+    the ceiling. The page weight and the script did not move: the heaviest page is still the
+    docs hub, and `public/scripts/site.js` is untouched.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -276,7 +284,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,667,206 bytes. Three times 1,222,402 (every file in `dist/`, 977,921
+  - **Whole site:** 3,675,540 bytes. Three times 1,225,180 (every file in `dist/`, 980,144
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -308,7 +316,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 250 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 607 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -319,9 +327,21 @@ added or removed without this sentence moving fails there:
     sees. `/docs/`, `/security/`
     and `/changelog/` are exempt, which is D188's own list: each renders a document of this
     repository rather than a page of the site, and the brief allows those to stay long.
-    The ceiling is set against the site as it was measured before the redesign
-    (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
-    getting-started 431, privacy 277, community 268 — every one of them over it).
+    **The number is no longer D188's 250, and it is derived rather than picked.** The
+    privacy statement is the page the App Store and Play listings link as a privacy policy,
+    so it carries the software as well as the site and is the one page that is not the
+    site's pitch; the number is that page's own count on the gates' own build — **485
+    words** — plus 25 %, rounded up, which is **607**. `budget.mjs`'s
+    `wordsCeilingFailures` holds the derivation to the built page the way the same file
+    holds the byte budgets to theirs, so a sentence added there re-derives this line in the
+    commit that adds it. **The raise is that page's and nobody else's**: every other page of
+    the site stays within D188's 250 words, and the same function holds them there, so this
+    number is a ceiling one page reaches and not a licence the rest can grow into. (D188's
+    250 was itself set against the site as it was measured
+    before the redesign — `docs/website/redesign/reconciliation.md` §6: faq 493 words,
+    caps-and-costs 487, getting-started 431, privacy 277, community 268, every one of them
+    over it — and the redesign brought every one of those pages but the privacy statement
+    inside it.)
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
@@ -416,6 +436,24 @@ added or removed without this sentence moving fails there:
   the stylesheet, and watches the named refusal come back.
   Each of those rules was then mutation-proved the other way: removed from the function, with the
   refusal it names watched failing.
+- `test/privacy.mjs` — the privacy statement's software part, and the three rules that keep it
+  honest (the owner's request of 2026-10-19). The page is the one the App Store and Play
+  listings link as a privacy policy, so it now says what the CLI, the console and the phone app
+  do as well as what the site does, and this file holds each of those sentences to the thing
+  that makes it true rather than to a copy of the sentence: the reach of the command line tool
+  and the console is read from the hosts their own sources name and refused if the site's own
+  host is ever one of them; the update check is read from `internal/updatecheck` (GitHub's
+  public "latest release" endpoint, at most once a day, cached on the machine) and from the two
+  switches `internal/cli` and `internal/localcfg` define, so a page that stops naming one or a
+  code path that starts asking somewhere else each fails; the phone app's two credentials and
+  its secure storage are read from `mobile/src/accounts/`; and "no analytics SDK and no
+  advertising identifier" is read from `mobile/package.json`'s dependency list, which a later
+  task would have to grow before that sentence could become false. And it holds the owner's
+  ruling against a terms page with no page to point at: no built page links to `/terms`, and
+  the word is not a link label anywhere. The word ceiling's own derivation — the privacy
+  statement's own count plus 25 %, the number `website/README.md` states, and every other page
+  of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that measures it
+  and the byte figures it is a sibling of.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
