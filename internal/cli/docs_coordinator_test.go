@@ -1766,7 +1766,6 @@ func TestDocsCoordinatorFrequentCitationsAreAnchoredByContent(t *testing.T) {
 	}
 	t.Logf("%s: %d citations under %s held by %d content anchors, none of them by a line number",
 		coordinatorReconciled, total, strings.Join(coordinatorContentAnchoredDirs, " and "), len(coordinatorContentAnchors))
-
 }
 
 // coordinatorReadmeAnchorScope is the README's own statement of what the content-anchor rule
