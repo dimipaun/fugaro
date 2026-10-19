@@ -623,6 +623,158 @@ func TestDocsCheck81RestoreUsesTheFirebaseProject(t *testing.T) {
 	}
 }
 
+// TestDocsCheck81UrlsCarryTheScheme: the guard reads the database's address out
+// of the project's config and strips the scheme from it (`sed -e
+// 's|^https://||'`), so every URL built from it has to put `https://` back.
+// Check 81 stripped the scheme and then wrote 33 bare `"$DB/..."` URLs -- plain
+// HTTP on port 80, which cannot answer the 200/401 the whole check is made of --
+// while only its step 8 re-added the scheme, and check 82 (the same guard, the
+// same strip, and docs/gcp-setup.md's block) re-adds it in every URL it writes.
+// No test looked at the scheme, which is how 33 lines of the check were unrunnable
+// under a green `go test ./internal/cli`.
+func TestDocsCheck81UrlsCarryTheScheme(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	for _, heading := range []string{"## Check 81:", "## Check 82:", "## Check 89:"} {
+		section := docSection(t, path, doc, heading)
+		if !strings.Contains(section, "$DB") {
+			continue // check 89 builds no URL from $DB (its guard is eas/profiles)
+		}
+		if !strings.Contains(section, "s|^https://||") {
+			t.Errorf("%s: reads $DB out of the config without the `s|^https://||` strip this test's rule is about, so the rule may not be the section's any more: read the guard before trusting the scheme in $DB", heading)
+		}
+		for _, line := range strings.Split(section, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue // the guard's own comment quotes the broken form to warn about it
+			}
+			for i := 0; ; {
+				j := strings.Index(line[i:], `"$DB/`)
+				if j < 0 {
+					break
+				}
+				t.Errorf("%s: a URL is built as %s\n$DB is the host alone (the guard strips the scheme), so this URL is plain HTTP on port 80 and the request cannot answer the status the check requires: every URL from $DB is written \"https://$DB/...\", as check 82 and docs/gcp-setup.md write theirs", heading, strings.TrimSpace(line[i+j:]))
+				i += j + len(`"$DB/`)
+			}
+		}
+	}
+}
+
+// TestDocsCheck81TokenDirIsOwnerOnly: check 81 mints custom tokens into
+// `/tmp/chk81` -- `$W/jwt-$uid.txt`, `$W/payload-$uid.json` -- and a custom
+// token is a bearer credential for whoever holds it until its `exp` (the helper
+// sets `now+3600`). `mkdir -p "$W"` under the default umask leaves that
+// directory 0755 with 0644 files in it, readable by any other local user for the
+// length of the run, in a check whose own text says the tokens are "never in a
+// file that outlives the run". The repository already writes credential-bearing
+// files this way (docs/gcp-live-checklist.md:1159: `(umask 077; terraform state
+// pull > …)   # holds the API key string: mode 600`).
+func TestDocsCheck81TokenDirIsOwnerOnly(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+	guard := codeBlockAfter(t, section, "# === Check 81: setup + guard")
+
+	for _, want := range []string{"$W/jwt-$uid.txt", "$W/payload-$uid.json"} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("## Check 81: the helpers no longer write %s, so the premise of this test (a minted credential lives in $W) is gone: read the mint helper again before trusting this guard", want)
+		}
+	}
+	// The creation itself has to carry the umask: a `mkdir -p "$W"` on a line of
+	// its own, with a `umask 077` somewhere above it, is a directory made at 0755.
+	mkdir := ""
+	for _, line := range strings.Split(guard, "\n") {
+		if strings.Contains(line, "mkdir -p") && strings.Contains(line, "$W") {
+			mkdir = line
+		}
+	}
+	if mkdir == "" {
+		t.Fatalf("## Check 81: the guard does not create $W with `mkdir -p` any more, so this test cannot see the mode it is made at: read the guard again")
+	}
+	if !strings.Contains(mkdir, "umask 077") {
+		t.Errorf("## Check 81: the guard creates $W here:\n%s\nwith no `umask 077` on the same line: a 0755 /tmp/chk81 holding the minted custom tokens and their payloads is readable by every other local user for the length of the run, and a custom token is a bearer credential for the account until its exp", strings.TrimSpace(mkdir))
+	}
+	if !strings.Contains(guard, "chmod 700") {
+		t.Errorf("## Check 81: the guard does not `chmod 700` $W: `umask 077` only shapes a directory this run creates, and a directory a previous run (or a previous copy of this block) left at 0755 keeps its mode -- the tokens go into the same path either way")
+	}
+}
+
+// TestDocsCheck89RegisterRowDoesNotClaimTheGuardReadsTheTrack: the register row
+// and the Fails-when paragraph both said the guard "stops on any profile whose
+// submit track is not internal". Nothing in the guard reads the track: it tests
+// that `mobile/eas.json` exists and that `app.json` carries the store identity.
+// The track is read by step 1's hand-run `jq`, and the stop is the owner's own
+// judgement -- which is what the section's own preamble says the guard does, so
+// the row contradicted the section it points at, and the row is what the owner
+// reads first.
+func TestDocsCheck89RegisterRowDoesNotClaimTheGuardReadsTheTrack(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 89:")
+	guard := codeBlockAfter(t, section, "# === Check 89: setup + guard")
+	row := registerRow(t, doc, "89")
+
+	// The premise: the guard really does not read the track.
+	for _, unread := range []string{"android.track", ".submit", "jq"} {
+		if strings.Contains(guard, unread) {
+			t.Fatalf("## Check 89: the guard now reads %q, so it does read the submit track and this test's premise (the track is step 1's read, not the guard's) is gone: read the guard again before changing the row", unread)
+		}
+	}
+
+	for _, where := range []struct{ what, text string }{
+		{"the register row for check 89", row},
+		{"## Check 89's \"Fails when\" paragraph", stepText(t, section, "**Fails when:**", "**Paste back:**")},
+	} {
+		for _, stale := range []string{"guard stops on any profile", "the guard stops on the profile", "guard stops on a profile"} {
+			if strings.Contains(where.text, stale) {
+				t.Errorf("%s: carries %q, and no line of the guard block reads a submit track -- it stops on the app's own files (`mobile/eas.json` today, and the store identity in `app.json`), so a stop on a track is a read the guard does not make and an owner looking for it reads the row as a promise the section does not keep", where.what, stale)
+			}
+		}
+	}
+	if !strings.Contains(row, "submit.internal.android.track") && !strings.Contains(row, "submit track is read") {
+		t.Errorf("the register row for check 89 no longer says the submit track is read before anything is built: the row has to account for the `internal` track the check is made of, and the read is step 1's `jq` with the owner's stop on it")
+	}
+}
+
+// TestDocsGuardPreamblesNameAConstructTheyUse: check 81's guard preamble said
+// "the `${VAR:?}` forms below are bash's" while no guard block among 81, 82 and
+// 89 contains a single `${VAR:?}` -- the bash-only construct check 81's block
+// actually has is `${!v}` (indirect expansion) in its `for v in DB KEY SA FP`
+// loop. The sentence is check 58's (its guard does use `${VAR:?}`), so it was
+// right for the wrong reason: an owner who greps for the named construct finds
+// nothing, and the reason to `source` the block instead of pasting it into zsh
+// is the construct that is really there.
+func TestDocsGuardPreamblesNameAConstructTheyUse(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	for _, c := range []struct{ heading, marker string }{
+		{"## Check 81:", "# === Check 81: setup + guard"},
+		{"## Check 82:", "# === Check 82: setup + guard"},
+		{"## Check 89:", "# === Check 89: setup + guard"},
+	} {
+		section := docSection(t, path, doc, c.heading)
+		guard := codeBlockAfter(t, section, c.marker)
+
+		var preamble string
+		for _, para := range paragraphsOf(section) {
+			if strings.Contains(para, "**Guard block") {
+				preamble = para
+				break
+			}
+		}
+		if preamble == "" {
+			t.Fatalf("%s: has no \"**Guard block\" paragraph, so this test cannot tell which prose describes the block it reads", c.heading)
+		}
+		if strings.Contains(preamble, "${VAR:?}") && !strings.Contains(guard, "${VAR:?}") {
+			t.Errorf("%s: the guard preamble names `${VAR:?}` and the block uses it nowhere: the sentence is what tells the owner why to `source` the block rather than paste it into an interactive zsh, and a construct that is not in the block sends them looking for the wrong thing", c.heading)
+		}
+		if strings.Contains(guard, "${!v}") && strings.Contains(preamble, "interactive zsh") && !strings.Contains(preamble, "${!v}") {
+			t.Errorf("%s: the guard block is bash through `${!v}` (indirect expansion -- `${(P)v}` in zsh) and its preamble does not name it: the sentence about pasting into an interactive zsh has to name the construct that is actually there", c.heading)
+		}
+	}
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // stepText returns one numbered step of a section: from is the step's opening
