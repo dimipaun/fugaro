@@ -13,11 +13,14 @@
 //      be a sentence of README.md, and its install commands have to be the commands
 //      `website/data/install.yaml` carries for the paths it renders — never typed into the
 //      component (Global Constraint 6, W1.4 step 1).
-//   3. **The chat is the workflow, and every line of it is a document's own** (changes spec
-//      item 3). The request is the spec's example, the agent's two lines are the
+//   3. **The chat is the workflow, and every line its turns speak is a document's own**
+//      (changes spec item 3). The request is the spec's example, the agent's two lines are the
 //      `parallelism` and `working` skills' own sentences, and the launch is the invocation
 //      the `parallelism` skill documents — read from those files rather than imagined, since
-//      a chat is where a page invents what a product says. The hero offers one command to
+//      a chat is where a page invents what a product says. The three `Pull request n of 3`
+//      labels are the exception and are held as what they are: the illustration's own labels
+//      for work a run would report, which is why the caption may not call the figure's lines
+//      quotations. The hero offers one command to
 //      copy besides the install paths, `fugaro watch`, and the old `fugaro run` example is
 //      asserted gone; the slot for the screenshot a separate task adds is asserted to be
 //      marked and empty, and the page to carry no picture but its wordmark.
@@ -709,12 +712,18 @@ function chat(page) {
 }
 
 /**
- * Every failure of the chat's rule, as the lines a reader of this file sees: every line of it
- * is a line of the document its turn cites, and the lines of a document come in the order
- * that document writes them. The chat is an illustration drawn from the repository rather
- * than a recording of a session, so a line a skill does not write — or one that moved ahead
- * of the line before it — is the page putting words in the agent's mouth that the agent's own
- * skill does not have (changes spec item 3, Global Constraint 6).
+ * Every failure of the chat's rule, as the lines a reader of this file sees: every line a turn
+ * *speaks* — its `line`, and its `call` where it has one — is a line of the document that turn
+ * cites, and the lines of a document come in the order that document writes them. The chat is
+ * an illustration drawn from the repository rather than a recording of a session, so a line a
+ * skill does not write — or one that moved ahead of the line before it — is the page putting
+ * words in the agent's mouth that the agent's own skill does not have (changes spec item 3,
+ * Global Constraint 6).
+ *
+ * `results` is not read here, and that is the rule rather than an oversight: the
+ * `Pull request n of 3` labels are the illustration's own, and the figure is honest about them
+ * — the caption labels the picture an illustration — rather than quoting a document that
+ * cannot have them. See the caption case below.
  *
  * Written as a function over a chat so a fixture can prove it refuses.
  */
@@ -741,7 +750,7 @@ export function chatFailures(turns, sources) {
       const at = normalize(document).indexOf(quoted, reached.get(turn.source) ?? 0)
       if (at === -1) {
         out.push(
-          `the chat's ${what} ${JSON.stringify(line)} does not appear in ${turn.source} at or after the line before it: every line of the chat is the document's own words, in the order it writes them (changes spec 2026-10-18, item 3; Global Constraint 6)`,
+          `the chat's ${what} ${JSON.stringify(line)} does not appear in ${turn.source} at or after the line before it: every line a turn of the chat speaks is the document's own words, in the order it writes them (changes spec 2026-10-18, item 3; Global Constraint 6)`,
         )
         continue
       }
@@ -751,7 +760,7 @@ export function chatFailures(turns, sources) {
   return out
 }
 
-test('the homepage chat is the workflow, and every line of it is the document it cites', () => {
+test('the homepage chat is the workflow, and every line its turns speak is the document it cites', () => {
   const turns = chat(builtPage(''))
 
   // Item 3's illustration, turn for turn: the request, the agent's answer with the launch it
@@ -772,7 +781,7 @@ test('the homepage chat is the workflow, and every line of it is the document it
   )
 
   const failures = chatFailures(turns, chatSources())
-  assert.deepEqual(failures, [], `the homepage chat is not the documents' own words (changes spec 2026-10-18, item 3):\n  ${failures.join('\n  ')}`)
+  assert.deepEqual(failures, [], `the lines the homepage chat's turns speak are not the documents' own words (changes spec 2026-10-18, item 3):\n  ${failures.join('\n  ')}`)
 })
 
 test('the chat rule refuses a line the document it cites does not write', () => {
@@ -845,15 +854,47 @@ test('the hero launches through the agent, and the one command it offers the rea
   )
 })
 
-test('the chat says on the page that it is an illustration, not a recording', () => {
-  // D184's rule for the transcript this replaces, kept for the chat: the lines are the
-  // repository's own, and the page says what they are rather than leaving a reader to take an
-  // illustration for a session that happened.
-  const caption = classText(builtPage(''), 'chat-caption')
+test('the chat says on the page that it is an illustration, and claims no more than that', () => {
+  // D184's rule for the transcript this replaces, kept for the chat: the page says what the
+  // figure is rather than leaving a reader to take an illustration for a session that
+  // happened. And it claims nothing about where the lines come from, because the figure is
+  // not all quotations: the request is item 3's own example of one, and the three results are
+  // the illustration's labels. The caption this case was written for said "every line is the
+  // repository's own words, from the skills the agent reads", which is false about both of
+  // those, and the words themselves are refused by `website/test/wording.mjs` — on the built
+  // page and in the site's sources, so the sentence cannot come back through a component.
+  const page = builtPage('')
+  const caption = classText(page, 'chat-caption')
 
   assert.ok(caption, 'the homepage chat carries no caption, and item 3 admits the illustration only as a labelled one rather than as a recording (changes spec 2026-10-18, item 3; D184)')
   assert.match(caption, /illustration/i, `the chat's caption ${JSON.stringify(caption)} does not say the chat is an illustration (changes spec 2026-10-18, item 3)`)
   assert.match(caption, /not a recording/i, `the chat's caption ${JSON.stringify(caption)} does not say the lines are not a recording of a session (D184)`)
+  assert.doesNotMatch(
+    caption,
+    /own words|quotation|quoted|verbatim/i,
+    `the chat's caption ${JSON.stringify(caption)} claims the figure's lines are quotations, and two of the things a reader reads in it are not: the request is item 3's own example, and the three results are labels for work a run would report. The caption says what the picture is and where the agent's behaviour comes from; it does not vouch for where every line came from (changes spec 2026-10-18, item 3; Global Constraint 6)`,
+  )
+  assert.match(
+    caption,
+    /skills/i,
+    `the chat's caption ${JSON.stringify(caption)} does not say where the agent's behaviour comes from, and the one thing about the figure a reader can check is that the agent's lines are its skills' (changes spec 2026-10-18, item 3)`,
+  )
+
+  // And the fact the caption may not claim, read off the figure itself: the results are not
+  // lines of the document the turn that reports them cites. They are the illustration's own
+  // labels — a run that has not happened has no pull request numbers — so a caption that
+  // called them quotations would be false, and a future edit that made them quotations of a
+  // document would make this case fail until the caption said so.
+  const report = chat(page).at(-1)
+  assert.ok(report, 'the homepage chat renders no turns, so the results the caption is about cannot be read')
+  const document = chatSources()[report.source]
+  assert.ok(document, `the chat's last turn cites ${JSON.stringify(report.source)}, which is not a document this check reads`)
+  for (const result of report.results) {
+    assert.ok(
+      !normalize(document).includes(normalize(result)),
+      `the chat's result ${JSON.stringify(result)} is a line of ${report.source}, and the caption's reading of the figure is that the results are the illustration's own labels rather than quotations (changes spec 2026-10-18, item 3; D184)`,
+    )
+  }
 })
 
 test('the watch snippet is the command the reader keeps, and it copies itself', () => {

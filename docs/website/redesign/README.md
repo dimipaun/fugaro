@@ -9,7 +9,7 @@ all of them, and it changes what they built — the hero's headline and its exam
 four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
 The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
-gates pass (257 tests, `npm run check`, measured 2026-10-19). The three documents of the
+gates pass (258 tests, `npm run check`, measured 2026-10-19). The three documents of the
 first line of work — [`../README.md`](../README.md) `:3` and `:5`,
 [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — still say the opposite,
@@ -141,12 +141,30 @@ does not have to guess them from the markup.
   a URL written for the page is the invented fact this line of work may not publish (Global
   Constraints 6 and 9). The three results are named as the batch's own pieces (`Pull
   request 1 of 3`), and the sentence above them is the `working` skill's own line about what
-  a run ends with. Everything else the chat shows is quoted the same way — the request from
+  a run ends with. Every other line a turn *speaks* is quoted the same way — the request from
   item 3, the agent's two answers from `plugin/skills/parallelism/SKILL.md` and
   `plugin/skills/working/SKILL.md`, and the launch from the invocation the `parallelism`
   skill documents, with its own `<name>` and `<id>` placeholders — and the build holds each
   line to its document, in that document's order. A copy of the repository staged for a test
-  build therefore carries `plugin/skills/`.
+  build therefore carries `plugin/skills/`. (The caption is neither: it is the page's own
+  sentence, and the next reading is what it may say.)
+- **The chat's caption says what the figure is, not where every line came from.** The caption
+  claimed "every line is the repository's own words, from the skills the agent reads", and
+  that is false about two of the things the figure prints: the request is **item 3's own
+  example** of one (a line of the spec, not of a skill), and the three `Pull request n of 3`
+  labels are the illustration's own, so the last review's finding asked for the wording to be
+  corrected. It reads "An illustration of the workflow, not a recording of a session: what you
+  type, and the shape of what your agent does and reports. The agent's behaviour comes from
+  the skills Fugaro installs." — the figure's own label, and the one sentence in it that is
+  neither a quotation nor a result label. The rule above is therefore stated of the lines a
+  turn *speaks*, which is the part of the figure a document vouches for.
+  `website/test/home.mjs` holds the caption to that reading (it says
+  it is an illustration and not a recording, it says where the agent's behaviour comes from,
+  it claims no quotation of the figure's lines, and the three results are checked not to be
+  lines of the document the turn cites), and `website/test/wording.mjs` refuses the phrases
+  the false sentence was made of — on every built page and in the site's own sources, with a
+  case that plants the caption back and proves the refusal, so the claim cannot return through
+  a rewrite.
 - **Item 4's row starts at 64 rem, and a step name wraps.** The four cards share the row, so
   a card is a quarter of the column less the arrows between them: at 48 rem — the breakpoint
   the chrome switches at — a card's content box is about 100 px, which is narrower than the
@@ -173,7 +191,7 @@ does not have to guess them from the markup.
   the flow's stylesheet changes — so all three figures move with it, from the build of
   2026-10-19: **JavaScript per page 76,086** (three times 25,362; `public/scripts/site.js`
   20,289 bytes), **page weight per page 927,195** (three times 309,065; the docs hub
-  247,252 bytes) and **whole site 3,035,547** (three times 1,011,849; 809,479 bytes across 21
+  247,252 bytes) and **whole site 3,035,742** (three times 1,011,914; 809,531 bytes across 21
   files). The figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site

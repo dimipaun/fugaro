@@ -17,16 +17,19 @@
  * shape of the skills' behaviour"). The launch line is the invocation the `parallelism`
  * skill's code block documents, with the placeholders it writes (`<name>`, `<id>`): an
  * invented batch name or run id would be a fact about a run that did not happen (D184).
- * Every line is held here at build time to the document it cites, and again from outside by
+ * Every one of those lines — the request, the agent's two sentences and its launch — is held
+ * here at build time to the document it cites, and again from outside by
  * `website/test/home.mjs`.
  *
- * **The pull requests are text, not links.** Item 3 asks the agent to report back with pull
- * request links, and there is no honest link to draw: a run that has not happened has no
- * pull request number, and a link to one would be either invented (D184's rejected
- * alternative) or a pointer at a page that does not exist (Global Constraint 9). So the three
- * results are named as the batch's own pieces — `Pull request 1 of 3` — and the sentence
- * above them is the skill's own line about what a run ends with. `fugaro watch` is the one
- * command the reader is asked for, and it is the one they can copy.
+ * **The pull requests are text, not links, and they are the illustration's own labels.**
+ * Item 3 asks the agent to report back with pull request links, and there is no honest link
+ * to draw: a run that has not happened has no pull request number, and a link to one would be
+ * either invented (D184's rejected alternative) or a pointer at a page that does not exist
+ * (Global Constraint 9). So the three results are named as the batch's own pieces — `Pull
+ * request 1 of 3` — which is the one thing in the figure that is **not** a quotation: they
+ * are labels for work the run would report, and the guard below does not claim otherwise.
+ * The sentence above them is the skill's own line about what a run ends with. `fugaro watch`
+ * is the one command the reader is asked for, and it is the one they can copy.
  *
  * **The slot.** Under the chat, a marked, empty element sits where the `fugaro watch`
  * screenshot goes: a separate task adds the image, and until it exists there is nothing to
@@ -108,10 +111,15 @@ const WATCH = 'fugaro watch'
 const WATCH_TAIL = 'is the live screen of spend, repositories and running agents.'
 const WATCH_NOTE = `\`${WATCH}\` ${WATCH_TAIL}`
 
-// Hold every line to the document it cites, in that document's order, here, so a paraphrase —
-// or a line the skills stopped saying — stops the build naming the file rather than reaching
-// a reader as the agent's own words. `cursor` walks forward through a document, so two lines
-// quoted from one of them can only be quoted in the order it writes them.
+// Hold every line a turn speaks — its `line` and, where it has one, its `call` — to the
+// document it cites, in that document's order, here, so a paraphrase — or a line the skills
+// stopped saying — stops the build naming the file rather than reaching a reader as the
+// agent's own words. `cursor` walks forward through a document, so two lines quoted from one
+// of them can only be quoted in the order it writes them.
+//
+// `results` is deliberately not in this loop: the three labels are the illustration's own,
+// not a document's lines, and a guard that read them would either fail on the figure the spec
+// asks for or push somebody to write document lines that pretend to be pull requests.
 {
   const cursors: { [name: string]: number } = {}
   for (const turn of TURNS) {
@@ -126,7 +134,7 @@ const WATCH_NOTE = `\`${WATCH}\` ${WATCH_TAIL}`
       const at = document.indexOf(quoted, from)
       if (at === -1) {
         throw new Error(
-          `website/src/components/AgentChat.astro: the chat's ${what} ${JSON.stringify(line)} is not a line of ${turn.source} at or after the line before it, and every line of the chat is a document's own words rather than words written for the page (changes spec 2026-10-18, item 3; Global Constraint 6).`,
+          `website/src/components/AgentChat.astro: the chat's ${what} ${JSON.stringify(line)} is not a line of ${turn.source} at or after the line before it, and every line a turn of the chat speaks is a document's own words rather than words written for the page (changes spec 2026-10-18, item 3; Global Constraint 6).`,
         )
       }
       cursors[turn.source] = at + quoted.length
@@ -194,12 +202,20 @@ if (!source('README.md').includes(WATCH)) {
       than in markdown backticks (the line `WATCH_NOTE` above is held to the skill). */}
   <p class="chat-watch-note"><code>{WATCH}</code> {WATCH_TAIL}</p>
 
-  {/* The caption is the figure's last child and its name: the chat is an illustration of the
-      workflow drawn from the documents, not a recording of a session (D184's rule for the
-      transcript this component replaced). */}
+  {/* The caption is the figure's last child and its name: it says what the picture is rather
+      than leaving a reader to take it for a session that happened (D184's rule for the
+      transcript this component replaced). **It claims nothing about where the lines come
+      from, because not every line is a quotation**: the request is item 3's own example of
+      one, and the three results are the illustration's — a run that has not happened has no
+      pull request numbers to quote. Only the two turns the agent speaks (and the launch under
+      them) are the skills' sentences, which is what the second half of the caption says. The
+      caption is the site's own sentence rather than a quotation, so `website/test/home.mjs`
+      holds it to the shape it has to keep and `website/test/wording.mjs` refuses the claim it
+      used to make. */}
   <figcaption class="chat-caption">
-    An illustration of the workflow, not a recording of a session: every line is the
-    repository's own words, from the skills the agent reads.
+    An illustration of the workflow, not a recording of a session: what you type, and the
+    shape of what your agent does and reports. The agent's behaviour comes from the skills
+    Fugaro installs.
   </figcaption>
 </figure>
 

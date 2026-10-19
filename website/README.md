@@ -150,10 +150,12 @@ with fixtures that keep its refusals running, and none of them needs the network
   - **Page weight per page:** 927,195 bytes. Three times 309,065: the heaviest page, the
     docs hub, at 247,252 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,035,547 bytes. Three times 1,011,849 (every file in `dist/`, 809,479
-    bytes across 21 files, plus 25 %). The figure moved 29 bytes with the fix round's two
-    layout declarations — the watch bar's `flex-direction: row-reverse` and the flow's
-    `rotate(-90deg)` — and was re-derived in that commit like any other.
+  - **Whole site:** 3,035,742 bytes. Three times 1,011,914 (every file in `dist/`, 809,531
+    bytes across 21 files, plus 25 %). The figure moved 52 bytes with the chat's caption,
+    rewritten so that it says what the figure is rather than claiming every line of it is a
+    quotation — the fix round's two layout declarations (the watch bar's `flex-direction:
+    row-reverse` and the flow's `rotate(-90deg)`) moved it by 29 before that — and it was
+    re-derived in that commit like any other (D192).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
@@ -337,9 +339,12 @@ them there.
 - **The two skills the agent reads**, `plugin/skills/parallelism/SKILL.md` and
   `plugin/skills/working/SKILL.md` — the agent's two answers in that chat, the launch it
   runs, and the line about what the watch screen shows. Item 3's acceptance is that the
-  agent's lines "show the real shape of the skills' behaviour", and a line of the illustration
-  is a line of the skill it came from, so the build reads the skills and stops, naming the
-  file, when a line is not in one of them. **This is why a test build's copy of the
+  agent's lines "show the real shape of the skills' behaviour", and every line a turn of the
+  illustration *speaks* is a line of the document it cites, so the build reads those files and
+  stops, naming the file, when a line is not in one of them. (The three `Pull request n of 3`
+  labels are the illustration's own rather than a document's lines — a run that has not
+  happened has no numbers to quote — and the caption labels the figure an illustration rather
+  than claiming its lines are quotations.) **This is why a test build's copy of the
   repository carries `plugin/skills/`**: `test/lib/build.mjs` and the five test files that
   stage their own copy skip only the parts of `plugin/` a build does not read
   (`READ_UNDER_PLUGIN`).

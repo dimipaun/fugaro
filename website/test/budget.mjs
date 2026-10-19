@@ -30,10 +30,11 @@
 //     One ceiling for every page rather than one per page, so a page that grows with the
 //     product (the changelog, the reference) is held to the same line as the rest instead of to
 //     its own history.
-//   - Whole site: 1,011,849 bytes. Every file in `dist/` sums to 809,479 bytes (21 files:
+//   - Whole site: 1,011,914 bytes. Every file in `dist/` sums to 809,531 bytes (21 files:
 //     eleven pages, the script, the brand icons and the manifest); × 1.25, rounded up. The
-//     two layout declarations the fix round added — the watch bar's `flex-direction:
-//     row-reverse` and the flow's `rotate(-90deg)` — are the 29 bytes that last moved it.
+//     chat's caption, rewritten so that it claims no more than the figure is, is the 52 bytes
+//     that last moved it (a previous round's two layout declarations — the watch bar's
+//     `flex-direction: row-reverse` and the flow's `rotate(-90deg)` — moved it by 29).
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:

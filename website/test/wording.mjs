@@ -32,9 +32,19 @@
 // everywhere else — including `website/data/faq.yaml`, whose answer said "a fleet of
 // ephemeral cloud workers" and whose page `/faq/` is not exempt.
 //
+// **The second rule: the claim the chat's caption may not make.** The hero's chat is an
+// illustration, and its caption said "every line is the repository's own words, from the
+// skills the agent reads" — which is false about two of the things the figure prints (the
+// request is item 3's own example, and the three `Pull request n of 3` labels are the
+// illustration's own). The caption now says what the picture is and where the agent's
+// behaviour comes from, and `RETIRED_CLAIMS` below refuses the phrases the false sentence was
+// made of — in the same three places, and with its own refusal case, because a caption that
+// is only fixed once is a caption that comes back the next time somebody rewrites the figure.
+//
 // A gate whose refusals have never been seen to fire is a gate nobody knows the shape of, so
-// each part below has a case that plants the word where its rule looks and proves the failure
-// arrives with the file's name in it. Standard library only; no network (Global Constraint 4).
+// each part below has a case that plants the word — or the claim — where its rule looks and
+// proves the failure arrives with the file's name in it. Standard library only; no network
+// (Global Constraint 4).
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -49,6 +59,38 @@ import { DOCUMENT_PAGES, RECONCILIATION, documentPagesNamedIn, readReconciliatio
  * a longer word. Case is not a distinction a reader makes.
  */
 export const RETIRED = /\bworkers?\b/i
+
+/**
+ * The claim the hero's chat caption may not make again, in the two halves a rewording would
+ * come back through. It said "every line is the repository's own words, from the skills the
+ * agent reads", and it is false about two of the things the figure prints: the request is
+ * item 3's own example (a line of the changes spec, not of a skill), and the three
+ * `Pull request n of 3` labels are the illustration's own — a run that has not happened has
+ * no pull request numbers to quote. The figure is an illustration, the caption says so, and
+ * the only lines in it a document vouches for are the ones the agent speaks.
+ *
+ * The two patterns are the claim's own phrases rather than the whole sentence, because the
+ * sentence can be reworded and the claim cannot: "the repository's own words" is also true of
+ * the flow's captions and the run's steps, which are quotations of README.md, so the phrase
+ * is refused only in the shape that claims it of *every line* — the chat's own sentence.
+ */
+export const RETIRED_CLAIMS = [
+  {
+    claim: 'every line is the repository\'s own words',
+    pattern: /every line is the (?:\w+'s )?own words/i,
+  },
+  {
+    claim: 'from the skills the agent reads',
+    pattern: /from the skills the agent reads/i,
+  },
+]
+
+/**
+ * Why the claim is refused, as the sentence a failure ends with. One copy, so the whole gate
+ * says the same thing about the same defect.
+ */
+const CLAIM_WHY =
+  'the chat is an illustration: its request is item 3\'s own example and its three results are labels for work a run would report, so only the lines the agent speaks are its skills\' words and the caption may not vouch for the rest (changes spec 2026-10-18, item 3; Global Constraint 6)'
 
 /**
  * The head's text that a reader meets outside the page: the `<title>`, the description and
@@ -77,6 +119,17 @@ function around(text, at) {
   return text.slice(starts, end === -1 ? text.length : end + 1).trim().slice(0, 160)
 }
 
+/** Every way a text carries a retired claim, as the lines a failure lists. */
+function claimFailures(text, where) {
+  const out = []
+  for (const { claim, pattern } of RETIRED_CLAIMS) {
+    const found = pattern.exec(text)
+    if (!found) continue
+    out.push(`${where} carries ${JSON.stringify(found[0])} in ${JSON.stringify(around(text, found.index))}: ${CLAIM_WHY}.`)
+  }
+  return out
+}
+
 /** Every way one built page carries the retired word, as the lines a failure lists. */
 export function pageWordingFailures(html, rel) {
   const out = []
@@ -85,6 +138,7 @@ export function pageWordingFailures(html, rel) {
     ['its head', headText(html).replace(/\s+/g, ' ')],
   ]
   for (const [what, text] of where) {
+    out.push(...claimFailures(text, `${rel}'s ${what}`))
     const found = RETIRED.exec(text)
     if (!found) continue
     out.push(
@@ -105,14 +159,16 @@ export function wordingFailures(dist) {
   return out
 }
 
-/** Every way the site's own sources carry the retired word, as failure lines. */
+/** Every way the site's own sources carry the retired word or a retired claim, as failure lines. */
 export function sourceWordingFailures(files) {
   const out = []
   for (const [rel, body] of Object.entries(files)) {
+    const flat = body.replace(/\s+/g, ' ')
+    out.push(...claimFailures(flat, rel))
     const found = RETIRED.exec(body)
     if (!found) continue
     out.push(
-      `${rel} carries ${JSON.stringify(found[0])} in ${JSON.stringify(around(body.replace(/\s+/g, ' '), found.index))}: ` +
+      `${rel} carries ${JSON.stringify(found[0])} in ${JSON.stringify(around(flat, found.index))}: ` +
         "the site's own copy calls a run's unit of work a job (changes spec 2026-10-18, item 2).",
     )
   }
@@ -135,19 +191,19 @@ function siteSources() {
   return files
 }
 
-test("no built page carries the retired word 'worker'", () => {
+test("no built page carries the retired word 'worker' or the chat's retired claim", () => {
   const failures = wordingFailures(DIST)
-  assert.deepEqual(failures, [], `the built site carries the retired wording:\n  ${failures.join('\n  ')}`)
+  assert.deepEqual(failures, [], `the built site carries wording this gate refuses:\n  ${failures.join('\n  ')}`)
 })
 
-test("the site's own sources carry no retired word", () => {
+test("the site's own sources carry no retired word and no retired claim", () => {
   const failures = sourceWordingFailures(siteSources())
-  assert.deepEqual(failures, [], `the site's sources carry the retired wording:\n  ${failures.join('\n  ')}`)
+  assert.deepEqual(failures, [], `the site's sources carry wording this gate refuses:\n  ${failures.join('\n  ')}`)
 })
 
-test('README.md carries no retired word', () => {
+test('README.md carries no retired word, and the claim is refused there too', () => {
   const failures = sourceWordingFailures({ 'README.md': readFileSync(path.join(SITE, '..', 'README.md'), 'utf8') })
-  assert.deepEqual(failures, [], `README.md carries the retired wording:\n  ${failures.join('\n  ')}`)
+  assert.deepEqual(failures, [], `README.md carries wording this gate refuses:\n  ${failures.join('\n  ')}`)
 })
 
 test('the pages this rule skips are D188’s own list, and no wider', () => {
@@ -208,4 +264,32 @@ test('the word is refused in README.md and in the site’s own sources', () => {
   const failures = sourceWordingFailures(sources)
   assert.equal(failures.length, 1, failures.join('\n'))
   assert.ok(failures[0].startsWith('data/faq.yaml '), failures.join('\n'))
+})
+
+test('the chat’s retired claim is refused where the caption is written, and in the sources', (t) => {
+  // The caption as it shipped, on a built page: the sentence claimed every line of the figure
+  // was a quotation, and two of them are not. A wording that comes back anywhere a reader
+  // reads it — a component's caption, a data file's answer — fails here with the file named.
+  const shipped = 'An illustration of the workflow, not a recording of a session: every line is the repository\'s own words, from the skills the agent reads.'
+  const failures = wordingFailures(distOf(t, { 'index.html': shell(`<h1>Fugaro</h1><figcaption>${shipped}</figcaption>`) }))
+  assert.equal(failures.length, RETIRED_CLAIMS.length, failures.join('\n'))
+  for (const { claim } of RETIRED_CLAIMS) {
+    assert.ok(
+      failures.some((line) => line.startsWith("index.html's its text ") && line.includes(claim)),
+      `the caption came back and the gate did not name ${JSON.stringify(claim)}:\n${failures.join('\n')}`,
+    )
+  }
+
+  // The same sentence in the site's own sources, which is where a caption is written: a
+  // component that puts the claim back in fails before the next build, not after it.
+  const sources = {
+    'src/components/AgentChat.astro': `<figcaption>${shipped}</figcaption>\n`,
+    'src/components/ArchitectureDiagram.astro': '<p>every caption in the flow is the repository\'s own words</p>\n',
+  }
+  const inSources = sourceWordingFailures(sources)
+  assert.equal(inSources.length, RETIRED_CLAIMS.length, `the claim in a component was not refused:\n${inSources.join('\n')}`)
+  assert.ok(
+    inSources.every((line) => line.startsWith('src/components/AgentChat.astro ')),
+    `the gate refused a true sentence about the flow's captions, which are quotations of README.md:\n${inSources.join('\n')}`,
+  )
 })
