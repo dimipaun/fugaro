@@ -423,15 +423,26 @@ describe('the bundle in a document', () => {
     // A bundle that threw on load, or one whose guard skipped it, draws nothing
     // too -- and this says which happened.
     expect(asked(), 'the entry never asked the bridge: nothing here was drawn or refused').toBe(1)
-    // The three drawings of a console whose handshake is in range: D13's
+    // The four drawings of a console whose handshake is in range: the
+    // installation rail (Task 6.3, the canvas's structural addition -- the
+    // grid's first column, and the body's first child after any banner), D13's
     // no-installation state (Task 3.4b, step 4), the navigation, and the panel
     // the screens are drawn into (Task 3.4c).
-    expect(document.body.children).toHaveLength(3)
-    const root = document.body.children[0] as FakeNode
+    expect(document.body.children).toHaveLength(4)
+    const rail = document.body.children[0] as FakeNode
+    expect(rail.attributes.get('class')).toBe('console-rail')
+    // The rail's row is the *chosen* installation's, and this bridge answered
+    // `chosen: false` -- so the region is drawn and holds no row: no
+    // installation is being read, and a row invented for one would be a row
+    // from a read this document does not have.
+    expect(
+      everyNode(rail).filter((node) => node.attributes.get('class') === 'console-rail-row'),
+    ).toEqual([])
+    const root = document.body.children[1] as FakeNode
     expect(root.attributes.get('class')).toBe('console-installation')
     expect(root.attributes.get('data-installation')).toBe('none')
     expect(textOf(root)).toContain('no installation has been chosen')
-    const nav = document.body.children[1] as FakeNode
+    const nav = document.body.children[2] as FakeNode
     expect(nav.attributes.get('class')).toBe('console-views')
     expect(nav.children.map((button) => button.attributes.get('data-view'))).toEqual([
       'live',
@@ -443,7 +454,7 @@ describe('the bundle in a document', () => {
     // all**, so the read the screen opens with is one the console could not
     // make. `renderUnavailable` draws no figure, which is the whole point of
     // answering a read like this with a refusal.
-    const panel = document.body.children[2] as FakeNode
+    const panel = document.body.children[3] as FakeNode
     expect(panel.attributes.get('class')).toBe('console-panel')
     const drawn = panel.children[0] as FakeNode
     expect(drawn.attributes.get('data-kind')).toBe('refused')
@@ -466,7 +477,7 @@ describe('the bundle in a document', () => {
         },
       },
     )
-    const text = textOf(document.body.children[0] as FakeNode)
+    const text = textOf(document.body.children[1] as FakeNode)
     expect(text).toContain('/home/owner/.config/fugaro-console/installations.json could not be read: the file is not JSON')
   })
 
@@ -478,12 +489,21 @@ describe('the bundle in a document', () => {
         data: { chosen: true, id: '0123456789abcdef', project: 'acme', binary: '/opt/fugaro/bin/fugaro', cliVersion: '9.9.9', mode: 'reduced' },
       },
     )
-    // The banner first, then the installation.
-    const section = document.body.children[1] as FakeNode
+    // The banner first, then the rail, then the installation.
+    const section = document.body.children[2] as FakeNode
     expect(section.attributes.get('data-installation')).toBe('chosen')
     expect(section.attributes.get('data-mode')).toBe('reduced')
     const lines = section.children.map((child) => child.textContent)
     expect(lines).toEqual(['acme', '/opt/fugaro/bin/fugaro', '9.9.9 · reduced'])
+    // And the rail's own row for the same installation: one row, because one
+    // installation is what `installation.current` answers.
+    const rail = document.body.children[1] as FakeNode
+    const rows = everyNode(rail).filter((node) => node.attributes.get('class') === 'console-rail-row')
+    expect(rows).toHaveLength(1)
+    const drawnName = everyNode(rows[0] as FakeNode).find(
+      (node) => node.attributes.get('class') === 'console-rail-name',
+    )
+    expect(drawnName?.textContent).toBe('acme')
   })
 
   it('draws the reduced banner, with the withheld views named', async () => {
@@ -732,37 +752,45 @@ describe('the stylesheet step', () => {
     // The pin above reads the real theme directory, which no test may edit; this
     // is the same scan on a planted tree, and it is what makes the "while
     // THEME_STYLESHEETS lists it" half of that case a claim about the scan rather
-    // than about the two files that happen to be in the directory today. The
-    // listed file's claim is found, and the identical claim in `base.css` -- not
-    // on the list -- is not reported, because a file the list does not name is
+    // than about the files that happen to be in the directory today. The listed
+    // file's claim is found, and the identical claim in `screens.css` -- not on
+    // the list -- is not reported, because a file the list does not name is
     // refused by the step and never reaches a window.
     const listed = THEME_STYLESHEETS[0] ?? ''
     const claim = ' * Nothing reads this file yet. It is inert until Task 6.2 lands.\n'
-    withPlantedStylesheet({ ...themeFiles(), [listed]: `${claim}${themeFiles()[listed] ?? ''}`, 'base.css': claim }, (options) => {
+    withPlantedStylesheet({ ...themeFiles(), [listed]: `${claim}${themeFiles()[listed] ?? ''}`, 'screens.css': claim }, (options) => {
       expect(unwiredClaimsIn(options.directory, THEME_STYLESHEETS)).toEqual([{ name: listed, claim: 'Nothing reads' }])
       // The second direction on the same tree: the scan is over the names it is
-      // given, so `base.css` is reported only when something asks about it.
-      expect(unwiredClaimsIn(options.directory, ['base.css'])).toEqual([{ name: 'base.css', claim: 'Nothing reads' }])
+      // given, so `screens.css` is reported only when something asks about it.
+      expect(unwiredClaimsIn(options.directory, ['screens.css'])).toEqual([{ name: 'screens.css', claim: 'Nothing reads' }])
     })
   })
 
   it('puts each stylesheet on a line of its own, whether or not the file ends with one', () => {
     // The append arm `stylesheetText` carries (`source.css.endsWith('\n') ? ...
     // : `${source.css}\n``) exists for a file that does not end in a newline, and
-    // neither real theme file reaches it: both end in one, so the branch is
-    // unexecuted by every case that reads the console's own directory. A planted
-    // pair is the only way to run it -- and the failure it prevents is a real
-    // one: without the append the *last* line of one layer runs into the next
+    // no real theme file reaches it: every one of them ends in one, so the branch
+    // is unexecuted by every case that reads the console's own directory. A
+    // planted list is the only way to run it -- and the failure it prevents is a
+    // real one: without the append the *last* line of one layer runs into the next
     // layer's `/* name */` banner, so a rule at the foot of `tokens.css` and the
     // banner above `palette.css` become one token sequence and the rules after it
     // are parsed as part of the broken one.
-    const [first = '', second = ''] = THEME_STYLESHEETS
-    withPlantedStylesheet({ [first]: 'a { color: red; }', [second]: 'b { color: blue; }\n' }, (options) => {
+    //
+    // The first two names carry the case and the rest are planted minimal, so the
+    // claim is about the boundary between one layer and the next rather than
+    // about the list's length -- which is what keeps it true as Tasks 6.3 and 6.4
+    // append their own file.
+    const [first = '', second = '', ...others] = THEME_STYLESHEETS
+    const files: Record<string, string> = { [first]: 'a { color: red; }', [second]: 'b { color: blue; }\n' }
+    for (const name of others) files[name] = 'c { color: green; }\n'
+    withPlantedStylesheet(files, (options) => {
       bundleStylesheet(options)
       // Both layers, each on its own line: the unterminated file gained exactly
       // one newline and no other byte moved, and the terminated one gained none.
+      const tail = others.map((name) => `/* ${name} */\nc { color: green; }\n`).join('')
       expect(readFileSync(options.out, 'utf8')).toBe(
-        `${GENERATED_BANNER}/* ${first} */\na { color: red; }\n/* ${second} */\nb { color: blue; }\n`,
+        `${GENERATED_BANNER}/* ${first} */\na { color: red; }\n/* ${second} */\nb { color: blue; }\n${tail}`,
       )
     })
   })

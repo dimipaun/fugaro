@@ -1,0 +1,557 @@
+/* console/src/renderer/theme/base.css — the console's RESET, its DOCUMENT and its
+ * CHROME (desktop-console plan Task 6.3; design section 4, and sections 3.7-3.9
+ * for the values it reads).
+ *
+ * This is the third layer of the one stylesheet the three documents link, and the
+ * first one that paints anything: `tokens.css` is the vocabulary, `palette.css`
+ * the value set, and this file is the reset, the window's two-column grid and the
+ * rules for the chrome — the installation rail, the installation line, the view
+ * nav and the panel. The screens' own rules are `screens.css` (Task 6.4).
+ *
+ * **It is wired, and Task 6.2 is what wired the layer it joins.**
+ * `tools/bundle-renderer/index.ts` names this file in `THEME_STYLESHEETS` — in the
+ * same commit that created it, because the step refuses a listed file that is
+ * missing — concatenates the list into `dist/bundle/console.css`, `/console.css`
+ * is one of the entries the served root admits (`src/main/protocol.ts`), and each
+ * document links it. So a rule written here reaches the window on the next
+ * `npm run build`.
+ *
+ * **No inline style, and the CSP is not touched.** `style-src 'self'` admits this
+ * file because it is served from this origin; nothing here needs a `<style>`
+ * element, a `style` attribute or `'unsafe-inline'`, and
+ * `test/unit/screen-literals.test.ts` refuses a `.style` write anywhere under
+ * `src/renderer/` (design section 5.5).
+ *
+ * **The document is a two-column grid** (design section 4.1, the canvas the owner
+ * approved on 2026-10-19). The entry appends up to five children to
+ * `document.body`: the version-skew banner (only when the mode is not `ok`), the
+ * installation rail, the installation line, the nav and the panel. The rail is the
+ * grid's first column and is appended **before** the installation line, so the tab
+ * order a reader gets is the order they see (design section 4.3).
+ *
+ * The placement below is written so that the banner's row can be empty and cost
+ * nothing, which is what makes one grid serve both shapes:
+ *
+ *   row 1  `section.console-skew` (spanning both columns) — 0 px tall when absent,
+ *          because an `auto` row with no items sizes to nothing;
+ *   row 2  the rail (first column) and `section.console-installation` (second);
+ *   row 3  `nav.console-views`;
+ *   row 4  `div.console-panel`, the one row that takes the remaining height.
+ *
+ * The rail spans rows 2 to the last line, so it is full height under the banner.
+ * In **refused** mode the banner is the body's only child and takes the whole
+ * window: `:only-child` is that case, and it is a structural pseudo-class rather
+ * than a hook, so no class is invented for it.
+ *
+ * **The rail's width is two literals and not tokens** (design section 4.1): like
+ * `CONSOLE_WINDOW_SIZE`'s 1180 x 780 they are facts about this window rather than
+ * values a screen reads, and no section 3.1 table gains a row for them. The first
+ * column is `auto` and the rail carries the width, so the collapsed state is one
+ * rule on the rail rather than a second grid definition.
+ *
+ * **The selected row's rule selects an attribute Task 6.5 writes.**
+ * `button.console-rail-row[aria-selected='true']` is the design's own rule (section
+ * 4.1: "the attribute is the machine-readable mark and the border is the drawn
+ * one"), and section 2.1 gives `role="tab"` and `aria-selected` to Task 6.5 — the
+ * keyboard task — while the border is this task's. The rule is therefore here
+ * before the attribute is, which is the design's split and not an oversight: a
+ * rail of one row has one row, and the mark that row will carry arrives with the
+ * tablist behaviour. The same is true of the forced-colors block's copy of it.
+ *
+ * **The state's tone is a second channel, never the only one.** Every state word
+ * on the rail is drawn beside its glyph and its `data-state` (design section 3.5):
+ * `running` is `--ok`, `silent` is `--warn`, `idle` is `--text-muted`, and a
+ * reader who cannot tell the tones apart has still read the word.
+ */
+
+/* ---- The reset ------------------------------------------------------------
+ *
+ * The console draws its own tree and the document ships no styles of its own, so
+ * the reset is the whole of what the platform's defaults contributed: box sizing,
+ * the body's margins, and the two things a browser styles that this console styles
+ * itself — a heading's size and a button's chrome. Nothing here is a preference;
+ * each line removes a default that would otherwise decide how a screen looks.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: grid;
+  /* The rail's column is `auto` and the rail carries its own width, so the
+   * collapsed state is one rule on the rail. `minmax(0, 1fr)` on the content
+   * column is what lets a wide table shrink instead of pushing the grid out. */
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+blockquote,
+dl,
+dd,
+pre {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-size: inherit;
+  font-weight: var(--weight-semibold);
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-size: inherit;
+}
+
+/* The one focus rule, and it is `:focus-visible` and never `:focus` (design
+ * section 4.3): a mouse click must not leave a ring on a nav button, and a
+ * keyboard user must never lose one. `--accent` clears 3:1 against the ground
+ * that ships, which is what a focus indicator needs. */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Motion is available and almost unused (design section 3.9). This rule is
+ * written ONCE, globally, the way the website writes its own — so a rule added
+ * later cannot forget it — and it is the only place the console answers the
+ * preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- The document's five places ------------------------------------------ */
+
+/* The version-skew banner is the body's first child when the mode is not `ok`
+ * and the whole document when the console refused (design section 2.8). It spans
+ * both columns above the rail; as an only child it takes the window. */
+section.console-skew {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+section.console-skew:only-child {
+  grid-row: 1 / -1;
+}
+
+/* The rail is the grid's first column and spans every row below the banner. */
+aside.console-rail {
+  grid-column: 1;
+  grid-row: 2 / -1;
+}
+
+section.console-installation {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+nav.console-views {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+div.console-panel {
+  grid-column: 2;
+  grid-row: 4;
+}
+
+/* ---- The installation rail ------------------------------------------------ */
+
+/* The rail: a fixed 216 px expanded, 56 px collapsed (design section 4.1), and
+ * the two literals are stated there rather than left to a rule's invention. It is
+ * `--surface` — the raised ground — with a hairline against the content column,
+ * and it never narrows with the window: collapsing is a control, not a media
+ * query. */
+aside.console-rail {
+  width: 216px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: var(--rule-width) solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* The collapsed width is the icon column — 16 px of padding, a 24 px glyph, 16 px
+ * again — so a collapsed row draws its glyph at the size the expanded rail draws
+ * it and the collapse control keeps its own box in the header row above. */
+aside.console-rail[data-collapsed='true'] {
+  width: 56px;
+}
+
+/* The header row: the title, and the control that toggles the rail. */
+div.console-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2xs);
+  min-height: calc(2 * var(--row-height));
+  padding: 0 var(--space-md);
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+p.console-rail-title {
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+button.console-rail-collapse {
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text-muted);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+button.console-rail-collapse:hover {
+  color: var(--text);
+}
+
+/* The list: the rows, and the one region that scrolls when a project has more
+ * installations than the window has room for. */
+div.console-rail-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* A row is a tab in all but name (the role and the tablist are Task 6.5's): two
+ * lines of identity, the state and the spend, and the hairline that separates it
+ * from the next row. The left border is reserved at the selected width so that
+ * selecting a row moves no text. */
+button.console-rail-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--space-2xs) var(--space-md);
+  border-left: 3px solid transparent;
+  border-bottom: var(--rule-width) solid var(--border);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+button.console-rail-row:hover {
+  background: var(--surface-alt);
+}
+
+/* The selected row: the raised surface and a 3 px `--accent` left border. The
+ * attribute is Task 6.5's and the border is this task's — see this file's header. */
+button.console-rail-row[aria-selected='true'] {
+  background: var(--surface-alt);
+  border-left-color: var(--accent);
+}
+
+span.console-rail-name {
+  color: var(--text);
+}
+
+span.console-rail-project {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The state glyph and the state word, in one span (design section 2.9), with the
+ * tone of section 4.1's table as the redundant second channel. */
+span.console-rail-state {
+  color: var(--text-muted);
+}
+
+span.console-rail-state[data-state='running'] {
+  color: var(--ok);
+}
+
+span.console-rail-state[data-state='silent'] {
+  color: var(--warn);
+}
+
+/* The spend is money, so it is mono and tabular like every other figure (design
+ * section 3.7) — the rail is chrome and its figures are still figures. */
+span.console-rail-spend {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The foot row and its button share one class: a row and the control inside it
+ * are one region, and the class names the region (design section 4.1). */
+div.console-rail-add {
+  border-top: var(--rule-width) solid var(--border);
+}
+
+button.console-rail-add {
+  display: block;
+  width: 100%;
+  min-height: var(--row-height);
+  padding: var(--space-2xs) var(--space-md);
+  color: var(--text-muted);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+button.console-rail-add:hover {
+  color: var(--text);
+}
+
+p.console-rail-hint {
+  padding: var(--space-2xs) var(--space-md) var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The collapsed rail is icons only, and it is a NAME-PRESERVING collapse (design
+ * section 4.1): the name, the project and the spend are taken out of sight but
+ * not out of the accessibility tree — `clip-path` and a 1 px box, not
+ * `display: none`, so the row's accessible name is still the whole of what it
+ * draws — and the state span keeps its glyph visible while its word is clipped
+ * away. Nothing the collapsed rail removes from sight is a fact it stops
+ * announcing. */
+aside.console-rail[data-collapsed='true'] span.console-rail-name,
+aside.console-rail[data-collapsed='true'] span.console-rail-project,
+aside.console-rail[data-collapsed='true'] span.console-rail-spend,
+aside.console-rail[data-collapsed='true'] p.console-rail-title,
+aside.console-rail[data-collapsed='true'] p.console-rail-hint {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+aside.console-rail[data-collapsed='true'] button.console-rail-row {
+  align-items: center;
+  padding: 0 var(--space-md);
+}
+
+/* The glyph is one character and the word is the rest of the span, so a 1 em box
+ * shows the glyph and clips the word. Clipped text is still announced. */
+aside.console-rail[data-collapsed='true'] span.console-rail-state {
+  width: 1em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* The add row keeps its label and its accessible name; the narrow box clips it to
+ * the `+`, which is the one character that says what it is. */
+aside.console-rail[data-collapsed='true'] button.console-rail-add {
+  padding: 0 var(--space-md);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* ---- The installation line, the nav and the panel ------------------------- */
+
+/* The line that says which installation the console is showing, in its three
+ * states (design section 4.1): `chosen` is `--text`, `none` is `--text-muted`,
+ * and `unreadable` carries the `--warn` rule and its own sentence. */
+section.console-installation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+section.console-installation[data-installation='chosen'] {
+  color: var(--text);
+}
+
+section.console-installation[data-installation='none'] {
+  color: var(--text-muted);
+}
+
+section.console-installation[data-installation='unreadable'] {
+  color: var(--warn);
+  border-left: 3px solid var(--warn);
+}
+
+p.installation-binary {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* The nav is a tab list in all but name, and it is styled as one: equal-weight
+ * buttons separated by rules, and the current one marked by the `aria-current`
+ * the code already emits plus a weight and an underline in `--accent` — so the
+ * marker is the attribute and the underline is the second channel. */
+nav.console-views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+button.console-view {
+  padding: var(--space-xs) var(--space-md);
+  color: var(--text-muted);
+  border-right: var(--rule-width) solid var(--border);
+  border-bottom: 2px solid transparent;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+button.console-view:hover {
+  color: var(--text);
+}
+
+button.console-view[aria-current='true'] {
+  color: var(--accent-ink);
+  font-weight: var(--weight-medium);
+  border-bottom-color: var(--accent);
+}
+
+/* The chrome never scrolls and the panel does: a dense screen that looks broken
+ * the moment it is longer than the window is the difference this rule makes. */
+div.console-panel {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-md);
+}
+
+/* ---- Narrow windows (design section 4.2) ----------------------------------
+ *
+ * The layers are the window's, written in `em` against the root size — the
+ * document sets no root `font-size`, so 780 px is 48.75em and 560 px is 35em at
+ * the browser's 16 px default — and this file carries the CHROME's share of them.
+ * The other two layers' subjects are the screens' own (the widest tables drop a
+ * column at 62.5em, and the ledger, the caps panel and the panels' source lines
+ * stack at 35em), so they are `screens.css`'s and land with Task 6.4.
+ *
+ * The rail is 216 px of every width, so each layer fires with the content column
+ * 216 px narrower than the number it names. The rule that outranks all of them is
+ * section 4.2's: a figure is never hidden to make a layout fit — what a layer
+ * drops is a column, and a dropped column is one whose value is repeated in a
+ * `title`.
+ */
+@media (max-width: 48.75em) {
+  /* The nav wraps to two rows, and the installation line drops to
+   * project · mode: the binary is the one cell that is not a figure, and it
+   * carries its own value in a `title` (the entry writes it), so dropping it
+   * from sight loses nothing a reader can still reach. */
+  section.console-installation p.installation-binary {
+    display: none;
+  }
+}
+
+@media (max-width: 35em) {
+  /* The content column is narrow enough that the chrome's own padding is a
+   * measurable share of it. */
+  section.console-installation,
+  nav.console-views,
+  div.console-panel {
+    padding-inline: var(--space-xs);
+  }
+}
+
+/* ---- Forced colors and high contrast (design section 4.4) -----------------
+ *
+ * `base.css` carries the CHROME's block and `screens.css` the rows' and badges'
+ * (Task 6.4), each in the task that writes the rules it defends. Two rules hold
+ * here, and neither names a colour literal: the system paints the chrome's
+ * backgrounds and text, and the two marks that were a *fill* — the current view
+ * and the rail's selected row — are mapped to `Highlight`/`HighlightText`, with
+ * `forced-color-adjust: none` so the mapping survives. The borders are re-enabled
+ * because the system collapses the accent's 3 px left border, which is exactly
+ * the boundary a selected row is read by.
+ *
+ * Rule 1 of section 4.4 is the one that matters most and it is not written here:
+ * every state keeps its word, so nothing on this rail becomes unreadable when the
+ * colours go away.
+ */
+@media (forced-colors: active) {
+  body,
+  section.console-skew,
+  aside.console-rail,
+  section.console-installation,
+  nav.console-views,
+  div.console-panel {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  aside.console-rail,
+  div.console-rail-head,
+  button.console-rail-row,
+  div.console-rail-add,
+  section.console-installation,
+  nav.console-views,
+  button.console-view {
+    border-color: CanvasText;
+  }
+
+  button.console-view[aria-current='true'],
+  button.console-rail-row[aria-selected='true'] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+    border-color: Highlight;
+  }
+
+  span.console-rail-state {
+    color: CanvasText;
+  }
+
+  span.console-rail-state[data-state='running'],
+  span.console-rail-state[data-state='silent'] {
+    color: CanvasText;
+  }
+}

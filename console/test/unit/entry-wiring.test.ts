@@ -42,6 +42,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadFixture } from '../../src/source/fixture'
 import {
   LIVE_POLL_MS,
+  RAIL_ADD_CLASS,
+  RAIL_CLASS,
+  RAIL_COLLAPSE_CLASS,
+  RAIL_EXPAND_LABEL,
+  RAIL_COLLAPSE_LABEL,
+  RAIL_HEAD_CLASS,
+  RAIL_HINT_CLASS,
+  RAIL_LIST_CLASS,
+  RAIL_LIST_ID,
+  RAIL_NAME_CLASS,
+  RAIL_PROJECT_CLASS,
+  RAIL_ROW_CLASS,
+  RAIL_SPEND_CLASS,
+  RAIL_STATE_CLASS,
   READ_UNREADABLE,
   VIEW_BUTTON_CLASS,
   VIEW_NAV_CLASS,
@@ -745,5 +759,152 @@ describe('the entry e2e spec', () => {
     // `page.evaluate` is the *reading* half and is what the file uses; the
     // assertion above is only meaningful next to the thing it is not.
     expect(spec).toContain('page.evaluate')
+  })
+})
+
+// The installation rail (desktop-console plan Task 6.3; design section 4.1).
+// ---------------------------------------------------------------------------
+
+/** railOf is the rail the entry appended. */
+function railOf(document: FakeDocument): FakeNode {
+  const rail = everyNode(document.body).find((node) => node.attributes.get('class') === RAIL_CLASS)
+  if (rail === undefined) throw new Error('the entry drew no installation rail')
+  return rail
+}
+
+/** railRow is the rail's one row for the installation the dashboard can read. */
+function railRow(document: FakeDocument): FakeNode {
+  const rows = classed(railOf(document), RAIL_ROW_CLASS)
+  if (rows.length !== 1) throw new Error(`the rail drew ${rows.length} rows, not one`)
+  return rows[0] as FakeNode
+}
+
+/** spanOf is one of a row's four spans. */
+function spanOf(document: FakeDocument, className: string): FakeNode {
+  const span = classed(railRow(document), className)[0]
+  if (span === undefined) throw new Error(`the rail's row drew no ${className}`)
+  return span
+}
+
+/** nowStamp is the console's own clock shape. A frame stamped now is a feed that
+ * has not gone quiet, which is what makes the rail's word `running` rather than
+ * `silent`: `snapshotReply`'s own stamp is a fixed date, and every frame in this
+ * suite is therefore stale unless a case says otherwise. */
+function nowStamp(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
+describe('the installation rail', () => {
+  it('draws one row for the installation the dashboard can read, with its state word and its glyph, and makes no read of its own', async () => {
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const { bridge, calls } = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame, nowStamp()) } })
+    const document = await boot(bridge, new FakeDocument())
+    const rail = railOf(document)
+    // The rail is the body's **first** content child and the grid's first
+    // column: the four regions of the design's tree, in the design's order.
+    expect(rail.tagName).toBe('ASIDE')
+    expect(rail.children.map((child) => child.attributes.get('class'))).toEqual([
+      RAIL_HEAD_CLASS,
+      RAIL_LIST_CLASS,
+      RAIL_ADD_CLASS,
+      RAIL_HINT_CLASS,
+    ])
+    // One row, because one installation is what `installation.current` answers
+    // (`chosen: true`, project `acme`). The two identity spans draw the one
+    // label the store keeps -- the canvas's two-line identity.
+    expect(railRow(document).tagName).toBe('BUTTON')
+    expect(spanOf(document, RAIL_NAME_CLASS).textContent).toBe('acme')
+    expect(spanOf(document, RAIL_PROJECT_CLASS).textContent).toBe('acme')
+    // The state is the word **and** its glyph, never one instead of the other
+    // (design section 3.5), and `data-state` is the tone's hook.
+    const state = spanOf(document, RAIL_STATE_CLASS)
+    expect(state.textContent).toBe('● running')
+    expect(state.attributes.get('data-state')).toBe('running')
+    // The spend is `n/a` with the console's own sentence until the console has
+    // read the budget -- and **the rail never reads it itself**: a `budget` read
+    // at mount would be a spawn the entry spec's spawn-log case refuses.
+    const spend = spanOf(document, RAIL_SPEND_CLASS)
+    expect(spend.textContent).toBe('n/a')
+    expect(spend.attributes.get('title')).toBe('no budget show document was read')
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+  })
+
+  it('draws no row for an installation it cannot read, and draws the rail either way', async () => {
+    // The dashboard's surface has no list read, and this task adds none: a rail
+    // that drew a row per *stored* installation would be drawing rows from a
+    // read no file in this commit brings (design sections 4.1 and 11).
+    for (const installation of [
+      { ok: false, reason: 'the installations file could not be read' },
+      { ok: true, data: { chosen: false, sentence: 'no installation has been chosen' } },
+      { ok: true, data: { nothing: 'the console can read' } },
+    ]) {
+      const { bridge } = fakeBridge({ installation })
+      const document = await boot(bridge, new FakeDocument())
+      const rail = railOf(document)
+      expect(classed(rail, RAIL_ROW_CLASS)).toHaveLength(0)
+      // The region is still the region: no row is not a missing rail.
+      expect(classed(rail, RAIL_LIST_CLASS)).toHaveLength(1)
+      expect(classed(rail, RAIL_ADD_CLASS)).toHaveLength(2)
+    }
+  })
+
+  it('announces the collapse and toggles the rail’s own collapsed state', async () => {
+    const { bridge } = fakeBridge({})
+    const document = await boot(bridge, new FakeDocument())
+    const rail = railOf(document)
+    const control = classed(rail, RAIL_COLLAPSE_CLASS)[0]
+    expect(control, 'the rail drew no collapse control').toBeDefined()
+    const button = control as FakeNode
+    // The control names what it is about and says which state it is in, so the
+    // collapse is announced rather than drawn only (design section 4.1).
+    expect(button.attributes.get('aria-controls')).toBe(RAIL_LIST_ID)
+    expect(classed(rail, RAIL_LIST_CLASS)[0]?.attributes.get('id')).toBe(RAIL_LIST_ID)
+    expect(button.attributes.get('aria-expanded')).toBe('true')
+    expect(button.attributes.get('aria-label')).toBe(RAIL_COLLAPSE_LABEL)
+    expect(rail.attributes.get('data-collapsed')).toBeUndefined()
+    button.click()
+    expect(button.attributes.get('aria-expanded')).toBe('false')
+    expect(button.attributes.get('aria-label')).toBe(RAIL_EXPAND_LABEL)
+    expect(rail.attributes.get('data-collapsed')).toBe('true')
+    button.click()
+    expect(button.attributes.get('aria-expanded')).toBe('true')
+    expect(button.attributes.get('aria-label')).toBe(RAIL_COLLAPSE_LABEL)
+    expect(rail.attributes.get('data-collapsed')).toBe('false')
+  })
+
+  it('says silent when the live read was refused, and draws the budget read the console made itself', async () => {
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => ({ ok: false, reason: 'the CLI refused this read' }),
+        showBudget: () => ({ ok: true, data: { document: { global: { counted_usd: 12.5 } } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    // The rail knows whether it is reading this installation now: the feed was
+    // refused, so the word is `silent` and not `running`.
+    expect(spanOf(document, RAIL_STATE_CLASS).textContent).toBe('▲ silent')
+    expect(spanOf(document, RAIL_STATE_CLASS).attributes.get('data-state')).toBe('silent')
+    expect(calls.some((call) => call.name === 'showBudget')).toBe(false)
+    // The operator opens Spend. The budget read is the console's own -- the one
+    // the caps panel makes -- and the rail draws its counted dollars.
+    buttonFor(document, 'spend').click()
+    await flush()
+    expect(calls.some((call) => call.name === 'showBudget')).toBe(true)
+    expect(spanOf(document, RAIL_SPEND_CLASS).textContent).toBe('$12.50')
+    expect(spanOf(document, RAIL_SPEND_CLASS).attributes.get('title')).toBeUndefined()
+  })
+
+  it('says silent when the feed it holds has gone quiet', async () => {
+    // The other half of `silent`: the read answered, and the frame it brought is
+    // older than `LIVE_STALE_AFTER_SECONDS`. `snapshotReply`'s own stamp is a
+    // fixed date, so this is the state every stale frame leaves the rail in --
+    // and the word is drawn beside its glyph, which is what keeps the state
+    // readable when the tone is not (design section 3.5).
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const { bridge } = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame) } })
+    const document = await boot(bridge, new FakeDocument())
+    const state = spanOf(document, RAIL_STATE_CLASS)
+    expect(state.textContent).toBe('▲ silent')
+    expect(state.attributes.get('data-state')).toBe('silent')
   })
 })

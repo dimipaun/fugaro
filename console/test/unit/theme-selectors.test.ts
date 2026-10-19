@@ -1,0 +1,206 @@
+// The stylesheet's selectors against the design's §2 inventory (desktop-console
+// plan Task 6.3; design sections 2, 2.1 and 5.5).
+//
+// The design's §2 opens with the licence every rule in this theme is written
+// under: "**a rule may only select a hook this table names**", and a hook a rule
+// genuinely wants is "added **here first**, in the PR that wants it, so the
+// test's list and the stylesheet's selectors move together". This file is that
+// test for the chrome, and it is the one case that can see the shape of rule
+// Task 6.3 adds: a rule written against a class **the entry draws** rather than
+// against a class a screen declares.
+//
+// **The list is read out of the design document, not written out here.** A
+// second copy of §2's tables in this file would be a list that drifts from the
+// one a reader checks, and the licence rule would then be enforced against the
+// copy rather than against the design. So the document is read from the
+// repository root (`docs/design/console-styling.md`), its §2 is taken whole, and
+// its **table rows** are where the hooks come from -- the tables are what the
+// design's own sentence points at, and the prose around them is prose. Each
+// backticked token in a row is read as a hook: `div.console-rail-head` names the
+// class `console-rail-head`, `data-installation="chosen"` names the attribute
+// `data-installation`, and a token that is neither (`console/src/renderer/
+// entry.ts`, `renderVersionSkew`) names no hook and is skipped.
+//
+// **What is scanned is the selectors, not the file's text.** Comments are
+// stripped first, so a hook named in this suite's own prose -- or in the
+// stylesheet's long header -- is not a selector, and only what a rule selects
+// is checked. Classes come from `.name` and attribute selectors from `[name`,
+// which between them are every way a rule in `base.css` names an element.
+//
+// **`screens.css` joins this scan in Task 6.4**, which is the task that writes
+// it: the plan gives that task "a case that every selector in `screens.css`
+// names a hook the design's §2 inventory lists ... the screens' own class
+// literals **and the chrome's hooks of §2.1** (the rail's twelve, which Task 6.3
+// draws and this scan must see)". The inventory read below is the shared half,
+// and the per-file half is one entry in `SCANNED` -- which is why this file is
+// named for the selectors rather than for `base.css`.
+
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { describe, expect, it } from 'vitest'
+
+import { THEME_STYLESHEETS } from '../../tools/bundle-renderer'
+
+/** CONSOLE_ROOT is the console package, which is where the theme is read from. */
+const CONSOLE_ROOT = join(__dirname, '..', '..')
+
+/** DESIGN_DOCUMENT is the design this stylesheet is written against, at the
+ * repository root. It is the one file this suite reads from outside the console,
+ * and it is read because §2's tables **are** the licence: a copy of them here
+ * would be a copy, and the copy is what would be enforced. */
+const DESIGN_DOCUMENT = join(CONSOLE_ROOT, '..', 'docs', 'design', 'console-styling.md')
+
+/** INVENTORY_HEADING and NEXT_SECTION bound §2 in the design document. */
+const INVENTORY_HEADING = '## 2. Screen inventory'
+const NEXT_SECTION = '## 3.'
+
+/** SCANNED is the stylesheets whose selectors are checked, and the task that
+ * adds each. Task 6.4 appends `screens.css` here. */
+const SCANNED: readonly string[] = Object.freeze(['base.css'])
+
+/** RAIL_HOOKS is the rail's twelve classes, which §2.1 names and §4.1 draws as
+ * thirteen elements. They are listed here because the count is the claim: the
+ * stylesheet selects these twelve and no thirteenth, and a case below says so. */
+const RAIL_HOOKS: readonly string[] = Object.freeze([
+  'console-rail',
+  'console-rail-head',
+  'console-rail-title',
+  'console-rail-collapse',
+  'console-rail-list',
+  'console-rail-row',
+  'console-rail-name',
+  'console-rail-project',
+  'console-rail-state',
+  'console-rail-spend',
+  'console-rail-add',
+  'console-rail-hint',
+])
+
+/** ELEMENT_PREFIX is the element names the design's tables qualify a class with
+ * (`div.console-rail-head`). Stripping one is what turns a token into the class
+ * a rule would select; a token with any other prefix is not a hook. */
+const ELEMENT_PREFIX = /^(?:a|aside|button|code|div|dl|figure|form|h1|h2|h3|input|label|li|nav|ol|p|pre|section|span|table|tbody|td|th|tr|ul)\./
+
+/** readDesign reads the design document, failing by name rather than with an
+ * ENOENT from somewhere further along. */
+function readDesign(): string {
+  try {
+    return readFileSync(DESIGN_DOCUMENT, 'utf8')
+  } catch (error) {
+    throw new Error(
+      `the design this theme is written against cannot be read at ${DESIGN_DOCUMENT}: the ` +
+        `selector scan's whole licence is §2 of that document (${String(error)})`,
+    )
+  }
+}
+
+/** readTheme reads one stylesheet of the theme directory. */
+function readTheme(name: string): string {
+  try {
+    return readFileSync(join(CONSOLE_ROOT, 'src', 'renderer', 'theme', name), 'utf8')
+  } catch (error) {
+    throw new Error(`src/renderer/theme/${name} cannot be read (${String(error)})`)
+  }
+}
+
+/** inventoryHooks is the hooks §2's tables name: every backticked token of every
+ * table row, reduced to the class or the attribute it is, in name order. */
+function inventoryHooks(): readonly string[] {
+  const design = readDesign()
+  const start = design.indexOf(INVENTORY_HEADING)
+  const end = design.indexOf(NEXT_SECTION, start)
+  if (start === -1 || end === -1) {
+    throw new Error(`the design has no ${INVENTORY_HEADING} section: the scan would be vacuous`)
+  }
+  const tables = design
+    .slice(start, end)
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith('|'))
+    .join('\n')
+  const hooks = new Set<string>()
+  for (const [, token] of tables.matchAll(/`([^`\n]+)`/g)) {
+    // `data-installation="chosen"` and `aria-current="true|false"` name the
+    // attribute; the value it carries is a state, not a hook.
+    const bare = (token ?? '').replace(/="[^"]*"$/, '')
+    const qualified = ELEMENT_PREFIX.test(bare) ? bare.replace(ELEMENT_PREFIX, '') : bare
+    if (/^[a-z][a-z0-9-]*$/.test(qualified)) hooks.add(qualified)
+  }
+  return [...hooks].sort()
+}
+
+/** selectorsIn is what one stylesheet's selectors name: the classes (`.name`)
+ * and the attributes (`[name`), in name order, with the comments removed so the
+ * file's own prose is not read as a selector. */
+function selectorsIn(css: string): { readonly classes: readonly string[]; readonly attributes: readonly string[] } {
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  return {
+    classes: [...new Set([...stripped.matchAll(/\.([a-z][a-z0-9-]*)/g)].map((match) => match[1] ?? ''))].sort(),
+    attributes: [...new Set([...stripped.matchAll(/\[([a-z][a-z0-9-]*)/g)].map((match) => match[1] ?? ''))].sort(),
+  }
+}
+
+describe('the theme’s selectors against the design’s §2 inventory', () => {
+  it('reads the inventory out of the design, and it names the rail’s twelve hooks', () => {
+    // The non-vacuity guard for every case below: an extraction that found
+    // nothing, or that read the wrong section, would pass a scan against an
+    // empty list. The rail's twelve are the hooks this task adds, and §2.1 is
+    // where they are listed.
+    const hooks = inventoryHooks()
+    expect(hooks.length, 'the §2 inventory read empty').toBeGreaterThan(20)
+    for (const hook of RAIL_HOOKS) expect(hooks, `§2.1 does not name ${hook}`).toContain(hook)
+    // And the two `data-*` hooks this task's rules select: a rule that wants one
+    // adds it to the table **first** (design §2's licence rule).
+    expect(hooks).toContain('data-collapsed')
+    expect(hooks).toContain('data-state')
+  })
+
+  it('selects no class §2 does not name, in every stylesheet this task writes', () => {
+    const hooks = inventoryHooks()
+    const unknown: string[] = []
+    for (const name of SCANNED) {
+      const { classes } = selectorsIn(readTheme(name))
+      // The non-vacuity guard, per file: a file with no class selector would
+      // pass this case by selecting nothing at all.
+      expect(classes.length, `${name} selects no class at all`).toBeGreaterThan(0)
+      for (const className of classes) {
+        if (!hooks.includes(className)) unknown.push(`${name}: .${className}`)
+      }
+    }
+    expect(unknown, 'a rule selects a hook the design’s §2 does not name').toEqual([])
+  })
+
+  it('selects no attribute §2 does not name', () => {
+    // The same licence, for the `data-*` and `aria-*` hooks a rule selects
+    // rather than for its classes. The attributes the screens emit beyond §2's
+    // tables are real and are deliberately unlisted (design §2 names
+    // `data-hidden` and `data-skew` as the two examples) -- so this case is what
+    // makes a rule that suddenly wants one add it to the table first.
+    const hooks = inventoryHooks()
+    const unknown: string[] = []
+    for (const name of SCANNED) {
+      for (const attribute of selectorsIn(readTheme(name)).attributes) {
+        if (!hooks.includes(attribute)) unknown.push(`${name}: [${attribute}]`)
+      }
+    }
+    expect(unknown, 'a rule selects an attribute the design’s §2 does not name').toEqual([])
+  })
+
+  it('selects the rail’s twelve hooks and no thirteenth', () => {
+    // "Twelve hooks on thirteen elements" (design §2.1 and §4.1): the foot row
+    // and the button inside it share `console-rail-add`. A thirteenth
+    // `console-rail-*` class in the stylesheet would be a hook either the entry
+    // does not draw or §2.1 does not list, and both are the same defect.
+    const rail = selectorsIn(readTheme('base.css')).classes.filter((name) => name.startsWith('console-rail'))
+    expect(rail).toEqual([...RAIL_HOOKS].sort())
+  })
+
+  it('scans the stylesheets the bundler serves, so a layer cannot be added and skipped', () => {
+    // The guard on the guard: `SCANNED` is a list this file owns, and a task
+    // that added a theme file without adding it here would leave that file's
+    // selectors unchecked. Every stylesheet the bundler concatenates is either
+    // scanned or is one of the two layers that hold no selector at all.
+    const unscanned = THEME_STYLESHEETS.filter((name) => !SCANNED.includes(name))
+    expect(unscanned).toEqual(['tokens.css', 'palette.css'])
+  })
+})
