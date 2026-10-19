@@ -145,3 +145,133 @@ func TestDocsCredentialsServiceKeepsOneBundleSecret(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsCredsTaskKeepsTheBundleInMemory pins the first of the two rules the
+// owner asked for on 2026-10-19, in the brief for the bundle's command task
+// (C1.25) that the Q6 ruling created.
+//
+// The rule: the bundle exists only in memory while the command runs. Nothing is
+// written to disk -- no temporary file, no editor buffer, no swap file, no
+// shell history of the value -- no value reaches a log line, a crash report or
+// an error message, and the command zeroes its buffers best-effort before it
+// exits.
+//
+// Why it is a rule and not a habit: the bundle is every service credential in
+// one object (Q6), and the accepted cost of the ruling is that a read of it is
+// every credential at once. A copy on the disk, in a log or in an error message
+// is that same leak with none of the service's own protections around it, so
+// the command that writes the bundle is the one place the value must not
+// survive.
+//
+// The plan's test list has to carry the test that holds it: one that runs the
+// command with HOME and TMPDIR pointed at empty directories and asserts they
+// stay empty, so the only thing the command writes is the Secret Manager
+// version.
+//
+// RED STEP, run for real: written before the documents were amended, this test
+// failed, naming every phrase below. It is deliberately about wording and not
+// about behaviour: nothing is implemented by the documents it reads.
+func TestDocsCredsTaskKeepsTheBundleInMemory(t *testing.T) {
+	const (
+		recon = "../../docs/credentials-service/reconciliation.md"
+		plan  = "../../docs/credentials-service/implementation-plan.md"
+	)
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	reconciliation, implementationPlan := read(recon), read(plan)
+
+	// The rule itself, at the top of the task the command is specified in.
+	for _, want := range []string{
+		"**No temporary file, ever.**",
+		"nothing is written to disk",
+		"no temporary file, no editor buffer, no swap",
+		"no value reaches a log line, a crash report or an error message",
+		"zeroes its buffers best-effort before it exits",
+	} {
+		if !strings.Contains(implementationPlan, want) {
+			t.Errorf("%s's C1.25 no longer says %q: the bundle's command has to keep the value off the disk, out of every log and out of every error", plan, want)
+		}
+	}
+
+	// The test that holds it, in the task's own test list.
+	for _, want := range []string{
+		"TestCredsSetWritesNoFile",
+		"`HOME` and `TMPDIR`",
+	} {
+		if !strings.Contains(implementationPlan, want) {
+			t.Errorf("%s's C1.25 no longer carries %q: a rule with no test that would catch a temp file left behind is a rule nothing enforces", plan, want)
+		}
+	}
+
+	// The record: an owner's rule that lives only in the plan reads as the
+	// plan's own choice, so the reconciliation states it too.
+	if !strings.Contains(reconciliation, "No temporary file") {
+		t.Errorf("%s no longer records the owner's no-temp-file rule of 2026-10-19: the plan implements the owner's brief, and this rule is one line of it", recon)
+	}
+}
+
+// TestDocsCredsTaskShowsOnlyThePromptAndOneLine pins the second of the two
+// rules the owner asked for on 2026-10-19, in the brief for the bundle's
+// command task (C1.25).
+//
+// The rule: the whole flow -- prompt for the value with no echo, read the
+// current bundle, merge in memory, validate, write the new version, re-read to
+// confirm -- is one command, and the owner sees nothing between its prompt and
+// its one final line: no progress line, no listing of what it read, no diff, no
+// intermediate state of any kind. The line is `added NAME (bundle version N)`
+// when the name is new, `replaced NAME (bundle version N)` when the entry
+// already existed, and `removed NAME (bundle version N)` for `fugaro creds rm
+// NAME`, which goes through the same flow.
+//
+// Why: an owner who is shown the flow's intermediate state is shown the bundle
+// (Q6 keeps every service credential in it), and a line per step is a line a
+// value can hide in. The plan's test list has to carry the test of the exact
+// output lines.
+//
+// RED STEP, run for real: written before the documents were amended, this test
+// failed, naming every phrase below.
+func TestDocsCredsTaskShowsOnlyThePromptAndOneLine(t *testing.T) {
+	const (
+		recon = "../../docs/credentials-service/reconciliation.md"
+		plan  = "../../docs/credentials-service/implementation-plan.md"
+	)
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	reconciliation, implementationPlan := read(recon), read(plan)
+
+	// The rule itself, and the three lines it fixes word for word.
+	for _, want := range []string{
+		"**The user sees only the prompt and one final line.**",
+		"no intermediate state",
+		"`fugaro creds rm NAME`",
+		"added NAME (bundle version N)",
+		"replaced NAME (bundle version N)",
+		"removed NAME (bundle version N)",
+	} {
+		if !strings.Contains(implementationPlan, want) {
+			t.Errorf("%s's C1.25 no longer says %q: the command's whole output is the prompt and one line, and the line is fixed word for word", plan, want)
+		}
+	}
+
+	// The test that holds it, in the task's own test list.
+	if !strings.Contains(implementationPlan, "TestCredsCommandsPrintOnlyTheFinalLine") {
+		t.Errorf("%s's C1.25 no longer carries TestCredsCommandsPrintOnlyTheFinalLine: an output rule with no test of the exact lines is a rule a progress line can quietly break", plan)
+	}
+
+	// The record, as in the file's first rule above.
+	if !strings.Contains(reconciliation, "one final line") {
+		t.Errorf("%s no longer records the owner's prompt-and-one-line rule of 2026-10-19: the plan implements the owner's brief, and this rule is one line of it", recon)
+	}
+}
