@@ -566,6 +566,17 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
+		// Generation 3's new conjunct is a *lockout* for any phone account with
+		// no device node, and this is the state an operator is in the moment
+		// before they deploy it — so the sentence that tells them to redeploy
+		// has to tell them what the redeploy costs. The three halves: the node
+		// (rules.PathDevices, not a second spelling of the path), the fact that
+		// nothing creates one yet, and what the operator must therefore do.
+		for _, want := range []string{rules.PathDevices, "fugaro pair", "by hand"} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the between-generations body does not say the deploy binds the user claim to a device node (%q absent from %q): an operator who deploys generation 3 without reading this locks out every phone account that has no node, and nothing mints one yet", want, c.Problem)
+			}
+		}
 		// And it is this state's one text: doctor is its only printer, and the
 		// publish refusal above is the other state's.
 		if c.Problem != rulesMarkerOlderText(projectpolicy.PolicyRulesVersion) {
