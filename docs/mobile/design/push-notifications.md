@@ -20,12 +20,14 @@ v1, and a decision of its own later". So this document decides nothing on its ow
 so that the owner can answer that later decision against real options rather than from
 scratch, and so that the answer's cost is priced before anything is built.
 
-Every claim about the code below was checked against `origin/main` at **`90ba554`** (v0.8.7,
-read 2026-10-19),
-by reading the file and the symbol named. Symbols are cited by name rather than by line number,
-because the lines move; where a claim is a **snapshot of a branch point** that a sibling branch
-is about to change — §2's device node, and #601's `userClaim` conjunct and generation 3 — it is
-marked as one at the point it is made rather than left to age silently.
+Every claim about the code below was checked against `origin/main` at **`371038f`** (read
+2026-10-19 — the tree in which **#601 has merged**: rules generation 3, the device node, the
+pairing nodes and the MAC symbols), by reading the file and the symbol named. Symbols are cited
+by name rather than by line number, because the lines move. **An earlier revision of this
+document was written against `90ba554`** (v0.8.7), where #601 was still an open branch and the
+device node, `RulesVersion = 3` and the MAC symbols were **not in the tree**; every claim that
+rested on that branch point is rewritten here as a statement about the merged tree, and each
+relocation is recorded where it was made rather than left to age silently.
 
 **Related.** [reconciliation.md](../reconciliation.md) (D112, D113, D117, D118, D121,
 D126), [functional-spec-reconciliation.md](../functional-spec-reconciliation.md) (D165,
@@ -110,9 +112,8 @@ answered.
   `mobile/src/skeleton/index.test.js` keeps it so). **The permission exists in a catalogue and
   nowhere else**: `deploy/terraform/testdata/custom-role-permissions.txt` lists
   `firebasecloudmessaging.messages.create` and its siblings among the permissions this
-  repository knows the names of *(that file is on `origin/main` — read at `90ba554` on
-  2026-10-19 — and **not yet in this branch's base (`82ba600`)**, which predates the catalogue;
-  it is in the tree this document lands on)*, but that file is a **permission catalogue**, not a
+  repository knows the names of *(the file is in this tree: it landed on
+  `main` after this branch's base, `82ba600`, and `371038f` carries it)*, but that file is a **permission catalogue**, not a
   dependency — **no code, no manifest and no Terraform resource uses any of them**, and no
   role in `deploy/terraform/` grants one. On `origin/main` before this document, every occurrence of the phrase "push token" is the **git**
   credential (comments in `internal/runner/provision.go` around `provisionGitToken`, and in
@@ -142,22 +143,25 @@ answered.
   `google_apikeys_key.web` restricted to Identity Toolkit and Secure Token),
   **Firestore** (`apis.tf`), and the signer/minter IAM (`iam.tf`). **Cloud Messaging is not
   among them**, and there is no Cloud Functions deployment.
-- **No device-token store.** The device node `config/admin/devices/$uid` is a **proposal**,
-  not code: it is named in `internal/budget/rules/rules.go`'s `userClaim` doc comment as the
-  node **`USER` will require** "(D166, plan P6.4)", and in `functional-spec-reconciliation.md`'s
-  D166 and G14. **As of `origin/main` at `90ba554` (2026-10-19)**, the generated rules
-  `internal/budget/rules/rules.json.tmpl` carry
-  `"admin": { ".read": false, ".write": false }`, **the `devices` subtree does not exist**, and
-  the rules' `USER` macro (`rules.go`'s `userClaim`) **has no device conjunct**;
-  `internal/projectpolicy/version.go`'s `RulesVersion` is **2**. **This is a statement about a
-  branch point, not a standing fact, and the sibling branch #601
-  (`fugaro/20261018-151654-3ddb`) changes all three**: it adds
-  `&& root.child('config/admin/devices').child(auth.uid).exists()` to `userClaim` and raises
-  the generation to **3** — the generation §3.4 stores its data under. **A reader on the day
-  #601 merges must read this bullet as "true before #601"**: what survives that merge is the
-  *shape* (`devices/$uid` is an admin-only node whose existence is the allowlist), not the
-  statement that it is absent. So there is nowhere a push token is stored, and no grant that
-  would admit one.
+- **No device-token store.** The device node `config/admin/devices/$uid` **is in the tree**
+  as of `origin/main` at `371038f` (read 2026-10-19; **merged as #601**, mobile plan P6.4,
+  decisions D166 and D165), and it is an **allowlist whose whole meaning is its existence** —
+  not a store of anything. `internal/budget/rules/rules.go`'s `userClaim` carries the conjunct
+  `root.child('config/admin/devices').child(auth.uid).exists()`, and the constant's own comment
+  reads "*the child `config/admin/devices/<uid>` existing IS 'this account is paired to a phone
+  that has not been revoked'*". The generated rules
+  `internal/budget/rules/rules.json.tmpl` carry `config/admin/devices/$uid` inside
+  `"admin": { ".read": false, ".write": false }`, and
+  `internal/projectpolicy/version.go`'s `RulesVersion` is **3**, whose comment says generation
+  3 "*is P6.4 … the device allowlist `config/admin/devices/<uid>` that USER now requires
+  (D166), and the two pairing nodes of D165*". **What is still missing is anything that
+  *writes* a device node**: `fugaro pair` is **P6.6**, approved 2026-10-18 and **not built**,
+  so until it lands the only way to write one is by hand over IAM (the same sentence
+  `version.go` carries). There is therefore nowhere a **push** token is stored, and no grant
+  that would admit one — an allowlist keyed by uid is not a token store, and this design keeps
+  its own data in a **sibling** node precisely so that stays true (§3.4). *(The earlier
+  revision of this bullet recorded the pre-#601 state — `RulesVersion = 2`, no device conjunct,
+  no `devices` subtree — as a branch point; #601 has merged and the bullet is now the tree.)*
 
 **What does exist, and what this design builds on:**
 
@@ -175,16 +179,28 @@ answered.
   distinguishes `live` / `stale` / `offline` / `clock-differs` from the heartbeat, with
   `MIN_INTERVAL_MS` as D117's floor. A push is not the offline signal — the heartbeat is — and
   this design must not turn a notification into one.
-- **The only scheduled cloud components in the tree**: the history job,
+- **The scheduled cloud components in the tree, and they are all jobs**: the history job,
   `deploy/terraform/gcp/modules/installation/history.tf`'s `google_cloud_run_v2_job.history`
   (running `fugaro budget history --sweep`, `internal/cli/history.go`), driven by
-  `google_cloud_scheduler_job.history_sweep` (`*/15 * * * *`) and `history_rollover`. Its
+  `google_cloud_scheduler_job.history_sweep` (`*/15 * * * *`) and `history_rollover`
+  (`30 0 * * *`, paused until the owner resumes it after the first hand-run backfill). Its
   account holds the custom role `fugaroHistory` and, from
   `deploy/terraform/gcp/modules/firebase/iam.tf`, `roles/firebasedatabase.admin`,
   `roles/firebaseauth.admin` and `roles/datastore.user`. Its
   own comment states the property this design leans on for §6: **"The job has no project
   config file … the account's identity is its only credential"** — there is no key on any
-  laptop.
+  laptop. **Two more Scheduler jobs are in the tree and neither is a service either:**
+  `deploy/terraform/gcp/modules/repo/check.tf`'s `google_cloud_scheduler_job.check`, the
+  **daily image check** — `internal/infra/spec.go`'s `Schedule` derives its minute from the
+  repository's slug ("a minute between 05:00 and 06:59 UTC … so repositories don't all build at
+  once"), it starts `google_cloud_run_v2_job.check` as the installation's scheduler service
+  account, and it is **paused** until every checked workflow has a build record; and
+  `deploy/terraform/gcp/modules/compute/preload.tf`'s
+  `google_cloud_scheduler_job.preload_rebuild`, the **weekly** rebuild of the preloaded Batch
+  boot image (`0 3 * * 1`, `var.preload_schedule`) that posts to the Cloud Build API as the
+  preload service account. Both are a Scheduler job starting a job or an API, under an ambient
+  service-account identity — **none of the three is an always-on server**, which is the
+  property §3.6 and Q1 read off them.
 - **One place the site already speaks to a provider**: `website/src/pages/privacy.astro`,
   which describes Google Analytics 4 and says plainly what it does **not** cover ("the Fugaro
   program" goes to `/security/`). §10 prices whether push touches it.
@@ -340,8 +356,9 @@ note says the same. They are marked here rather than presented as verified.)*
 it. Both are nodes of rules generation 3.**
 
 **Why not a child of `config/admin/devices/$uid`, which is what the first draft proposed.**
-The device node's **existence is the allowlist**: on PR #601,
-`internal/budget/rules/rules.go`'s `userClaim` is
+The device node's **existence is the allowlist**, in the tree rather than on a branch:
+`internal/budget/rules/rules.go`'s `userClaim` — merged with #601, `origin/main` at `371038f`
+— is
 `(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())`,
 and the constant's own comment reads "*the child `config/admin/devices/<uid>` existing IS 'this
 account is paired to a phone that has not been revoked'*". Deleting that child is `fugaro pair
@@ -360,7 +377,7 @@ writes it but pairing.
 ```
 config/admin/devices/$uid/            # D166's node. WRITTEN AND DELETED ONLY by `fugaro pair`
   ...                                 #   / `fugaro pair revoke` (P6.6): mac key name, added at.
-                                      #   Its existence IS the allowlist (userClaim, #601).
+                                      #   Its existence IS the allowlist (userClaim, P6.4).
 config/admin/push/$uid/               # THIS design's node — a SIBLING, never a child
   token/<installation>/               #   the provider registration token, per installation
                                       #   (§3.3: FCM addresses one project per token)
@@ -378,9 +395,11 @@ config/admin/push/$uid/               # THIS design's node — a SIBLING, never 
 1. **No writer other than `fugaro pair` and `fugaro pair revoke` ever touches `devices/**`.**
    Not re-registration, not the prefs toggle, not the sender, not the reaper, not the app.
    A rules-level statement rather than a convention: `config/admin` stays `"admin": { ".read":
-   false, ".write": false }` in `rules.json.tmpl`, no client grant is added for `push/**`
-   either, and P6.4's deployed document should carry the same two client-denied locations for
-   `config/admin/push` that #601's template carries for `config/admin/devices`.
+   false, ".write": false }` in `rules.json.tmpl` and its `config/admin/devices/$uid` child
+   restates exactly that pair, with no client grant anywhere under it (merged as #601). Nothing
+   has to be added for the sibling either: a `push/**` node under the same `config/admin` is
+   client-denied by inheritance, and a later task that writes it into the template must keep it
+   that way.
 2. **The sender sends only when BOTH nodes exist**: `devices/$uid` (the device is still paired)
    **and** `push/$uid` (a registration exists). No device node means no send — revocation is
    still one act, and it is still immediate, because the send-time check reads the node the
@@ -473,16 +492,17 @@ same thing now.
   multi-installation change makes the *node* per (device, installation) even though the device
   is one.
 
-**The generation.** Both nodes land in **rules generation 3**. On `origin/main` at `90ba554`
-(read 2026-10-19), `internal/projectpolicy/version.go` carries `RulesVersion = 2` ("Generation 2
-is the mailbox (mobile plan task P2.1)"), and `userClaim` in `internal/budget/rules/rules.go` is
-`(auth != null && auth.token.mu != null && auth.token.mu == auth.uid)` — **no device conjunct
-yet**; **PR #601 (`fugaro/20261018-151654-3ddb`) is the branch that takes
-it to 3** by adding the device conjunct this section quotes, and P6.4 names the file among its
-own. **A push store does not need a generation of its own**: it is a sibling inside
-`config/admin`, whose rules P6.4 already rewrites. *(Cited by symbol and by branch, not by line
-or by PR state: #601 is open at the time of writing, and the sentence above is about the
-predicate it carries, not about whether it has merged.)*
+**The generation.** Both nodes land in **rules generation 3, and that generation is in the
+tree**: `origin/main` at `371038f` (read 2026-10-19) carries
+`internal/projectpolicy/version.go`'s `RulesVersion = 3`, whose comment reads "*Generation 3 is
+P6.4 (mobile plan task P6.4, decisions D161, D165, D166, D169, D171): the mailbox's message
+fields as P6.3's schema defines them … the device allowlist `config/admin/devices/<uid>` that
+USER now requires (D166), and the two pairing nodes of D165*"; and `userClaim` in
+`internal/budget/rules/rules.go` carries the device conjunct quoted at the top of this section.
+**#601 (`fugaro/20261018-151654-3ddb`, head `14e5ff4` when this document first read it) has
+merged as that generation**, so the file names above are read from the tree and not from a
+branch. **A push store does not need a generation of its own**: it is a sibling inside
+`config/admin`, whose rules that generation already rewrote.
 
 ### 3.5 Rotation and revocation
 
@@ -592,8 +612,7 @@ The candidates, priced:
     **`firebasecloudmessaging.messages.create`**, granted through a **custom role** on the
     Firebase project — not `roles/firebasecloudmessaging.admin`, which carries topic and
     subscription management this sender never needs (`deploy/terraform/testdata/custom-role-permissions.txt`,
-    on `origin/main` at `90ba554` — see §2's note on why this branch's base (`82ba600`) does not carry it —
-    is the permission catalogue the custom roles are read against, and it lists
+    in the tree — see §2 — is the permission catalogue the custom roles are read against, and it lists
     `firebasecloudmessaging.messages.create` beside the `topicSubscriptions.*` set the design
     does not want). The **FCM API must be enabled** on the project
     (`firebasecloudmessaging.googleapis.com`), which is a change `apis.tf` does not carry
@@ -927,32 +946,36 @@ and database admin **bypasses the rules**:
   accepts as the likely shape of the basic roles and does not claim to have checked against
   live IAM)*.
 
-**The rules cannot verify a tag — the symbols, the branch and the quote.** Stated precisely,
-because the first draft of this correction cited symbol names that do not exist on `main` and
-that is exactly the kind of citation a later implementer cannot check:
+**The rules cannot verify a tag — the symbols, the commit and the quote.** Stated precisely,
+because the first draft of this correction cited symbol names that did not exist on `main` at
+the time, and that is exactly the kind of citation a later implementer cannot check; the
+symbols **are in the tree now**, so this cites the tree rather than a branch:
 
-- **On PR #601's branch** (`fugaro/20261018-151654-3ddb`, head `14e5ff4`, read **2026-10-19**),
-  `internal/budget/rules/rules.go` carries `MaxMacLength = 64`, whose comment is: "*MaxMacLength
-  is the length of a message's or a heartbeat's MAC, in hex characters: 32 bytes of
-  HMAC-SHA-256 (§3.5, D169, D171, O7). The rules check the length and the lowercase-hex
-  characters (patternHex), never the value: verifying a tag needs the key, which the database
-  never holds. TestMailboxRulesAgreeWithTheSharedSchema holds the number to the schema's
-  MAC_MAX.*" The same file defines `patternHex`, the regex `/^[0-9a-f]+$/`, and the `MACOK`
-  macro (which the branch's `rules.json.tmpl` applies to every message's and the heartbeat's
-  `mac` child) expands to
+- **In the tree** — `origin/main` at **`371038f`**, read 2026-10-19, where the file arrived with
+  **#601 merging** (mobile plan P6.4) — `internal/budget/rules/rules.go` carries
+  `MaxMacLength = 64`, whose comment is: "*MaxMacLength is the length of a message's or a
+  heartbeat's MAC, in hex characters: 32 bytes of HMAC-SHA-256 (§3.5, D169, D171, O7). The rules
+  check the length and the lowercase-hex characters (patternHex), never the value: verifying a
+  tag needs the key, which the database never holds. TestMailboxRulesAgreeWithTheSharedSchema
+  holds the number to the schema's MAC_MAX.*" The same file defines `patternHex`, the regex
+  `/^[0-9a-f]+$/`, and the `MACOK` macro (which `rules.json.tmpl` applies to every message's and
+  the heartbeat's `mac` child, three times) expands to
   `(newData.isString() && newData.val().length == 64 && newData.val().matches(/^[0-9a-f]+$/))`,
   with the comment "*A tag's shape: a string of exactly MAC_MAX characters, every one of them
-  the schema's lowercase hex (HEX_PATTERN). The characters are checked; the value never is, and
-  cannot be … P6.7 is what verifies one.*"
-- **On `origin/main` at the same date** (`90ba554`, v0.8.7): **none of those symbols exists.**
-  `userClaim` is `(auth != null && auth.token.mu != null && auth.token.mu == auth.uid)` — no
-  device conjunct — `RulesVersion` is **2**, and the mailbox rules validate
+  the schema's lowercase hex (HEX_PATTERN). The characters are checked; the *value* never is,
+  and cannot be: verifying a tag needs the key, which is D171's and never passes through the
+  database, so the rules can require a well-formed tag and nothing more (P6.7 is what verifies
+  one).*" *(When this document was first written, on `90ba554`, none of the three symbols was in
+  the tree and the paragraph named #601's branch as the place to find them; #601 has merged.)*
+- **What that replaced, on the tree as it was before #601** (`90ba554`, v0.8.7): none of those
+  symbols existed there, `userClaim` was
+  `(auth != null && auth.token.mu != null && auth.token.mu == auth.uid)` — no device conjunct —
+  `RulesVersion` was **2**, and the mailbox rules validated
   `newData.hasChildren(['id', 'sender', 'text', 'at'])` with `"$other": { ".validate": false }`,
-  so **a message carrying a `mac` is refused there outright**; the `mac` field's rules-side
-  handling arrives with #601. (The schema is ahead of the rules on `main`: `shared/mailbox-schema/index.js`
-  already declares `REQUIRED_FIELDS = ['id', 'sender', 'text', 'at', 'mac']` and `MAC_MAX = 64`,
-  which is the disagreement #601's rules close.)
-- **The schema side, which is the same on both**: `shared/mailbox-schema/index.js`'s `macField`
+  so **a message carrying a `mac` was refused there outright**. The schema was ahead of those
+  rules: `shared/mailbox-schema/index.js` declared `REQUIRED_FIELDS = ['id', 'sender', 'text',
+  'at', 'mac']` and `MAC_MAX = 64`, which is the disagreement #601's rules close.
+- **The schema side**, which did not move: `shared/mailbox-schema/index.js`'s `macField`
   requires exactly 64 lowercase hex characters (`HEX_PATTERN`, refusing with `BAD_MAC`: "*A mac
   is not 64 lowercase hex characters: a 32-byte HMAC-SHA-256 tag*"), and `verifyMac` in
   `shared/mailbox-schema/mac.js` is the separate, keyed question — HMAC-SHA-256 over
@@ -964,8 +987,10 @@ symbols**: the rules can require a well-shaped tag and cannot check its value, a
 thing that catches a forged one is the **app verifying the tag with the per-pairing key** (§4
 rule 11, P6.3/D169, P6.7). A compromised sender — **which is the realistic way attacker 2 gets
 the credential, and should be named as the capability's holder rather than "an outsider"** —
-can write mailbox content with a well-shaped `mac` that the rules admit (on #601's generation-3
-rules; on today's `main` the write would be refused for the field's mere presence). And **the budget families carry no MAC at all** (`config/kill/**`,
+can write mailbox content with a well-shaped `mac` that the rules admit — on the generation-3
+rules in the tree today, where the `mac` child's shape is checked and its value cannot be;
+before #601 merged, generation 2 refused that write for the field's mere presence, which was a
+narrower door and not a verification either. And **the budget families carry no MAC at all** (`config/kill/**`,
 `config/caps/**`, `spend/$day/**` are numbers and flags): for the budget category a compromised
 sender can forge **both** the push **and** the in-app state it points to, so **the app's own
 screen is not "the truth" for that category** — the truth there is what the database says, read
@@ -1224,7 +1249,10 @@ bent are §4's rules (content-free, never-a-confirmation) and §3.6's choice of 
   writes, and a **forged** push is attacker-authored, can say anything on the lock screen, and
   cannot be told apart by the OS. What is bounded is the act and the app screen, not the lie
   (§3.1, §3.9, §5 attacker 2, §4 rules 3, 7, 8 and 9).
-- Never ship before the device node it hangs off is approved (P6.4's generation 3).
+- Never ship before the device node it hangs off is **deployed and writable**: P6.4's
+  generation 3 is approved (2026-10-18) and **merged** (#601), so the rules are in the tree,
+  but `fugaro pair` is **P6.6** — approved, not built — and until it lands nothing writes a
+  device node, so no phone can be paired and no registration can exist (§2, §3.4).
 
 ## 12. Open for the owner
 
@@ -1280,8 +1308,9 @@ D160–D179 are not this document's to take.
   it, sent to only while **both** nodes exist. One revocation act still stops delivery *and*
   reads, because §3.4's rule is "no device node, no send"; the generation is P6.4's rather than
   a new one; and no client grant is added.
-  - **Why not a child — the reason this is (i) and the first draft's (i) is withdrawn.** On
-    #601, `userClaim` admits a phone if `config/admin/devices/<uid>` merely **exists**. A
+  - **Why not a child — the reason this is (i) and the first draft's (i) is withdrawn.** In
+    the tree (generation 3, merged as #601), `userClaim` admits a phone if
+    `config/admin/devices/<uid>` merely **exists**. A
     child of that node makes **every routine push write** — re-registration (§3.5 (b)), a prefs
     toggle (§3.8), a stale-token cleanup (§6) — a potential **re-pairing primitive**: a
     re-registration message the phone sent before `fugaro pair revoke` and the consumer

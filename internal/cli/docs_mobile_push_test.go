@@ -111,9 +111,10 @@ func TestDocsMobilePushDesignIsWritten(t *testing.T) {
 // assertion cannot see one of them move, so each is stat'ed here as well as
 // required in the text.
 //
-// Every path below was read on `origin/main` at 82ba600 and is in this branch's
-// tree. The document links its neighbours relatively (../reconciliation.md,
-// ../../../SECURITY.md), so a citation counts in either form.
+// Every path below was read on `origin/main` at 371038f — the tree the design
+// itself names — and is in this branch's tree. The document links its neighbours
+// relatively (../reconciliation.md, ../../../SECURITY.md), so a citation counts
+// in either form.
 func TestDocsMobilePushCitationsExist(t *testing.T) {
 	const path = "docs/mobile/design/push-notifications.md"
 	doc := readDoc(t, path)
@@ -414,46 +415,78 @@ func TestDocsMobilePushSaysWhoDeletesThePushNode(t *testing.T) {
 	}
 }
 
-// TestDocsMobilePushMACEvidenceNamesItsBranch: the B4 correction leans on what
-// the rules do with a message's `mac`, and the first draft cited `rules.go`'s
-// `MACOK`, `patternHex` and `MaxMacLength` as if they were in this tree. They
-// are not: on this branch rules.go has none of them, and on main at the time of
-// writing the rules do not mention `mac` at all (the mailbox `$msg` validates
-// ['id','sender','text','at'] with "$other": {".validate": false}). The symbols
-// exist on PR #601's branch. So the design must (a) name that branch and a head
-// commit, (b) carry the real quote, and (c) say plainly that main does not have
-// them — and this test re-checks (c) against the tree rather than trusting it.
-func TestDocsMobilePushMACEvidenceNamesItsBranch(t *testing.T) {
+// TestDocsMobilePushMACEevidenceIsInTheTree: the B4 correction leans on what the
+// rules do with a message's `mac`, and its first draft cited `rules.go`'s
+// `MACOK`, `patternHex` and `MaxMacLength` as symbols that lived on PR #601's
+// branch and *not* on main ("none of those symbols exists"). #601 has since
+// merged — rules generation 3 is in the tree at `371038f` — so that paragraph
+// described a tree its reader is not standing in. It now cites the symbols as
+// being in the tree, and this test holds that citation to the tree in both
+// directions: every symbol the paragraph quotes must be in
+// `internal/budget/rules/rules.go`, the commit named must be the one the design
+// says it read, and the "on a branch, not on main" wording must be gone.
+func TestDocsMobilePushMACEevidenceIsInTheTree(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	doc := readDoc(t, docPath)
+	flat := normSpace(doc)
 
-	// (c), checked first: the in-tree rules really do not carry these symbols,
-	// so a document that cites them without a branch is citing something that
-	// does not exist where its reader is standing.
+	// (a) the three symbols the paragraph quotes are read out of the file it
+	// quotes, so a merge that renames or drops one fails this guard instead of
+	// leaving the design resting on a symbol nobody has.
 	rules := readDoc(t, "internal/budget/rules/rules.go")
 	for _, symbol := range []string{"MACOK", "MaxMacLength", "patternHex"} {
-		if strings.Contains(rules, symbol) {
-			t.Errorf("internal/budget/rules/rules.go now defines %s: the design's paragraph saying the symbol is on #601's branch and NOT on main is stale and must be re-cited against the tree", symbol)
+		if !strings.Contains(rules, symbol) {
+			t.Errorf("internal/budget/rules/rules.go no longer defines %s, which %s's MAC paragraph quotes as being in the tree: re-read the paragraph and re-cite it", symbol, docPath)
+		}
+		if !strings.Contains(doc, symbol) {
+			t.Errorf("%s no longer names %s: the paragraph carrying B4's evidence must quote the symbol it rests on", docPath, symbol)
 		}
 	}
 
+	// (b) the tree and the commit it was read at, so a reader can go and look.
 	for _, want := range []string{
-		// (a) the branch and a head, so a reader can find the symbol.
-		"fugaro/20261018-151654-3ddb",
-		"14e5ff4",
-		// (b) the quote that actually exists, with the clause that carries the
+		"origin/main",
+		"`371038f`",
+		"are in the tree now",
+		"merged as #601",
+		// The quote that actually exists, with the clause that carries the
 		// conclusion: the characters are checked, the value never is.
 		"never the value: verifying a tag needs the key",
-		// (c) stated, not implied.
-		"none of those symbols exists",
 	} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("%s lacks %q: the MAC evidence must name its branch, quote the real comment and say main does not carry the symbols", docPath, want)
+		if !strings.Contains(flat, normSpace(want)) {
+			t.Errorf("%s lacks %q: the MAC evidence must cite the symbols where its reader can find them", docPath, want)
 		}
 	}
+
+	// (c) the pre-merge wording, which sent a reader to a branch for symbols
+	// that are on main and said main did not carry them. The document keeps one
+	// historical mention of the symbols' absence, explicitly dated to `90ba554`,
+	// which is why these needles are the old *claims* and not the bare words.
+	for _, bad := range []string{
+		"none of those symbols exists",
+		"On PR #601's branch",
+		"the symbol is on #601's branch and NOT on main",
+		"not in this branch's tree",
+	} {
+		if strings.Contains(flat, normSpace(bad)) {
+			t.Errorf("%s still carries %q, which describes the tree before #601 merged: the symbols are in the tree now and the paragraph has to say so", docPath, bad)
+		}
+	}
+
 	// The schema side is the other half of the claim and must be cited too,
 	// since it is the same on both: the shape the phone validates and the keyed
-	// question are different functions.
+	// question are different functions. Held against the schema files as well,
+	// so the citation is checkable rather than remembered.
+	idx := readDoc(t, "shared/mailbox-schema/index.js")
+	macjs := readDoc(t, "shared/mailbox-schema/mac.js")
+	for _, sym := range []string{"macField", "MAC_MAX"} {
+		if !strings.Contains(idx, sym) {
+			t.Errorf("shared/mailbox-schema/index.js no longer defines %s, which %s cites as the shape check", sym, docPath)
+		}
+	}
+	if !strings.Contains(macjs, "verifyMac") {
+		t.Errorf("shared/mailbox-schema/mac.js no longer exports verifyMac, which %s cites as the keyed check the rules cannot make", docPath)
+	}
 	for _, want := range []string{
 		"shared/mailbox-schema/index.js",
 		"shared/mailbox-schema/mac.js",
@@ -643,7 +676,12 @@ func TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR(t *testing.T) {
 // depending on nothing (`| P5.1–P5.3 | — | D115, D121, D123 |`). A reader
 // scheduling from that table would schedule the sender before the node and the
 // command it needs exist. The prerequisites are recorded the way P3.6's row
-// names P6.3: in the "Depends on" cell, marked proposed and NOT APPROVED.
+// names P6.3: in the "Depends on" cell, with the state the plan's Phase 6 rows
+// carry — the owner approved Phase 6 on 2026-10-18 (`approved 2026-10-18`, the
+// phrase TestDocsMobilePlanPhase6IsApproved pins on every P6.N row), so the
+// block and the row mark P6.4 **merged** (#601, the generation in the tree) and
+// P6.6 approved and not built, rather than carrying the pre-approval
+// "proposed, NOT APPROVED" this guard was first written against.
 func TestDocsMobilePushPlanRecordsTheDesignsPrerequisites(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	const planPath = "docs/mobile/implementation-plan.md"
@@ -674,10 +712,13 @@ func TestDocsMobilePushPlanRecordsTheDesignsPrerequisites(t *testing.T) {
 	if depends == "—" || depends == "-" {
 		t.Errorf("%s records P5.2 as depending on nothing (%q), though the design's Q2 makes P6.4 a prerequisite and §3.4 makes P6.6 the command that writes both nodes", planPath, depends)
 	}
-	for _, want := range []string{"**P6.4**", "**P6.6**", "proposed, NOT APPROVED"} {
+	for _, want := range []string{"**P6.4**", "**P6.6**", "approved 2026-10-18", "#601", "not built"} {
 		if !strings.Contains(depends, want) {
 			t.Errorf("%s's P5.2 dependency row does not name %q: %s", planPath, want, depends)
 		}
+	}
+	if strings.Contains(depends, "NOT APPROVED") {
+		t.Errorf("%s's P5.2 dependency row still says %q, though the owner approved Phase 6 on 2026-10-18: %s", planPath, "NOT APPROVED", depends)
 	}
 	// The task block's own "Depends on." paragraph has to name them too: the
 	// block and the table are read by different readers (one reads the task,
@@ -697,15 +738,19 @@ func TestDocsMobilePushPlanRecordsTheDesignsPrerequisites(t *testing.T) {
 	// "**P6.4**", not "P6.4": the block also quotes the design's own sentence
 	// ("push cannot ship before P6.4"), so the bare string would pass a block
 	// whose prerequisite list had lost the task.
-	for _, want := range []string{"**P6.4**", "**P6.6**", "NOT APPROVED"} {
+	for _, want := range []string{"**P6.4**", "**P6.6**", "approved 2026-10-18", "merged"} {
 		if !strings.Contains(block, want) {
 			t.Errorf("%s's P5.2 block does not name %q in its Depends-on paragraph: %s", planPath, want, block)
 		}
 	}
+	if strings.Contains(block, "NOT APPROVED") {
+		t.Errorf("%s's P5.2 block still says %q about its prerequisites, though the owner approved Phase 6 on 2026-10-18: %s", planPath, "NOT APPROVED", block)
+	}
 
-	// P3.6's row is the model: a proposed prerequisite named in the cell with
-	// its state, not silently assumed.
-	if !strings.Contains(plan, "| P3.6 | ") || !strings.Contains(plan, "**P6.3** (signing; proposed, NOT APPROVED)") {
+	// P3.6's row is the model: a prerequisite named in the cell with its state,
+	// not silently assumed. The state it carries is main's own ("approved
+	// 2026-10-18"), which is what makes the two rows readable side by side.
+	if !strings.Contains(plan, "| P3.6 | ") || !strings.Contains(plan, "**P6.3** (signing; approved 2026-10-18)") {
 		t.Errorf("%s's P3.6 row no longer names P6.3 the way this test says a prerequisite is recorded; update the guard's model", planPath)
 	}
 }
@@ -870,13 +915,14 @@ func TestDocsMobilePushCategorySetIncludesCapNear(t *testing.T) {
 }
 
 // TestDocsMobilePushBranchOnlyCitationsAreAttributed: this design cites things
-// that are NOT in this branch's tree — PR #601's rules symbols (MACOK and
-// friends), the Terraform permission catalogue, and #632's orchestrator design.
-// A reader standing on this branch cannot stat any of them, so each must say
-// where it lives: a branch name, a PR number, a commit, or `origin/main` with a
-// date. The failure this catches is a citation that reads as if it were in the
-// tree — which is exactly how the first draft's `MACOK`/`patternHex`/
-// `MaxMacLength` read before this round.
+// a reader cannot stat in this branch's tree — the sibling orchestrator design
+// (#632) is still unwritten, and papers a citation of *any* path that the walk
+// below can neither stat nor match to a basename in the tree. Each such citation
+// must say where it lives: a branch name, a PR number, a commit, or `origin/main`
+// with a date. The failure this catches is a citation that reads as if it were in
+// the tree — which is how the first draft's `MACOK`/`patternHex`/`MaxMacLength`
+// read before #601 merged; those symbols are in the tree now, and the design
+// describes them as being there.
 //
 // The attribution has to sit NEAR the citation: this document mentions PR #601
 // and `origin/main` in other paragraphs entirely, so a paragraph-wide check
@@ -934,16 +980,19 @@ func TestDocsMobilePushBranchOnlyCitationsAreAttributed(t *testing.T) {
 		}
 	}
 
-	// ...and it must say WHICH tree lacks it. The first wording, "not in this
-	// branch's tree", is false of the tree this document is read in after the
-	// merge -- the catalogue file is on `main`, so a reader there finds it and
-	// the sentence reads as a mistake. The repo's own idiom for this is "this
-	// branch's base (`<sha>`)", as docs/website/redesign/reconciliation.md uses
-	// it; the design names the base commit instead.
+	// ...and it must say WHICH tree it is describing. The first wording, "not in
+	// this branch's tree", was true of the tree this document was written in
+	// (before the catalogue file and before #601) and false of this one — the
+	// catalogue is on `main` now, so a reader here finds it and the sentence
+	// reads as a mistake. The design names both the base it started from and the
+	// commit it was last read at, which is what makes a citation a reader cannot
+	// stat checkable at all.
 	if strings.Contains(doc, "not in this branch's tree") {
-		t.Errorf("%s still says a cited file is %q; it is on `main`, so name this branch's base (`82ba600`) the way docs/website/redesign/reconciliation.md does", docPath, "not in this branch's tree")
+		t.Errorf("%s still says a cited file is %q, which is not true of the tree this document is read in: name the base (`82ba600`) and the commit read (`371038f`) instead, as docs/website/redesign/reconciliation.md names its base", docPath, "not in this branch's tree")
 	}
-	if !strings.Contains(doc, "this branch's base (`82ba600`)") {
-		t.Errorf("%s no longer names this branch's base for the citations its own tree does not carry", docPath)
+	for _, want := range []string{"this branch's base, `82ba600`", "`371038f` carries it"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer carries %q: the design has to say which tree each citation was checked against", docPath, want)
+		}
 	}
 }
