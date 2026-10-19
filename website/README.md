@@ -356,8 +356,10 @@ added or removed without this sentence moving fails there:
     and links to the rest of it, so the three carry text the repository wrote rather
     than a page of the site, and the brief allows those to stay long. The exemption is the
     owner's and this change did not touch it: the page is much shorter than the document it
-    used to render whole and still carries 314 words, over this ceiling, so it stays on the
-    list — and `test/security.mjs` holds it to a ceiling of its own.
+    used to render whole and is still well over this ceiling, so it stays on the list — and
+    `test/security.mjs` holds it to a ceiling of its own. How many words the page carries is
+    `budget.mjs`'s own reader's to say, over the built artifact; this list does not keep the
+    count, and the figure it kept here once did not match what the reader measures.
     The ceiling is set against the site as it was measured before the redesign
     (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268 — every one of them over it).
