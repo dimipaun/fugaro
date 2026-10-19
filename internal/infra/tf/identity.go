@@ -110,11 +110,11 @@ func (i RemovalIdentity) Identifies() bool {
 }
 
 // RemovedIdentity is the identity of the object rc removes: the change's
-// resource type and its before view's id, name and project. Nothing else is in
-// that view to read, which is the residual the package comment and the type
-// above both state. A change that
-// removes nothing still answers — a create's before is null — and the answer
-// then identifies nothing, which is what Approves refuses.
+// resource type and its before view's id, name and project — nothing else is
+// in that view to read, which is the residual the package comment and the type
+// above both state. A change that removes nothing still answers — a create's
+// before is null — and the answer then identifies nothing, which is what
+// Approves refuses.
 func RemovedIdentity(rc ResourceChange) RemovalIdentity {
 	b := rc.Change.Before
 	return RemovalIdentity{
