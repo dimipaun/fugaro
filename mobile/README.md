@@ -485,6 +485,26 @@ judges it once, so the heartbeat has one judge and not two that can disagree. A
 refusal from the mailbox client is passed through unchanged: its codes are its
 own, and this module does not re-label another module's decision.
 
+### The heartbeat line, and a negative age
+
+**A negative age is a reading, not a claim smuggled in**, and it is why neither
+`heartbeat.js` nor `lines.js` floors one at zero. P1.4 computes
+`ageMs = now - at`, so a heartbeat stamped *after* the phone's clock arrives
+negative: `live` while the skew is inside its future tolerance (P1.4's own test
+pins `ageMs = -60000`) and `clock-differs` beyond it — that branch is
+`ageMs < -futureToleranceMs` and nothing else, which is D117's fourth state and
+the reason it exists. Refusing the sign made the wiring drop a good reading back
+into `unknown` and made `jobList` refuse the whole list — spend, caps and the
+kill switch — for the one phone whose clock is ahead. The reading is judged on
+what it is made of (`'3s'`, `NaN`, `Infinity` are refused), not on its sign.
+
+The screen draws it the other way round: **an age the phone cannot state is not
+printed as one.** The state is printed alone for a negative age, because
+`live (-60s ago)` and `clock-differs (-600s ago)` are durations with a minus
+sign on them, and for `clock-differs` the age is not a fact this phone can state
+at all. The sign is P1.4's arithmetic; the state is the fact. A reading with an
+age the phone *can* state keeps it — `stale (190s ago)`.
+
 ### The scan: the resolution's "not shown" as rules
 
 `scope.test.js` holds what no behavioural test can hold on its own — that no
@@ -542,7 +562,8 @@ planted dead export, that being the finding that the rule could not fail.
 | every snapshot claims the day did not change | `the list is built from the feed and the mailbox…` |
 | an unread mailbox is reported `offline` | `the heartbeat is unknown until something has read it…` |
 | an unsigned reading counts as verified | `an unsigned heartbeat is carried as unverified…` |
-| a negative age is carried | `the fields a caller could smuggle a claim through are judged` |
+| a negative age is refused, so a skewed clock is no reading at all | `a negative age is carried, because P1.4 is where one comes from`, and the same case through the wiring |
+| the age is printed with its sign (`live (-60s ago)`) | `an age the phone cannot state is not printed as one` |
 | the module reaches for a repository | `no repository row and no repository name` |
 | a screen reaches around the feed's door | `the feed is reached through its door…` |
 | a run is named | `no run is named, and neither family the grant denies is asked for` |

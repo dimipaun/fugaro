@@ -237,6 +237,39 @@ test('the heartbeat is unknown until something has read it, and carries its age 
   assert.equal(lineText(unsigned, 'Heartbeat'), 'offline');
 });
 
+test('an age the phone cannot state is not printed as one', () => {
+  // P1.4 computes `ageMs = now - at`, so a reading stamped after the phone's
+  // clock arrives **negative**: `live` inside its future tolerance, and
+  // `clock-differs` -- D117's state for exactly this skew -- always. A line
+  // that printed the number anyway would read `live (-60s ago)` or
+  // `clock-differs (-600s ago)`: a duration with a minus sign on it, for the one
+  // reading whose whole point is that the phone's clock is not the authority.
+  // The state is printed alone there -- it is the fact, and the number is
+  // P1.4's arithmetic, not a duration this screen can state.
+  const skewed = jobList({
+    snapshot: snapshotOf(documentOf()),
+    presence: { state: 'clock-differs', verified: true, reason: 'future-skew', ageMs: -600_000 },
+  });
+  assert.equal(lineText(skewed, 'Heartbeat'), 'clock-differs');
+
+  const ahead = jobList({
+    snapshot: snapshotOf(documentOf()),
+    presence: { state: 'live', verified: true, reason: 'fresh', ageMs: -60_000 },
+  });
+  assert.equal(lineText(ahead, 'Heartbeat'), 'live');
+
+  // ... and the reading that has an age keeps it: the rule is the sign, not a
+  // screen that stopped saying how old the heartbeat is.
+  const older = jobList({
+    snapshot: snapshotOf(documentOf()),
+    presence: { state: 'stale', verified: true, reason: 'missed-intervals', ageMs: 190_000 },
+  });
+  assert.equal(lineText(older, 'Heartbeat'), 'stale (190s ago)');
+  for (const list of [skewed, ahead]) {
+    assert.equal(/-\d+s| ago/.test(text(list)), false, 'no duration the phone cannot state');
+  }
+});
+
 test('the feed\'s notice is the only sentence the feed can put on the screen', () => {
   const withNote = jobList({
     snapshot: snapshotOf(documentOf(), { note: 'part of the feed could not be read' }),

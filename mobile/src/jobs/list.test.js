@@ -225,6 +225,32 @@ test('a poll reports the heartbeat, and a client refusal is passed through uncha
   refused.list.stop();
 });
 
+test('a reading with a negative age is stored and drawn, not refused', async () => {
+  // The phone's clock ahead of the orchestrator's is D117's `clock-differs`, and
+  // P1.4 reports it with a **negative** age (`ageMs = now - at`, and that branch
+  // is the only one that answers `clock-differs`). A refusal here would leave
+  // the heartbeat at `unknown` and, through `jobList`, refuse the whole list --
+  // spend, caps and the kill switch -- for the one phone whose clock is skewed,
+  // which is the case the state exists for. `heartbeat.test.js` feeds this rule
+  // a reading P1.4 actually produced; this is the same reading through the
+  // wiring the app uses.
+  const presence = { state: 'clock-differs', verified: true, reason: 'future-skew', ageMs: -600_000, agents: null };
+  const { port, list } = wired({ readPresence: async () => ({ ok: true, presence }) });
+  list.start(T0);
+  port.flush(treeAt(DAY), T0);
+  const polled = await list.poll();
+  assert.deepEqual({ ok: polled.ok, polled: polled.polled }, { ok: true, polled: true });
+
+  const drawn = list.snapshot({ nowMs: T0 });
+  assert.equal(drawn.ok, true, 'a skewed clock is not a refusal of the list');
+  assert.equal(drawn.heartbeat.ok, undefined, 'a skew is a reading, not a refusal');
+  assert.equal(drawn.heartbeat.state, 'clock-differs');
+  assert.equal(drawn.heartbeat.ageMs, -600_000, 'the age P1.4 measured, sign and all');
+  assert.equal(lineText(drawn, 'Heartbeat'), 'clock-differs');
+  assert.equal(text(drawn).includes('Spend (counted)'), true, 'the figures are on the screen');
+  list.stop();
+});
+
 test('a presence function that answers something else is refused', async () => {
   const bad = wired({ readPresence: async () => 'presence' });
   bad.list.start(T0);
@@ -263,7 +289,7 @@ test('the list refuses a presence reading it cannot render', () => {
     total: { counted_usd: 1, burn: { known: false, usd_per_min: null, fast: false }, kill: null },
   }).document;
   const snapshot = { liveness: 'live', document, day: document.day, dayChanged: false, broken: false, degraded: false, note: null };
-  assert.equal(jobList({ snapshot, presence: { state: 'offline', ageMs: -1 } }).code, LIST_CODES.BAD_PRESENCE);
+  assert.equal(jobList({ snapshot, presence: { state: 'offline', ageMs: '3s' } }).code, LIST_CODES.BAD_PRESENCE);
   assert.equal(jobList({ snapshot, presence: null }).ok, true);
 });
 

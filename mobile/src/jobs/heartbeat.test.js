@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { evaluatePresence } from '../../../shared/presence/index.js';
 import { HEARTBEAT_STATES, LIST_CODES } from './fields.js';
 import { READ_STATES, heartbeatRow } from './heartbeat.js';
 
@@ -71,9 +72,9 @@ test('a state this app has never heard of is refused, never printed', () => {
 test('the fields a caller could smuggle a claim through are judged', () => {
   for (const bad of [
     { verified: 'yes' },
-    { ageMs: -1 },
     { ageMs: '3s' },
     { ageMs: Number.NaN },
+    { ageMs: Number.POSITIVE_INFINITY },
     { reason: 7 },
   ]) {
     const row = heartbeatRow(presenceOf(bad));
@@ -82,6 +83,38 @@ test('the fields a caller could smuggle a claim through are judged', () => {
   }
   for (const notAReading of ['live', 42, [], true]) {
     assert.equal(heartbeatRow(notAReading).code, LIST_CODES.BAD_PRESENCE, JSON.stringify(notAReading));
+  }
+});
+
+test('a negative age is carried, because P1.4 is where one comes from', () => {
+  // `heartbeatRow` is handed P3.6's report, and P3.6 hands P1.4's reading on
+  // unchanged -- `ageMs = now - at`. A heartbeat stamped *after* the phone's
+  // clock is therefore **negative**: `live` while the skew is inside P1.4's
+  // future tolerance, and `clock-differs` beyond it, that branch being `ageMs <
+  // -futureToleranceMs` and nothing else (D117's fourth state, which exists for
+  // exactly this skew). Refusing the sign made a valid reading a refusal: the
+  // wiring dropped it into `unknown`, and `jobList` refused the whole list --
+  // spend, caps and the kill switch -- for the one phone whose clock is ahead.
+  //
+  // The readings below are P1.4's own, run rather than written by hand:
+  // `evaluatePresence` is imported and called, so this is the real producer's
+  // output and not this test's idea of it.
+  const clock = 1_700_000_000_000;
+  const heartbeat = (ageMs) => ({ at: clock - ageMs, bootId: ['bo', 'ot'].join('') + '-1' });
+  const reading = (ageMs) => evaluatePresence({ heartbeat: heartbeat(ageMs), now: clock, intervalMs: 60_000 });
+
+  const fresh = reading(-60_000);
+  assert.equal(fresh.state, 'live', 'within the future tolerance, a future stamp is live');
+  assert.equal(fresh.ageMs, -60_000, 'P1.4 carries the sign rather than flooring it');
+  const skewed = reading(-600_000);
+  assert.equal(skewed.state, 'clock-differs');
+  assert.ok(skewed.ageMs < 0, 'a clock difference is negative by construction');
+
+  for (const produced of [fresh, skewed]) {
+    const row = heartbeatRow(produced);
+    assert.equal(row.ok, undefined, `${produced.state}: a reading P1.4 produced is not a refusal`);
+    assert.equal(row.state, produced.state);
+    assert.equal(row.ageMs, produced.ageMs, 'carried as P1.4 measured it, and not floored at zero');
   }
 });
 

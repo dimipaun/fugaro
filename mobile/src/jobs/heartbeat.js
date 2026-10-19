@@ -59,8 +59,18 @@ const UNKNOWN = Object.freeze({ state: 'unknown', verified: false, reason: null,
  *     verdict, and a `true` beside a state nothing verified is exactly the lie
  *     the check exists to stop. A missing `verified` reads as **not verified**,
  *     which is the safe direction.
- *   * `ageMs` is a non-negative finite number or `null`/absent. Nothing here
- *     computes one.
+ *   * `ageMs` is a finite number or `null`/absent, and **a negative one is
+ *     legitimate** -- so nothing here floors it at zero or refuses it. P1.4
+ *     computes `ageMs = now - at`, so a heartbeat stamped *after* the phone's
+ *     own clock arrives negative: `live` when the skew is inside its future
+ *     tolerance (`shared/presence/index.test.js` pins `ageMs = -60000`), and
+ *     `clock-differs` -- D117's fourth state, which exists for exactly this
+ *     skew -- always, because that branch is `ageMs < -futureToleranceMs` and
+ *     nothing else. A negative age is therefore a value P1.4 carries, not a
+ *     claim smuggled in here; refusing it made `poll()` drop a good reading and
+ *     `jobList` refuse the whole list -- spend, caps and kill switch -- for the
+ *     one phone whose clock is ahead. What is refused is a value that is not a
+ *     number at all (`'3s'`, `NaN`, `Infinity`). Nothing here computes one.
  *   * `reason` is a bounded string or `null`/absent. It is one of P1.4's
  *     reasons or one of P3.6's own (`PRESENCE_REASON`), which are static
  *     sentences -- never a database error's text -- and it is **carried, not
@@ -87,7 +97,7 @@ export function heartbeatRow(presence) {
   }
   const ageMs = presence.ageMs;
   if (ageMs !== undefined && ageMs !== null) {
-    if (typeof ageMs !== 'number' || !Number.isFinite(ageMs) || ageMs < 0) {
+    if (typeof ageMs !== 'number' || !Number.isFinite(ageMs)) {
       return refuse(LIST_CODES.BAD_PRESENCE, 'presence.ageMs');
     }
   }

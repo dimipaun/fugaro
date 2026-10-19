@@ -96,13 +96,31 @@ function fieldText(list, name) {
   return figureText(value);
 }
 
+/** The age, as the screen can state it -- or nothing.
+ *
+ * **A negative age is not a duration this phone can state.** P1.4 computes
+ * `ageMs = now - at`, so a reading below zero is a heartbeat stamped *after* the
+ * phone's own clock: `live` when the skew is inside its future tolerance
+ * (P1.4's own test pins `ageMs = -60000`), and every `clock-differs` reading,
+ * which is negative by construction -- that branch is `ageMs <
+ * -futureToleranceMs` and nothing else, and it is the state D117 added for
+ * exactly this skew. Printing the number with its sign -- `live (-60s ago)`,
+ * `clock-differs (-600s ago)` -- would put a nonsense duration on the screen for
+ * the one reading whose whole point is that the phone's clock is not the
+ * authority. So the state is printed alone there: the state is the fact, and the
+ * negative number is P1.4's arithmetic. `null` (nothing read yet) has no age
+ * either. */
+function ageText(ageMs) {
+  if (ageMs === null || ageMs < 0) return '';
+  return ` (${Math.round(ageMs / 1000)}s ago)`;
+}
+
 /** The heartbeat's text: its state, and how old the reading was when the
  * mailbox client read it. The age is P3.6's -- nothing here computes one -- and
  * `unknown` carries none, because nothing has been read. */
 function heartbeatText(heartbeat) {
   if (!HEARTBEAT_STATES.includes(heartbeat.state)) return GAP_MARK;
-  const age = heartbeat.ageMs === null ? '' : ` (${Math.round(heartbeat.ageMs / 1000)}s ago)`;
-  return `${heartbeat.state}${age}`;
+  return `${heartbeat.state}${ageText(heartbeat.ageMs)}`;
 }
 
 /**
