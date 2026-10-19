@@ -358,7 +358,13 @@ describe("the console's theme tokens", () => {
     // The two layers are disjoint, and that is the whole of "one source of truth per fact":
     // a colour belongs in the palette, where every pair above can read it, and a step
     // belongs in the vocabulary. A name in both would be a second place a colour is set.
-    expect(overlap(VOCABULARY, new Set(palette.keys())), 'a name is declared in both layers').toEqual([])
+    // Both sides are spelled the way `declarations()` reads them, which is without the
+    // leading `--`: comparing `VOCABULARY` as written against the palette's keys was a
+    // comparison of `--space-3xs` with `ground`, so it was empty whatever the files said.
+    expect(
+      overlap(VOCABULARY.map((name) => name.replace(/^--/, '')), new Set(palette.keys())),
+      'a name is declared in both layers',
+    ).toEqual([])
     // A colour spelled in the vocabulary in any of its three forms is an offence: the
     // palette is the only place a colour is written, so that one file's literals are the
     // ones every ratio is computed from.
@@ -381,10 +387,17 @@ describe("the console's theme tokens", () => {
     // here rather than a review note.
     const stripped = [stripComments(paletteCss), stripComments(tokensCss)].join('\n')
     expect(stripped, `${PALETTE_FILE} does not fix color-scheme to dark`).toMatch(/color-scheme:\s*dark;/)
-    expect(stripped, 'a theme file declares the OS-driven pair `light dark`').not.toMatch(/light\s+dark/)
-    expect(stripped, 'a theme file uses light-dark(); a light set would then ship with no case deciding it').not.toContain('light-dark(')
-    expect(stripped, 'a theme file reads prefers-color-scheme; the console follows the CLI theme, not the OS').not.toContain('prefers-color-scheme')
-    expect(stripped, "a theme file keys a block on data-theme='light'").not.toContain("data-theme='light'")
+    // The four offences are matched against the LOWER-CASED text, because CSS keywords and
+    // attribute values are case-insensitive: `LIGHT-DARK(` and `[data-theme="light"]` are the
+    // same theme as the spellings below, and a check that only knew the lower-case ones would
+    // let a light set in through a capital letter. Both quote styles are matched for the same
+    // reason -- `[data-theme]` is written by the screens, and which quote they use is not this
+    // file's business.
+    const lowered = stripped.toLowerCase()
+    expect(lowered, 'a theme file declares the OS-driven pair `light dark`').not.toMatch(/light\s+dark/)
+    expect(lowered, 'a theme file uses light-dark(); a light set would then ship with no case deciding it').not.toContain('light-dark(')
+    expect(lowered, 'a theme file reads prefers-color-scheme; the console follows the CLI theme, not the OS').not.toContain('prefers-color-scheme')
+    expect(lowered, 'a theme file keys a block on a `light` data-theme, in either quote style').not.toMatch(/data-theme\s*=\s*['"]?light['"]?/)
   })
 
   it('refuses a pair below AA, with the line the red step recorded', () => {

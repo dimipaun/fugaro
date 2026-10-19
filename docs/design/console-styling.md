@@ -863,6 +863,18 @@ there because that is the only way to state it honestly.
 
 ### 3.6 How the theme is chosen
 
+**The owner's Q1 ruling of 2026-10-19 supersedes the mechanism below, and what ships is one
+declaration.** The console ships one value set, dark: `:root { color-scheme: dark; }` in
+`palette.css`, with the design's `:root, [data-theme]` pair kept around it so a later light
+set would be a change of values rather than a restructuring. **There is no switch and no
+script**: `light-dark()`, `prefers-color-scheme`, the OS-driven `light dark` pair and a
+`[data-theme='light']` block appear nowhere in the theme directory, and
+`console/test/unit/theme-tokens.test.ts` (Task 6.1) fails by name on each of the four, in
+either letter case and either quote style. The three sources below, the code block and the
+`light-dark()` paragraph are **the record of option (a)**, which the owner did not take; a
+task that wants a light theme again needs a new ruling and the case above changed with it.
+*As designed, before the ruling:*
+
 Three sources, in this order, and **one switch**:
 
 1. **The operating system, by default.** No script is involved: `:root` carries
@@ -905,13 +917,16 @@ asserting both blocks name exactly the same vocabulary (see [§9](#9-alternative
 |---|---|---|
 | `index.html` (dashboard) | `console.js` | the entry puts `data-theme` on the mount it draws the chrome into, so the nav, the installation line and the panel all switch together; each screen additionally stamps its own root (as it does today) |
 | `installations.html` (picker) | `installations.js` | the picker's script stamps `document.documentElement` (or its `<main>`); its CSS is id-scoped |
-| `refusal.html` | **none** | `:root`'s `color-scheme: light dark` alone — **the OS decides, and no code runs.** This is the strongest argument for making the OS the default rather than a stored preference: the one document the console shows when nothing else works must be themed without a script |
+| `refusal.html` | **none** | `:root`'s `color-scheme` alone — **nothing decides anything, and no code runs.** As shipped under the Q1 ruling that is `dark` outright; the pre-ruling form of this row said `light dark` and was the strongest argument for making the OS the default rather than a stored preference, since the one document the console shows when nothing else works must be themed without a script |
 
 **Why the entry and not the screens decide.** Today the entry names one theme for every
 drawing (`CONSOLE_THEME`, and `renderLive(…, theme)` and its three siblings take it as an
 argument). That stays: the *argument* is what a golden frame records, and a screen never
-reads the environment. What changes in [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)
-is the **value**: `CONSOLE_THEME` becomes the answer of a small `themeChoice()` that reads
+reads the environment. **Under the Q1 ruling `CONSOLE_THEME` keeps the value it has today**
+— the literal `'dark'`, which is the one set that ships — and no `matchMedia` read, no
+`change` subscription and no `nativeTheme` query comes with it. *What the two-set design
+would have changed in [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard):
+`CONSOLE_THEME` becomes the answer of a small `themeChoice()` that reads
 `matchMedia('(prefers-color-scheme: dark)')` and subscribes to its `change` event — a
 `matchMedia` read is neither a network call nor a style write, so the CSP is untouched and
 the `ElementLike` interface is untouched (a media query is not a DOM write).
@@ -979,15 +994,20 @@ animated would be a figure whose last frame is a lie about when the value was re
 proposes to change, and it is *not* a CSS change: with no `backgroundColor`, a theme's
 window flashes the platform's default (usually white) before the document paints.
 
-**Which ground the window paints is a decision, and the first revision of this section
-left it ambiguous.** It said "equal to `--ground`" — but `--ground` has **two** values,
-`#0A0E16` and `#F2F6FA`, and §3.6 makes the OS the default, so a single pinned literal is
-wrong on one of the two machines. Pinning the dark ground alone is the worse of the two
-errors: on a light-OS machine it introduces the very flash §4.1 exists to remove, **dark**
-where the document is about to paint light.
+**Under the owner's Q1 ruling of 2026-10-19 the window paints one ground, and it is
+`#0A0E16`.** One value set ships, so `--ground` has one value, a single literal is right on
+every machine, and **no `nativeTheme` read and no `'updated'` listener comes with it** — the
+proposal that needed them was the two-set one. The token test therefore asserts that one
+literal against the shipped `--ground` (Task 6.5), not the pair below. *Which ground the
+window paints, as the two-set design decided it and kept as the record of option (a):* it
+said "equal to `--ground`", and with `--ground` carrying **two** values, `#0A0E16` and
+`#F2F6FA`, and §3.6 making the OS the default, a single pinned literal would have been wrong
+on one of the two machines — pinning the dark ground alone being the worse of the two errors,
+because on a light-OS machine it would introduce the very flash §4.1 exists to remove,
+**dark** where the document is about to paint light.
 
-So the window paints **the ground of the theme it is about to show**, and the main process
-reads which that is from `nativeTheme`:
+So the two-set design had the window paint **the ground of the theme it is about to show**,
+with the main process reading which that is from `nativeTheme`:
 
 - `nativeTheme.shouldUseDarkColors` → `#0A0E16` (the dark `--ground`), otherwise
   `#F2F6FA` (the light one);
@@ -999,9 +1019,12 @@ reads which that is from `nativeTheme`:
   asking the same question of the same preference. The `data-theme` attribute is still the
   single switch for the CSS.
 
-`nativeTheme` is core Electron and needs no dependency and no CSP change. The main process
-still cannot read the CSS, so **both** literals are duplicates of the two `--ground`
-values; the plan's Task 6.5 carries it, and the token test asserts **both** equalities —
+`nativeTheme` is core Electron and needs no dependency and no CSP change. **As shipped under
+the ruling none of it is read**: the main process cannot read the CSS, so a background
+literal is a duplicate of `--ground` however many sets there are, and with one set there is
+one duplicate to keep honest — the plan's Task 6.5 carries it, and the token test asserts the
+one equality. *The two-set form of the same problem:* **both** literals are duplicates of
+the two `--ground` values, and the token test asserts **both** equalities —
 the dark literal against `--ground` in the dark set and the light literal against `--ground`
 in the light set — rather than the ambiguous "equal to `--ground`" the first revision
 wrote.
@@ -1300,7 +1323,12 @@ invalidates, and — worse — it would let a reviewer believe the screens had b
 ### 6.2 The computed-background assertion — so identical frames can never be recorded again
 
 **A per-spec assertion that the computed background colour differs between the schemes**,
-in all four golden specs, next to the existing theme read:
+in all four golden specs, next to the existing theme read. **Under the owner's Q1 ruling of
+2026-10-19 there is one value set, so "differs between the schemes" is the wrong sentence**:
+the two runs stamp different `data-theme` values and must paint the **same** ground, and the
+assertion becomes that both runs compute the shipped `--ground` — the same guard, since a
+tree with no stylesheet still fails it by reading `rgba(0, 0, 0, 0)` twice. The code below is
+the two-set form, kept as the record of option (a):
 
 ```ts
 const paintedBackground = (el: Element): string =>
@@ -1317,17 +1345,19 @@ expect(light, 'light and dark paint the same background: the stylesheet is not b
 This is the test the current suite is missing. Every one of the four specs already reads
 `data-theme` off the screen root (`scope.querySelector('.live')?.getAttribute('data-theme')`),
 which passes today with no stylesheet at all. The new assertion fails **the moment a
-stylesheet stops being served, stops being linked, or stops switching** — which is exactly
-the regression that could otherwise be recorded as a fresh golden and never noticed.
+stylesheet stops being served, stops being linked, or stops painting** — under the ruling
+there is no switch left to stop, and the first two are what remains — which is exactly the
+regression that could otherwise be recorded as a fresh golden and never noticed.
 
 **This assertion lands in [Task 6.6](#76-task-66--the-golden-frames-re-recorded), with the
 recording it guards — but what it waits for is the stylesheet, not Task 6.5's theme
 choice.** It reads a *computed* background off a screen root, so it can pass only once a
 rule paints one, and the rules that paint a screen root are the stylesheet's: `palette.css`
 gives each theme its `--ground` and its `color-scheme`, and `base.css` and `screens.css`
-spend them. Task 6.5 is a different subject — it changes `CONSOLE_THEME` in `entry.ts` from
-the literal `'dark'` to the media query's answer, which is the **app's** boot path and the
-window's own `backgroundColor`.
+spend them. Task 6.5 is a different subject — as designed it changed `CONSOLE_THEME` in
+`entry.ts` from the literal `'dark'` to the media query's answer, which is the **app's** boot
+path and the window's own `backgroundColor`; under the ruling it keeps the literal and what
+is left of the task is the background and the keyboard.
 
 The four golden specs never read it. Each draws its screen directly with the theme it
 names — `mount(theLastFrame(), 'light')`, `renderSpend(factory, model, 'light')` and their
@@ -1349,18 +1379,28 @@ it reads: the phase's own ordering, not the theme switch, is what puts it last.
 should reuse the arithmetic of rather than re-derive):
 
 - it **reads `theme/palette.css` for its colour numbers** — the literals the window paints,
-  not a copy of them. **Two of its cases read a file other than `palette.css`, and each
-  lands in the task that writes what it reads** (the `--border` scan, which reads `base.css`
-  and `screens.css`, in Task 6.4; the window background, which reads the main process's
-  window module, in Task 6.5), so Task 6.1 writes this file with the palette cases alone and
-  the other two arrive where their subject matter does;
+  not a copy of them. **Three of the cases described below are not in the file that shipped
+  with Task 6.1** (the file Task 6.1 wrote carries eight cases, and this list is the design
+  the file is measured against), each for one of two reasons: the **two-set vocabulary case**
+  is *replaced* — with one value set it would compare a set with itself, so the shipped case
+  asserts the vocabulary is complete and that neither layer carries what the other owns —
+  while the other **two read a file other than `palette.css`, and each lands in the task that
+  writes what it reads** (the `--border` scan, which reads `base.css` and `screens.css`, in
+  Task 6.4; the window background, which reads the main process's window module, in Task 6.5).
+  Task 6.1 writes this file with the palette cases alone; the two arrive where their subject
+  matter does, and the replacement is described with its case below;
 - one case computes **every pair of §3.4** and asserts the ratio its role requires: 4.5:1
   for `--text`, `--text-muted`, `--accent-ink` and all five state colours on `--ground`,
   `--surface` and `--surface-alt`; 3:1 for `--accent` and `--border-strong` on each; 4.5:1
   for `--ink-on-fill` on every fill;
 - a case asserts the **vocabulary** is complete and identical in both sets — the token
   names of one set are exactly the token names of the other, and every token of §3.1–§3.3
-  is present — so a token added to light and not to dark fails by name;
+  is present — so a token added to light and not to dark fails by name. **Under the owner's
+  Q1 ruling there is one set, so this case cannot be written as designed and Task 6.1
+  replaces it with the case the file carries**: the vocabulary is complete (§3.1's every
+  token is declared, by name), neither layer carries what the other owns (no colour in
+  `tokens.css`, no step in `palette.css`), and each of those two directions is a case a
+  mutation fails by name;
 - a case asserts `--border` is **only** used decoratively: no rule in `base.css` or
   `screens.css` uses `--border` where the property is `outline` or where the border marks
   a control (a scan of the CSS text, in the spirit of `screen-literals.test.ts`). **This
@@ -1368,10 +1408,12 @@ should reuse the arithmetic of rather than re-derive):
   read something other than `palette.css`, and the two files it reads are created by Tasks
   6.3 and 6.4 — see [§7.4](#74-task-64--the-screens). Task 6.1 writes the file and its
   palette cases; Task 6.4 adds this case at the point where both stylesheets exist;
-- a case asserts **the main process's window background equals the ground of the theme it
-  is about to paint** ([§4.1](#41-the-windows-structure)) — **both** literals, the dark one
-  against the dark `--ground` and the light one against the light `--ground`, rather than
-  the ambiguous "equal to `--ground`" a `--ground` with two values cannot support. **This
+- a case asserts **the main process's window background equals the ground the window is
+  about to paint** ([§4.1](#41-the-windows-structure)) — under the Q1 ruling **one**
+  literal, `#0A0E16`, against the shipped `--ground`; *as the two-set design wrote it,*
+  **both** literals, the dark one against the dark `--ground` and the light one against the
+  light `--ground`, rather than the ambiguous "equal to `--ground`" a `--ground` with two
+  values cannot support. **This
   case is [Task 6.5](#75-task-65--the-theme-switch-the-window-background-and-the-keyboard)'s
   and not Task 6.1's**, for the plainest of reasons: the two literals are a change to
   `console/src/main/window.ts`, and Task 6.5 is the task that makes it — `consoleWindowOptions`
@@ -1548,7 +1590,8 @@ file's own numbering, in the five places that file carries a phase: one section
 tasks across five groups, since `J3` is the two PRs of Tasks 6.3 and 6.4); and
 **four** lines in the File Structure tree, one per `theme/*.css` file. **These six tasks are
 `APPROVED by the owner on 2026-10-19`**, and so is this document: the owner's approval is the
-go, §8's six questions are answered with it (**Q1** taking option (b), dark only), and the
+go, **Q1** is answered by it (option (b), dark only) while **Q2 to Q6 stand as §8 writes
+them**, and the
 plan's phase heading, summary row and PR rows say the same. *The heading as first written,
 kept:* `The build plan (Phase 6, UNAPPROVED)`, whose text read "**Nothing here is approved**:
 the plan's OWNER APPROVAL GATE stands, and these tasks carry `UNAPPROVED` until the owner
@@ -1737,11 +1780,19 @@ window-background case put back into Task 6.1's `**Tests**`; a later task named 
 
 ## 8. Open for the owner
 
-Six questions this design does not answer for the owner. **No D-number is allocated** —
-they are the console plan's `C`-series style only in shape, and a number is the owner's to
-give.
+Six questions this design does not answer for the owner, **one of which the owner has since
+answered**: Q1 was ruled on 2026-10-19 (option (b), dark only) and the answer is written into
+the question below, while Q2 to Q6 stand open. **No D-number is allocated** — they are the
+console plan's `C`-series style only in shape, and a number is the owner's to give.
 
 **Q1 — Does the console ship a light theme at all, and is the OS the default?**
+- **ANSWERED by the owner on 2026-10-19: option (b), dark only** — matching today's
+  `CONSOLE_THEME`, with the light set deferred to §3.3's table and no OS default added.
+  `palette.css` sets `color-scheme: dark`; the four spellings a light theme would need
+  (`light dark`, `light-dark()`, `prefers-color-scheme`, a `[data-theme='light']` block)
+  fail `console/test/unit/theme-tokens.test.ts` by name. **This is the one question the
+  approval of 2026-10-19 answered**, and §3.6, §4.1, §6.2 and §6.3 and the plan's Tasks 6.1,
+  6.5 and 6.6 each carry what (b) changes in them. **Q2 to Q6 below stand open.**
 - *Options:* (a) light and dark both ship, the OS decides, an override is offered
   (**recommended**); (b) dark only, matching today's `CONSOLE_THEME`, with light deferred;
   (c) light and dark, the OS decides, **no override at all**.

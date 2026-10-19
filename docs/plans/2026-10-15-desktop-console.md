@@ -1142,11 +1142,17 @@ theme ship and is the OS the default; **Q2** where does the owner's override liv
 does the "phosphor set" ship; **Q4** is PR #629's darwin baseline set superseded; **Q5** is
 the forced-colors smoke a gate; **Q6** does the styling work gate the console's first
 release — were put to the owner with their options, their recommendation and the reason in
-the design's §8, and that approval answers them. **The answer the first task below turns on
-is Q1's, and it is option (b): the console ships a dark theme only** — one value set,
-matching the `CONSOLE_THEME` the screens are drawn with today, with the design's §3.3 light
-set deferred and that table kept as its record. **No D-number and no C-number is allocated
-to any of them**, deliberately: a number is the owner's to give. The work starts now.
+the design's §8, and **the approval answers exactly one of them**: the ruling of 2026-10-19
+took **Q1 option (b), so the console ships a dark theme only** — one value set, matching the
+`CONSOLE_THEME` the screens are drawn with today, with the design's §3.3 light set deferred
+and that table kept as its record. **Q2 to Q6 are not answered here and stand as the design's
+§8 writes them**: the approval is the go for Phase 6, not a second ruling on where an
+override lives or whether this work gates the first release, and a task that depends on one
+of them says so where it is written (Task 6.6's Q4, the MVP list's Q6 below). Every place in
+the design and this file that assumed two value sets is marked with the ruling and is a
+change a later round must carry, not a licence to build the light theme. **No D-number and no
+C-number is allocated to any of them**, deliberately: a number is the owner's to give. The
+work starts now.
 
 **Dependencies, all soft but the first.** Phase 6 needs Task 3.4a's bundle step and served
 root (`console/tools/bundle-renderer/index.ts` and `SERVED_FILES` do not exist before it),
@@ -1217,8 +1223,10 @@ new.
 literals it checks are the literals the window paints: every pair of the design's §3.4 with
 its required ratio (4.5:1 for body text and every state colour on the three surfaces, 3:1
 for the accent and the control border, 4.5:1 for a label on a filled control); the
-vocabulary complete and identical in both sets, so a token added to one and not the other
-fails by name; and a **deliberately failing fixture**, asserted to report
+vocabulary complete, by name, with **no colour in it and no step in the palette** — the
+design's "identical in both sets" case compares a set with itself under the owner's Q1
+ruling of 2026-10-19, so this task replaces it with that pair of directions; and a
+**deliberately failing fixture**, asserted to report
 **`--text-muted on --surface is 3.1:1, needs 4.5:1`** — one decimal, because that is the
 string `website/test/a11y.mjs` actually formats (`ratio.toFixed(1)`, and its committed
 fixture prints `3.1:1`), and a **fixture pair named in the case** (the precedent's is
@@ -1234,21 +1242,28 @@ dependency is the next task's, and its paragraph carries it.
 
 **Commit:** `console: the theme's tokens, and the palette they are painted in`
 
-**What this task does not own, and why the cases land later.** Two cases of the design's
-§6.3 read a file this task does not write, so neither can be written here without asserting
-something that does not exist yet:
+**What this task does not own, and why the cases land later.** **Three cases of the design's
+§6.3 are not in the file this task writes**, and two different reasons put them elsewhere.
+The first is *replaced* rather than deferred — the design's **"vocabulary identical in both
+sets"** case has one set to compare under the owner's Q1 ruling of 2026-10-19, so this task
+writes the two directions that case was meant to catch (every vocabulary token declared, no
+colour in `tokens.css`, no step in `palette.css`) and the case as designed is not written at
+all. The other two read a file this task does not write, so neither can be written here
+without asserting something that does not exist yet:
 
 - **the `--border`-is-decorative case** is Task 6.4's. It is a scan of the CSS text of
   `base.css` and `screens.css`, and both of those are created later, by Tasks 6.3 and 6.4.
   Task 6.4 adds that case, and `theme-tokens.test.ts` is in its Files for it.
-- **the window-background case** is Task 6.5's. It compares the two literals
-  `consoleWindowOptions` paints against the two `--ground` values, and `backgroundColor` is
-  a key Task 6.5 adds to `console/src/main/window.ts` — there is nothing to compare before
-  then. Task 6.5 adds that case, and `theme-tokens.test.ts` is in its Files for it too.
+- **the window-background case** is Task 6.5's. It compares the background literal
+  `consoleWindowOptions` paints against `--ground`, and `backgroundColor` is a key Task 6.5
+  adds to `console/src/main/window.ts` — there is nothing to compare before then. Task 6.5
+  adds that case, and `theme-tokens.test.ts` is in its Files for it too. **Under the Q1
+  ruling it is one literal against one `--ground`**, not the two the two-set design asked
+  for, and Task 6.5 says so in its own text.
 
 So this task writes the file with its palette cases; the file's name is honest about the
-part of it that is here, and the design's §6.3 says which task each of the other two
-arrives with.
+part of it that is here, the design's §6.3 says which task each of the other two arrives
+with, and the one it replaces is named above rather than dropped silently.
 
 **Reviewer tier:** ordinary — it touches no CSP, no protocol and no document.
 
@@ -1426,6 +1441,18 @@ depends on.
 
 ### Task 6.5: The theme switch, the window background and the keyboard
 
+**The owner's Q1 ruling of 2026-10-19 removes the switch this task is named for, and the
+scope below is the two-set design it was written from.** One value set ships, dark, so there
+is nothing to switch between: `CONSOLE_THEME` stays the literal it is today, no
+`matchMedia` read and no `nativeTheme` query is added, and the window paints **one**
+background literal, `#0A0E16`, against the one `--ground`. What is left of this task is
+therefore **the window background and the keyboard**, and both are still needed — a window
+with no `backgroundColor` flashes the platform's default before the first paint whatever the
+theme, and the nav has no keydown handling at all. **A later task that wants the switch back
+needs a light set to switch to and a new ruling to ship it**, and the heading above is kept
+as the record of what this task was scheduled to do. *The scope as designed, before the
+ruling:*
+
 **Scope.** `CONSOLE_THEME` stops being the literal `'dark'` and becomes the answer of a
 `themeChoice()` that reads `matchMedia('(prefers-color-scheme: dark)')` and subscribes to
 its `change` event — `:root`'s `color-scheme: light dark` is the OS default, and the
@@ -1453,10 +1480,11 @@ WAI-ARIA tablist behaviour it lacks — `role`,
 attribute, and `role`, `aria-*` and `tabindex` are attributes — so `ElementLike` needs no
 widening and no style is written.
 
-**Tests.** `CONSOLE_THEME` no longer follows the media query; **the background literal for
-each theme drifting from that theme's `--ground`** (both directions, since there are two
-literals now — the dark one checked against the dark `--ground`, the light one against the
-light `--ground`, and `shouldUseDarkColors` deciding which is set). **That case is this
+**Tests.** `CONSOLE_THEME` is the literal `'dark'` and reads no media query; **the
+background literal drifting from `--ground`** — one literal, one direction, the ruled
+scope. *The two-set form of the same case:* the literal for each theme drifting from that
+theme's `--ground` (both directions, since there are two literals, with
+`shouldUseDarkColors` deciding which is set). **That case is this
 task's and cannot be Task 6.1's**, which the plan said before this round: the two literals
 are added to `console/src/main/window.ts` here, so before this task there is no
 `backgroundColor` to compare with anything (design §6.3, §7.5). And a roving-tabindex
@@ -1464,9 +1492,10 @@ regression.
 
 **Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run test:e2e`
 
-**Depends on:** Task 6.2 (the served, linked stylesheet the switch chooses between — a
-theme choice is a choice about a document that has one) and Task 6.1 (the two `--ground`
-values its case compares the window's literals against). It needs nothing later in the
+**Depends on:** Task 6.2 (the served, linked stylesheet — under the ruling the window's
+background is a duplicate of a `--ground` that only exists once a stylesheet is served, and
+under option (a) it would have been a choice about a document that has one) and Task 6.1
+(the `--ground` value its case compares the window's literal against). It needs nothing later in the
 phase: this task's own run skips the goldens, and the re-recording is the phase's last
 task — which is a sequence, not a dependency: the last task's assertion waits on the
 stylesheets, not on this task's theme choice (design §6.2).
@@ -1492,7 +1521,14 @@ and their two siblings — and every screen stamps that argument on its own root
 run has said `data-theme='light'` since the screens were written and `CONSOLE_THEME` appears
 in none of them. The frames are identical today only because nothing paints: no stylesheet
 is served or linked, so every computed background is `rgba(0, 0, 0, 0)` (design §1.3,
-§6.2). The forced-colors smoke is **not** in this task: it landed with
+§6.2). **Under the owner's Q1 ruling that assertion cannot read "differs between the
+schemes"**: one value set ships, so the `'light'` and `'dark'` runs stamp different
+attributes and must paint the *same* ground, and what the case asserts becomes — in the
+task that lands it — **that both runs compute the shipped `--ground` and therefore agree**,
+which is the same guard on the same recording (a tree with no stylesheet still fails it,
+since both would read `rgba(0, 0, 0, 0)`). The baselines themselves are unchanged: still
+eight, still one set of pictures, still owner-run. The forced-colors smoke is **not** in this
+task: it landed with
 the rules it tests, its chrome half in Task 6.3 and its per-screen half in Task 6.4.
 
 **Files.** `console/test/e2e/{live,spend,projects,run}.spec.ts`; the committed
@@ -1513,7 +1549,9 @@ no picture these specs take (design §6.2). It is still the phase's last task �
 are a picture of every stylesheet the phase writes, and the recording is the owner's to run —
 which is why Task 6.5 precedes it, as sequence rather than as dependency.
 
-**Commit:** `console: the golden frames, re-recorded in both themes`
+**Commit:** `console: the golden frames, re-recorded in both themes` — the message as
+written for the two-set design; under the ruling the frames are one set of pictures with
+both runs painting the same ground, and the message should say so when this task runs.
 
 **Reviewer tier:** the assertions ordinary; the recording is the owner's.
 

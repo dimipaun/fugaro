@@ -774,9 +774,39 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 		"**five** rows in the PR groups table",
 		"**four** lines in the File Structure tree",
 		"**six** `### Task 6.n:` headings",
+		// The ruling is not a fact about the gate alone, and this is the half of it
+		// a reader of the design would otherwise trip over: Q1 took option (b), dark
+		// only, and the design's §3.6 prescribed the two-set mechanism option (a)
+		// needs — `color-scheme: light dark`, `light-dark()`, `prefers-color-scheme`
+		// and a `[data-theme='light']` block, which is exactly what Task 6.1's token
+		// test now fails by name on. A design that keeps prescribing a light set, and
+		// a task that keeps building a switch to nowhere, are the same defect as a
+		// phase that still says `UNAPPROVED`: the next round implements what it
+		// reads. Each string below is the sentence that records the ruling, in the
+		// section or the task a reader of that subject finds it in, and the three
+		// places that still needed it are §3.6, §4.1 and §8 of the design and Tasks
+		// 6.5 and 6.6 of the plan.
+		"**The owner's Q1 ruling of 2026-10-19 supersedes the mechanism below",
+		"**Under the owner's Q1 ruling of 2026-10-19 the window paints one ground",
+		"**Under the owner's Q1 ruling of 2026-10-19 there is one value set",
+		"**ANSWERED by the owner on 2026-10-19: option (b), dark only**",
 	} {
 		if !strings.Contains(mdFlat(design), want) {
 			t.Errorf("docs/design/console-styling.md: §7 does not say %q; that sentence is how the design tells a reader where the phase landed, and each of its counts is a fact about the plan that this test just counted", want)
+		}
+	}
+
+	// And the plan's own three: the paragraph that records what the approval
+	// answered and what it did not, and the two tasks that would build the switch
+	// the ruling removed. Task 6.5 keeps its heading as the record of what it was
+	// scheduled to do, so what a reader needs is the sentence under it.
+	for _, want := range []struct{ has, because string }{
+		{"**Q2 to Q6 are not answered here and stand as the design's", "the approval answered Q1 alone, and a paragraph claiming all six contradicts the gate at the foot of this file and the design's §8"},
+		{"**The owner's Q1 ruling of 2026-10-19 removes the switch this task is named for", "Task 6.5's scope is `CONSOLE_THEME`, `matchMedia` and `nativeTheme`, and implementing it as written would build a switch with one side to it"},
+		{"**Under the owner's Q1 ruling that assertion cannot read \"differs between the", "Task 6.6's assertion and the recording it guards are the phase's last step, and both were written for two schemes"},
+	} {
+		if !strings.Contains(mdFlat(plan), want.has) {
+			t.Errorf("%s: does not say %q — %s", path, want.has, want.because)
 		}
 	}
 }

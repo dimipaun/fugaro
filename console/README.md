@@ -2736,8 +2736,16 @@ The red step is kept as a case: a deliberately failing fixture, `#646464` on `#1
 must print `--text-muted on --surface is 3.1:1, needs 4.5:1` — one decimal, because that is
 the line `a11y.mjs`'s own committed fixture prints.
 
-Two cases the design's section 6.3 assigns to `theme-tokens.test.ts` are **not** there yet,
-each because the file it reads does not exist: the `--border`-is-decorative scan of
-`base.css` and `screens.css` is Task 6.4's, and the window-background comparison against
-`consoleWindowOptions` is Task 6.5's — `backgroundColor` is a key that task adds to
-`src/main/window.ts`. Both land with the file they read.
+**Three** of the cases the design's section 6.3 assigns to `theme-tokens.test.ts` are not in
+the file, and two different reasons put them elsewhere:
+
+- the **"vocabulary complete and identical in both sets"** case is *replaced*: under the
+  owner's dark-only ruling there is one value set, so it would compare a set with itself.
+  What catches what it was written for is here instead — every vocabulary token is declared
+  by name, no colour is spelled in `tokens.css`, and no step is spelled in `palette.css`;
+- the **`--border`-is-decorative scan** of `base.css` and `screens.css` is Task 6.4's: both
+  files are created later, by Tasks 6.3 and 6.4, so the case lands in the task that writes
+  what it reads;
+- the **window-background comparison** against `consoleWindowOptions` is Task 6.5's:
+  `backgroundColor` is a key that task adds to `src/main/window.ts`, and under the ruling it
+  is one literal, `#0A0E16`, checked against the one `--ground`.
