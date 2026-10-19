@@ -1,0 +1,95 @@
+/* console/src/renderer/theme/palette.css — the console's VALUE SET.
+ *
+ * docs/design/console-styling.md §3.2 is the literal table this file transcribes, and the
+ * plan's Task 6.1 is the task that writes it. It holds every colour the console paints and
+ * nothing else: no size, no spacing, no motion (those are `tokens.css`), so a rule that
+ * wants a value reads a token here and a step there, and the contrast test
+ * (`console/test/unit/theme-tokens.test.ts`) computes every pair from the literals in THIS
+ * file rather than from a copy of them.
+ *
+ * **DARK ONLY, and that is the owner's ruling of 2026-10-19.** The design's Q1 asked
+ * whether the console ships a light theme and recommended (a) light and dark with the OS
+ * deciding; the owner ruled (b): the console ships ONE value set, dark, matching the
+ * `CONSOLE_THEME` the screens are drawn with today, and the light set is deferred (the
+ * design's §3.3 table is the record of it, for whichever later task the owner hands it
+ * to). The consequence is written down rather than left to the reader: `color-scheme` is
+ * `dark` and not `light dark`, no `light-dark()` and no `prefers-color-scheme` appears
+ * anywhere in the theme directory, and the token test fails by name on either — a light
+ * theme cannot arrive here without a failing case and a task that owns it. The declaration
+ * site is still the design's `:root, [data-theme]` pair (§3.6): with one value set the
+ * second selector changes nothing, and it means a later light set is a change of values
+ * rather than a restructuring that has to be discovered.
+ *
+ * The hue is the website's. `--ground`, `--surface`, `--text`, `--text-muted`, `--accent`,
+ * `--border` and `--warn` are reused from website/src/styles/palette-logo.css BYTE FOR
+ * BYTE, and `--accent-ink` is that file's `--accent-on-dark` under a name that does not
+ * name the wrong one of two grounds. The amber matters most: it is the site's, not this
+ * design's invention, because "attention" means the same thing on both sides of the
+ * product. The remaining six are this console's own — the second surface, the control
+ * border, and the four state colours the site has no equivalent for — and of those, only
+ * the state colours can move without touching the site at all.
+ *
+ * Roles, because two of them are easy to get backwards (§3.2, §3.4):
+ *   - `--accent` is STRUCTURE — a rule, the focus ring, a filled control's background; it
+ *     is 7.16:1 on the ground, so it also clears 4.5:1 as text, but
+ *   - `--accent-ink` is the accent AS TEXT (links, an accent heading), the lighter tone of
+ *     the pair;
+ *   - `--border` is a DECORATIVE 1 px hairline (1.44:1 on the ground — deliberately below
+ *     the 3:1 a boundary needs, which is why it may never mark a control's extent) and
+ *     `--border-strong` is the border that marks one (4.00:1);
+ *   - `--ok` is used for *measured and inside the cap*, never decoratively.
+ * Every one of those is asserted in the token test, and the `--border`-is-decorative scan
+ * over `base.css` and `screens.css` is Task 6.4's (the design's §6.3 says why: neither
+ * file exists until then).
+ */
+
+:root {
+  /* One value set ships, so the console's `color-scheme` is `dark` outright. This is also
+   * what makes the picker and the refusal document — neither of which reads the theme the
+   * entry chose — paint dark rather than in the platform's default. */
+  color-scheme: dark;
+}
+
+:root,
+[data-theme] {
+  /* The window's ground, and the panel/card surface two steps above it. */
+  --ground: #0A0E16;
+  --surface: #121A26;
+  /* A table header, a zebra row. */
+  --surface-alt: #18222F;
+
+  /* Body text, and the quieter tone beside it: labels and secondary prose. Still prose,
+   * still 4.5:1 on all three surfaces. */
+  --text: #E6EEF5;
+  --text-muted: #9FB2C4;
+
+  /* The accent's two jobs, which are two contrast requirements and are why the pair
+   * exists rather than one token. */
+  --accent: #17A8E6;
+  --accent-ink: #6FD8F5;
+
+  /* A hairline meant to be seen and not to shout, and the border that marks a control. */
+  --border: #24303F;
+  --border-strong: #5B7491;
+
+  /* The five state colours. Hue is the second channel §3.4 measures: every pair of these
+   * five is at least 50° apart, so no two state FILLS are told apart by lightness — which
+   * is deliberate, because lightness is the channel a colour-blind operator and a
+   * forced-colors mode keep. The primary defence is §3.5's: every state also carries a
+   * word, a mark or a number the code already emits, so no state is ever carried by colour
+   * alone. `--halted` is a DELIBERATE STOP and not a failure; `--error` is failed, lost or
+   * an infrastructure error. */
+  --ok: #4CC38A;
+  --warn: #F5A524;
+  --error: #F2648C;
+  --halted: #C9A0FF;
+  /* The last-known values after the feed stopped. */
+  --stale: #8A9AAB;
+
+  /* The label on a filled control — a filled button, a state chip, a kill banner's fill.
+   * On this set it is `--ground` repeated as its own token rather than `var(--ground)`,
+   * because the token test parses hex literals out of this file and a `var()` would be a
+   * pair it could not compute (design §6.3). The token test asserts the two are equal, so
+   * the repetition is checked rather than trusted. */
+  --ink-on-fill: #0A0E16;
+}
