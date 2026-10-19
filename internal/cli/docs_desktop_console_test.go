@@ -6,7 +6,12 @@ package cli
 // reference a path under console/ -- and it references it the way every
 // docs_*_test.go here references docs/: readDoc(t, path) reads the bytes. It
 // imports nothing from console/, embeds nothing from it and adds no go.mod
-// dependency to reach it.
+// dependency to reach it. Everything below that reads a console/ file reads it
+// as bytes for the same reason, and stays in this file so that the allow-list
+// keeps its single entry: the console's copy of a Go decision is checked here
+// against the Go source, and the second such copy is
+// TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource, reading
+// console/tools/scrub-fixture/scrub.ts.
 //
 // Two halves, three test families. TestDocsDesktopConsoleDesignCarriesTheDecisions
 // is the design's own presence test (design section 9.5 item 1): the load-bearing
@@ -4753,4 +4758,549 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 			}
 		}
 	}
+}
+
+// The scrub's vocabularies against the Go source (owner review of PR #643,
+// item 1: "add a drift test comparing the scrub's vocabularies with the Go
+// source's constants so they cannot rot silently").
+//
+// It lives in this file rather than one of its own because Task 0.3's boundary
+// test allows exactly ONE Go file to mention a path under console/, and this is
+// it: a second file would have to be argued onto that list, while this one
+// already reads console/ documents the same way -- as bytes, importing nothing
+// from them. It reads console/tools/scrub-fixture/scrub.ts for the same reason
+// it reads console/docs/json-contract.md: the console's copy of a Go decision is
+// checked against the Go source, not against a hand-kept list on either side.
+//
+// `console/tools/scrub-fixture/scrub.ts` copies a value only when it is in a
+// fixed list and refuses the rest -- deny by default, so the recorder cannot
+// leak a field it does not know. The failure that review found is the other side
+// of that rule: a list that is too SHORT does not leak, it makes the recorder
+// unusable, because the ordinary run it was reading is refused. The lists were
+// derived by hand from the Go source once and had already drifted (`bootstrap`,
+// `review_first`, `finalize` and `vertex` were all missing, and `warn` was a
+// mode no CLI writes).
+
+// scrubTS is the file that holds the vocabularies.
+const scrubTS = "console/tools/scrub-fixture/scrub.ts"
+
+// quoted returns every double-quoted Go string literal inside s, in order.
+func quoted(s string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(s, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// tsQuoted is quoted for the other language: every single-quoted string literal
+// inside s, in order.
+func tsQuoted(s string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(s, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// collect returns the first capture of every match of re, in order. It says
+// nothing about finding none: most files in a package do not carry the shape
+// being looked for, and the caller asserts on the package's total.
+func collect(src, re string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(re).FindAllStringSubmatch(src, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// sourceValues is collect for a scan that must find something: a pattern that
+// silently matches nothing would compare two empty lists and pass.
+func sourceValues(t *testing.T, where, src, re string) []string {
+	t.Helper()
+	out := collect(src, re)
+	if len(out) == 0 {
+		t.Fatalf("%s: the pattern %q matched nothing; the source has moved and this test is no longer reading it", where, re)
+	}
+	return out
+}
+
+// runnerSources returns the non-test .go files of a package directory.
+func runnerSources(t *testing.T, dir string) []string {
+	t.Helper()
+	paths, err := filepath.Glob("../../" + dir + "/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, p := range paths {
+		if !strings.HasSuffix(p, "_test.go") {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("no source files under %s", dir)
+	}
+	return out
+}
+
+// tsList returns the single-quoted strings of one list in scrub.ts: `key: [...]`
+// for a VOCAB entry, or `NAME = [...]` for an exported list.
+func tsList(t *testing.T, scrub, pattern, what string) []string {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)` + pattern).FindStringSubmatch(scrub)
+	if m == nil {
+		t.Fatalf("%s: %s is not in the file in the form this test reads", scrubTS, what)
+	}
+	got := tsQuoted(m[1])
+	slices.Sort(got)
+	if len(got) == 0 {
+		t.Fatalf("%s: %s parsed as an empty list", scrubTS, what)
+	}
+	return got
+}
+
+// sameSet fails with both lists when they differ.
+func sameSet(t *testing.T, what string, want, got []string) {
+	t.Helper()
+	want, got = slices.Clone(want), slices.Clone(got)
+	slices.Sort(want)
+	slices.Sort(got)
+	want, got = slices.Compact(want), slices.Compact(got)
+	if !slices.Equal(want, got) {
+		t.Errorf("%s: the Go source writes %v, the scrub knows %v", what, want, got)
+	}
+}
+
+// without returns values with every occurrence of drop removed.
+func without(values []string, drop string) []string {
+	var out []string
+	for _, v := range values {
+		if v != drop {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource compares every list
+// the scrub uses to copy a CLI value with the constants the Go source writes it
+// from. A value on one side and not the other is a refusal waiting to happen
+// (too short) or a pass-through (too long); both fail here.
+func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
+	scrub := readDoc(t, scrubTS)
+
+	// The stages of runs[].stage, which is the run's REGISTRY entry and nothing
+	// else: internal/watch/build.go writes dash(e.Stage) into the row, and that
+	// entry takes a stage from exactly two places -- the literal it is created
+	// with (budget_session.go's registryEntry) and beginBudgetStage, whose only
+	// caller is r.stage, so its vocabulary is the first argument of r.stage's
+	// call sites. The runner's other stage strings are other documents: the
+	// record's own stage (r.rec.Stage = "render", "writeback", "check",
+	// "finalize") goes to result.json, and provisionStage names a timing row. A
+	// scrub that knew them would pass a value runs[].stage can never carry, so
+	// the scan reads the entry and not the package's every stage string.
+	budgetSession := readDoc(t, "internal/runner/budget_session.go")
+	stages := sourceValues(t, "internal/runner/budget_session.go", budgetSession, `Stage: "([a-z_]+)"`)
+	var budgetStageCalls []string
+	for _, path := range runnerSources(t, "internal/runner") {
+		src := readDoc(t, strings.TrimPrefix(path, "../../"))
+		stages = append(stages, collect(src, `\.stage\(ctx, "([a-z_]+)"`)...)
+		budgetStageCalls = append(budgetStageCalls, collect(src, `\.beginBudgetStage\((\w+),`)...)
+	}
+	if len(stages) < 5 {
+		t.Fatalf("internal/runner yielded %d stages (%v); the scans are no longer reading the source", len(stages), stages)
+	}
+	// Those names are the vocabulary only while r.stage is the one caller of
+	// beginBudgetStage and hands it its own name argument: a second call site,
+	// or a stage the entry is given some other way, and the list is short.
+	if len(budgetStageCalls) != 1 || budgetStageCalls[0] != "name" {
+		t.Fatalf("internal/runner calls beginBudgetStage(%v, ...); this test reads the stage names off r.stage's call sites because that call is what puts them in the registry entry", budgetStageCalls)
+	}
+	// A runs-bucket row with no registry entry yet carries watch's own "queued".
+	stages = append(stages, sourceValues(t, "internal/watch/queued.go",
+		readDoc(t, "internal/watch/queued.go"), `Stage: "([a-z_]+)"`)...)
+	sameSet(t, "stage", stages, tsList(t, scrub, `\bstage: \[([^\]]*)\]`, "VOCAB.stage"))
+
+	// The auth values: the config's allowed set, which is the one a run is
+	// launched with, plus the dash the wall view writes for an empty one.
+	auth := sourceValues(t, "internal/config/validate.go", readDoc(t, "internal/config/validate.go"),
+		`\[\]string\{([^}]*)\}, c\.Agent\.Auth`)
+	allowed := quoted(auth[0])
+	if len(allowed) == 0 {
+		t.Fatalf("internal/config/validate.go: the allowed-auth set parsed as empty")
+	}
+	sameSet(t, "auth", append(allowed, "-"), tsList(t, scrub, `\bauth: \[([^\]]*)\]`, "VOCAB.auth"))
+
+	// The budget mode.
+	sameSet(t, "mode", sourceValues(t, "internal/budget/model.go", readDoc(t, "internal/budget/model.go"),
+		`Mode\w+ = "([a-z]+)"`), tsList(t, scrub, `\bmode: \[([^\]]*)\]`, "VOCAB.mode"))
+
+	// The connection reasons the CLI writes itself: internal/watch/state.go sets
+	// one beside each kind it invents -- "access refused" for a permission
+	// error, "connecting" before the first event. The third branch is the
+	// transport's own error text, one-lined and clipped there, so the scrub
+	// cannot have a vocabulary for it; only these two are compared.
+	sameSet(t, "connection reason", sourceValues(t, "internal/watch/state.go", readDoc(t, "internal/watch/state.go"),
+		`c\.Kind, c\.Reason = \w+, "([^"]*)"`), tsList(t, scrub, `CONNECTION_REASONS = \[([^\]]*)\]`, "CONNECTION_REASONS"))
+
+	// The verify kinds: the three `fugaro verify` can run. Held in variables
+	// rather than passed straight to sameSet because the head grammar below is
+	// built from them.
+	verifyGo := readDoc(t, "internal/verify/verify.go")
+	kinds := sourceValues(t, "internal/verify/verify.go", verifyGo, `Kind\w+\s+Kind = "([a-z]+)"`)
+	sameSet(t, "verify kind", kinds, tsList(t, scrub, `VERIFY_KINDS = \[([^\]]*)\]`, "VERIFY_KINDS"))
+
+	// The two status words `Record.Summary` picks between, the flag it appends
+	// to the kind, the one warning sentence it writes, and the note it appends
+	// to a run that found the tree dirty. The last two are the CLI's own text
+	// sitting in the middle of the line: the scrub spells them out, so a second
+	// warning or a reworded note fails here rather than making the recorder
+	// refuse an ordinary run.
+	statuses := sourceValues(t, "internal/verify/verify.go", verifyGo, `status (?::=|=) "([A-Za-z]+)"`)
+	sameSet(t, "verify status", statuses, tsList(t, scrub, `VERIFY_STATUSES = \[([^\]]*)\]`, "VERIFY_STATUSES"))
+	rerun := sourceValues(t, "internal/verify/verify.go", verifyGo, `kind \+= " ([^"]+)"`)
+	sameSet(t, "verify rerun flag", rerun, []string{tsConst(t, scrub, "VERIFY_RERUN_FLAG")})
+	sameSet(t, "verify warning", sourceValues(t, "internal/verify/verify.go", verifyGo,
+		`rec\.Warning = "([^"]*)"`), []string{tsConst(t, scrub, "VERIFY_WARNING_PREFIX")})
+	sameSet(t, "verify clean-tree note", sourceValues(t, "internal/verify/verify.go", verifyGo,
+		"s \\+= \"; ([^\"]*)\"\n\t}\n\treturn s"), []string{tsConst(t, scrub, "VERIFY_CLEAN_TREE")})
+
+	// The clip internal/runner puts on the summary before the document carries
+	// it: `verifySummaryRunes`, which is also what scrub.ts calls
+	// VERIFY_CLIP_RUNES. The scrub needs the number because a clipped line is a
+	// PREFIX of the writer's and its matchers have to accept one, so a clip that
+	// moved in the registry without moving here would leave the scrub refusing an
+	// ordinary recording -- or accepting a cut beyond the one the writer makes.
+	sameNumber(t, "verify summary clip (runes)", sourceNumber(t, "internal/runner/budget_session.go",
+		readDoc(t, "internal/runner/budget_session.go"), `const verifySummaryRunes = (\d+)`),
+		tsNumber(t, scrub, "VERIFY_CLIP_RUNES"))
+
+	// The report globs the warning sentence carries and nowhere else in the
+	// document: the two `commands.reports` patterns internal/config/defaults.go
+	// installs, which are what internal/verify/verify.go joins into
+	// `no JUnit reports found under ...`. They are the vocabulary the fixture
+	// scan pins the glob slot to (VERIFY_REPORT_GLOBS), so a change to the
+	// defaults that the scrub did not follow would make the scan refuse a
+	// recording the CLI itself wrote.
+	sameSet(t, "verify report glob", quoted(sourceValues(t, "internal/config/defaults.go",
+		readDoc(t, "internal/config/defaults.go"), `w\.Commands\.Reports = \[\]string\{([^}]*)\}`)[0]),
+		tsList(t, scrub, `VERIFY_REPORT_GLOBS = \[([^\]]*)\]`, "VERIFY_REPORT_GLOBS"))
+
+	// The connection states, the healths and the deadlines: three inline tables
+	// in internal/watch/json.go, keyed by the constants they render.
+	jsonGo := readDoc(t, "internal/watch/json.go")
+	sameSet(t, "connection state", sourceValues(t, "internal/watch/json.go", jsonGo, `Conn\w+: "([a-z]+)"`),
+		tsList(t, scrub, `\bconnectionState: \[([^\]]*)\]`, "VOCAB.connectionState"))
+	sameSet(t, "health", sourceValues(t, "internal/watch/json.go", jsonGo, `Health\w+: "([a-z]+)"`),
+		tsList(t, scrub, `\bhealth: \[([^\]]*)\]`, "VOCAB.health"))
+	sameSet(t, "deadline", sourceValues(t, "internal/watch/json.go", jsonGo, `Deadline\w+: "([a-z]+)"`),
+		tsList(t, scrub, `\bdeadline: \[([^\]]*)\]`, "VOCAB.deadline"))
+
+	// The statuses and outcomes of a `finished` row. Both are runstore's own
+	// constants; `running` is left out because a finished row is read from a
+	// result.json, which only exists once the run has stopped (internal/watch/
+	// finished.go), so no document ever carries it.
+	sameSet(t, "status", without(sourceValues(t, "internal/runstore/runstore.go",
+		readDoc(t, "internal/runstore/runstore.go"), `Status\w+\s+Status = "([a-z_]+)"`), "running"),
+		tsList(t, scrub, `\bstatus: \[([^\]]*)\]`, "VOCAB.status"))
+	outcomes := sourceValues(t, "internal/runstore/runstore.go", readDoc(t, "internal/runstore/runstore.go"),
+		`Outcome\w+\s+Outcome = "([a-z]+)"`)
+	outcomes = append(outcomes, sourceValues(t, "internal/runstore/artifact.go",
+		readDoc(t, "internal/runstore/artifact.go"), `Outcome\w+\s+Outcome = "([a-z]+)"`)...)
+	sameSet(t, "outcome", outcomes, tsList(t, scrub, `\boutcome: \[([^\]]*)\]`, "VOCAB.outcome"))
+
+	// The verify line's head grammar, which is neither a list nor prose: the
+	// pattern is read out of scrub.ts as the expression it is, its `${...}`
+	// interpolations are filled with the values read above, and the result is
+	// compiled here and tried against lines built from verify.go's own format
+	// string -- carrying the exit code internal/procgroup/procgroup.go leaves
+	// for a process it killed, which is what its own timeout does.
+	//
+	// A literal dropped from the pattern, an exit code narrowed to `\d+`, or a
+	// pattern that spells the kinds out instead of interpolating the list this
+	// test compares, fails here. The comment above the pattern in the file
+	// spells the same literals out, and cannot stand in for it: a substring
+	// check over the whole file passes on the comment alone.
+	head := verifyHeadPattern(t, scrub, kinds, statuses, rerun[0])
+	headRE, err := regexp.Compile(head)
+	if err != nil {
+		t.Fatalf("%s: VERIFY_HEAD is not a pattern this test can compile: %v (%s)", scrubTS, err, head)
+	}
+	format := sourceValues(t, "internal/verify/verify.go", verifyGo, `"(fugaro verify %s #%d: %s \(exit %d)"`)[0]
+	killed := sourceValues(t, "internal/procgroup/procgroup.go",
+		readDoc(t, "internal/procgroup/procgroup.go"), `code := (-?\d+)`)[0]
+	var lines []string
+	for _, kind := range kinds {
+		for _, status := range statuses {
+			for _, code := range []string{"0", killed} {
+				lines = append(lines, verifySummaryLine(format, kind, "3", status, code))
+			}
+		}
+		lines = append(lines, verifySummaryLine(format, kind+" "+rerun[0], "5", statuses[0], killed))
+	}
+	for _, line := range lines {
+		if !headRE.MatchString(line) {
+			t.Errorf("%s: VERIFY_HEAD (%s) does not match the line verify.go writes: %q", scrubTS, head, line)
+		}
+	}
+
+	// The tail, segment by segment and in order. The head was held above and the
+	// tail's literals were held to nothing, which is the rot this test exists to
+	// prevent: scrub.ts spells `Record.Summary`'s tail out part by part, so a
+	// segment ADDED to verify.go -- a `; N skipped` for the Skipped count the
+	// summary does not print today, say -- would leave the scrub refusing an
+	// ordinary recording while this test stayed green.
+	//
+	// Both sides are rendered to one string per segment, from their own sources:
+	// a literal as written (with the writer's `%d` as the digits marker), the
+	// test-name joins as the names marker, and `r.Warning` -- which verify.go
+	// builds as the sentence below plus the repository's reports -- as that
+	// sentence followed by the globs marker. Nothing is retyped here, so a
+	// reworded, dropped, reordered or added segment fails on the two renderings.
+	warning := sourceValues(t, "internal/verify/verify.go", verifyGo, `rec\.Warning = "([^"]*)"`)[0]
+	goTail := summaryTail(t, verifyGo, warning+"\x02globs")
+	tsTail := verifyTailRendered(t, scrub)
+	if len(goTail) == 0 || len(tsTail) == 0 {
+		t.Fatalf("%s: the tail scan read nothing (verify.go %q, scrub.ts %q); the sources have moved", scrubTS, goTail, tsTail)
+	}
+	if !slices.Equal(goTail, tsTail) {
+		t.Errorf("%s: Record.Summary appends %q, the scrub's VERIFY_TAIL renders %q: a tail segment added, reworded, dropped or reordered in verify.go has to move the scrub with it", scrubTS, goTail, tsTail)
+	}
+
+	// The counts are the one tail segment a KIND decides on, and the scrub's
+	// grammar encodes that decision twice: VERIFY_TAIL's first group is the
+	// counts, sliced off entirely for a build or a lint (VERIFY_TEST_TAIL_FROM)
+	// and required WHOLE for a test (VERIFY_TEST_GROUPS_REQUIRED), because
+	// verify.go writes them under a KindTest condition and the 120-rune clip
+	// lands far after them. summaryTail above skips `if` lines -- a condition
+	// names what it guards without writing it -- so the condition itself is read
+	// here: were the counts moved to another kind, or written unconditionally,
+	// the scrub would refuse an ordinary recording of that kind while every
+	// rendering above stayed equal.
+	counts := sourceValues(t, "internal/verify/verify.go", verifyGo,
+		`if r\.Kind == (\w+) \{\s*s \+= fmt\.Sprintf\(", %d tests, %d failures"`)
+	if len(counts) != 1 || counts[0] != "KindTest" {
+		t.Errorf("internal/verify/verify.go writes the counts under r.Kind == %v; >>%s<< slices them off for every kind but a test and requires them whole for a test, so the two have to agree", counts, scrubTS)
+	}
+}
+
+// tailDigits, tailNames and tailGlobs mark, in the two renderings compared
+// above, the places a segment is not literal text: a `%d`, the test-name lists
+// verify.go joins with ", ", and the report globs inside its warning.
+const (
+	tailDigits = "\x03"
+	tailNames  = "\x02names"
+	tailGlobs  = "\x02globs"
+)
+
+// summaryTail renders the statements Record.Summary appends, in order, one string
+// each: literal text as written (`%d` becoming tailDigits), every
+// strings.Join(...) as tailNames, and r.Warning as `warning`. The head's own
+// fmt.Sprintf is excluded -- VERIFY_HEAD is compared with it -- by starting after
+// the r.ExitCode argument that closes it.
+func summaryTail(t *testing.T, verifyGo, warning string) []string {
+	t.Helper()
+	fn := regexp.MustCompile(`(?s)func \(r Record\) Summary\(\) string \{(.*?)\n\}`).FindStringSubmatch(verifyGo)
+	if fn == nil {
+		t.Fatalf("internal/verify/verify.go: Record.Summary is not a function this test can read")
+	}
+	tail := fn[1]
+	at := strings.Index(tail, "r.ExitCode)")
+	if at < 0 {
+		t.Fatalf("internal/verify/verify.go: Record.Summary no longer builds its head from r.ExitCode; this test reads the statements after it")
+	}
+	tail = tail[at+len("r.ExitCode)"):]
+	var out []string
+	var b strings.Builder
+	flush := func() {
+		if b.Len() > 0 {
+			out = append(out, b.String())
+			b.Reset()
+		}
+	}
+	for i := 0; i < len(tail); {
+		switch {
+		case strings.HasPrefix(tail[i:], "if "):
+			// A condition names what it guards without writing it: `if r.Warning
+			// != ""` must not count as the warning's own segment.
+			nl := strings.IndexByte(tail[i:], '\n')
+			if nl < 0 {
+				i = len(tail)
+				break
+			}
+			i += nl
+		case strings.HasPrefix(tail[i:], "strings.Join("):
+			// The join's separator is ", ", which is the slot's own internal
+			// separator in scrub.ts, not a literal of the tail.
+			end := strings.Index(tail[i:], ")")
+			if end < 0 {
+				t.Fatalf("internal/verify/verify.go: a strings.Join call in Record.Summary is not closed")
+			}
+			b.WriteString(tailNames)
+			i += end + 1
+		case strings.HasPrefix(tail[i:], "r.Warning"):
+			b.WriteString(warning)
+			i += len("r.Warning")
+		case tail[i] == '"':
+			end := strings.Index(tail[i+1:], `"`)
+			if end < 0 {
+				t.Fatalf("internal/verify/verify.go: an unterminated literal in Record.Summary")
+			}
+			b.WriteString(strings.ReplaceAll(tail[i+1:i+1+end], "%d", tailDigits))
+			i += end + 2
+		case tail[i] == '\n':
+			flush()
+			i++
+		default:
+			i++
+		}
+	}
+	flush()
+	return out
+}
+
+// verifyTailRendered renders scrub.ts's VERIFY_TAIL the way summaryTail renders
+// verify.go's: one string per segment, `text` parts as the value they spell out
+// (a quoted literal, or a constant this test already compares), `digits` as
+// tailDigits and every free slot as its own marker.
+func verifyTailRendered(t *testing.T, scrub string) []string {
+	t.Helper()
+	block := regexp.MustCompile(`(?s)const VERIFY_TAIL[^=]*= \[(.*?)\n\]`).FindStringSubmatch(scrub)
+	if block == nil {
+		t.Fatalf("%s: VERIFY_TAIL is not a list this test can read", scrubTS)
+	}
+	partRE := regexp.MustCompile(`text: ([^}]*?)\}|digits: true|free: '([a-z]+)'`)
+	var out []string
+	for _, line := range strings.Split(block[1], "\n") {
+		parts := partRE.FindAllStringSubmatch(line, -1)
+		if len(parts) == 0 {
+			continue
+		}
+		var b strings.Builder
+		for _, part := range parts {
+			switch {
+			case part[2] != "":
+				b.WriteString("\x02" + part[2])
+			case part[1] != "":
+				b.WriteString(tsTextValue(t, scrub, part[1]))
+			default:
+				b.WriteString(tailDigits)
+			}
+		}
+		out = append(out, b.String())
+	}
+	return out
+}
+
+// tsTextValue resolves one `text:` expression of VERIFY_TAIL: each ` + `-joined
+// part is a single-quoted literal or the name of a const this test reads out of
+// the file. Anything else is a failure rather than a silent pass, so a part
+// rewritten into an expression this test cannot follow cannot slip through.
+func tsTextValue(t *testing.T, scrub, expr string) string {
+	t.Helper()
+	var b strings.Builder
+	for _, part := range strings.Split(strings.TrimSpace(expr), "+") {
+		part = strings.TrimSpace(part)
+		if m := regexp.MustCompile(`^'([^']*)'$`).FindStringSubmatch(part); m != nil {
+			b.WriteString(m[1])
+			continue
+		}
+		if regexp.MustCompile(`^[A-Z][A-Z_]*$`).MatchString(part) {
+			b.WriteString(tsConst(t, scrub, part))
+			continue
+		}
+		t.Fatalf("%s: VERIFY_TAIL has a text part this test cannot read: %q", scrubTS, part)
+	}
+	return b.String()
+}
+
+// tsConst returns the single-quoted value of one `const NAME = '...'` in
+// scrub.ts, so a literal the pattern is built from can be compared with the Go
+// source's own.
+func tsConst(t *testing.T, scrub, name string) string {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)const ` + name + ` = '([^']*)'`).FindStringSubmatch(scrub)
+	if m == nil {
+		t.Fatalf("%s: %s is not a const holding one single-quoted string", scrubTS, name)
+	}
+	return m[1]
+}
+
+// sourceNumber returns the one integer a pattern captures, from a scan that
+// must find it: a number the scrub copies from the Go source is worth comparing
+// for the same reason a list is.
+func sourceNumber(t *testing.T, where, src, re string) int {
+	t.Helper()
+	values := sourceValues(t, where, src, re)
+	n, err := strconv.Atoi(values[0])
+	if err != nil {
+		t.Fatalf("%s: %q is not an integer: %v", where, values[0], err)
+	}
+	return n
+}
+
+// tsNumber returns the integer of one `const NAME = 123` in scrub.ts.
+func tsNumber(t *testing.T, scrub, name string) int {
+	t.Helper()
+	m := regexp.MustCompile(`const ` + name + ` = (\d+)`).FindStringSubmatch(scrub)
+	if m == nil {
+		t.Fatalf("%s: %s is not a const holding one integer", scrubTS, name)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("%s: %s is not an integer: %v", scrubTS, name, err)
+	}
+	return n
+}
+
+// sameNumber fails with both numbers when they differ.
+func sameNumber(t *testing.T, what string, want, got int) {
+	t.Helper()
+	if want != got {
+		t.Errorf("%s: the Go source writes %d, the scrub knows %d", what, want, got)
+	}
+}
+
+// verifyHeadPattern returns scrub.ts's VERIFY_HEAD as a pattern this test can
+// compile: the template literal's escapes undone, and its `${...}`
+// interpolations replaced by the values the Go source writes. An interpolation
+// this test does not know, or a pattern that no longer uses the one holding the
+// kinds or the statuses, is a failure: the pattern has to be built from the
+// lists this test compares, not retyped beside them.
+func verifyHeadPattern(t *testing.T, scrub string, kinds, statuses []string, rerun string) string {
+	t.Helper()
+	m := regexp.MustCompile("(?s)VERIFY_HEAD = new RegExp\\(\\s*`([^`]*)`").FindStringSubmatch(scrub)
+	if m == nil {
+		t.Fatalf("%s: VERIFY_HEAD is not a new RegExp(...) over one template literal; this test reads its source", scrubTS)
+	}
+	pattern := strings.ReplaceAll(m[1], `\\`, `\`)
+	for _, sub := range []struct{ expr, value string }{
+		{"${VERIFY_KINDS.join('|')}", "(" + strings.Join(kinds, "|") + ")"},
+		{"${VERIFY_STATUSES.join('|')}", "(" + strings.Join(statuses, "|") + ")"},
+		{"${VERIFY_RERUN_FLAG}", rerun},
+	} {
+		if !strings.Contains(pattern, sub.expr) {
+			t.Fatalf("%s: VERIFY_HEAD no longer interpolates %s: the pattern must be built from the list this test compares, not retyped beside it", scrubTS, sub.expr)
+		}
+		pattern = strings.ReplaceAll(pattern, sub.expr, sub.value)
+	}
+	if strings.Contains(pattern, "${") {
+		t.Fatalf("%s: VERIFY_HEAD interpolates something this test cannot fill: %s", scrubTS, pattern)
+	}
+	return pattern
+}
+
+// verifySummaryLine renders verify.go's own format string the way the writer
+// does: `fugaro verify %s #%d: %s (exit %d` takes the kind, the record number,
+// the status and the exit code, in that order.
+func verifySummaryLine(format, kind, n, status, code string) string {
+	for _, value := range []string{kind, n, status, code} {
+		at := strings.Index(format, "%")
+		if at < 0 {
+			break
+		}
+		format = format[:at] + value + format[at+2:]
+	}
+	return format
 }

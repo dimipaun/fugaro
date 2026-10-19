@@ -14,7 +14,9 @@
 //     against a positive allow-list of shapes. The scrub's own removed values are
 //     checked in memory, on a scrub of a SYNTHETIC input, never from a file: a
 //     file of hashes of removed values is a dictionary oracle and is not kept.
-//   - **the scrub refuses what it does not know**, and is deterministic.
+//   - **the scrub refuses what it does not know**, and is deterministic once its
+//     clock shift is given -- the shift itself is drawn per run (see
+//     scrub-vocabulary.test.ts and the README).
 
 import { readFileSync } from 'node:fs'
 
@@ -23,7 +25,9 @@ import { describe, expect, it } from 'vitest'
 import { loadFixture } from '../../src/source/fixture'
 import type { JSONDoc } from '../../src/source/source'
 import { normalFixture } from '../../tools/scrub-fixture/index'
-import { QUEUED_NOTE_SHAPE, TIME_SHIFT_MS, VERIFY_SHAPE, VOCAB, scrubDocument } from '../../tools/scrub-fixture/scrub'
+import {
+  CONNECTION_REASONS, INVENTED_CONNECTION_REASON, QUEUED_NOTE_SHAPE, VOCAB, isKnownVerifySummary, scrubDocument,
+} from '../../tools/scrub-fixture/scrub'
 
 const FIXTURE = 'test/fixtures/normal.ndjson'
 
@@ -124,34 +128,76 @@ const FORBIDDEN = [
   'dimi', 'dimipaun', 'youkno', 'edgeapp', 'belong', 'edgeserver', 'edgeweb', 'fugaro-dev', 'fugaro-prod',
   'sk-', 'aiza', 'gh' + 'p_', 'xox',
 ]
-const TWELVE_DIGITS = /\d{12}/
+/**
+ * DIGIT_RUN is twelve or more decimal digits standing on their own: a leaked
+ * number (an amount, an identifier, an epoch-millisecond stamp) that the
+ * allow-list below would otherwise wave through as an invented value.
+ *
+ * "Standing on their own" is the whole of the rule, and it is what makes this
+ * scan deterministic. The header carries a 64-character SHA-256 digest, which is
+ * hex, so each of its characters is a digit five eighths of the time: twelve
+ * consecutive digits occur inside one about 7% of the time (measured: 145 of
+ * 2000 scrubs), and every run draws a fresh clock shift, so the digest is a
+ * fresh draw too. A bare /\d{12}/ therefore failed this scan at random -- about
+ * one run in fourteen -- while a run of digits with a hex digit beside it is
+ * part of a longer hex token (a digest, a pseudonym, a commit) and not a number
+ * the scan is for.
+ *
+ * `{12,}` and not `{12}`: the run is the whole maximal one, and a longer run has
+ * digits on both sides of every twelve-character window inside it, so a fixed
+ * twelve would match neither lookaround and a thirteen-digit stamp would pass
+ * the scan untouched. The lookarounds exempt hex tokens, not long runs.
+ */
+const DIGIT_RUN = /(?<![0-9a-f])\d{12,}(?![0-9a-f])/
+
+/** DIGEST_WITH_A_DIGIT_RUN is a well-formed 64-hex SHA-256 digest that carries
+ * twelve consecutive decimal digits -- what a real digest carries about 7% of
+ * the time, so one run in fourteen. */
+const DIGEST_WITH_A_DIGIT_RUN = 'abcdef' + '123456789012' + 'ab'.repeat(23)
 
 /** normalise is NFKC, lowercase, zero-width characters stripped. */
 function normalise(text: string): string {
   return text.normalize('NFKC').replace(/[\u200b-\u200f\u2060\u2062-\u2064\ufeff\u00ad]/g, '').toLowerCase()
 }
 
-const SHAPES: readonly RegExp[] = [
+/** SHAPES is the positive allow-list: a string value must pass one of these.
+ * The verify line is a matcher rather than a regular expression because it is a
+ * PREFIX of what verify.go writes (the registry clips it); see scrub.ts. It is
+ * the PINNED matcher, `isKnownVerifySummary`, not the scrub's own
+ * `isVerifySummary`: the warning-globs slot is a finite vocabulary (the two
+ * `commands.reports` defaults the CLI installs), so a glob the CLI was never
+ * given cannot pass this list. The test-name slots are NOT pinned that way --
+ * junit.go builds an ID verbatim from the report, so no vocabulary can hold it,
+ * and the guard there is the FORBIDDEN pass below, which runs over the whole
+ * value including the name list. */
+const SHAPES: ReadonlyArray<(value: string) => boolean> = [
   /^(<project>|\[redacted-url\])$/,
   /^r-[0-9a-f]{8}\/r-[0-9a-f]{8}$/,
   /^slug-[0-9a-f]{8}$/,
   /^\d{8}-\d{6}-(ee|ff)\d{2}$/,
   /^# Task: example (finished )?task \d{1,3}$/,
   /^(claude-sonnet-4-5-20250929|-)$/,
-  /^(enforce|observe|warn)$/,
+  new RegExp(`^(${VOCAB.mode.join('|')})$`),
   /^\d{4}-\d{2}-\d{2}$/,
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
   new RegExp(`^(${VOCAB.connectionState.join('|')}|${VOCAB.stage.join('|')}|${VOCAB.auth.join('|')}|${VOCAB.health.join('|')}|${VOCAB.deadline.join('|')}|${VOCAB.status.join('|')}|${VOCAB.outcome.join('|')})$`),
   /^\d{1,2}$/,
-  VERIFY_SHAPE,
-  QUEUED_NOTE_SHAPE,
+  (value: string) => isKnownVerifySummary(value),
+  (value: string) => QUEUED_NOTE_SHAPE.test(value),
+  // A connection's reason: the two sentences internal/watch/state.go writes
+  // itself, plus the one the scrub puts in place of the transport's own error
+  // text (free text, replaced rather than kept). The list is the scrub's own
+  // `CONNECTION_REASONS`, not a copy of it, and the round-trip test below walks
+  // every value of it -- so a sentence added there and not carried here fails
+  // rather than making a recording the scrub accepts uncommittable.
+  new RegExp(`^(${[...CONNECTION_REASONS, INVENTED_CONNECTION_REASON].join('|')})$`),
   /^(redacted@example\.invalid|example reason|example halt reason|example-recipe|example-workflow)$/,
   /^https:\/\/example\.invalid\/example-owner\/example-repo\/pull\/\d+$/,
   /^(github-com-example-owner-example-repo|example-owner\/example-repo)(-\d+)?$/,
   // the header: the case, the version strings, the digest, the one-sentence note
   /^(normal|fugaro-console-redact\/\d+|\d+\.\d+\.\d+|[0-9a-f]{64})$/,
   /^normal: the shape of one real fugaro watch --json document; every value is invented \(see the scrub-fixture tool\)$/,
-]
+].map((shape) => (typeof shape === 'function' ? shape : (value: string) => shape.test(value)))
 const KEYS = new Set([
   'at', 'document', 'project', 'mode', 'day', 'now', 'connection', 'state', 'age_seconds', 'total', 'counted_usd', 'spent_usd',
   'notional_usd', 'daily_cap_usd', 'percent', 'burn', 'known', 'usd_per_min', 'fast', 'kill', 'by', 'reason', 'runs',
@@ -192,11 +238,11 @@ function scan(text: string, removed: readonly string[] = []): string[] {
     for (const { text: raw, key } of stringsOf(parsed)) {
       const n = normalise(raw)
       for (const word of FORBIDDEN) if (n.includes(word)) found.push(`forbidden substring ${word}`)
-      if (TWELVE_DIGITS.test(n)) found.push('a 12-digit run')
+      if (DIGIT_RUN.test(n)) found.push('a run of 12 or more digits')
       if (key) {
         if (!KEYS.has(raw)) found.push('an unknown key')
       } else {
-        if (!SHAPES.some((re) => re.test(raw))) found.push('a string outside the allow-list')
+        if (!SHAPES.some((shape) => shape(raw))) found.push('a string outside the allow-list')
         for (const r of removed) if (r.length >= 4 && n.includes(normalise(r))) found.push('a removed value')
         if (removed.includes(raw)) found.push('a removed value')
       }
@@ -239,6 +285,69 @@ describe('the normal fixture: nothing real is in it', () => {
     expect(scan(line('# Task: example task 1'))).toEqual([])
   })
 
+  it('does not read twelve digits inside a hex digest as a leaked number', () => {
+    // The other half of the digit rule, and the one that is deterministic: a
+    // digest is the fixture's own header field, and a run of digits inside one
+    // is hex, not the number the rule is for. The digest below is the shape the
+    // header really carries (64 hex characters) with a twelve-digit run planted
+    // in it, which a real digest produces at random -- see DIGIT_RUN.
+    const header = readFileSync(FIXTURE, 'utf8').split('\n')[0]!
+    const planted = header.replace(/[0-9a-f]{64}/, DIGEST_WITH_A_DIGIT_RUN)
+    expect(planted).not.toBe(header)
+    expect(planted).toContain('123456789012')
+    expect(scan(`${planted}\n`)).toEqual([])
+    // ...and a run that stands on its own is still caught, whatever its length:
+    // the exemption is for digits inside a hex token, not for long runs. A
+    // thirteen-digit epoch-millisecond stamp is the case a fixed `{12}` missed,
+    // because every twelve-character window inside it has a digit on both sides.
+    for (const run of ['123456789012', '1234567890123', '1750000000000', '12345678901234567890']) {
+      expect(scan(line(run)), run).toContain('a run of 12 or more digits')
+      expect(scan(line(`acme-${run}`)), `acme-${run}`).toContain('a run of 12 or more digits')
+    }
+    // ...and the hex exemption still holds for digits inside a hex token, which
+    // is the digest case the scan would otherwise fail on at random.
+    expect(scan(line('abcdef123456789012abcdef'))).not.toContain('a run of 12 or more digits')
+  })
+
+  it('refuses a verify line whose slots carry text the CLI does not write there', () => {
+    // The verify line is the one value whose middle the CLI fills from the
+    // repository: the test names its reports carry and the globs it reads. A
+    // line shaped like the writer's is not enough for the glob slot -- what sits
+    // there has to be one of the globs the CLI itself installs, or the positive
+    // allow-list would wave through a pattern the CLI was never given.
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: the Acme Payroll build was slow)'))).toContain('a string outside the allow-list')
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/acme-payroll/*.xml)'))).toContain('a string outside the allow-list')
+    // The NAME slot is different, and deliberately: internal/verify/junit.go
+    // builds each ID as `classname + "." + name` verbatim from the report, so
+    // there is no vocabulary to hold it to -- prose there is a name somebody
+    // could have written, and refusing it would make a real recording
+    // uncommittable. So a name-list slot passes the shapes even when it reads
+    // like prose...
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll suite)'))).toEqual([])
+    // ...and what guards that slot is the forbidden-substring pass, which runs
+    // over the whole verify value, name list included. This is the case that
+    // matters: an identifying name inside a legitimately shaped line.
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: dimipaun/fugaro)'))).toContain('forbidden substring dimipaun')
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: belong)'))).toContain('forbidden substring belong')
+    // ...and the slots the CLI really fills still pass, cut or whole.
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: TestA, pkg/sub.TestB)'))).toEqual([])
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: test_mod.py::test_add[1-2])'))).toEqual([])
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml, **/buil'))).toEqual([])
+    // A test line that stops before its counts is one verify.go cannot produce
+    // (it writes them unconditionally for a test), so the allow-list refuses it
+    // rather than taking it as a clipped or a quiet line.
+    expect(scan(line('fugaro verify test #5: passed (exit 0)'))).toContain('a string outside the allow-list')
+    // The name slot is open in the allow-list -- junit.go copies an ID verbatim,
+    // so no vocabulary can hold it -- which leaves the digit rule as the one
+    // guard against a number riding in there as a "name". A test name carrying
+    // an epoch-millisecond stamp is the case to hold: thirteen digits, so the
+    // rule has to read the whole maximal run, not a fixed twelve.
+    expect(scan(line('fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: TestA_1750000000000)')))
+      .toContain('a run of 12 or more digits')
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: 12345678901234567890)')))
+      .toContain('a run of 12 or more digits')
+  })
+
   it('finds a removed value with a changed prefix, and a removed number', () => {
     expect(scan(line('PREFIX real-title-x'), ['real-title-x'])).toContain('a removed value')
     expect(scan(`{"at":"x","document":{"spent_usd":9.37,"x":1}}\n`, ['9.37'])).toContain('a removed number')
@@ -272,8 +381,14 @@ describe('the scrub', () => {
     queued_note: 'queued runs unavailable: the runs bucket did not answer within 3s',
   })
 
+  /** SHIFT is a shift the tests pass in so that the offset is held still. The
+   * scrub draws its own, random, one when it is not given (scrub-vocabulary
+   * .test.ts holds that); nothing HERE depends on a committed value, which is
+   * the point of review item 2. */
+  const SHIFT = -17 * 24 * 3600 * 1000 - 4242
+
   it('replaces every identity and amount, keeps the key order, and recomputes the totals', () => {
-    const out = scrubDocument(raw())
+    const out = scrubDocument(raw(), SHIFT)
     const text = JSON.stringify(out)
     for (const real of ['real-', 'real secret plan', 'another real plan', 'Real Person', 'because real', 'person.example', 'github.com', 'abcd', 'beef', '77', '9.37']) {
       expect(text).not.toContain(real)
@@ -281,8 +396,8 @@ describe('the scrub', () => {
     expect(Object.keys(out)).toEqual(Object.keys(raw()))
     const run = (out['runs'] as Array<Record<string, unknown>>)[0]!
     expect(Object.keys(run)).toEqual(Object.keys((raw()['runs'] as unknown[])[0] as object))
-    // the clock is shifted by a fixed offset: now, day, the run ID and kill.at all follow it
-    const shifted = new Date(Date.parse('2026-10-19T02:00:00Z') + TIME_SHIFT_MS).toISOString()
+    // the clock is shifted by the offset given: now, day, the run ID and kill.at all follow it
+    const shifted = new Date(Date.parse('2026-10-19T02:00:00Z') + SHIFT).toISOString()
     expect(out['now']).toBe(`${shifted.slice(0, 19)}Z`)
     expect(out['day']).toBe(shifted.slice(0, 10))
     expect(out['now']).not.toBe('2026-10-19T02:00:00Z')
@@ -294,13 +409,14 @@ describe('the scrub', () => {
     expect(total['spent_usd']).toBe(run['spent_usd'])
     expect(total['percent']).toBeCloseTo(((total['counted_usd'] as number) / 50) * 100, 6)
     expect(total['kill']).toEqual({
-      by: 'redacted@example.invalid', at: `${new Date(Date.parse('2026-10-19T01:00:00Z') + TIME_SHIFT_MS).toISOString().slice(0, 19)}Z`,
+      by: 'redacted@example.invalid', at: `${new Date(Date.parse('2026-10-19T01:00:00Z') + SHIFT).toISOString().slice(0, 19)}Z`,
       reason: 'example reason',
     })
   })
 
-  it('is deterministic', () => {
-    expect(JSON.stringify(scrubDocument(raw()))).toBe(JSON.stringify(scrubDocument(raw())))
+  it('is deterministic once the shift is given, and draws a fresh one when it is not', () => {
+    expect(JSON.stringify(scrubDocument(raw(), SHIFT))).toBe(JSON.stringify(scrubDocument(raw(), SHIFT)))
+    expect(scrubDocument(raw())['now']).not.toBe(scrubDocument(raw())['now'])
   })
 
   const at = (doc: Record<string, unknown>, ...path: Array<string | number>): Record<string, unknown> => {
@@ -345,7 +461,11 @@ describe('the scrub', () => {
       ['outcome', (d) => { at(d, 'finished', 0)['outcome'] = 'real' }],
       ['failed', (d) => { at(d, 'finished', 0)['failed'] = 'real' }],
       ['connection.state', (d) => { at(d, 'connection')['state'] = 'real' }],
-      ['connection.reason', (d) => { at(d, 'connection')['reason'] = 'the real reason' }],
+      // Every branch internal/watch/state.go writes a reason in writes a
+      // string, so only the type is refused here: the two sentences the CLI
+      // writes itself are kept and the transport's own error text is replaced,
+      // which `scrub-vocabulary.test.ts` holds.
+      ['connection.reason', (d) => { at(d, 'connection')['reason'] = 7 }],
       ['burn.known', (d) => { at(d, 'total', 'burn')['known'] = 'real' }],
       ['queued_note', (d) => { d['queued_note'] = 'queued runs unavailable: real-org said no' }],
     ]
@@ -363,6 +483,74 @@ describe('the scrub', () => {
       expect(removed).toContain(real)
     }
     expect(scan(text, removed)).toEqual([])
+  })
+
+  it('commits a recording whose connection carries a reason, kept or invented', () => {
+    // The rule that accepts `connection.reason` is worth nothing if the scan
+    // that gates a commit then refuses what the rule emits: the scrub passes,
+    // and the recording the rule exists for still cannot be committed. Every
+    // branch of internal/watch/state.go goes through the whole tool -- scrub,
+    // redactor, writer -- and the text a commit would carry is scanned.
+    const cases: Array<[string, string]> = [
+      // [what the CLI wrote, what the committed fixture carries]
+      ...CONNECTION_REASONS.map((reason): [string, string] => [reason, reason]),
+      ['dial tcp 10.0.0.7:443: connect: connection refused', INVENTED_CONNECTION_REASON],
+    ]
+    for (const [wrote, committed] of cases) {
+      const doc = raw()
+      at(doc, 'connection')['state'] = 'offline'
+      at(doc, 'connection')['reason'] = wrote
+      const { text, scrubbed } = normalFixture(doc, '0.8.6')
+      const out = at(scrubbed as unknown as Record<string, unknown>, 'connection')
+      expect(out['reason'], wrote).toBe(committed)
+      if (committed !== wrote) expect(text, wrote).not.toContain(wrote)
+      expect(scan(text), wrote).toEqual([])
+    }
+  })
+
+  it('commits every value its vocabularies can copy, so no field it keeps is uncommittable', () => {
+    // The finding above is one instance of a property the whole tool has to
+    // hold: every value the scrub copies out of a CLI vocabulary -- and every
+    // one it invents in place of a real value, which the document carries at
+    // the same time -- must survive the scan that gates a commit. Each value of
+    // each list in VOCAB goes through the whole tool and the text is scanned.
+    const fields: Array<[string, readonly string[], (d: Record<string, unknown>, v: string) => void]> = [
+      ['mode', VOCAB.mode, (d, v) => { d['mode'] = v }],
+      ['connection.state', VOCAB.connectionState, (d, v) => { at(d, 'connection')['state'] = v }],
+      ['runs[].stage', VOCAB.stage, (d, v) => { at(d, 'runs', 0)['stage'] = v }],
+      ['runs[].auth', VOCAB.auth, (d, v) => { at(d, 'runs', 0)['auth'] = v }],
+      ['runs[].health', VOCAB.health, (d, v) => { at(d, 'runs', 0)['health'] = v }],
+      ['runs[].deadline', VOCAB.deadline, (d, v) => { at(d, 'runs', 0)['deadline'] = v }],
+      ['finished[].status', VOCAB.status, (d, v) => { at(d, 'finished', 0)['status'] = v }],
+      ['finished[].outcome', VOCAB.outcome, (d, v) => { at(d, 'finished', 0)['outcome'] = v }],
+    ]
+    for (const [what, values, set] of fields) {
+      for (const value of values) {
+        const label = `${what} = ${value}`
+        const doc = raw()
+        set(doc, value)
+        const { text } = normalFixture(doc, '0.8.6')
+        // ...and the value really is in what would be committed, so the scan
+        // below is reading it and not passing on a document without it.
+        expect(text, label).toContain(JSON.stringify(value))
+        expect(scan(text), label).toEqual([])
+      }
+    }
+  })
+
+  it('scans 300 scrubs with a fresh drawn clock each, and never trips the digit rule', () => {
+    // The clock offset is drawn per run and never given here, so every iteration
+    // writes a different header digest (and different run IDs, and a different
+    // `recorded`). 300 of them is the flake this test is for: with a bare
+    // /\d{12}/ the scan read twelve digits inside the hex digest as a leaked
+    // number about 7% of the time (145 of 2000 scrubs, measured), so three
+    // hundred draws caught it with near certainty while a single run of the test
+    // above did not.
+    for (let i = 0; i < 300; i++) {
+      let removed: readonly string[] = []
+      const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r })
+      expect(scan(text, removed), `iteration ${i}`).toEqual([])
+    }
   })
 
   it('the scan on the scrub output catches a scrub that keeps a real title or a real amount', () => {
