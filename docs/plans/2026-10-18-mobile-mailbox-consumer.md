@@ -59,11 +59,11 @@ a window is; where the Go side needs one of those answers it **binds** the modul
 | Presence and the heartbeat's `boot` | `shared/presence/index.js` — `evaluatePresence`, `STATE`, `REASON`, `REFUSAL`, `DEFAULT_INTERVAL_MS` (60 s), `DEFAULT_MISSED_INTERVALS`, `DEFAULT_OFFLINE_INTERVALS`, `MAX_BOOT_ID_LENGTH` (64) | The heartbeat this command writes is the value `evaluatePresence` reads |
 | The redactor (D118 requires it before anything is written) | `shared/digest/index.js` — `redact`, `REDACTED`, `redactFunc`, `redactForms`, `digest`, `SEVERITY`, `moreSevere`, `mostSevere` | Every field this command writes to its own state or prints passes it first |
 | The simulator, the fault model and the canonical schedule line | `shared/mailbox-sim/index.js` — `createSimulator`, `scheduleFromSeed`, `faultFor`, `scheduleText`, `parseScheduleText`, `replyId`; its README §"The fault model, which is data", §"What the actors do" | The corpus's scenarios are its schedules; a failing Go case prints `scheduleText()` |
-| The mailbox subtree, and who may write it | `internal/budget/rules/rules.json.tmpl` lines 193–230 (merged: `134db49`, "mobile P2.1 + P2.2 … (#532)"), and the macros `MAILBOX` / `CONSUMER` in `internal/budget/rules/rules.go` (lines 383 and 390) | §2 below. Its writes go through the `CONSUMER` credential (§2's C0), so the grants are a **store-level fence** on them — and no task mints that credential (decision 8) |
+| The mailbox subtree, and who may write it | `internal/budget/rules/rules.json.tmpl`'s `mailbox` block (merged: `134db49`, "mobile P2.1 + P2.2 … (#532)"), and the macros `MAILBOX` / `CONSUMER` in `internal/budget/rules/rules.go` | §2 below, which `TestMailboxPlanMatchesTheMergedGrants` holds to the file. Its writes go through the `CONSUMER` credential (§2's C0), so the grants are a **store-level fence** on them — and no task mints that credential (decision 8) |
 | The rules' emulator proof | `internal/budget/rules/emulator_mailbox_test.go` | The template's fence is already proven; this command does not re-prove it |
 | A long-lived consumer's local state | `internal/watch/acks.go` — `AckPath`, `LoadAcks`, tmp+rename, `0o600` | The ledger and the pending-prompt file are written the same way (Ruling M7) |
 | A lease-shaped claim, and its TTL | `internal/runstore/launch.go` — `Store.Claim`, `ClaimTTL` (10 min) | Not used directly: the launch claim is the runs bucket's. Cited as the shape this command's lease follows |
-| A sweeper, its report and its user-key convention | `internal/budget/sweep.go` — `Sweeper`, `Sweep`, `SweepReport`, `RunUID` (`r~…`) | Ruling M8: the hidden `mailbox sweep` is written in this shape (`m~…`) |
+| A sweeper, its report and its delete-set discipline | `internal/budget/sweep.go` — `Sweeper`, `Sweep`, `SweepReport`, its keep set | Ruling M8: the hidden `mailbox sweep` is written in that shape, and it deletes the consumer's own state — **no `m~…` user** (P6.6's, not approved) and no `r~…` one |
 | An owner-run hidden command | `internal/cli/history.go` — `newBudgetHistoryCmd` (`Hidden: true`) | The precedent for hiding the sweeper |
 | Executing a cancel | `internal/cli/cancel.go` — `cancelRun` | The one existing destructive path the refusal fence (Ruling M6) must gate |
 | A kill switch write, and a **conditional write on an ETag with a bounded retry** | `internal/budget/kill.go` — `SetKill` and its `SetAttempts` bound: "The write is conditional on the ETag read; a lost race is re-read up to `SetAttempts` times" | The other destructive path — and the in-repo precedent for Ruling M1's compare-and-swap |
@@ -80,9 +80,11 @@ a window is; where the Go side needs one of those answers it **binds** the modul
 
 ## 2. What the merged rules already decide, and the three things they force
 
-Read from the template as it is on `main` (`internal/budget/rules/rules.json.tmpl` lines 193–230,
-macro definitions at `internal/budget/rules/rules.go` 383 and 390). This is not a proposal; it is
-what is merged, and P4.1 may not contradict it.
+Read from the template as it is on `main` (`internal/budget/rules/rules.json.tmpl`'s `mailbox` block;
+the macros at `internal/budget/rules/rules.go`'s `case "MAILBOX":` and `case "CONSUMER":`). This is
+not a proposal; it is what is merged, and P4.1 may not contradict it. **The pin's
+`TestMailboxPlanMatchesTheMergedGrants` parses this file and holds the three claims below to it**,
+so a rules change that moves a grant is a failing test rather than a stale paragraph.
 
 ```jsonc
 "mailbox": { "$mb": {
@@ -124,8 +126,33 @@ about what `CONSUMER` admits:
 
 | The read or write | The credential | Why that one |
 | --- | --- | --- |
-| **Read** `mailbox/$mb/inbox` | the **operator's application-default credential** (`internal/cli/cloud.go`'s `google.DefaultTokenSource` feeding `internal/rtdb`) — an IAM read that **bypasses the rules** | The inbox has **no `.read` grant at all** (C1): neither `MAILBOX` nor `CONSUMER` may read it. The consumer's read is out of band, and it is the only credential the CLI already holds |
+| **Read** `mailbox/$mb/inbox` **and `mailbox/$mb/heartbeat`** (the lease's ETag read, M1) | the **operator's application-default credential** (`internal/cli/cloud.go`'s `google.DefaultTokenSource` feeding `internal/rtdb`) — an IAM read that **bypasses the rules** | The inbox has **no `.read` grant at all** (C1), and the heartbeat's only `.read` is `MAILBOX` — the phone's, not the consumer's. `CONSUMER` **may read no mailbox at all** (`CONSUMER` appears in no `.read` in the whole mailbox subtree; it is a write claim). So both reads are out of band, and the ADC is the only credential the CLI already holds |
 | **Write** `mailbox/$mb/outbox/$msg` and `mailbox/$mb/heartbeat` | a **`CONSUMER`-claimed credential** — a token carrying `mc == $mb` | It is the only credential the merged grants admit for those paths, and using it is what makes the grants a **store-level fence** on this command rather than a comment |
+
+**The heartbeat read is the one the earlier draft of this plan left unattributed, and the rules do
+not let it be the consumer's.** M1 takes the lease by reading the heartbeat's ETag and writing it
+back with `if-match`. `.read` at `mailbox/$mb/heartbeat` is `"MAILBOX"`, and `MAILBOX` is
+`(auth.token.mu …) && $mb == auth.uid` — the phone's own claim, minted for the phone (D112). A
+credential carrying `mc` instead is refused that read, and the root of the rules is
+`".read": false`, so there is nothing to fall back on. The consumer therefore reads the heartbeat
+**as the operator's ADC, exactly as it reads the inbox**, and the two reads are one row of the table
+above. What that means for the credential model is worth stating plainly, because it is the same
+asymmetry decision 8 already carries on the write side:
+
+- **The lease's arbitration does not depend on a grant at all.** The CAS is the store's HTTP
+  `if-match` precondition (`internal/rtdb`'s `GetETag` + `PutIfMatch`, and `ErrPrecondition` on the
+  412), not a rules predicate. It is evaluated for whoever sends the request — an ADC write is
+  still refused when the ETag has moved — which is why M1's fence survives either answer to
+  decision 8. T3's test is the evidence in this repository; a live project's is check 83's.
+- **Under the ADC, the rules bind nothing on this path.** An IAM write bypasses `.validate` too, so
+  the heartbeat's shape (`hasChildren(['at','boot'])`, `$other: false`) is enforced by the command
+  and by `shared/lease`, not by the store, whenever the write is an ADC write. That is another
+  reason to prefer decision 8's `CONSUMER` credential: with it, the merged `.validate` is a real
+  fence on the node's shape, and M10's write-set test is the fence on the set.
+- **The phone's read of the heartbeat is unaffected** — `MAILBOX` still reads it, which is what the
+  presence verdict is for (§4.2). No side of this needs a rules change; a rules change would be
+  needed only to let the *consumer* read the heartbeat under its own credential, and nothing here
+  wants that.
 
 **The second row is a dependency this plan does not get to assume, and it is a finding:** no task in
 the mobile plan mints a token carrying `mc`. P6.6 mints the **pairing** token (`p~<random>`) and the
@@ -173,7 +200,15 @@ The consumer takes the lease by reading `mailbox/$mb/heartbeat` with `internal/r
 and writing `{at, boot}` back with `PutIfMatch`; a returned `ErrPrecondition` (the 412 answer) is a
 lost race, and it is retried a **bounded** number of times, never forced —
 the pattern `internal/budget/kill.go`'s `SetKill` already uses ("the write is conditional on the
-ETag read; a lost race is re-read up to `SetAttempts` times"). `boot` is the holder identity; the lease's TTL is
+ETag read; a lost race is re-read up to `SetAttempts` times"). **The read runs under the operator's ADC, and it has to** (C0's read row): the heartbeat's only
+`.read` grant is `MAILBOX` — the phone's — and `CONSUMER` is a write claim that appears in no
+`.read` in the mailbox subtree, so its token is refused the `GET` the ETag comes from. The CAS's
+**arbitration is the store's `if-match` precondition**, not a rules predicate, so it is evaluated
+for whichever credential sends the write and is unaffected by that choice; the rules bind nothing
+on this path under the ADC, which is why decision 8's `CONSUMER` credential is worth minting and
+why T3's test is the fence in this repository either way.
+
+`boot` is the holder identity; the lease's TTL is
 `shared/lease`'s `CLAIM_TTL` (10 min) and its skew tolerance is `MAX_CLOCK_SKEW` (5 min), applied
 by `readLease`/`takeLease` — the module decides, this command only supplies the value and the
 store.
@@ -357,9 +392,18 @@ operator's phone already asked for. The test in T4 kills the process mid-loop an
   `project: <name> (GCP <id>)` first, like every cloud command (design §9.1).
 - `fugaro mailbox sweep` — **hidden**, in the shape of `internal/budget/sweep.go` and the hidden
   `fugaro budget history` (`internal/cli/history.go`); it is the D118 TTL's enforcer and the
-  presence verdict's writer, and its user keys are `m~…` (the runs bucket's are `r~…`,
-  `internal/budget/sweep.go`'s `RunUID`). Hidden because it is internal — and because a hidden
-  command is not user documentation, which is exactly what `internal/clidoc`'s skip rule is for.
+  presence verdict's reporter. **What it may delete is the consumer's own state and nothing else:
+  the waiting prompts in its local `pending.json` past 72 h (§6, §7), and its stale ledger
+  entries.** It **deletes no Firebase user at all** — it holds no `m~…` user keys and no `r~…`
+  ones, and its `deleteUsers`-shaped walk is not part of what it reuses from
+  `internal/budget/sweep.go` (`RunUID`'s `r~…` keys are the runs bucket's). The `m~`-keyed
+  deletion is **P6.6's** and is not approved, and the stored prompt a sweep of the *store* would
+  delete is **P6.13's** (its sweeper deletes stored prompts "and nothing more"); at P4.1 there is
+  no store-held prompt to sweep. So a mailbox sweep that found itself about to delete an `m~…`
+  user must **refuse and report** it as the finding §16 names, never fix it here — that is T7's
+  deletion-set test, and it is the rule this ruling exists to state rather than leave implied.
+  Hidden because it is internal — and because a hidden command is not user documentation, which is
+  exactly what `internal/clidoc`'s skip rule is for.
 
 ### M9 — Parity is proven by a **corpus of vectors**, in data, replayable with no Node.
 
@@ -491,7 +535,8 @@ fugaro mailbox sweep [--json] [--dry-run]
 ```
 
 The D118 TTL's enforcer, written in `internal/budget/sweep.go`'s shape: it walks the mailboxes it is
-configured for, expires waiting prompts past 72 h (M3), and **reports** the presence verdict —
+configured for, expires **its own** waiting prompts past 72 h (M3, §6's `pending.json`) — it holds
+no Firebase user keys and deletes none (M8) — and **reports** the presence verdict —
 computing `shared/presence`'s `evaluatePresence` over the heartbeat and printing it, **writing
 nothing**. That is not an omission: `evaluatePresence` is a **pure function over a heartbeat**, no
 node is designated to hold its output, the merged template has **no grant reaching any presence
@@ -601,7 +646,7 @@ subcommand of it, so it needs no line of its own. What that line drags with it, 
 
 | State | Where | Who may write it | Written how |
 | --- | --- | --- | --- |
-| The lease, and presence | `mailbox/$mb/heartbeat` = `{at, boot}` (+ `mac`, and `agents`, once P6.4 lands) | the consumer, with the **`CONSUMER` credential** (C0) | ETag conditional write (M1); `boot` names the holder; **signed** (M4b) |
+| The lease, and presence | `mailbox/$mb/heartbeat` = `{at, boot}` (+ `mac`, and `agents`, once P6.4 lands) | the consumer, with the **`CONSUMER` credential** (C0) — the phone **reads** it, and the consumer's own read of the ETag is an **ADC** read, because no grant admits it (C0's read row) | ETag conditional write (M1); `boot` names the holder; **signed** (M4b) |
 | The consumer's answers | `mailbox/$mb/outbox/$msg` = `{id, sender, text, at}` (+ `mac`, once P6.4 lands) | the consumer, with the `CONSUMER` credential | create-only, per the merged grant; **signed** (M4b) |
 | The phone's receipt that an answer was spoken | `mailbox/$mb/outbox/$msg/acked` | **the phone** (`MAILBOX`) | not this command's (C2) |
 | The dedupe ledger, the actions performed, the window state | `$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json` | the consumer | tmp+rename, `0o600` — the *prefix* and the discipline are `internal/watch/acks.go`'s (`AckPath` is the single file `…/fugaro/watch-acks.json`); the `<project>` level is **new here** (M7) |
@@ -822,6 +867,8 @@ do.
 | M4's three states are three states | the availability check is a startup refusal with **no pass run** (T5); a message that fails verification is a per-message refusal inside a running pass (T2); a value the signer rejects is a per-write refusal inside a running pass (T2a) — and the third is unreachable without the injected signer, which is why the tests are three and not one | `internal/cli`'s `RunE` tests, `internal/mailbox`'s gate tests, and a signer that fails on demand |
 | An unverifiable message is never retired | the node is still read on the next pass and refused again with its code; nothing the command can do removes it (M4a, §7's ordering 2) | `internal/gcpfake`'s Realtime Database, two passes |
 | The **write credential** | the writes are made with a `CONSUMER`-claimed token (C0), and the merged create-only grant refuses a second write to one outbox id | `internal/gcpfake`'s identitytoolkit fake, and the emulator rules for the store's other half |
+| The **read credential** | the lease's ETag read is an **ADC** read, because the merged rules admit the consumer to no mailbox read at all (C0); a `CONSUMER` token that tries it is refused, and the CAS still refuses the loser when the write is made under the ADC | the emulator rules for the read half (`mailbox/$mb/heartbeat`'s only `.read` is `MAILBOX`); `internal/gcpfake` for the `if-match` |
+| The **sweeper's delete set** | it deletes the consumer's own expired state and **no Firebase user**; a sweep that would delete an `m~…` (or `r~…`) user refuses and reports it instead (M8) | a fake Auth that records every deletion; T7 |
 | The expiry | the 72-hour boundary, exactly; the 6-hour command window; the 5-minute future tolerance | injected `now` |
 | The exit contract | 0 for a completed pass, refusals included **and nothing read included**; 1 for a bad flag, a missing mailbox, the M4/§8.3 startup refusal and a refused database (`dbErr`/`checkDBProject`); 2 only for `dbErr`'s `remote` errors; M12's four-clause predicate for the one pass-level case | `--once` runs through the command's own `RunE` |
 
@@ -904,12 +951,16 @@ attribute, which is the same class of exposure as the inbound half.
 `shared/lease/parity.test.js` (new) + corpus entries.
 **Depends on.** T1; P1.2 (merged); M1.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/mailbox -run 'Lease' -count=1` over
-`internal/gcpfake`: the read uses `GetETag` and the write `PutIfMatch`; two consumers read one empty
-heartbeat, both get `ok: true` from `takeLease`, the second write is refused `ErrPrecondition` and
-**nothing moves**; the retry is bounded (the loser does not spin); a lease 5 minutes ahead is held
-and 5 minutes and 1 ms ahead is taken over; `--no-heartbeat` takes no lease and acts on nothing.
+`internal/gcpfake`: the read uses `GetETag` **under the operator's ADC** (C0's read row — the
+heartbeat's only `.read` grant is `MAILBOX`, so a `CONSUMER` token is refused the `GET`, and the
+test asserts that refusal as well as the read) and the write `PutIfMatch`; two consumers read one
+empty heartbeat, both get `ok: true` from `takeLease`, the second write is refused
+`ErrPrecondition` and **nothing moves**; the retry is bounded (the loser does not spin); a lease 5
+minutes ahead is held and 5 minutes and 1 ms ahead is taken over; `--no-heartbeat` takes no lease
+and acts on nothing.
 **Red step.** Drop the `if-match` from the second write and watch `TestTwoConsumersOneLease` fail
-with both writes landing.
+with both writes landing; drop `$mb == auth.uid` from `MAILBOX` and watch the read-refusal test
+fail.
 **Reviewer tier.** SECURITY-SENSITIVE — this is the fence that makes at-most-once true.
 
 ### Task T4: The ledger, the restart, and the dedupe — SECURITY-SENSITIVE, independent opus review
@@ -987,10 +1038,14 @@ share that fence, so both must be green).
 `fugaro mailbox sweep` is absent from `website/content/cli-reference.md` (asserted); the 72-hour
 boundary is exact, and 72 h equals 259 200 000 ms; **the presence verdict is computed and reported
 and nothing is written for it** — the test asserts the store is unchanged by a sweep whose only work
-was a verdict, which is §4.2 and §6's row, and the reason is that no node and no grant is designated.
+was a verdict, which is §4.2 and §6's row, and the reason is that no node and no grant is designated;
+**the sweep deletes no Firebase user** — it runs against a fake Auth that records every deletion and
+the record is empty, and it **refuses and reports** rather than proceeds if the set it would delete
+names an `m~…` or `r~…` user (M8; at P4.1 the set is its own `pending.json` and ledger entries).
 **Red step.** Change the TTL to 6 hours and watch `TestPromptExpiresAt72h` fail; unhide the sweeper
 and watch the reference test fail; make the sweeper write a verdict node and watch
-`TestSweepWritesNoVerdict` fail.
+`TestSweepWritesNoVerdict` fail; let the sweeper delete one `m~…` user and watch
+`TestSweepDeletesNoUser` fail.
 **Reviewer tier.** standard.
 
 ### Task T8: The parity corpus, the simulator scenarios and the review checklist
@@ -1145,8 +1200,10 @@ Each with the recommendation first. Decisions 1, 2, 3 and 8 hold the task back; 
    a crash between the two meanings be ambiguous. **Cost:** two atomic writes per pass instead of
    one.
 8. **Which credential authenticates the consumer's writes (§2's C0), since no task in the mobile
-   plan mints one?** Today the command can read the inbox only as the operator (ADC, rules
-   bypassed), and the merged `CONSUMER` grant — the one that makes the outbox create-only and the
+   plan mints one?** Today the command can read the inbox **and the heartbeat** only as the operator
+   (ADC, rules
+   bypassed — C0's read row: `CONSUMER` appears in no `.read` in the mailbox subtree), and the
+   merged `CONSUMER` grant — the one that makes the outbox create-only and the
    heartbeat the only replaceable node — binds a token **carrying `mc == $mb`**, which **no approved
    task mints**: P6.6 mints `p~` and the phone's `m~`, P6.4 writes the device and pairing nodes, and
    the rules' comment says `CONSUMER`'s `mc` "is minted the same way" without naming the task.
@@ -1203,8 +1260,14 @@ Each with the recommendation first. Decisions 1, 2, 3 and 8 hold the task back; 
   CI's `test` job today — so `TestParityCorpusIsCurrent` **skips** there and a `shared/` change under
   an unregenerated corpus is caught by no test in this repository until P4.3's job exists. The
   recommendation in decision 4 is offered with that gap named, not hidden.
-- **The sweeper's treatment of `m~…` users** is P6.6's and is not approved. Until it lands, a
-  `mailbox sweep` that deletes an `m~…` user is a **finding** and must be reported, not fixed here.
+- **The sweeper's treatment of `m~…` users** is P6.6's and is not approved. So at P4.1 the
+  sweeper's delete set cannot contain one: it deletes the consumer's own state and **refuses and
+  reports** if it is ever about to delete an `m~…` — or an `r~…` — user (M8, §6, §17). The
+  `m~`-keyed deletion is a **finding for the owner**, never a silent fix here.
+- **The lease's read is an ADC read, so the merged rules fence nothing on it** (§2's C0, M1): the
+  heartbeat's only `.read` grant is `MAILBOX`, and `CONSUMER` appears in no `.read` in the mailbox
+  subtree. The CAS itself is the store's `if-match`, which this repository can only prove against a
+  fake (the bullet below) — a live project's answer is check 83's neighbourhood and the owner's.
 - **The shared package's CI job (P4.3)** does not exist. The proposed change — a job that installs
   the shared package's dependencies and runs its test script, alongside the Go job and the `rules`
   job, which is the only job that sets up Node today — belongs in `.github/workflows/ci.yml` and is
@@ -1220,7 +1283,7 @@ Each with the recommendation first. Decisions 1, 2, 3 and 8 hold the task back; 
 | A refusal list that is right today and wrong later | a destructive action from a voice message | the list is a value with a test; an unrecognised kind is refused by default (T6) |
 | The `CONSUMER` write credential is never minted | the writes fall back to the ADC and the store stops being a fence | decision 8; T6's write-set test is the fence that survives either answer |
 | The keychain code is ours | a platform bug, or a leak | T2's two mutations; the reviewer tier |
-| `internal/budget/sweep.go` touching `m~…` | a deleted mailbox's state | §6 and §16: a finding, not a silent fix |
+| `internal/budget/sweep.go` touching `m~…` | a deleted mailbox's state | **M8 refuses it** — the P4.1 sweeper's delete set is its own state, and an `m~…` user in it is refused and reported (§6, §16): a finding, not a silent fix |
 | An unverifiable message parks in the inbox for ever | one inbox read and one `refused[]` entry **per pass**, forever, from one bad message | nothing in the merged design retires it (§7's ordering 2, §16): the ledger holds no slot for it by design, and the create-only inbox grant refuses a delete. The operator's own credential is the only remedy, and it is out of band |
 
 ## 18. Execution

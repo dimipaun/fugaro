@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path"
 	"regexp"
@@ -474,4 +475,171 @@ func TestMailboxPlanNamesTheMacTriggersAndTheCosts(t *testing.T) {
 	if !strings.Contains(doc, "is the only test that reads") {
 		t.Errorf("%s no longer says which test reads it, so the IAM gap in section 5 item 4 is unnamed again", mailboxPlan)
 	}
+}
+
+// The plan's section 2 is an argument about GRANTS, so its claims about who may
+// read and write what are checkable against the merged rules file itself rather
+// than against a reader's memory of it. TestMailboxPlanMatchesTheMergedGrants
+// parses internal/budget/rules/rules.json.tmpl and holds the plan to what it
+// says — the review that produced this test found the plan's M1 taking a lease
+// by an ETag read of mailbox/$mb/heartbeat while section 2's own grant table
+// named no credential that may read it: the heartbeat's only .read grant is
+// MAILBOX (the phone), and CONSUMER "may read no mailbox at all".
+//
+// Mutation (verified, run and restored): change the heartbeat's ".read" in the
+// template to "CONSUMER" and this test fails naming the path; delete the
+// heartbeat's ".read" and it fails on the missing grant; add a ".read" under
+// the inbox and it fails on the read the plan says does not exist.
+func TestMailboxPlanMatchesTheMergedGrants(t *testing.T) {
+	doc := readDoc(t, mailboxPlan)
+	grants := mailboxGrants(t)
+
+	// What the plan says the merged rules decide (section 2's quotes of the
+	// template), asserted against the template itself.
+	want := map[string]string{
+		"mailbox/$mb/outbox":    "MAILBOX",
+		"mailbox/$mb/heartbeat": "MAILBOX",
+	}
+	for path, expr := range want {
+		if got := grants.reads[path]; got != expr {
+			t.Errorf("%s says %s has %q as its .read; the merged template says %q", mailboxPlan, path, expr, got)
+		}
+	}
+	if len(grants.reads) != len(want) {
+		t.Errorf("the merged mailbox subtree grants %d reads (%v); the plan's section 2 lists %d (%v)", len(grants.reads), sortedKeys(grants.reads), len(want), sortedKeys(want))
+	}
+	for path, expr := range grants.reads {
+		if strings.Contains(expr, "CONSUMER") {
+			t.Errorf("%s (via section 2) says CONSUMER may read no mailbox; the merged template grants %q at %s", mailboxPlan, expr, path)
+		}
+	}
+	for path := range grants.reads {
+		if strings.HasPrefix(path, "mailbox/$mb/inbox") {
+			t.Errorf("%s's C1 says the inbox has no .read grant at all; the merged template grants one at %s", mailboxPlan, path)
+		}
+	}
+	// C3: the heartbeat is the consumer's only replaceable node. The two
+	// CONSUMER writes are the create-only outbox message and the heartbeat,
+	// and the heartbeat's is the one without the create-only clause.
+	if len(grants.consumerWrites) != 2 {
+		t.Errorf("the merged mailbox subtree has %d CONSUMER writes (%v); the plan's C3 rests on exactly two — the outbox and the heartbeat", len(grants.consumerWrites), sortedKeys(grants.consumerWrites))
+	}
+	for path, expr := range grants.consumerWrites {
+		switch path {
+		case "mailbox/$mb/outbox/$msg":
+			if !strings.Contains(expr, "!data.exists()") {
+				t.Errorf("%s says the outbox write is create-only (C2, section 6); the merged template's %s is %q", mailboxPlan, path, expr)
+			}
+		case "mailbox/$mb/heartbeat":
+			if strings.Contains(expr, "!data.exists()") {
+				t.Errorf("%s's C3 rests on the heartbeat being the replaceable node; the merged template's %s is create-only (%q)", mailboxPlan, path, expr)
+			}
+		default:
+			t.Errorf("the merged template grants CONSUMER a write at %s (%q); the plan's section 2 knows only the outbox and the heartbeat", path, expr)
+		}
+	}
+	if got := grants.writes["mailbox/$mb/inbox/$msg"]; !strings.HasPrefix(got, "MAILBOX") {
+		t.Errorf("%s says the phone creates inbox messages; the merged template's inbox write is %q", mailboxPlan, got)
+	}
+
+	// The plan-side half: the read half of M1's CAS has a credential named, and
+	// it is the one the rules leave (no grant admits the consumer to a read).
+	m1 := planSection(t, doc, "### M1 —")
+	s2 := planSection(t, doc, "## 2. What the merged rules")
+	s6 := planSection(t, doc, "## 6. Where state lives")
+	for _, section := range []struct{ name, text string }{{"M1", m1}, {"2", s2}, {"6", s6}} {
+		if !strings.Contains(section.text, "ADC") {
+			t.Errorf("%s no longer names the operator's ADC as the reader of the heartbeat: no merged grant admits the consumer to that read, so the CAS cannot run under its own credential", section.name)
+		}
+	}
+	for _, want := range []string{"GetETag", "if-match"} {
+		if !strings.Contains(m1, want) {
+			t.Errorf("%s's M1 no longer says %q: the arbitration is the store's precondition, which holds whatever credential performs it", mailboxPlan, want)
+		}
+	}
+
+	// M8's sweeper deletes the consumer's own state, never a store user, and
+	// the plan says so in this one place rather than contradicting section 6.
+	m8 := planSection(t, doc, "### M8 —")
+	if strings.Contains(doc, "its user keys are `m~") {
+		t.Errorf("%s says the mailbox sweeper's user keys are m~ again: that rule is P6.6's and is not approved (section 6, section 16), and P6.13's sweeper deletes stored prompts and nothing more", mailboxPlan)
+	}
+	for _, want := range []string{"deletes no Firebase user", "refuse and report"} {
+		if !strings.Contains(m8, want) {
+			t.Errorf("%s's M8 no longer says %q: what the P4.1 sweeper may delete, and what it must refuse, is the finding a review of this plan raised", mailboxPlan, want)
+		}
+	}
+}
+
+// grantsByPath is the .read and .write expressions under the rules' mailbox
+// subtree, keyed by their path in the tree. Only the mailbox subtree is walked:
+// the plan is an argument about mailbox grants.
+type grantsByPath struct {
+	reads, writes, consumerWrites map[string]string
+}
+
+// tmplPlaceholderRE matches the template's {{.MaxKeyLength}}-style parameters,
+// which make rules.json.tmpl not-quite-JSON. Replacing them with a number is
+// what lets this test parse the file rather than pattern-match it.
+var tmplPlaceholderRE = regexp.MustCompile(`\{\{[^{}]*\}\}`)
+
+// mailboxGrants parses internal/budget/rules/rules.json.tmpl as it is on this
+// branch and returns the grants under `rules.mailbox`, macros unexpanded — which
+// is the form the plan quotes ("MAILBOX", "CONSUMER") and the form whose names
+// are meaningful: Generate() expands them into the same expressions the emulator
+// evaluates, and would hide which claim a grant names.
+func mailboxGrants(t *testing.T) grantsByPath {
+	t.Helper()
+	raw, err := os.ReadFile("../../internal/budget/rules/rules.json.tmpl")
+	if err != nil {
+		t.Fatalf("reading the merged rules template: %v", err)
+	}
+	var doc struct {
+		Rules map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal(tmplPlaceholderRE.ReplaceAll(raw, []byte("0")), &doc); err != nil {
+		t.Fatalf("parsing the merged rules template: %v", err)
+	}
+	mb, ok := doc.Rules["mailbox"].(map[string]any)
+	if !ok {
+		t.Fatal("the merged rules template has no rules.mailbox subtree")
+	}
+	g := grantsByPath{reads: map[string]string{}, writes: map[string]string{}, consumerWrites: map[string]string{}}
+	var walk func(node map[string]any, path string)
+	walk = func(node map[string]any, path string) {
+		for key, v := range node {
+			switch {
+			case key == ".read" || key == ".write":
+				expr, _ := v.(string)
+				if key == ".read" {
+					g.reads[path] = expr
+				} else {
+					g.writes[path] = expr
+					if strings.Contains(expr, "CONSUMER") {
+						g.consumerWrites[path] = expr
+					}
+				}
+			case strings.HasPrefix(key, "."):
+				// .validate and friends: values are expressions, not nodes.
+			default:
+				if child, ok := v.(map[string]any); ok {
+					walk(child, path+"/"+key)
+				}
+			}
+		}
+	}
+	walk(mb, "mailbox")
+	if len(g.reads) == 0 {
+		t.Fatal("no .read grant found under rules.mailbox: the walk, not the rules, is what broke")
+	}
+	return g
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
