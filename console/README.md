@@ -2071,8 +2071,9 @@ review of Task 4.2 caught it). The current revision goes further, because the
 packer's own notarisation turned out to be a place nothing can retry: **the
 workflow now does the notarising, and the packer does none of it.**
 
-`npm run package` is run twice in the signing step, with
-`-c.mac.notarize=false` both times:
+The packer is run twice in the signing step, with `-c.mac.notarize=false` both
+times — `npm run package` for the first, and `npm run package:targets` (the
+same packer without its `npm run build`) for the second:
 
 1. `npm run package -- --dir -c.mac.notarize=false
    -c.extraMetadata.version=X.Y.Z` builds and signs the universal `.app` and
@@ -2086,12 +2087,18 @@ workflow now does the notarising, and the packer does none of it.**
    Console.app"` does the three calls this file owns: `ditto -c -k
    --keepParent` the bundle into a `.zip` and `xcrun notarytool submit … --wait
    --output-format json` it **once**, refusing at once (no staple, the answer
-   printed) unless Apple's status is exactly `Accepted`; then `xcrun stapler
-   staple` and `xcrun stapler validate`, both retried.
-3. `npm run package -- --prepackaged "$APP" -c.mac.notarize=false
+   printed) unless `notarytool` **exited 0 and** Apple's status is exactly
+   `Accepted` — neither alone is the whole answer; then `xcrun stapler staple`
+   and `xcrun stapler validate`, both retried.
+3. `npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false
    -c.extraMetadata.version=X.Y.Z` builds the `.dmg` and the `.zip` **from the
    bundle that now carries its ticket**, so both artifacts contain a stapled
-   `.app`.
+   `.app`. This is the one-of-the-two pack that does not rebuild: `package` is
+   `npm run build && electron-builder …`, and with `--prepackaged` the bundle
+   is already built, so the compile would only be spent a second time — here,
+   in the step that holds the unlocked keychain and the exported `.p8` path.
+   `package:targets` is the same pinned local packer alone. What the first pack
+   builds is unchanged.
 4. The `.dmg` is **signed** (`codesign --sign <identity> --timestamp`:
    electron-builder leaves `dmg.sign` false, Apple's guidance is to sign a disk
    image before notarising it, and a hardened runtime is for executables, not a
@@ -2102,27 +2109,36 @@ workflow now does the notarising, and the packer does none of it.**
 The owner's own `npm run package` on their Mac (Task 4.1, above) is unchanged:
 no `-c.mac.notarize=false`, no `--dir`, so it still signs, notarises and
 staples the `.app` in one command and then builds the targets. Nothing in
-`console/package.json` changed — the switch is on the workflow's command lines,
-which is also what keeps `entitlements.test.ts`'s "does not turn the notariser
-off" assertion true of the checked-in configuration.
+`console/package.json`'s **build configuration** changed — the switch is on the
+workflow's command lines, which is also what keeps `entitlements.test.ts`'s
+"does not turn the notariser off" assertion true of the checked-in
+configuration. The manifest did gain one script, `package:targets`,
+`electron-builder --mac --universal --publish never` with no `npm run build`,
+which is what the workflow's second pack uses; `fuses.test.ts` still pins
+`package` exactly as it was.
 
-**Every `xcrun stapler` call in the pipeline is retried, bounded — added
-2026-10-18, after release runs failed there.** `xcrun stapler staple` and
-`xcrun stapler validate` reach Apple's ticket-delivery service over the
-network, and the runs printed `CloudKit … error is Error
-Domain=NSURLErrorDomain Code=-1005 "The network connection was lost"` against
+**Every `xcrun stapler` call in the pipeline is retried, bounded — the retry
+and the move out of the packer landed together, on 2026-10-19, after the
+release run failed there.** `xcrun stapler staple` and `xcrun stapler validate`
+reach Apple's ticket-delivery service over the network, and the run printed
+`CloudKit … error is Error Domain=NSURLErrorDomain Code=-1005 "The network
+connection was lost"` against
 `.../com.apple.gk.ticket-delivery/production/public/records/lookup`, error 68,
 after which the signing step refused with "carries no stapled ticket: refusing
 to publish artifacts that would carry it unstapled". **Which call failed
-matters, and it moved the notarisation out of the packer**: the fourth run's
-failure was `@electron/notarize`'s staple *inside* `npm run package`
-("Failed to staple your application with code: 68"), and the fifth's a
-`xcrun stapler validate` in the workflow. (Only those two runs reached Apple at
-all — the earlier attempts failed on setup: missing `APPLE_API_*` secrets, and
-a certificate import with the wrong password — so "three consecutive runs
-failed at the stapler" is not what happened, and this section said so until
-2026-10-19.) The notarisation itself had been accepted in both: what was lost
-was the connection, not the ticket.
+matters, and it moved the notarisation out of the packer**: release run
+39163351646 was attempted five times, and of those only the fourth and the
+fifth reached Apple — the fourth attempt's failure was `@electron/notarize`'s
+staple *inside* `npm run package` ("Failed to staple your application with
+code: 68"), and the fifth's a `xcrun stapler validate` **on the bundle**, in
+the workflow, before any target was packed. The three earlier attempts never
+reached Apple: the first failed within about a second with no step having
+started (its cause is not recorded, and this section does not guess one), the
+second on missing `APPLE_API_*` secrets, the third on a certificate import with
+the wrong password. So "three consecutive runs failed at the stapler" is not
+what happened, and this section said so until 2026-10-19. The notarisation
+itself had been accepted where it was submitted: what was lost was the
+connection, not the ticket.
 
 So one shell function, `retry_apple_network`, defined once in
 `console/scripts/notarize-and-staple.sh` and once — character for character the
@@ -2139,9 +2155,12 @@ sit inside `record`, so every attempt is in `console-verification.txt` too.
 otherwise.** `xcrun notarytool submit --wait` is the submission itself — a
 rejection is final, and re-submitting is not this file's business — so the
 script runs it once, reads Apple's own answer as JSON (`--output-format json`)
-and refuses at once, with the answer printed and no staple, unless the status
-is exactly `Accepted`. **Nothing outside the `xcrun stapler` calls is retried
-at all** — `codesign`, the submission and its status, the TeamIdentifier
+and refuses at once, with the answer printed and no staple, unless `notarytool`
+exited 0 **and** the status is exactly `Accepted`. Both halves are needed:
+`notarytool` can exit non-zero having printed an answer, and it can exit 0
+having printed something other than `Accepted`, and neither case is a
+submission with a ticket to staple. **Nothing outside the `xcrun stapler` calls
+is retried at all** — `codesign`, the submission and its result, the TeamIdentifier
 checks, `scripts/release-gate.sh` and the fail-closed secret check all still
 fail at once, with no retry — and the tests read it both ways over the script
 and over every step: every line naming the helper is one of those calls, and
@@ -2179,10 +2198,12 @@ set there. Nothing in this section changes the owner's commands, and they are
 not a fallback for the workflow.
 
 **Where the two agree, and where the workflow deliberately differs.** Both call
-the same script, `npm run package` (the pinned local electron-builder, `--mac
---universal --publish never`), so the hardened runtime, the `.dmg` and `.zip`
-targets, `entitlements.mac.plist` and the fuse hook are one configuration and
-not two. The differences are on purpose:
+the same script, `console/scripts/notarize-and-staple.sh`, and the same pinned
+local electron-builder (`--mac --universal --publish never`, through `npm run
+package`, or through `package:targets` where the workflow has no reason to
+rebuild), so the hardened runtime, the `.dmg` and `.zip` targets,
+`entitlements.mac.plist` and the fuse hook are one configuration and not two.
+The differences are on purpose:
 
 - **The certificate goes into a keychain the step creates**, never the runner's
   login keychain: a random password from `openssl rand`, `security
@@ -2201,7 +2222,9 @@ not two. The differences are on purpose:
   certificate or another team's is refused rather than submitted.
 - **The packer's own notarisation is off** (`-c.mac.notarize=false` on every
   pack, with `--dir` for the bundle-only one and `--prepackaged` for the
-  targets), and the workflow's own `console/scripts/notarize-and-staple.sh`
+  targets, which go through `npm run package:targets` rather than `npm run
+  package` because the bundle they pack is already built), and the workflow's
+  own `console/scripts/notarize-and-staple.sh`
   submits, staples and validates instead. That is the one deliberate difference
   in the *packing* as well as in the signing: the packer's staple is a call
   inside its own process, so a lost connection there cannot be retried, and one
@@ -2248,16 +2271,18 @@ partition list; that the warm-up pack leaves everything the signed pack needs
 in the cache; that `-c.extraMetadata.version` reaches the bundle's version
 and the artifact names as described; and that the signed, stapled DMG passes
 `spctl --assess --type open --context context:primary-signature`. To that the
-2026-10-18 retry adds one more: that a `xcrun stapler` call which really does
+2026-10-19 retry adds one more: that a `xcrun stapler` call which really does
 meet a transient CloudKit failure recovers inside the five attempts (the fake
 `xcrun` the tests run the helper and the script with proves the *control flow* —
-five attempts, the pauses, the refusal, the no-retry on a status that is not
-`Accepted` — and nothing about Apple's service). The 2026-10-19 move of the
-notarisation out of the packer adds two more, both about electron-builder's own
-flags rather than the retry: that `--dir` builds the universal `.app` and no
-targets, and that `--prepackaged "$APP"` packs the `.dmg` and the `.zip` from
-that bundle with the tag's version still in their names, under `--mac
---universal` and with `-c.mac.notarize=false`. None of these can be checked offline. **Accepted residuals:** `security` takes the
+five attempts, the pauses, the refusal, the no-retry on a submission whose exit
+status or status is not good — and nothing about Apple's service). The same
+change's move of the notarisation out of the packer adds three more, all about
+electron-builder's own flags rather than the retry: that `--dir` builds the
+universal `.app` and no targets, that `--prepackaged "$APP"` packs the `.dmg`
+and the `.zip` from that bundle with the tag's version still in their names
+under `--mac --universal` and with `-c.mac.notarize=false`, and that a
+prepackaged pack needs no `npm run build` before it (which is what
+`package:targets` leaves out). None of these can be checked offline. **Accepted residuals:** `security` takes the
 keychain password (`create-keychain -p`, `unlock-keychain -p`,
 `set-key-partition-list -k`) and the `.p12` password (`import -P`) only on its
 command line, so another process of the same user can read them in the process
@@ -2350,6 +2375,10 @@ a scratch copy of the staged file and turned the named test red:
 | `--dir` dropped from the bundle-only pack, or `--prepackaged "$APP"` from the targets pack | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the bundle/script/targets order |
 | the script's call for the `.app`, or the one for the `.dmg`, removed from the signing step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that order and on the `.dmg`'s sign-then-notarise order |
 | the status check neutered (`if false`), or a status that is not `Accepted` accepted | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines; and `TestDocsConsoleNotarizeAndStapleScript`, on the rejected-submission case (no staple, no pause, non-zero exit) |
+| the exit-status half of the submission's result dropped (`[ "$status" != "Accepted" ]` alone, so an Accepted body over a non-zero `notarytool` exit is stapled) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines; and `TestDocsConsoleNotarizeAndStapleScript`, on the Accepted-body-over-a-non-zero-exit case |
+| `npm run build` added to `package:targets` (the second pack rebuilding under the unlocked keychain) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the manifest's `package:targets` being the packer alone |
+| `npm run build` removed from `package` (the first pack, and the owner's command, with nothing to pack) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `package` still building |
+| the second pack back to plain `npm run package -- --prepackaged "$APP"` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the targets pack's exact line |
 | `--output-format json` dropped from the submission | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the submission line |
 | the `ditto -c -k --keepParent` zip of the bundle dropped | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that line; and `TestDocsConsoleNotarizeAndStapleScript`, on the calls the fake `xcrun` and `ditto` log |
 | the script left non-executable | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on its file mode (the signing step runs it directly) |

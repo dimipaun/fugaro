@@ -99,33 +99,46 @@
 #     release.yml and images.yml run it (D18).
 #   - **The order is: build the bundle, notarise it, staple it, and only then
 #     pack the .dmg and the .zip -- and what is verified is the bundle inside
-#     the shipped artifacts. The packer notarises nothing here.** `npm run
-#     package` (Task 4.1's script: the pinned local electron-builder, `--mac
-#     --universal --publish never`) runs twice. First with `--dir
-#     -c.mac.notarize=false`, which builds and signs the universal `.app` and
-#     nothing else: electron-builder's own notarise-and-staple is *inside* that
-#     command (`@electron/notarize` submits the bundle and staples the ticket
-#     while packing), so a lost connection to Apple there fails the pack with
-#     no way to retry just the staple -- what the October 2026 runs hit -- and
-#     the switch plus `--dir` keep that call and the targets out of the first
-#     pack. This file then zips the bundle and submits it once, staples the
-#     ticket to the bundle and validates it (see the next bullet), and only
-#     then runs `npm run package -- --prepackaged "$APP"
+#     the shipped artifacts. The packer notarises nothing here.** The packer
+#     (the pinned local electron-builder, `--mac --universal --publish never`)
+#     is run twice -- and only the first of the two rebuilds. First `npm run
+#     package -- --dir -c.mac.notarize=false`, which runs `npm run build` and
+#     then builds and signs the universal `.app` and nothing else:
+#     electron-builder's own notarise-and-staple is *inside* that command
+#     (`@electron/notarize` submits the bundle and staples the ticket while
+#     packing), so a lost connection to Apple there fails the pack with no way
+#     to retry just the staple -- what the October 2026 run's fourth attempt
+#     hit -- and the switch plus `--dir` keep that call and the targets out of
+#     the first pack. This file then zips the bundle and submits it once,
+#     staples the ticket to the bundle and validates it (see the next bullet),
+#     and only then runs `npm run package:targets -- --prepackaged "$APP"
 #     -c.mac.notarize=false` to build the `.dmg` and the `.zip` *from the
 #     stapled bundle*, so both artifacts carry a bundle that already holds its
-#     ticket. The `.dmg` is then signed (electron-builder leaves `dmg.sign`
-#     false), submitted, stapled and validated the same way, because the disk
-#     image is its own artifact and Gatekeeper assesses it on open. The owner's
-#     own `npm run package` on their Mac (console/README.md, Task 4.1) passes
-#     neither switch: it still notarises and staples through the packer.
+#     ticket. That second invocation is the variant Task 4.1's `package` script
+#     has no reason to be: `package:targets` is `electron-builder` alone, with
+#     no `npm run build`, because `--prepackaged` packs the bundle that is
+#     already built -- and re-running the build there would spend the compile
+#     again while this step holds the unlocked keychain and the `.p8` path in
+#     its environment. What the first pack builds is unchanged. The `.dmg` is
+#     then signed (electron-builder leaves `dmg.sign` false), submitted,
+#     stapled and validated the same way, because the disk image is its own
+#     artifact and Gatekeeper assesses it on open. The owner's own `npm run
+#     package` on their Mac (console/README.md, Task 4.1) passes neither
+#     switch: it still notarises and staples through the packer.
 #   - **Every `xcrun stapler` call is retried, bounded -- and nothing else
 #     is.** `xcrun stapler staple` and `xcrun stapler validate` reach Apple's
 #     ticket-delivery service over the network, and the October 2026 release
-#     runs failed there with `NSURLErrorDomain Code=-1005 "The network
+#     run failed there with `NSURLErrorDomain Code=-1005 "The network
 #     connection was lost"` against `.../com.apple.gk.ticket-delivery/...` --
-#     a lost connection, not a rejected notarisation: the fourth run died in the
-#     packer's own staple (error 68, inside `npm run package`) and the fifth in
-#     a `stapler validate` here. `retry_apple_network`, defined once in
+#     a lost connection, not a rejected notarisation: release run 39163351646
+#     was attempted five times -- the **fourth attempt** died in the packer's
+#     own staple (error 68, inside `npm run package`), and the **fifth** in a
+#     `stapler validate` on the bundle here, not on the disk image. The three
+#     earlier attempts never reached Apple: the first failed within about a
+#     second with no step having started (its log records no cause), and the
+#     second and third on setup -- missing `APPLE_API_*` secrets, then a
+#     certificate import with the wrong password.
+#     `retry_apple_network`, defined once in
 #     `console/scripts/notarize-and-staple.sh` and, character for character,
 #     once in the verification step, retries those calls on either side of it
 #     up to five times with a growing pause (15, 30, 60, 90 seconds), printing
@@ -135,9 +148,10 @@
 #     **The other Apple-network calls are deliberately not retried**, because
 #     none of them can be separated from work that must not be repeated:
 #     `xcrun notarytool submit --wait` is the submission itself (a rejection is
-#     final, its status is read from Apple's JSON answer and anything but
-#     "Accepted" refuses at once, and re-submitting is not this file's
-#     business). So codesign, the submission and its `--wait` result, the team
+#     final, its result is read from `notarytool`'s exit status and Apple's JSON
+#     answer together and anything but a clean exit with "Accepted" refuses at
+#     once, and re-submitting is not this file's business). So codesign, the
+#     submission and its `--wait` result, the team
 #     checks, the gate and the fail-closed secret check all fail at once,
 #     exactly as before, and the retried validations in the verification step
 #     are what guard the copies of the bundle that actually ship, inside the
@@ -406,8 +420,9 @@ jobs:
           # electron-builder from submitting the bundle and stapling it inside
           # its own process, where a lost connection to Apple's ticket delivery
           # fails the pack and the staple cannot be retried on its own (the
-          # fourth October 2026 run, error 68). The submission, staple and
-          # validation are this file's, in the script below.
+          # fourth attempt of the October 2026 release run, error 68). The
+          # submission, staple and validation are this file's, in the script
+          # below.
           npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
 
           APP="release/mac-universal/Fugaro Console.app"
@@ -425,7 +440,8 @@ jobs:
             exit 1
           fi
           # The bundle: notarised once (the submission is never retried, and
-          # anything but an "Accepted" answer refuses at once), then stapled and
+          # anything but a clean `notarytool` exit with an "Accepted" answer
+          # refuses at once), then stapled and
           # validated -- both retried, 5 attempts with a growing pause, because
           # both reach Apple's ticket-delivery service over the network and a
           # lost connection there is not a rejection. The fifth failure of
@@ -442,8 +458,12 @@ jobs:
           # point of the order, since what ships is the bundle inside them. The
           # packer's notarisation stays off here too: the bundle is already
           # notarised and stapled, and the .dmg is this file's own submission,
-          # below.
-          npm run package -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
+          # below. This pack goes through `package:targets` -- Task 4.1's
+          # `package` script without its `npm run build` -- because
+          # `--prepackaged` packs the bundle that is already built, so the
+          # rebuild would only spend the compile again, here, where the
+          # keychain is unlocked and the .p8's path is exported.
+          npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
 
           shopt -s nullglob
           dmgs=(release/*.dmg)
@@ -466,11 +486,14 @@ jobs:
 
           # The disk image: signed (Apple's guidance for a notarised .dmg; no
           # hardened runtime, which is for executables), then submitted, stapled
-          # and validated by the same script -- the fifth run failed at a
-          # `stapler validate`, which is why this side of the pipeline is
-          # retried too. A rejected submission leaves no ticket and refuses at
-          # once: the script checks Apple's own status, so the submission is
-          # never retried.
+          # and validated by the same script. The fifth attempt of the October
+          # 2026 run failed at a `stapler validate` on the **bundle** ($APP,
+          # above), before any target existed -- not here: the disk image gets
+          # the same helper because its staple and validation reach the same
+          # service over the same network, not because it failed. A rejected
+          # submission leaves no ticket and refuses at once: the script checks
+          # `notarytool`'s exit status and Apple's own status, so the submission
+          # is never retried.
           codesign --sign "$identity" --keychain "$KEYCHAIN" --timestamp "$DMG"
           scripts/notarize-and-staple.sh dmg "$DMG"
 

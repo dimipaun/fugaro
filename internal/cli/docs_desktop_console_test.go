@@ -1988,12 +1988,15 @@ const consoleReleaseVerifyStep = "Verify the shipped artifacts, and record it"
 // consoleRetryHelperName is the one shell function that retries the
 // Apple-network calls (`xcrun stapler staple` and `xcrun stapler validate`),
 // defined once in console/scripts/notarize-and-staple.sh and, character for
-// character, once in the verification step. The October 2026 release runs
-// failed at Apple's ticket-delivery lookup with NSURLErrorDomain -1005, "The
-// network connection was lost" -- a network failure, not a rejection, on two
-// sides of the pipeline (the packer's own staple inside `npm run package`, and
-// a `stapler validate` in the workflow) -- so those calls get five attempts
-// with a growing pause, and everything else in the file still fails at once.
+// character, once in the verification step. The October 2026 release run
+// (39163351646) failed at Apple's ticket-delivery lookup with NSURLErrorDomain
+// -1005, "The network connection was lost" -- a network failure, not a
+// rejection. Two of its five attempts reached Apple: the packer's own staple
+// inside `npm run package` (the fourth) and a `stapler validate` on the bundle
+// in the workflow (the fifth); the three earlier attempts never got that far
+// (setup errors, and one with no step started at all). So those calls get five
+// attempts with a growing pause, and everything else in the file still fails
+// at once.
 const consoleRetryHelperName = "retry_apple_network"
 
 // consoleNotarizeScriptPath is the script the signing step notarises, staples
@@ -2438,8 +2441,8 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// notarise-and-staple runs *inside* that command: with the switch absent it
 	// submits the bundle and staples it there, where a lost connection to
 	// Apple's ticket delivery fails the pack and the staple cannot be retried
-	// on its own -- the fourth October 2026 run, error 68 (mutation: the switch
-	// removed from any pack).
+	// on its own -- the fourth attempt of the October 2026 release run, error
+	// 68 (mutation: the switch removed from any pack).
 	packs := 0
 	for _, step := range job.Steps {
 		for _, line := range consoleRunLines(step.Run) {
@@ -2462,12 +2465,13 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		t.Errorf("%s packs %d times, want 3 (the unsigned warm-up, the signed bundle-only pack and the pack of the .dmg and .zip from the stapled bundle)", consoleReleaseWorkflowPath, packs)
 	}
 
-	// The packer only through `npm run package`: never `npx`, never by name.
+	// The packer only through `npm run package` or its no-rebuild variant,
+	// `npm run package:targets`: never `npx`, never by name.
 	for _, j := range jobs {
 		for _, step := range j.job.Steps {
 			for _, line := range consoleRunLines(step.Run) {
 				if strings.Contains(line, "npx") || strings.Contains(line, "electron-builder") {
-					t.Errorf("%s's step %q runs %q: the packer is the lockfile's, through `npm run package`", consoleReleaseWorkflowPath, step.Name, line)
+					t.Errorf("%s's step %q runs %q: the packer is the lockfile's, through `npm run package` (or `npm run package:targets`, its `--prepackaged` variant), and never resolved outside the lockfile", consoleReleaseWorkflowPath, step.Name, line)
 				}
 			}
 		}
@@ -2572,9 +2576,17 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// which the both-directions clause below catches); the second pack builds
 	// the targets from the stapled bundle (mutation: `--prepackaged "$APP"`
 	// dropped).
+	//
+	// **And the second pack is the variant that does not rebuild.** `npm run
+	// package` is `npm run build && electron-builder …`; with `--prepackaged`
+	// the bundle is already built, so the compile would only be spent again --
+	// in the one step that holds the unlocked keychain and the exported `.p8`
+	// path. `npm run package:targets` is the same packer without the build
+	// (mutation: this line back to plain `npm run package --`, which the
+	// exact-line lookup below misses -- the first pack's line is not it).
 	bundlePack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
 	appScript := at(`scripts/notarize-and-staple.sh app "$APP"`, false)
-	targetsPack := at(`npm run package -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
+	targetsPack := at(`npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
 	if bundlePack < 0 || appScript < 0 || targetsPack < 0 || !(bundlePack < appScript && appScript < targetsPack) {
 		t.Errorf("%s's signing step does not build the bundle, notarise and staple it through %s, and only then pack the .dmg and the .zip from it (%d, %d, %d)", consoleReleaseWorkflowPath, consoleNotarizeScriptPath, bundlePack, appScript, targetsPack)
 	}
@@ -2644,10 +2656,11 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// **Every `xcrun stapler` call in the pipeline is retried, bounded -- and
 	// no other call is.** `xcrun stapler staple` and `xcrun stapler validate`
 	// reach Apple's ticket-delivery service over the network, and the October
-	// 2026 release runs failed there with `NSURLErrorDomain Code=-1005 "The
-	// network connection was lost"` -- a lost connection, not a rejected
-	// notarisation, in two different processes: the fourth run in the packer's
-	// own staple inside `npm run package`, the fifth in a `stapler validate`.
+	// 2026 release run (39163351646) failed there with `NSURLErrorDomain
+	// Code=-1005 "The network connection was lost"` -- a lost connection, not a
+	// rejected notarisation, in two different processes: its fourth attempt in
+	// the packer's own staple inside `npm run package`, its fifth in a
+	// `stapler validate` on the bundle here.
 	// The first is why the packer's notarisation is off in this file and the
 	// script does the three calls; this clause and the script's own make sure
 	// the two that stay (the staples and validations here and in the
@@ -2656,7 +2669,8 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// the verification step, retries them. **The other Apple-network calls are
 	// deliberately left alone**, and the clauses below hold that too: `xcrun
 	// notarytool submit --wait` is the submission (a rejection is final, its
-	// "Accepted" status is checked in the script, and it is never wrapped).
+	// exit status and its "Accepted" status are both checked in the script, and
+	// it is never wrapped).
 	//
 	// The mutations this is proved against: removing the helper or its
 	// definition from either place (the definition clause), wrapping
@@ -2767,12 +2781,42 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if !strings.Contains(script, `"Accepted"`) || !strings.Contains(script, "not 'Accepted'") {
 		t.Errorf("%s does not refuse a notary answer that is not `Accepted`: a rejection is final and must not be stapled over", consoleNotarizeScriptPath)
 	}
-	refuseStatus := consoleLineIndex(scriptLines, `if [ "$status" != "Accepted" ]; then`, false)
+	// The submission's result is **the pair**: notarytool's own exit status AND
+	// the status in Apple's answer. Neither alone is the whole answer -- a
+	// non-zero exit can still leave a printed body behind, and a zero exit can
+	// print a status that is not "Accepted" -- so the refusal reads both
+	// (mutation: the exit-status half dropped, which
+	// TestDocsConsoleNotarizeAndStapleScript's "Accepted body over a non-zero
+	// exit" case catches as well, or the condition replaced by `if false;
+	// then`).
+	refuseStatus := consoleLineIndex(scriptLines, `if [ "$submit_status" -ne 0 ] || [ "$status" != "Accepted" ]; then`, false)
 	if refuseStatus < 0 || refuseStatus+2 >= len(scriptLines) || !strings.HasPrefix(scriptLines[refuseStatus+1], `echo "::error::`) || scriptLines[refuseStatus+2] != "exit 1" {
-		t.Errorf("%s does not exit 1 on a status that is not `Accepted`", consoleNotarizeScriptPath)
+		t.Errorf("%s does not exit 1 unless notarytool exited 0 and the status is `Accepted`: an Accepted-looking body over a non-zero exit is not an accepted submission, and a status that is not `Accepted` is a rejection -- either one refuses at once, with no staple", consoleNotarizeScriptPath)
 	}
 	// A bundle is submitted zipped by `ditto` (with --keepParent, so the .app
 	// survives the round trip); a disk image goes as itself.
+	// The no-rebuild variant exists in the manifest, and the script it is a
+	// variant *of* still builds: `package:targets` is the pinned local packer
+	// alone (mutation: a `npm run build` added to it, which would undo the
+	// point of the second pack), and Task 4.1's `package` keeps its build
+	// (mutation: the build removed from it, which would leave the owner's own
+	// command and this workflow's first pack with nothing to pack).
+	pkgBytes, err := os.ReadFile(filepath.Join("..", "..", "console", "package.json"))
+	if err != nil {
+		t.Fatalf("console/package.json is unreadable: %v", err)
+	}
+	var manifest struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(pkgBytes, &manifest); err != nil {
+		t.Fatalf("console/package.json is not JSON: %v", err)
+	}
+	if got := manifest.Scripts["package:targets"]; got != "electron-builder --mac --universal --publish never" {
+		t.Errorf("console/package.json's `package:targets` is %q, want the pinned local packer alone with no `npm run build`: the pack that runs with --prepackaged packs a bundle that is already built, in the step that holds the unlocked keychain and the exported .p8 path", got)
+	}
+	if !strings.Contains(manifest.Scripts["package"], "npm run build") {
+		t.Errorf("console/package.json's `package` is %q: Task 4.1's command -- and this workflow's first pack -- builds before it packs", manifest.Scripts["package"])
+	}
 	if !slices.Contains(scriptLines, `ditto -c -k --keepParent "$artifact" "$submission"`) {
 		t.Errorf("%s does not zip the bundle with `ditto -c -k --keepParent` before submitting it", consoleNotarizeScriptPath)
 	}
@@ -3249,15 +3293,18 @@ fi
 //     **then** refused, non-zero, with the "carries no stapled ticket" message,
 //     so a ticket that is genuinely absent still refuses to publish;
 //   - a submission whose status is not `Accepted` -- a rejection -- is refused
-//     at once: no `stapler` call is made at all, no pause is taken, and the
+//     at once, and so is an "Accepted" body over a non-zero `notarytool` exit:
+//     either way no `stapler` call is made at all, no pause is taken, and the
 //     script exits non-zero. **That is the "nothing else is retried" half**,
 //     and the fake `xcrun` proves it by logging every call it is given.
 //
 // The mutations this was written against: wrapping the submission in the
 // helper (case 5's "submit once" plus the "no pause" clause go red), accepting
 // any status (case 5 passes and the refusal clause of the pinned test goes
-// red), returning after the first failure (case 2), and dropping the fifth
-// attempt (case 3).
+// red), accepting the status and ignoring `notarytool`'s exit (case 6, which
+// is an "Accepted" body printed over a non-zero exit, and the pair clause of
+// the pinned test), returning after the first failure (case 2), and dropping
+// the fifth attempt (case 3).
 func TestDocsConsoleNotarizeAndStapleScript(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
@@ -3360,18 +3407,39 @@ func TestDocsConsoleNotarizeAndStapleScript(t *testing.T) {
 			notWant:       []string{"attempt 6", "xcrun stapler validate", "stapled and validated:"},
 		},
 		{
-			name:       "a rejected submission: no staple, no retry, and it refuses at once",
+			name:       "a rejected submission reported with a clean exit: no staple, no retry",
 			kind:       "app",
 			status:     "Invalid",
-			submitExit: "1",
+			submitExit: "0",
 			ok:         false,
 			want: []string{
 				// Apple's answer, printed, and the refusal read out of its
-				// status -- not out of notarytool's exit code.
+				// status: notarytool exited 0, and the submission is still a
+				// rejection. (**This case exits 0 on purpose** -- the status
+				// half of the pair is what refuses here, and the case below is
+				// the exit-status half. A case that failed on both would pass
+				// with either half removed.)
 				`"status":"Invalid"`,
 				"not 'Accepted'",
 			},
 			// The submission happened exactly once.
+			wantCalls: []string{"xcrun notarytool submit"},
+			notWant:   []string{"stapler", "pause", "attempt 2", "stapled and validated:"},
+		},
+		{
+			name:       "an Accepted body over a non-zero notarytool exit: refused, not stapled",
+			kind:       "app",
+			status:     "Accepted",
+			submitExit: "1",
+			ok:         false,
+			want: []string{
+				// Apple's answer says Accepted, and notarytool's own exit says
+				// the run did not finish cleanly. Both are required to be good,
+				// so this refuses -- at once, with no staple, exactly like a
+				// rejection.
+				`"status":"Accepted"`,
+				"notarytool exited 1",
+			},
 			wantCalls: []string{"xcrun notarytool submit"},
 			notWant:   []string{"stapler", "pause", "attempt 2", "stapled and validated:"},
 		},

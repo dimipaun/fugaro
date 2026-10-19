@@ -156,15 +156,20 @@ step's. The `release` job, in order:
 3. **one step holds all six secrets** and does everything that needs them:
    the fail-closed check, a temporary keychain, the `.p8` key file (both
    created under `umask 077`), the certificate's team checked against
-   `APPLE_TEAM_ID` before anything is signed, `npm run package` (Task 4.1's
-   script: `--mac --universal --publish never`, the hardened runtime,
+   `APPLE_TEAM_ID` before anything is signed, the packer (Task 4.1's script:
+   `--mac --universal --publish never`, the hardened runtime,
    `console/entitlements.mac.plist`, `-c.extraMetadata.version=X.Y.Z` from the
    tag, and `-c.mac.notarize=false` plus `--dir` on the bundle-only pack:
    electron-builder signs the `.app` and notarises nothing, because its own
    notarise-and-staple is inside `npm run package` and its staple cannot be
    retried on its own — `console/scripts/notarize-and-staple.sh` submits, staples
-   and validates the bundle instead, and the second pack builds the `.dmg` and
-   the `.zip` **from the stapled bundle**, `--prepackaged "$APP"`), the
+   and validates the bundle instead, refusing unless `notarytool` exited 0 *and*
+   Apple's status is `Accepted`), the second pack building the `.dmg` and the
+   `.zip` **from the stapled bundle** as `npm run package:targets --
+   --prepackaged "$APP"` — the same pinned packer without the `npm run build`
+   the other packs start with, since `--prepackaged` packs a bundle that is
+   already built and the rebuild would only be spent again in the step holding
+   the unlocked keychain — the
    signature's TeamIdentifier checked, then the `.dmg` signed with
    `codesign --timestamp`, submitted, stapled and validated by the same script;
    its exit trap removes the key material;
@@ -177,18 +182,21 @@ step's. The `release` job, in order:
    `console-release-assets` (upload-artifact at the pin `release.yml` and
    `images.yml` use).
 
-**Re-copy required: the staged file changed on 2026-10-18 and the copy under
-`.github/workflows/` did not.** Release runs failed at Apple's ticket-delivery
+**Re-copy required: the staged file changed on 2026-10-19 and the copy under
+`.github/workflows/` did not.** Release run 39163351646 was attempted five
+times, and the last two of those attempts failed at Apple's ticket-delivery
 lookup — `NSURLErrorDomain Code=-1005 "The network connection was lost"`
 against `.../com.apple.gk.ticket-delivery/production/public/records/lookup`,
-error 68: the fourth attempt died in **the packer's own staple, inside
+error 68: the **fourth attempt** died in **the packer's own staple, inside
 `npm run package`** (`@electron/notarize`, "Failed to staple your application
-with code: 68"), and the fifth in a `xcrun stapler validate`, which the signing
-step then refused with "carries no stapled ticket: refusing to publish
-artifacts that would carry it unstapled". A network failure to Apple, not a
-rejection: the notarisation itself had been accepted. (Only those two runs
-reached Apple at all: earlier attempts failed on setup — missing `APPLE_API_*`
-secrets, and a certificate import with the wrong password.) That is why the
+with code: 68"), and the **fifth** in a `xcrun stapler validate` on the bundle,
+which the signing step then refused with "carries no stapled ticket: refusing
+to publish artifacts that would carry it unstapled". A network failure to
+Apple, not a rejection: the notarisation itself had been accepted. The three
+earlier attempts never reached Apple at all — the first failed within about a
+second with no step having started (its cause is not recorded, and this
+document does not guess one), the second on missing `APPLE_API_*`
+secrets, the third on a certificate import with the wrong password. That is why the
 packer's notarisation is now off in the workflow and the staple, the validation
 **and the submission** are the staged file's own: the packer's staple is one
 call inside its process, where nothing can retry it. The staged file retries
@@ -388,12 +396,15 @@ that `-c.extraMetadata.version` reaches the bundle's version and the
 artifact names as described; that the signed, stapled DMG passes
 `spctl --assess --type open --context context:primary-signature`; and, added
 2026-10-19, that `npm run package -- --dir -c.mac.notarize=false` builds and
-signs the universal `.app` and no targets, and that `npm run package --
---prepackaged "release/mac-universal/Fugaro Console.app"
--c.mac.notarize=false` then packs the `.dmg` and the `.zip` from that bundle
-with the tag's version still in their names.
+signs the universal `.app` and no targets, and that `npm run package:targets --
+--prepackaged "release/mac-universal/Fugaro Console.app" -c.mac.notarize=false`
+then packs the `.dmg` and the `.zip` from that bundle with the tag's version
+still in their names. `package:targets` is `package` without its `npm run
+build`; that the packer really needs no rebuild there (the prepackaged pack
+skips `doPack` and the bundle is already on disk) is the same Check 59a reading
+of electron-builder 26.17.0, unverifiable offline.
 
-The 2026-10-18 retry leaves one thing for Check 59a to confirm on a real runner,
+The 2026-10-19 retry leaves one thing for Check 59a to confirm on a real runner,
 because it cannot be observed here: that a `xcrun stapler` call which does meet
 a transient CloudKit failure recovers inside the five attempts. What is
 verified offline is the helper's own behaviour — its bound, its pauses, its

@@ -18,8 +18,9 @@
 #
 # **Only `xcrun stapler` is retried here.** The submission is retried never: a
 # rejected submission is final, and re-submitting is not this script's business.
-# The credential check below, the `ditto` that zips a bundle, the status check
-# that follows the submission and the refusals all fail at once.
+# The credential check below, the `ditto` that zips a bundle, the submission's
+# result -- `notarytool`'s exit status *and* Apple's own status, both required
+# to be good -- and the refusals all fail at once.
 #
 # Credentials, from the environment; the workflow's signing step exports them,
 # and they are the same triple the packer and `notarytool` already read:
@@ -127,17 +128,20 @@ else
 fi
 
 # The submission, once, waited for, with Apple's answer read as JSON so the
-# status can be checked rather than assumed from the exit code. A submission
-# that answered anything but "Accepted" is final: there is no retry, and no
-# ticket to staple.
+# status can be checked rather than inferred from the exit code -- and with
+# **both** checked, because neither alone is the whole answer: `notarytool` can
+# exit non-zero having printed an answer (a truncated run, a failure after the
+# body was written), and it can exit 0 having printed a status that is not
+# "Accepted". Both are required to be good. Anything else is final: there is no
+# retry, and no ticket to staple.
 submit_status=0
 answer="$(xcrun notarytool submit "$submission" --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait --output-format json)" || submit_status=$?
 status="$(printf '%s\n' "$answer" | grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')" || status=""
 # Apple's answer, on the record whether it was Accepted or not (it names the
 # submission's id and status; it holds no credential).
 printf '%s\n' "$answer"
-if [ "$status" != "Accepted" ]; then
-  echo "::error::the notary service answered '${status:-nothing}', not 'Accepted' (notarytool exited $submit_status): a rejection is final and is not retried -- refusing to staple $artifact"
+if [ "$submit_status" -ne 0 ] || [ "$status" != "Accepted" ]; then
+  echo "::error::notarytool exited $submit_status with the notary service answering '${status:-nothing}': not 'Accepted' and a clean exit, and that is final and is not retried -- refusing to staple $artifact"
   exit 1
 fi
 echo "notarised: $artifact is Accepted by the notary service"
