@@ -90,11 +90,14 @@ jobs:
       - name: the shared package's tests
         working-directory: shared
         run: npm test
-      # The package's mutation proofs (P1.1, P1.2, P0.2, P1.5): each script
-      # breaks one guard in its module and requires the module's tests to
-      # catch it, so this is the step that keeps the suite from being merely
-      # green. They are shell scripts rather than npm scripts, so they are run
-      # by name; each one finds its own node and REFUSES (exit 2) rather than
+      # The package's mutation proofs: each script breaks one guard in its
+      # module and requires the module's tests to catch it, so this is the step
+      # that keeps the suite from being merely green. There is one per module
+      # that declares one, and the step globs for them rather than listing
+      # them, so a module that adds a proof later is covered without an edit
+      # here -- the list in the README beside this file is what a human reads.
+      # They are shell scripts rather than npm scripts, so they are run by
+      # name; each one finds its own node and REFUSES (exit 2) rather than
       # reporting mutations it never ran when it cannot -- which is why it is
       # worth running here, where a runner is known to exist.
       #

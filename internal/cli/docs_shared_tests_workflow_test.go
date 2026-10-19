@@ -27,6 +27,13 @@ package cli
 //     other workflows' pins of the same actions (while it is pending they can:
 //     Dependabot does not watch docs/pending-workflows/, so the person copying
 //     it compares, as the README beside it says).
+//   - TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays: the README beside
+//     the file says the file is still pending, and that sentence is false the
+//     moment the owner copies it in -- so the copy-in steps update the README,
+//     and this is what makes that step load-bearing rather than tidy.
+//   - TestSharedTestsWorkflowReadmeNamesEveryProofScript: the README lists the
+//     package's mutation-proof scripts by name while the job globs for them, so
+//     the list is held to the tree instead of to whoever last edited it.
 //
 // What this test cannot do is run the job. Nothing here executes GitHub
 // Actions, so the job's own behaviour in CI -- the two Node legs, the install,
@@ -62,7 +69,27 @@ const (
 	// staged copy is gone: the job's own name, so a copy that landed empty, or
 	// a file renamed over it, is refused rather than passing vacuously.
 	sharedTestsWorkflowMarker = "shared/*/mutation-proof.sh"
+	// pendingWorkflowsReadmePath is the document beside the staged file: where
+	// a human reads what is still waiting to be copied in, and therefore where
+	// the copy-in has to be recorded once it has happened.
+	pendingWorkflowsReadmePath = "docs/pending-workflows/README.md"
+	// sharedTestsReadmeHeading opens that document's section on this workflow.
+	sharedTestsReadmeHeading = "## `shared-tests.yml`"
 )
+
+// sharedTestsStagingStatusRE reads the one machine-readable line in the README
+// that says whether this file is still pending. It is machine-readable on
+// purpose: the state it describes is a fact about the tree -- does the staged
+// copy exist? -- and a document that restates a fact in prose is exactly what
+// goes stale, which is what happened here. The copy-in steps change this line
+// and the document's opening line, and nothing else in the prose.
+var sharedTestsStagingStatusRE = regexp.MustCompile("\\*\\*Status: `shared-tests.yml` is (staged and pending|applied, not pending)\\.?\\*\\*")
+
+// sharedTestsProofScriptRE finds a concrete proof-script path in the README --
+// `shared/<module>/mutation-proof.sh`, with a real module name, so the glob
+// form the job uses (`shared/*/mutation-proof.sh`) is not a match and the list
+// the test compares is one of actual scripts.
+var sharedTestsProofScriptRE = regexp.MustCompile(`shared/[a-z0-9-]+/mutation-proof\.sh`)
 
 // sharedTestsWorkflow is docs/pending-workflows/shared-tests.yml, decoded with
 // unknown fields refused: a key nobody reads is a key nobody pins. `on` is
@@ -402,6 +429,159 @@ func TestSharedTestsWorkflowIsStagedAndPinned(t *testing.T) {
 	if !sawMatrixVersion {
 		t.Error("no setup-node step takes node-version from the matrix")
 	}
+}
+
+// TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays: the document beside
+// the staged file is itself a claim about the tree, and the claim it makes --
+// "this file is still waiting to be copied in" -- is false the moment the
+// owner copies it in and `git rm`s the staged copy. Nothing about the workflow
+// changes then, so nothing in the tests above notices; this is the test that
+// does, and it is why the README's copy-in steps end with an edit to the README
+// itself rather than with the copy.
+//
+// The claim is read from two places, both of which the copy-in has to update:
+// the machine-readable `**Status: `shared-tests.yml` is ...**` line in the
+// file's own section, and the document's opening line, which is the sentence a
+// reader sees first and the one that names the pending file. A third assertion
+// keeps the document naming this test, so the paragraph that tells a reader
+// what enforces the state cannot outlive the name it prints.
+func TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays(t *testing.T) {
+	// The document's prose, without its fenced blocks. The copy-in steps quote
+	// both forms -- the command that copies the file in, and the line the
+	// README's own status should become -- so a check over the raw text would
+	// find the applied form quoted in the instructions and call the document
+	// self-contradictory. What is claimed is the prose; what is quoted in a
+	// fence is a command or a shape, not a claim about today.
+	readme := sharedTestsReadmeProse(t)
+	_, stagedErr := os.Stat("../../" + stagedSharedTestsWorkflowPath)
+	_, realErr := os.Stat("../../" + realSharedTestsWorkflowPath)
+	staged, real := stagedErr == nil, realErr == nil
+
+	// Neither is the one state with nothing to describe: the job is gone from
+	// both places, and saying which of the two the README should claim would be
+	// inventing a fact.
+	if !staged && !real {
+		t.Fatalf("neither %s nor %s exists: the job is in neither place, so there is no staging state for %s to be right about",
+			stagedSharedTestsWorkflowPath, realSharedTestsWorkflowPath, pendingWorkflowsReadmePath)
+	}
+
+	// The state is keyed on the staged copy, which is what
+	// readSharedTestsWorkflowAt above keys on: while it exists the staged file
+	// is the reviewed one, and the README is still telling a reader to copy it.
+	statuses := sharedTestsStagingStatusRE.FindAllStringSubmatch(readme, -1)
+	if len(statuses) != 1 {
+		t.Fatalf("%s carries %d `**Status: `shared-tests.yml` is ...**` lines, want exactly one: that line is the machine-readable half of this claim, and the copy-in steps change it", pendingWorkflowsReadmePath, len(statuses))
+	}
+	said, want := statuses[0][1], "applied, not pending"
+	if staged {
+		want = "staged and pending"
+	}
+	if said != want {
+		t.Errorf("%s says shared-tests.yml is %q while %s %s: the document and the directory have to agree in both directions, or a reader is told to copy a file that is already in place, or left believing a copy nobody made",
+			pendingWorkflowsReadmePath, said,
+			map[bool]string{true: stagedSharedTestsWorkflowPath, false: realSharedTestsWorkflowPath}[staged],
+			map[bool]string{true: "is still here", false: "is gone"}[staged])
+	}
+
+	// The opening line, which is prose and is checked as the one phrase the
+	// copy-in has to remove rather than as a whole sentence: it is the line
+	// that says which file is pending.
+	const openingClaim = "pending: `shared-tests.yml`"
+	if got := strings.Contains(readme, openingClaim); got != staged {
+		t.Errorf("%s %s %q, and the staged copy %s: the opening line and the directory must agree (see the copy-in steps in that document -- this is the step that used to be missing)",
+			pendingWorkflowsReadmePath,
+			map[bool]string{true: "does not carry", false: "still carries"}[got], openingClaim,
+			map[bool]string{true: "exists", false: "is gone"}[staged])
+	}
+
+	// ... and the document has to name the check that holds it to the tree. A
+	// reader who has just copied the file in has no other way to find out which
+	// test tells them whether they finished.
+	const enforcer = "TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays"
+	if !strings.Contains(readme, enforcer) {
+		t.Errorf("%s never names %s: the paragraph that describes the staged/applied state has to name the check that enforces it, or the name drifts and the reader is left with prose", pendingWorkflowsReadmePath, enforcer)
+	}
+}
+
+// TestSharedTestsWorkflowReadmeNamesEveryProofScript: the proof step globs for
+// `shared/*/mutation-proof.sh`, so the job never needs an edit when a module
+// adds or loses one -- but the README lists them by name, and a list written by
+// hand is a list that goes stale. This is the test that stops it: the scripts
+// are counted from the tree, and the README's list has to be exactly that set,
+// in both directions.
+//
+// It is also what keeps the section honest about *how many* proofs there are:
+// the count that used to be written into that prose ("the package's four
+// mutation-proof scripts") was wrong within weeks of being written, and the
+// list it is replaced by cannot be wrong without failing here.
+func TestSharedTestsWorkflowReadmeNamesEveryProofScript(t *testing.T) {
+	section := sharedTestsReadmeSectionText(t)
+	found, err := filepath.Glob("../../shared/*/mutation-proof.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) == 0 {
+		t.Fatalf("shared/ carries no */mutation-proof.sh: the job's proof step refuses an empty glob, and so does this test -- a README list checked against nothing would pass vacuously")
+	}
+	want := make([]string, 0, len(found))
+	for _, path := range found {
+		want = append(want, strings.TrimPrefix(path, "../../"))
+	}
+	slices.Sort(want)
+
+	named := sharedTestsProofScriptRE.FindAllString(section, -1)
+	slices.Sort(named)
+	named = slices.Compact(named)
+
+	if !slices.Equal(named, want) {
+		t.Errorf("%s's `%s` section names the proof scripts %q; shared/ carries %q. The list is the README's and the glob is the job's, and they have to be the same set: a module that adds a proof script is covered by the job with no edit, so the README is the only place that can go on saying otherwise, and a name here whose script is gone sends a reader looking for a proof that does not exist",
+			pendingWorkflowsReadmePath, sharedTestsReadmeHeading, named, want)
+	}
+}
+
+// sharedTestsReadmeProse returns docs/pending-workflows/README.md with its
+// fenced code blocks removed: three-backtick fences and the lines between them,
+// including the ```sh blocks that hold the copy-in commands. A command quoted
+// in a fence is an instruction, and the shapes it names are the ones the reader
+// is being asked to produce; only the prose outside the fences is a claim about
+// the tree, and only the prose is what the checks below read.
+func sharedTestsReadmeProse(t *testing.T) string {
+	t.Helper()
+	var out strings.Builder
+	inFence := false
+	for _, line := range strings.Split(readDoc(t, pendingWorkflowsReadmePath), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			continue
+		}
+		if !inFence {
+			out.WriteString(line)
+			out.WriteString("\n")
+		}
+	}
+	if inFence {
+		t.Fatalf("%s has an unclosed ``` fence: this test cannot tell prose from a quoted command in it", pendingWorkflowsReadmePath)
+	}
+	return out.String()
+}
+
+// sharedTestsReadmeSectionText returns the body of the README's
+// `## `shared-tests.yml“ section, from its heading to the next `## ` heading.
+// Scoped rather than whole-document because every claim here is about this one
+// workflow: a sentence in another workflow's section must not be able to
+// satisfy it.
+func sharedTestsReadmeSectionText(t *testing.T) string {
+	t.Helper()
+	doc := sharedTestsReadmeProse(t)
+	start := strings.Index(doc, "\n"+sharedTestsReadmeHeading)
+	if start < 0 {
+		t.Fatalf("%s has no %q heading: this test reads that section and nothing else", pendingWorkflowsReadmePath, sharedTestsReadmeHeading)
+	}
+	rest := doc[start+1:]
+	if end := strings.Index(rest[len(sharedTestsReadmeHeading):], "\n## "); end >= 0 {
+		return rest[:len(sharedTestsReadmeHeading)+end]
+	}
+	return rest
 }
 
 // TestReadSharedTestsWorkflowFallsBackOnlyWhilePending pins every mode of the
