@@ -114,19 +114,25 @@ number, because the lines move.
 
 ## 1. The channel as it is
 
-Five steps, all of them shipped:
+Five steps, all of them shipped. This is the **merged tree's** channel: the seal of §7.1 and the
+move out of `runs/` of §7.2 are shipped too, so those two sections are this table's account rather
+than a proposal for it, and they supersede the pre-seal shape wherever one is named — §2 keeps the
+premise the four candidates were priced against (the token object under the `runs/` prefix, a
+readable plaintext token, a take that deletes), and it is the premise, not the shipped code.
 
 | step | where |
 | --- | --- |
 | **Mint** | `internal/cli/launch_budget.go`: `mintBudgetToken` (the decision is `budgetMintOn`) mints `token.Claims{Slug, Run, FX, FP, RB}` with `token.Mint` through `token.IAMSigner` built by `tokenSigner` |
-| **Deliver** | `internal/budget/token/object.go`: `PutObject` writes the custom token at `ObjectKey(slug, run)` = `runs/<slug>/<run>/budget-token`, create-if-absent (`ErrObjectExists`); the runs bucket's lifecycle rule deletes an untaken one after a day (`deploy/terraform/gcp/modules/installation/bucket.tf`, `google_storage_bucket.runs`); `DeleteObject` removes it after a launch that did not start (`dropBudgetToken`) |
-| **Take** | `internal/runner/projectpolicy.go`: `takeBudgetToken` → `token.TakeObject` (`internal/budget/token/object.go`), which reads the object, **deletes it**, and refuses one whose own `fs`/`fr` claims are not the names the read used (`checkNames`, same file). `budgetClient` takes exactly once per run and shares the result with the budget session |
+| **Deliver** | `internal/budget/token/object.go`: `PutObject` writes the custom token **sealed** under a key the launcher draws for this launch (`Seal`, §7.1) at `ObjectKey(slug, run)` = `tokens/<slug>/<run>/budget-token` — the name §7.2 moved it to, and the object's own name is the envelope's AAD — create-if-absent (`ErrObjectExists`); the runs bucket's lifecycle rule deletes an untaken one after a day (`deploy/terraform/gcp/modules/installation/bucket.tf`, `google_storage_bucket.runs`); `DeleteObject` removes it after a launch that did not start, or an earlier attempt's object on a retry (`dropBudgetToken`), and both are the launcher's write: the run's own grant on `tokens/` carries no delete (D16) |
+| **Take** | `internal/runner/projectpolicy.go`: `takeBudgetToken` → `token.TakeObject` (`internal/budget/token/object.go`), which reads the object, **unseals it under the launch's key** (`Unseal`, which checks the envelope version first and the AAD — the object's name and that version byte — on the open) and **never deletes it**, and refuses one whose own `fs`/`fr` claims are not the names the read used (`checkNames`, same file). `budgetClient` takes exactly once per run — one call site, and the read is read-only, so a second one would find the object again — and shares the result with the budget session |
 | **Exchange** | `internal/budget/token/exchange.go`: `Exchange` turns the custom token into an ID token; its claims, `fs`, `fr`, `fx`, `fp`, `rb` and the uid `UID`, are the run's database identity, and they are what the rules test (`internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/rules.go`, e.g. `auth.token.fs == $slug && auth.token.fr == $run`). The claims and `UID` are declared in `internal/budget/token/token.go` |
-| **Mark** | `internal/cli/run.go` sets `lspec.Env = []string{runner.BudgetTokenEnv + "=1"}`; `internal/backend/backend.go`'s `LaunchSpec.Env` carries it into the execution's container override (`internal/backend/gcp/run.go`, `Launch`), and `internal/runner/budget_session.go`'s `BackendFromEnv` parses it |
+| **Mark** | `internal/cli/run.go` sets `lspec.SecretEnv = []string{sealMarker(sealKey)}` — `FUGARO_BUDGET_TOKEN` whose *value* is this launch's seal key (`internal/cli/launch_budget.go`), the one copy of it that leaves the launcher (D15); `internal/backend/backend.go`'s `LaunchSpec.SecretEnv` carries it as a secret member of the execution's container override (`internal/backend/gcp/run.go`, `Launch`), and `internal/runner/budget_session.go`'s `BackendFromEnv` parses it strictly (a value of `"1"` is a launcher from before the seal, which the run refuses at the take rather than reading an unsealed object, D19) |
 
 Two properties of that channel are load-bearing and easy to lose in a redesign:
 
-- **The token is not in the override.** The override carries one bit. The credential itself is a
+- **The token is not in the override.** The override carries the launch's seal key, never the
+  token: what a reader of the override holds is a key to an object it may not have, and without
+  the object the key opens nothing. The credential itself is a
   bucket object the launcher writes and one run reads. Design §4.2 states the rule for the token
   ("The budget token deliberately does not travel as an override"), and `internal/cli/launch_budget.go`
   states it for this code in the **file-level comment** above the launcher's part of the budget
@@ -134,8 +140,15 @@ Two properties of that channel are load-bearing and easy to lose in a redesign:
   an error or a message" — which is where the invariant is written. `mintBudgetToken`'s own doc
   comment is about the mint it performs (the earlier attempt's object is replaced) and does not carry
   the sentence.
-- **The take is the consume.** `TakeObject` deletes as it reads, so a token can be used once, and a
-  run that finds none where its own marker says one was minted refuses to start rather than run
+- **The take is the consume**, and since the seal it is *not* the delete that makes it one:
+  `TakeObject` never calls delete — the job account's grant on `tokens/` is read-only (D16,
+  §7.2), so a delete is a request the run already knows is denied, and gocloud reports the denial
+  as `NotFound`, the same error an object already gone gets, which is why no path may infer
+  anything from one. What makes a token usable once is the key: the launcher draws it for a single
+  execution, delivers it there and nowhere else (D15, D17), and `takeBudgetToken` has one call
+  site — `budgetClient`, which memoizes what it read — so the second read a second take would need
+  finds ciphertext under a key this run has nothing left to open. A run that finds none where its
+  own marker says one was minted refuses to start rather than run
   without a session, a cap or a kill switch (`budgetClient`'s `TokenMarked` branch). That refusal
   is the fail-closed path the L-b finding of PR #379 hardened: an environment that cannot be
   parsed is `MalformedEnv` and stops the run whatever its mode.

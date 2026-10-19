@@ -52,6 +52,60 @@ func TestDocsBudgetTokenChannelDesignIsWritten(t *testing.T) {
 	}
 }
 
+// TestDocsBudgetTokenChannelSection1IsTheSealedChannel: §1 is "the channel as
+// it is", and the tree it describes is the sealed one — the object under
+// `tokens/` (the §7.2 move), the take that never deletes, and the marker whose
+// value is the launch's key rather than the "1" bit. §1 went unread while the
+// seal and the move landed: it still said the object was at
+// `runs/<slug>/<run>/budget-token`, that `TakeObject` "reads the object, deletes
+// it", that the mark was `lspec.Env = ... + "=1"`, and that "The take is the
+// consume. TakeObject deletes as it reads" — so an engineer reasoning about the
+// channel's threat model from §1 was told the wrong mechanism and pointed at the
+// wrong prefix (the 2026-10-19 review's medium finding). The shipped claims are
+// required here and the superseded ones refused, both on §1's own text, so §7.1
+// or §7.2 cannot stand in for it.
+func TestDocsBudgetTokenChannelSection1IsTheSealedChannel(t *testing.T) {
+	const path = "docs/design/budget-token-channel.md"
+	doc := readDoc(t, path)
+	i := strings.Index(doc, "## 1. The channel as it is")
+	j := strings.Index(doc, "## 2. What phase 3 changes about it")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no §1 followed by §2: the section that states the shipped channel is gone", path)
+	}
+	// The section is wrapped, so a phrase can straddle a line break: the
+	// assertions below are on prose, not on layout.
+	sec := strings.Join(strings.Fields(doc[i:j]), " ")
+	for _, want := range []string{
+		// The object the launcher writes and the run reads is under tokens/,
+		// and it is sealed: §7.1's and §7.2's shipped form.
+		"`tokens/<slug>/<run>/budget-token`",
+		"**sealed** under a key the launcher draws for this launch",
+		// The take unseals and never deletes.
+		"**unseals it under the launch's key**",
+		"**never deletes it**",
+		// The mark carries the launch's key, as a secret override member.
+		"lspec.SecretEnv = []string{sealMarker(sealKey)}",
+		// And the property that costs the most if it is read backwards: what
+		// makes a token usable once is the key, not a delete.
+		"since the seal it is *not* the delete that makes it one",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s §1 does not say %q: the section describing the channel as it is has to describe the shipped one — the sealed object under tokens/, the take that unseals and never deletes, and the marker that carries the launch's key", path, want)
+		}
+	}
+	for _, refused := range []string{
+		"`runs/<slug>/<run>/budget-token`",
+		"reads the object, **deletes it**",
+		`lspec.Env = []string{runner.BudgetTokenEnv + "=1"}`,
+		"`TakeObject` deletes as it reads",
+		"The override carries one bit",
+	} {
+		if strings.Contains(sec, refused) {
+			t.Errorf("%s §1 still says %q, which is the pre-seal channel: the seal and the move to tokens/ are shipped, so §1 must state them (or point at §7.1/§7.2 for them) rather than describe the tree they replaced", path, refused)
+		}
+	}
+}
+
 // TestDocsBudgetTokenChannelCitationsExist: the design's load-bearing citations
 // are paths a later implementer has to find — the module that grants the prefix,
 // the package the seal will live in, the runner that parses the marker, the
