@@ -297,7 +297,11 @@ const STEPS = [
   /* The row: four cards side by side, which is the run travelling left to right. The steps
      share the width and the arrows sit between the cards, turned to point along the row — the
      drawing's own box turns with them, so the arrow lands inside the gap rather than across a
-     card.
+     card. **The turn is `-90deg`, and the sign is the direction of the run:** the path below is
+     drawn pointing down, and a positive angle in CSS turns clockwise, so `90deg` would send the
+     arrow leftwards — from each step back at the one before it, against the order item 4 draws.
+     `website/test/base-styles.mjs` reads the drawn direction out of the markup and the angle
+     out of this stylesheet and refuses an arrow that points the way the run does not travel.
 
      64 rem rather than the chrome's 48 rem: a card here is a quarter of the column less the
      arrows, and below about 51 rem that box is narrower than the longest word of the spec's
@@ -337,7 +341,7 @@ const STEPS = [
       width: 2rem;
       height: 1.5rem;
       margin: 0;
-      transform: rotate(90deg);
+      transform: rotate(-90deg);
     }
   }
 

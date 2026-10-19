@@ -9,7 +9,7 @@ all of them, and it changes what they built — the hero's headline and its exam
 four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
 The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
-gates pass (254 tests, `npm run check`, measured 2026-10-19). The three documents of the
+gates pass (257 tests, `npm run check`, measured 2026-10-19). The three documents of the
 first line of work — [`../README.md`](../README.md) `:3` and `:5`,
 [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — still say the opposite,
@@ -160,12 +160,20 @@ does not have to guess them from the markup.
   starts earlier fails there naming the width. Whether the picture then *looks* right at
   1280 px is the owner's check (70a–70c), as D190 requires, and this line of work cannot see
   it.
+- **The arrows point the way the run travels, and the fix round is where the sign was set.**
+  The arrow is drawn pointing down (the shaft is `M12 1 V 25`), a positive angle in CSS turns
+  clockwise, so the row's `rotate(90deg)` pointed every arrow back at the step before it — the
+  four steps drawn in reverse by the one mark that says which way the run goes. The turn is
+  `rotate(-90deg)` now, and `website/test/base-styles.mjs` reads the drawn direction out of
+  the markup and the rotation out of the built stylesheet at the breakpoint, at the page's
+  maximum width and below the breakpoint, where the arrow has to point down the column. A
+  rotation the check cannot read is refused rather than assumed.
 - **The byte budgets are re-derived in this branch (D192).** Its items change what the
   artifact weighs — the terminal's transcript goes, the chat comes, `site.js` loses 117 bytes,
   the flow's stylesheet changes — so all three figures move with it, from the build of
   2026-10-19: **JavaScript per page 76,086** (three times 25,362; `public/scripts/site.js`
   20,289 bytes), **page weight per page 927,195** (three times 309,065; the docs hub
-  247,252 bytes) and **whole site 3,035,439** (three times 1,011,813; 809,450 bytes across 21
+  247,252 bytes) and **whole site 3,035,547** (three times 1,011,849; 809,479 bytes across 21
   files). The figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site
@@ -181,4 +189,9 @@ does not have to guess them from the markup.
   it. Item 5's screenshot is a separate task: this pull request leaves
   `[data-slot="watch-screenshot"]` right after the chat and commits **no image**, and
   `website/test/home.mjs` holds that slot to being empty and the homepage to its one picture
-  (the wordmark).
+  (the wordmark). **The watch bar is the site's one command block that puts its control beside
+  its command rather than above it**, and the fix round gave it `flex-direction: row-reverse`
+  to do it: the control comes first in the shared markup (`src/lib/copy-control.mjs`), so a
+  plain row drew it at the left of the command it belongs to — the other way round from
+  `base.css`'s rule and from every other block. `website/test/base-styles.mjs` reads every
+  `[data-copy]` block's own rules and refuses one whose control is laid out first.

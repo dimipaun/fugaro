@@ -16,6 +16,18 @@
 // layout rules: a card's content box at the breakpoint and at the page's maximum width,
 // against the width of the longest word the flow's names are built from.
 //
+// **Two more readings of the same kind, both of them defects a browser shows rather than a
+// preference: the arrows point the way the run travels, and a command block's copy control
+// sits at the right of the block it belongs to.** The first is `transform: rotate(90deg)` on
+// an arrow drawn pointing down, which turns it leftwards — from each step back at the one
+// before it — with no test in the repository reading the direction at all. The second is
+// `justify-content: space-between` on a row whose first child in the markup is the shared
+// control, which puts the control at the left of its command, the other way round from
+// `base.css`'s rule and from every other command block on the site. Both are read from the
+// built page as arithmetic or as a cascade, because both are invisible to a check that only
+// counts elements: `home.mjs` counts the flow's three arrows and `copy.mjs` clicks the
+// control, and neither of them says which way the one points or where the other is drawn.
+//
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file.
 // No browser, no network: the checks are over the HTML and CSS a browser would receive.
 
@@ -24,7 +36,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parse, textOf, walk } from './lib/html.mjs'
+import { cssDeclarations, cssRules, parse, textOf, walk } from './lib/html.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DIST = path.join(SITE, 'dist')
@@ -249,46 +261,30 @@ test('the layout imports the stylesheets statically, tokens first', () => {
 /**
  * Every rule of a stylesheet, as `{ query, selector, decls }`, in document order, with the
  * `@media`/`@supports` prelude a rule sits inside — so a rule can be held to where it applies
- * rather than to being present somewhere in the file. The stylesheets here nest at most two
- * blocks deep and carry no braces in a value, which is what keeps this a walk rather than a
- * parser (`mediaBlocks` above does the same job for the one file that needs only `@media`).
+ * rather than to being present somewhere in the file. The reading itself is `lib/html.mjs`'s
+ * `cssRules`, the reader the other gates use: this only renames its parts, so that a
+ * stylesheet one gate can read is a stylesheet every gate reads the same way.
  */
 function allRules(css) {
-  const out = []
-  const blocks = []
-  let buffer = ''
-  for (let i = 0; i < css.length; i++) {
-    const ch = css[i]
-    if (ch === '{') {
-      const prelude = buffer.trim()
-      buffer = ''
-      if (prelude.startsWith('@')) {
-        blocks.push(prelude)
-        continue
-      }
-      const close = css.indexOf('}', i)
-      out.push({ query: blocks.join(' '), selector: prelude, decls: css.slice(i + 1, close) })
-      i = close
-      continue
-    }
-    if (ch === '}') {
-      blocks.pop()
-      buffer = ''
-      continue
-    }
-    buffer += ch
-  }
-  return out
+  return cssRules(css).map((rule) => ({
+    query: (rule.conditions ?? []).join(' '),
+    selector: rule.selector ?? '',
+    decls: rule.body ?? '',
+  }))
 }
 
 /** A rule's declarations as `{ property: value }`, the last one winning, as a browser reads them. */
 function declarations(rule) {
-  const out = {}
-  for (const part of rule.decls.split(';')) {
-    const at = part.indexOf(':')
-    if (at > 0) out[part.slice(0, at).trim()] = part.slice(at + 1).trim()
+  return Object.fromEntries(cssDeclarations(rule.decls))
+}
+
+/** True when a rule is in force at a viewport width: no `@media`, or a min-width at or below it. */
+function appliesAt(width) {
+  return (rule) => {
+    if (!rule.query) return true
+    const min = /width\s*>=\s*([\d.]+)rem/.exec(rule.query)
+    return min !== null && Number(min[1]) * 16 <= width
   }
-  return out
 }
 
 /** A CSS length as pixels: a token, a `rem`/`px` length, or `calc(var(--x) * n)`. */
@@ -402,13 +398,6 @@ export function flowLayoutFailures(css, names, wrappers = []) {
   /** The horizontal padding a rule declares: the second value of a `padding` shorthand. */
   const paddingInline = (rule) => toPx((declarations(rule)['padding'] ?? '').split(/\s+/)[1], tokens)
 
-  /** True when a rule is in force at a viewport width: no `@media`, or a min-width at or below it. */
-  const appliesAt = (width) => (rule) => {
-    if (!rule.query) return true
-    const min = /width\s*>=\s*([\d.]+)rem/.exec(rule.query)
-    return min !== null && Number(min[1]) * 16 <= width
-  }
-
   /**
    * `main`'s gutter at a width: the last of its rules that applies there — the base rule and
    * every breakpoint at or below the width. `main:has(…)`'s `padding: 0` is left out on
@@ -515,12 +504,264 @@ test('every flow-layout refusal fires on the defect it names', () => {
       plant('flex-direction:column;align-items:flex-start}', 'align-items:flex-start}'),
       /cannot render its own step names/,
     ],
+    // The arrows, which are the rest of the same picture: the one that shipped wrong turns the
+    // drawn-down arrow a quarter turn clockwise, which points it back along the row.
+    [
+      'an arrow turned the wrong way along the row',
+      plant('transform:rotate(-90deg)', 'transform:rotate(90deg)'),
+      /points left at 64 rem/,
+    ],
+    [
+      'a row whose arrows were never turned at all',
+      plant(';transform:rotate(-90deg)', ''),
+      /points down at 64 rem/,
+    ],
+    [
+      'an arrow turned sideways in the column',
+      plant('{width:1.5rem;height:2rem;margin:var(--space-2xs) auto;display:block}', '{transform:rotate(-90deg);width:1.5rem;height:2rem;margin:var(--space-2xs) auto;display:block}'),
+      /points right below the flow’s breakpoint/,
+    ],
   ]
   for (const [what, css, expected] of cases) {
-    const failures = flowLayoutFailures(css, names, wrappers)
+    const failures = [...flowLayoutFailures(css, names, wrappers), ...arrowDirectionFailures(css, home)]
     assert.ok(failures.some((f) => expected.test(f)), `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`)
   }
   assert.deepEqual(flowLayoutFailures(TODAY(), names, wrappers), [], 'the flow-layout rule fails on the built stylesheet, so the cases above are not proving what they name')
+  assert.deepEqual(arrowDirectionFailures(TODAY(), home), [], 'the arrow-direction rule fails on the built page, so the cases above are not proving what they name')
+})
+
+// ---- the arrows point the way the run travels (changes spec item 4) ----------------------
+
+/**
+ * The direction the flow's arrow is drawn in, as a vector in the SVG's own coordinates (y
+ * grows downwards, as it does in the box a path is drawn in): the **shaft**, the straight line
+ * down the middle of the picture. The shaft rather than the head, because a head is a chevron
+ * — two strokes meeting at a point — and a rotation turns the whole picture together, so the
+ * shaft's own direction is the thing a rotation swings. `null` rather than a guess when the
+ * markup has no arrow or no straight shaft: this check's whole subject is the arrow's
+ * direction, so a picture it cannot read is a picture it has to refuse.
+ */
+function arrowDrawnVector(html) {
+  const svg = [...walk(parse(html))].find((el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('step-arrow'))
+  if (!svg) return null
+  for (const path of walk(svg)) {
+    const d = (path.attrs.get('d') ?? '').replace(/\s+/g, ' ').trim()
+    const shaft = /^M\s*(-?[\d.]+)\s+(-?[\d.]+)\s+V\s*(-?[\d.]+)$/.exec(d)
+    if (shaft) return { x: 0, y: Math.sign(Number(shaft[3]) - Number(shaft[2])) }
+  }
+  return null
+}
+
+/** A vector turned by a CSS `rotate()` angle. Positive is clockwise, on a y-downs axis. */
+function turn(vector, degrees) {
+  const radians = (degrees * Math.PI) / 180
+  return {
+    x: vector.x * Math.cos(radians) - vector.y * Math.sin(radians),
+    y: vector.x * Math.sin(radians) + vector.y * Math.cos(radians),
+  }
+}
+
+/** Which way a vector points, by its larger component. */
+function points(vector) {
+  if (Math.abs(vector.x) >= Math.abs(vector.y)) return vector.x >= 0 ? 'right' : 'left'
+  return vector.y >= 0 ? 'down' : 'up'
+}
+
+/**
+ * Every way the flow's arrows point the wrong way down the run, for one built page: the
+ * direction is read two ways, and each is a defect rather than a preference.
+ *
+ *   - **Below the row's breakpoint the steps are a column, and an arrow between two of them
+ *     points down it.** A sideways arrow in a column draws an order the list does not have.
+ *   - **In the row the steps travel left to right, and each arrow points right.** This is the
+ *     one that shipped wrong: the arrow is drawn pointing down, `rotate(90deg)` is clockwise,
+ *     and the arrow between each pair therefore pointed back at the step before it — four
+ *     steps drawn in reverse by the one mark that says which way the run goes. A positive
+ *     angle is clockwise on the axis the picture is drawn on, so the turn that points right
+ *     is negative (`rotate(-90deg)`, or `270deg` written the long way round).
+ *
+ * The rotation is the one the cascade leaves in force at each width — the last rule that sets
+ * `transform` among those in force, which is one property read the way a browser reads it.
+ * An arrow whose `transform` is neither `none` nor a plain `rotate(<angle>)` is refused rather
+ * than passed: the direction would be a guess, and the direction is the subject.
+ */
+export function arrowDirectionFailures(css, html) {
+  const out = []
+  const rules = allRules(css)
+  const drawn = arrowDrawnVector(html)
+  if (!drawn) {
+    out.push(
+      "the flow draws no arrow this check can read (an SVG classed `step-arrow` with a straight `M … V …` shaft), and the arrow between two steps is what says which way the run travels (changes spec 2026-10-18, item 4)",
+    )
+    return out
+  }
+
+  const arrowRules = rules.filter((r) => /\.step-arrow(?![\w-])/.test(r.selector))
+  /** The `transform` in force on the arrow at a width, as degrees: `null` when it is not a rotation. */
+  const rotationAt = (width) => {
+    const values = arrowRules.filter(appliesAt(width)).map((r) => declarations(r)['transform']).filter((value) => value !== undefined)
+    const value = (values.at(-1) ?? 'none').trim()
+    if (value === 'none' || value === '') return 0
+    const rotate = /^rotate\(\s*(-?[\d.]+)deg\s*\)$/.exec(value)
+    return rotate ? Number(rotate[1]) : null
+  }
+
+  /** One refusal for an arrow that does not point the way the run travels at a width. */
+  const refusal = (width, expected) => {
+    const rotation = rotationAt(width)
+    if (rotation === null) {
+      return `the arrow's transform at ${width / 16} rem is not a rotation this check can read, so the direction it leaves the arrow pointing is a guess (changes spec 2026-10-18, item 4)`
+    }
+    const way = points(turn(drawn, rotation))
+    if (way === expected) return null
+    const where = width === 390 ? 'below the flow’s breakpoint, where the four steps are a column' : `at ${width / 16} rem, where the four steps are a row`
+    const how = rotation === 0 ? 'no rotation at all' : `transform: rotate(${rotation}deg), which turns the arrow the markup draws pointing down ${rotation > 0 ? 'clockwise' : 'anticlockwise'}`
+    return `the arrow between two steps points ${way} ${where} (${how}): item 4's run travels left to right along the row and down the column, and an arrow drawn the other way reads the four steps in the opposite order (changes spec 2026-10-18, item 4)`
+  }
+
+  // The column: a phone shows the steps one after another, and the arrow goes down.
+  const column = refusal(390, 'down')
+  if (column) out.push(column)
+
+  // The row: at the width it starts at, and at the page's maximum width.
+  const row = rules.find((r) => /\.flow-steps(?![\w-])/.test(r.selector) && /flex-direction:row/.test(r.decls) && r.query)
+  const breakpoint = row ? Number(/width\s*>=\s*([\d.]+)rem/.exec(row.query)?.[1]) * 16 : NaN
+  if (!row) return out // `flowLayoutFailures` names the missing row; there is no row to read here
+  for (const width of [breakpoint, 80 * 16]) {
+    const at = refusal(width, 'right')
+    if (at) out.push(at)
+  }
+  return out
+}
+
+test('the flow’s arrows point the way the run travels', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (arrowDrawnVector(html) === null) continue
+    checked += 1
+    failures.push(...arrowDirectionFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the flow’s arrow, and item 4 draws one between each pair of the four steps')
+  assert.deepEqual(failures, [], `the flow’s arrows do not point the way the run travels:\n  ${failures.join('\n  ')}`)
+})
+
+// ---- a copy control sits at the right of the block it belongs to (base.css) --------------
+
+/**
+ * The `[data-copy]` blocks on one built page whose control *and* command share a row, as
+ * `{ klass, direction, atStart }`: the ones where "where the control is drawn" is a question
+ * at all. A block whose control is a row above its command (`display: block`, or a column)
+ * is already the shape `base.css` states, so it is not returned.
+ *
+ * `atStart` is whether the control ends up first along the row's main axis — from `order`
+ * where the two differ, and from the markup where they are equal, which is the cascade a
+ * browser applies. The classes are read off the built page and the declarations off the built
+ * stylesheet, so the check follows the block rather than a list of block names kept here.
+ */
+export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
+  const rules = allRules(css)
+  const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+
+  /** The declarations in force for an element with these classes at a width, last one winning. */
+  const effective = (classes) => {
+    const out = {}
+    for (const rule of rules) {
+      if (!appliesAt(width)(rule)) continue
+      const selects = rule.selector.split(',').map((selector) => selector.trim())
+      if (!selects.some((selector) => classes.some((klass) => new RegExp(`(^|[\\s>+~])\\.${klass}(?![\\w-])`).test(selector)))) continue
+      Object.assign(out, declarations(rule))
+    }
+    return out
+  }
+
+  const blocks = []
+  for (const block of [...walk(parse(html))].filter((el) => el.attrs.has('data-copy'))) {
+    const control = [...walk(block)].find((el) => classesOf(el).includes('command-controls'))
+    const insideControl = (el) => {
+      for (let node = el.parent; node && node !== block; node = node.parent) if (node === control) return true
+      return false
+    }
+    const command = [...walk(block)].find((el) => (el.name === 'pre' || el.name === 'code') && !insideControl(el))
+    if (!control || !command) continue // the markup's shape is `copy.mjs`'s subject, not this one
+
+    const layout = effective(classesOf(block))
+    const display = layout['display'] ?? 'block'
+    const direction = layout['flex-direction'] ?? 'row'
+    if (display !== 'flex' || !direction.startsWith('row')) continue
+
+    const orderOf = (el) => {
+      const value = effective(classesOf(el))['order']
+      return value === undefined ? 0 : Number(value)
+    }
+    const order = [...walk(block)]
+    const atStart =
+      orderOf(control) === orderOf(command)
+        ? order.indexOf(control) < order.indexOf(command)
+        : orderOf(control) < orderOf(command)
+    blocks.push({ klass: classesOf(block)[0] ?? '(unclassed)', direction, atStart })
+  }
+  return blocks
+}
+
+/**
+ * Every command block on one built page that draws its copy control on the wrong side of the
+ * command it belongs to. `base.css` states the rule — "the control is a row above the block it
+ * belongs to and right-aligned on it" — and every block but one follows it by doing nothing:
+ * the control is in the flow above its command, and its own `justify-content: flex-end` puts
+ * the button at the right of the column. A block that puts the two on one row owes that
+ * `flex-direction: row-reverse`, because the control comes **first in the markup** (it is
+ * `src/lib/copy-control.mjs`'s, shared with every other block) and a plain row would therefore
+ * draw the control at the left of the command and push the command to the right edge.
+ */
+export function copyControlPlacementFailures(css, html) {
+  const out = []
+  for (const { klass, direction, atStart } of sideBySideCopyBlocks(css, html)) {
+    const reversed = direction === 'row-reverse'
+    if (reversed ? !atStart : atStart) {
+      out.push(
+        `the copy control of a .${klass} block is drawn before the command it belongs to (display: flex, flex-direction: ${direction}, and the control is first in the markup), where base.css puts the control at the right of the block it belongs to and every other command block on the site reads that way`,
+      )
+    }
+  }
+  return out
+}
+
+test('every command block draws its copy control at the right of the command it belongs to', () => {
+  const failures = []
+  for (const { rel, html } of builtPages()) failures.push(...copyControlPlacementFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  assert.deepEqual(failures, [], `a command block draws its control on the wrong side:\n  ${failures.join('\n  ')}`)
+})
+
+test('the copy-control placement rule reads the blocks it is about, and refuses the one that shipped wrong', () => {
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const css = TODAY()
+  const sideBySide = sideBySideCopyBlocks(css, home)
+  assert.ok(
+    sideBySide.some((block) => block.klass === 'chat-watch' && block.direction === 'row-reverse' && block.atStart),
+    `the check finds no side-by-side command block on the homepage (it found ${JSON.stringify(sideBySide)}), so the cases below would pass without reading the block they are about (changes spec 2026-10-18, item 3)`,
+  )
+  assert.deepEqual(copyControlPlacementFailures(css, home), [], 'the placement rule fails on the built homepage, so the case below is not proving what it names')
+
+  // The defect as it shipped: the watch bar is a plain row, so the control — first in the
+  // markup — is drawn at the left of the command.
+  const notReversed = plant('flex-direction:row-reverse;', '')
+  const failures = copyControlPlacementFailures(notReversed, home)
+  assert.ok(
+    failures.some((f) => /drawn before the command it belongs to/.test(f)),
+    `a row that is not reversed was not refused; the check said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+  )
+
+  // And the other way of saying the same thing, which the check has to let through: the row
+  // left alone, with the control ordered after the command. `order` is what puts the control
+  // at main-end, which in a plain row is the right — the arrangement base.css asks for.
+  const ordered = notReversed.replace('.command-controls{justify-content:flex-end;', '.command-controls{justify-content:flex-end;order:1;')
+  assert.ok(ordered !== notReversed, 'this fixture moves the control to the end of the row with `order: 1` on .command-controls, and the built stylesheet no longer carries that rule')
+  assert.deepEqual(
+    copyControlPlacementFailures(ordered, home),
+    [],
+    'a row whose control is ordered after its command is refused, and that is how base.css states the control belongs on the right',
+  )
 })
 
 // ---- the menu (P3, D182) ---------------------------------------------------------------

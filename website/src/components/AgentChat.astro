@@ -289,8 +289,18 @@ if (!source('README.md').includes(WATCH)) {
     color: var(--text);
   }
 
+  /* One bar: the command at the left and its control at the right. **The control comes first
+     in the markup** — it is `src/lib/copy-control.mjs`'s, shared with every other command
+     block on the site, and this component does not get to reorder it — so a row laid out the
+     ordinary way would put the control at the left and push the command to the right edge,
+     against `base.css`'s rule that the control is right-aligned on the block it belongs to and
+     against the shape of every other block here. `row-reverse` is the one declaration that
+     settles it: the main axis starts at the right, so the first child in the markup lands at
+     the right end and the command takes the left. `website/test/base-styles.mjs` checks every
+     `[data-copy]` block on the built pages for it. */
   .chat-watch {
     display: flex;
+    flex-direction: row-reverse;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-sm);

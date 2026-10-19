@@ -150,8 +150,10 @@ with fixtures that keep its refusals running, and none of them needs the network
   - **Page weight per page:** 927,195 bytes. Three times 309,065: the heaviest page, the
     docs hub, at 247,252 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,035,439 bytes. Three times 1,011,813 (every file in `dist/`, 809,450
-    bytes across 21 files, plus 25 %).
+  - **Whole site:** 3,035,547 bytes. Three times 1,011,849 (every file in `dist/`, 809,479
+    bytes across 21 files, plus 25 %). The figure moved 29 bytes with the fix round's two
+    layout declarations — the watch bar's `flex-direction: row-reverse` and the flow's
+    `rotate(-90deg)` — and was re-derived in that commit like any other.
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
