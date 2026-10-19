@@ -6,10 +6,12 @@
 package runview
 
 import (
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -91,11 +93,29 @@ type Row struct {
 	Halt        *runstore.Halt `json:"halt,omitempty"`
 	Batch       string         `json:"batch,omitempty"`
 	RequestedBy string         `json:"requested_by,omitempty"`
-	PRURL       string         `json:"pr_url,omitempty"`
-	Execution   string         `json:"execution,omitempty"`
-	LogURL      string         `json:"log_url,omitempty"`
-	Created     time.Time      `json:"created"`
-	Cost        runstore.Cost  `json:"cost"`
+	// LaunchedBy is who started the run, as the run's own launch.json
+	// recorded it at launch (runstore.Launch.LaunchedBy, written from the
+	// launching task's RequestedBy): a person's address, or the identity an
+	// automated launch runs as (a service account, a CI runner). It is the
+	// launch record's own account of itself and nothing else — absent for a
+	// run whose launch.json has none (never launched, or launched by a
+	// writer that recorded no identity), and never filled in from the task,
+	// the record or the account the run used.
+	//
+	// UNTRUSTED display text, and the one field of this row that is
+	// sanitised here rather than by the renderer: a launcher writes it, so
+	// it can carry escapes, newlines, bidi overrides or 10 KB of text, and
+	// both documents this row appears in — runs ls --json and the console
+	// that reads it — are rendered as they are. safetext.Field drops what
+	// could rewrite a line and caps what is left. It is read for display
+	// only: nothing authorises or admits anything by it (the guard test in
+	// this package fails if any other code reads the field).
+	LaunchedBy string        `json:"launched_by,omitempty"`
+	PRURL      string        `json:"pr_url,omitempty"`
+	Execution  string        `json:"execution,omitempty"`
+	LogURL     string        `json:"log_url,omitempty"`
+	Created    time.Time     `json:"created"`
+	Cost       runstore.Cost `json:"cost"`
 	// ImageAgeS is how old the run's image was when the run started
 	// (started_at minus built_at), in seconds; absent when either is unknown.
 	ImageAgeS *int64 `json:"image_age_s,omitempty"`
@@ -178,6 +198,25 @@ func Pushed(t *task.Spec, r *runstore.Record) (head string, ok bool) {
 	return "", false
 }
 
+// LauncherShort is a launcher identity as a text column shows it: for an
+// address, the part before its @ (dana@example.com → dana, which is what
+// tells two colleagues' runs apart); for anything else — a service account
+// name, a CI identity, whatever an automated launch recorded — the whole
+// value, since it has no local part to shorten to. An address with nothing
+// before its @ shortens to "", which the caller renders as its own empty
+// cell marker.
+//
+// It shortens what is already there; it does not make a value safe. The
+// launcher is untrusted text, so callers pass a sanitised value (Row's own
+// LaunchedBy is one) and sanitise the result again for the cell they write
+// it into, as every other bucket-derived column does.
+func LauncherShort(by string) string {
+	if name, _, ok := strings.Cut(by, "@"); ok {
+		return name
+	}
+	return by
+}
+
 // PriceBook is the compute price table one execution is priced with (a
 // local override, else the backend's list price), for the execution's own
 // region and machine type. The execution is passed rather than a region
@@ -216,6 +255,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	}
 	if in.Launch != nil {
 		row.Execution, row.LogURL = in.Launch.Execution, in.Launch.LogURL
+		row.LaunchedBy = safetext.Field(in.Launch.LaunchedBy)
 	}
 	r, e := in.Record, in.Exec
 	followUpFields(&row, in.Task, r)

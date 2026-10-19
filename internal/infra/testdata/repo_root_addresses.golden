@@ -40,6 +40,7 @@ module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["
 module.repo.module.workflow["web"].google_service_account.job
 module.repo.module.workflow["web"].google_service_account_iam_member.operator["user:operator@example.com"]
 module.repo.module.workflow["web"].google_storage_bucket_iam_member.job
+module.repo.module.workflow["web"].google_storage_bucket_iam_member.job_tokens
 module.repo.module.workflow["web_bmb"].google_cloud_run_v2_job.this[0]
 module.repo.module.workflow["web_bmb"].google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"]
 module.repo.module.workflow["web_bmb"].google_cloud_run_v2_job_iam_member.launcher["user:operator@example.com"]
@@ -49,3 +50,4 @@ module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.j
 module.repo.module.workflow["web_bmb"].google_service_account.job
 module.repo.module.workflow["web_bmb"].google_service_account_iam_member.operator["user:operator@example.com"]
 module.repo.module.workflow["web_bmb"].google_storage_bucket_iam_member.job
+module.repo.module.workflow["web_bmb"].google_storage_bucket_iam_member.job_tokens

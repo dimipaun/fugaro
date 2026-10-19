@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
@@ -430,6 +431,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		err = r.redactErr(err)
 	}()
 
+	r.addSealKey()
 	r.addMountedSecrets()
 	if onNewRun != nil {
 		onNewRun(r)
@@ -625,6 +627,28 @@ const SecretEnvsVar = "FUGARO_SECRET_ENVS"
 // minSecretLen is the shortest value redacted; agent.BuildEnv refuses a
 // shorter declared secret for the same reason.
 const minSecretLen = 4
+
+// addSealKey registers the launch's seal key with the redactor, before
+// anything can print it. The key arrives in the job's environment — it is the
+// value of the launcher's marker (Backend.TokenKey, D15) — so the runner holds
+// it from its first moment, long before takeBudgetToken unseals anything with
+// it, and every reason the run publishes from here on is redacted of it.
+// That is why it is registered at the top of Run and not where the key is
+// used: the parse that reads the marker cannot register anything (it runs
+// before this process has a redactor at all, internal/cli's runExec), so the
+// runner is the earliest holder that can.
+//
+// The value registered is both spellings the key can be printed in: the
+// encoded one, because that is the form it travels in and therefore the form a
+// print of the environment value would show, and the raw key bytes, because
+// the redactor derives a secret's base64 spellings from the secret itself —
+// so the raw form also covers an encoding this code did not think of.
+func (r *run) addSealKey() {
+	if len(r.d.Backend.TokenKey) > 0 {
+		r.addSecret(token.EncodeKey(r.d.Backend.TokenKey))
+		r.addSecret(string(r.d.Backend.TokenKey))
+	}
+}
 
 // addMountedSecrets registers the values of the variables SecretEnvsVar
 // names, before anything else runs, so even a failure reason from the
@@ -1088,6 +1112,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// overrides are applied: the selection is a name the published policy must
 	// define (plan task 3.1 step 1, the fail-closed half).
 	if err := r.checkJobProfile(ctx, name, wf); err != nil {
+		return err
+	}
+	// And the credential the job holds, against the one this run's own
+	// configuration resolved to (plan task 3, design §4.4 rows 6 to 9): the
+	// runner's own half of the launch gate, here because agent.auth is a fact
+	// of the resolved config and the job identity is a fact of admissionCheck,
+	// which ran before any git credential existed.
+	if err := r.checkProjectJobAccount(ctx, cfg.Agent.Auth); err != nil {
 		return err
 	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)

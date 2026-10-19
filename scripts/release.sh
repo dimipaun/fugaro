@@ -150,6 +150,19 @@ if scripts/release-policy.sh highlights-required "$version"; then
     echo "$highlights on main is empty; write the Highlights (see docs/releases/README.md), merge it, then re-run scripts/release.sh $version" >&2
     exit 1
   fi
+
+  # And the release needs its end-user summary, the one line the changelog page
+  # prints above the Highlights. The site build reads one per release file and
+  # stops, naming the file, when one is missing (website/README.md,
+  # website/src/content.ts), so the entry ships in the same PR as the Highlights
+  # (docs/release.md). Read from origin/main for the same reason.
+  summaries="website/data/release-summaries.yaml"
+  summary_line=$(git show "origin/main:$summaries" 2>/dev/null | grep -F "  $tag: " | head -1 || true)
+  summary_text=${summary_line#"  $tag: "}
+  if [ -z "${summary_text// /}" ]; then
+    echo "$summaries on main carries no entry for $tag, and the changelog page prints one per release (the site build stops when a release file has none). Write the line (see the file's header), in the same PR as $highlights, then re-run scripts/release.sh $version" >&2
+    exit 1
+  fi
 fi
 
 if ! command -v gh >/dev/null 2>&1; then

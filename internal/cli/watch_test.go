@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // seedWatch puts one capped repository with a killed switch-free api-key run
@@ -255,26 +256,79 @@ func TestWatchStreamJSONThenCancel(t *testing.T) {
 	}
 }
 
+// tuiStub replaces the interactive screen with one that records the deps it
+// was handed and returns at once. starts counts the times it ran, so a test
+// can tell a mode that never reaches the screen from one that does.
+type tuiStub struct {
+	deps   *WatchDeps
+	starts int
+}
+
+func stubTUI(t *testing.T) *tuiStub {
+	t.Helper()
+	oldTTY, oldRun := watchStdoutTTY, runTUI
+	watchStdoutTTY = func(io.Writer) bool { return true }
+	s := &tuiStub{}
+	runTUI = func(ctx context.Context, d *WatchDeps) error { s.starts++; s.deps = d; return nil }
+	t.Cleanup(func() { watchStdoutTTY, runTUI = oldTTY, oldRun })
+	return s
+}
+
 func TestWatchTUIHook(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "x")
 	typed(t)
-	oldTTY, oldRun := watchStdoutTTY, runTUI
-	watchStdoutTTY = func(io.Writer) bool { return true }
-	t.Cleanup(func() { watchStdoutTTY, runTUI = oldTTY, oldRun })
-	var got *WatchDeps
-	runTUI = func(ctx context.Context, d *WatchDeps) error { got = d; return nil }
-	if _, _, err := execute(t, "watch", "--repo", "acme/app"); err != nil || got == nil || got.Sup == nil || got.DB == nil || got.RepoKey == "" || got.LC.Name != "aurora" {
-		t.Fatalf("err %v deps %+v", err, got)
+	st := stubTUI(t)
+	if _, _, err := execute(t, "watch", "--repo", "acme/app"); err != nil || st.starts != 1 {
+		t.Fatalf("err %v starts %d", err, st.starts)
+	}
+	if got := st.deps; got == nil || got.Sup == nil || got.DB == nil || got.RepoKey == "" || got.LC.Name != "aurora" {
+		t.Fatalf("deps %+v", st.deps)
 	}
 	// --once and --json never reach it, even at a terminal.
-	got = nil
 	for _, a := range []string{"--once", "--json"} {
 		if _, _, err := execute(t, "watch", "--once", a); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got != nil {
+	if st.starts != 1 {
 		t.Fatal("a non-interactive mode started the screen")
+	}
+}
+
+// The screen is handed the deps' own readers, not a snapshot of them: the
+// model asks both again on every rebuild, so a run that starts later still
+// gains its launcher and its job within one redraw. The facts are the ones
+// only the bucket scan has — a live row is built from the registry entry,
+// which carries neither (internal/watch's facts.go) — so a screen built
+// without them shows a dash for the launcher of every running run while
+// `watch --json` names it.
+//
+// Mutation caught: building the TUIOptions without Facts.
+func TestWatchTUIPassesTheRunFacts(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "x")
+	typed(t)
+	st := stubTUI(t)
+	if _, _, err := execute(t, "watch", "--repo", "acme/app"); err != nil || st.deps == nil {
+		t.Fatalf("err %v deps %+v", err, st.deps)
+	}
+	want := watch.Facts{watch.RunKeyOf("acme/app", "20261002-090000-aaaa"): watch.RunFacts{
+		JobRef:     watch.JobRef{Job: "fugaro-aurora-1a2b3c4d", Profile: "work", Provider: "github", Account: "work"},
+		LaunchedBy: "dana@example.com"}}
+	queued := []watch.QueuedRun{{Run: "r9", Slug: appSlug, Workflow: "web"}}
+	st.deps.Facts = func() watch.Facts { return want }
+	st.deps.Queued = func() ([]watch.QueuedRun, []watch.FinishedRun, string) { return queued, nil, "a note" }
+
+	o := watchTUIOptions(context.Background(), st.deps, "me@x")
+	if o.Facts == nil {
+		t.Fatal("the screen was given no run-facts reader: every launcher line stays a dash")
+	}
+	if got := o.Facts()[watch.RunKeyOf("acme/app", "20261002-090000-aaaa")].LaunchedBy; got != "dana@example.com" {
+		t.Fatalf("the screen's facts reader answered %q, want the deps' own reader", got)
+	}
+	rows, _, note := o.Queued()
+	if len(rows) != 1 || rows[0].Run != "r9" || note != "a note" {
+		t.Fatalf("the screen's queued reader = %+v %q, want the deps' own", rows, note)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	storage "google.golang.org/api/storage/v1"
@@ -381,6 +382,357 @@ func TestWriteMarkerNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	}
 }
 
+// WriteManagedLabel is the other half of the same fact (Task 3.0), on the
+// project itself rather than in its bucket: the gate is WriteMarker's, the
+// write is idempotent in the one direction that is not dangerous (the label
+// already says what this package writes), and a label someone else put there
+// is refused rather than overwritten — `fugaro_managed=false` is a statement,
+// and this package does not get to replace it. A Resource Manager v1 update
+// replaces the whole label map, so the other labels the project carries are
+// the third thing the rows below pin: a writer that sent only its own key
+// would drop them.
+func TestWriteManagedLabel(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		created, project string
+		labels           map[string]string // the project's labels as the fake has them
+		missing          bool              // the project is not in the fake at all
+		refuse           int               // a status for every Resource Manager call
+		noUpdate         bool              // the read is readable and the update is refused
+		want             string            // a substring the refusal must carry, "" for no refusal
+		wantLabels       map[string]string // what the project carries afterwards
+		wantCalls        int               // Resource Manager calls the write may make
+	}{
+		"the project this run created": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{"environment": "prod"},
+			wantLabels: map[string]string{"environment": "prod", ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2, // the read and the update
+		},
+		"a project with no labels at all": {
+			created: testProject, project: testProject,
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2,
+		},
+		"a project that already carries the label": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  1, // the read, and no update: the mark is written once
+		},
+		"a project carrying the key with another value": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{ProjectLabelKey: "false"},
+			want:       "already carries",
+			wantLabels: map[string]string{ProjectLabelKey: "false"},
+			wantCalls:  1,
+		},
+		"an empty value is not the label": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{ProjectLabelKey: ""},
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2,
+		},
+		"another project": {
+			created: testProject, project: "belong",
+			want:      "did not create",
+			wantCalls: 0,
+		},
+		"nothing to mark": {
+			created: testProject, project: "",
+			want:      "did not create",
+			wantCalls: 0,
+		},
+		"the project read is refused": {
+			created: testProject, project: testProject, refuse: http.StatusForbidden,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+		"the project is not there": {
+			created: testProject, project: testProject, missing: true,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+		// The shape every credential a run holds is in: the project can be
+		// read and its label cannot be written (no
+		// resourcemanager.projects.update). The object may already be in the
+		// bucket by then — this is
+		// the half-mark of Task 3.0's point 4, and the read answers "not
+		// managed" for it.
+		"the update is refused": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{"environment": "prod"},
+			noUpdate:   true,
+			want:       "labelling project",
+			wantLabels: map[string]string{"environment": "prod"},
+			wantCalls:  2,
+		},
+		"the read fails": {
+			created: testProject, project: testProject, refuse: http.StatusInternalServerError,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, cf := newCRM(t)
+			if !tc.missing {
+				cf.AddProject(testProject, testProjectNumber)
+				if tc.labels != nil {
+					cf.SetLabels(testProject, tc.labels)
+				}
+			}
+			if tc.refuse != 0 {
+				cf.Refuse(tc.refuse, "PERMISSION_DENIED", "", "refused")
+			}
+			if tc.noUpdate {
+				cf.DenyUpdate(testProject)
+			}
+			err := WriteManagedLabel(ctx, c, tc.created, tc.project)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("err = %v, want the label written", err)
+			case tc.want != "" && err == nil:
+				t.Fatalf("want a refusal carrying %q", tc.want)
+			case tc.want != "" && !strings.Contains(err.Error(), tc.want):
+				t.Errorf("err = %v, want it to carry %q", err, tc.want)
+			}
+			if n := len(cf.Requests()); n != tc.wantCalls {
+				t.Errorf("the write made %d Resource Manager calls, want %d: %v", n, tc.wantCalls, cf.Requests())
+			}
+			// Every call is a read or the one update, and the update is a
+			// projects update: a writer reaching for anything else (a policy,
+			// a create) is not this function.
+			for _, r := range cf.Requests() {
+				if r.Method != http.MethodGet && r.Method != http.MethodPut {
+					t.Errorf("the write made a %s %s", r.Method, r.Path)
+				}
+			}
+			if tc.wantLabels != nil {
+				if got := cf.Labels(testProject); !maps.Equal(got, tc.wantLabels) {
+					t.Errorf("the project carries %v, want %v", got, tc.wantLabels)
+				}
+			}
+		})
+	}
+
+	// A run that created no project writes nothing at all — not a read, not a
+	// label — exactly as WriteMarker does not: adding Firebase to an existing
+	// project (D73) and every ordinary run of an existing installation come
+	// through here with created == "", and the owner's own projects, belong
+	// among them, must come out of it untouched.
+	c, cf := newCRM(t)
+	cf.AddProject(testProject, testProjectNumber)
+	if err := WriteManagedLabel(ctx, c, "", testProject); err != nil {
+		t.Fatalf("err = %v, want a silent no-op", err)
+	}
+	if reqs := cf.Requests(); len(reqs) != 0 {
+		t.Errorf("the call touched the API: %v", reqs)
+	}
+	if got := cf.Labels(testProject); len(got) != 0 {
+		t.Errorf("the project carries %v, want nothing", got)
+	}
+
+	// And the client the rows above all have: a call with none is a refusal
+	// rather than a panic (WriteMarker's own nil-client branch, and
+	// WriteDeleteList's).
+	if err := WriteManagedLabel(ctx, nil, testProject, testProject); err == nil {
+		t.Error("the write was made with no Resource Manager client")
+	}
+}
+
+// TestWriteManagedLabelForFlag is the other gate on the same label: the one
+// `fugaro managed flag` holds (D58's owner, their own terminal, the GCP
+// project ID typed), for a project no run created. What it must do that
+// WriteManagedLabel must not is exactly that — label a project this run did
+// not create — and everything else is the same write: the same value, the
+// same refusals, the same labels kept.
+//
+// The gate itself is not in this function and cannot be: it is the command's
+// (an agent's session and a run's process are refused before it reads
+// anything, and the typed ID is the confirmation), which is why the test that
+// pins it is managed_flag_test.go's. What is pinned here is that this entry
+// point asks for none of WriteManagedLabel's creation evidence.
+func TestWriteManagedLabelForFlag(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		project    string
+		labels     map[string]string // the project's labels as the fake has them
+		missing    bool              // the project is not in the fake at all
+		refuse     int               // a status for every Resource Manager call
+		noUpdate   bool              // the read is readable and the update is refused
+		want       string            // a substring the refusal must carry, "" for no refusal
+		wantLabels map[string]string // what the project carries afterwards
+		wantCalls  int               // Resource Manager calls the write may make
+	}{
+		// The row this entry point exists for: no run created this project —
+		// it is the owner's, flagged by hand — and the label lands on it
+		// anyway, with the label it already carried kept.
+		"a project no run created": {
+			project:    testProject,
+			labels:     map[string]string{"environment": "prod"},
+			wantLabels: map[string]string{"environment": "prod", ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2, // the read and the update
+		},
+		"a project with no labels at all": {
+			project:    testProject,
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2,
+		},
+		"a project that already carries the label": {
+			project:    testProject,
+			labels:     map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  1, // the read, and no update: the mark is written once
+		},
+		// Refused, and the refusal says which of the two writes this label
+		// is, because the flag's message for it is the operator's: the label
+		// is not this command's to replace, whatever put it there.
+		"a project carrying the key with another value": {
+			project:    testProject,
+			labels:     map[string]string{ProjectLabelKey: "false"},
+			want:       "already carries",
+			wantLabels: map[string]string{ProjectLabelKey: "false"},
+			wantCalls:  1,
+		},
+		"an empty value is not the label": {
+			project:    testProject,
+			labels:     map[string]string{ProjectLabelKey: ""},
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2,
+		},
+		"no project to label": {
+			project:   "",
+			want:      "no project name",
+			wantCalls: 0,
+		},
+		"the project read is refused": {
+			project: testProject, refuse: http.StatusForbidden,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+		"the project is not there": {
+			project: testProject, missing: true,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+		"the update is refused": {
+			project:    testProject,
+			labels:     map[string]string{"environment": "prod"},
+			noUpdate:   true,
+			want:       "labelling project",
+			wantLabels: map[string]string{"environment": "prod"},
+			wantCalls:  2,
+		},
+		"the read fails": {
+			project: testProject, refuse: http.StatusInternalServerError,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, cf := newCRM(t)
+			if !tc.missing {
+				cf.AddProject(testProject, testProjectNumber)
+				if tc.labels != nil {
+					cf.SetLabels(testProject, tc.labels)
+				}
+			}
+			if tc.refuse != 0 {
+				cf.Refuse(tc.refuse, "PERMISSION_DENIED", "", "refused")
+			}
+			if tc.noUpdate {
+				cf.DenyUpdate(testProject)
+			}
+			err := WriteManagedLabelForFlag(ctx, c, tc.project)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("err = %v, want the label written", err)
+			case tc.want != "" && err == nil:
+				t.Fatalf("want a refusal carrying %q", tc.want)
+			case tc.want != "" && !strings.Contains(err.Error(), tc.want):
+				t.Errorf("err = %v, want it to carry %q", err, tc.want)
+			}
+			if n := len(cf.Requests()); n != tc.wantCalls {
+				t.Errorf("the write made %d Resource Manager calls, want %d: %v", n, tc.wantCalls, cf.Requests())
+			}
+			// One read and one update, and the update is a projects update:
+			// the same shape WriteManagedLabel's own test pins.
+			for _, r := range cf.Requests() {
+				if r.Method != http.MethodGet && r.Method != http.MethodPut {
+					t.Errorf("the write made a %s %s", r.Method, r.Path)
+				}
+			}
+			if tc.wantLabels != nil {
+				if got := cf.Labels(testProject); !maps.Equal(got, tc.wantLabels) {
+					t.Errorf("the project carries %v, want %v", got, tc.wantLabels)
+				}
+			}
+		})
+	}
+
+	// The refusal that names who writes the label is this entry point's own
+	// text: the creation path's would tell a flagged project's owner about a
+	// run that created it, which is not what happened.
+	c, cf := newCRM(t)
+	cf.AddProject(testProject, testProjectNumber)
+	cf.SetLabels(testProject, map[string]string{ProjectLabelKey: "false"})
+	err := WriteManagedLabelForFlag(ctx, c, testProject)
+	if err == nil || !strings.Contains(err.Error(), "the owner flagging the project") {
+		t.Errorf("err = %v, want it to say who writes the label", err)
+	}
+	if err := WriteManagedLabel(ctx, c, testProject, testProject); err == nil || !strings.Contains(err.Error(), "the run that created the project") {
+		t.Errorf("err = %v, want the creation path's own text", err)
+	}
+
+	// And the client the rows above all have: a call with none is a refusal
+	// rather than a panic.
+	if err := WriteManagedLabelForFlag(ctx, nil, testProject); err == nil {
+		t.Error("the write was made with no Resource Manager client")
+	}
+}
+
+// TestWriteManagedLabelKeepsTheProjectsDisplayName is the round-2 review's
+// should-fix, and it is about the request and not about the label: Resource
+// Manager v1 projects.update replaces the project's editable state with what
+// the request carries — the display name and the whole label map — so a writer
+// that sends a Project holding only the labels it computed takes the owner's
+// display name off the project, silently, on every project it labels. gcloud
+// and Terraform both read the project, change the field they mean to change
+// and send the whole object back for exactly this reason.
+//
+// The fake models that replacement (gcpfake.CRM, and its own test pins it), so
+// the assertion here is the API's: after each writer has run, the project
+// still has the display name it had. It covers both writers, because both end
+// in the same update and a fix in one would leave the other clearing names.
+func TestWriteManagedLabelKeepsTheProjectsDisplayName(t *testing.T) {
+	ctx := context.Background()
+	const name = "Belong production"
+	for what, write := range map[string]func(context.Context, *crm.Service) error{
+		"the creating run's write": func(ctx context.Context, c *crm.Service) error {
+			return WriteManagedLabel(ctx, c, testProject, testProject)
+		},
+		"the owner's flag": func(ctx context.Context, c *crm.Service) error {
+			return WriteManagedLabelForFlag(ctx, c, testProject)
+		},
+	} {
+		t.Run(what, func(t *testing.T) {
+			c, cf := newCRM(t)
+			cf.AddProject(testProject, testProjectNumber)
+			cf.SetDisplayName(testProject, name)
+			cf.SetLabels(testProject, map[string]string{"environment": "prod"})
+			if err := write(ctx, c); err != nil {
+				t.Fatalf("the write = %v, want the label written", err)
+			}
+			if got := cf.DisplayName(testProject); got != name {
+				t.Errorf("the project's display name is %q after the label write, want %q: an update replaces the project's editable fields, so the writer has to send the project it read", got, name)
+			}
+			if got, want := cf.Labels(testProject), map[string]string{"environment": "prod", ProjectLabelKey: ProjectLabelValue}; !maps.Equal(got, want) {
+				t.Errorf("the project carries %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 // The write half of Global Constraint 4 (design D57): no credential a run
 // holds may have a write path to the marker. The agent of a run holds a job
 // account and a build holds a build account, and the grant each is given on
@@ -416,8 +768,12 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 		// A project job's widened grant (phase 3, Task 3.2): no slug, but
 		// still the three prefixes, so never the bucket's root.
 		"a project job account's grant": gcp.ProjectBucketCondition(testBucket, gcp.JobBucketPrefixes),
-		"a build account's grant":       gcp.BucketCondition(testBucket, gcp.BuildBucketPrefixes, "web"),
-		"a launcher's grant":            gcp.LauncherBucketCondition(testBucket),
+		// A project job's read-only tokens/ grant (phase 3, Task 3.2): the
+		// whole prefix, and still not the bucket's root.
+		"a project job account's tokens grant": gcp.ProjectTokenBucketCondition(testBucket),
+		"a job account's tokens grant":         gcp.TokenBucketCondition(testBucket, "web-a1b2c3"),
+		"a build account's grant":              gcp.BucketCondition(testBucket, gcp.BuildBucketPrefixes, "web"),
+		"a launcher's grant":                   gcp.LauncherBucketCondition(testBucket),
 	} {
 		prefixes := startsWithPrefixes(expr, testBucket)
 		if len(prefixes) == 0 {
@@ -431,14 +787,18 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	}
 	// The prefixes the fakes and the modules agree on, named here so a
 	// widening of one is a visible diff: a job writes runs/, cache/ and
-	// locks/, a build writes builds/, a launcher writes runs/.
+	// locks/, a build writes builds/, a launcher writes runs/ and, since the
+	// sealed budget token moved there, tokens/ (budget-token-channel.md §7.2,
+	// D16: the deliberate widening). tokens/ is not a run account's write
+	// prefix — the job's grant there is objectViewer, checked by
+	// runAccountGrants and by the scan's write-role rules.
 	if !slices.Equal(gcp.JobBucketPrefixes, []string{"runs", "cache", "locks"}) {
 		t.Errorf("gcp.JobBucketPrefixes = %v", gcp.JobBucketPrefixes)
 	}
 	if !slices.Equal(gcp.BuildBucketPrefixes, []string{"builds"}) {
 		t.Errorf("gcp.BuildBucketPrefixes = %v", gcp.BuildBucketPrefixes)
 	}
-	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/"}) {
+	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/", "tokens/"}) {
 		t.Errorf("the launcher condition grants %v", got)
 	}
 
@@ -468,6 +828,18 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	}
 	if scan.customRoles < 5 {
 		t.Errorf("the scan read %d custom roles, want the modules'", scan.customRoles)
+	}
+	// Task 3.0's rule, and the count that keeps it from passing vacuously:
+	// every grant to a member that is not a set of people, whose role this
+	// scan could resolve, was read for the two permissions that set or remove
+	// the project's own label — and none of them holds one. Without the
+	// first count the second is an assertion about nothing, which is exactly
+	// what a scan of the bucket's grants alone would give.
+	if scan.labelChecked < 20 {
+		t.Errorf("the scan read %d grants for a path to the %s label, want every grant the modules make to a member that is not a set of people (the run, history and scheduler accounts)", scan.labelChecked, ProjectLabelKey)
+	}
+	if scan.labelGrants != 0 {
+		t.Errorf("the scan found %d of those grants reaching the %s label, want none: no run account may set or remove it (Task 3.0)", scan.labelGrants, ProjectLabelKey)
 	}
 	// The one project-level storage write this scan admits, and the reason it
 	// admits it: binding (2)'s fence, which the scan read out of the module
@@ -796,6 +1168,27 @@ locals {
 				`    "storage.buckets.create",`, `    "storage.buckets.create",
     "storage.objects.create",`, 1)
 		},
+		// Task 3.0's rule, in the three spellings a grant of the label
+		// permission could come in: a predefined role that carries it, and a
+		// custom role holding each of the two permissions (setIamPolicy
+		// matters on its own — it is how a holder grants itself the update).
+		// Each is a project-level grant to the job account, the credential a
+		// run's agent holds: the one that must never be able to put a project
+		// into managed mode, or take it out. None of them touches the runs
+		// bucket, which is the point — the label is not in the bucket, so
+		// neither the bucket's conditions nor the deployer's prefix fence
+		// bounds this permission.
+		"roles/editor to the job account": func(f map[string]string) {
+			f["modules/workflow/sa.tf"] += projectGrantToJob("job_editor", `"roles/editor"`)
+		},
+		"a custom role holding resourcemanager.projects.update, to the job account": func(f map[string]string) {
+			f["modules/workflow/sa.tf"] += customRole("job_labeller", "jobLabeller", `"resourcemanager.projects.update"`) +
+				projectGrantToJob("job_label", `google_project_iam_custom_role.job_labeller.name`)
+		},
+		"a custom role holding resourcemanager.projects.setIamPolicy, to the job account": func(f map[string]string) {
+			f["modules/workflow/sa.tf"] += customRole("job_policy_labeller", "jobPolicyLabeller", `"resourcemanager.projects.setIamPolicy"`) +
+				projectGrantToJob("job_policy_label", `google_project_iam_custom_role.job_policy_labeller.name`)
+		},
 		"a grant inside a comment-looking string": func(f map[string]string) {
 			// A block comment opened inside a string does not hide what
 			// follows the string.
@@ -818,6 +1211,41 @@ locals {
 			}
 		})
 	}
+	// Task 3.0's rule fires by itself, and not only beside the allowlist.
+	// Every mutation above is also a new grant to a non-people member, which
+	// runAccountGrants refuses whatever it grants — so a mutation being
+	// caught says nothing yet about the label rule. What says something is
+	// the finding itself: each of these names the project's label, so the
+	// scan refused it for the permission it carries and not only for being
+	// new. That is the rule a future task needs when it adds an entry to the
+	// allowlist without reading it.
+	for name, role := range map[string]string{
+		"roles/editor":                          `"roles/editor"`,
+		"roles/owner":                           `"roles/owner"`,
+		"roles/resourcemanager.projectIamAdmin": `"roles/resourcemanager.projectIamAdmin"`,
+		"roles/iam.securityAdmin":               `"roles/iam.securityAdmin"`,
+		"a custom role with projects.update":    `google_project_iam_custom_role.labeller.name`,
+		"a custom role with projects.setIamPol": `google_project_iam_custom_role.policy_labeller.name`,
+	} {
+		t.Run("the label rule refuses "+name, func(t *testing.T) {
+			files := moduleFiles(t)
+			files["modules/workflow/sa.tf"] += labelRoleFor(role) + projectGrantToJob("job_label_rule", role)
+			scan := scanModuleIAM(files)
+			if scan.labelGrants == 0 {
+				t.Errorf("the label rule counted no grant for %s: %v", role, scan.findings)
+			}
+			if !slices.ContainsFunc(scan.findings, func(f string) bool { return strings.Contains(f, ProjectLabelKey) }) {
+				t.Errorf("%s: no finding names the %s label, so it was refused for another reason:\n%s", role, ProjectLabelKey, strings.Join(scan.findings, "\n"))
+			}
+		})
+	}
+	// The other half: the label rule reads the modules' own grants and finds
+	// nothing there, which is only worth saying beside a count of what it
+	// read (TestRunAccountsHaveNoWritePathToTheMarker asserts that count).
+	if scan := scanModuleIAM(moduleFiles(t)); scan.labelGrants != 0 {
+		t.Errorf("the modules as they are: %d grant(s) reach the %s label", scan.labelGrants, ProjectLabelKey)
+	}
+
 	// The modules as they are are the other half of the fixture: the scan
 	// above must find nothing in them, or the mutations would be passing for
 	// a reason that has nothing to do with them.
@@ -907,6 +1335,31 @@ func TestTheScanRefusesTheComputeModulesGrantsAsAKnownLimit(t *testing.T) {
 			t.Errorf("the compute module's %s grant is not refused: the known limit says it is", name)
 		}
 	}
+}
+
+// labelRoleFor is the custom role a grant of role needs before the grant can
+// be said to reach the project label, or nothing when role names one of
+// Google's own — which carries the permission in its title, not in the file.
+func labelRoleFor(role string) string {
+	switch role {
+	case `google_project_iam_custom_role.labeller.name`:
+		return customRole("labeller", "jobLabeller", `"resourcemanager.projects.update"`)
+	case `google_project_iam_custom_role.policy_labeller.name`:
+		return customRole("policy_labeller", "jobPolicyLabeller", `"resourcemanager.projects.setIamPolicy"`)
+	}
+	return ""
+}
+
+// customRole is a project-level custom role holding one permission.
+func customRole(name, roleID, perm string) string {
+	return `
+resource "google_project_iam_custom_role" "` + name + `" {
+  project     = var.project
+  role_id     = "` + roleID + `"
+  title       = "` + roleID + `"
+  permissions = [` + perm + `]
+}
+`
 }
 
 // projectGrantToJob is a project-level grant of role to the job account,
@@ -999,7 +1452,15 @@ type iamScan struct {
 
 	// runAccountGrants is how many of runAccountGrants the scan matched.
 	runAccountGrants int
-	conditions       map[string]int
+
+	// labelChecked is every grant to a member that is not a set of people
+	// whose role this scan could resolve, and labelGrants the ones that give
+	// that member a way to set or remove the project's own label (Task 3.0):
+	// the first is what makes the second's zero an assertion rather than a
+	// vacuous pass.
+	labelChecked, labelGrants int
+
+	conditions map[string]int
 }
 
 func (s *iamScan) failf(format string, a ...any) {
@@ -1048,6 +1509,7 @@ func scanModuleIAM(files map[string]string) iamScan {
 			s.customRoles++
 		case iamGrantTypeRE.MatchString(r.typ):
 			s.checkRunAccountGrant(r, roles, locals[dir], seen)
+			s.checkLabelGrant(r, roles, locals[dir])
 			switch strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(r.typ, "_member"), "_binding"), "_policy") {
 			case "google_storage_bucket_iam":
 				s.checkBucketGrant(r, roles, locals[dir])
@@ -1099,6 +1561,13 @@ var runAccountGrants = setOf(
 	`google_project_iam_member | "roles/aiplatform.user" | project=var.project | google_service_account.job.member | for_each= | perms=`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.workflow.secret_env)) | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
+	// The same account's read-only grant on the budget token objects, in the
+	// workflow module (tokens/<slug>/, one repository) and in the project
+	// module (the whole of tokens/, a shared job; phase 3, modules/project/
+	// sa.tf). objectViewer carries no create, no delete and no update, so
+	// neither can write, replace or remove a token object — and what the
+	// shared job reads is sealed ciphertext (budget-token-channel.md §7.2).
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// A project job account's (phase 3, modules/project/sa.tf): the same
 	// shape, its secrets keyed by the profile's mounts; its bucket grant is
 	// the workflow job's key above, under the widened condition.
@@ -1192,6 +1661,112 @@ func (s *iamScan) checkRunAccountGrant(r tfResource, roles map[string][]string, 
 			seen[key] = true
 		}
 	}
+}
+
+// labelWritePerms are the permissions that set, change or remove the
+// project's own fugaro_managed label — the second half of the creation fact,
+// written by the owner-run command that creates the project and required by
+// the read (Task 3.0, design finding 14). Both are on the list because
+// either one is enough: resourcemanager.projects.update writes the label
+// directly, and resourcemanager.projects.setIamPolicy is how a holder grants
+// itself the first (Project IAM Admin does not carry update; Owner and Editor
+// carry both, which is why labelWriteRoles exists as well).
+//
+// A run's credential holding either is a finding however it is spelled, and
+// that is what makes this rule different from the storage rules above: the
+// label is not in the runs bucket, so no bucket condition and no prefix fence
+// can bound it. The permission is the whole of what it takes to put a project
+// into managed mode, or to take it out.
+var labelWritePerms = map[string]bool{
+	"resourcemanager.projects.update":       true,
+	"resourcemanager.projects.setIamPolicy": true,
+}
+
+// labelWriteRoles are the predefined roles this test knows carry one of the
+// permissions above, and **the list is not claimed to be exhaustive**. It is
+// a list rather than a permission check because a test cannot ask Google what
+// roles/xyzzy carries (Global Constraint 12: no live IAM read), and a role
+// whose contents this test cannot resolve is not silently passed: it lands in
+// runAccountGrants, which pins every grant to a non-people member whole, so a
+// predefined role reaching a run account is a finding there whether or not it
+// is named here. What naming one adds is the second, independent reason for
+// the roles whose contents are not in doubt — the rule still refuses them if
+// a future task widens runAccountGrants without reading what it admitted.
+//
+// The four are chosen by what they carry and nothing else: Owner and Editor
+// carry resourcemanager.projects.update (and setIamPolicy with it), and
+// Project IAM Admin and Security Admin carry
+// resourcemanager.projects.setIamPolicy, which is how a holder grants itself
+// the update. A role this test does not know is left to the allowlist rather
+// than guessed at: a wrong guess here would be a rule that refuses nothing.
+var labelWriteRoles = map[string]bool{
+	"roles/owner":                           true,
+	"roles/editor":                          true,
+	"roles/resourcemanager.projectIamAdmin": true,
+	"roles/iam.securityAdmin":               true,
+}
+
+// checkLabelGrant refuses a grant that would let a credential a run holds set
+// or remove the project's fugaro_managed label. It is the third rule over the
+// same grants checkRunAccountGrant and checkBucketGrant read, and it is the
+// plan's Open item 2 answered by meeting it rather than by falling back to
+// it: the fixture could be written, so the label is not refused for want of
+// one (docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md §6).
+//
+// Members that are a set of people are skipped, exactly as they are above:
+// the operators' own accounts hold resourcemanager.projects.update by
+// construction — the owner-run command that writes the label runs on one —
+// and that is the documented limit rather than a hole (SECURITY.md).
+func (s *iamScan) checkLabelGrant(r tfResource, roles map[string][]string, locals map[string]string) {
+	members, ok := grantMembers(r)
+	if !ok {
+		return // checkRunAccountGrant reports a shape this test cannot read
+	}
+	forEach := field(r.body, "for_each")
+	for _, role := range grantRoles(r, roles) {
+		why, resolved := labelGrantWhy(role, roles)
+		if !resolved {
+			continue // not a role this test can resolve: checkRunAccountGrant's finding
+		}
+		for _, m := range members {
+			if isPersonSet(m, forEach, locals) {
+				continue
+			}
+			s.labelChecked++
+			if why == "" {
+				continue
+			}
+			s.labelGrants++
+			s.failf("%s: %s grants %s on %s to %s, and %s: no credential a run holds may set or remove the project's %s label, which is what puts a project into managed mode (Task 3.0; the label is written by the run that creates the project or by the owner's own flag command, and by no credential a run holds)",
+				r.path, r.name, role, grantTarget(r.body), m, why, ProjectLabelKey)
+		}
+	}
+}
+
+// labelGrantWhy says why a grant of role would let its holder set or remove
+// the project's label, and whether the role could be resolved at all: a
+// predefined role by the two names above, and a custom role by the
+// permissions this scan read for it (customRolePermissions). A predefined
+// role that carries the permission but is not named above is not resolved
+// here — runAccountGrants is where it would be caught.
+func labelGrantWhy(role string, roles map[string][]string) (why string, resolved bool) {
+	ref := unquote(strings.TrimSpace(role))
+	if labelWriteRoles[ref] {
+		return ref + " carries resourcemanager.projects.update", true
+	}
+	if strings.HasPrefix(ref, "roles/") {
+		return "", true
+	}
+	perms, ok := roles[customRoleRef(role)]
+	if !ok {
+		return "", false
+	}
+	for _, p := range perms {
+		if labelWritePerms[p] {
+			return fmt.Sprintf("the custom role %s holds %s", ref, p), true
+		}
+	}
+	return "", true
 }
 
 // grantTarget is the resource a grant is on: the first of the attributes
@@ -2246,5 +2821,231 @@ func TestBudgetCheck(t *testing.T) {
 		if err := b.Check(); err == nil {
 			t.Errorf("%s: %+v.Check() = nil, want a refusal", name, b)
 		}
+	}
+}
+
+// --- WriteFlag: the owner's statement about an existing project (D58, the
+// plan's Task 6.1) ---
+//
+// The flag is the second writer of MarkerObject and the only one that does
+// not need a creation: the owner names a project Fugaro did not create, and
+// the object it writes is the version that carries a budget, because a
+// marked project whose marker records no amount is refused by the apply-time
+// budget read (Task 4.4) — a flag that wrote version 1 would lower a guard
+// and buy nothing.
+
+// TestWriteFlagRoundTrip is the write half of the command: the object is
+// MarkerObject, it is the version that carries the amount the owner chose,
+// and a project that already records an amount is refused rather than
+// rewritten — this command adds a budget, it does not edit one.
+func TestWriteFlagRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced {
+		t.Error("the flag reported a replacement with nothing there to replace")
+	}
+	b, ok := readMarker(t, s, testBucket)
+	if !ok || string(b) != markerBudgetJSON {
+		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerBudgetJSON)
+	}
+	// Once a budget is recorded: a project that already records one is not
+	// flagged again — the amount is the owner's decision at the time it was
+	// taken, and this command is not an editor of it — and the second call
+	// says so rather than overwriting.
+	replaced, err = WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 9, Currency: "EUR"})
+	if err == nil || !errors.Is(err, ErrAlreadyMarked) {
+		t.Fatalf("second flag: %v, want ErrAlreadyMarked", err)
+	}
+	if replaced {
+		t.Error("the refused second call reported a replacement")
+	}
+	if b, _ := readMarker(t, s, testBucket); string(b) != markerBudgetJSON {
+		t.Errorf("the second call changed the object to %q", b)
+	}
+}
+
+// The flag's other half, and the reason it is not "create only": a project
+// Fugaro created WITHOUT --managed records the version-1 creation fact and no
+// amount (init passes no budget to WriteMarker), and the apply-time budget
+// read refuses that marker — this release's own gate refusal names this
+// command as the way such a project gets an amount
+// (internal/managed/budget.go). So the flag REPLACES exactly that object,
+// and exactly that one: the version-1 fact of this project. Anything else
+// that is there is refused rather than replaced.
+func TestWriteFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
+	ctx := context.Background()
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	f.Put(testBucket, MarkerObject, []byte(markerJSON))
+	replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"})
+	if err != nil {
+		t.Fatalf("flagging a version-1 project: %v", err)
+	}
+	if !replaced {
+		t.Error("the flag replaced a version-1 fact and did not say so")
+	}
+	b, ok := readMarker(t, s, testBucket)
+	if !ok {
+		t.Fatalf("no %s in gs://%s after the flag", MarkerObject, testBucket)
+	}
+	if string(b) != markerBudgetJSON {
+		t.Errorf("after the flag gs://%s/%s = %s, want %s", testBucket, MarkerObject, b, markerBudgetJSON)
+	}
+}
+
+// What the flag does NOT replace, one row each: the objects a marker may be
+// and are not this project's version-1 fact. None of them is touched, and
+// each is refused with ErrAlreadyMarked — the object is there, and the write
+// that refused to overwrite it is the answer.
+func TestWriteFlagReplacesNothingButTheCreationFactOfItsOwnProject(t *testing.T) {
+	ctx := context.Background()
+	for name, existing := range map[string]string{
+		"a marker that already records an amount":         markerBudgetJSON,
+		"a version-1 marker about another project":        `{"version":1,"gcp_project":"another-proj"}`,
+		"a version this build does not know":              `{"version":3,"gcp_project":"proj-1234"}`,
+		"an object that is not JSON at all":               "not json",
+		"two JSON values":                                 `{"version":1,"gcp_project":"proj-1234"}{"version":1,"gcp_project":"proj-1234"}`,
+		"a key this build does not write":                 `{"version":1,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"}}`,
+		"a version-1 marker whose project is not spelled": `{"version":1,"gcp_project":"PROJ-1234"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			f.Put(testBucket, MarkerObject, []byte(existing))
+			replaced, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"})
+			if err == nil || !errors.Is(err, ErrAlreadyMarked) {
+				t.Fatalf("flagging over %s: %v, want ErrAlreadyMarked", existing, err)
+			}
+			if replaced {
+				t.Error("the refused call reported a replacement")
+			}
+			if b, _ := readMarker(t, s, testBucket); string(b) != existing {
+				t.Errorf("a refused flag changed the object: %q → %q", existing, b)
+			}
+		})
+	}
+}
+
+// The write and the read of the same object, together: what the flag writes
+// is read back through the path the apply uses — IsManaged for "this project
+// is managed" and ReadBudget for the amount that opens the gate (Task 4.4) —
+// for a project with no marker at all and for one whose version-1 fact the
+// flag replaced. The two tests above assert the bytes; this one asserts that
+// the bytes are a fact this build believes, which is what the command is for.
+func TestWriteFlagWritesSomethingTheManagedReadBelieves(t *testing.T) {
+	ctx := context.Background()
+	for name, existing := range map[string]string{
+		"no marker at all":            "",
+		"the version-1 creation fact": markerJSON,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f, c, _ := managedWorld(t)
+			if existing != "" {
+				f.Put(testBucket, MarkerObject, []byte(existing))
+			}
+			if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err != nil {
+				t.Fatal(err)
+			}
+			ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
+			if err != nil || !ok || reason != "" {
+				t.Fatalf("IsManaged after the flag = %v, %q, %v; want true, \"\", nil", ok, reason, err)
+			}
+			budget, ok, reason, err := ReadBudget(ctx, s, c, testFugaroProject, testProject)
+			if err != nil || !ok || reason != "" {
+				t.Fatalf("ReadBudget after the flag = %+v, %v, %q, %v; want 7 USD, true, \"\", nil", budget, ok, reason, err)
+			}
+			if budget.Amount != 7 || budget.Currency != "USD" {
+				t.Errorf("ReadBudget after the flag = %+v, want the amount the flag recorded (7 USD)", budget)
+			}
+		})
+	}
+}
+
+// TestWriteFlagRefusesABudgetThatIsNotOne: the amount is required (D64, no
+// silent default, and Task 4.4's read refuses a marker that records none),
+// and the pair is the marker's own rule — the same Check the write of a
+// managed creation applies and the read believes. A refused pair writes
+// nothing at all.
+func TestWriteFlagRefusesABudgetThatIsNotOne(t *testing.T) {
+	ctx := context.Background()
+	for name, b := range map[string]Budget{
+		"no amount":                 {Currency: "USD"},
+		"a zero amount":             {Currency: "USD"},
+		"a negative amount":         {Amount: -1, Currency: "USD"},
+		"no currency":               {Amount: 7},
+		"one above the ceiling":     {Amount: MaxBudgetAmount + 1, Currency: "USD"},
+		"a lower-case currency":     {Amount: 7, Currency: "usd"},
+		"a four-letter currency":    {Amount: 7, Currency: "USDX"},
+		"a currency with a newline": {Amount: 7, Currency: "US\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, b); err == nil {
+				t.Fatal("want a refusal: the amount and the currency are a pair, above 0 and in range")
+			}
+			// Before the read below makes a request of its own: a flag with
+			// a budget that is not one is refused before the cloud is
+			// touched at all — it does not even read the bucket it would
+			// have written into.
+			if reqs := f.Requests(); len(reqs) != 0 {
+				t.Errorf("a flag with a budget that is not one touched the API: %v", reqs)
+			}
+			if names := objects(t, s, testBucket); len(names) != 0 {
+				t.Errorf("a refused flag wrote %v", names)
+			}
+		})
+	}
+}
+
+// TestWriteFlagNeedsTheProjectsOwnRunsBucket is WriteMarker's proof, on the
+// flag's own writer: the object may only be written into a bucket that is
+// the project's own, by number and by the installation's label. A bucket
+// name is global, so a mark written into a stranger's bucket would read as a
+// fact about this project (internal/infra/project.go's rule, and the read's).
+func TestWriteFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		bucket string
+		number uint64
+		labels map[string]string
+	}{
+		"no bucket number":                  {testBucket, 0, testManaged},
+		"another project's":                 {testBucket, 999, testManaged},
+		"an unlabelled bucket":              {testBucket, testProjectNumber, nil},
+		"a bucket labelled by someone else": {testBucket, testProjectNumber, map[string]string{gcp.LabelManaged: "managed-by-someone"}},
+		"no bucket named":                   {"", testProjectNumber, testManaged},
+		"a bucket that is not there":        {"fugaro-runs-elsewhere", testProjectNumber, testManaged},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, tc.labels)
+			if _, err := WriteFlag(ctx, s, tc.bucket, testProject, tc.number, Budget{Amount: 7, Currency: "USD"}); err == nil {
+				t.Fatal("want a refusal")
+			}
+			if _, ok := readMarker(t, s, testBucket); ok {
+				t.Error("a refused call wrote the object")
+			}
+		})
+	}
+	// The labelled bucket with the right number is the one case that works,
+	// so the table above is not passing for the wrong reason.
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	if _, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err != nil {
+		t.Fatalf("the project's own runs bucket was refused: %v", err)
+	}
+	// A call with no storage client is a refusal rather than a panic.
+	if _, err := WriteFlag(ctx, nil, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err == nil {
+		t.Error("the flag was written with no storage client")
+	}
+	// A call naming no project has nothing to write a fact about.
+	if _, err := WriteFlag(ctx, s, testBucket, "", testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err == nil {
+		t.Error("the flag was written with no project named")
 	}
 }

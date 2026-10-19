@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -333,6 +337,187 @@ func TestDocsProjectLayerStatesTheFailClosedAdmission(t *testing.T) {
 	} {
 		if strings.Contains(doc, notWant) {
 			t.Errorf("docs/project-layer.md still says %q, which is the fail-open reading the code does not implement", notWant)
+		}
+	}
+}
+
+// TestDocsProjectLayerSaysWhichGateRefusesAnOAuthLaunch: docs/project-layer.md
+// is the operator-facing reference for what a repository may set, and its
+// `agent.oauth_token` row and shared-job section said, until this change, that
+// no profile may mount a Claude OAuth token "in this release", that every
+// project job therefore runs as no account, and that an installation on
+// `auth: oauth` "has no usable shared job until phase 5" — naming
+// `internal/cli`'s `checkProjectJobOAuth` as the gate. Named accounts shipped
+// (plan task 3): that function is gone, a profile listing an account serves
+// that account's token on that account's job, and the `default` account rides
+// the profile's no-account job, so the old sentences document the opposite of
+// what the binary does at the feature's central point (review finding on this
+// change). Nothing pinned them, so this does: the gate the doc must name, the
+// condition it must state, and the sentences that must not come back.
+//
+// Mutation (verified, run and restored): put the reviewed sentence back into
+// the `agent.oauth_token` row — "In this release no profile may mount a Claude
+// OAuth token (`fugaro init` refuses it), so every project job runs as no
+// account" — and this test fails on both the missing wants and the notWant.
+func TestDocsProjectLayerSaysWhichGateRefusesAnOAuthLaunch(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		// The paragraph that replaced the shared-job table's OAuth row.
+		"Claude OAuth tokens are no longer one of the missing pieces",
+		"one shared job per (profile, provider, account)",
+		"the `default` account rides the profile's no-account job",
+		"admitted when the profile lists the account the run's own credential selects",
+		// The gate that exists, on both sides.
+		"`projectJobAccountFor`",
+		"`checkProjectJobAccount`",
+		"`checkProjectJobAccountCovers`",
+		"`internal/runner`'s `checkProjectJobAccount`",
+		// What a repository's own file may choose among, and where the list is.
+		"`claude_accounts`",
+		"`accounts.<n>.allow_repos`",
+		// The one half of the old claim that is still true, kept apart from it:
+		// a Claude token in a profile's `secrets:` is still refused, and the
+		// profile states accounts in `claude_accounts` instead.
+		"A profile that mounts a Claude OAuth token in its `secrets:` is still refused",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q: the reference must name the shipped gate and the condition an OAuth launch is admitted on", want)
+		}
+	}
+	for _, notWant := range []string{
+		"checkProjectJobOAuth",
+		"no profile may mount a Claude OAuth token",
+		"has no usable shared job",
+		"every project job runs as no account",
+		"an `agent.auth: oauth` run has no token on a shared job",
+		// The same claim in its three other spellings in this file.
+		"it is always empty",
+		"which is empty in this release",
+		"no profile may mount one yet",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q: that was true before named accounts shipped, and the gate it names is gone", notWant)
+		}
+	}
+}
+
+// TestNoShippedTextNamesTheRetiredOAuthGate: `checkProjectJobOAuth` is gone
+// (plan task 3 replaced it with the account gate), and a shipped file that
+// still names it in prose sends a reader looking for a function that does not
+// exist — the review found exactly that in internal/projectpolicy/version.go's
+// version-3 note and in docs/project-layer.md's `agent.oauth_token` row. What
+// is scanned is what a reader of the binary is pointed at: every non-test Go
+// file under internal/ and cmd/, and the operator-facing docs directly under
+// docs/ (docs/design and docs/plans are excluded on purpose: they record what
+// the code was when they were written, cite line numbers, and are corrected by
+// the plan that supersedes them, not by this test).
+//
+// Mutation (verified, run and restored): write the retired name back into
+// internal/projectpolicy/version.go's comment — the file the review found it
+// in — and this fails naming that file.
+func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
+	const retired = "checkProjectJobOAuth"
+	roots := []string{"../../internal", "../../cmd", "../../docs"}
+	var scanned int
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				// The two historical doc trees, and nothing else, are skipped.
+				if d.Name() == "design" || d.Name() == "plans" {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			isGo := strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go")
+			isDoc := strings.HasSuffix(path, ".md") && filepath.Dir(path) == "../../docs"
+			if !isGo && !isDoc {
+				return nil
+			}
+			scanned++
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(b), retired) {
+				t.Errorf("%s names %s, which this release removed: name the gate that exists (internal/cli's projectJobAccountFor, checkProjectJobAccount and checkProjectJobAccountCovers, and internal/runner's checkProjectJobAccount)", path, retired)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if scanned < 100 {
+		t.Fatalf("scanned only %d files: the tree has moved, so this check saw nothing", scanned)
+	}
+}
+
+// TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
+// reference paragraph said, in the present tense, that "the policy is version 2
+// from fugaro 0.8.5" — and this change raises `projectpolicy.Version` to 3
+// (VersionSince[3] = "0.9.0", the release that states Claude accounts in the
+// node), so the sentence named a version no longer written and a release that
+// is not the one a reader of this page runs. The paragraph now leads with
+// version 3 and keeps version 2 as the gate that came before it, which is what
+// the table says.
+//
+// The version the page names is read from the constants rather than typed
+// twice, so the next bump fails here instead of shipping a page describing
+// another release's node.
+//
+// Mutation (verified, run and restored): put the old sentence back — "The
+// policy is version 2 from fugaro 0.8.5, the release that enforces a job
+// profile's admission list" — and this test fails naming it.
+func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version)
+	if !ok {
+		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
+	}
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that states Claude accounts in it**", projectpolicy.Version, rel)
+	if !strings.Contains(doc, want) {
+		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
+	}
+	// The stale sentence, and the table it disagrees with.
+	if stale := "The policy is version 2 from fugaro 0.8.5"; strings.Contains(doc, stale) {
+		t.Errorf("docs/project-layer.md still says %q: version 3 ships in 0.9.0, and a page naming 0.8.5's node as the current one sends an operator to the wrong release", stale)
+	}
+	for v, r := range projectpolicy.VersionSince {
+		if !strings.Contains(doc, r) {
+			t.Errorf("docs/project-layer.md names no release for policy version %d (%s): every version's row is what a refusal quotes, and the page is where an operator reads them", v, r)
+		}
+	}
+}
+
+// TestDocsReleaseChecklistNamesEveryPolicyVersion: docs/release.md's "Before
+// you tag" list is where a release is checked against the constants, and its
+// `VersionSince` bullet enumerated the table's rows — one and two only, while
+// this change adds row 3 ("0.9.0", the account axis). A checklist that stops at
+// the row before the one being shipped is a check that reads as complete and
+// is not, so the enumeration is read from the table itself here: every row must
+// be on the bullet, with the release the table holds.
+//
+// Mutation (verified, run and restored): delete "; 3 is the account axis — a
+// profile's `claude_accounts` and the `accounts` block it is gated by —
+// `"0.9.0"`" from the bullet — this fails naming version 3 and its release.
+func TestDocsReleaseChecklistNamesEveryPolicyVersion(t *testing.T) {
+	doc := readDoc(t, "docs/release.md")
+	var bullet string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(line, "`VersionSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no VersionSince bullet: the checklist is where a release verifies the table")
+	}
+	for v, rel := range projectpolicy.VersionSince {
+		if !strings.Contains(bullet, fmt.Sprintf("%d is ", v)) || !strings.Contains(bullet, `"`+rel+`"`) {
+			t.Errorf("docs/release.md's VersionSince bullet does not carry policy version %d's row (%s): every row the table holds belongs there, or the checklist reads as complete without it", v, rel)
 		}
 	}
 }

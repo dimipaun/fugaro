@@ -1,13 +1,13 @@
 ---
 /**
  * website/src/pages/caps-and-costs.astro — the caps-and-costs guide (website plan, Task
- * W1.5).
+ * W1.5; reworked by the owner's brief of 2026-10-19).
  *
- * The page is a heading and the guide itself: what a cap is and how to set it, and what
- * runs actually cost are `src/components/CapsCosts.astro`, which renders the CLI's own
- * reference and the owner-run aggregation's own output. Nothing is written here, and
- * nothing on this page is a figure the aggregation did not produce (F26, F31, F33, D96,
- * D97).
+ * The page is a heading, the one message a reader meets above the fold, and the guide
+ * itself: what a job costs, the commands that set the caps, and what the owner's own
+ * aggregation publishes are `src/components/CapsCosts.astro`, which renders the owner's
+ * measurement and the CLI's own reference. Nothing is written here, and nothing on this page
+ * is a figure neither of those sources produced (F26, F31, F33, D96, D97).
  */
 import Base from '../layouts/Base.astro'
 import CapsCosts from '../components/CapsCosts.astro'
@@ -16,9 +16,24 @@ import CapsCosts from '../components/CapsCosts.astro'
 <Base title="Caps and costs">
   <h1>Caps and costs</h1>
 
-  <p>
-    What a run may spend, the commands that set the caps, and what runs cost.
+  <p class="lede">
+    A cap is a ceiling on what a run may spend: <code>observe</code> counts and logs,
+    <code>enforce</code> halts. What Fugaro's own jobs cost, and the commands that set the
+    caps.
   </p>
 
   <CapsCosts />
 </Base>
+
+<style>
+  /* The page's own lead, in the site's tokens (W1.2, D104): no colour is named here. The rule
+     is the one `community.astro` and `faq.astro` carry for their own leads — Astro scopes a
+     component's styles to its own markup, so a `class="lede"` this page writes needs the rule
+     in this page's block or it renders as body text. */
+  .lede {
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+  }
+</style>
