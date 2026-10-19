@@ -9,9 +9,11 @@
 //     file with `internal/watch/json.go`). An unknown key, a dropped key or a
 //     retyped value fails.
 //   - **the invented numbers agree with each other**, the way the CLI's do.
-//   - **nothing real is in it.** A scan for the real names and token shapes, and
-//     for the hash of every value the scrub removed (the values themselves are
-//     not committed: they are what the scrub is for).
+//   - **nothing real is in it.** Every key and string value of the decoded fixture
+//     is checked, after NFKC and case folding, against forbidden substrings, and
+//     against a positive allow-list of shapes. The scrub's own removed values are
+//     checked in memory, on a scrub of a SYNTHETIC input, never from a file: a
+//     file of hashes of removed values is a dictionary oracle and is not kept.
 //   - **the scrub refuses what it does not know**, and is deterministic.
 
 import { readFileSync } from 'node:fs'
@@ -20,10 +22,10 @@ import { describe, expect, it } from 'vitest'
 
 import { loadFixture } from '../../src/source/fixture'
 import type { JSONDoc } from '../../src/source/source'
-import { hashOf, leafValues, scrubDocument } from '../../tools/scrub-fixture/scrub'
+import { normalFixture } from '../../tools/scrub-fixture/index'
+import { QUEUED_NOTE_SHAPE, TIME_SHIFT_MS, VERIFY_SHAPE, VOCAB, scrubDocument } from '../../tools/scrub-fixture/scrub'
 
 const FIXTURE = 'test/fixtures/normal.ndjson'
-const HASHES = 'tools/scrub-fixture/normal.scrubbed.json'
 
 type Shape = { readonly [key: string]: string | Shape }
 
@@ -77,7 +79,6 @@ describe('the normal fixture: the real shape', () => {
     const loaded = loadFixture(readFileSync(FIXTURE, 'utf8'), FIXTURE)
     expect(loaded.header.case).toBe('normal')
     expect(loaded.header.cli).toBe('0.8.6')
-    expect(loaded.header.synthetic).toBe(false)
     expect(loaded.header.note).toContain('every value is invented')
     expect(loaded.records).toHaveLength(1)
   })
@@ -118,52 +119,129 @@ describe('the normal fixture: the real shape', () => {
   })
 })
 
-const REAL_NAME = /dimipaun|edgeappinc|belong|edgeserver|edgeweb|dimi@|youkno|fugaro-dev|fugaro-runs|AIza|gh[p]_|sk-[A-Za-z0-9]|xox[bp]-|\b\d{12}\b/i
-const RUN_ID = /\b\d{8}-\d{6}-[0-9a-f]{4}\b/g
+/** FORBIDDEN is what no fixture string or key may contain, after normalisation. */
+const FORBIDDEN = [
+  'dimi', 'dimipaun', 'youkno', 'edgeapp', 'belong', 'edgeserver', 'edgeweb', 'fugaro-dev', 'fugaro-prod',
+  'sk-', 'aiza', 'gh' + 'p_', 'xox',
+]
+const TWELVE_DIGITS = /\d{12}/
 
-/** scan returns what in `text` looks real: a real name or token shape, a value
- * the scrub removed (by hash), or a run ID the scrub removed. */
-function scan(text: string, scrubbed: ReadonlySet<string>): string[] {
+/** normalise is NFKC, lowercase, zero-width characters stripped. */
+function normalise(text: string): string {
+  return text.normalize('NFKC').replace(/[\u200b-\u200f\u2060\u2062-\u2064\ufeff\u00ad]/g, '').toLowerCase()
+}
+
+const SHAPES: readonly RegExp[] = [
+  /^(<project>|\[redacted-url\])$/,
+  /^r-[0-9a-f]{8}\/r-[0-9a-f]{8}$/,
+  /^slug-[0-9a-f]{8}$/,
+  /^\d{8}-\d{6}-(ee|ff)\d{2}$/,
+  /^# Task: example (finished )?task \d{1,3}$/,
+  /^(claude-sonnet-4-5-20250929|-)$/,
+  /^(enforce|observe|warn)$/,
+  /^\d{4}-\d{2}-\d{2}$/,
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
+  new RegExp(`^(${VOCAB.connectionState.join('|')}|${VOCAB.stage.join('|')}|${VOCAB.auth.join('|')}|${VOCAB.health.join('|')}|${VOCAB.deadline.join('|')}|${VOCAB.status.join('|')}|${VOCAB.outcome.join('|')})$`),
+  /^\d{1,2}$/,
+  VERIFY_SHAPE,
+  QUEUED_NOTE_SHAPE,
+  /^(redacted@example\.invalid|example reason|example halt reason|example-recipe|example-workflow)$/,
+  /^https:\/\/example\.invalid\/example-owner\/example-repo\/pull\/\d+$/,
+  /^(github-com-example-owner-example-repo|example-owner\/example-repo)(-\d+)?$/,
+  // the header: the case, the version strings, the digest, the one-sentence note
+  /^(normal|fugaro-console-redact\/\d+|\d+\.\d+\.\d+|[0-9a-f]{64})$/,
+  /^normal: the shape of one real fugaro watch --json document; every value is invented \(see the scrub-fixture tool\)$/,
+]
+const KEYS = new Set([
+  'at', 'document', 'project', 'mode', 'day', 'now', 'connection', 'state', 'age_seconds', 'total', 'counted_usd', 'spent_usd',
+  'notional_usd', 'daily_cap_usd', 'percent', 'burn', 'known', 'usd_per_min', 'fast', 'kill', 'by', 'reason', 'runs',
+  'run_hours', 'repos', 'slug', 'repo', 'run', 'title', 'stage', 'round', 'verify', 'models', 'recipe', 'auth', 'notional',
+  'health', 'deadline', 'halted', 'queued', 'stuck', 'workflow', 'requested_by', 'finished', 'ready', 'status', 'outcome',
+  'failed', 'pr_url', 'pr_number', 'queued_note',
+  'fugaro_fixture', 'version', 'redactor', 'case', 'synthetic', 'cli', 'recorded', 'records', 'sha256', 'note',
+])
+
+/** stringsOf walks decoded JSON: every key and every string value, normalised. */
+function stringsOf(value: unknown, into: Array<{ text: string; key: boolean }> = []): Array<{ text: string; key: boolean }> {
+  if (typeof value === 'string') into.push({ text: value, key: false })
+  else if (Array.isArray(value)) for (const v of value) stringsOf(v, into)
+  else if (typeof value === 'object' && value !== null) {
+    for (const [k, v] of Object.entries(value)) {
+      into.push({ text: k, key: true })
+      stringsOf(v, into)
+    }
+  }
+  return into
+}
+
+/** scan decodes every line and returns what is not clean: a forbidden substring
+ * (in a key or a string value, after NFKC, case and zero-width folding), a string
+ * outside the positive allow-list of shapes, an unknown key, and, when the scrub
+ * run's own removed values are given, any of them. */
+function scan(text: string, removed: readonly string[] = []): string[] {
   const found: string[] = []
-  const name = text.match(REAL_NAME)
-  if (name !== null) found.push(`real name or token shape (${name[0].length} chars)`)
   for (const line of text.split('\n')) {
     if (line === '') continue
     let parsed: unknown
     try {
       parsed = JSON.parse(line)
     } catch {
+      found.push('a line that is not JSON')
       continue
     }
-    for (const leaf of leafValues(parsed)) if (scrubbed.has(hashOf(leaf))) found.push('a scrubbed value')
+    for (const { text: raw, key } of stringsOf(parsed)) {
+      const n = normalise(raw)
+      for (const word of FORBIDDEN) if (n.includes(word)) found.push(`forbidden substring ${word}`)
+      if (TWELVE_DIGITS.test(n)) found.push('a 12-digit run')
+      if (key) {
+        if (!KEYS.has(raw)) found.push('an unknown key')
+      } else {
+        if (!SHAPES.some((re) => re.test(raw))) found.push('a string outside the allow-list')
+        for (const r of removed) if (r.length >= 4 && n.includes(normalise(r))) found.push('a removed value')
+        if (removed.includes(raw)) found.push('a removed value')
+      }
+    }
+    for (const r of removed) if (/^-?\d+(\.\d+)?$/.test(r) && JSON.stringify(parsed).includes(`:${r},`)) found.push('a removed number')
   }
-  for (const id of text.match(RUN_ID) ?? []) if (scrubbed.has(hashOf(id))) found.push('a scrubbed run ID')
-  return found
+  return [...new Set(found)]
 }
 
-function scrubbedSet(): ReadonlySet<string> {
-  return new Set(JSON.parse(readFileSync(HASHES, 'utf8')) as string[])
-}
+const line = (value: unknown): string => `${JSON.stringify({ at: '2026-01-01T00:00:00Z', document: { run: value } })}\n`
 
 describe('the normal fixture: nothing real is in it', () => {
-  it('has a list of scrubbed values to check against: the run IDs, titles, repo, slug and amounts', () => {
-    expect(scrubbedSet().size).toBeGreaterThanOrEqual(25)
+  it('has no forbidden substring, token shape, unknown key or string outside the allow-list', () => {
+    expect(scan(readFileSync(FIXTURE, 'utf8'))).toEqual([])
   })
 
-  it('carries no real name, token shape, or scrubbed value', () => {
-    expect(scan(readFileSync(FIXTURE, 'utf8'), scrubbedSet())).toEqual([])
+  it('says it is synthetic, as its note says every value is invented', () => {
+    const loaded = loadFixture(readFileSync(FIXTURE, 'utf8'), FIXTURE)
+    expect(loaded.header.synthetic).toBe(true)
   })
 
-  it('finds a planted real name, token, scrubbed value and scrubbed run ID', () => {
-    const set = new Set([hashOf('# Task: a planted title'), hashOf('20260101-000000-abcd'), hashOf('7.123456')])
-    const line = (value: unknown): string => `${JSON.stringify({ at: 'x', document: { v: value } })}\n`
-    for (const plant of ['dimipaun/fugaro', 'EdgeServer', 'me@youkno.ai', 'AIzaSyA', 'gh' + 'p_abc', 'sk-abcdef', '123456789012', 'belong']) {
-      expect(scan(line(plant), set)).not.toEqual([])
+  it('finds a planted name, token, confusable, JSON-escaped word, 12-digit run, unknown key and stray string', () => {
+    for (const plant of [
+      'dimipaun/fugaro', 'EdgeServer', 'me@youkno.ai', 'AIzaSyA', 'gh' + 'p_abc', 'sk-abcdef', 'xo' + 'xb-1', '123456789012', 'belong',
+      'x-fugaro-prod', 'fugaro-dev',
+    ]) {
+      expect(scan(line(plant))).not.toEqual([])
     }
-    expect(scan(line('# Task: a planted title'), set)).toEqual(['a scrubbed value'])
-    expect(scan(line(7.123456), set)).toEqual(['a scrubbed value'])
-    expect(scan(line('x 20260101-000000-abcd y'), set)).toEqual(['a scrubbed run ID'])
-    expect(scan(line('an invented title'), set)).toEqual([])
+    // the folding itself, not just the allow-list, must see these
+    expect(scan(line('ｂｅｌｏｎｇ'))).toContain('forbidden substring belong') // fullwidth confusable
+    expect(scan(line('be\u200blong'))).toContain('forbidden substring belong') // zero-width split
+    expect(scan(line('ＥＤＧＥＳＥＲＶＥＲ'))).toContain('forbidden substring edgeserver')
+    // a JSON-escaped forbidden word: the raw text has no `belong`, the decoded value does
+    const escaped = '{"at":"2026-01-01T00:00:00Z","document":{"run":"\\u0062elong"}}\n'
+    expect(escaped).not.toContain('belong')
+    expect(scan(escaped)).toContain('forbidden substring belong')
+    expect(scan('{"at":"2026-01-01T00:00:00Z","document":{"b\\u0065long":"-"}}\n')).toContain('forbidden substring belong')
+    expect(scan('{"at":"2026-01-01T00:00:00Z","document":{"surprise":"-"}}\n')).toContain('an unknown key')
+    expect(scan(line('some real looking title'))).toContain('a string outside the allow-list')
+    expect(scan(line('# Task: example task 1'))).toEqual([])
+  })
+
+  it('finds a removed value with a changed prefix, and a removed number', () => {
+    expect(scan(line('PREFIX real-title-x'), ['real-title-x'])).toContain('a removed value')
+    expect(scan(`{"at":"x","document":{"spent_usd":9.37,"x":1}}\n`, ['9.37'])).toContain('a removed number')
   })
 })
 
@@ -172,17 +250,17 @@ describe('the scrub', () => {
     project: 'real-project', mode: 'enforce', day: '2026-10-19', now: '2026-10-19T02:00:00Z',
     connection: { state: 'live', age_seconds: 0.1 },
     total: {
-      counted_usd: 9, spent_usd: 9, notional_usd: 0, daily_cap_usd: 77, percent: 11, burn: { known: false, usd_per_min: 0, fast: false },
+      counted_usd: 9.37, spent_usd: 9.37, notional_usd: 0, daily_cap_usd: 77.5, percent: 11, burn: { known: false, usd_per_min: 0, fast: false },
       kill: { by: 'Real Person', at: '2026-10-19T01:00:00Z', reason: 'because real' }, runs: 1, run_hours: 1,
     },
     repos: [{
-      slug: 'real-slug', repo: 'real-org/real-repo', counted_usd: 9, spent_usd: 9, notional_usd: 0, daily_cap_usd: 77,
+      slug: 'real-slug', repo: 'real-org/real-repo', counted_usd: 9.37, spent_usd: 9.37, notional_usd: 0, daily_cap_usd: 77.5,
       percent: 11, burn: { known: false, usd_per_min: 0, fast: false }, kill: null,
     }],
     runs: [{
       run: '20261019-000000-abcd', slug: 'real-slug', repo: 'real-org/real-repo', title: '# Task: real secret plan',
       stage: 'implement', round: '-', verify: '-', models: 'vendor/real-model', recipe: 'real-recipe', auth: 'api-key',
-      notional: false, spent_usd: 9, age_seconds: 3600, health: 'ok', deadline: 'ok', workflow: 'real-wf',
+      notional: false, spent_usd: 9.37, age_seconds: 3600, health: 'ok', deadline: 'ok', workflow: 'real-wf',
       requested_by: 'real@person.example',
     }],
     finished: [{
@@ -191,37 +269,108 @@ describe('the scrub', () => {
       pr_number: 9, age_seconds: 90000,
     }],
     ready: [],
+    queued_note: 'queued runs unavailable: the runs bucket did not answer within 3s',
   })
 
   it('replaces every identity and amount, keeps the key order, and recomputes the totals', () => {
     const out = scrubDocument(raw())
     const text = JSON.stringify(out)
-    for (const real of ['real-', 'Real Person', 'because real', 'person.example', 'github.com', 'abcd', 'beef', '77']) {
+    for (const real of ['real-', 'real secret plan', 'another real plan', 'Real Person', 'because real', 'person.example', 'github.com', 'abcd', 'beef', '77', '9.37']) {
       expect(text).not.toContain(real)
     }
     expect(Object.keys(out)).toEqual(Object.keys(raw()))
     const run = (out['runs'] as Array<Record<string, unknown>>)[0]!
     expect(Object.keys(run)).toEqual(Object.keys((raw()['runs'] as unknown[])[0] as object))
-    expect(run['run']).toBe('20261019-010000-ee01') // document.now minus the run's own age
+    // the clock is shifted by a fixed offset: now, day, the run ID and kill.at all follow it
+    const shifted = new Date(Date.parse('2026-10-19T02:00:00Z') + TIME_SHIFT_MS).toISOString()
+    expect(out['now']).toBe(`${shifted.slice(0, 19)}Z`)
+    expect(out['day']).toBe(shifted.slice(0, 10))
+    expect(out['now']).not.toBe('2026-10-19T02:00:00Z')
+    const start = new Date(Date.parse(out['now'] as string) - 3600 * 1000).toISOString()
+    expect(run['run']).toBe(`${start.slice(0, 10).replaceAll('-', '')}-${start.slice(11, 19).replaceAll(':', '')}-ee01`)
+    expect(run['run']).not.toContain('010000')
+    expect((out['connection'] as Record<string, unknown>)['age_seconds']).toBe(0.1)
     const total = out['total'] as Record<string, unknown>
     expect(total['spent_usd']).toBe(run['spent_usd'])
     expect(total['percent']).toBeCloseTo(((total['counted_usd'] as number) / 50) * 100, 6)
-    expect(total['kill']).toEqual({ by: 'redacted@example.invalid', at: '2026-10-19T01:00:00Z', reason: 'example reason' })
+    expect(total['kill']).toEqual({
+      by: 'redacted@example.invalid', at: `${new Date(Date.parse('2026-10-19T01:00:00Z') + TIME_SHIFT_MS).toISOString().slice(0, 19)}Z`,
+      reason: 'example reason',
+    })
   })
 
   it('is deterministic', () => {
     expect(JSON.stringify(scrubDocument(raw()))).toBe(JSON.stringify(scrubDocument(raw())))
   })
 
+  const at = (doc: Record<string, unknown>, ...path: Array<string | number>): Record<string, unknown> => {
+    let cur: unknown = doc
+    for (const p of path) cur = (cur as Record<string | number, unknown>)[p]
+    return cur as Record<string, unknown>
+  }
+
   it('refuses a key it does not know, at any level, rather than passing it through', () => {
     const top = raw()
     top['surprise'] = 'real'
     expect(() => scrubDocument(top)).toThrow(/unknown key at \$\.surprise/)
-    const nested = raw()
-    ;((nested['runs'] as Array<Record<string, unknown>>)[0] as Record<string, unknown>)['surprise'] = 'real'
-    expect(() => scrubDocument(nested)).toThrow(/unknown key at \$\.runs\[0\]\.surprise/)
-    const total = raw()
-    ;(total['total'] as Record<string, unknown>)['surprise'] = 1
-    expect(() => scrubDocument(total)).toThrow(/unknown key at \$\.total\.surprise/)
+    const cases: Array<[string, (d: Record<string, unknown>) => Record<string, unknown>]> = [
+      ['$.runs[0].surprise', (d) => at(d, 'runs', 0)],
+      ['$.total.surprise', (d) => at(d, 'total')],
+      ['$.repos[0].surprise', (d) => at(d, 'repos', 0)],
+      ['$.finished[0].surprise', (d) => at(d, 'finished', 0)],
+      ['$.total.kill.surprise', (d) => at(d, 'total', 'kill')],
+      ['$.connection.surprise', (d) => at(d, 'connection')],
+      ['$.total.burn.surprise', (d) => at(d, 'total', 'burn')],
+      ['$.repos[0].burn.surprise', (d) => at(d, 'repos', 0, 'burn')],
+    ]
+    for (const [path, holder] of cases) {
+      const doc = raw()
+      holder(doc)['surprise'] = 'real'
+      expect(() => scrubDocument(doc), path).toThrow(new RegExp(`unknown key at ${path.replaceAll(/[$[\].]/g, '\\$&')}`))
+    }
+  })
+
+  it('refuses a value outside the CLI vocabulary or of the wrong type, in every field that is copied', () => {
+    const bad: Array<[string, (d: Record<string, unknown>) => void]> = [
+      ['stage', (d) => { at(d, 'runs', 0)['stage'] = 'a real stage' }],
+      ['round', (d) => { at(d, 'runs', 0)['round'] = 'real round' }],
+      ['verify', (d) => { at(d, 'runs', 0)['verify'] = 'fugaro verify real-thing for acme #5: passed' }],
+      ['auth', (d) => { at(d, 'runs', 0)['auth'] = 'real-auth' }],
+      ['health', (d) => { at(d, 'runs', 0)['health'] = 'real' }],
+      ['deadline', (d) => { at(d, 'runs', 0)['deadline'] = 'real' }],
+      ['notional', (d) => { at(d, 'runs', 0)['notional'] = 'real' }],
+      ['age_seconds', (d) => { at(d, 'runs', 0)['age_seconds'] = 'real' }],
+      ['mode', (d) => { d['mode'] = 'real' }],
+      ['status', (d) => { at(d, 'finished', 0)['status'] = 'real' }],
+      ['outcome', (d) => { at(d, 'finished', 0)['outcome'] = 'real' }],
+      ['failed', (d) => { at(d, 'finished', 0)['failed'] = 'real' }],
+      ['connection.state', (d) => { at(d, 'connection')['state'] = 'real' }],
+      ['connection.reason', (d) => { at(d, 'connection')['reason'] = 'the real reason' }],
+      ['burn.known', (d) => { at(d, 'total', 'burn')['known'] = 'real' }],
+      ['queued_note', (d) => { d['queued_note'] = 'queued runs unavailable: real-org said no' }],
+    ]
+    for (const [name, mutate] of bad) {
+      const doc = raw()
+      mutate(doc)
+      expect(() => scrubDocument(doc), name).toThrow(/scrub:/)
+    }
+  })
+
+  it('hands the removed values to an injected callback, in memory, and writes no hash or file', () => {
+    let removed: readonly string[] = []
+    const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r })
+    for (const real of ['real-project', 'real-org/real-repo', '# Task: real secret plan', '9.37', '77.5', 'real@person.example', 'Real Person']) {
+      expect(removed).toContain(real)
+    }
+    expect(scan(text, removed)).toEqual([])
+  })
+
+  it('the scan on the scrub output catches a scrub that keeps a real title or a real amount', () => {
+    let removed: readonly string[] = []
+    const { text } = normalFixture(raw(), '0.8.6', (r) => { removed = r })
+    const title = text.replace('# Task: example task 1', '# Task: real secret plan')
+    expect(scan(title, removed).length).toBeGreaterThan(0)
+    const amount = text.replace('"spent_usd":0.15', '"spent_usd":9.37')
+    expect(scan(amount, removed)).toContain('a removed number')
   })
 })

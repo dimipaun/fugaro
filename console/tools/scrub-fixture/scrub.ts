@@ -25,11 +25,18 @@
 //                               document's invariants hold (see `recompute`)
 //   models                      claude-sonnet-4-5-20250929 (the real one was a `vendor/model` string,
 //                               which the redactor reads as a repository)
-// Kept as the CLI wrote them: the enums and flags (mode, stage, round, health,
-// deadline, auth, verify, status, outcome),
-// day, now, ages, connection and queued_note (fixed CLI sentences).
-
-import { createHash } from 'node:crypto'
+// Kept as the CLI wrote them, ONLY when the value is in the fixed CLI vocabulary
+// enumerated below (anything else is a refusal, never a pass-through): the enums
+// and flags (mode, stage, round, health, deadline, auth, verify, status, outcome,
+// connection.state), the numbers (ages, burn) and queued_note (a fixed sentence).
+// The clock is SHIFTED by a constant offset (TIME_SHIFT_MS) so no real instant
+// survives: now, day, kill.at and the run IDs all come from the shifted clock, and
+// every age_seconds stays as it was, so they stay consistent.
+//
+// Nothing about a removed value is ever persisted, not even a hash: a bare hash of
+// a low-entropy value (a small integer, an amount, a repo-style name) is recovered
+// by dictionary. `removedValues` hands the removed values to the caller in memory
+// only; the command line prints a COUNT.
 
 import type { JSONDoc } from '../../src/source/source'
 
@@ -40,6 +47,25 @@ export const SCRUB_PROJECT = 'example-project'
 export const INVENTED_SPEND: readonly number[] = Object.freeze([0.15, 0.4, 0.11, 0.03, 0.1, 0.07, 0.03, 0.04, 0.01])
 /** INVENTED_CAP_USD is the invented daily cap, in place of the real one. */
 export const INVENTED_CAP_USD = 50
+/** TIME_SHIFT_MS moves the whole recorded clock; the real instant is recorded nowhere. */
+export const TIME_SHIFT_MS = -((41 * 24 + 5) * 3600 + 17 * 60 + 33) * 1000
+
+/** The fixed CLI vocabulary per field. A value outside it fails the scrub closed. */
+export const VOCAB = {
+  mode: ['enforce', 'observe', 'warn'],
+  connectionState: ['live', 'stale', 'offline', 'refused', 'polling'],
+  stage: ['queued', 'plan', 'provision', 'implement', 'fix', 'check', 'review', 'render', 'writeback'],
+  auth: ['api-key', 'oauth', '-'],
+  health: ['ok', 'silent', 'lost'],
+  deadline: ['ok', 'near', 'over'],
+  status: ['succeeded', 'failed', 'halted', 'cancelled', 'infra_error'],
+  outcome: ['ready', 'draft', 'none', 'reviewed', 'artifacts'],
+} as const
+/** VERIFY_SHAPE is the CLI's verify wording ("-", or one `fugaro verify` line, truncated to 120 chars). */
+export const VERIFY_SHAPE = /^(-|fugaro verify [a-z][a-z-]* #\d{1,4}: (passed|failed)( \(exit \d{1,3}, \d{1,6} tests?, \d{1,6} failures?(; warning: no JUnit reports found under \*\*\/junit\*\.xml, \*\*\/buil)?\)?)?)$/
+const ROUND_SHAPE = /^(-|\d{1,2})$/
+/** QUEUED_NOTE_SHAPE is the one queued_note sentence the CLI writes for a slow bucket. */
+export const QUEUED_NOTE_SHAPE = /^queued runs unavailable: the runs bucket did not answer within \d{1,3}s$/
 const KNOWN_TOP = [
   'project', 'mode', 'day', 'now', 'connection', 'total', 'repos', 'runs', 'finished', 'ready', 'queued_note',
 ]
@@ -56,6 +82,40 @@ function refuse(path: string, what: string): never {
 
 function round6(n: number): number {
   return Math.round(n * 1e6) / 1e6
+}
+
+type Rule = (v: unknown, path: string) => unknown
+
+const num: Rule = (v, path) => (typeof v === 'number' && Number.isFinite(v) ? v : refuse(path, 'not a number'))
+const bool: Rule = (v, path) => (typeof v === 'boolean' ? v : refuse(path, 'not a boolean'))
+const oneOf = (allowed: readonly string[]): Rule => (v, path) =>
+  typeof v === 'string' && allowed.includes(v) ? v : refuse(path, 'a value outside the CLI vocabulary')
+const shaped = (re: RegExp): Rule => (v, path) =>
+  typeof v === 'string' && re.test(v) ? v : refuse(path, 'a value outside the CLI vocabulary')
+const invent = (value: unknown): Rule => (v, path) => (typeof v === 'string' ? value : refuse(path, 'not a string'))
+
+/** applyRules copies a key only through its own rule; a key with no rule is refused. */
+function applyRules(obj: Obj, path: string, rules: Readonly<Record<string, Rule>>): Obj {
+  const out: Obj = {}
+  for (const key of Object.keys(obj)) {
+    const rule = rules[key]
+    if (rule === undefined) refuse(`${path}.${key}`, 'an unknown key')
+    out[key] = rule(obj[key], `${path}.${key}`)
+  }
+  return out
+}
+
+const BURN_RULES: Readonly<Record<string, Rule>> = { known: bool, usd_per_min: num, fast: bool }
+const CONNECTION_RULES: Readonly<Record<string, Rule>> = {
+  state: oneOf(VOCAB.connectionState),
+  age_seconds: num,
+  // `reason` is free text in the CLI: no sentence is known to be safe, so it is refused.
+}
+
+function shiftIso(iso: string, path: string): string {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return refuse(path, 'not a timestamp')
+  return new Date(t + TIME_SHIFT_MS).toISOString().slice(0, 19) + 'Z'
 }
 
 function runStamp(now: string, ageSeconds: number): string {
@@ -83,7 +143,7 @@ export function scrubDocument(raw: unknown): JSONDoc {
   const inventedSlug = (i: number): string =>
     i === 1 ? 'github-com-example-owner-example-repo' : `github-com-example-owner-example-repo-${i}`
 
-  const now = typeof raw['now'] === 'string' ? raw['now'] : refuse('$.now', 'no now')
+  const now = shiftIso(typeof raw['now'] === 'string' ? raw['now'] : refuse('$.now', 'no now'), '$.now')
   const out: Obj = {}
   for (const key of Object.keys(raw)) {
     const value = raw[key]
@@ -92,9 +152,17 @@ export function scrubDocument(raw: unknown): JSONDoc {
       case 'project':
         out[key] = SCRUB_PROJECT
         break
-      case 'mode': case 'day': case 'now': case 'connection': case 'queued_note':
-        out[key] = value
+      case 'mode': out[key] = oneOf(VOCAB.mode)(value, path); break
+      case 'now': out[key] = now; break
+      case 'day':
+        if (typeof value !== 'string') refuse(path, 'not a string')
+        out[key] = now.slice(0, 10)
         break
+      case 'connection':
+        if (!isObj(value)) refuse(path, 'not an object')
+        out[key] = applyRules(value, path, CONNECTION_RULES)
+        break
+      case 'queued_note': out[key] = shaped(QUEUED_NOTE_SHAPE)(value, path); break
       case 'total':
         out[key] = scrubTotalOrRepo(value, path, undefined)
         break
@@ -133,7 +201,7 @@ function scrubKill(kill: unknown, path: string): unknown {
   const out: Obj = {}
   for (const key of Object.keys(kill)) {
     if (key === 'by') out[key] = 'redacted@example.invalid'
-    else if (key === 'at') out[key] = kill[key]
+    else if (key === 'at') out[key] = shiftIso(String(kill[key]), `${path}.at`)
     else out[key] = 'example reason'
   }
   return out
@@ -141,25 +209,15 @@ function scrubKill(kill: unknown, path: string): unknown {
 
 function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefined): Obj {
   if (!isObj(value)) return refuse(path, 'not an object')
-  copyKeys(value, path, [
-    'slug', 'repo', 'counted_usd', 'spent_usd', 'notional_usd', 'daily_cap_usd', 'percent', 'burn', 'kill', 'runs',
-    'run_hours',
-  ])
-  const out: Obj = {}
-  for (const key of Object.keys(value)) {
-    const v = value[key]
-    switch (key) {
-      case 'slug': out[key] = `github-com-example-owner-example-repo${repoN === 1 ? '' : `-${repoN}`}`; break
-      case 'repo': out[key] = `example-owner/example-repo${repoN === 1 ? '' : `-${repoN}`}`; break
-      case 'counted_usd': case 'spent_usd': case 'notional_usd': case 'percent': case 'runs': case 'run_hours':
-        out[key] = typeof v === 'number' ? v : refuse(`${path}.${key}`, 'not a number')
-        break // recomputed below
-      case 'daily_cap_usd': out[key] = v === null ? null : INVENTED_CAP_USD; break
-      case 'burn': out[key] = v; break
-      case 'kill': out[key] = scrubKill(v, `${path}.kill`); break
-    }
-  }
-  return out
+  const inventedRepo = `example-owner/example-repo${repoN === 1 ? '' : `-${repoN}`}`
+  return applyRules(value, path, {
+    slug: invent(`github-com-example-owner-example-repo${repoN === 1 ? '' : `-${repoN}`}`),
+    repo: invent(inventedRepo),
+    counted_usd: num, spent_usd: num, notional_usd: num, percent: num, runs: num, run_hours: num, // recomputed below
+    daily_cap_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_CAP_USD : refuse(p, 'not a number')),
+    burn: (v, p) => (isObj(v) ? applyRules(v, p, BURN_RULES) : refuse(p, 'not an object')),
+    kill: (v, p) => scrubKill(v, p),
+  })
 }
 
 function scrubRun(
@@ -167,30 +225,30 @@ function scrubRun(
   inventedRepo: (n: number) => string, inventedSlug: (n: number) => string,
 ): Obj {
   if (!isObj(run)) return refuse(path, 'a run that is not an object')
-  copyKeys(run, path, [
-    'run', 'slug', 'repo', 'title', 'stage', 'round', 'verify', 'models', 'recipe', 'auth', 'notional', 'spent_usd',
-    'age_seconds', 'health', 'deadline', 'halted', 'queued', 'stuck', 'workflow', 'requested_by',
-  ])
   const n = repoIndex(run['repo'], `${path}.repo`)
   const age = run['age_seconds']
-  const out: Obj = {}
-  for (const key of Object.keys(run)) {
-    const v = run[key]
-    switch (key) {
-      case 'run': out[key] = `${runStamp(now, typeof age === 'number' ? age : 0)}-ee${String(i + 1).padStart(2, '0')}`; break
-      case 'slug': out[key] = inventedSlug(n); break
-      case 'repo': out[key] = inventedRepo(n); break
-      case 'title': out[key] = `# Task: example task ${i + 1}`; break
-      case 'spent_usd': out[key] = v === null ? null : INVENTED_SPEND[i % INVENTED_SPEND.length]; break
-      case 'models': out[key] = v === '-' ? '-' : 'claude-sonnet-4-5-20250929'; break
-      case 'recipe': out[key] = 'example-recipe'; break
-      case 'workflow': out[key] = 'example-workflow'; break
-      case 'requested_by': out[key] = 'redacted@example.invalid'; break
-      case 'halted': out[key] = 'example halt reason'; break
-      default: out[key] = v
-    }
-  }
-  return out
+  return applyRules(run, path, {
+    run: invent(`${runStamp(now, typeof age === 'number' ? age : 0)}-ee${String(i + 1).padStart(2, '0')}`),
+    slug: invent(inventedSlug(n)),
+    repo: invent(inventedRepo(n)),
+    title: invent(`# Task: example task ${i + 1}`),
+    stage: oneOf(VOCAB.stage),
+    round: shaped(ROUND_SHAPE),
+    verify: shaped(VERIFY_SHAPE),
+    models: (v, p) => (v === '-' ? '-' : typeof v === 'string' ? 'claude-sonnet-4-5-20250929' : refuse(p, 'not a string')),
+    recipe: invent('example-recipe'),
+    auth: oneOf(VOCAB.auth),
+    notional: bool,
+    spent_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_SPEND[i % INVENTED_SPEND.length] : refuse(p, 'not a number')),
+    age_seconds: num,
+    health: oneOf(VOCAB.health),
+    deadline: oneOf(VOCAB.deadline),
+    halted: invent('example halt reason'),
+    queued: bool,
+    stuck: bool,
+    workflow: invent('example-workflow'),
+    requested_by: invent('redacted@example.invalid'),
+  })
 }
 
 function scrubFinished(
@@ -198,26 +256,20 @@ function scrubFinished(
   inventedRepo: (n: number) => string, inventedSlug: (n: number) => string,
 ): Obj {
   if (!isObj(run)) return refuse(path, 'a finished run that is not an object')
-  copyKeys(run, path, [
-    'run', 'slug', 'repo', 'title', 'status', 'outcome', 'failed', 'pr_url', 'pr_number', 'age_seconds',
-  ])
   const n = repoIndex(run['repo'], `${path}.repo`)
   const age = run['age_seconds']
-  const out: Obj = {}
-  for (const key of Object.keys(run)) {
-    const v = run[key]
-    switch (key) {
-      case 'run': out[key] = `${runStamp(now, typeof age === 'number' ? age : 0)}-ff${String(i + 1).padStart(2, '0')}`; break
-      case 'slug': out[key] = inventedSlug(n); break
-      case 'repo': out[key] = inventedRepo(n); break
-      case 'title': out[key] = `# Task: example finished task ${i + 1}`; break
-      case 'pr_url': out[key] = `https://example.invalid/example-owner/example-repo/pull/${100 + i}`; break
-      case 'pr_number': out[key] = 100 + i; break
-      case 'outcome': out[key] = v === 'ready' ? 'ready' : v; break
-      default: out[key] = v
-    }
-  }
-  return out
+  return applyRules(run, path, {
+    run: invent(`${runStamp(now, typeof age === 'number' ? age : 0)}-ff${String(i + 1).padStart(2, '0')}`),
+    slug: invent(inventedSlug(n)),
+    repo: invent(inventedRepo(n)),
+    title: invent(`# Task: example finished task ${i + 1}`),
+    status: oneOf(VOCAB.status),
+    outcome: oneOf(VOCAB.outcome),
+    failed: bool,
+    pr_url: invent(`https://example.invalid/example-owner/example-repo/pull/${100 + i}`),
+    pr_number: () => 100 + i,
+    age_seconds: num,
+  })
 }
 
 /** recompute makes the invented amounts agree with each other the way the CLI's
@@ -263,11 +315,6 @@ function recompute(doc: Obj): JSONDoc {
   return doc as JSONDoc
 }
 
-/** hashOf is how a scrubbed value is remembered without being kept. */
-export function hashOf(value: string): string {
-  return createHash('sha256').update(`fugaro-console-scrub:${value}`, 'utf8').digest('hex')
-}
-
 function leaves(value: unknown, into: Set<string>): void {
   if (typeof value === 'string') into.add(value)
   else if (typeof value === 'number') into.add(String(value))
@@ -275,20 +322,14 @@ function leaves(value: unknown, into: Set<string>): void {
   else if (isObj(value)) for (const v of Object.values(value)) leaves(v, into)
 }
 
-/** scrubbedHashes is the hash of every string and number leaf of the RAW document
- * that does not survive, as a leaf, into the scrubbed one: what the scan test must
- * never find. Hashes, not values, because the values are what must not be committed. */
-export function scrubbedHashes(raw: unknown, scrubbed: unknown): string[] {
+/** removedValues is every string and number leaf of the RAW document that does not
+ * survive, as a leaf, into the scrubbed one: what the scan must never find. It is
+ * returned in memory to the caller (a test, through an injected callback) and is
+ * never written anywhere, and nothing derived from it (no hash) is either. */
+export function removedValues(raw: unknown, scrubbed: unknown): string[] {
   const before = new Set<string>()
   const after = new Set<string>()
   leaves(raw, before)
   leaves(scrubbed, after)
-  return [...before].filter((v) => !after.has(v) && v !== '').map(hashOf).sort()
-}
-
-/** leafValues is what the scan test hashes: every leaf of a fixture document. */
-export function leafValues(value: unknown): string[] {
-  const set = new Set<string>()
-  leaves(value, set)
-  return [...set]
+  return [...before].filter((v) => !after.has(v) && v !== '')
 }
