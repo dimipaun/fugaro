@@ -346,7 +346,7 @@ function ownedInRoot(options: BundleOptions, documents: readonly string[]): Read
  *
  * A directory that is not there yet holds nothing foreign, and is made.
  */
-export function refuseForeignFilesIn(directory: string, owned: ReadonlySet<string>): void {
+function refuseForeignFilesIn(directory: string, owned: ReadonlySet<string>): void {
   let existing: string[] = []
   try {
     existing = readdirSync(directory)
@@ -538,7 +538,15 @@ const QUOTED_STRING_RE = /(["'])([^"'\n]*)\1/g
  *
  * The cost is that a *string* that merely spells a URL is refused as well, the
  * same way a comment that merely spells `@import` is: the scan cannot tell a
- * load from a label, and a label that spells a URL is a label to reword.
+ * load from a label, and a label that spells a URL is a label to reword. Prose
+ * is the shape that reaches this: a comment line holding two apostrophes with a
+ * `://` between them ("the design's order, see https://…, and the site's") reads
+ * as one string to this scan, and is refused with the text quoted. That is the
+ * direction it errs in, and it cannot be relaxed by skipping comments: a scan
+ * that struck out comment syntax would hide an escape behind an opening comment
+ * marker written *inside* a string, which is the bypass this rule exists to
+ * close. So the file is reworded instead. Neither stylesheet in the tree holds
+ * `://` at all.
  */
 export function quotedRemoteIn(css: string): string | null {
   for (const match of css.matchAll(QUOTED_STRING_RE)) {
@@ -550,7 +558,9 @@ export function quotedRemoteIn(css: string): string | null {
 
 /**
  * themeStylesheetSources reads the theme directory and answers its layers in
- * `THEME_STYLESHEETS` order, refusing the three things the header names.
+ * `THEME_STYLESHEETS` order, refusing the things the header names: an unlisted
+ * `.css`, a listed file that is missing or is not a regular file, a backslash, an
+ * `@import`, a quoted string that names a URL, and a remote `url()`.
  *
  * The directory read is what makes the list the directory's *whole contents* in
  * both directions: a listed file that is absent fails, and a `.css` that is
