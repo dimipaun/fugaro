@@ -35,20 +35,30 @@ const CLOCK = 1_700_000_000_000;
 /**
  * A pipeline over three fakes, with every event recorded. The clock and the id
  * source are counters, not a real clock and not a real random source: that is
- * the point of injecting them (see `pipeline.js`'s header).
+ * the point of injecting them (see `pipeline.js`'s header) -- and they count
+ * their calls, so a test can assert that a dropped event drew no id and read no
+ * clock rather than only that it emitted nothing.
  */
 function harness({ refuse = null, stt: sttOptions } = {}) {
   const audioIn = new FakeAudioIn(refuse ? { refuse } : {});
   const stt = new FakeStt(sttOptions);
   const tts = new FakeTts();
   let ids = 0;
+  let drawn = 0;
+  let clocks = 0;
   const pipeline = createVoicePipeline({
     audioIn,
     stt,
     tts,
     sender: SENDER,
-    newId: () => `m-${++ids}`,
-    now: () => CLOCK,
+    newId: () => {
+      drawn += 1;
+      return `m-${++ids}`;
+    },
+    now: () => {
+      clocks += 1;
+      return CLOCK;
+    },
   });
   const events = [];
   for (const kind of PIPELINE_EVENTS) pipeline.on(kind, (event) => events.push(event));
@@ -58,6 +68,8 @@ function harness({ refuse = null, stt: sttOptions } = {}) {
     tts,
     pipeline,
     events,
+    /** How many ids the pipeline has drawn and how many times it has read the clock. */
+    drawn: () => ({ ids: drawn, clocks }),
     /** Every event of one kind, in order. */
     of: (kind) => events.filter((event) => event.kind === kind),
     /** One whole turn, from speech to the engine's final, with no partials. */
@@ -168,6 +180,12 @@ test('D118/§5: a final with no turn open is dropped, before an id is even drawn
   // No turn: the engine's flush arriving after a stop.
   h.stt.lateFinal('cancel that');
   assert.deepEqual(h.events, [], 'nothing heard, nothing said');
+  // **Before an id is even drawn** is the test's own title, and it is the half
+  // that says what the rule is for: an id is drawn and a clock is read only
+  // for a message this pipeline is going to make, so a dropped event leaves the
+  // injected sources untouched. Asserting only that no event was emitted would
+  // leave a pipeline that composes the message first and throws it away green.
+  assert.deepEqual(h.drawn(), { ids: 0, clocks: 0 }, 'a dropped final draws no id and reads no clock');
 
   // And the same after a real turn was abandoned mid-flight by `stop()`.
   h.audioIn.speechStart();
@@ -181,6 +199,7 @@ test('D118/§5: a final with no turn open is dropped, before an id is even drawn
     'and not even a final transcript -- the partial that was shown before the stop stays shown',
   );
   assert.equal(h.pipeline.turn(), false);
+  assert.deepEqual(h.drawn(), { ids: 0, clocks: 0 }, 'and the abandoned turn\'s flush drew nothing either');
 });
 
 test('a superseded turn\'s late final is not this turn\'s message', async () => {
@@ -269,8 +288,17 @@ test('an engine that refuses the end of speech is reported, and its final still 
 test('stop() abandons the turn and interrupts an utterance in flight', async () => {
   const h = harness();
   await h.pipeline.start();
-  const said = h.pipeline.say('still talking');
+  // The turn opens **before** the utterance starts, and that order is the
+  // whole test. A `speech-start` is itself a barge-in (`onSpeechStart` cancels
+  // whatever is speaking), so an utterance already in flight when the turn
+  // opened would have been interrupted by the turn opening -- and `stop()`'s
+  // own cancel would never run. That is how this test used to be written, and
+  // it stayed green with stop()'s cancel deleted. Mutation: remove
+  // `if (tts.speaking()) tts.cancel();` from `stop()` and this fails.
   h.audioIn.speechStart();
+  const said = h.pipeline.say('still talking');
+  assert.equal(h.pipeline.speaking(), true, 'the utterance is in flight while the turn is open');
+  assert.deepEqual(h.of('utterance'), [], 'and nothing has interrupted it yet: the only cancel left is stop()\'s');
   await h.pipeline.stop();
   assert.deepEqual({ ...(await said) }, { ok: false, code: TTS_CODES.INTERRUPTED, field: 'text' });
   assert.equal(h.audioIn.running(), false);

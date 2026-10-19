@@ -367,20 +367,21 @@ from their absence:
   `acked` is an ordinary message) and
   nothing else -- no auth, no durability, no listeners, no quota. The deployed
   rules are checks **81/82**, owner-run, and none of them is run here.
-* **The template does not accept `mac` yet, and that is P6.4's task.** This
-  client signs every message because the plan's P3.6 entry requires it (P6.3 and
-  P6.4 "require `mac` on every inbox message, so P3.6 must sign"), and
-  `shared/mailbox-schema` is the merged authority for the record's shape. The
-  template in `internal/budget/rules/rules.json.tmpl` today validates exactly
-  `id`, `sender`, `text`, `at` (plus `acked` on the outbox) with `$other:
-  false`, so **a message this client writes would be denied by the rules as
-  they now stand** until **P6.4** -- proposed, NOT APPROVED, and the task that
-  adds "the same fields in the mailbox subtree" -- lands and is deployed. That
-  is a sequencing fact, not a defect in this module, and it is named here
-  because a reader who tries this against a real project deserves to know it
-  before the rules refuse the write. `store.js`'s double deliberately does not
-  model a field allow-list: the shape is the schema's rule, and P6.3's tests
-  hold it.
+* **No deployment, and the template's allow-list is newer than any deployed
+  one.** This client signs every message because the plan's P3.6 entry requires
+  it (P6.3 and P6.4 "require `mac` on every inbox message, so P3.6 must
+  sign"), and `shared/mailbox-schema` is the merged authority for the record's
+  shape. The template in `internal/budget/rules/rules.json.tmpl` now agrees
+  with it: P6.4 merged on 2026-10-18 and its inbox and outbox message nodes
+  require `id`, `sender`, `text`, `at` **and `mac`**, and carry `kind`,
+  `agent`, `options`, `reply_to` and the action record with `$other: false`.
+  What is *not* true is that anything is running it -- the template is a
+  template, and the deployed rules are checks **81/82**, owner-run and not run
+  here -- so a reader pointing this client at a project whose rules predate
+  P6.4 would still see the write refused. That is a sequencing fact about a
+  deployment, not a defect in this module. `store.js`'s double deliberately
+  does not model a field allow-list either: the shape is the schema's rule,
+  and P6.3's tests hold it.
 * **The Realtime Database adapter does not exist yet.** `store.js` is the port
   and its double; the SDK adapter is `mobile/index.js`'s wiring (P3.2's and
   P6.10's territory), and there is no test for it because there is no file.

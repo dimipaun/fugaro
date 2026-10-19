@@ -55,11 +55,28 @@ test('nothing is repaired: the schema\'s refusal is passed through as itself', (
 });
 
 test('a field this draft does not have is refused with the protocol\'s own code', () => {
-  // P6.3's `kind` is proposed and NOT APPROVED, and a draft that accepted it
-  // would be a draft that silently dropped it -- or, worse, one that carried a
-  // field the rules deny (the message node closes `$other`).
+  // A draft that accepted `kind` would be a draft that silently dropped it --
+  // or, worse, one that carried a field the rules deny (the message node
+  // closes `$other`). The refusal is this module's scope rather than the
+  // protocol's rule, and the test below is what says so.
   assert.deepEqual({ ...messageDraft(draft({ kind: 'command' })) }, { ok: false, code: 'unknown-field', field: 'kind' });
   assert.deepEqual({ ...messageDraft(draft({ mac: 'deadbeef' })) }, { ok: false, code: 'unknown-field', field: 'mac' });
+});
+
+test('`kind` is refused by this draft\'s scope, not by the protocol', () => {
+  // This test exists because a comment here once said `kind` was "proposed,
+  // NOT APPROVED", which was false twice over: P6.3 was approved on
+  // 2026-10-18, and its fields are in the schema this module imports. What is
+  // true is narrower, and it is checkable rather than asserted in prose: the
+  // protocol carries `kind` as an **optional** field and accepts every kind,
+  // and a draft is the schema's *required* fields less the `mac` the client
+  // signs -- so `messageDraft` refuses `kind` because a draft is not composed
+  // of it, not because the protocol lacks it.
+  assert.equal(FIELDS.includes('kind'), true, 'the protocol carries `kind` (P6.3)');
+  assert.equal(REQUIRED_FIELDS.includes('kind'), false, 'and it is optional: most messages carry none');
+  assert.equal(validateMessage({ ...draft(), mac: '0'.repeat(64) }).ok, true, 'so a message with no `kind` is valid');
+  assert.equal(validateMessage({ ...draft(), kind: 'prompt', mac: '0'.repeat(64) }).ok, true, 'and so is another kind the pipeline never makes');
+  assert.equal(validateMessage({ ...draft(), kind: 'command', mac: '0'.repeat(64) }).ok, false, 'while a kind the protocol does not have is not');
 });
 
 test('a draft that is not an object is refused, and never coerced', () => {

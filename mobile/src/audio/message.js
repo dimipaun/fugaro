@@ -16,8 +16,21 @@
 // not redact, does not generate the id, does not read a clock, and does not
 // add a field. What it adds is one thing the schema cannot: a **refusal of a
 // field it does not know**, with the schema's own `unknown-field` code, so
-// that a caller reaching for P6.3's `kind` (proposed, NOT APPROVED) learns it
-// from the protocol rather than from a silently dropped key.
+// that a caller reaching for a field a draft does not carry learns it from the
+// protocol rather than from a silently dropped key.
+//
+// **`kind` is refused because of this module's scope, not the protocol's.**
+// The protocol carries `kind` -- P6.3 (approved 2026-10-18, merged) put it in
+// the schema's field set, alongside `agent`, `options`, `reply_to` and the
+// action record -- and it is an **optional** field: a message without one is
+// the default `message`, and the schema accepts a `prompt` or an `answer` too.
+// A draft composes the schema's *required* fields and nothing else
+// (`DRAFT_FIELDS`), and the one thing P3.4 makes is a plain utterance: the
+// voice pipeline turns a final transcript into a `message`, which is what an
+// absent `kind` means. Choosing another kind is not this module's business --
+// a prompt is P6.5's queue and a typed command is P6.9's text screen -- so a
+// caller that hands `kind` to `messageDraft` is handing it a field a draft
+// does not have, and hears so.
 //
 // **What a draft is not.** It is not signed and not written. P6.3's `mac` and
 // P3.6's write are both later tasks, and P1.3's redactor is applied where the
