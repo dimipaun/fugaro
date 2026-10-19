@@ -55,14 +55,18 @@
 // accepts a queued prompt -- **except** that an answer to a **destructive**
 // prompt is a confirmation and takes the command window, because a
 // confirmation must be fresh. That is D169's shape: a destructive answer is an
-// action record, not free text.
+// action record, not free text -- and §3.5 makes it the **only** shape one is
+// accepted in, so `answer` refuses a plain `answer` to a destructive prompt
+// rather than passing P6.7 a command it must then refuse. The MAC over that
+// record is P6.7's to verify; the shape is this module's.
 //
 // This module does not re-implement the windows: it **passes the kind** to
 // P1.1's kind-parameterised API (`KIND.COMMAND` or `KIND.PROMPT`, the same
 // vocabulary P1.1's `deliver` reads) and `acceptanceKind` is the mapping. What
 // is checked here is the other half, which P1.1 cannot check: whether the
-// PROMPT is still alive, and whether a destructive answer's own `at` is inside
-// the command window.
+// PROMPT is still alive, and whether a confirmation's own time -- §3.5 checks
+// the command window from the confirmation time, not from the envelope's `at`
+// -- is inside the command window.
 //
 // ## Reminder escalation bounds attention; the cap bounds storage (§3.4)
 //

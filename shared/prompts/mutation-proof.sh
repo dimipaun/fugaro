@@ -11,13 +11,17 @@
 #
 #   shared/prompts/mutation-proof.sh
 #
-# The FIRST guard is the one the task names. P6.5's red step is "an unanswered
-# prompt expires at D118's mailbox TTL, as a pure function of the prompt's `at`,
-# the TTL and the consumer's clock": the mutation below is the stub that never
-# expires anything -- a consumer that holds every question for ever -- and the
-# test that names the expiry fails on it. It is first so that the task's own red
-# step is re-runnable after this commit instead of living only in a
-# pull-request transcript.
+# The FIRST guard is the headline case of P6.5's own Verification clause: "an
+# unanswered prompt expires at D118's mailbox TTL ... decided as a pure function
+# of the prompt's `at`, the TTL and the consumer's clock". The mutation below is
+# the stub that never expires anything -- a consumer that holds every question
+# for ever -- and the test that names the expiry fails on it.
+#
+# It is NOT a Red step the plan names: P6.5's card has no Red step line (only
+# P6.1, P6.2 and P6.13 have one), and an earlier version of this header called
+# it one. It is first because it is the clause the task is verified by, and
+# keeping it re-runnable inside the harness costs nothing -- an ordering that
+# rested on the misattribution would be the only thing wrong with it.
 #
 # It restores index.js with `git checkout` after each mutation, so it refuses to
 # run against an uncommitted module: `git checkout` on an untracked file fails
@@ -191,11 +195,12 @@ fi
 # The control's own kill is its evidence; the tallies below are the guards'.
 killed=0
 
-# 3. THE TASK'S RED STEP, first. Expiry never happens -- a consumer that holds
-#    every question for ever -- and "an unanswered prompt expires at D118's
-#    mailbox TTL, as a pure function of the prompt's at, the TTL and the
-#    consumer's clock" must fail on it.
-run "RED STEP: expiry is a pure function of at, the TTL and now" \
+# 3. The headline of P6.5's Verification clause, first: expiry never happens --
+#    a consumer that holds every question for ever -- and "an unanswered prompt
+#    expires at D118's mailbox TTL ... as a pure function of the prompt's at,
+#    the TTL and the consumer's clock" must fail on it. Not a "Red step" the
+#    plan names (P6.5's card has none); see the header.
+run "the expiry is a pure function of at, the TTL and now" \
   "  return now - at > promptTtlMs;" \
   "  return false;"
 

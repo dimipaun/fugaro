@@ -112,8 +112,10 @@ accepts a queued prompt — **except** that an answer to a **destructive** promp
 and takes the command window, because a confirmation must be fresh. Two consequences worth naming:
 
 - The prompt's own life is judged from the **prompt's** `at`; a confirmation is judged from the
-  **answer's** `at`. A prompt three days old confirmed a minute ago is accepted; the same prompt
-  confirmed seven hours after the tap is not.
+  **confirmation's** time (§3.5 checks the command window from the confirmation time). A prompt
+  three days old confirmed a minute ago is accepted; the same prompt confirmed seven hours after
+  the tap is not — and a record whose `at` is old but whose confirmation is fresh is accepted,
+  which is the same fact from the other side.
 - This module does not re-implement either window: `acceptanceKind(destructive)` returns P1.1's own
   kind (`prompt` for a queued prompt, `command` for a confirmation) and the same kind is what
   P6.7's consumer passes to P1.1's `deliver`, so the two ends cannot pick different windows. The
@@ -127,7 +129,15 @@ the user's late answer is not what is handed over. An answer to an expired quest
 a changed world, and D168's default is the non-destructive option. The other way to reach that
 code is the answer's own age: one written before the prompt was, and so older than the TTL, while
 the prompt is alive — refused `expired` too, with **no** expiry, because nothing has died. The two
-are told apart by `field` (`prompt.at` against `answer.at`) and by the expiry's presence.
+are told apart by `field` (`prompt.at` against `answer.at`, or
+`answer.action.confirmation.at` for a confirmation) and by the expiry's presence.
+
+**The confirmation's shape is refused here too.** D169's action record is the *only* shape a
+destructive prompt's answer may take (§3.5: never as free text and never as a plain `answer`), so
+`answer` takes kind `action` for a destructive entry and refuses a plain `answer` to one as
+`not-a-confirmation`; an action record answering a prompt whose effect is not destructive is
+`not-an-answer`, the same refusal a `message` gets. The MAC over the record is P6.7's to verify,
+and the record's own fields are P6.3's to validate — this module adds the shape and the window.
 
 ## Reminder escalation, and the pending cap (§3.4)
 
@@ -237,13 +247,14 @@ nor any stage, and the value the text screen would render) is an answer a caller
 | `invalid-entry` | an entry is malformed, its prompt fails the schema, its prompt is not a prompt, or its `at` is outside the bound the writer is held to (`1`..`TIME_MAX` — the schema accepts `at: 0`, `at: -0` and any safe integer, and this module carries none of them) |
 | `duplicate-entry` / `unsorted-prompts` | a handed-back queue holds one id twice, or is out of canonical order |
 | `invalid-queues` | the cross-account view was handed two queues for one installation, or not a list |
-| `not-a-prompt` / `not-an-answer` | the delivered message is not the kind the operation takes |
+| `not-a-prompt` / `not-an-answer` | the delivered message is not the kind the operation takes — for an answer, a `message`, or an action record answering a prompt whose effect is not destructive |
+| `not-a-confirmation` | (answer) a plain `answer` to a **destructive** prompt: §3.5 accepts one only as an action record carrying a confirmation |
 | `invalid-destructive` / `invalid-safe` | the local classification is not a boolean / a bounded single line |
 | `safe-not-an-option` | the safe answer is not one of the prompt's own options, so the user could never have chosen it |
 | `zero-timestamp` / `negative-zero` | the schema accepts `at: 0` and `at: -0`; both are the shape of an unset or negated counter, not a time |
-| `future-timestamp` | the message is from beyond the future tolerance |
+| `future-timestamp` | the message is from beyond the future tolerance, or past the module's own ceiling (`TIME_MAX`) — the write path and the read path hold the same bound, so a prompt the writer takes is one the reader accepts |
 | `expired` | (answer) the answer is past the window its kind is judged by — a dead prompt (`field: prompt.at`, with the expiry it is owed) or an answer older than the TTL while the prompt lives (`field: answer.at`, with none) |
-| `replay` | (answer) a confirmation older than the command window |
+| `replay` | (answer) a confirmation whose **confirmation time** is older than the command window (`field: answer.action.confirmation.at`) |
 | `id-conflict` | a held id under a different sender or `at` |
 | `queue-full` | the cap — carries `QUEUE_FULL_REPLY` for the orchestrator |
 | `unknown-prompt` | the answer names a prompt this queue does not hold |
@@ -278,13 +289,16 @@ halves of one honest limit), the cap at its boundary, and the interrupt table ex
 tests pin the two lines a *code* can draw for the same field — a schema refusal names a field the
 schema defines and never one the writer invented, and a field that is not carried at all is
 `missing-field` rather than `unknown-field` — and one pins `isExpired`'s arguments, argument by
-argument, against the coercion that would answer `false`. Three
-Two more tests pin the clock's second bound and the read-side one: a `now` that leaps more than
-a year past the watermark is refused `now-jumped` without being written — the exact bound is still
-an honest advance, and the next honest reading after a refused leap is accepted — and a stored
-prompt whose `at` is outside the module's own bound is refused on the way in rather than trusted
-because the schema accepted it. Three
-tests pin the rules that were *removed* rather than kept: `reminderStage` is monotone in `at` (which
+argument, against the coercion that would answer `false`. Two more tests pin the clock's second
+bound and the read-side one: a `now` that leaps more than a year past the watermark is refused
+`now-jumped` without being written — the exact bound is still an honest advance, and the next honest
+reading after a refused leap is accepted — and a stored prompt whose `at` is outside the module's
+own bound is refused on the way in rather than trusted because the schema accepted it. Two more pin
+the two ends of one rule: the **write path** will not store a prompt the read path would refuse (so
+the ceiling holds on both sides of a queue's life), and a **plain `answer` to a destructive prompt**
+is `not-a-confirmation` while an **action record** answers it, is judged from the confirmation's own
+time and is checked as an action record rather than merely accepted by kind. Three tests pin the
+rules that were *removed* rather than kept: `reminderStage` is monotone in `at` (which
 is why the listing needs no stage rule of its own), an expiry list comes back oldest-first (which is
 why `expire` needs no sort), and `digest.severity` is read through its own descriptor (which is why
 `readKill` has no plain property access). One test is not about values at all: it scans `index.js`
@@ -293,12 +307,14 @@ that resolves outside `shared/`, because the module's header claims all of that 
 checks is a comment. And one test walks every exported function with a hostile `Proxy` — alive and
 revoked — asserting no entry point raises and that a refusal never repeats what was thrown.
 
-**The red step** is P6.5's own: "an unanswered prompt expires at D118's mailbox TTL, as a pure
-function of the prompt's `at`, the TTL and the consumer's clock", written against a stub consumer
-that never expires anything and failing on it. It is `mutation-proof.sh`'s first guard, so it stays
-re-runnable rather than living only in a pull-request transcript.
+**The verification line** this module was built against is the one P6.5's own card names:
+"an unanswered prompt expires at D118's mailbox TTL … decided as a pure function of the prompt's
+`at`, the TTL and the consumer's clock". P6.5's card has **no Red step** line — only P6.1, P6.2 and
+P6.13 have one — so that sentence is the task's *Verification* clause, and this test is not a red
+step the plan named. It is still written first and kept as `mutation-proof.sh`'s first guard: it is
+the clause the task is verified by, and re-running it costs nothing.
 
-`mutation-proof.sh` plants 75 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 81 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It
