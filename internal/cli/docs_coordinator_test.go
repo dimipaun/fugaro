@@ -49,7 +49,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 25, one per way these documents can
+// Mutation (verified, run and restored) -- 26, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -76,6 +76,10 @@ package cli
 //	  drop its "It allocates no decision number" sentence -> fails.
 //	TestDocsCoordinatorCitationsExist
 //	  rename a cited path to `internal/budget/modelX.go` -> fails, naming it;
+//	  put a line past the end of a cited file (`internal/budget/model.go:99999`,
+//	  and the same on a second citation of a file cited twice above) -> fails,
+//	  naming the line and the file's length, where before this check the path
+//	  resolved and the line was never looked at;
 //	  cite a nonexistent path in the `path:line Symbol` shape the old regexp
 //	  missed (`internal/task/taskNOPE.go:328 NewRunID`) -> fails, naming it.
 //	  Run against the old regexp with the census check removed, the same
