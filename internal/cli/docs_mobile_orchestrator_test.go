@@ -63,6 +63,14 @@ func TestDocsMobileOrchestratorDesignIsWritten(t *testing.T) {
 		"E4 — a compromised resident orchestrator",
 		"holds the job's own credentials",
 		"launch",
+		// Who can actually read a secret's value: not the `orch` account alone.
+		// The basic Owner/Editor roles carry secretmanager.versions.access and
+		// bypass a secret's own policy, which the tree states itself in F3.
+		"secretmanager.versions.access",
+		"Project Owners/Editors bypass any secret-level policy",
+		"reader set",
+		// The repository kill node's real path.
+		"config/kill/repos/<slug>",
 		// Approvals with the phone as the only human.
 		"spoken-confirmation",
 		"Confirm targets",
@@ -226,6 +234,32 @@ func TestDocsMobileOrchestratorCheckNumberIsFree(t *testing.T) {
 	readme := readDoc(t, "docs/mobile/README.md")
 	if !strings.Contains(readme, "80–89") {
 		t.Errorf("docs/mobile/README.md no longer records this work's 80–89 reservation: the next free number is only free past it")
+	}
+}
+
+// TestDocsMobileOrchestratorKillPathMatchesTheTree: the design names the
+// repository kill node as the tree writes it — `config/kill/repos/<slug>`
+// (internal/budget/model.go's PathKillRepo, and the rules' KILLS_OFF macro
+// reads root.child('config/kill/repos').child($slug)) — and never as the shorter
+// `config/kill/<slug>` a reader would guess, which is a node nothing writes and
+// the rules never consult. A design that tells an implementer to watch the wrong
+// node is a design that tells them the kill switch is off when it is on.
+func TestDocsMobileOrchestratorKillPathMatchesTheTree(t *testing.T) {
+	doc := readDoc(t, orchDesign)
+	if strings.Contains(doc, "config/kill/<slug>") {
+		t.Errorf("%s writes the repository kill node as config/kill/<slug>: the tree's node is config/kill/repos/<slug> (PathKillRepo), and a reader following this document would watch a node nothing writes", orchDesign)
+	}
+	if !strings.Contains(doc, "config/kill/repos/<slug>") {
+		t.Errorf("%s no longer names the repository kill node at all", orchDesign)
+	}
+	// The claim is the tree's, so the tree is asked.
+	model := readDoc(t, "internal/budget/model.go")
+	if !strings.Contains(model, `"config/kill/repos/"`) {
+		t.Errorf("internal/budget/model.go no longer builds PathKillRepo from \"config/kill/repos/\": %s's citation has gone stale", orchDesign)
+	}
+	rules := readDoc(t, "internal/budget/rules/rules.go")
+	if !strings.Contains(rules, "config/kill/repos") {
+		t.Errorf("internal/budget/rules/rules.go's KILLS_OFF no longer reads config/kill/repos: %s's citation has gone stale", orchDesign)
 	}
 }
 
