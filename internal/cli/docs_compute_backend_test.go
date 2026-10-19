@@ -120,6 +120,14 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 // flips" — so a rename on either side has to fail here rather than in a
 // reviewer's head. Each entry is a symbol the plan asserts EXISTS today, not
 // one a task will add.
+//
+// Every entry carries at least one symbol, and the test fails on one that does
+// not: an entry with an empty list runs zero assertions and turns this map into
+// a file-existence check, which is the drift it exists to catch. A file the plan
+// cites but names no symbol in — the logs, names and prices files, the two
+// gcpfake packages, reap_test.go and the two init stages, each cited as
+// "already built" rather than as a rename target — is therefore **not** an entry
+// here; TestDocsComputeBackendCitationsExist is what holds those.
 var computeBackendSymbols = map[string][]string{
 	"internal/backend/backend.go":   {"CloudRun", "CloudBatch"},
 	"internal/backend/registry.go":  {"Opener", "func Open"},
@@ -143,25 +151,17 @@ var computeBackendSymbols = map[string][]string{
 		"ActionDeleteJob", "ActionCancelJob", "ActionDeleteVM", "Report",
 		"ReapMargin", "MaxDeadline", "QueueDeadline",
 	},
-	"internal/backend/batch/logs.go":   {},
-	"internal/backend/batch/names.go":  {},
-	"internal/backend/batch/prices.go": {},
-	"internal/gcpfake/batch.go":        {},
-	"internal/gcpfake/compute.go":      {},
 	"internal/backend/batch/batch_test.go": {
 		// Task 9 and Task 14 both name this test as the pin they follow, and
 		// the plan's "no literal 412 anywhere" claim rests on this constant.
 		"TestLaunchRefusesASecretEnv", "testSocketGID",
 	},
-	"internal/backend/batch/reap_test.go": {},
-	"internal/cli/cloud.go":               {"openCloudFor", "checkExecution"},
-	"internal/cli/run.go":                 {"Backend: backend.CloudRun"},
+	"internal/cli/cloud.go": {"openCloudFor", "checkExecution"},
+	"internal/cli/run.go":   {"Backend: backend.CloudRun"},
 	"internal/cli/recipes_skew.go": {
 		"batchProvisionShipped", "batchProvisionDisabled", "refuseBatchProvisionNotShipped",
 	},
 	"internal/cli/launch_budget.go": {"budgetMintOn"},
-	"internal/cli/init_stages.go":   {},
-	"internal/cli/init_compute.go":  {},
 	"internal/cli/root.go":          {"AddCommand"},
 	"internal/localcfg/localcfg.go": {"BackendName", "func (c *Config) Backend"},
 	"internal/localcfg/localcfg_test.go": {
@@ -242,6 +242,10 @@ func TestDocsComputeBackendSymbolsExist(t *testing.T) {
 		return string(data), true
 	}
 	for path, symbols := range computeBackendSymbols {
+		if len(symbols) == 0 {
+			t.Errorf("%s is an entry in computeBackendSymbols with no symbols, so it asserts nothing but the file's existence: either name the symbol %s's tasks use in it, or leave the file to TestDocsComputeBackendCitationsExist", path, computeBackendPlan)
+			continue
+		}
 		text, ok := read(path)
 		if !ok {
 			continue
