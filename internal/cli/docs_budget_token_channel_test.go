@@ -144,6 +144,164 @@ func TestDocsBudgetTokenChannelCitationsExist(t *testing.T) {
 	}
 }
 
+// TestCheck60LearnsTheJobBeforeAnyStepNamesIt: Check 60's steps are run in
+// order, and the job every step from 3 on executes — and step 4 filters the
+// audit log by — is not known until step 3 reads it off the run's own launch
+// record (it is the repository's own job or the shared project job). The setup
+// block is re-run at the start of every step, so a `${SANDBOX_JOB:?}` in it
+// stops step 1 and step 2 on a variable the owner cannot know yet, and the only
+// way past is to guess a job name — which is what the 2026-10-18 review found
+// the block did. What holds the order instead: the setup block leaves the
+// variable optional and reads `$CHK60/vars.env` back (step 2 writes `SLUG` and
+// `RUN2` there, and step 3 the job), and the first `${SANDBOX_JOB:?}` — the
+// hard stop at the point of use — comes after step 3 has learnt it.
+func TestCheck60LearnsTheJobBeforeAnyStepNamesIt(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	i := strings.Index(doc, "## Check 60: the sealed budget token")
+	j := strings.Index(doc, "## Check 69a:")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no Check 60 section followed by Check 69a: the section this test reads is gone", path)
+	}
+	sec := doc[i:j]
+	setup := section(t, sec, "### 1. Setup and guard", "### 2. ")
+	step2 := section(t, sec, "### 2. ", "### 3. ")
+	step3 := section(t, sec, "### 3. ", "### 4. ")
+	// The blocks carry comments, and a comment that names a guard is not a
+	// guard: every check below is on the lines that run.
+	setup, step2, step3 = codeLines(setup), codeLines(step2), codeLines(step3)
+
+	// Step 1: the job is not a hard stop here, and the file the later steps
+	// keep their variables in is read back rather than assumed empty.
+	if strings.Contains(setup, "SANDBOX_JOB=${SANDBOX_JOB:?") {
+		t.Errorf("Check 60's setup block hard-stops on SANDBOX_JOB, which step 3 is what learns: re-run at the start of step 1 or 2 it stops on a job name the owner has no way to fill in, so the only way past is to guess one")
+	}
+	if !strings.Contains(setup, "SANDBOX_JOB=${SANDBOX_JOB:-}") {
+		t.Errorf("Check 60's setup block does not leave SANDBOX_JOB optional (`${SANDBOX_JOB:-}`): step 1 and step 2 run before step 3 learns it")
+	}
+	if !strings.Contains(setup, `"$CHK60/vars.env"`) {
+		t.Errorf("Check 60's setup block does not read $CHK60/vars.env back: it is re-run in every step, and a later shell has lost what step 2 and step 3 wrote there")
+	}
+	// Steps 1 and 2 must not use it: the only reads before step 3 are the
+	// read-only lists and step 2's own run.
+	for _, bad := range []string{"${SANDBOX_JOB:?", "${SANDBOX_JOB}"} {
+		if strings.Contains(setup, bad) || strings.Contains(step2, bad) {
+			t.Errorf("Check 60 uses %s before step 3 learns the job", bad)
+		}
+	}
+
+	// Step 3: learnt off the run's launch record, and kept for every step
+	// after it.
+	const learn = `SANDBOX_JOB=$(gcloud storage cat`
+	const keep = `echo "SANDBOX_JOB=${SANDBOX_JOB:?}" >> "$CHK60/vars.env"`
+	if !strings.Contains(step3, learn) {
+		t.Errorf("Check 60's step 3 does not assign SANDBOX_JOB from the run's own launch record (`%s`): the job every later step names is the one this step reads", learn)
+	}
+	if !strings.Contains(step3, keep) {
+		t.Errorf("Check 60's step 3 does not keep the job in vars.env (`%s`): every step after it re-runs the setup block in a shell that has never seen it", keep)
+	}
+	if a, b := strings.Index(step3, learn), strings.Index(codeLines(sec), "${SANDBOX_JOB:?"); a < 0 || b < 0 || b < a {
+		t.Errorf("Check 60's first `${SANDBOX_JOB:?}` is not after the step that learns the job (learn at %d, first hard stop at %d): the guard at the point of use is what has to catch an empty job, not the setup block", a, b)
+	}
+}
+
+// codeLines is what s runs: the lines inside its fenced blocks, with each
+// line's `#` comment removed. Prose is not read, so a sentence that names a
+// guard is not a guard — the check is on the commands the owner pastes.
+func codeLines(s string) string {
+	var out []string
+	fenced := false
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		if !fenced {
+			continue
+		}
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// TestCheck60LabelsWhatIsPerJobAndWhatIsNot: the check has three scopes and the
+// text has to say which step is which, because the owner re-runs it and reads
+// the FACTs against a live project: step 2 is per-run, steps 3 to 7 and 9 name
+// one job (`SANDBOX_JOB`) and are about that job, and step 8 reads the bucket's
+// whole policy — the launchers' binding and every job's `tokens/` grant, which
+// is installation-wide. The 2026-10-18 review found only step 8 saying so.
+//
+// It holds the commands' own rule too (Check 43's "Every `fugaro` command that
+// takes `--project` gets `--project fugaro`"): the two `fugaro` reads this check
+// makes are the ones that would otherwise resolve their installation from
+// whatever checkout the owner is standing in.
+func TestCheck60LabelsWhatIsPerJobAndWhatIsNot(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	i := strings.Index(doc, "## Check 60: the sealed budget token")
+	j := strings.Index(doc, "## Check 69a:")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no Check 60 section followed by Check 69a: the section this test reads is gone", path)
+	}
+	sec := doc[i:j]
+
+	// Every step that runs something against one job names it, guarded.
+	for _, h := range []struct{ from, to string }{
+		{"### 3. ", "### 4. "}, {"### 4. ", "### 5. "}, {"### 5. ", "### 6. "},
+		{"### 6. ", "### 7. "}, {"### 7. ", "### 8. "}, {"### 9. ", "### Restore"},
+	} {
+		step := section(t, sec, h.from, h.to)
+		if !strings.Contains(codeLines(step), "${SANDBOX_JOB:?") {
+			t.Errorf("Check 60's %s does not name ${SANDBOX_JOB:?}: every step from 3 on runs against the one job step 3 learnt, and a step that named the repository's own job instead would record a false FACT on a project whose workflow launches on the shared one", strings.TrimSpace(h.from))
+		}
+	}
+
+	// Step 8 is the installation-wide one, and it says so, with the two grant
+	// titles the live policy must show — spelled by the code that writes them.
+	step8 := section(t, sec, "### 8. ", "### 9. ")
+	if !strings.Contains(step8, "installation-wide") {
+		t.Errorf("Check 60's step 8 does not say it is the installation-wide step: it reads the whole bucket policy, while every other step from 3 on is about one job")
+	}
+	tokenTitle := strings.TrimSuffix(gcp.TokenBucketConditionTitle("acct"), "acct")
+	for _, want := range []string{tokenTitle, gcp.ProjectTokenBucketConditionTitlePrefix} {
+		if !strings.Contains(step8, want) {
+			t.Errorf("Check 60's step 8 does not name the grant title %q: its FACT is what the owner compares the live policy against, so both shapes have to be spelled", want)
+		}
+	}
+
+	// The two fugaro reads carry --project, or they resolve their installation
+	// from the checkout the owner happens to be in.
+	step2 := section(t, sec, "### 2. ", "### 3. ")
+	step3 := section(t, sec, "### 3. ", "### 4. ")
+	for _, c := range []struct{ step, what string }{
+		{step2, "fugaro run"}, {step3, "fugaro diagnose"},
+	} {
+		for _, line := range strings.Split(codeLines(c.step), "\n") {
+			if !strings.Contains(line, c.what) {
+				continue
+			}
+			if !strings.Contains(line, "--project fugaro") {
+				t.Errorf("Check 60's `%s` does not carry --project fugaro: %s", c.what, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// section is the part of doc between the from and to markers, failing the test
+// when either is missing or out of order.
+func section(t *testing.T, doc, from, to string) string {
+	t.Helper()
+	i := strings.Index(doc, from)
+	j := strings.Index(doc, to)
+	if i < 0 || j < i {
+		t.Fatalf("the document has no %q followed by %q: this test reads the text between them", from, to)
+	}
+	return doc[i:j]
+}
+
 // TestDocsBudgetTokenChannelSection72IsTheMergedTree: Check 60 sends the owner
 // to §7.2 for the moved object's grant, its lifecycle rule and the shape of its
 // take, so that section has to describe the tree the owner is standing in
