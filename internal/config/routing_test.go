@@ -460,3 +460,112 @@ func buildsAString(f goSource, call *ast.CallExpr) bool {
 	}
 	return false
 }
+
+// TestRoutingCascadeNeedsNoProviderClaim: the credentials cascade is one switch
+// with one key (D150), and it is written as `routing.claude: {via: cascade}`
+// alone (O3) — no provider entry claims anything for it, yet the switch is
+// accepted, with an empty providers table and with the providers table a
+// cascade project actually has.
+//
+// The reason it needs no claim is the reason it routes nothing here: tier C for
+// Claude is off (C3.6), so a cascade call still goes to Anthropic under Claude's
+// own IDs and no provider entry has a destination to offer. What the switch
+// changes is which credential carries the call, and that decision belongs to the
+// credentials service, not to this package.
+func TestRoutingCascadeNeedsNoProviderClaim(t *testing.T) {
+	sw := &Routing{Claude: &RoutingClaude{Via: RouteCascade}}
+	for _, tc := range []struct {
+		name      string
+		providers map[string]ModelProvider
+	}{
+		{"no providers at all", nil},
+		{"an empty table", map[string]ModelProvider{}},
+		{"a table that claims nothing for Claude", map[string]ModelProvider{"openrouter": okProvider()}},
+	} {
+		if ps := CheckRouting(sw, tc.providers, "routing"); len(ps) != 0 {
+			t.Errorf("%s: problems = %s, want none — via: %s claims no route", tc.name, problemsText(ps), RouteCascade)
+		}
+		// And the resolution agrees, on every model: the cascade forwards the
+		// body it was given, so the pin and the ID it is sent with are the same
+		// model as the direct route's.
+		for _, model := range []string{canonicalClaude, "claude-opus-5-5"} {
+			route, sent, ok := RoutingClaudeFor(sw.Claude, model, tc.providers)
+			if !ok || route != RouteDirect || sent != model {
+				t.Errorf("%s (%s): RoutingClaudeFor = (%q, %q, %v), want (%q, %q, true)", tc.name, model, route, sent, ok, RouteDirect, model)
+			}
+		}
+	}
+	// And the resolver is correct by itself, not only by the shape rule that
+	// keeps a list away from it: a cascade switch that names a model anyway —
+	// CheckRoutingShape refuses such a node, so no policy carries one, and the
+	// resolver is handed it here to pin its own contract — still resolves to the
+	// direct route with the model unchanged. Without the resolver's own cascade
+	// case this switch would resolve through the provider lookup, fail closed
+	// with ok=false, and halt every run that carried it: the resolver must never
+	// be the reader that invents a route for the cascade, nor the one that
+	// refuses a call the cascade does not move.
+	named := &RoutingClaude{Via: RouteCascade, Models: []string{canonicalClaude}}
+	if route, sent, ok := RoutingClaudeFor(named, canonicalClaude, map[string]ModelProvider{"openrouter": claudeRoute([]string{"*"})}); !ok || route != RouteDirect || sent != canonicalClaude {
+		t.Errorf("via: %s naming a model: RoutingClaudeFor = (%q, %q, %v), want (%q, %q, true)", RouteCascade, route, sent, ok, RouteDirect, canonicalClaude)
+	}
+}
+
+// TestRoutingCascadeRefusesAModelsList: via: cascade takes no models list, and
+// the refusal is what keeps today's runner inert under the switch rather than
+// halting under it.
+//
+// The switch's list is D1a's opt-in — the thing that decides which pins the
+// route is applied to — and the runner applies a routed pin by asking
+// RoutingClaudeFor for a route that is *not* direct (internal/runner/routing.go,
+// applyRouting). Cascade resolves to direct, so a cascade switch that named a
+// model would halt every run of the project with "names X, and this run cannot
+// resolve its route". Refusing the list here, at the shape rule both the CLI and
+// the policy reader reach, is the smaller, safer answer: the switch is exactly
+// the one O3 spells, `{via: cascade}`, and no run of this release changes what
+// it sends because of it.
+func TestRoutingCascadeRefusesAModelsList(t *testing.T) {
+	sw := &Routing{Claude: &RoutingClaude{Via: RouteCascade, Models: []string{canonicalClaude}}}
+	got := problemsText(CheckRouting(sw, nil, "routing"))
+	if !strings.Contains(got, "routing.claude.models") || !strings.Contains(got, RouteCascade) {
+		t.Errorf("via: %s with a list: problems = %q, want a refusal naming the list and the via", RouteCascade, got)
+	}
+	if !strings.Contains(got, RouteOpenRouter) {
+		t.Errorf("via: %s with a list: problems = %q, want the refusal to name the value that does take a list (%s)", RouteCascade, got, RouteOpenRouter)
+	}
+	// The shape rule is where the refusal lives, so the *shape* of a published
+	// policy is judged by it before its routes are: a policy reader that saw
+	// only CheckRouting's answer would let the node through.
+	if ps := CheckRoutingShape(sw, "routing"); len(ps) != 1 || !strings.Contains(problemsText(ps), "routing.claude.models") {
+		t.Errorf("CheckRoutingShape(via: %s with a list) = %s, want exactly one refusal on routing.claude.models", RouteCascade, problemsText(ps))
+	}
+}
+
+// TestRoutingAutoMeaningUnchangedForAPIKey: O3's second half — for every auth
+// that is not cascade, today's meaning of `routing.claude` is untouched, and
+// `via: auto` above all. Auto is key-presence driven: it resolves through the
+// provider route exactly as openrouter does, and the caller that knows whether
+// an Anthropic key exists (the runner's RoutingInertReason) is what prefers the
+// direct path. Adding cascade changes neither half of that.
+func TestRoutingAutoMeaningUnchangedForAPIKey(t *testing.T) {
+	providers := map[string]ModelProvider{"openrouter": claudeRoute([]string{"*"})}
+	auto := &RoutingClaude{Via: RouteAuto, Models: []string{canonicalClaude}}
+	// The claim resolves exactly as before: auto is the openrouter route, and
+	// the ID sent is the route's own.
+	if ps := CheckRouting(&Routing{Claude: auto}, providers, "routing"); len(ps) != 0 {
+		t.Errorf("via: auto: problems = %s, want none", problemsText(ps))
+	}
+	route, sent, ok := RoutingClaudeFor(auto, canonicalClaude, providers)
+	if !ok || route != "openrouter" || sent != "anthropic/claude-sonnet-5.5" {
+		t.Errorf("via: auto: RoutingClaudeFor = (%q, %q, %v), want (openrouter, anthropic/claude-sonnet-5.5, true)", route, sent, ok)
+	}
+	// Without a route claiming the ID, auto is refused and does not resolve: the
+	// key-presence caller falls back to the direct path itself, which is D1b's
+	// way of preferring the credential the run already has — not a silent
+	// fall-through inside the resolver.
+	if ps := CheckRouting(&Routing{Claude: auto}, map[string]ModelProvider{"openrouter": okProvider()}, "routing"); len(ps) == 0 {
+		t.Error("via: auto with an unclaimed ID: accepted, want refused")
+	}
+	if _, _, ok := RoutingClaudeFor(auto, canonicalClaude, map[string]ModelProvider{"openrouter": okProvider()}); ok {
+		t.Error("via: auto with an unclaimed ID resolved")
+	}
+}
