@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,16 +11,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
-// The two documents this work added, and the index that names them. There is
-// no test in this package that walks docs/ or pins the set of docs folders, so
-// a folder that wants its documents pinned writes its own file — this one.
+// The two documents this work added, and the index that names them. There is no
+// registry test over docs/ in this package: nothing pins the set of docs folders
+// and nothing pins a folder's documents on its behalf, so a folder that wants
+// its documents pinned writes its own file — this one.
 // That is the convention and not a guarantee: docs/mobile/'s six documents are
-// pinned by nothing, and docs/releases/ only through the release-note
-// precondition scripts/release_test.go exercises, not by a pin of its
-// documents.
+// pinned by nothing — this file names the folder only to say so — and
+// docs/releases/ only through the release-note precondition
+// scripts/release_test.go exercises, not by a pin of its documents.
 const (
 	inJobReviewREADME  = "docs/in-job-review/README.md"
 	inJobReviewSpec    = "docs/in-job-review/spec.md"
@@ -754,26 +758,162 @@ func TestDocsInJobReviewNamesEveryTaskOverride(t *testing.T) {
 // folder is pinned, and the first version of that sentence claimed "each docs
 // package is pinned by its own file" — false: docs/mobile/'s six documents are
 // pinned by nothing, and docs/releases/ only through the release-note
-// precondition scripts/release_test.go exercises. The true half — no test in
-// internal/cli walks docs/ or pins the set of folders — is what justifies this
-// pin and has to stay, and the folders the claim does not cover have to be
-// named rather than implied.
+// precondition scripts/release_test.go exercises. The true half — no registry
+// test over docs/ in internal/cli, so nothing pins the folder set or a folder's
+// documents on its behalf — is what justifies this pin and has to stay, and the
+// folders the claim does not cover have to be named rather than implied.
+//
+// The mobile half was itself wrong once this pin existed: it said the only
+// mention of the folder in a _test.go was a passing comment in
+// emulator_mailbox_test.go, and this file's own docstring and strings name it
+// too. The parenthetical now says what is true — the folder is named only as
+// text — and the set of _test.go files that name it is asserted here, so a
+// third one fails rather than quietly falsifying the sentence.
 func TestDocsInJobReviewPinningClaimNamesItsExceptions(t *testing.T) {
 	readme := readDoc(t, inJobReviewREADME)
 	for _, want := range []string{
-		"No test in `internal/cli` walks `docs/` or pins the set of docs folders",
+		"nothing pins the set of docs folders, and nothing pins a folder's documents on its behalf",
 		"docs/mobile/",
 		"docs/releases/",
 		"scripts/release_test.go",
+		// The corrected parenthetical: named as text, never read.
+		"never by a test that reads or asserts those documents",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q: the pinning claim has to keep the half that justifies this pin, and name the folders it does not cover",
 				inJobReviewREADME, want)
 		}
 	}
-	if strings.Contains(readme, "each docs package is pinned by its own file") {
-		t.Errorf("%s carries the retracted claim that each docs package is pinned by its own file: docs/mobile/'s six documents have no pin, and docs/releases/ has no pin of its documents, so the claim must not come back",
-			inJobReviewREADME)
+	for _, absent := range []string{
+		"each docs package is pinned by its own file",
+		// The retracted parenthetical, falsified by this pin's own text.
+		"the only mention of the folder in a `_test.go`",
+	} {
+		if strings.Contains(readme, absent) {
+			t.Errorf("%s carries %q, a form this work retracted: docs/mobile/'s six documents have no pin, and docs/releases/ has no pin of its documents, so neither claim may come back",
+				inJobReviewREADME, absent)
+		}
+	}
+
+	// "Pinned by nothing" is a claim about this tree, so the tree is asked: the
+	// _test.go files naming the folder are the one passing comment and this pin,
+	// which names it only to say that nothing pins it. A third file means the
+	// sentence has to be rewritten, which is what happened to its first version.
+	named := testFilesNaming(t, "docs/mobile")
+	want := []string{
+		"internal/budget/rules/emulator_mailbox_test.go",
+		"internal/cli/docs_in_job_review_test.go",
+	}
+	if got := strings.Join(named, ", "); got != strings.Join(want, ", ") {
+		t.Errorf("the _test.go files naming docs/mobile are [%s], want [%s]: %s says the folder is named only in a passing comment and in this pin, so a third file means the sentence is stale",
+			got, strings.Join(want, ", "), inJobReviewREADME)
+	}
+}
+
+// testFilesNaming returns the module's *_test.go files whose text contains
+// needle, as slash-separated paths relative to the module root, sorted. The
+// console's own tree is skipped: it is not this module, and its tests are not
+// what a docs pin's claim about this module's tests is about.
+func testFilesNaming(t *testing.T, needle string) []string {
+	t.Helper()
+	root := filepath.Join("..", "..")
+	found := []string{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "console":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), needle) {
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			found = append(found, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the module for %q: %v", needle, err)
+	}
+	sort.Strings(found)
+	return found
+}
+
+// TestDocsInJobReviewSaysHowTheConsoleReachesAReview: finding #26 and Q7 turn
+// on how a verdict would reach the console, and the first version of that
+// sentence had it wrong in three places. It said a verdict object reaches the
+// console "only if runs ls --json (or watch --json) carries it" — the console
+// spawns `diagnose --json` and renders that document's findings as severity,
+// file and summary — and Q6's option 2 cited a "reviewed[].verdict pin" in the
+// console contract's own json-contract.md, which that file does not carry: its
+// only review surface is §6.1's findings row. The corrected claims are pinned
+// here, the retracted forms are pinned out, and the tree fact the correction
+// rests on — the feed the list and watch surfaces read has no findings field —
+// is asserted rather than stated.
+//
+// The console's own file paths are cited in the reconciliation's prose and
+// deliberately not spelled here: this is a .go file of the module, and
+// TestConsoleIsOutsideTheGoModule's consoleBoundaryAllowList is a one-entry
+// exception, so the pin stops at the module's edge and the prose carries the
+// console citations (the same rule the citations test follows).
+func TestDocsInJobReviewSaysHowTheConsoleReachesAReview(t *testing.T) {
+	recon := readDoc(t, inJobReviewRecon)
+	for _, want := range []string{
+		// The command the console spawns.
+		"`diagnose --json`",
+		// What it renders out of that document, and the row that pins it.
+		"`[]runner.Finding` (severity, file, summary)",
+		"json-contract.md` §6.1",
+		// The true half: the feed carries no findings, so diagnose is the route.
+		"neither `internal/runview` nor `internal/watch` has a `Findings` field",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: the console reaches a review through `diagnose --json`, which is what #26's consequence and Q7's answer turn on",
+				inJobReviewRecon, want)
+		}
+	}
+	for _, absent := range []string{
+		// The retracted route: the feed as the only way in.
+		"reaches the console only if",
+		"console contract touched only if",
+		"updated only if `runs ls --json`",
+		// The retracted citation: a pin that file does not carry.
+		"`reviewed[].verdict` pin",
+	} {
+		if strings.Contains(recon, absent) {
+			t.Errorf("%s carries %q, a form this work retracted: the console reads `diagnose --json`, not only the feed, and the console contract carries no verdict word",
+				inJobReviewRecon, absent)
+		}
+	}
+
+	// The claim is about this tree, so it is asked: neither the row the list
+	// surface reads nor the documents the watch surface reads carries a findings
+	// field. One appearing means the sentence has to be re-checked, because the
+	// diagnose document would no longer be the console's only route to a review.
+	for _, typ := range []reflect.Type{
+		reflect.TypeOf(runview.Row{}),
+		reflect.TypeOf(watch.JSONRun{}),
+		reflect.TypeOf(watch.JSONFinished{}),
+	} {
+		for i := range typ.NumField() {
+			if f := typ.Field(i); strings.Contains(f.Name, "Finding") {
+				t.Errorf("%s.%s exists: %s says neither internal/runview nor internal/watch has a Findings field, so the sentence has to be re-checked",
+					typ.Name(), f.Name, inJobReviewRecon)
+			}
+		}
 	}
 }
 
