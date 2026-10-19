@@ -122,7 +122,7 @@ RELEASE_LABEL="$(printf '%s' "$BASE_RELEASE" | tr '[:upper:]' '[:lower:]' | cut 
 BUILD=yes
 if gcloud compute images describe-from-family "$IMAGE_FAMILY" --project="$PROJECT" >/dev/null 2>&1; then
   # csv[no-heading] rather than value(): a value() row leaves an absent field
-  # out, and the four answers here have to stay in their columns -- an image
+  # out, and the five answers here have to stay in their columns -- an image
   # with no base-release label is a fact this build acts on, not a shift. And
   # IFS=,: without it `read` splits on whitespace only, so the whole
   # comma-joined line lands in the first variable and every existing image

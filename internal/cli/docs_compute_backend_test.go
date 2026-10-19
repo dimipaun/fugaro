@@ -16,12 +16,16 @@ import (
 // the implementation plan for the Cloud Batch compute backend (design
 // docs/design/compute-backend.md), written against the tree branch
 // fugaro/20261019-140014-b55a stands on (= the branch `integration-0.9.5`, cut
-// from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
-// and this test, the documents and tests a review of them corrected, and no
-// Terraform and no workflow). The one behavioural line among those corrections
-// is internal/managed/stateaccounts.go's table, which learns the compute
-// module's three types; everything else the branch adds is a comment, a test or
-// a document, and no task of this plan is built.
+// from `integration-0.9.0` at `af953e5e`; when this file was added the branch's
+// own commits were this plan and this test, the documents and tests a review of
+// them corrected, and no workflow — and no task of the plan was built. **Task 9
+// has landed on it since**, which is why the plan's Status line and its OWNER
+// APPROVAL GATE read the way they do and why this file's release check is read
+// against the tree rather than against the branch as it was when it was added;
+// the one behavioural line among the corrections is
+// internal/managed/stateaccounts.go's table, which learns the compute module's
+// three types, and everything else those earlier commits add is a comment, a
+// test or a document.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
@@ -79,7 +83,7 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 		"internal/gcpfake/batch.go",
 		"internal/gcpfake/compute.go",
 		// The CLI sites the three TODO(compute-backend Task 8) markers sit in,
-		// and the stage that refuses --provision-batch.
+		// and the stage `fugaro init --provision-batch` runs (Task 9 shipped it).
 		"internal/cli/cloud.go",
 		"internal/cli/run.go",
 		"internal/cli/validate.go",
@@ -360,9 +364,9 @@ func stripLineComments(text string) string {
 }
 
 // TestDocsComputeBackendSymbolsExist: the plan's tasks are written in terms of
-// names in other packages — the opener map, the constant that refuses
-// --provision-batch, the six-permission role, the test that pins the seal's
-// refusal. Each is asserted present in the file the plan says it is in, and
+// names in other packages — the opener map, the gate the --provision-batch
+// stage ships behind, the five-permission reaper role, the test that pins the
+// seal's refusal. Each is asserted present in the file the plan says it is in, and
 // asserted in that file's **code** rather than anywhere in its text, so a
 // rename fails here rather than leaving a task that tells an implementer to
 // change something that no longer exists.
@@ -618,10 +622,12 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 }
 
 // TestDocsComputeBackendDecisionsAreRecommendations: the plan's own decisions
-// are P1 to P8, every one of them a recommendation and none an answer, and the
-// gate at the foot is UNAPPROVED. A row that acquires an owner's answer must
-// acquire it here and in the gate's own text, so this test is what makes
-// "answered silently" impossible.
+// are P1 to P8, and the gate at the foot carries the approval and the
+// conditions with it. The rows were written as recommendations and the owner's
+// ruling of 2026-10-19 took them as written — so the file says that in one
+// place, the decisions section, and the gate says the same thing rather than
+// the UNAPPROVED it opened with; this test is what makes a silent answer, or a
+// gate that still forbids what has landed, impossible.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	for i := 1; i <= 8; i++ {
@@ -631,8 +637,8 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 		}
 	}
 	decisions := section(t, doc, "## Decisions this plan defers to the owner", "## Open items")
-	if !strings.Contains(decisions, "**None is answered**") {
-		t.Errorf("%s: the decisions section no longer says none of its rows is answered", computeBackendPlan)
+	if !strings.Contains(decisions, "**The owner's ruling of 2026-10-19 took every recommendation below as written**") {
+		t.Errorf("%s: the decisions section no longer records that the owner took its rows as written, so a reader cannot tell an answered row from an open one", computeBackendPlan)
 	}
 	// The three the gate says change what gets built, named there as such.
 	// The gate is the file's last section, so it runs to the end of the file.
@@ -642,7 +648,7 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	}
 	gate := doc[i:]
 	for _, want := range []string{
-		"**UNAPPROVED. Nothing in this plan is approved",
+		"**APPROVED — the owner's ruling of 2026-10-19",
 		"**P1 — the seal's carrier.**",
 		"**P2 — the reaper's impossible permission.**",
 		"**P5 — the release.**",
@@ -1315,5 +1321,86 @@ func TestDocsComputeBackendReleaseProseDocumentsAreNamed(t *testing.T) {
 	}
 	if len(found) < 8 {
 		t.Fatalf("the walk found %d documents naming a 0.9.x release in this work's context while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", len(found), len(computeBackendReleaseProse))
+	}
+}
+
+// TestDocsReleaseChecklistNamesEveryShippedGate: docs/release.md's "Before you
+// tag" list is where a release verifies the shipped-gate constants, and Task 9
+// is what showed the list can lose one silently. The commit that flipped
+// `batchProvisionShipped` rewrote the bullet that held it and dropped the
+// `managedDeployerShipped` half with it — a gate that is still `false`, and so a
+// checklist that stopped verifying a refusal that is still live — and nothing in
+// the tree said so: the list enumerates constants by hand, and no test read it
+// against them. This is that reading, taken from the constants themselves, so a
+// later commit that folds one bullet into another fails here rather than in a
+// release.
+//
+// Mutation (verified, run and restored): delete the `managedDeployerShipped`
+// bullet this change restores — this fails naming that constant.
+func TestDocsReleaseChecklistNamesEveryShippedGate(t *testing.T) {
+	skew := readDoc(t, "internal/cli/recipes_skew.go")
+	gates := regexp.MustCompile(`(?m)^const (\w+Shipped) = (?:true|false)$`).FindAllStringSubmatch(skew, -1)
+	if len(gates) < 4 {
+		t.Fatalf("internal/cli/recipes_skew.go declares %d *Shipped constants and this check requires at least four (cloneShipped, catalogShipped, managedDeployerShipped, batchProvisionShipped): the declaration shape moved and the walk below would pass over nothing", len(gates))
+	}
+	const beforeYouTag = "**Before you tag"
+	doc := readDoc(t, "docs/release.md")
+	start := strings.Index(doc, beforeYouTag)
+	if start < 0 {
+		t.Fatalf("docs/release.md has no %q list: the checklist is where a release verifies every gate constant", beforeYouTag)
+	}
+	section := doc[start:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	for _, g := range gates {
+		if !strings.Contains(section, "`"+g[1]+"`") {
+			t.Errorf("docs/release.md's Before-you-tag list names no `%s`: every gate constant in internal/cli/recipes_skew.go is verified there, or a release ships one that nothing checks", g[1])
+		}
+	}
+}
+
+// TestDocsComputeBackendPlanStatusMatchesTheTree: the plan's Status line and its
+// OWNER APPROVAL GATE are claims about the branch the plan is read on, and Task 9
+// is what made them false — the line said no task's commit existed, that no
+// Terraform on the branch changed and that `batchProvisionShipped` was `false`,
+// while the same file's fact 1 already said Task 9 had landed and the constant in
+// the tree was `true`. No test read the Status line against the tree, so the
+// contradiction survived a review of the plan that wrote it. This one does, from
+// the two facts the tree can be asked about: the constant's value and whether a
+// task's commit has landed beside it.
+//
+// Mutation (verified, run and restored): put "no task's commit exists" back into
+// the Status line — this fails naming it.
+func TestDocsComputeBackendPlanStatusMatchesTheTree(t *testing.T) {
+	skew := readDoc(t, "internal/cli/recipes_skew.go")
+	plan := readDoc(t, computeBackendPlan)
+	if !strings.Contains(skew, "const batchProvisionShipped = true") {
+		t.Skip("the tree's batchProvisionShipped is not true, so the plan's Status line is not read: this check is about the branch the task landed on")
+	}
+	var status string
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(line, "**Status:") {
+			status = line
+			break
+		}
+	}
+	if status == "" {
+		t.Fatalf("%s's Status line is not a line starting with **Status:, so the claims a reader takes from it are not held by anything", computeBackendPlan)
+	}
+	if !strings.Contains(status, "Task 9") {
+		t.Errorf("%s's Status line does not name Task 9 while the tree carries its landed work (batchProvisionShipped is true): the line is what tells a reader which of the tasks below exist", computeBackendPlan)
+	}
+	for _, stale := range []string{
+		"no task's commit exists",
+		"still refuses before any cloud call",
+		"`batchProvisionShipped` is `false`",
+	} {
+		if strings.Contains(status, stale) {
+			t.Errorf("%s's Status line still says %q while Task 9 has landed and the tree's batchProvisionShipped is true: a Status line is a claim about the branch, and this one is the shape the plan's own fact 1 contradicts", computeBackendPlan, stale)
+		}
+	}
+	if strings.Contains(plan, "**UNAPPROVED.") {
+		t.Errorf("%s's OWNER APPROVAL GATE still opens with UNAPPROVED while the tree carries Task 9's landed work: a gate that forbids every task while a task has landed is the contradiction this check is for", computeBackendPlan)
 	}
 }
