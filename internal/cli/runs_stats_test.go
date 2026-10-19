@@ -582,6 +582,80 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 	})
 }
 
+// TestRunsStatsOwnViewShowsNothingForACallerWithNoKeyOfItsOwn is the guard's
+// other half (runs_stats.go, the own-view filter's `own == "" ||`), and the
+// one the recorded-text comparison cannot reach on its own. A caller whose
+// identity is no key of its own -- nothing printable in it, or the word
+// 'unknown' itself -- is shown no row, and that holds even when runs recorded
+// the caller's exact text: runs ls --mine's comparison keeps those runs (the
+// recorded text is theirs), and the row they land in is keyed 'unknown' either
+// way, the key everybody's unattributed runs are grouped under. The private
+// table would then print that row under "your own runs only" while the note
+// beside it says no row below is shown as yours.
+//
+// So the fixture here records runs by the caller's own text, which the
+// sub-test in TestRunsStatsVisibilityIsTheRuling deliberately does not: with
+// no such run, deleting `own == "" ||` leaves the package green, which is the
+// gap this closes.
+func TestRunsStatsOwnViewShowsNothingForACallerWithNoKeyOfItsOwn(t *testing.T) {
+	day := time.Now().UTC()
+	for _, tc := range []struct {
+		name, identity string
+	}{
+		{"nothing printable in the identity", "​"},
+		{"the identity is the unattributed key's own word", userstats.UnknownUser},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			userStatsPlace(t, f, tc.identity, nil, nil)
+			// Two runs recorded by the caller's own text, one recorded by
+			// nobody, and one by somebody else. All four are keyed 'unknown' in
+			// the first two cases' tables, which is why the private view must
+			// not be read off the row they share.
+			seedUserRun(t, f, userStatsID(day, 0), tc.identity, userRec(runstore.StatusSucceeded, 7.00, runstore.BasisAPIList))
+			seedUserRun(t, f, userStatsID(day, 1), tc.identity, userRec(runstore.StatusFailed, 2.00, runstore.BasisAPIList))
+			seedUserRun(t, f, userStatsID(day, 2), "", userRec(runstore.StatusSucceeded, 3.00, runstore.BasisAPIList))
+			seedUserRun(t, f, userStatsID(day, 3), "dana@example.com", userRec(runstore.StatusSucceeded, 1.00, runstore.BasisAPIList))
+
+			own := runsStats(t)
+			if own.View != "own" {
+				t.Fatalf("view = %q, want the private one", own.View)
+			}
+			if len(own.Rows) != 0 || len(own.Totals) != 0 {
+				t.Fatalf("the caller's own view = %+v / %+v, want nothing: their own runs are keyed "+
+					"%q, the key every run that recorded no launcher is grouped under, and that row "+
+					"is not a person's", own.Rows, own.Totals, userstats.UnknownUser)
+			}
+			human, _, err := execute(t, "runs", "stats")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(human, "no run in this window was started by you") {
+				t.Errorf("the private table = %q, want it said plainly rather than shown as a table", human)
+			}
+			if strings.Contains(human, "USER") {
+				t.Errorf("the private table = %q, want no table at all: its one row would be keyed %q "+
+					"and that row is nobody's own", human, userstats.UnknownUser)
+			}
+			if tc.identity == userstats.UnknownUser && !strings.Contains(human, "no row below is shown as yours") {
+				t.Errorf("the private table = %q, want the note that says the row keyed %q is not "+
+					"shown as theirs -- the words the mutant above contradicts", human, userstats.UnknownUser)
+			}
+			// The guard is on whose row the own view claims, not on the table a
+			// caller asks for: --all-users still shows every run, the caller's
+			// own text among them.
+			all := runsStats(t, "--all-users")
+			if len(all.Rows) != 2 {
+				t.Fatalf("--all-users rows = %+v, want the %q row and dana's", all.Rows, userstats.UnknownUser)
+			}
+			if got := userStatsRow(t, all, userstats.UnknownUser); got.Runs != 3 || got.CountedUSD != 12.00 {
+				t.Errorf("the %q row = %+v, want every run keyed under it: the two this caller "+
+					"recorded and the one nobody did", userstats.UnknownUser, got)
+			}
+		})
+	}
+}
+
 // TestRunsStatsHelpStatesThePrivateViewsThreeWays is the help's half of the
 // ruling. The code has three states here, and the help a reader gets first
 // must have them too: an identity the CLI cannot resolve at all -- the local
