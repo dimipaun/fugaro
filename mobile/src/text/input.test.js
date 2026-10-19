@@ -37,7 +37,13 @@ import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
 import { createMailboxClient } from '../mailbox/client.js';
 import { MemoryMailboxStore } from '../mailbox/store.js';
 import { MemorySpeaker } from '../mailbox/speaker.js';
-import { INPUT_CODES, INPUT_OUTCOME, TYPE_CUE, createTypedInput } from './input.js';
+import {
+  INPUT_CODES,
+  INPUT_OUTCOME,
+  TYPE_CUE,
+  createTypedInput,
+  typedReadBack,
+} from './input.js';
 
 /** A mailbox id shaped like an Auth uid, and never a real one. */
 const UID = 'AbCdEf0123456789ghIJkl';
@@ -339,6 +345,12 @@ test('a resolved destructive command is read back in the machine\'s words and na
   assert.equal(proposed.actionId, 'x-1');
   assert.equal(proposed.deadline, T0 + MINUTE, 'P6.2\'s default timeout, not this module\'s');
   assert.equal(proposed.readBack.includes('run-42'), true, 'the read-back names the resolved run');
+  assert.equal(proposed.readBack.endsWith(TYPE_CUE), true, 'and it asks for the typed phrase');
+  assert.equal(
+    proposed.readBack.includes('Say "Fugaro, confirm"'),
+    false,
+    'the spoken cue must not reach a screen with a keyboard',
+  );
   assert.equal(h.inbox().length, 0, 'a read-back is not a send');
 });
 
@@ -498,6 +510,12 @@ test('awaiting() reports what the typed phrase would confirm, in the machine\'s 
   assert.equal(live.actions.length, 1);
   assert.equal(live.actions[0].actionId, 'x-1');
   assert.equal(live.actions[0].readBack.includes('run-42'), true);
+  assert.equal(
+    live.actions[0].readBack.endsWith(TYPE_CUE),
+    true,
+    'what the screen draws is what the screen can take: the typed phrase',
+  );
+  assert.equal(live.actions[0].readBack.includes('Say "'), false);
   // And one that has timed out is not offered any more.
   h.at(T0 + 2 * MINUTE);
   assert.deepEqual((await h.input.awaiting()).actions, []);
@@ -563,4 +581,31 @@ test('the typed cue is the fixed phrase, and it is not P6.2\'s spoken one', () =
   assert.equal(TYPE_CUE.includes('Fugaro, confirm'), true);
   assert.equal(TYPE_CUE.includes('Type'), true);
   assert.notEqual(TYPE_CUE, CONFIRM_CUE, 'P6.2\'s cue says "Say": a keyboard does not');
+});
+
+test('typedReadBack swaps the instruction and leaves the sentence that names the target alone', () => {
+  // D47's Rule: the read-back names the resolved target, never the transcript.
+  // The swap touches the instruction and nothing else, which is why the
+  // sentence before it survives character for character.
+  const spoken = `Cancel run ${RUN_TARGET.runId}. ${CONFIRM_CUE}`;
+  const typed = typedReadBack(spoken);
+  assert.equal(typed.endsWith(TYPE_CUE), true);
+  assert.equal(typed.startsWith('Cancel run run-42.'), true, 'the target survives the swap');
+  assert.equal(typed.includes('Say'), false);
+  assert.equal(spoken.includes('Say'), true, 'and the input really was P6.2\'s spoken one');
+  // One sentence, one instruction -- never a "Type" appended after a "Say".
+  assert.equal(typed.split('Fugaro, confirm').length - 1, 1);
+});
+
+test('typedReadBack edits only what it recognises, and returns everything else untouched', () => {
+  // A sentence this module does not recognise is not one it will edit: the only
+  // safe edit is the one that provably touches nothing but the instruction.
+  const foreign = 'Do the thing. Ask your assistant to proceed.';
+  assert.equal(typedReadBack(foreign), foreign);
+  // A read-back with no sentence at all is the cue, not a leading space.
+  assert.equal(typedReadBack(CONFIRM_CUE), TYPE_CUE);
+  // And a value that is not a string is passed through rather than coerced.
+  for (const value of [null, undefined, 42, {}, ['a']]) {
+    assert.equal(typedReadBack(value), value, String(value));
+  }
 });

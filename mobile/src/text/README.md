@@ -55,9 +55,23 @@ code, wherever it is found.
 A bare **"confirm"** is agent text and is sent to the agent: there is
 deliberately no string-level predicate for a confirmation (P6.1 says so, and
 D164 is why), so the fixed phrase — `Fugaro, confirm`, routed like anything
-else — is the only spelling that reaches the machine. `TYPE_CUE` is the line
-the screen puts under a read-back: P6.2's own cue says "Say", and a text screen
-that asked the user to speak would be giving an instruction it cannot take.
+else — is the only spelling that reaches the machine.
+
+**The cue is swapped where the sentence is built, not where it is drawn.** P6.2
+builds one sentence *and* one spoken cue: every read-back it hands out ends
+`… Say "Fugaro, confirm" to confirm.` (`shared/confirm`'s `CONFIRM_CUE`), which
+is right for the spoken path and wrong for a keyboard. So `typedReadBack` — used
+by `propose` and by `awaiting`, and exported for a caller that draws the same
+read-back somewhere else — replaces that final instruction with `TYPE_CUE`
+(`Type "Fugaro, confirm" to confirm.`) and touches nothing else: the sentence
+naming the resolved target is P6.2's and survives character for character, and a
+read-back that does not end in `CONFIRM_CUE` is returned **unmodified**, because
+the only safe edit is one that provably touches nothing but the instruction. The
+screen then draws **one** line, verbatim. Drawing P6.2's read-back on the screen
+and putting `TYPE_CUE` under it — which this module did in its first round — put
+a "Say" instruction and a "Type" instruction on the same screen, on the screen
+that exists because the user cannot speak to it; that is the contradiction the
+swap removes, and `screen.test.js` now pins the absence of it.
 
 **The phrase needs no action id from the caller.** `submit('Fugaro, confirm')`
 with no context confirms the one live read-back — the one the screen is drawing
@@ -132,6 +146,10 @@ react-native**, like `src/app/root.js` and for the same reason: the Expo
 toolchain is not installed in this environment and no test here may need a
 device (Global Constraint 10). `screen.test.js` walks the tree against a fake
 React, which is also how "the screen draws no secret" stays a fact in CI.
+
+`confirmation` is `{ readBack, deadline }` as `awaiting()` and `propose()`
+return it, and it is drawn **verbatim and once**: the read-back already ends in
+the typed cue (see above), so the screen adds no second instruction under it.
 
 It takes `{ installations, confirmation, unsent, notice, draft, onChangeText }`
 and draws, per installation, its id (D114's label), its waiting questions in

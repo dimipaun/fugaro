@@ -35,11 +35,11 @@
 #      it is applied, so a stale pattern is APPLY-FAILED and never a verdict.
 #
 # A mutation that lives in `screen.js` names that file and its own suite as two
-# trailing arguments; both default to `input.js` and its tests. Two guards are
-# caught by the OTHER suite (the typed cue is drawn by the screen and pinned by
-# the input tests), so a run may name either suite; the file is restored with
-# `git checkout` either way, and every file a mutation touches must be committed
-# and clean.
+# trailing arguments; both default to `input.js` and its tests. A guard may be
+# caught by the other suite (the typed read-back is produced by `input.js` and
+# drawn by `screen.js`), so a run may name either suite; the file is restored
+# with `git checkout` either way, and every file a mutation touches must be
+# committed and clean.
 #
 # Expected output: one "killed" line per guard, no "SURVIVED", no
 # "APPLY-FAILED", and exit 0.
@@ -311,6 +311,24 @@ run "and the reason is a named code, not silence" \
 run "the typed cue is the typed one (P6.2's says \"Say\")" \
   "export const TYPE_CUE = 'Type \"Fugaro, confirm\" to confirm.';" \
   "export const TYPE_CUE = CONFIRM_CUE;"
+run "the cue is swapped out, not left in place beside a second one" \
+  "  const spoken = readBack.slice(0, -CONFIRM_CUE.length).trimEnd();" \
+  "  const spoken = readBack;"
+run "a read-back that is only the cue is not drawn with a leading space" \
+  "  return spoken === '' ? TYPE_CUE : \`\${spoken} \${TYPE_CUE}\`;" \
+  "  return \`\${spoken} \${TYPE_CUE}\`;"
+run "a value that is not a string is passed through, not coerced or crashed on" \
+  "  if (typeof readBack !== 'string') return readBack;" \
+  "  if (readBack === null) return readBack;"
+run "a sentence this module does not recognise is not one it edits" \
+  "  if (!readBack.endsWith(CONFIRM_CUE)) return readBack;" \
+  "  if (false) return readBack;"
+run "what propose() reads back is the typed sentence, not P6.2's spoken one" \
+  "      readBack: typedReadBack(stepped.readBack)," \
+  "      readBack: stepped.readBack,"
+run "and so is every action awaiting() offers the screen" \
+  "        readBack: typedReadBack(one.readBack)," \
+  "        readBack: one.readBack,"
 
 # 10. The screen: D170's two halves -- per installation, and never summed.
 run "a mutation of one installation's questions is drawn (the section's list is the one given)" \
@@ -338,8 +356,15 @@ run "and no more than the cap of them" \
 run "a row that is not a summary is dropped rather than drawn blank" \
   "      Number.isSafeInteger(one.at)," "      true," \
   mobile/src/text/screen.js "$SCREEN_SUITE"
-run "a read-back is drawn under the typed cue" \
-  "          el(Text, { key: 'cue', type: SCREEN.CUE }, TYPE_CUE)," "" \
+run "the confirmation is one line: a second cue under the read-back is the finding" \
+  "          el(Text, { key: 'read-back', type: SCREEN.READ_BACK }, confirmation.readBack)," \
+  "          el(Text, { key: 'read-back', type: SCREEN.READ_BACK }, confirmation.readBack),
+          el(Text, { key: 'cue', type: SCREEN.CUE }, 'Say it out loud.')," \
+  mobile/src/text/screen.js "$SCREEN_SUITE"
+run "a read-back with no sentence is not drawn as an empty confirmation" \
+  "      typeof confirmation.readBack === 'string' &&
+      confirmation.readBack !== ''" \
+  "      typeof confirmation.readBack === 'string'" \
   mobile/src/text/screen.js "$SCREEN_SUITE"
 run "the UNSENT text is shown (D167's first half)" \
   "      if (typeof one.text !== 'string' || one.text === '') return;" "" \

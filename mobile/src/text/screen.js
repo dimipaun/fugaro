@@ -48,8 +48,6 @@
 // No launch button either: a launch is D162's pass-through and belongs to the
 // action it starts.
 
-import { TYPE_CUE } from './input.js';
-
 /** The element type names the screen uses, in one place so a test can name
  * them too. They are the react-native primitives the entry passes in. */
 export const SCREEN = Object.freeze({
@@ -65,7 +63,6 @@ export const SCREEN = Object.freeze({
   UNSENT: 'fugaro.text.unsent',
   CONFIRMATION: 'fugaro.text.confirmation',
   READ_BACK: 'fugaro.text.confirmation.read-back',
-  CUE: 'fugaro.text.confirmation.cue',
   NOTICE: 'fugaro.text.notice',
   INPUT: 'fugaro.text.input',
 });
@@ -175,9 +172,14 @@ function promptLine(entry) {
  *   * `installations` -- `[{ account, pending, summaries }]`, one section each,
  *     in the caller's order (P6.5's `pendingAcross` accounts and the app's
  *     summaries). Nothing is summed across them;
- *   * `confirmation` -- `null`, or P6.2's read-back to show (`{ readBack,
- *     deadline }`, as `input.js`'s `awaiting()` and `propose()` return it). The
- *     cue under it is the typed one: a keyboard does not "say";
+ *   * `confirmation` -- `null`, or the read-back to show (`{ readBack,
+ *     deadline }`, as `input.js`'s `awaiting()` and `propose()` return it). It
+ *     is drawn **verbatim and once**: the read-back that module hands out
+ *     already ends in the typed cue (`typedReadBack` swaps P6.2's spoken one
+ *     for it where the sentence is built), so the screen adds no second
+ *     instruction under it. Drawing P6.2's own `readBack` here instead would
+ *     put a "Say" line and a "Type" line on the same screen -- the
+ *     contradiction this arrangement exists to prevent;
  *   * `unsent` -- the mailbox client's `pending()`: the text that has not
  *     reached the agent yet (D167's first half is that this is SHOWN rather
  *     than queued by the SDK, so a user who typed into a dead connection can
@@ -268,14 +270,24 @@ export function createTextScreen({ React, View, Text, TextInput }) {
       );
     });
 
+    // The read-back is one line and it carries its own instruction -- the typed
+    // one, put there by `typedReadBack` where P6.2 built the sentence. The
+    // screen adds no second cue under it: a "Say" line above a "Type" line is
+    // the contradiction this screen cannot afford, and the screen is not where
+    // the swap belongs (a caller that draws the same read-back elsewhere must
+    // get the same instruction).
     const confirmation = props.confirmation;
-    if (confirmation !== null && confirmation !== undefined) {
+    if (
+      confirmation !== null &&
+      confirmation !== undefined &&
+      typeof confirmation.readBack === 'string' &&
+      confirmation.readBack !== ''
+    ) {
       children.push(
         el(
           View,
           { key: 'confirmation', type: SCREEN.CONFIRMATION },
           el(Text, { key: 'read-back', type: SCREEN.READ_BACK }, confirmation.readBack),
-          el(Text, { key: 'cue', type: SCREEN.CUE }, TYPE_CUE),
         ),
       );
     }

@@ -77,6 +77,7 @@
 
 import { COMMAND, ROUTE, WAKE_ALIASES, routeUtterance } from '../../../shared/command/index.js';
 import {
+  CONFIRM_CUE,
   DESTRUCTIVE_VERBS,
   OUTCOME as CONFIRM_OUTCOME,
   REFUSAL as CONFIRM_REFUSAL,
@@ -136,6 +137,35 @@ export const INPUT_CODES = Object.freeze({
  * a keyboard does not, and a cue that asked the user to speak on a text screen
  * would be the one instruction this screen cannot follow. */
 export const TYPE_CUE = 'Type "Fugaro, confirm" to confirm.';
+
+/**
+ * The read-back, retargeted at a keyboard.
+ *
+ * P6.2's `readBack` is one sentence **and** one spoken cue: every read-back it
+ * builds ends `"… Say \"Fugaro, confirm\" to confirm."` (its `CONFIRM_CUE`),
+ * which is right for the spoken path and wrong here. Drawing that sentence and
+ * `TYPE_CUE` under it -- which is what this module did until this round -- puts
+ * a "Say" instruction and a "Type" instruction on the same screen, one above
+ * the other, on the screen that exists because the user cannot speak to it.
+ *
+ * So the cue is **swapped where the read-back is produced rather than where it
+ * is drawn**: the sentence that names the resolved target (D47's Rule) is
+ * P6.2's and is carried through character for character, and only the
+ * instruction at the end changes. The cue is P6.2's own exported constant,
+ * imported rather than respelled, and a read-back that does not end in it is
+ * returned **unmodified** -- a sentence this module does not recognise is not
+ * one it will edit, because the only safe edit is one that provably touches
+ * nothing but the instruction.
+ */
+export function typedReadBack(readBack) {
+  if (typeof readBack !== 'string') return readBack;
+  if (!readBack.endsWith(CONFIRM_CUE)) return readBack;
+  const spoken = readBack.slice(0, -CONFIRM_CUE.length).trimEnd();
+  // A read-back that is nothing but the cue would otherwise be drawn with a
+  // leading space. P6.2 never builds one (its sentence always names the
+  // target), but the space would be this function's own doing.
+  return spoken === '' ? TYPE_CUE : `${spoken} ${TYPE_CUE}`;
+}
 
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
@@ -465,22 +495,30 @@ export function createTypedInput(options = {}) {
       verb: stepped.verb,
       target: stepped.target,
       deadline: stepped.deadline,
-      readBack: stepped.readBack,
+      // The machine's own sentence, with the typed cue (see `typedReadBack`).
+      readBack: typedReadBack(stepped.readBack),
     });
   }
 
   /**
    * What is waiting for the typed phrase: P6.2's `pending`, which recomputes
    * every read-back from its own verb and target rather than reading one out of
-   * the state. The screen draws these, and a caller that has a `target` to
-   * re-state passes it to `submit`.
+   * the state. The screen draws these -- each with the typed cue, exactly as
+   * `propose` hands one back -- and a caller that has a `target` to re-state
+   * passes it to `submit`.
    */
   function awaiting() {
     const at = clock();
     if (at === null) return refuse(INPUT_CODES.BAD_CLOCK, 'now');
     const live = confirmPending(machine, at);
     if (!live.ok) return refuse(live.code, live.field);
-    return Object.freeze({ ok: true, actions: live.actions });
+    return Object.freeze({
+      ok: true,
+      actions: Object.freeze(live.actions.map((one) => Object.freeze({
+        ...one,
+        readBack: typedReadBack(one.readBack),
+      }))),
+    });
   }
 
   return Object.freeze({ ok: true, submit, propose, awaiting });

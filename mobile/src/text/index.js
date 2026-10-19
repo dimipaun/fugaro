@@ -22,6 +22,7 @@ export {
   INPUT_OUTCOME,
   TYPE_CUE,
   createTypedInput,
+  typedReadBack,
 } from './input.js';
 
 export {

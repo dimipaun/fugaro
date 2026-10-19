@@ -36,6 +36,7 @@ import {
   TYPE_CUE,
   createTextScreen,
   recentSummaries,
+  typedReadBack,
 } from './index.js';
 
 /** The smallest React that can build a tree we can read. */
@@ -266,14 +267,32 @@ test('a limit that is not a count is no summaries at all, not a crash', () => {
 // The read-back, the unsent text, and the notice.
 // ---------------------------------------------------------------------------
 
-test('a read-back is drawn with the TYPED cue, never P6.2\'s spoken one', () => {
+test('a read-back is drawn once, and the one instruction on it is the TYPED one', () => {
   const screen = makeScreen();
-  const readBack = 'Cancel run run-42. Say "Fugaro, confirm" to confirm.';
-  const shown = render(screen, { confirmation: { readBack, deadline: 1_700_000_060_000 } });
-  assert.equal(shown.includes(readBack), true);
-  assert.equal(shown.includes(TYPE_CUE), true);
-  assert.equal(TYPE_CUE.includes('Fugaro, confirm'), true);
-  // And with nothing waiting, there is no cue and no read-back at all.
+  // The read-back the caller is handed, built the way the pipeline builds it:
+  // P6.2's sentence, retargeted at a keyboard by `typedReadBack` (see
+  // `input.test.js` for that half). Using P6.2's own string here instead --
+  // "… Say \"Fugaro, confirm\" to confirm." -- is exactly the contradiction
+  // this test exists to keep out of the tree.
+  const readBack = typedReadBack('Cancel run run-42. Say "Fugaro, confirm" to confirm.');
+  const confirmation = { readBack, deadline: 1_700_000_060_000 };
+  const shown = render(screen, { confirmation });
+  assert.equal(shown.includes(readBack), true, 'the read-back is drawn verbatim');
+  assert.equal(readBack.includes(TYPE_CUE), true, 'and it carries the typed cue');
+  assert.equal(
+    shown.some((line) => line.includes('Say "Fugaro, confirm"')),
+    false,
+    'a screen with a keyboard must not ask the user to speak',
+  );
+  // One line, drawn once: a second cue under the read-back is how the
+  // "Say" and "Type" pair got onto this screen in the first place.
+  assert.deepEqual(stringsOf(screen, SCREEN.READ_BACK, { confirmation }), [readBack]);
+  const box = walk(screen({ confirmation })).filter(
+    (one) => one.props !== null && one.props.type === SCREEN.CONFIRMATION,
+  );
+  assert.equal(box.length, 1);
+  assert.equal(box[0].children.length, 1, 'the confirmation is one line, not a line and a cue');
+  // And with nothing waiting, there is no read-back and no cue at all.
   const quiet = render(screen);
   assert.equal(quiet.includes(TYPE_CUE), false);
   assert.equal(stringsOf(screen, SCREEN.CONFIRMATION).length, 0);
