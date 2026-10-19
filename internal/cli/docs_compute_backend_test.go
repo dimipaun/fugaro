@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -157,7 +158,7 @@ var computeBackendSymbols = map[string][]string{
 	},
 	"internal/backend/batch/reap.go": {
 		"Reaper", "NewReaper", "func (r *Reaper) Reap", "ReaperOptions",
-		"ActionDeleteJob", "ActionCancelJob", "ActionDeleteVM", "Report",
+		"ActionDeleteJob", "ActionDeleteVM", "Report",
 		"ReapMargin", "MaxDeadline", "QueueDeadline",
 	},
 	"internal/backend/batch/batch_test.go": {
@@ -168,7 +169,11 @@ var computeBackendSymbols = map[string][]string{
 	"internal/cli/cloud.go": {"openCloudFor", "checkExecution"},
 	"internal/cli/run.go":   {"Backend: backend.CloudRun"},
 	"internal/cli/recipes_skew.go": {
-		"batchProvisionShipped", "batchProvisionDisabled", "refuseBatchProvisionNotShipped",
+		// The gate the plan is about. Task 9 flips it and removes the refusal
+		// beside it; the three names that go are in computeBackendAbsent below,
+		// which is what makes a re-added cancel action or a re-added refusal
+		// fail rather than read as present.
+		"batchProvisionShipped",
 	},
 	"internal/cli/launch_budget.go": {"budgetMintOn"},
 	"internal/cli/root.go":          {"AddCommand"},
@@ -184,8 +189,10 @@ var computeBackendSymbols = map[string][]string{
 		"RunSchedulerJob", "PreloadedImage", "propagating",
 	},
 	"deploy/terraform/gcp/modules/compute/iam.tf": {
-		// The permission Task 9 removes, and the resource that names it.
-		"google_project_iam_custom_role", "batch.jobs.cancel", "batch.jobs.delete",
+		// The resource that names the permissions. The one Task 9 removes
+		// (batch.jobs.cancel, which no GCP role can carry) is in
+		// computeBackendAbsent below.
+		"google_project_iam_custom_role", "batch.jobs.delete",
 	},
 	"deploy/terraform/gcp/modules/compute/preload.tf": {
 		"google_cloud_scheduler_job", "preload_rebuild",
@@ -195,13 +202,122 @@ var computeBackendSymbols = map[string][]string{
 		"google_cloud_run_v2_job", "google_cloud_scheduler_job", "history_sweep",
 	},
 	"deploy/terraform/terraform_test.go": {
-		// The two pins Task 9 updates in the same commit as the permission list.
-		"TestComputeReaperRoleIsExactlySix", "TestCustomRolePermissionsAreAllowedByGoogle", "knownInvalid",
+		// The two pins Task 9 updates in the same commit as the permission
+		// list. The first is renamed with its assertion: a pin called "exactly
+		// six" that asserts five is a name that has stopped being true.
+		"TestComputeReaperRoleIsExactlyFive", "TestCustomRolePermissionsAreAllowedByGoogle", "knownInvalid",
 	},
 	"internal/cli/docs_artifact_runs_test.go": {
 		// The shape Task 12's TestChecklistHasCheck57 is written in.
 		"TestChecklistHasCheck58", "check58Guard",
 	},
+}
+
+// computeBackendAbsent are the names Task 9 removed, each with the files it was
+// removed from. They are asserted **gone** rather than merely dropped from
+// computeBackendSymbols above, and that is the point of the table: a name that
+// goes and is not held against the tree is a name the next reader re-adds, which
+// is what removed it in the first place. `ActionCancelJob` is the sharpest of
+// them -- a cancel action nothing emits is a permission someone re-adds to the
+// reaper's role, and that permission (batch.jobs.cancel) is not one GCP has, so
+// re-adding it breaks --provision-batch again.
+//
+// The files are where each name lived, and the walk in
+// TestDocsComputeBackendRemovedNamesAreGone is over the whole tree for the same
+// names: a name that reappears anywhere in code, Terraform or a script fails
+// there, whether or not it is the file it was removed from.
+var computeBackendAbsent = map[string][]string{
+	"internal/backend/batch/reap.go": {
+		// The queue deadline deletes now (Task 9). The action a cancel would
+		// be recorded as is gone from the package, and cancelling a queued job
+		// is not a verb the reaper has.
+		"ActionCancelJob",
+	},
+	"internal/cli/recipes_skew.go": {
+		// The pair around the gate and the refusal it fed: an open gate
+		// nothing closes and a refusal nothing can reach are names a later
+		// reader re-opens.
+		"batchProvisionOpen", "batchProvisionDisabled", "refuseBatchProvisionNotShipped",
+	},
+	"deploy/terraform/gcp/modules/compute/iam.tf": {
+		// The permission Google does not define, which made the reaper's role
+		// uncreatable and refused --provision-batch.
+		"batch.jobs.cancel",
+	},
+}
+
+// The two names the walk below leaves out of its repo-wide search: this file,
+// which quotes every one of them in the table above, and the plan, which cites
+// them. Both are prose about the tree rather than the tree.
+var computeBackendAbsenceSkips = []string{"internal/cli/docs_compute_backend_test.go", computeBackendPlan}
+
+// TestDocsComputeBackendRemovedNamesAreGone: every name Task 9 removed is
+// asserted absent from the tree's **code**, in the file it was removed from and
+// anywhere else, so that re-adding one fails here rather than leaving a plan
+// whose task has been undone silently. Comments are stripped before the search
+// for the same reason computeBackendSymbols strips them: the files that explain
+// these removals say the names (iam.tf says why batch.jobs.cancel is gone, and
+// says it is not to come back), and a doc comment naming a symbol is not the
+// symbol.
+func TestDocsComputeBackendRemovedNamesAreGone(t *testing.T) {
+	for file, names := range computeBackendAbsent {
+		text, err := os.ReadFile("../../" + file)
+		if err != nil {
+			t.Errorf("%s: %v", file, err)
+			continue
+		}
+		code := stripLineComments(string(text))
+		for _, name := range names {
+			if strings.Contains(code, name) {
+				t.Errorf("%s still has %s in its code: Task 9 removed it, and this table is what makes a re-add fail (the plan's Tasks are written in terms of these having gone)", file, name)
+			}
+		}
+	}
+	// The same names, over the whole tree. A name re-added in another package
+	// (a caller that still expects a cancel, a test that pins one) is the same
+	// regression as one re-added where it lived.
+	err := filepath.WalkDir("../..", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel := strings.TrimPrefix(filepath.ToSlash(p), "../../")
+		if slices.Contains(computeBackendAbsenceSkips, rel) {
+			return nil
+		}
+		switch filepath.Ext(rel) {
+		case ".go", ".tf", ".sh":
+		default:
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		code := stripLineComments(string(data))
+		for _, names := range computeBackendAbsent {
+			for _, name := range names {
+				if !strings.Contains(code, name) {
+					continue
+				}
+				for i, line := range strings.Split(code, "\n") {
+					if strings.Contains(line, name) {
+						t.Errorf("%s:%d names %s in code: Task 9 removed it from %s (or from the package it lived in), and this walk is what holds the removal over the whole tree rather than over one file", rel, i+1, name, "the tree")
+						break
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 // computeBackendTodoMarker is the marker the design's Task 8 left at each call
@@ -855,56 +971,79 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	if walked == 0 {
 		t.Fatalf("no files under docs/ were walked: %s's Spot fact is a claim about the whole directory", computeBackendPlan)
 	}
-	// The release: the tree says 0.9.0 in the constant and the 0.8.6 note, and
-	// the plan follows the brief's 0.9.5 and says so.
+	// The release: the tree's own surfaces say 0.9.5 now and the plan follows
+	// the brief's 0.9.5, and the only 0.9.0 the release fact still quotes is the
+	// released note's, which Task 9 does not rewrite.
+	//
+	// The constant is asserted by its **new** words. This assertion used to read
+	// "is false until 0.9.0" out of internal/cli/recipes_skew.go, and that was
+	// the assertion Task 9 was written to falsify -- a pin that keeps the old
+	// sentence is a pin that fails the moment the gate it is about ships, so it
+	// is flipped with the thing it asserts rather than deleted. The absence
+	// assertion beside it is what makes a revert of step 5 -- the refusal back
+	// on, under the old words -- fail here.
 	for _, want := range []string{
-		"**0.9.5**", "is false until 0.9.0", "The reaper will be redesigned for 0.9.0",
+		"**0.9.5**", "both are planned to return in 0.9.0 after a redesign", "The reaper will be redesigned for 0.9.0",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer quotes %q in its release fact", computeBackendPlan, want)
 		}
 	}
-	if !strings.Contains(readDoc(t, "internal/cli/recipes_skew.go"), "is false until 0.9.0") {
-		t.Errorf("internal/cli/recipes_skew.go no longer says the Batch provisioning is false until 0.9.0: Task 9's commit is the one that changes it, so a change here means that task has landed and %s's release fact has to change with it", computeBackendPlan)
+	skew := readDoc(t, "internal/cli/recipes_skew.go")
+	if !strings.Contains(skew, "batchProvisionShipped is true as of 0.9.5") {
+		t.Errorf("internal/cli/recipes_skew.go no longer says the Batch provisioning is true as of 0.9.5: Task 9's commit is the one that flips that constant to the release it lands in, so the flag is refused again for a release the plan does not name and %s's release fact has to change with it", computeBackendPlan)
+	}
+	if strings.Contains(skew, "is false until 0.9.0") {
+		t.Errorf("internal/cli/recipes_skew.go says the Batch provisioning is false until 0.9.0 again: Task 9 is the commit that retires that sentence -- the module the stage applies is fixed in 0.9.5, so re-landing the refusal under the old release name is the state this pin exists to catch")
 	}
 }
 
 // computeBackendZeroNineZero is every place in the tree's own code, its tests
-// and its release documents that names 0.9.0 for the work this plan is about,
-// each as the file, the line and the words that line carries: the constant whose
-// comment names the release, the refusal text it feeds, the released note the
-// refusal came from, the rerelease checklist's verifying line, the Terraform
-// pin's two lines, the shipped-gate test's assertion that the refusal says
-// 0.9.0, and the init flag table's entry for the stage the refusal covers.
+// and its release documents that still names 0.9.0 for the work this plan is
+// about, each as the file, the line and the words that line carries.
 //
-// It is a table of lines rather than a walk because the words matter — every
+// It held nine entries before Task 9 and holds two after it, and the two are the
+// whole of what that task leaves: docs/releases/v0.8.6.md's two lines, which are
+// a **released note** -- they were true when they were written, a plan does not
+// edit history, and the plan's fact 1 is rewritten to say the count is two and
+// that these two lines are it. The seven that went are the surfaces Task 9
+// changes or removes: the constant's comment and the refusal text it fed
+// (rewritten and deleted with batchProvisionDisabled,
+// refuseBatchProvisionNotShipped and the assertion that kept the refusal
+// saying 0.9.0, all of which the absence table above holds gone),
+// docs/release.md's verifying line and managed_test.go's init flag entry (both
+// rewritten to 0.9.5 by that task), and deploy/terraform/terraform_test.go's two
+// knownInvalid lines (which went with the entry step 4 takes out of the map).
+// A reader who finds a third entry here has found a surface a commit reverted,
+// and the walk below is what says so rather than a reader's count.
+//
+// It is a table of lines rather than a walk because the words matter -- every
 // entry here is a citation the plan makes, and the assertion below reads the
 // tree's line back, so a citation that moved, a line rewritten elsewhere and a
 // count that drifted are all failures. What a table cannot do is say whether it
 // is complete, and a count nobody can check is how this fact said "two places"
 // for a tree that has nine: so the two walks below are its bounds.
 // TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed searches the tree for a
-// 0.9.x release name beside one of this work's gating identifiers and fails on
+// 0.9.0 release name beside one of this work's gating identifiers and fails on
 // any line that is not one of these; TestDocsComputeBackendReleaseProseDocumentsAreNamed
-// does the same for the documents under docs/ that place this work in a 0.9.x
-// release in prose. The difference between the two sets is the plan's own and is
-// what Task 9 implements: these are what that task changes, and the documents
-// the second walk finds are the record of an earlier ruling, which no task here
-// rewrites.
+// does the same, over 0.9.x, for the documents under docs/ that place this work
+// in such a release in prose. The difference between the two sets is the plan's
+// own and is what Task 9 implements: these are what that task changes, and the
+// documents the second walk finds are the record of an earlier ruling, which no
+// task here rewrites -- which is why this walk reads 0.9.0 and that one reads
+// any 0.9.x. The narrowed pattern is deliberate and is not a weakening: 0.9.5
+// beside a gating identifier is what this task's commit **puts** in the tree
+// (the constant's comment, the verifying line, the flag table's entry), so a
+// search that kept 0.9.x would require the plan to list its own new lines; what
+// it must keep finding is every line that still claims this work ships in
+// **0.9.0**, and after Task 9 the released note's two lines are the whole of it.
 var computeBackendZeroNineZero = []struct {
 	file string
 	line int
 	text string
 }{
-	{"internal/cli/recipes_skew.go", 170, "batchProvisionShipped is false until 0.9.0"},
-	{"internal/cli/recipes_skew.go", 187, "it returns in 0.9.0, and the installation's ordinary steps are unaffected"},
 	{"docs/releases/v0.8.6.md", 2, "both are planned to return in 0.9.0 after a redesign"},
 	{"docs/releases/v0.8.6.md", 15, "The reaper will be redesigned for 0.9.0."},
-	{"docs/release.md", 78, "each names 0.9.0 as the release meant to ship it"},
-	{"deploy/terraform/terraform_test.go", 3103, "the reaper is redesigned for 0.9.0"},
-	{"deploy/terraform/terraform_test.go", 3108, "--provision-batch refuses until 0.9.0 (batchProvisionShipped)"},
-	{"internal/cli/shipped_gates_test.go", 87, `"batch.jobs.cancel", "0.9.0"`},
-	{"internal/cli/managed_test.go", 821, "main's compute stage (0.9.0, init_compute.go)"},
 }
 
 // computeBackendGateIdentifiers are this work's own gating names: the constant
@@ -984,7 +1123,7 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 // TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed: fact 1's count is a
 // claim about the tree, and a claim about the tree is only as good as the search
 // behind it. This is that search for the surfaces the plan enumerates: every
-// line in the tree carrying a 0.9.x release name beside one of this work's
+// line in the tree carrying a **0.9.0** release name beside one of this work's
 // gating identifiers must be one of the places the plan lists.
 //
 // It is the direction the earlier counts never had. "Two places" and then
@@ -993,6 +1132,16 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 // misses: it breaks no compile, fails no other test, and is a line of prose in a
 // table. A count is only a fact if something searches for the tenth.
 //
+// **The pattern is 0.9.0 and not any 0.9.x, and Task 9 is why**: that task's
+// commit is the one that *puts* 0.9.5 beside these identifiers (the constant's
+// comment, the verifying line, the init flag table's entry, the Terraform
+// pin's comment and the module pin's own), so a search over 0.9.x after it
+// would be requiring the plan to list the lines the plan's own task just wrote
+// -- a bound that grows with the work rather than holding it. What this must
+// keep finding is every line that still claims this work ships in 0.9.0, which
+// after Task 9 is the released note's two lines and nothing else: a line
+// rewritten back to 0.9.0, or a new one, is a third surface and fails here.
+//
 // Two files are skipped by name: this test file, whose table quotes every one of
 // the lines, and the plan, which cites them.
 func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
@@ -1000,7 +1149,7 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 	for _, e := range computeBackendZeroNineZero {
 		listed[fmt.Sprintf("%s:%d", e.file, e.line)] = true
 	}
-	release := regexp.MustCompile(`0\.9\.[0-9]`)
+	release := regexp.MustCompile(`0\.9\.0`)
 	found := 0
 	err := filepath.WalkDir("../..", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -1046,7 +1195,7 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 			}
 			found++
 			if !listed[fmt.Sprintf("%s:%d", rel, i+1)] {
-				t.Errorf("%s:%d carries a 0.9.x release name beside one of this work's gating identifiers (%s) and is not among the places %s's fact 1 lists: the count there is a claim about this tree, so a tenth surface is either a line the plan has to list or a release name that has to move with the work", rel, i+1, strings.Join(computeBackendGateIdentifiers, ", "), computeBackendPlan)
+				t.Errorf("%s:%d carries a 0.9.0 release name beside one of this work's gating identifiers (%s) and is not among the places %s's fact 1 lists: the count there is a claim about this tree, so a third surface is either a line the plan has to list or a release name that has to move with the work", rel, i+1, strings.Join(computeBackendGateIdentifiers, ", "), computeBackendPlan)
 			}
 		}
 		return nil
@@ -1054,8 +1203,12 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if found < 5 {
-		t.Fatalf("the walk found %d lines carrying a 0.9.x name beside a gating identifier while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", found, len(computeBackendZeroNineZero))
+	// The floor is the table's own length: this walk reads 0.9.0, and the table
+	// is every 0.9.0 line beside an identifier that is left, so a search finding
+	// fewer lines than the table lists is not matching what the plan states and
+	// is a bound that cannot fail.
+	if found < len(computeBackendZeroNineZero) {
+		t.Fatalf("the walk found %d lines carrying a 0.9.0 name beside a gating identifier while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", found, len(computeBackendZeroNineZero))
 	}
 }
 
