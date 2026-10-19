@@ -64,7 +64,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import { NO_ACTIVE_INSTALLATION, REDUCED_REFUSAL } from '../../src/main/ipc'
@@ -80,6 +80,7 @@ import { EXPOSED_OPERATIONS } from '../../src/preload/index'
 import { installCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { dismissFirstRunPicker } from '../support/firstRun'
+import { launchConsole } from '../support/launch'
 import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
 import { sanitizeRefusal } from '../../src/shared/sanitize'
 
@@ -127,7 +128,7 @@ async function launch(
   // unseeded one, whose picker opens beside the window under test and is
   // dismissed before any assertion about that window (`dismissFirstRunPicker`).
   const profile = options.firstRun ?? stub
-  const app = await electron.launch({
+  const app = await launchConsole({
     args: profile.launchArgs(consoleDir),
     env: { ...stubEnv, ...(options.env ?? {}), [SPAWN_LOG_ENV]: spawnLog },
   })
@@ -654,7 +655,7 @@ test.describe('the renderer entry, in the real window', () => {
     gone.seedActiveInstallation('gone', join(gone.dir, 'missing', 'fugaro'))
     const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
     const spawnLog = join(scratch, 'spawn.jsonl')
-    const app = await electron.launch({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
+    const app = await launchConsole({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
     try {
       const page = await app.firstWindow()
       await page.waitForLoadState('domcontentloaded')

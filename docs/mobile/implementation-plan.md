@@ -4,7 +4,7 @@
 
 **Status: plan only; nothing is implemented.** No app, no mailbox, no shared module and no rules change exists. **The owner answered every decision this plan depends on on 2026-10-17** ([reconciliation.md](reconciliation.md) D110–D129, D113b and D113c) — D112 **against** the recommendation (direct RTDB reads) and D113c as option (ii) (a new `fugaro` command) — and the answers are written back below (Task P0.4). **Answering a decision is not approving a task: nothing in this plan is approved**, the gate at the end of this file is not passed, and three tensions the answers create are open ([reconciliation.md](reconciliation.md) §4, "Open tensions").
 
-**Status as of 2026-10-17, later (added by the functional-spec v0.1 reconciliation; the paragraph above is kept as written).** Some of this plan now exists: **P0.1, P0.2, P0.3, P1.2, P1.3 and P1.4 are merged on `main`** (`shared/`), the owner **approved Phase 2 (P2.1, P2.2) on 2026-10-17**, and **P2.1 is draft PR #532**. Nothing else is built. **Phase 6 below is proposed by [functional-spec-reconciliation.md](functional-spec-reconciliation.md) and is NOT APPROVED**: none of its tasks may start without the owner's explicit go, and their decisions D160–D172 were **answered by the owner on 2026-10-17** (D162 and D168 against the recommendation), which approves none of them; Phase 6's rules changes land **after #532** (O2). The owner's **amendment of D128 (2026-10-17)** — cancel, approve/merge and confirming an action allowed on the phone with a spoken read-back and an explicit "confirm" — is what P6.2 and P6.7 would build; recording it approves neither.
+**Status as of 2026-10-17, later (added by the functional-spec v0.1 reconciliation; the paragraph above is kept as written).** Some of this plan now exists: **P0.1, P0.2, P0.3, P1.2, P1.3 and P1.4 are merged on `main`** (`shared/`), the owner **approved Phase 2 (P2.1, P2.2) on 2026-10-17**, and **P2.1 is draft PR #532**. Nothing else is built. **Phase 6 below is proposed by [functional-spec-reconciliation.md](functional-spec-reconciliation.md) and was approved by the owner on 2026-10-18** — this clause said the opposite until then, and is corrected rather than left to read as a live bar — and its decisions D160–D172 were **answered by the owner on 2026-10-17** (D162 and D168 against the recommendation). Its tasks may start, each still waiting on the decision rows its line names; its rules changes landed **after #532** (O2). The owner's **amendment of D128 (2026-10-17)** — cancel, approve/merge and confirming an action allowed on the phone with a spoken read-back and an explicit "confirm" — is what P6.2 and P6.7 would build; recording it approves neither.
 
 **Spec.** [spec.md](spec.md) (the owner's spec, verbatim); [functional-spec-v0.1.md](functional-spec-v0.1.md) (the owner's functional spec, verbatim), reconciled in [functional-spec-reconciliation.md](functional-spec-reconciliation.md). **Reconciliation.** [reconciliation.md](reconciliation.md) — findings F1–F37, decisions D110–D129, open items. **Index.** [README.md](README.md).
 
@@ -44,7 +44,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | **3 — The app** | The skeleton and account store, the feed reader, the job list, the audio interfaces, the mailbox client, the voice screen | P3.1–P3.6 | Yes — the app is its own artifact and merges without touching the CLI |
 | **4 — The other end, the checks, the release** | The consumer beside the orchestrator, checks 80–89, the CI job, the store path | P4.1–P4.4, P4.2a | P4.1 yes — **D113c** answered it a new `fugaro` command, so it merges from a CLI plan (D19); P4.2a and P4.2 write the register, and **the checks they write, P4.3 and P4.4 are owner-run** |
 | **5 — Later, unscheduled** | Phase 2 hosting, push, the local/remote voice evaluation switch, the conversational front agent | P5.1–P5.4 | Unscheduled by construction |
-| **6 — PROPOSED, NOT APPROVED (functional spec v0.1)** | Wake-word routing and the app-command grammar, the spoken-confirmation machine, the schema and rules for agents/prompts/action records/the MAC, the prompt queue, `fugaro pair`, the consumer's enforcement, pairing and overview in the app, the text screen, the offline gate, checks 100–104 | P6.1–P6.13 | Yes, each — but **none is approved**, and each waits on the D160–D172 rows its line names |
+| **6 — APPROVED 2026-10-18 (functional spec v0.1)** | Wake-word routing and the app-command grammar, the spoken-confirmation machine, the schema and rules for agents/prompts/action records/the MAC, the prompt queue, `fugaro pair`, the consumer's enforcement, pairing and overview in the app, the text screen, the offline gate, checks 100–104 | P6.1–P6.13 | Yes, each — **the owner approved all of Phase 6 on 2026-10-18**, and each still waits on the D160–D172 rows its line names |
 
 ---
 
@@ -67,7 +67,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | **88** | Push delivery — **only if D121 says yes** | P5.2 | Needs a real push service |
 | **89** | A signed EAS build, and the store's internal track | written by P4.2a; run at P4.4 | Needs the owner's signing keys and store accounts |
 
-**Checks 100–109 (proposed, NOT APPROVED).** The functional-spec reconciliation took a second block, **100–109**, after reading every number in use on `main` and in every open pull request (credentials-service holds 90–99). Phase 6 proposes **100** (QR pairing end to end, with the code confirmation), **101** (revocation: deleting the device node denies the next read; the Auth user's token timing), **102** (the wake word's recognition rate on the oldest supported device), **103** (a spoken cancel and a spoken merge on the **sandbox repository only**, each with its read-back and "confirm", and the refusals: a misheard confirm, a replayed confirm, a confirm for another target), **104** (offline: no command is sent or queued while disconnected). **105–109 are reserved and unused.** All are owner-run; P6.11 writes 100–104 into the register.
+**Checks 100–109 (approved 2026-10-18).** The functional-spec reconciliation took a second block, **100–109**, after reading every number in use on `main` and in every open pull request (credentials-service holds 90–99). Phase 6 proposes **100** (QR pairing end to end, with the code confirmation), **101** (revocation: deleting the device node denies the next read; the Auth user's token timing), **102** (the wake word's recognition rate on the oldest supported device), **103** (a spoken cancel and a spoken merge on the **sandbox repository only**, each with its read-back and "confirm", and the refusals: a misheard confirm, a replayed confirm, a confirm for another target), **104** (offline: no command is sent or queued while disconnected). **105–109 are reserved and unused.** All are owner-run; P6.11 writes 100–104 into the register.
 
 **Checks 81, 82 and 89 are written into the register by P4.2a — before P2.3 and P4.4 run them — and checks 80 and 83–88 by P4.2; all ten are run by the owner.** A check is never run before its text is in the register. Until they are run, the app's live behaviour is **unverified**, and no task below may claim otherwise.
 
@@ -88,7 +88,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 11. **`belong` is never touched by an agent**, and no fixture is ever recorded from it (F31). The `belong` account is added by the owner by hand.
 12. **The app never stores or uploads audio** (D118, answered 2026-10-17 as recommended). STT is on-device; the mailbox carries text. **Amended 2026-10-19, for the evaluation switch only** (the owner's answer to **Q0**, option (a), in [design/voice-evaluation-switch.md](design/voice-evaluation-switch.md) §1a, which states the scope in full and is the authority for it): **audio may be uploaded, only to a provider on the project's allow-list, only with the owner's remote switch on and consent recorded for that provider, never while a confirmation is pending and never on a destructive-command path, and never stored by the app beyond the live stream — no buffer, no spool, no retry queue, no file.** The sentence above is kept as written: **what it says about *storing* is not relaxed at all**, and it remains the rule for everything except the evaluation switch. Voice D44 stays the rule for what ships, and **adopting cloud voice is still a later decision**.
 13. **Every task's verification names the exact command**, and every verification runs without a live cloud, a device or a network.
-14. **A task marked SECURITY-SENSITIVE gets an independent review** (an opus review on the diff, by a reviewer that did not write it) before it merges. The tasks marked below are: P0.3, P1.1, P1.2, P2.1, P2.2, P3.1, P3.6, P4.1 — and, in Phase 6 (proposed, NOT APPROVED), P6.1, P6.2, P6.3, P6.4, P6.6, P6.7, P6.8, P6.10, P6.12, P6.13.
+14. **A task marked SECURITY-SENSITIVE gets an independent review** (an opus review on the diff, by a reviewer that did not write it) before it merges. The tasks marked below are: P0.3, P1.1, P1.2, P2.1, P2.2, P3.1, P3.6, P4.1 — and, in Phase 6 (approved 2026-10-18), P6.1, P6.2, P6.3, P6.4, P6.6, P6.7, P6.8, P6.10, P6.12, P6.13.
 
 ---
 
@@ -138,17 +138,17 @@ A reviewer of a **task** should read that task's own "Reviewer tier" line. The S
 | `mobile/` (the app: `package.json`, `app.json`, `src/`) | P3.1–P3.6 | The Expo app, its own artifact, outside the Go module |
 | The consumer beside the orchestrator | P4.1 | **D113c answered (ii), 2026-10-17:** a new `fugaro` command, **`fugaro mailbox`** — `internal/cli/mailbox.go` (named by the owner 2026-10-17, tension (c)) and its tests — written in a CLI plan (D19), not this one |
 
-**Proposed by Phase 6 (NOT APPROVED), created:** `shared/command/` (P6.1) · `shared/confirm/` (P6.2) · `shared/prompts/` (P6.5) · `internal/budget/rules/emulator_pairing_test.go` (P6.4) · `internal/cli/pair.go` and its tests (P6.6, in a CLI plan per console D19) · `internal/budget/token/device.go` and its test, `internal/budget/sweep_device_test.go` (P6.6) · `mobile/src/text/` (P6.9) · `mobile/src/pairing/`, `mobile/src/overview/` (P6.8).
+**Created by Phase 6 (approved 2026-10-18):** `shared/command/` (P6.1) · `shared/confirm/` (P6.2) · `shared/prompts/` (P6.5) · `internal/budget/rules/emulator_pairing_test.go` (P6.4) · `internal/cli/pair.go` and its tests (P6.6, in a CLI plan per console D19) · `internal/budget/token/device.go` and its test, `internal/budget/sweep_device_test.go` (P6.6) · `mobile/src/text/` (P6.9) · `mobile/src/pairing/`, `mobile/src/overview/` (P6.8).
 
 ### Edited
 
 | Path | Task | The edit |
 |---|---|---|
-| `shared/mailbox-schema/` | **P6.3 (proposed, NOT APPROVED)** | The fields D161, D167, D168, D169 and D171 need: `agent`, `kind`, `options`, `reply_to`, the action record, `mac` (no `expires_at` field: under D168 as amended a prompt expires at D118's TTL, computed by the consumer from `at`) |
-| `internal/budget/rules/rules.json.tmpl`, `rules.go`, `testdata/rules.golden.json`, `internal/projectpolicy/version.go`, `docs/design/m9-budget-and-dashboard.md` | **P6.4 (proposed, NOT APPROVED)** | The same fields in the mailbox subtree, and the device-node conjunct in `USER` (D166) — after P2.1, never beside it |
-| `internal/cli/mailbox.go`, `internal/cli/root.go`, `internal/budget/sweep.go` | **P6.7, P6.6, P6.13 (proposed, NOT APPROVED)** | The consumer's enforcement (P6.7) and its sweeper rule for waiting prompts (P6.13); one registration line for `fugaro pair` and the sweep's `m~` rule (P6.6; no other task writes `sweep.go`) |
-| `mobile/src/mailbox/`, `mobile/src/voice/` | **P6.10, P6.12 (proposed, NOT APPROVED)** | The offline gate; the spoken confirmation and routing in the voice screen |
-| `docs/gcp-live-checklist.md` | **P6.11 (proposed, NOT APPROVED)** | Checks 100–104 |
+| `shared/mailbox-schema/` | **P6.3 (approved 2026-10-18)** | The fields D161, D167, D168, D169 and D171 need: `agent`, `kind`, `options`, `reply_to`, the action record, `mac` (no `expires_at` field: under D168 as amended a prompt expires at D118's TTL, computed by the consumer from `at`) |
+| `internal/budget/rules/rules.json.tmpl`, `rules.go`, `testdata/rules.golden.json`, `internal/projectpolicy/version.go`, `docs/design/m9-budget-and-dashboard.md` | **P6.4 (approved 2026-10-18)** | The same fields in the mailbox subtree, and the device-node conjunct in `USER` (D166) — after P2.1, never beside it |
+| `internal/cli/mailbox.go`, `internal/cli/root.go`, `internal/budget/sweep.go` | **P6.7, P6.6, P6.13 (approved 2026-10-18)** | The consumer's enforcement (P6.7) and its sweeper rule for waiting prompts (P6.13); one registration line for `fugaro pair` and the sweep's `m~` rule (P6.6; no other task writes `sweep.go`) |
+| `mobile/src/mailbox/`, `mobile/src/voice/` | **P6.10, P6.12 (approved 2026-10-18)** | The offline gate; the spoken confirmation and routing in the voice screen |
+| `docs/gcp-live-checklist.md` | **P6.11 (approved 2026-10-18)** | Checks 100–104 |
 | `docs/mobile/reconciliation.md`, `docs/mobile/implementation-plan.md`, `docs/mobile/README.md` | P0.4 | The owner's answers, written into the empty column, and the plan updated to match |
 | `internal/budget/rules/rules.json.tmpl` | P2.1 | The new mailbox and heartbeat subtree |
 | `internal/budget/rules/testdata/rules.golden.json` | P2.1 | Regenerated |
@@ -208,7 +208,7 @@ P3.1 ──┬─► P3.2 ──► P3.3
 
 every task a check covers ──► P4.2
 
-Phase 6 — PROPOSED, NOT APPROVED:
+Phase 6 — APPROVED 2026-10-18:
 P0.1 ──┬─► P6.1 ──┬─► P6.8
        │          └─► P6.12
        └─► P6.2 ──┬─► P6.7
@@ -248,7 +248,7 @@ P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 | `docs/gcp-live-checklist.md` | **P4.2a** (level 2: checks 81, 82, 89) **and P4.2** (level 5: checks 80, 83–88) | Two writers at **different levels**, never the same one. P2.3 and P4.4 **run** checks 81, 82 and 89 and do not write the register — which is why P4.2a comes before them |
 | `docs/mobile/*` | **P0.4 only** | It is the only task that writes an answer |
 | `.github/workflows/ci.yml` | **P4.3, owner-made** | No agent writes it (Global Constraint 8) |
-| **Phase 6 (proposed, NOT APPROVED) adds these writers, each at a different level from the earlier writer of the same file:** | | |
+| **Phase 6 (approved 2026-10-18) adds these writers, each at a different level from the earlier writer of the same file:** | | |
 | `shared/mailbox-schema/` | **P0.2** (level 1, merged) **and P6.3** (level 2) | P6.3 makes `mac` **required on every inbox and outbox message and on the heartbeat**, and adds the canonical serialisation; P1.1 (level 2, `shared/mailbox/`) validates messages and P3.6 (level 3) writes the inbox, so P3.6 depends on P6.3 and signs; P1.1 does not write the schema |
 | `internal/budget/rules/rules.json.tmpl`, `rules.go`, `testdata/rules.golden.json`, `internal/projectpolicy/version.go`, `docs/design/m9-budget-and-dashboard.md` | **P2.1** (level 0) **and P6.4** (level 3) | P6.4 starts only after P2.2 has merged; if the owner folds P6.4's changes into draft #532 instead (open item O2), P6.4 shrinks to its emulator file |
 | `internal/cli/root.go` | **P4.1** (level 3) **and P6.6** (level 4) | One registration line each; the explicit edge P4.1 → P6.6 keeps them apart |
@@ -269,7 +269,7 @@ P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 | **5** | **P4.2** checks 80 and 83–88, written into the register | No | standard | `docs/gcp-live-checklist.md` |
 | **unscheduled** | **P5.1** phase 2 hosting · **P5.2** push · **P5.3** the local/remote voice evaluation switch · **P5.4** the conversational front agent | **No, and not scheduled** | — | — |
 
-**Phase 6 — PROPOSED, NOT APPROVED — placed on the same levels** (a task is on the level after its deepest dependency; no level gains a second writer of a file, per the shared-files table):
+**Phase 6 — APPROVED 2026-10-18 — placed on the same levels** (a task is on the level after its deepest dependency; no level gains a second writer of a file, per the shared-files table):
 
 | Level | Phase 6 tasks | Approved? | Reviewer | Files touched |
 |---|---|---|---|---|
@@ -496,7 +496,7 @@ P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 ### Task P3.6: The app's mailbox client — SECURITY-SENSITIVE
 
 **Files.** `mobile/src/mailbox/`.
-**Depends on.** P1.1, P1.3 (the redactor D118 requires before anything is written), P1.4, P3.1, **and P6.3** *(added 2026-10-17 by the functional-spec review: P6.3/P6.4 require `mac` on every inbox message, so P3.6 must sign — with P6.3's canonical serialisation and the key from secure storage — and cannot start until P6.3, which is proposed and NOT APPROVED, exists; P3.6 never writes an unsigned inbox message)*.
+**Depends on.** P1.1, P1.3 (the redactor D118 requires before anything is written), P1.4, P3.1, **and P6.3** *(added 2026-10-17 by the functional-spec review: P6.3/P6.4 require `mac` on every inbox message, so P3.6 must sign — with P6.3's canonical serialisation and the key from secure storage — and could not start until P6.3, approved 2026-10-18, existed; P3.6 never writes an unsigned inbox message)*.
 **Resolved 2026-10-17 (tension (b)):** the app's reads are exactly its own outbox and the heartbeat under the (b1) grant, and **the per-pairing MAC key is confirmed (b2)**, so the client **verifies the MAC over each outbox message's id, text and timestamp before it speaks a word or acks**, with the key read from platform secure storage and never logged; a message that fails verification is dropped and not acked. Added tests: a tampered text, id or timestamp is refused; a message with no MAC is refused; the key never appears in a log line or fixture.
 **Verification.** Tests over the simulator and the fakes: the client writes **one** message per utterance, with a fresh id; it writes **no other path**; it reads only its own outbox; **every inbox message it writes carries a `mac` over P6.3's canonical bytes with the key from secure storage, and a test proves an unsigned write is never attempted**; the outbox and heartbeat MACs are verified over every field (§3.5 of the functional-spec reconciliation), and an unsigned heartbeat is treated as offline; **it acks a message only after it has spoken it** — and that ack is the plan's **second, explicitly-allowed phone write**, which the owner approves with D113 and P2.1's template grants on the message's own `acked` child and nowhere else; it re-delivers an unacked message after a reconnect and the duplicate is not acted on twice; and **it writes no heartbeat** — the heartbeat is the orchestrator's (D113b), and the app only **reads** it, through P1.4's rule. Under D112's answer the outbox and the heartbeat are **direct reads** under the user-claim read grant (P2.1), scoped to the phone's own account.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.**
@@ -585,9 +585,9 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 
 ---
 
-## Phase 6 — PROPOSED by the functional spec v0.1, NOT APPROVED
+## Phase 6 — APPROVED by the owner on 2026-10-18 (proposed by the functional spec v0.1)
 
-*Every task here is a proposal from [functional-spec-reconciliation.md](functional-spec-reconciliation.md). **None is approved**, none may start without the owner's explicit go, and each also waits on the decision rows its "Depends on" names. The conventions of this plan apply unchanged (Global Constraints 1–14): no live cloud in a test, no secret-shaped literal, `belong` never touched, no agent edits a workflow, owner-run checks only.*
+*Every task here came from [functional-spec-reconciliation.md](functional-spec-reconciliation.md), and **the owner approved all of Phase 6 on 2026-10-18** — the status line this section carried until then said the opposite, and it is corrected here rather than left to be read as a live bar. Each task still waits on the decision rows its "Depends on" names, and the SECURITY-SENSITIVE ones still need their independent review before they merge. The conventions of this plan apply unchanged (Global Constraints 1–14): no live cloud in a test, no secret-shaped literal, `belong` never touched, no agent edits a workflow, owner-run checks only.*
 
 ### Task P6.1: Wake-word routing and the app-command grammar — SECURITY-SENSITIVE
 
@@ -617,13 +617,14 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 ### Task P6.5: The prompt queue and the interrupt policy
 
 **Files.** `shared/prompts/` (new). **Depends on.** P1.3, P1.4, P6.3; **D160, D168 (amended: prompts expire at D118's TTL), D173**, D127.
-**Verification.** `npm test` in `shared/`: prompts queue by default; at a natural pause the announcement counts pending prompts across every account ("Two questions waiting"); "what's pending" lists them per installation; **an unanswered prompt expires at D118's mailbox TTL** (D168 as amended 2026-10-17), decided as a pure function of the prompt's `at`, the TTL and the consumer's clock, and the expiry yields the prompt's non-destructive answer, or a stop if it has none (the consumer, P6.7, delivers it once); a prompt answer is **accepted within its TTL, not P1.1's 6-hour command replay window**, except that an answer to a **destructive** prompt is a confirmation and takes the command window (D173; §3.6, O6 confirmed 2026-10-17; TTL 72 hours, O5); P1.1's kind-parameterised window API implements the windows and this module passes the kind; **reminder escalation**, before expiry — a waiting prompt is re-announced at the next natural pause after 1 hour, then once a day, and is listed first in "what's pending" (the bounded alternative of [functional-spec-reconciliation.md](functional-spec-reconciliation.md) §3.4; proposed, NOT APPROVED); a **hard cap on pending prompts per consumer**: at the maximum count a new prompt is refused with a defined answer to the orchestrator ("queue full"), tested at the boundary; reminder escalation bounds attention, the cap bounds storage;  only D160's set interrupts, and the local switch narrows or widens it; a pure function of (queue, digest, presence, switch, now).
+**Verification.** `npm test` in `shared/`: prompts queue by default; at a natural pause the announcement counts pending prompts across every account ("Two questions waiting"); "what's pending" lists them per installation; **an unanswered prompt expires at D118's mailbox TTL** (D168 as amended 2026-10-17), decided as a pure function of the prompt's `at`, the TTL and the consumer's clock, and the expiry yields the prompt's non-destructive answer, or a stop if it has none (the consumer, P6.7, delivers it once); a prompt answer is **accepted within its TTL, not P1.1's 6-hour command replay window**, except that an answer to a **destructive** prompt is a confirmation and takes the command window (D173; §3.6, O6 confirmed 2026-10-17; TTL 72 hours, O5); P1.1's kind-parameterised window API implements the windows and this module passes the kind; **reminder escalation**, before expiry — a waiting prompt is re-announced at the next natural pause after 1 hour, then once a day, and is listed first in "what's pending" (the bounded alternative of [functional-spec-reconciliation.md](functional-spec-reconciliation.md) §3.4, adopted with Phase 6); a **hard cap on pending prompts per consumer**: at the maximum count a new prompt is refused with a defined answer to the orchestrator ("queue full"), tested at the boundary; reminder escalation bounds attention, the cap bounds storage;  only D160's set interrupts, and the local switch narrows or widens it; a pure function of (queue, digest, presence, switch, now).
 **Reviewer tier.** standard.
 
 ### Task P6.6: `fugaro pair` — SECURITY-SENSITIVE
 
 **Files.** `internal/cli/pair.go` (new) and tests, `internal/budget/token/device.go` (new) and test, `internal/budget/sweep_device_test.go` (new), `internal/budget/sweep.go` (the `m~` rule), **one line** in `internal/cli/root.go`. Written in **a CLI plan** (console D19), as P4.1 is. **Depends on.** P6.4, P4.1 (the shared `root.go` line); **D165, D166, D171**.
 **What it does.** Mints a **pairing** token (one-shot `p~<random>` uid, `exp` ≤ 5 minutes) and shows the QR (Firebase config from what `init` recorded, and that token — **no key**); waits for the phone's public key in its pairing-request node and for the operator to type the code (the key's fingerprint) the phone shows; only then mints the **device** token (`m~<random>`, `mu = uid`), generates the per-pairing MAC key into the OS keychain (the settings hold the item's name only, Voice D42(2)), writes `config/admin/devices/$uid`, and delivers token and key encrypted to the phone's key (D165, D171). `ls` and `revoke` per D166; extends the history sweep to remove `m~` users whose device node is gone. **Needs two separate role sets, and states both:** the `token_minter` custom role on the signer (launchers and operators, `iam.tf`'s `minter`) to mint either token, **and** `roles/firebasedatabase.admin` (admins and budget admins) to write or delete the device node; it refuses clearly, naming the missing one, without either.
+**Carried over from P6.4.** The deployed rules put **no time limit on a pairing session**: the `p~` uid may write its `pairing/<uid>/request` once and read `pairing/<uid>/delivery` for as long as its Auth user exists, and the node outlives the five-minute token. So P6.6 **deletes the `p~` Auth user and the `pairing/<uid>` node once the delivery has been read** — the session is one-shot by construction (one request, one delivery) but not by time, and nothing else removes either. A pairing session that is never completed leaves both behind, and that is the sweep's job, not the rules'.
 **Verification.** `go test ./internal/budget/token/... ./internal/budget/... ./internal/cli -run 'Pair|Sweep'` with the fakes (`internal/gcpfake/identitytoolkit.go`): the minted uids never start with `r~`; the sweeper never deletes an `m~` user whose device node exists and does delete one whose node is gone; a wrong typed code writes nothing; the delivered payload is unreadable without the phone's private key (a fake key pair); `exp` is at most five minutes; no device node is written before the typed code matches; the key never appears in output, a log line or a fixture; revoke deletes the node before the Auth user; **a caller without the minter role is refused with a message naming it, and a caller without database admin is refused with a message naming it**, each before any side effect (two tests, fakes). **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
 
 ### Task P6.7: The consumer's enforcement of the D128 amendment — SECURITY-SENSITIVE
@@ -685,7 +686,7 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 | P3.3 | P3.2, P0.3 | D124 |
 | P3.4 | P3.1 | D122, D123 |
 | P3.5 | P3.4, P3.6, P1.2, P1.3, P1.4 | D122, D127 |
-| P3.6 | P1.1, P1.3, P1.4, P3.1, **P6.3** (signing; proposed, NOT APPROVED) | D111, D113, **D113b**, D118 |
+| P3.6 | P1.1, P1.3, P1.4, P3.1, **P6.3** (signing; approved 2026-10-18) | D111, D113, **D113b**, D118 |
 | P4.1 | P1.1, P1.2, P1.3, P2.1 | D110, D128, **D113b**, **D113c** (answered (ii); named `fugaro mailbox`, 2026-10-17), D118 |
 | P4.2a | P2.2 | D113, D120, D126 |
 | P4.2 | all | D126 |
@@ -693,19 +694,19 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 | P4.4 | P3.1, P4.2a | D120, D125 |
 | P5.1–P5.3 | — | D115, D121, D123 |
 | P5.4 *(unscheduled)* | — | D172 |
-| P6.1 *(proposed, NOT APPROVED)* | P0.1 | D164, D161, D163 |
-| P6.2 *(proposed, NOT APPROVED)* | P0.1 | D169, D162, D128 as amended 2026-10-17 |
-| P6.3 *(proposed, NOT APPROVED)* | P0.2 | D161, D167, D168, D169, D171 |
-| P6.4 *(proposed, NOT APPROVED)* | P2.2, P6.3 | D161, D166, D169, D171 |
-| P6.5 *(proposed, NOT APPROVED)* | P1.3, P1.4, P6.3 | D160, D168, D173, D127 |
-| P6.6 *(proposed, NOT APPROVED)* | P6.4, P4.1 | D165, D166, D171 |
-| P6.7 *(proposed, NOT APPROVED)* | P4.1, P6.2, P6.3, P6.4 | D169, D162, D168 |
-| P6.8 *(proposed, NOT APPROVED)* | P3.1, P6.1, P6.6 | D165, D170, D171, D114 |
-| P6.9 *(proposed, NOT APPROVED)* | P3.6, P6.5 | D167 |
-| P6.10 *(proposed, NOT APPROVED)* | P3.6, P6.3 | D167 |
-| P6.11 *(proposed, NOT APPROVED)* | P6.4 | D126 |
-| P6.12 *(proposed, NOT APPROVED)* | P3.5, P6.1, P6.2, P6.5 | D162, D169 |
-| P6.13 *(proposed, NOT APPROVED)* | P6.7 | D118, D168 (amended) |
+| P6.1 *(approved 2026-10-18)* | P0.1 | D164, D161, D163 |
+| P6.2 *(approved 2026-10-18)* | P0.1 | D169, D162, D128 as amended 2026-10-17 |
+| P6.3 *(approved 2026-10-18)* | P0.2 | D161, D167, D168, D169, D171 |
+| P6.4 *(approved 2026-10-18)* | P2.2, P6.3 | D161, D166, D169, D171 |
+| P6.5 *(approved 2026-10-18)* | P1.3, P1.4, P6.3 | D160, D168, D173, D127 |
+| P6.6 *(approved 2026-10-18)* | P6.4, P4.1 | D165, D166, D171 |
+| P6.7 *(approved 2026-10-18)* | P4.1, P6.2, P6.3, P6.4 | D169, D162, D168 |
+| P6.8 *(approved 2026-10-18)* | P3.1, P6.1, P6.6 | D165, D170, D171, D114 |
+| P6.9 *(approved 2026-10-18)* | P3.6, P6.5 | D167 |
+| P6.10 *(approved 2026-10-18)* | P3.6, P6.3 | D167 |
+| P6.11 *(approved 2026-10-18)* | P6.4 | D126 |
+| P6.12 *(approved 2026-10-18)* | P3.5, P6.1, P6.2, P6.5 | D162, D169 |
+| P6.13 *(approved 2026-10-18)* | P6.7 | D118, D168 (amended) |
 
 ---
 

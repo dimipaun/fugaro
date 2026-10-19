@@ -4,12 +4,21 @@ The Expo (React Native) app for the phone. It is **its own artifact**: outside
 the Go module, with its own release path, and it merges without touching the
 CLI (mobile plan D125, Phase 3).
 
-**Status.** Phase 3, task **P3.1** only — the app skeleton and the account
-store ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)
-line 455). P3.2 (the feed reader), P3.3 (the job list), P3.4 (the audio
-interfaces), P3.5 (the voice screen) and P3.6 (the mailbox client) are not
-here. What exists is the shell, the account model, the two device ports and the
-fences around them.
+**Status.** Phase 3: tasks **P3.1** (the app skeleton and the account store), **P3.2**
+(the feed reader and the contract's document rules) and **P3.6** (the mailbox
+client) are here ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
+P3.3 (the job list), P3.4 (the audio interfaces) and P3.5 (the voice screen) are
+not. What exists is the shell, the account model, the two device ports, the
+fences around them, the feed (the four granted families read directly from the
+Realtime Database, the document they add up to, and the screen's rules over it),
+and the phone's mailbox client -- which is the only place in the app that writes
+to the database.
+
+**P3.4 is not merged, so P3.6 defines the one audio seam it needs** —
+`src/mailbox/speaker.js`, `speak(text)` answering whether the utterance was
+spoken, which is what the ack's rule is written against. The secure store is
+**not** stubbed: P3.1's `SecretStore` is reused, and it gained one method
+(`use`) for the reason `src/mailbox/README.md` gives.
 
 ## Running the tests
 
@@ -39,8 +48,38 @@ module plugged in by `index.js` at the bottom of the tree.
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
+| `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
+| `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
+
+## The mailbox client, and the app's write set
+
+`src/mailbox/` is where the app talks to the database, and it is the only place
+that does (`src/mailbox/README.md` has the rule sheet). Three things about it
+belong in this file:
+
+* **The app's write set is exactly two paths** (D113): its own inbox message
+  node, one per utterance with a fresh id, and the `acked` child of an outbox
+  message it has already spoken. The heartbeat belongs to the orchestrator
+  (D113b) and is only read. Every record it writes is signed with the
+  per-pairing MAC key, and every record it reads -- outbox messages and the
+  heartbeat -- is verified against that key before a word is spoken or an ack
+  is written.
+* **The one-write-path claim is enforced by a scan.** `src/mailbox/write-path.test.js`
+  (P3.1's `src/boundary.test.js` shape) fails if any file but
+  `src/mailbox/client.js` calls the store's `write`, if any file but `index.js`
+  imports a `firebase` module or names a path through `.ref(` — so P3.2 and
+  P3.3 cannot bring a second write set in with the real adapter.
+* **One pass at a time.** `send`, `flush` and `poll` share a queue: an ack is
+  written only after the message was spoken, so two passes in flight together
+  would both speak it, and a screen that polls on a timer and on a reconnect
+  would do that without meaning to.
+* **The key is reached through `SecretStore.use`**: the material is handed to a
+  callback for the duration of one call and never returned (a result that
+  carries it is refused as `leaked`). No module under `src/mailbox/` can read
+  the key itself -- `reveal(`'s allow-list in the boundary scan stays two files
+  -- and that is the reason `use` exists at all.
 
 ## Where the phone's secrets live, and what is not stored
 
@@ -101,6 +140,264 @@ and a prompt per refresh is a prompt the owner switches off.
 * **No `belong`.** The `belong` installation is added by the owner by hand
   (D114, Global Constraint 11); no fixture here is recorded from it, and no
   agent touches it. `app.json` ships with no installation in it at all.
+
+## The feed: four families, and nothing else
+
+D112 was answered **direct Realtime Database reads** on 2026-10-17, and tension
+(a) was resolved with it: the phone reads **database nodes directly**, as
+documents judged by the contract's rules, from **exactly four families**
+(`config/caps/**`, `spend/$day/**`, `config/kill/**`, and the phone's own
+mailbox — `outbox` and `heartbeat`). D124 is kept as the **reader rules and the
+document shapes**, not as the `watch --json` transport: there is no child
+process on a phone, and no iOS or Android build of the Go CLI to be one.
+
+**What the phone therefore cannot show, and does not try to.** `agents/$slug/$run`
+and `outcomes/**` carry no read for a user claim, so **there are no run titles,
+no run rows and no PR link** anywhere in the app. `config/caps/repos` (the
+*parent* of `$slug`) carries no grant either, so the phone **cannot enumerate
+repositories**: the list is the owner's, typed in, exactly as D114's account
+list is. `config/mode` is not granted, so a document this app assembles carries
+`mode: null` rather than a guessed `observe` — on the one setting that decides
+whether a cap is enforced. And the queued and finished rows live in the runs
+bucket, which the phone does not see.
+
+The plan's own added test case is a statement about **requests**, not about
+refusals: *no request is ever made for `agents/**` or `outcomes/**`*. So the
+gate (`paths.js`'s `request`) judges every path **by exact shape** before the
+port is called, and the test proves it the only way a request can be proved
+absent — the fake port records every path it is handed, and the assertion is on
+that record. A reader that asked and handled the refusal would pass a test that
+only checked the refusal, and fails this one.
+
+### The contract's reader rules, and where each one lives
+
+| §10.13 rule | Where |
+| --- | --- |
+| 1. a line that is not JSON is skipped | `document.js`'s `decode` (the phone's analogue of a line is a node's value: a value that is not an object is not a counter, and reads as `unavailable` — never a throw, and never a `0`) |
+| 2. the newest document, never accumulated | `view.js`: one document, replaced on every ingest; there is no arithmetic in the file, so nothing *can* accumulate |
+| 3. silence is not death | `view.js`'s `livenessOf`, from the four inputs the rule names: the phone's clock, the document's `now`, its `connection.state` and its `connection.age_seconds`. The vocabulary (`LIVENESS`) has no word for a dead process, and silence reaches **`stale` and stops there** — that is as far as `State.conn` goes (`watch.LostAfter` is a *run*'s threshold, and the phone reads no run) |
+| 4. a changed `day` is a break | `view.js`: `broken` is `!measured`, and a broken view's `drawable` is **`null`** — so the zero a rollover document carries (§10.7: "must not draw the zero") cannot be drawn by a screen that forgot to check |
+| 5. a missing field is `unavailable`, never `0` | `availability.js` (the figure) and `document.js` (every number in a document comes out of it as one). Both kinds of the tree's "absent" are honoured: a **cap** is a pointer (`nil` = unset = `unavailable`, never a cap of zero, which would be a project allowed to spend nothing) and a **counter** is `omitempty` (absent = the zero the CLI's own document carries) |
+| 6. `--repo` | not the phone's: its repository list is the owner's, and `len(repos)` is that list |
+| 7. the child's exit | not the phone's: there is no child to end and nothing to loop on |
+| 8. the console's allow-list | the console's |
+| the degraded shape (§10.8) | `document.js` recognises the CLI's own shape — `lsDoc` (`project`, `runs[]`, `totals`, `warnings[]`) **plus** `degraded` and `notice` — by its `degraded` key, judges the `lsDoc` half for its type and **drops** it (this app renders no run row), refuses a document that carries both halves, and `view.js` renders it **as degraded**, never as a zero spend |
+
+### The two choices P3.2 had to make
+
+The resolution of 2026-10-17 left two things to this task, and both are stated
+here because a reviewer has to be able to disagree with them:
+
+1. **The burn rate and the cap fraction are recomputed on the phone** rather
+   than not shown. The alternative would leave the live screen without the two
+   numbers it exists for, and both inputs are inside the grant. What is
+   recomputed is recomputed **from the CLI's own constants and formulas**
+   (`internal/watch/build.go`'s `bar`, `internal/watch/state.go`'s `State.Burn`
+   and `burnOf`): a 5-minute window that needs a 60-second span before it says
+   anything, `perMin*60 > daily/8` for `fast`, and `100%` when the cap is zero.
+   "From the CLI's constants", not "exactly as the CLI computes it", because
+   there are **two places this app cannot follow** and a reviewer should be able
+   to see both without reading the Go: `Build` blanks the burn block when
+   `len(b.Runs) == 0` (`internal/watch/build.go:332`), and this app is not
+   granted `agents/**`, so it has no runs to count; and `burnOf` prefers
+   `cfg.BurnAlertPerHour` — the operator's local
+   `watch.burn_alert_usd_per_hour` (`internal/localcfg/localcfg.go:145`), which
+   is not in the database — so the phone only ever computes the `daily/8`
+   fallback. Both divergences are written down in `src/feed/recompute.js`. The
+   two figures are over **two different totals**, and that
+   is the CLI's own split rather than an accident here: the fraction is over
+   **counted** ("only counted feeds it; notional counts toward no cap") while the
+   rate is the slope of **spent + notional**, which is what `State.observe`
+   records. A rate with no window is **unknown, not zero**; so is one whose
+   window was just cleared, which is what a counter that went **backwards** does
+   (`State.record`: "a reset, not negative spend"). A missing input makes the
+   figure `unavailable`, never `0`.
+2. **The repository list is the owner's**, typed in, and never discovered:
+   `config/caps/repos` carries no grant, so the database cannot be asked which
+   repositories exist. The list is bounded (`MAX_PATHS`) because every entry is
+   a listener, and an entry that is not a slug is **refused, not dropped** — a
+   list that quietly lost an entry is a repository the phone would never show.
+
+### The connection the phone reports
+
+The CLI's `State.conn` is "the worst of the four streams". The phone's streams
+are its granted paths, so the same rule applies to them, **in the same order**:
+a **refused** read outranks everything (a permission error is the diagnosis, and
+the silence that follows it is its consequence), then a read that **failed** for
+any other reason, then the paths that have not answered yet, then the **oldest
+node that has delivered**. `age_seconds` is the CLI's own measure, and it is
+what `view.js` reads as silence.
+
+**A permission error and a dropped socket are different facts**, and the phone
+keeps them apart (`isPermissionError`, the phone's side of `errors.Is(err,
+rtdb.ErrPermission)`): only a `PERMISSION_DENIED` code is `refused`/"access
+refused"; a timeout, a network failure or a client that has not authenticated is
+`offline`/"the read failed". Calling the second one a credential problem would
+send the owner to check a token that is fine. The reasons are **static
+sentences** (`CONNECTION_REASONS`): an error message from the database is not
+something this app puts on a screen, and the reader drops it rather than echoing
+it. Before anything has arrived the state is `offline`/`connecting` — the CLI's
+own word for a stream that has not spoken yet, and not a death.
+
+**Silence never leaves `stale`.** `State.conn` has exactly one silence
+threshold (`StaleAfter`, 45 s), and §10.9's `LostAfter` (180 s) is not a
+connection's: the table calls it a property of a **run** (`State.health` calls a
+run `lost`), and the phone is subscribed to no run — it reads no stage, no
+deadline and no agent. A feed that has been quiet for half an hour is a feed
+that has been quiet for half an hour; the app says so, and it keeps the last
+measurement on screen.
+
+### The feed's mutations
+
+Each was planted, the run went red, the bug was removed:
+
+| Mutation | Went red |
+| --- | --- |
+| the gate lets a denied family through and the plan asks for `agents/…` | `no request is ever made for a denied family, and the port proves it` |
+| the path bound (`MAX_PATHS`) is not enforced | `the plan is the granted shapes…` |
+| the repository list is not judged | `the plan is the granted shapes…` |
+| the account's uid is not judged | `the plan is the granted shapes…` |
+| `ingest` stores a value for a path that was never asked for | `a value for a path the reader never asked for is refused and not stored` |
+| a listener is subscribed without being registered with the account | `the listener belongs to the account…` |
+| a closed account can subscribe anyway | `…not one socket is opened for a closed account` |
+| the project's cap is read as the repository default | `the granted nodes add up to a document…` |
+| an unset cap becomes a cap of zero | `a missing node is unavailable, never a zero…` |
+| a counter reading is not sampled | `the burn window is fed spent + notional…` |
+| a rollover does not move the reader to the new day | `a changed day is a break…` |
+| the day is measured before its counter has been heard | `a changed day is a break…` |
+| a refused read is not a connection state | `the connection is the worst of the granted paths…` |
+| the kill node is passed through instead of the document's shape | `a kill switch the phone cannot read is a kill switch that is on` |
+| an unreadable counter node reads as zero | `a node that cannot be read is unavailable, and never a zero` |
+| a reader that was never started refreshes anyway | `a reader that was never started refuses to refresh…` |
+| starting does not assemble the first, connecting document | `the connection is the worst of the granted paths…` |
+| `stop` does not stop the listeners | `…stop is final` |
+| starting twice is allowed | `…and stop is final` |
+| the recording ignores the day it is asked for | the door's end-to-end test and `the granted nodes add up to a document…` |
+| the door re-exports a path composer | `the door carries no port and no path composer` |
+
+The ones below are the **code review** of this task: its eight findings, plus
+the mutations that followed from reading the CLI's own code to fix them (the
+backwards counter, and the connection's age in the two error states) — see "The
+review" under the table:
+
+| Mutation | Went red |
+| --- | --- |
+| the burn window is fed `counted` instead of `spent + notional` | `the burn window is fed spent + notional…` |
+| a counter that goes backwards keeps the window it went back from | `a counter that goes backwards clears the window…` |
+| every port error is a refusal | `a permission error is refused, and a failure to connect is not` |
+| a failed read is not a connection state | `a permission error is refused…` |
+| silence goes `offline` again at ten minutes | `a feed that stops arriving is a silence, not a death` |
+| an instant past what a JS `Date` renders is rendered anyway | `an instant past what a JS Date can render…`, `a kill switch whose instant this app cannot render…` |
+| the uid is composed without being judged | `the account is judged as the account module judges it…` |
+| `refresh` does not judge its clock | `a clock that is not an instant is refused at every entry point` |
+| `isNow` accepts an unrenderable instant | `a clock that is not an instant is refused…` |
+| the assembly does not judge its instant | `a clock that is not an instant is refused…` |
+| `stop` keeps the session | `stop forgets the session, and a restart does not inherit it` |
+| `check()` relabels every figure `measured` | `the codes are the refusal vocabulary a caller matches on` |
+| a refusal (or a failed read) resets the connection's age to zero | `a permission error is refused, and a failure to connect is not` |
+
+**Two of those mutations were found by writing the tests, and both were real
+bugs rather than test faults.** The first: the wire document's `kill` carries no
+`on` field (presence *is* the on-ness — `jsonKill` returns nil when the switch is
+off), so passing the tree's node through was an unknown field that made
+`document.js` refuse the **whole document** the moment a kill switch was on. The
+second: an unreadable counter node crashed the assembly — a node holding text
+reached `counters.counted` on a refusal. It reads as `unavailable` now, never as
+`0`, and the rest of the document is untouched.
+
+### The review
+
+A code review of this task found eight more, and they are worth reading as one
+class rather than as eight incidents: **each was a rule the CLI has, restated
+here slightly differently** — which is exactly the failure mode this module was
+written to avoid, because the two implementations are meant to agree about the
+same tree.
+
+* **The burn window was fed `counted`.** `State.observe` records
+  `Spent+Notional`, and `counted` is `bar()`'s number. The phone's rate and its
+  `fast` flag therefore disagreed with the console's for the same tree, and the
+  test encoded the wrong series — a test that would have passed either way is
+  worse than no test, so it now moves `counted` alone and requires a zero slope.
+* **Every port error was collapsed into `refused`.** `State.conn` calls a
+  permission error `refused` and any other error a connection that is not up; a
+  dropped socket was being reported as an access problem, and the port could not
+  express the difference. There are two sets and two sentences now.
+* **`watch.LostAfter` was used as a connection threshold.** §10.9's table calls
+  it a property of a **run** (`State.health`), and `State.conn` never leaves
+  `stale` for a silence — so the phone would have said `offline` where the
+  console, reading the same tree, said `stale`. The constant is gone, and a test
+  asserts it is not exported again.
+* **An out-of-range `at` threw inside an assembly.** A nanosecond timestamp
+  fits an `int64` and does not fit a JS `Date`; `toISOString()` throws, and
+  because the value was stored before the assembly, every later assembly threw
+  too — a feed dead for the rest of the session, with an ON switch reading as
+  off. `MAX_INSTANT_MS` bounds the instant, and a switch whose instant cannot be
+  read is a switch the app believes (`State.kill`), not one it claims to have
+  read while quietly dropping a field.
+* **The mailbox path was composed from an unjudged `authUid`.** The account id
+  was judged and the uid was not, so an account without one composed
+  `mailbox/undefined/outbox` — a path the gate **grants**, because `undefined`
+  has a uid's shape. That is the request the plan's own case forbids, arriving
+  by the back door. The account is now judged by `validateAccount`, the module
+  that owns the tuple.
+* **`refresh()` did not judge its clock**, so a no-argument call threw a
+  `TypeError` out of `dayKey` instead of refusing with `BAD_NOW`. The same bound
+  is now applied at every entry point *and* in the assembly, so a clock that
+  cannot be rendered cannot reach `toISOString()` at all.
+* **`stop()` left the session's state behind**, so a re-`start()` rendered the
+  previous session's counters as freshly delivered — the exact confusion
+  `#delivered` exists to prevent.
+* **`check()` returned a `measured` figure for a notional one**, silently
+  dropping the state for any caller that reads `.figure`. `measured` is a claim
+  about who read the number, not a default.
+
+Each fix has its own test, and each test was mutation-proven (the thirteen rows
+above). Two divergences of the same class were found while fixing these and are
+**not** in the review. `State.record` clears the burn window when a counter goes
+backwards, where this sampler kept the reading it went back from — so the fix
+for the first finding carries the second with it. And `State.conn` sets `Age`
+whenever **any** stream has been heard, in every branch, so a refusal or a
+failed read does not reset the clock: this reader was reporting an age of zero
+for a refusal, which tells a screen the feed has just been heard from when the
+truth is that the last thing heard was an hour ago and it was a rejection.
+
+### The second review
+
+Two review rounds of the same task found seven each, and the class is the same
+one again: **a rule the CLI has, restated here slightly differently.** Thirteen
+of the fourteen are fixed; each fix has a test and each test was mutation-proven.
+(The first round's fixes were lost to a refused push — Fugaro is not allowed to
+change workflow files — so the second round saw the same code and re-raised the
+ones it had.)
+
+| Mutation | Went red |
+| --- | --- |
+| the live field list judges the CLI's own degraded document (no discriminator first) | `the degraded shape is its own shape, recognised by its own key` |
+| `DEGRADED_FIELDS` loses `totals` (or `warnings`) | the same test — the `lsDoc` half is judged, not ignored |
+| the degraded branch is reached only after the live field list | the same test |
+| `refresh()` does not assemble after the rollover | `the rollover breaks the series at the rollover, not at the next delivery` |
+| `refresh()` subscribes before it sets `#paths`/`#day` | `the rollover subscribes the new day before a listener can answer` |
+| the rollover clears `#refused` by the store instead of the plan | `a refusal on a path that never delivered does not outlive its day` |
+| `ingest` judges the gate but not the plan | `ingest takes a value only for a path in the plan, not merely a granted one` |
+| the kill switch's strings are bounded but not cleaned | `a kill switch's strings are cleaned the way the CLI cleans them` |
+| `#dayChanged` is cleared by the first assembly inside the gap | `a changed day is a break, and the new day is re-subscribed` |
+| the door re-exports `isGranted` | both `index.js` tests |
+
+**The one refusal.** This app does **not** recompute the burn rate "exactly as
+the CLI computes it", and the README no longer says so: the two places it cannot
+follow are written into `recompute.js` and quoted in "The two choices P3.2 had
+to make" above. The reviewer's counter — that `Build`'s `len(b.Runs) == 0`
+zeroing "depends only on data the phone already holds" — is the part that does
+not hold: **live** runs are `runs/**` and `agents/**`, neither of which this app
+is granted, and the spend tree carries spend, not liveness.
+
+**The two dead exports** (`FIRST_FRAME_MS`, `gap()`) were the same class and are
+answered differently on purpose. `FIRST_FRAME_MS` was a threshold on the door
+that decided nothing — it is gone, and a test asserts it is not exported again.
+`gap()` and `STATE.GAP` are §1's **vocabulary**, not a threshold: the contract
+names five availability states, and `availability.js` now says in place that the
+constructor has no caller in P3.2 and that the day break §10.7 calls a gap is
+drawn as `drawable: null` instead.
 
 ## Which files may write a credential
 
@@ -205,3 +502,49 @@ a class rather than as an incident:**
   is a statement about this code, not about a phone. No iOS bundle identifier or
   Android package is committed: those are the owner's, and they differ per
   installation (D125).
+* **The two limits the module names.** `src/mailbox/README.md` records them with
+  their decisions: the phone does not check how old an outbox message is (a
+  signed one with an old `at` is spoken; a replay needs the consumer's identity,
+  which the rules require), and `acked` is outside the tag (P6.3/D171), so a
+  token minted for this uid could pre-ack a genuine message -- which hides a
+  message and cannot make anything act.
+* **The mailbox against a real database, and its deployed rules.** P3.6's client
+  is tested against the port's double, which models the two rules a re-send
+  meets and nothing else: no auth, no listeners, no quota, no project. Checks
+  **81** and **82** (the deployed rules' fence and the rules deploy) are
+  owner-run and have not been run, so *what the deployed rules do with a
+  re-write* is asserted here only as the double's model of them.
+* **Metro, and the `shared/` imports.** `src/mailbox/` imports
+  `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
+  and `../../../shared/digest/redact.js`; node resolves them (the tests run) and
+  the D119 boundary rule allows them, but **bundling `mobile/` and `shared/`
+  together needs a Metro `watchFolders` entry that no task has added yet.**
+  There has been no `expo start` here, so that wiring is unverified — see
+  `src/mailbox/README.md`.
+* **The Realtime Database itself (P3.2).** No database client is installed: the
+  reader takes a port — `{ subscribe(path, { onValue, onError }) }` — and every
+  test hands it a fake that records the paths it is asked for. So **no listener
+  has ever been attached to a real project**, no document has ever come off a
+  real tree, and the deployed grant has never been exercised from a phone. That
+  is check **81**'s and check **84**'s job (owner-run), not this suite's.
+* **The tree's real shapes.** `fixtures/nodes.js` is synthetic and written from
+  `internal/budget/model.go`, not recorded from an installation — no fixture
+  here may be recorded from `belong`, or from any live project (Global
+  Constraint 11). A tree whose shape changed would be caught by the CLI's own
+  tests; nothing in this app would notice a field it does not read, which is
+  deliberate (the reader ignores what it does not use) and is exactly why the
+  fixtures carry fields it does not use.
+* **The clock.** Every instant in the feed's tests is injected, so no test has
+  run against a real clock: the day rollover, the burn window and the silence
+  thresholds are all arithmetic over an instant a test chose. Clock **skew** —
+  "clock differs" — is check **84**'s, and `view.js` deliberately floors a
+  negative age at zero rather than deciding what it means. What *is* asserted is
+  that an instant this app cannot render (past `MAX_INSTANT_MS`, or not a
+  number at all) is refused at every entry point rather than raising inside an
+  assembly.
+* **What the heartbeat means.** The reader reads `mailbox/$uid/heartbeat` and
+  draws **no conclusion** from it: the heartbeat is delivered like any other
+  granted node, and presence — live, stale, offline, and the boot id that says
+  the orchestrator restarted — is check **84** (P4.2)'s rule, which has a real
+  clock and a real database. A heartbeat that is not there is a node that is not
+  there, and this task does not call that "the orchestrator is down".

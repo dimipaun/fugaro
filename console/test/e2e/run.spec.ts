@@ -68,7 +68,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import type { JSONDoc } from '../../src/source/source'
@@ -76,6 +76,7 @@ import { RUN_LOG_CAP, RUN_THEMES } from '../../src/renderer/screens/run'
 import { githubToken } from '../support/fakeSecrets'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
 // is two levels below it.
@@ -440,13 +441,13 @@ test.describe('the Run detail screen', () => {
     // opens when no installation is chosen -- is not, and no spec touches the
     // machine's own console profile.
     cli.seedActiveInstallation()
-    app = await electron.launch({ args: cli.launchArgs(consoleDir), env: cli.env })
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })
 
   test.afterAll(async () => {
-    await app.close()
+    await app?.close()
     cli.remove()
   })
 
