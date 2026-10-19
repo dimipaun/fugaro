@@ -30,8 +30,11 @@ package cli
 //  * TestDocsCoordinatorCitationsExist -- every repository path reconciliation.md
 //    cites resolves on disk, in either the full form or the
 //    deploy/terraform/gcp/-relative form the Terraform modules are cited in, in
-//    every citation shape the document uses, and the check is measured against
-//    an independent count of the document's path-looking tokens.
+//    every citation shape the document uses -- including a shortened reference
+//    that names its file by base name alone and carries a line number, which is
+//    resolved against the tree and refused when the name fits no file or more
+//    than one -- and the check is measured against an independent count of the
+//    document's path-looking tokens.
 //  * TestDocsCoordinatorRelativeCitationsResolve -- every relative second
 //    reference (`:89`, `:14-24`, `:127 notCovered`) resolves against the
 //    nearest full-path citation before it in its own paragraph, to a line that
@@ -49,7 +52,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 26, one per way these documents can
+// Mutation (verified, run and restored) -- 30, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -88,7 +91,21 @@ package cli
 //	  restore the old shape-blind regexp -> the census assertion fails,
 //	  reporting "217 path-looking tokens and the citation check matched 182";
 //	  make the regexp line-bounded again -> fails in the relative check below,
-//	  because that loses the anchor `:127 notCovered` resolves against.
+//	  because that loses the anchor `:127 notCovered` resolves against;
+//	  put a line past the end of the file a shortened reference's name resolves
+//	  to (`apptoken.go:9999`) -> fails, naming that file and its length, where
+//	  before this round the token was skipped in silence and no check read it;
+//	  shorten a reference to a name no file carries (`nosuchfile.go:89
+//	  grantRules`) -> fails, saying no file in the tree is named it;
+//	  shorten one to a name six files carry (`main.go:89 grantRules`) -> fails,
+//	  listing them: a shortened name is a claim about one file, and the check
+//	  will not choose one for it;
+//	  name a symbol the resolved file does not have beside the line
+//	  (`cover.go:1569 grantRules`) -> fails, naming the window it searched.
+//	  The three shortened references the document carries were checked by no
+//	  test before this round, and the census could not see it: they are
+//	  path-looking tokens like any other. The count could -- it read 94
+//	  citations then and reads 96 now, which is why it is logged.
 //	TestDocsCoordinatorRelativeCitationsResolve
 //	  put the literal `:...` back where the F36 line reference is -> fails: a
 //	  placeholder is not a line number;
@@ -138,10 +155,11 @@ package cli
 //     package while DailyMicros is declared in internal/budget/model.go:
 //     evaluate.go:31 is ReasonRepoDailyCap. STILL OPEN, and the reason is
 //     scope: the symbol sits outside the backticks, so pairing it with a path
-//     means reading the sentence. The relative-reference check below does test
-//     the symbol where the document names one, and that is the half of this
-//     that is mechanical -- the symbol there is inside the reference's own
-//     token.
+//     means reading the sentence. Two checks do test the symbol where the
+//     document names one -- the relative references below, and a shortened
+//     reference that carries its line (`cover.go:89 grantRules`) in the
+//     citation check above -- and that is the half of this that is mechanical:
+//     the symbol there is inside the reference's own token.
 //  2. The extractor's regexp required the closing backtick to follow the path
 //     or its `:line` suffix, so the document's dominant `path:line Symbol`
 //     shape never matched and nine cited paths were never checked. CLOSED, and
@@ -172,9 +190,11 @@ package cli
 // than presenting a fuzzy check as a complete one.
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -422,9 +442,10 @@ var coordinatorCitationPrefixes = []string{"", "deploy/terraform/gcp/"}
 
 // coordinatorRootFiles are the repository's own top-level documents, which a
 // citation may name with no directory at all. Everything else has to look like
-// a path (contain a `/`), so that a bare filename in the prose -- a run
-// artifact such as `launch.json`, or a shortened second reference to a file
-// already cited in full -- is not mistaken for a citation of a file.
+// a path (contain a `/`), or carry a line number that makes it a shortened
+// reference to one file in the tree, which coordinatorBareNames resolves and
+// refuses to guess at. What is left -- a bare filename with no line, a run
+// artifact such as `launch.json` -- is not a claim about a file in this tree.
 var coordinatorRootFiles = map[string]bool{"SECURITY.md": true, "README.md": true, "CONTRIBUTING.md": true}
 
 // coordinatorCitationExceptions are citations that deliberately name something
@@ -457,6 +478,9 @@ func TestDocsCoordinatorCitationsExist(t *testing.T) {
 		t.Fatalf("%s holds %d path-looking tokens and the citation check matched %d of them: the document cites a shape coordinatorCitationRE no longer knows, so those citations are unchecked",
 			coordinatorReconciled, census, len(matches))
 	}
+	// The tree is walked once, so that a shortened reference can be resolved
+	// against it rather than skipped.
+	bareNames := coordinatorBareNames(t)
 	seen := map[string]bool{}
 	used := map[string]bool{}
 	cites := 0
@@ -478,10 +502,42 @@ func TestDocsCoordinatorCitationsExist(t *testing.T) {
 			}
 			continue
 		}
-		// A citation is a path, or one of the repository's own root documents.
-		// A bare filename is a run artifact or a shortened second reference,
-		// and is not a claim about a file in this tree.
+		// A citation is a path, one of the repository's own root documents, or a
+		// shortened second reference that carries the line it means -- `cover.go:89
+		// grantRules`, `apptoken.go:174`. The last of those used to be skipped
+		// here, and silently: the token names no directory, so the path test
+		// below never reached it, and the line number it carries was read by no
+		// test at all -- while the document's contract is that every citation
+		// shape it uses is checked. A shortened reference is a claim about one
+		// file in this tree, so it is resolved against the tree and the check
+		// refuses to pick a file for it when the name does not pick one.
+		//
+		// A bare name with NO line is still left alone: `launch.json` and
+		// `fugaro.yaml` name a run artifact and a configuration file, not a file
+		// in this tree, and the token carries nothing that could hold them to
+		// one.
 		if !strings.Contains(path, "/") && !coordinatorRootFiles[path] {
+			if m[2] == "" {
+				continue
+			}
+			file, ok := coordinatorResolveBareName(bareNames, path)
+			if !ok {
+				if first {
+					cites++
+					t.Errorf("%s cites %q, a shortened reference carrying a line number, and %s: a shortened name is a claim about one file in this tree, and this check will not choose one for it",
+						coordinatorReconciled, path, coordinatorBareNameTrouble(bareNames, path))
+				}
+				continue
+			}
+			if first {
+				cites++
+			}
+			if !coordinatorCheckCitedLines(t, path, file, m[2]) {
+				continue
+			}
+			if symbol := coordinatorCitedSymbol(m[0], path, m[2]); symbol != "" {
+				coordinatorCheckCitedSymbol(t, path, file, m[2], symbol)
+			}
 			continue
 		}
 		file, ok := coordinatorResolveCitation(path)
@@ -527,6 +583,90 @@ func coordinatorResolveCitation(path string) (string, bool) {
 	return "", false
 }
 
+// coordinatorBareNames indexes every file in the tree by its base name, so that
+// a shortened second reference -- `cover.go:89 grantRules`, `apptoken.go:174` --
+// can be resolved to the one file the document means.
+//
+// The document shortens a name only when the name is unambiguous in the tree,
+// and this index is what makes that a checked claim rather than a convention:
+// coordinatorResolveBareName below resolves a name only when exactly one file
+// carries it. `.git` and `node_modules` are skipped -- neither is this
+// repository's own source, and a name matching a vendored copy would be an
+// ambiguity that is not one.
+func coordinatorBareNames(t *testing.T) map[string][]string {
+	t.Helper()
+	index := map[string][]string{}
+	err := filepath.WalkDir("../..", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" || d.Name() == "node_modules" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel("../..", p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		index[filepath.Base(rel)] = append(index[filepath.Base(rel)], rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("the repository tree could not be walked, so a shortened reference into it cannot be resolved: %v", err)
+	}
+	for name := range index {
+		sort.Strings(index[name])
+	}
+	return index
+}
+
+// coordinatorResolveBareName resolves a shortened reference's base name against
+// the tree index. Exactly one file has to carry the name: a reference is a claim
+// about one file, so a name matching two files (or none) is reported by
+// coordinatorBareNameTrouble below rather than resolved to a guess.
+func coordinatorResolveBareName(index map[string][]string, name string) (string, bool) {
+	matches := index[name]
+	if len(matches) != 1 {
+		return "", false
+	}
+	return matches[0], true
+}
+
+// coordinatorBareNameTrouble says why a shortened reference's name did not
+// resolve to one file, in the same sentence as the failure: which files carry
+// the name, or that none does.
+func coordinatorBareNameTrouble(index map[string][]string, name string) string {
+	switch matches := index[name]; len(matches) {
+	case 0:
+		return "no file in this tree is named " + name
+	case 1:
+		return "the one file named " + name + " is " + matches[0]
+	default:
+		return strconv.Itoa(len(matches)) + " files are named " + name + " (" + strings.Join(matches, ", ") + ")"
+	}
+}
+
+// coordinatorCitedSymbol reads the symbol a citation names beside its line: the
+// first word after `path:line` inside the citation's own backticks, as
+// `cover.go:89 grantRules` names grantRules. A citation with nothing after the
+// line names no symbol, and there is nothing to check.
+//
+// This is the same convention the document's relative references use (`:127
+// notCovered`), and it is the only shape in which a path, a line and a symbol
+// are paired by grammar rather than by reading the sentence -- which is why the
+// symbol is checked here and not beside full-path citations ("THREE HOLES",
+// hole 1, above).
+func coordinatorCitedSymbol(token, path, spec string) string {
+	fields := strings.Fields(strings.TrimSuffix(strings.TrimPrefix(token, "`"+path+spec), "`"))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
 // coordinatorFileLines reads a repository file and returns its lines. The
 // trailing newline every Go file ends with is not a line of it: splitting
 // without trimming counts one more than the file has, which makes a citation
@@ -553,17 +693,52 @@ func coordinatorFileLines(t *testing.T, file string) []string {
 //
 // An open-ended line (`:326+`) is checked for the line it names and no more,
 // which is all the `+` claims.
-func coordinatorCheckCitedLines(t *testing.T, path, file, spec string) {
+//
+// It reports whether every line it was given is a line of the file, because the
+// symbol check below indexes into those lines: a caller that goes on to look for
+// a symbol beside a line past the end of the file would slice out of range.
+func coordinatorCheckCitedLines(t *testing.T, path, file, spec string) bool {
+	t.Helper()
+	lines := coordinatorFileLines(t, file)
+	if lines == nil {
+		return false
+	}
+	ok := true
+	for _, n := range coordinatorLineNumbers(strings.TrimPrefix(spec, ":")) {
+		if n < 1 || n > len(lines) {
+			ok = false
+			t.Errorf("%s cites %q at %q, but %s holds %d lines: line %d is past the end of the file, so the citation names a line that is not there",
+				coordinatorReconciled, path, spec, file, len(lines), n)
+		}
+	}
+	return ok
+}
+
+// coordinatorCheckCitedSymbol checks the symbol a shortened reference names
+// beside its line: `cover.go:89 grantRules` claims grantRules is at line 89, and
+// a check that read the number and not the name would pass a citation whose name
+// had moved to another file. The window is the same one the relative references
+// use, and for the same reason.
+func coordinatorCheckCitedSymbol(t *testing.T, path, file, spec, symbol string) {
 	t.Helper()
 	lines := coordinatorFileLines(t, file)
 	if lines == nil {
 		return
 	}
-	for _, n := range coordinatorLineNumbers(strings.TrimPrefix(spec, ":")) {
-		if n < 1 || n > len(lines) {
-			t.Errorf("%s cites %q at %q, but %s holds %d lines: line %d is past the end of the file, so the citation names a line that is not there",
-				coordinatorReconciled, path, spec, file, len(lines), n)
+	nums := coordinatorLineNumbers(strings.TrimPrefix(spec, ":"))
+	lo, hi := nums[0], nums[0]
+	for _, n := range nums {
+		if n < lo {
+			lo = n
 		}
+		if n > hi {
+			hi = n
+		}
+	}
+	from, to, found := coordinatorSymbolBeside(lines, lo, hi, symbol)
+	if !found {
+		t.Errorf("%s cites %q at %q naming %q, but %q is nowhere in lines %d-%d of %s: the shortened reference names a symbol the file does not have beside the line it is attached to",
+			coordinatorReconciled, path, spec, symbol, symbol, from, to, file)
 	}
 }
 
@@ -608,12 +783,37 @@ var coordinatorLineSpecRE = regexp.MustCompile(`^[0-9]+(?:[-,+][0-9]*)*$`)
 // already accepted.
 var coordinatorDigitsRE = regexp.MustCompile(`[0-9]+`)
 
-// coordinatorSymbolWindow is how far from a relative reference's line a symbol
-// named beside it may sit, in either direction. A doc comment sits a few lines
-// above the declaration it belongs to and a call site a line or two either
-// side, so the window has to be a few lines wide; it is far too narrow to
-// accept a symbol that lives in another part of the file.
+// coordinatorSymbolWindow is how far from a cited line a symbol named beside it
+// may sit, in either direction. A doc comment sits a few lines above the
+// declaration it belongs to and a call site a line or two either side, so the
+// window has to be a few lines wide; it is far too narrow to accept a symbol
+// that lives in another part of the file.
 const coordinatorSymbolWindow = 5
+
+// coordinatorSymbolBeside looks for a symbol in the window of lines a citation
+// may mean, and returns the window it looked in and whether it found it. The
+// window is why this is not an equality: the symbol named beside a line is
+// usually on the line, but a doc comment or a call site puts it a few lines
+// away, and both are the citation's own subject.
+//
+// The caller has established that lo and hi are lines of the file: the window is
+// an index into lines, and a past-the-end line would slice out of range.
+func coordinatorSymbolBeside(lines []string, lo, hi int, symbol string) (int, int, bool) {
+	from, to := lo-coordinatorSymbolWindow, hi+coordinatorSymbolWindow
+	if from < 1 {
+		from = 1
+	}
+	if to > len(lines) {
+		to = len(lines)
+	}
+	want := strings.TrimSuffix(symbol, "()")
+	for _, l := range lines[from-1 : to] {
+		if strings.Contains(l, want) {
+			return from, to, true
+		}
+	}
+	return from, to, false
+}
 
 // coordinatorParagraphSeparatorRE finds the blank line that ends a paragraph.
 var coordinatorParagraphSeparatorRE = regexp.MustCompile(`\n[ \t]*\n`)
@@ -712,20 +912,7 @@ func TestDocsCoordinatorRelativeCitationsResolve(t *testing.T) {
 		if symbol == "" || past {
 			continue
 		}
-		from, to := lo-coordinatorSymbolWindow, hi+coordinatorSymbolWindow
-		if from < 1 {
-			from = 1
-		}
-		if to > len(lines) {
-			to = len(lines)
-		}
-		found := false
-		for _, l := range lines[from-1 : to] {
-			if strings.Contains(l, strings.TrimSuffix(symbol, "()")) {
-				found = true
-				break
-			}
-		}
+		from, to, found := coordinatorSymbolBeside(lines, lo, hi, symbol)
 		if !found {
 			t.Errorf("%s:%d cites %q against %q, but %q is nowhere in lines %d-%d: the reference names a symbol the file does not have beside the line it is attached to",
 				coordinatorReconciled, line, ref, file, symbol, from, to)
