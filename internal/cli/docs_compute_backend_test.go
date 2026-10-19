@@ -1360,6 +1360,54 @@ func TestDocsReleaseChecklistNamesEveryShippedGate(t *testing.T) {
 	}
 }
 
+// TestReleaseChecklistCopiesNoApplyFailure: "fails partway through its apply" is
+// true of one bullet only — `managedDeployerShipped`, whose flip re-enables an
+// installation apply the deployer's fence refuses — and it was copied into the
+// `catalogSince` bullet above it, where the failure is not an init at all:
+// `catalogSince` names a release that does not exist yet, so the base-image age
+// check passes for every image there is, the deploy goes through, and the RUN
+// fails at bootstrap on a `FUGARO_MODEL_PROVIDERS` field its runner refuses to
+// decode. The sentence is read against the bullet it sits in, so a later copy
+// fails here rather than in a release.
+//
+// Mutation (verified, run and restored): put the copied sentence back into the
+// `catalogSince` bullet — this fails naming it.
+func TestReleaseChecklistCopiesNoApplyFailure(t *testing.T) {
+	const beforeYouTag = "**Before you tag"
+	doc := readDoc(t, "docs/release.md")
+	start := strings.Index(doc, beforeYouTag)
+	if start < 0 {
+		t.Fatalf("docs/release.md has no %q list: the checklist is where a release verifies every gate constant", beforeYouTag)
+	}
+	section := doc[start:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	bullets := strings.Split(section, "\n- **")
+	if len(bullets) < 10 {
+		t.Fatalf("the Before-you-tag list parsed as %d bullets: the walk below would pass over nothing", len(bullets))
+	}
+	const phrase = "fails partway through its apply"
+	for _, b := range bullets {
+		if strings.Contains(b, phrase) && !strings.Contains(b, "managedDeployerShipped") {
+			t.Errorf("a Before-you-tag bullet that is not `managedDeployerShipped` says %q: that sentence is the deployer fence's apply failure, and the catalog gate's flip leaves the deploy whole and fails the run at bootstrap instead", phrase)
+		}
+	}
+	var catalog string
+	for _, b := range bullets {
+		if strings.Contains(b, "Verify `catalogSince`") {
+			catalog = b
+			break
+		}
+	}
+	if catalog == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no `catalogSince` bullet")
+	}
+	if !strings.Contains(catalog, "bootstrap") {
+		t.Error("the `catalogSince` bullet does not name the bootstrap failure its flip brings back: those keys are decoded with DisallowUnknownFields, so it is the run that fails at bootstrap, not the init's apply")
+	}
+}
+
 // TestDocsComputeBackendPlanStatusMatchesTheTree: the plan's Status line and its
 // OWNER APPROVAL GATE are claims about the branch the plan is read on, and Task 9
 // is what made them false — the line said no task's commit existed, that no

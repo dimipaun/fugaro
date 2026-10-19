@@ -419,6 +419,23 @@ func TestProvisionBatchFlagIsRefusedWhereItCannotApply(t *testing.T) {
 	}
 }
 
+// The --repo run's own check, and the one place a --repo run validates: it
+// never reaches check(), which is why the pair has to be refused here too.
+// Left unrefused, `fugaro init --repo --provision-batch` onboarded the
+// repository and dropped the flag silently -- the user asked for an apply that
+// costs money and got no apply and no word about it. The flag's own help says
+// it excludes --repo, so the refusal names both.
+func TestProvisionBatchIsRefusedOnTheRepoPath(t *testing.T) {
+	o := &initOptions{provisionBatch: true, repo: true}
+	err := o.checkRepo()
+	if err == nil {
+		t.Fatal("fugaro init --repo --provision-batch was accepted: the flag excludes --repo, and a flag that does nothing here must be refused, not ignored")
+	}
+	if !strings.Contains(err.Error(), "--provision-batch") || !strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("err = %v, want a refusal naming --provision-batch and --repo", err)
+	}
+}
+
 // The registry repository the root is given is the one the installation's pin
 // names, never the fugaro-base constant (§7.2): a grant aimed at the wrong
 // repository leaves every agent unable to pull.

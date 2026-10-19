@@ -2284,6 +2284,14 @@ func (r *initRun) printResult() error {
 
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
+	if o.provisionBatch {
+		// This run validates here and never reaches check(), so the pair has
+		// to be refused here as well: --repo onboards a repository's own root
+		// and --provision-batch applies the installation's compute root, which
+		// is why the flag's help says it excludes --repo. Accepted, it would
+		// onboard the repository and drop the provisioning the user named.
+		return userErr("--provision-batch provisions the installation's Batch compute backend, which is an apply of the installation's own root: it excludes --repo (run fugaro init --provision-batch for the installation, then fugaro init --repo for the repository)")
+	}
 	if o.anchor {
 		return userErr("--anchor and --repo exclude one another: --anchor writes the gcp_project line of an onboarded repository's checkout (run fugaro init --anchor there), and fugaro init --repo does not write it")
 	}
