@@ -763,12 +763,17 @@ func TestDocsInJobReviewNamesEveryTaskOverride(t *testing.T) {
 // documents on its behalf — is what justifies this pin and has to stay, and the
 // folders the claim does not cover have to be named rather than implied.
 //
-// The mobile half was itself wrong once this pin existed: it said the only
-// mention of the folder in a _test.go was a passing comment in
-// emulator_mailbox_test.go, and this file's own docstring and strings name it
-// too. The parenthetical now says what is true — the folder is named only as
-// text — and the set of _test.go files that name it is asserted here, so a
-// third one fails rather than quietly falsifying the sentence.
+// The mobile half has been wrong twice, and both times the tree was asked.
+// First it said the only mention of the folder in a _test.go was a passing
+// comment in emulator_mailbox_test.go, and this file's own docstring and
+// strings name it too; then the mobile work landed pins of its own —
+// docs_mobile_plan_test.go reads the implementation plan's Phase 6 status and
+// docs_voice_switch_test.go reads design/voice-evaluation-switch.md — so "named
+// only as text, never by a test that reads or asserts those documents" became
+// false. The parenthetical now says what is true: no pin of the folder's own,
+// two files read by the mobile work's own tests. The set of _test.go files that
+// name the folder is asserted here, so a fourth one fails rather than quietly
+// falsifying the sentence again.
 func TestDocsInJobReviewPinningClaimNamesItsExceptions(t *testing.T) {
 	readme := readDoc(t, inJobReviewREADME)
 	for _, want := range []string{
@@ -776,8 +781,11 @@ func TestDocsInJobReviewPinningClaimNamesItsExceptions(t *testing.T) {
 		"docs/mobile/",
 		"docs/releases/",
 		"scripts/release_test.go",
-		// The corrected parenthetical: named as text, never read.
-		"never by a test that reads or asserts those documents",
+		// The corrected parenthetical: no pin of the folder's own, and the two
+		// files the mobile work's own tests read named rather than implied.
+		"have no pin of the folder's own",
+		"internal/cli/docs_mobile_plan_test.go",
+		"internal/cli/docs_voice_switch_test.go",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q: the pinning claim has to keep the half that justifies this pin, and name the folders it does not cover",
@@ -795,17 +803,19 @@ func TestDocsInJobReviewPinningClaimNamesItsExceptions(t *testing.T) {
 		}
 	}
 
-	// "Pinned by nothing" is a claim about this tree, so the tree is asked: the
-	// _test.go files naming the folder are the one passing comment and this pin,
-	// which names it only to say that nothing pins it. A third file means the
-	// sentence has to be rewritten, which is what happened to its first version.
+	// "No pin of the folder's own" is a claim about this tree, so the tree is
+	// asked: the _test.go files naming the folder are this pin, which names it
+	// to say that nothing pins it as a set, and the mobile work's own two, which
+	// read two of its files. A fourth file means the sentence has to be
+	// rewritten, which is what happened to its first two versions.
 	named := testFilesNaming(t, "docs/mobile")
 	want := []string{
-		"internal/budget/rules/emulator_mailbox_test.go",
 		"internal/cli/docs_in_job_review_test.go",
+		"internal/cli/docs_mobile_plan_test.go",
+		"internal/cli/docs_voice_switch_test.go",
 	}
 	if got := strings.Join(named, ", "); got != strings.Join(want, ", ") {
-		t.Errorf("the _test.go files naming docs/mobile are [%s], want [%s]: %s says the folder is named only in a passing comment and in this pin, so a third file means the sentence is stale",
+		t.Errorf("the _test.go files naming docs/mobile are [%s], want [%s]: %s says the folder has no pin of its own and that two of its files are read by the mobile work's tests, so a fourth file means the sentence is stale",
 			got, strings.Join(want, ", "), inJobReviewREADME)
 	}
 }
