@@ -12,25 +12,35 @@ Three things it deliberately does **not** claim:
   step 6 of its approval list is "Approve P4.1 separately" and that approval has not been given.
   Answering D113c (which fixed the *shape* — a new `fugaro` command — and the *name* —
   `fugaro mailbox`) approves no task.
-- **Phase 6 is approved, and half of it is merged — this plan is written against what landed.**
-  The owner approved all of Phase 6 on 2026-10-18. **Merged on `main` today:** **P6.3** (the schema
-  extension — `mac` required on every message of every kind and on the heartbeat, `agent`, `kind`,
-  `options`, `reply_to`, the action record, `canonicalBytes`, and `shared/mailbox-schema`'s
-  `vectors.json`), **P6.4** (rules generation 3 — the same fields in the template, the `kind` /
-  parent-kind / MAC-shape macros, and `config/admin/devices/$uid`, which `USER` now requires) and
-  **P6.5** (`shared/prompts` — the queue, `PROMPT_TTL_MS`, the interrupt table). **Approved and not
-  built:** P6.1, P6.2 (the phone's confirmation machine), **P6.6** (`fugaro pair` — the tokens, the
-  device node, and the OS keychain entry the pairing key lives in), **P6.7** (the consumer's
-  enforcement of the D128 amendment — this command's inbound gate, the action record, the ledger
-  and the expiry) and **P6.13** (the sweeper's rule for stored prompts). So the MAC **can** be
+- **Phase 6 is approved, and most of its modules are merged — this plan is written against what
+  landed.** The owner approved all of Phase 6 on 2026-10-18. **Merged on `main` today — five of its
+  tasks, each with the module that proves it:** **P6.1** (`shared/command/index.js` — the command
+  grammar),
+  **P6.2** (`shared/confirm/index.js`, with the confirmation machine's rules, its `vectors.json` and
+  its mutation proofs), **P6.3** (the schema extension — `mac` required on every message of every
+  kind and on the heartbeat, `agent`, `kind`, `options`, `reply_to`, the action record,
+  `canonicalBytes`, and `shared/mailbox-schema/vectors.json`), **P6.4** (rules generation 3 — the
+  same fields in the template, the `kind` / parent-kind / MAC-shape macros, and
+  `config/admin/devices/$uid`, which `USER` now requires) and **P6.5** (`shared/prompts` — the
+  queue, `PROMPT_TTL_MS`, the interrupt table). **Approved and not built:** **P6.6** (`fugaro pair`
+  — the tokens, the device node, and the OS keychain entry the pairing key lives in), **P6.7** (the
+  consumer's enforcement of the D128 amendment — this command's inbound gate, the action record,
+  the ledger and the expiry), **P6.12** (the phone's spoken confirmation, which consumes the merged
+  confirmation machine) and **P6.13** (the sweeper's rule for stored prompts). So the MAC **can** be
   computed today and the **key cannot**: no pairing exists until P6.6 runs. What that means for
   this command's startup is §8.3's first row, and §8.4 says **which half of the MAC work is
-  P4.1's and which is P6.7's**.
-- **`shared/`'s tests have no CI job.** P4.3 is owner-made (no agent edits
-  `.github/workflows/`, Global Constraint 8), so until the owner adds it nothing runs the shared
-  package's tests in CI. That is why every verification in this plan is a **Go** verification, and
-  why the MAC and action-record contracts are replayed from **committed vector files** rather than
-  from a Node subprocess (Ruling M9).
+  P4.1's and which is P6.7's**. A module existing and a task being *built* are not the same claim,
+  and this bullet is held to the tree by the pin (`TestMailboxPlanPhaseSixStatusIsTrue`).
+- **`shared/`'s tests have no CI job *running* — the job itself is written and staged.** P4.3 is
+  owner-made (no agent edits `.github/workflows/`, Global Constraint 8), so the job is committed as
+  **`docs/pending-workflows/shared-tests.yml`** for the owner to copy in by hand, with the README
+  beside it, and `internal/cli/docs_shared_tests_workflow_test.go` pins the staged file's triggers,
+  permissions, action commits and the state the README describes. **Until the owner copies it in,
+  nothing runs the shared package's tests in CI** — the file is a proposal in the tree, not a job.
+  That is why every verification in this plan is a **Go** verification, and why the MAC and
+  action-record contracts are replayed from **committed vector files** rather than from a Node
+  subprocess (Ruling M9); §16 and Ruling M9's decision 4 say what the copy-in does and does not
+  change for this plan.
 
 Related: [mobile/implementation-plan.md](../mobile/implementation-plan.md) (P4.1 — this plan's
 authority — and P6.6, P6.7 and P6.13, whose halves §8.4 and M8 draw), [mobile/reconciliation.md](../mobile/reconciliation.md)
@@ -83,8 +93,16 @@ that owns it.
 | The generated CLI reference | `internal/clidoc/cliref.go` — `writeCLIReference`, `defaultPath` (`website/content/cli-reference.md`); the drift tests `internal/clidoc/cliref_test.go` `TestCliReferenceIsCurrent` and `internal/cli/docs_website_cliref_test.go` | §5: the one `root.AddCommand` line requires regenerating it |
 | The exit-code contract and the command table | `internal/cli/root.go` — the `ExitOK` / `ExitUserError` / `ExitRemoteError` constants, `ExitError` and `ExitCode` (which maps any other error to `ExitUserError`), and `NewRootCmd`; `docs/design/v1.md` §9.1 | §3, and the classification §4.4 rests on: `dbErr` and `checkDBProject` in `internal/cli/budget.go` |
 
-**No existing behaviour changes.** The only Go file that changes is `internal/cli/root.go`, by
-**one line**. Everything else is new files.
+**No existing behaviour changes — but the change is not only new files.** Two existing Go files are
+edited, and each edit is small and named: `internal/cli/root.go`, by **one line** (T5's
+`newMailboxCmd()` in the `root.AddCommand` list, §5); and **`internal/localcfg`**, where T2 adds the
+**keychain item name** — a field on the existing config struct (`localcfg.go`'s `Config`, beside
+`Watch`, `localcfg.go:143`) with its validation, **and its layered merge** in `localcfg/shared.go`
+(the `if out.Watch == nil { out.Watch = published.Watch }` precedent at `shared.go:115`, which a new
+block must join or a shared config's item name would be silently dropped). Two generated and
+hand-written documents follow the command: `website/content/cli-reference.md` (regenerated) and
+`docs/design/v1.md` §9.1 (one row). Everything else T1–T8 writes is new files. The owner sizing this
+change should count three Go files, not one.
 
 ---
 
@@ -1305,8 +1323,9 @@ constant without regenerating and watch `TestParityCorpusIsCurrent` fail.
 | `docs/design/v1.md` | T5 | one §9.1 row; **not test-enforced** (T5 says so) |
 | `docs/mobile/mailbox-review-checklist.md` | T8 | new, short; the lines a reviewer must confirm, each marked proved or unprovable here |
 | `internal/localcfg` | T2 | one field (the keychain item name), validated, **not secret** |
-| `internal/cli/docs_mobile_mailbox_plan_test.go` | **this plan, not a task** | the pin this document ships with. It **derives its path list from this document at test time** — every backticked `internal/`, `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` and `scripts/` path in the plan, plus its markdown links, must be in the tree, except the handful T1–T8 create, each of which must still be absent — that each symbol the plan names is still in the file it names it in; that M12, §4.4 and §9 state the same four-clause exit rule, **all four clauses in each of the three places**; that M4's three MAC states stay told apart and that the parked-message cost stays stated; **and, for every quote of `internal/budget/rules/rules.json.tmpl` this document makes, that the quoted lines are still in the template** — the quote is *derived by the pin*: it extracts §2's quoted block line by line and compares each with the file, and a negative control mutates a **temp copy** of the template and asserts the comparison fails, so the guard is proven able to fail rather than assumed. **That list is what the pin checks; it is not a claim that the pin checks everything above.** It is the answer to reviews that found a "verbatim" quote the file did not contain, the rule stated as one clause, and the exit row attributed to the wrong function; it is not T1–T8's and it adds no product code |
-| `.github/workflows/ci.yml` | **nobody** | P4.3 is owner-made (Global Constraint 8); see §16 |
+| `internal/cli/docs_mobile_mailbox_plan_test.go` | **this plan, not a task** | the pin this document ships with. It **derives its path list from this document at test time** — every backticked `internal/`, `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` and `scripts/` path in the plan, plus its markdown links, must be in the tree, except the handful T1–T8 create, each of which must still be absent — that each symbol the plan names is still in the file it names it in; that M12, §4.4 and §9 state the same four-clause exit rule, **all four clauses in each of the three places**; that M4's three MAC states stay told apart and that the parked-message cost stays stated; **that the Phase 6 status the premise bullet states is true of this branch** — every task the bullet calls merged must still have its module in the tree (and be named there), and every task it calls approved-and-unbuilt must still have none of the files the plan names for it, so the list cannot rot back into "P6.2 is not built" while `shared/confirm` sits in the tree (`TestMailboxPlanPhaseSixStatusIsTrue`); **and, for every quote of `internal/budget/rules/rules.json.tmpl` this document makes, that the quoted lines are still in the template** — the quote is *derived by the pin*: it extracts §2's quoted block line by line and compares each with the file, and a negative control mutates a **temp copy** of the template and asserts the comparison fails, so the guard is proven able to fail rather than assumed. **That list is what the pin checks; it is not a claim that the pin checks everything above.** It is the answer to reviews that found a "verbatim" quote the file did not contain, the rule stated as one clause, and the exit row attributed to the wrong function; it is not T1–T8's and it adds no product code |
+| `.github/workflows/ci.yml` | **nobody** | P4.3 is owner-made (Global Constraint 8), and its job is already **written and staged** as `docs/pending-workflows/shared-tests.yml` for the owner to copy in — pinned by `internal/cli/docs_shared_tests_workflow_test.go`; see §16 |
+| `docs/pending-workflows/shared-tests.yml` | **nobody** | P4.3's job, staged for the owner's copy-in (merged in #582, with its README and its pin); this plan names it and changes nothing in it |
 
 **Levels** (the mobile plan's): T1 and T2 are level 3 (with P4.1); T2a, T3–T8 follow in one lane,
 one writer each, because each builds on the one before. **Dependency edges that exist explicitly in
@@ -1342,8 +1361,9 @@ alone. **P4.1's own PR is SECURITY-SENSITIVE** (the mobile plan's group P-F) and
   a stored prompt to **P6.13**, and leaves the `m~…` sweep rule to **P6.6**.
 - **It writes no check into the register.** Checks 80 and 83–88 are P4.2's; 81, 82 and 89 are
   P4.2a's; all ten are owner-run.
-- **It touches nothing under `.github/workflows/`.** The shared package's CI job is P4.3 and is
-  owner-made; §16 describes it rather than making it.
+- **It touches nothing under `.github/workflows/`, and it authors no CI job.** P4.3's shared-tests
+  job is owner-made and already staged (`docs/pending-workflows/shared-tests.yml`); this plan neither
+  writes it nor copies it in — §16 says what the copy-in would mean for T8's drift check.
 - **It performs no live cloud action, touches no `belong` installation, EdgeWeb or EdgeServer, and
   reads, writes or asks for no API key, token, secret, certificate or password.**
 - **It does not make the app's side true.** P3.6 signs the inbox messages this command verifies, and
@@ -1407,8 +1427,9 @@ and P6.13 own, and the corpus's known gap.
 4. **The parity corpus (Ruling M9): a committed corpus generated by a JS test, replayed in Go — or
    a Node subprocess in the Go test?**
    **Recommended: the committed corpus.** Neither this runner nor CI's `test` job has Node (verified
-   here: `node --version` → `node: command not found`), and `shared/` has no CI job at all until the
-   owner makes P4.3, so a subprocess would be a verification that cannot run. **What the merged
+   here: `node --version` → `node: command not found`), and `shared/`'s CI job is **staged, not
+   running** — `docs/pending-workflows/shared-tests.yml` waits for the owner's copy-in — so a
+   subprocess would be a verification that cannot run today. **What the merged
    state buys:** the two contracts that matter most — `shared/mailbox-schema/vectors.json` and
    `shared/confirm/vectors.json` — are **committed files**, so the Go side replays them with no Node
    at all; the corpus only covers `shared/mailbox`'s outcomes and codes. **Cost, stated plainly,
@@ -1418,7 +1439,11 @@ and P6.13 own, and the corpus's known gap.
    T8's `TestParityCorpusIsCurrent`, which regenerates and diffs **only where `node` is on `PATH`**
    and **skips with a recorded reason everywhere else** — including, today, in this repository's own
    `test` job. The mitigation available today is the generator being a test in `shared/mailbox/` (so
-   any `shared/` PR that runs `npm test` regenerates it) and the P4.3 job closing it properly.
+   any `shared/` PR that runs `npm test` regenerates it), plus the **one step left** for the
+   staged job: `docs/pending-workflows/shared-tests.yml` is written and pinned, and copying it into
+   `.github/workflows/` is what closes the gap — which also runs the package's mutation proofs, so
+   the corpus generator runs there too. The copy-in is the owner's hand, not a task of this plan's
+   (Global Constraint 8).
 5. **Where does the keychain reader live?** **Recommended: a new narrow `internal/mailbox/keychain`
    with a fake**, because nothing in this repository reads an OS keychain today, and a boundary this
    small should not be a dependency (`github.com/zalando/go-keyring` or similar) unless the owner
@@ -1487,18 +1512,28 @@ and P6.13 own, and the corpus's known gap.
   agent reads a real keychain.
 - **The corpus's drift check cannot run wherever Node is absent** — including this runner and CI's
   `test` job today — so `TestParityCorpusIsCurrent` **skips** there and a `shared/mailbox` change
-  under an unregenerated corpus is caught by no test in this repository until P4.3's job exists.
-  Decision 4 offers the design with that gap named, not hidden.
+  under an unregenerated corpus is caught by no test in this repository until the owner copies the
+  staged P4.3 job in. Decision 4 offers the design with that gap named, not hidden.
 - **The sweeper's treatment of `m~…` users** is P6.6's and is not built. So at P4.1 the sweeper's
   delete set cannot contain one: it deletes the consumer's own state and **refuses and reports** if
   it is ever about to delete an `m~…` — or an `r~…` — user (M8, §6, §17). The `m~`-keyed deletion
   is a **finding for the owner**, never a silent fix here.
 - **The stored-prompt deletion is P6.13's** and is not built: at P4.1 `fugaro mailbox sweep` deletes
   the consumer's own expired state and **no store node** (§6's last row, T7).
-- **The shared package's CI job (P4.3)** does not exist. The proposed change — a job that installs
-  the shared package's dependencies and runs its test script, alongside the Go job and the `rules`
-  job, which is the only job that sets up Node today — belongs in `.github/workflows/ci.yml` and is
-  **owner-made**. It is described here because an agent may not write it.
+- **The shared package's CI job (P4.3) is written and staged, not running.** The job that installs
+  the shared package's dependencies, runs its test script and runs its mutation proofs — alongside
+  the Go job and the `rules` job, which is the only job that sets up Node today — is committed at
+  **`docs/pending-workflows/shared-tests.yml`**, with the README beside it, and
+  **`internal/cli/docs_shared_tests_workflow_test.go`** pins the staged file (its `main`-push and
+  `shared/**`-pull-request triggers, `contents: read`, every `uses:` as a full commit with its tag,
+  the two Node lines, and that the README says the file is still pending — a sentence the copy-in
+  must update). It is **owner-made** (Global Constraint 8: no agent writes or edits
+  `.github/workflows/**`), so it is **not in `.github/workflows/` yet and no workflow runs it**.
+  **What that means for T8:** `TestParityCorpusIsCurrent` regenerates and diffs only where `node`
+  is on `PATH` and **skips with a recorded reason everywhere else**, which is still the case in this
+  repository's `test` job today — the copy-in is the single remaining step, and until it happens a
+  `shared/mailbox` change under an unregenerated corpus is caught by no test here. Nothing in this
+  plan writes that job or performs the copy-in.
 
 ---
 
@@ -1524,7 +1559,8 @@ and P6.13 own, and the corpus's known gap.
    is named rather than assumed: P4.1 can be built and tested without it (the fake keychain), and
    cannot do anything in production until it runs.
 2. Then T1 and T2 land first, SECURITY-SENSITIVE, each with its independent opus review, and the
-   corpus generator runs (the owner, or the P4.3 CI job once it exists). T2a follows immediately —
+   corpus generator runs (the owner, by hand or after copying the staged P4.3 job in). T2a follows
+  immediately —
    it is the same function, the same key and the same vectors, and it is what P6.7 expects to find
    filled.
 3. Then T3 and T4, then T5–T7, then T8.

@@ -795,6 +795,95 @@ func TestMailboxPlanQuotesTheRulesFile(t *testing.T) {
 	}
 }
 
+// planPhaseSixMerged is the Phase 6 tasks the plan's premise bullet calls merged,
+// each with a path that only that task's merge puts in the tree. A review of this
+// plan found the bullet calling P6.1 and P6.2 "approved and not built" while
+// shared/command/ and shared/confirm/ (with its vectors.json and mutation
+// proofs) were merged — and P6.1/P6.2 are tasks this plan does not otherwise
+// touch, so the only thing holding the claim to the tree is a check like this
+// one. The path is the proof, not the task: it must exist, and the bullet must
+// not list the task among the unbuilt.
+var planPhaseSixMerged = map[string]string{
+	"P6.1": "shared/command/index.js",
+	"P6.2": "shared/confirm/index.js",
+	"P6.3": "shared/mailbox-schema/index.js",
+	"P6.4": "internal/budget/rules/rules.json.tmpl",
+	"P6.5": "shared/prompts/index.js",
+}
+
+// planPhaseSixUnbuilt is the other direction: the tasks the bullet calls
+// "approved and not built", and the file each would write. Every one of those
+// files must be **absent** — that is what makes the bullet a fact about this
+// branch rather than a memory — and the plan must still name it, so a reader
+// knows where the later task's work lands. P6.12 (the phone's spoken
+// confirmation) has no path here: its deliverable is app code this plan names
+// nowhere, so only its listing is asserted.
+var planPhaseSixUnbuilt = map[string][]string{
+	"P6.6":  {"internal/cli/pair.go", "internal/budget/token/device.go", "internal/budget/sweep_device_test.go"},
+	"P6.7":  {"internal/cli/mailbox.go"},
+	"P6.12": nil,
+	"P6.13": {"internal/cli/mailbox.go"},
+}
+
+// TestMailboxPlanPhaseSixStatusIsTrue holds the premise bullet — the one that
+// says which of Phase 6 is merged and which is not — to the tree. Nothing else
+// in this repository checks that class of claim: the plan's own sections were
+// self-consistent about P6.2 (M6 and T8 both said its module and vectors are in
+// the tree) while the bullet a reader meets first said the opposite, which is
+// how a reader is sent to build a module that already exists.
+//
+// Mutation (verified, run and restored): move P6.2 into the bullet's "approved
+// and not built" list and this test fails naming it; move P6.6 into the merged
+// list and it fails on the missing shared/command-style proof or on the unbuilt
+// file that exists; delete shared/confirm/index.js's citation from the plan and
+// it fails on the path the merged claim needs.
+func TestMailboxPlanPhaseSixStatusIsTrue(t *testing.T) {
+	doc := readDoc(t, mailboxPlan)
+	bullet := planSection(t, doc, "- **Phase 6 is approved")
+	if j := strings.Index(bullet, "\n- "); j >= 0 {
+		bullet = bullet[:j]
+	}
+	const unbuiltMarker = "**Approved and not built:**"
+	i := strings.Index(bullet, unbuiltMarker)
+	if i < 0 {
+		t.Fatalf("%s's premise bullet no longer separates the merged Phase 6 tasks from the unbuilt ones (%q): the two lists are what a reader plans against", mailboxPlan, unbuiltMarker)
+	}
+	mergedPart, unbuiltPart := bullet[:i], bullet[i+len(unbuiltMarker):]
+
+	for task, proof := range planPhaseSixMerged {
+		if !strings.Contains(mergedPart, "**"+task+"**") {
+			t.Errorf("%s's premise bullet no longer names %s among the merged tasks, although %s is in the tree: the merged list is the plan's answer to \"what can I build against?\"", mailboxPlan, task, proof)
+		}
+		// The id as a token, not as bold text: the revision this guard was written
+		// for said "P6.1, P6.2 (the phone's confirmation machine)" — unbolded, and
+		// the one a reader believes. A merged task named anywhere in the unbuilt
+		// sentence is the claim, however it is spelled.
+		if regexp.MustCompile(`\b` + regexp.QuoteMeta(task) + `\b`).MatchString(unbuiltPart) {
+			t.Errorf("%s's premise bullet lists %s among the approved-but-unbuilt tasks, but %s is in the tree: an implementer reading that would plan work that is already done (if the sentence means only to cross-reference the task, say so in the merged half instead)", mailboxPlan, task, proof)
+		}
+		if _, err := os.Stat("../../" + proof); err != nil {
+			t.Errorf("%s says %s is merged on the strength of %s, which is not in the tree: %v", mailboxPlan, task, proof, err)
+		}
+		if !planCited(doc, proof) {
+			t.Errorf("%s relies on %s for %s's merge, but the plan never names it: the claim has nothing a reader can check", mailboxPlan, proof, task)
+		}
+	}
+
+	for task, files := range planPhaseSixUnbuilt {
+		if !strings.Contains(unbuiltPart, "**"+task+"**") {
+			t.Errorf("%s's premise bullet no longer names %s among the approved-but-unbuilt tasks: this list is the plan's own claim about what does not exist yet", mailboxPlan, task)
+		}
+		for _, f := range files {
+			if _, err := os.Stat("../../" + f); err == nil {
+				t.Errorf("%s calls %s unbuilt, but %s is in the tree: the status list must be rebuilt against the branch, not remembered", mailboxPlan, task, f)
+			}
+			if !planCited(doc, f) {
+				t.Errorf("%s calls %s unbuilt and names none of its files: a reader cannot tell where that task's work lands", mailboxPlan, task)
+			}
+		}
+	}
+}
+
 // grantsByPath is the .read and .write expressions under the rules' mailbox
 // subtree, keyed by their path in the tree. Only the mailbox subtree is walked:
 // the plan is an argument about mailbox grants.
