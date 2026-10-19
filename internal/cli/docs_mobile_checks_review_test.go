@@ -1171,6 +1171,22 @@ func TestDocsCheck81Step5CountsItsTokLines(t *testing.T) {
 		}
 	}
 
+	// Step 6 points back at step 3 by position, the way step 5 points at its own
+	// lines: it says the control read of `config/caps/global` with `$BO` is the
+	// line that would be a 401 without Bob's device node. The sentence used to
+	// call it "step 3's third-from-last line", which is the `curl` read-back of
+	// `config/limits/maxReserveMicros` -- the device-conjunct line is the last
+	// `TOK` line of the block, and the last of its three `$BO` lines. Nothing
+	// read the claim, so both the position and the line it names are checked
+	// here.
+	step6 := stepText(t, section, "6. **The granted read nodes", "7. **A token whose")
+	if !strings.Contains(step6, "step 3's last `TOK` line") {
+		t.Errorf("check 81 step 6 does not point at \"step 3's last `TOK` line\" for the 401 that Bob's device node turns into a 200: it is the last of step 3's three `$BO` lines, and a position that is not named cannot be read against the block")
+	}
+	if last := strings.TrimSpace(toks3[len(toks3)-1]); !strings.Contains(last, "config/caps/global.json?auth=$BO") {
+		t.Errorf("check 81 step 6 names step 3's last `TOK` line as the one that would be a 401 without Bob's device node, and that line is\n%s\nwhich does not read `config/caps/global.json?auth=$BO`: the position the sentence names and the line it describes have to be the same line", last)
+	}
+
 	step4 := stepText(t, section, "4. **The user reads", "5. **The user's second write")
 	toks4 := tokLines(step4, "AT=$(gcloud auth print-access-token)")
 	if len(toks4) != 6 || !strings.Contains(step4, "the six statuses") {
@@ -1187,8 +1203,9 @@ func TestDocsCheck81Step5CountsItsTokLines(t *testing.T) {
 	}
 	// The other half of the same sentence: it says how many `curl` lines the
 	// block has, to say that none of them is one of the five statuses. The
-	// device node generation 3 added is a third `curl` (one IAM write and the
-	// two read-backs), and the sentence kept saying "four" for a round.
+	// device node generation 3 added is the block's fourth `curl` -- the `$OUT2`
+	// IAM seed, the device-node IAM write, and the two read-backs -- and the
+	// sentence kept the older count for a round.
 	block5 := codeBlockAfter(t, step5, "AT=$(gcloud auth print-access-token)")
 	curls := 0
 	for _, line := range strings.Split(block5, "\n") {
