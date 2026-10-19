@@ -1202,8 +1202,8 @@ aside.console-rail                        the rail — the grid's first column
   project** are the installation store's and the CLI's answers *about an installation*, and
   the **state** and the **spend** are the console's own view of one. `installation.current`
   answers the **active** installation and nothing else, and it takes no argument; the stored
-  list is the picker's own read on a channel a frame on this document cannot reach
-  ([§5.1](#51-the-stylesheet-files)). **This section states that dependency and does not
+  list is the picker's own read (§2.2), on a channel a frame on this document cannot reach.
+  **This section states that dependency and does not
   design its way around it**: the task that builds the rail lands the read it needs — the
   same bounded, schema-checked list the picker already draws, with no path and no id
   crossing from the renderer — or draws the row it *can* read (the active installation's)
@@ -1224,16 +1224,17 @@ aside.console-rail                        the rail — the grid's first column
 **Two things the canvas did not decide, and what this design does with each.**
 
 1. **No alert badge.** The canvas draws the state word and its glyph in **every** row, so a
-   `silent` or a `halted` installation raises no separate badge when it is not the selected
-   one: a badge would be a second mark for a fact already written in the row, and a count of
-   them would be a number nobody asked the console for. A later design that wants one adds
-   it as a mark on the row rather than as a second word.
+   `silent` installation — the rail's own attention state — raises no separate badge when it
+   is not the selected row, and neither would a fourth word if the rail ever gains one (a
+   `halted` installation, say): a badge would be a second mark for a fact already written in
+   the row, and a count of them would be a number nobody asked the console for. A later
+   design that wants one adds it as a mark on the row rather than as a second word.
 2. **The shortcut keys and the platform.** They are Command + digit on macOS and Control +
    digit elsewhere, as the bullet above states. macOS reserves neither form inside an
    application window, and **the console has no other keyboard shortcut to collide with**:
    the entry has no keydown handling at all today (§2.1), so these are the console's first
-   four-modifier keys and a later binding that wants one takes it from here rather than
-   overriding it quietly.
+   keyboard shortcuts and there is no binding for them to collide with. A later shortcut
+   that wants one of these takes it from here rather than overriding it quietly.
 
 ### 4.2 Narrow windows
 
@@ -1285,8 +1286,8 @@ which §6.1 rule 1 forbids more strongly than any layout does.
   the rail's add row — then the view nav, then the panel's own controls, and the panel's
   contents in the order the screen draws them. That is the layout's promise and not a
   preference: the rail is appended before the installation line (§4.1), so the tab order a
-  reader gets is the order they see, left to right and top to bottom. **A rail that were
-  drawn on the left and appended last would put the whole chrome ahead of it**, which is
+  reader gets is the order they see, left to right and top to bottom. **A rail drawn on the left
+  and appended last would put the whole chrome ahead of it**, which is
   the WCAG 2.4.3 failure this ordering exists to avoid — and it is also why the shortcut
   keys exist: `Ctrl`/`Cmd` + digit reaches the first three installations without walking
   the tab order at all (§4.1).
@@ -1306,8 +1307,8 @@ Windows High Contrast and `forced-colors: active` discard author colours. Two ru
 2. One `@media (forced-colors: active)` block per stylesheet, each in the task that writes
    the rules it defends: `base.css` carries the chrome's — let the system paint its
    backgrounds by setting `background: Canvas` / `color: CanvasText` on the chrome, map the
-   current view to `Highlight`/`HighlightText`, and re-enable the border the system
-   collapses. `screens.css` carries the rows' and badges' — `Canvas`/`CanvasText` on the row
+   current view **and the rail's selected row** to `Highlight`/`HighlightText`, and re-enable
+   the border the system collapses — the rail's accent left border is exactly such a border. `screens.css` carries the rows' and badges' — `Canvas`/`CanvasText` on the row
    surfaces, `LinkText`/`GrayText` where a fill was carrying a meaning, and
    `border: 1px solid CanvasText` on a panel, because a hairlines-only table becomes
    structureless without it. Neither block names a colour literal; both read the tokens.
