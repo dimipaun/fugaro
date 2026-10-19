@@ -404,6 +404,41 @@ func TestAllowDeleteCommandRefusesAnArgumentThatIsNotAnEntry(t *testing.T) {
 	}
 }
 
+// TestAllowDeleteCommandAcceptsAQuotedIdentity: the loop the help text
+// describes is a person copying the identity out of a refusal and pasting it
+// back, and a refusal is printed bare (tf.RemoveIdentityText) so that the paste
+// is the identity itself. A person may still quote what they paste — a shell
+// of their own, a message someone else quoted — so one surrounding pair of
+// double quotes is stripped, which is the only mark removed: the text inside
+// them must begin with "type=" like any other argument, so the fail-closed
+// direction is unchanged (the row above shows a quoted non-identity refused).
+func TestAllowDeleteCommandAcceptsAQuotedIdentity(t *testing.T) {
+	r := allowDeleteRig(t)
+	quoted := dataApproval.address + `="type=google_storage_bucket id=data-bucket"`
+	if _, _, err := execute(t, "allow-delete", quoted); err != nil {
+		t.Fatalf("a quoted identity was refused: %v", err)
+	}
+	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatal("nothing was written")
+	}
+	// The object holds the identity without the quotes: what was stripped is
+	// not recorded, and the stored text is the one a plan's before view
+	// produces.
+	if want := allowDeleteJSON("proj-1234", dataApproval); got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+	// And the printed list is pasteable, which is the other end of the same
+	// loop: the refusal's identity and the listing's line are one text.
+	out, _, err := execute(t, "allow-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, dataApproval.arg()) || strings.Contains(out, `"`) {
+		t.Errorf("the listing is not the pasteable form:\n%s", out)
+	}
+}
+
 // TestAllowDeleteCommandNeedsTheDefaultRunsBucket: the managed objects are
 // only ever read from the project's runs bucket under its default name — the
 // rule init's owner() and markCreated already apply — so a list recorded in a

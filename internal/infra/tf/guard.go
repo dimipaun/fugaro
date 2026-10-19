@@ -166,8 +166,13 @@ func Listable(p *Plan, allowDelete []string) []string {
 // identity of the object this plan removes (Approves). An entry that names the
 // address for another object is one of them: the removal is refused because
 // the entry is about a different object, and an entry about this one clears it.
-// What no entry clears is what Listable already excludes: a moved object, an
-// action the guard does not know, a change with no actions.
+// What no entry clears is what Listable already excludes — a moved object, an
+// action the guard does not know, a change with no actions — plus one case the
+// entries rule adds: a removal whose before view identifies nothing, which no
+// entry can be matched against (an entry always carries at least its type, so
+// it cannot equal an identity with no parts). Approves refuses that one with
+// its own sentence, and listing its address would tell the owner to approve
+// something approving cannot clear.
 //
 // It exists so the advice a refusal ends with is still true under the entries
 // rule: "an address the owner approves is listed there" is an instruction that
@@ -184,6 +189,11 @@ func ListableEntries(p *Plan, entries []DeleteEntry) []string {
 			continue
 		}
 		if removesUnderAnotherAddress(rc) {
+			continue
+		}
+		// A before view that identifies no object is a refusal no entry can
+		// clear (see the doc above): the address is not one to offer.
+		if !RemovedIdentity(rc).Identifies() {
 			continue
 		}
 		if ok, _ := Approves(entries, rc); ok {

@@ -16,8 +16,22 @@ import (
 // (a replace) in after, so before is the object's own description at the
 // moment of the removal — its type and the identifying attributes it carries.
 // An entry of the list therefore holds the address AND that identity, and the
-// gate admits a removal only when both match, which is what makes one approval
-// one delete (the entry no longer matches once the object it named is gone).
+// gate admits a removal only when both match: an approval given for the object
+// at an address is not an approval of another object a later plan carries
+// there, which is what the address alone could not tell apart.
+//
+// What this does NOT close, recorded here rather than implied by the rule:
+// the identity is what the plan's before view says the object IS, and for
+// every resource type on the managed allowlist bar google_apikeys_key the
+// provider derives `id` from the object's configured name — a bucket's id is
+// its bucket name, a secret's is projects/P/secrets/NAME, a Cloud Run job's
+// and a Pub/Sub topic's are the same shape — so nothing in a plan's before
+// view distinguishes a name-derived object from a re-creation of it under the
+// same name. An approval therefore survives delete-and-re-create of an object
+// that keeps its name at the same address, and it closes the case the design's
+// §6 item 5 is about: the address carrying a DIFFERENT object (another name,
+// a renamed or replaced resource, a moved-in one) is no longer admitted by an
+// approval given for the object that is gone.
 
 // DeleteEntry is one approval of the owner's delete list: the Terraform
 // address the owner approved a delete or a replace at, and the identity of the
@@ -45,11 +59,17 @@ type DeleteEntry struct {
 // the project it is in.
 //
 // The three attributes are the ones terraform's Google provider writes for
-// every one of its resources and the ones that make the object the object:
-// id is unique per object for the life of that object, so an object re-created
-// at the same address after a delete carries another one. A view that carries
-// none of them identifies nothing (Identifies), which is the fail-closed
-// answer rather than an approval of the type alone.
+// every one of its resources and the ones that name the object: `name` is the
+// configured name, `project` the project it lives in, and `id` the provider's
+// own identifier for it — which for every managed type but google_apikeys_key
+// is DERIVED from that name (a bucket's id is its bucket name, a secret's is
+// projects/P/secrets/NAME, a Cloud Run job's and a Pub/Sub topic's are the
+// same shape), so `id` is not a per-instance unique value here and a
+// same-named object re-created at the address carries the same identity. That
+// is the residual the package comment states: the rule tells one NAMED object
+// at an address from another one, not one instance of a name from the next. A
+// view that carries none of the three identifies nothing (Identifies), which
+// is the fail-closed answer rather than an approval of the type alone.
 type RemovalIdentity struct {
 	Type    string
 	Project string
@@ -90,7 +110,9 @@ func (i RemovalIdentity) Identifies() bool {
 }
 
 // RemovedIdentity is the identity of the object rc removes: the change's
-// resource type and its before view's id, name and project. A change that
+// resource type and its before view's id, name and project. Nothing else is in
+// that view to read, which is the residual the package comment and the type
+// above both state. A change that
 // removes nothing still answers — a create's before is null — and the answer
 // then identifies nothing, which is what Approves refuses.
 func RemovedIdentity(rc ResourceChange) RemovalIdentity {
@@ -163,18 +185,18 @@ func Approves(entries []DeleteEntry, rc ResourceChange) (bool, string) {
 			bound = append(bound, safetext.Field(e.Before))
 		}
 	}
-	held := strings.Join(bound, "\", \"")
+	held := strings.Join(bound, ", ")
 	if held == "" {
 		held = "no identity at all"
 	}
-	return false, "the owner's delete list approves this address for another object (the list holds \"" + held + "\", and the plan removes " + identityText(id) + ")"
+	return false, "the owner's delete list approves this address for another object (the list holds " + held + ", and the plan removes " + identityText(id) + ")"
 }
 
 // identityText is a RemovalIdentity as a sentence names it: the identity
 // itself, or, for a view that identifies nothing, the reason it does not.
 func identityText(id RemovalIdentity) string {
 	if s := safetext.Field(id.String()); s != "" && id.Identifies() {
-		return "\"" + s + "\""
+		return s
 	}
 	return "an object the plan does not identify (no id, name or project in its before view)"
 }
@@ -184,5 +206,9 @@ func identityText(id RemovalIdentity) string {
 // list approval is not the rule that refused it — the cover's own item for an
 // address the owner's list does not name. It is what the owner copies into
 // fugaro allow-delete, so it is the identity itself and not a description of
-// it, and the reason when the plan identifies nothing.
+// it, and the reason when the plan identifies nothing. It is printed unquoted
+// and without marks of the sentence's own: the owner pastes it, and a
+// surrounding pair of quotes would be characters the identity does not have
+// (the command strips one pair if a caller pastes them anyway, so the two
+// agree about what is printed here).
 func RemoveIdentityText(rc ResourceChange) string { return identityText(RemovedIdentity(rc)) }

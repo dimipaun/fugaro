@@ -156,8 +156,9 @@ func TestGuardEntriesAdmitsAListedRemovalOfItsOwnObject(t *testing.T) {
 // TestListableEntriesIsWhatANewEntryWouldAdmit: the advice a refusal ends with
 // may name the owner's list only when the list could clear the refusal, and
 // under the entries rule that is a removal no entry approves whose object the
-// plan does identify — a mismatched entry included, a moved object and an
-// unknown action not.
+// plan does identify — a mismatched entry included; a moved object, an unknown
+// action, and a before view that identifies nothing all not, because no entry
+// can be matched against the last one (an entry always carries its type).
 func TestListableEntriesIsWhatANewEntryWouldAdmit(t *testing.T) {
 	own := removal("google_storage_bucket", map[string]any{"id": "fmgd-b"})
 	other := own
@@ -172,10 +173,76 @@ func TestListableEntriesIsWhatANewEntryWouldAdmit(t *testing.T) {
 
 	entries := []DeleteEntry{ApprovalFor(own), ApprovalFor(listed)}
 	got := ListableEntries(&Plan{ResourceChanges: []ResourceChange{own, listed, other, moved, weak, unknown}}, entries)
-	if want := []string{other.Address, weak.Address}; !slices.Equal(got, want) {
+	// weak is not in the answer: its before view identifies nothing, so no
+	// entry could clear it, and the advice must not offer its address.
+	if want := []string{other.Address}; !slices.Equal(got, want) {
 		t.Errorf("ListableEntries = %v, want %v", got, want)
 	}
 	if ListableEntries(nil, entries) != nil {
 		t.Error("ListableEntries of no plan is not empty")
+	}
+}
+
+// TestTheRefusalsIdentityIsWhatTheOwnerPastes: the sentence an owner acts on
+// carries the identity of the object the plan removes, and it carries it as
+// the entry's own text — no quotation marks and no other mark of the
+// sentence's — because the owner copies it into `fugaro allow-delete`, whose
+// argument is ADDRESS=IDENTITY and whose identity half must begin with
+// "type=". A quoted identity is rejected there, so this pins the two ends
+// against each other: the text printed here is the text the command accepts.
+func TestTheRefusalsIdentityIsWhatTheOwnerPastes(t *testing.T) {
+	rc := removal("google_storage_bucket", map[string]any{"id": "fmgd-b", "name": "fmgd-b", "project": "proj-1"})
+	entries := []DeleteEntry{ApprovalFor(rc)}
+	// The mismatched-entry sentence, from Approves itself.
+	other := rc
+	other.Change.Before = map[string]any{"id": "fmgd-other", "name": "fmgd-other", "project": "proj-1"}
+	_, why := Approves(entries, other)
+	// And the sentence for an address the list does not name, which is the
+	// cover's and the one the owner copies in the ordinary loop.
+	unlisted := RemoveIdentityText(other)
+	for name, text := range map[string]string{"the mismatched entry": why, "the unlisted address": unlisted} {
+		// A double quote is what breaks the paste: the command cuts an
+		// argument at its first "=", so a leading quote makes the identity
+		// half start with the quote rather than with "type=".
+		if strings.Contains(text, `"`) {
+			t.Errorf("%s's sentence quotes the identity: %q", name, text)
+		}
+		// The identity is in it whole, and the identity itself is an argument.
+		id := RemovedIdentity(other).String()
+		if !strings.Contains(text, id) {
+			t.Errorf("%s's sentence does not carry the identity %q:\n%q", name, id, text)
+		}
+		if !strings.HasPrefix(id, "type=") {
+			t.Errorf("the identity %q does not begin with the type the command requires", id)
+		}
+	}
+	// And the entry's own identity is the same text: what one refusal printed
+	// is what the next list holds, and what the next plan is compared against.
+	if got := ApprovalFor(other).Before; got != RemovedIdentity(other).String() {
+		t.Errorf("ApprovalFor = %q, want the identity the refusal printed", got)
+	}
+}
+
+// TestAnEntryApprovesASameNamedObjectReCreatedAtTheAddress — the residual this
+// rule does not close, pinned as behaviour rather than left to be inferred.
+// For every managed type bar google_apikeys_key the provider derives the id
+// from the object's configured name, so a plan's before view cannot tell an
+// object from a re-creation of it under the same name: the entry still
+// approves the removal. What the rule closes is the address carrying a
+// DIFFERENT object, which the test above proves.
+func TestAnEntryApprovesASameNamedObjectReCreatedAtTheAddress(t *testing.T) {
+	// A bucket as the provider writes one: id IS the bucket name, so the two
+	// views are indistinguishable to this rule.
+	original := removal("google_storage_bucket", map[string]any{"id": "fmgd-data", "name": "fmgd-data", "project": "proj-1"})
+	recreated := removal("google_storage_bucket", map[string]any{"id": "fmgd-data", "name": "fmgd-data", "project": "proj-1"})
+	if ok, why := Approves([]DeleteEntry{ApprovalFor(original)}, recreated); !ok {
+		t.Fatalf("a same-named object at the address is refused, so the residual has changed shape: %q", why)
+	}
+	// A type whose id is a UID is the exception: the id differs across
+	// re-creation even when the name does not, and the entry does not survive.
+	key := removal("google_apikeys_key", map[string]any{"id": "uid-1", "name": "projects/p/keys/k"})
+	rekeyed := removal("google_apikeys_key", map[string]any{"id": "uid-2", "name": "projects/p/keys/k"})
+	if ok, _ := Approves([]DeleteEntry{ApprovalFor(key)}, rekeyed); ok {
+		t.Error("an entry approved a re-created object whose id differs, which the rule should refuse")
 	}
 }
