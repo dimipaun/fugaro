@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -53,28 +54,42 @@ import (
 // command cannot overrule the owner. fugaro init still honours --allow-delete
 // on its own command line, where the addresses go to tf.Guard directly.
 
-// newAllowDeleteCmd is `fugaro allow-delete [ADDRESS...]`.
+// newAllowDeleteCmd is `fugaro allow-delete [ADDRESS=IDENTITY...]`.
 func newAllowDeleteCmd() *cobra.Command {
 	var o cloudOptions
 	cmd := &cobra.Command{
-		Use:   "allow-delete [ADDRESS...]",
+		Use:   "allow-delete [ADDRESS=IDENTITY...]",
 		Short: "Record the Terraform addresses a run may delete or replace (the project's owner)",
 		Long: `Record which Terraform addresses the project's owner approves for deletion or
-replacement, in a managed project's fugaro/allow-delete.json at the root of
-the runs bucket. An approval lives in that object and nowhere else: this
-command is Fugaro's only writer of it, with the operator's own credentials.
+replacement, and which object at each address is approved, in a managed
+project's fugaro/allow-delete.json at the root of the runs bucket. An approval
+lives in that object and nowhere else: this command is Fugaro's only writer of
+it, with the operator's own credentials.
 
-An address is the Terraform address a plan reports, as in
-google_cloud_run_v2_job.web or module.web.google_storage_bucket.data, and
-nothing else is recorded — no note and no reason: the object's own version
-history is the record of who approved what and when.
+An argument is an address and the identity of the object approved there,
+written as ADDRESS=IDENTITY: the Terraform address a plan reports, as in
+google_cloud_run_v2_job.web or module.web.google_storage_bucket.data,
+followed by the identity a refused managed apply printed for the object that
+address removes, as in
+
+  fugaro allow-delete 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket'
+
+An approval is of one object and not of the address: the same address carrying
+another object later is not approved by it, so an entry an earlier apply
+already used admits nothing more (the object it named is gone). The identity is
+compared character for character with the one the plan's before view shows, so
+copy it from the refusal rather than retyping it. Nothing else is recorded — no
+note and no reason: the object's own version history is the record of who
+approved what and when, and the identity is what the approved delete is
+identified by.
 
 Run it in your own terminal, as an operator, with your own credentials. Pass
-the addresses to approve, and they replace the list: an invocation that leaves
-an address out removes that approval, so the command names the entries it
-would drop and asks for the project's name before writing such a list. With no
-addresses the command prints the list and writes nothing; it never empties the
-list, because an empty list is what an absent one already means.
+the entries to approve, and they replace the list: an invocation that leaves an
+entry out removes that approval, so the command names the entries it would drop
+and asks for the project's name before writing such a list. With no arguments
+the command prints the list — each entry in the same ADDRESS=IDENTITY form, so
+a line can be pasted back — and writes nothing; it never empties the list,
+because an empty list is what an absent one already means.
 
 What the object is for: a run's own credentials cannot write it, and the
 deployer account a managed apply impersonates will not be able to (D75, Task
@@ -94,12 +109,14 @@ check below is that the bucket is the project's own runs bucket, which every
 installation has, not that the project is Fugaro-managed.
 
 The list is read fail-closed: an absent object, an empty one, one naming
-another project, one whose fields are not exactly the three this command
-writes, or one this package cannot read is no addresses — and no addresses
-refuses every delete and replacement rather than permitting them. The write
-is fail-closed too: if the current list cannot be read, nothing is written,
-and the write is conditioned on the object being unchanged since that read,
-so a concurrent write is never silently overwritten (run the command again).`,
+another project, one written by an older Fugaro (its addresses carry no
+identities, so nothing in it says which object was approved), one whose fields
+are not exactly the ones this command writes, or one this package cannot read
+is no entries — and no entries refuses every delete and replacement rather
+than permitting them. The write is fail-closed too: if the current list cannot
+be read, nothing is written, and the write is conditioned on the object being
+unchanged since that read, so a concurrent write is never silently overwritten
+(run the command again).`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return allowDelete(cmd, o, args)
@@ -110,7 +127,7 @@ so a concurrent write is never silently overwritten (run the command again).`,
 }
 
 // allowDelete is newAllowDeleteCmd's body: print the list, or write it.
-func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
+func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 	ctx := cmd.Context()
 	// Before anything is read: the refusal is about who is running, and an
 	// agent's session gets no answer at all, not even the list.
@@ -142,17 +159,13 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	if want := "fugaro-runs-" + lc.GCPProject; bucket != want {
 		return userErr("the delete list needs the default runs bucket name %s (this installation's is %q): the managed read locates the project's runs bucket by that name, so a list written into another bucket would be read by nobody", safetext.Field(want), safetext.Field(bucket))
 	}
-	approved := make([]string, 0, len(addresses))
-	for _, a := range addresses {
-		// Trimmed, and tested for emptiness the way the writer tests it: an
-		// address is compared with a plan's by exact equality, so a stray
-		// space would be an approval of nothing, and a whitespace-only
-		// argument is an empty address rather than anything about the bucket.
-		a = strings.TrimSpace(a)
-		if a == "" {
-			return userErr("an empty address: every argument names a Terraform address to approve, as in google_cloud_run_v2_job.web")
+	approved := make([]tf.DeleteEntry, 0, len(args))
+	for _, a := range args {
+		entry, err := approveArgument(a)
+		if err != nil {
+			return err
 		}
-		approved = append(approved, a)
+		approved = append(approved, entry)
 	}
 	c, err := newInitClients(ctx, lc)
 	if err != nil {
@@ -183,38 +196,40 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 		return remote(fmt.Errorf("nothing was written for %s: the current gs://%s/%s could not be read, and a list written without that read could drop approvals unasked: %w",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.AllowDeleteObject, safetext.FieldErr(err)))
 	}
-	current := state.Addresses
+	current := state.Entries
 	if len(approved) == 0 {
 		if len(current) == 0 {
 			why := "there is no list"
 			if state.Unreadable {
-				why = "the object there is not a list this command reads"
+				why = "the object there is not a list this command reads (one written by an older Fugaro names addresses without the objects approved there, and this version refuses it rather than reading its addresses as approvals of whatever is at them now)"
 			}
-			fmt.Fprintf(w, "gs://%s/%s allows no address: every delete and replacement in %s is refused (%s)\n",
+			fmt.Fprintf(w, "gs://%s/%s allows no entry: every delete and replacement in %s is refused (%s)\n",
 				safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), why)
 			return nil
 		}
-		fmt.Fprintf(w, "gs://%s/%s allows %d address(es) in %s:\n", safetext.Field(bucket), managed.AllowDeleteObject, len(current), safetext.Field(lc.Name))
-		printAddresses(w, current)
+		fmt.Fprintf(w, "gs://%s/%s approves %d entry(ies) in %s, each an address and the object approved there:\n", safetext.Field(bucket), managed.AllowDeleteObject, len(current), safetext.Field(lc.Name))
+		printEntries(w, current)
 		return nil
 	}
 	// Sorted and deduplicated, so one approval has one encoding: two people
-	// adding the same two addresses in either order write the same object.
-	approved = slices.Compact(slices.Sorted(slices.Values(approved)))
-	// The write replaces the list, so an invocation that leaves an address out
+	// adding the same two entries in either order write the same object. An
+	// entry sorts by its address and then by its identity, which is the order
+	// the listing above is read in.
+	approved = slices.Compact(slices.SortedFunc(slices.Values(approved), compareEntries))
+	// The write replaces the list, so an invocation that leaves an entry out
 	// removes the approval it carried — and an approval dropped without the
 	// owner noticing is a delete refused later for a reason nobody remembers
 	// giving. The entries this write drops are named, and a list that drops any
 	// of them is written only after the project's name is typed.
 	dropped := droppedFrom(current, approved)
 	if len(dropped) > 0 {
-		fmt.Fprintf(w, "gs://%s/%s approves %d address(es) now, and this list leaves out %d of them:\n", safetext.Field(bucket), managed.AllowDeleteObject, len(current), len(dropped))
-		printAddresses(w, dropped)
+		fmt.Fprintf(w, "gs://%s/%s approves %d entry(ies) now, and this list leaves out %d of them:\n", safetext.Field(bucket), managed.AllowDeleteObject, len(current), len(dropped))
+		printEntries(w, dropped)
 	}
 	// An object that is there but is not a list this command reads is
 	// replaced only on the same typed confirmation: what it held is unknown.
 	if state.Unreadable {
-		fmt.Fprintf(w, "gs://%s/%s is there but is not a list this command reads: writing replaces it\n", safetext.Field(bucket), managed.AllowDeleteObject)
+		fmt.Fprintf(w, "gs://%s/%s is there but is not a list this command reads (an object written by an older Fugaro, whose addresses carry no identities, is one of these): writing replaces it\n", safetext.Field(bucket), managed.AllowDeleteObject)
 	}
 	if len(dropped) > 0 || state.Unreadable {
 		// Strict rather than confirmTyped: this command has no --yes (it
@@ -227,7 +242,7 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 		// The question says what is lost: the approvals named above, or, for
 		// an unreadable object, whatever it held — dropped is empty then
 		// because nothing could be read, not because nothing is removed.
-		what := fmt.Sprintf("this replaces %s's list, removing %d address(es) it approved: every delete or replacement of them is refused again", safetext.Field(lc.Name), len(dropped))
+		what := fmt.Sprintf("this replaces %s's list, removing %d entry(ies) it approved: every delete or replacement of the objects they named is refused again", safetext.Field(lc.Name), len(dropped))
 		if state.Unreadable {
 			what = fmt.Sprintf("this replaces gs://%s/%s, an object that is not a list this command reads: nothing it held could be read, so any approval it carried for %s is lost and every delete or replacement it allowed is refused again", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name))
 		}
@@ -239,40 +254,91 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	if err := managed.WriteDeleteList(ctx, c.Storage, bucket, lc.GCPProject, number, approved, state.Generation); err != nil {
 		return allowDeleteWriteErr(lc, bucket, err)
 	}
-	fmt.Fprintf(w, "wrote gs://%s/%s: %s may now delete or replace %d address(es):\n", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), len(approved))
-	printAddresses(w, approved)
+	fmt.Fprintf(w, "wrote gs://%s/%s: %s may now delete or replace %d object(s), at the addresses below and no others:\n", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), len(approved))
+	printEntries(w, approved)
 	return nil
 }
 
-// printAddresses is a listing of the addresses an owner's object holds, one
-// per line, bounded twice.
+// approveArgument is one argument of this command as an entry: ADDRESS=IDENTITY,
+// cut at the first "=".
 //
-// Each entry is one safetext.Field: these lines go to stdout and not through
-// ErrorText, and an address read from the bucket is whatever its writer put
-// there (parseDeleteList refuses only blank entries), so an escape sequence, a
-// bidi control or a newline in one must not reach the terminal as itself. And
-// the listing stops at safetext.FieldListMax entries with the rest counted
-// (FieldListNote): the object holds as many addresses as it was written with,
-// and the sentence above the listing is this command's own — the count is
-// stated there, in full, and what is cut is the listing and never the fact
-// that something was cut.
-func printAddresses(w io.Writer, addresses []string) {
-	shown, omitted := safetext.FieldList(addresses)
-	for _, a := range shown {
-		fmt.Fprintln(w, a)
+// The identity is the text a refused managed apply printed for the object a
+// removal takes away (tf.RemoveIdentityText), which always begins with the
+// resource type — "type=google_storage_bucket project=… name=… id=…" — so the
+// half after the first "=" is required to begin with "type=". That is what
+// makes the form's one ambiguity fail closed rather than silently: a Terraform
+// address may itself contain an "=" (an index key with one in it, as in
+// google_x.y["a=b"]), and for such an argument the cut lands inside the
+// address, the half after it does not begin with "type=", and the command
+// refuses to record an approval that matches nothing. The alternative — a
+// second argument order, or a flag per address — was not taken: the ambiguity
+// is refused, not guessed, and the operator is told which of the two they are
+// looking at.
+//
+// The whole argument and each half are trimmed, and the halves are compared
+// with a plan's by exact equality: a stray space around either would be an
+// approval of nothing.
+func approveArgument(arg string) (tf.DeleteEntry, error) {
+	address, before, cut := strings.Cut(strings.TrimSpace(arg), "=")
+	address, before = strings.TrimSpace(address), strings.TrimSpace(before)
+	switch {
+	case !cut || address == "":
+		return tf.DeleteEntry{}, userErr("an argument is an address and the identity of the object approved there, written ADDRESS=IDENTITY, as in 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket': the identity is the one a refused apply printed for the object the address removes, and nothing was written")
+	case !strings.HasPrefix(before, "type="):
+		return tf.DeleteEntry{}, userErr("an identity begins with the resource type the plan showed, as in 'type=google_storage_bucket project=… name=… id=…', and the text after the first '=' in this argument does not: the argument is cut at its first '=', so an address whose own text holds an '=' cannot be approved this way (nothing was written; approve it from a plan whose address has none, or rename the resource)")
+	}
+	return tf.DeleteEntry{Address: address, Before: before}, nil
+}
+
+// printEntries is a listing of the entries an owner's object holds, one per
+// line, in the ADDRESS=IDENTITY form this command's arguments take — so a line
+// the owner reads is a line they can paste back.
+//
+// Each line is one safetext.Field: these go to stdout and not through
+// ErrorText, and an entry read from the bucket is whatever its writer put there
+// (parseDeleteList refuses only blank halves), so an escape sequence, a bidi
+// control or a newline in one must not reach the terminal as itself. And the
+// listing stops at safetext.FieldListMax entries with the rest counted
+// (FieldListNote): the object holds as many entries as it was written with, and
+// the sentence above the listing is this command's own — the count is stated
+// there, in full, and what is cut is the listing and never the fact that
+// something was cut.
+func printEntries(w io.Writer, entries []tf.DeleteEntry) {
+	lines := make([]string, 0, len(entries))
+	for _, e := range entries {
+		lines = append(lines, e.Address+"="+e.Before)
+	}
+	shown, omitted := safetext.FieldList(lines)
+	for _, l := range shown {
+		fmt.Fprintln(w, l)
 	}
 	if note := safetext.FieldListNote(omitted); note != "" {
 		fmt.Fprintf(w, "(%s)\n", note)
 	}
 }
 
-// droppedFrom is the addresses current approves that approved does not: the
+// compareEntries orders two entries the way this command lists and writes them:
+// by address, then by the identity the address is approved for.
+func compareEntries(a, b tf.DeleteEntry) int {
+	if c := strings.Compare(a.Address, b.Address); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Before, b.Before)
+}
+
+// droppedFrom is the entries current approves that approved does not: the
 // approvals a write of approved removes.
-func droppedFrom(current, approved []string) []string {
-	var out []string
-	for _, a := range current {
-		if !slices.Contains(approved, a) {
-			out = append(out, a)
+//
+// An entry is dropped when the same address and identity are not both on the
+// new list, so re-approving an address for another object — the form the reuse
+// rule is answered in, and what an owner does after a resource was replaced —
+// is named as the drop it is: the object the earlier entry approved is no
+// longer approved by anything.
+func droppedFrom(current, approved []tf.DeleteEntry) []tf.DeleteEntry {
+	var out []tf.DeleteEntry
+	for _, e := range current {
+		if !slices.Contains(approved, e) {
+			out = append(out, e)
 		}
 	}
 	return out

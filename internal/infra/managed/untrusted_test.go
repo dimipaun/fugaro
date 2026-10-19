@@ -12,6 +12,7 @@ import (
 	"google.golang.org/api/googleapi"
 	storage "google.golang.org/api/storage/v1"
 
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -167,14 +168,17 @@ func TestTheWritersReadErrorIsBounded(t *testing.T) {
 		})
 	}
 	// The state is the owner's own text: the bound is on the error alone.
-	list := `{"version":1,"gcp_project":"` + testProject + `","addresses":["google_storage_bucket.a\u001b[31m"]}`
+	// Both halves of an entry are the owner's — the address and the identity —
+	// and both are compared to a plan's by exact equality.
+	list := `{"version":2,"gcp_project":"` + testProject + `","entries":[{"address":"google_storage_bucket.a\u001b[31m","before":"type=google_storage_bucket id=a\u001b[31m"}]}`
 	s, bucket := seedDeleteList(t, list)
 	st, err := ReadDeleteListForWrite(ctx, s, bucket, testProject, testProjectNumber)
 	if err != nil {
 		t.Fatalf("ReadDeleteListForWrite: %v", err)
 	}
-	if want := "google_storage_bucket.a\u001b[31m"; len(st.Addresses) != 1 || st.Addresses[0] != want {
-		t.Errorf("the writer's read = %q, want the owner's own address %q", st.Addresses, want)
+	want := tf.DeleteEntry{Address: "google_storage_bucket.a\u001b[31m", Before: "type=google_storage_bucket id=a\u001b[31m"}
+	if len(st.Entries) != 1 || st.Entries[0] != want {
+		t.Errorf("the writer's read = %q, want the owner's own entry %q", st.Entries, want)
 	}
 }
 
@@ -207,18 +211,23 @@ func TestTheGuardsRefusalIsBounded(t *testing.T) {
 	}
 }
 
-// TestAllowDeleteReturnsTheOwnersAddressesUntouched: the bound is on what this
-// package prints and never on what the gate compares — an address is admitted
-// or refused by its exact text, and a sanitised copy would admit an address the
-// owner never wrote.
-func TestAllowDeleteReturnsTheOwnersAddressesUntouched(t *testing.T) {
-	list := `{"version":1,"gcp_project":"` + testProject + `","addresses":["google_storage_bucket.a\u001b[31m","module.m.google_storage_bucket.b"]}`
+// TestAllowDeleteReturnsTheOwnersEntriesUntouched: the bound is on what this
+// package prints and never on what the gate compares — an entry is admitted or
+// refused by the exact text of its two halves, and a sanitised copy would
+// approve an object the owner never approved.
+func TestAllowDeleteReturnsTheOwnersEntriesUntouched(t *testing.T) {
+	list := `{"version":2,"gcp_project":"` + testProject + `","entries":[` +
+		`{"address":"google_storage_bucket.a\u001b[31m","before":"type=google_storage_bucket id=a\u001b[31m"},` +
+		`{"address":"module.m.google_storage_bucket.b","before":"type=google_storage_bucket id=b"}]}`
 	s, bucket := seedDeleteList(t, list)
 	got, err := AllowDelete(context.Background(), s, bucket, testProject, testProjectNumber)
 	if err != nil {
 		t.Fatalf("AllowDelete: %v", err)
 	}
-	want := []string{"google_storage_bucket.a\u001b[31m", "module.m.google_storage_bucket.b"}
+	want := []tf.DeleteEntry{
+		{Address: "google_storage_bucket.a\u001b[31m", Before: "type=google_storage_bucket id=a\u001b[31m"},
+		{Address: "module.m.google_storage_bucket.b", Before: "type=google_storage_bucket id=b"},
+	}
 	if len(got) != len(want) {
 		t.Fatalf("AllowDelete = %q, want %q", got, want)
 	}

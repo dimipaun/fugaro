@@ -3,11 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -44,6 +44,50 @@ func allowDeleteAt(t *testing.T, g *gcpfake.GCS, bucket string) (string, bool) {
 	return string(b), true
 }
 
+// approval is one approval fixture in this file: the Terraform address the
+// owner approves, and the id of the object the plan shows there — the part of
+// the identity that tells one object at an address from another one.
+type approval struct{ address, id string }
+
+// arg is the approval as this command's own argument, ADDRESS=IDENTITY, which
+// is what the owner pastes out of a refused apply.
+func (a approval) arg() string {
+	return a.address + "=type=google_storage_bucket id=" + a.id
+}
+
+// allowDeleteJSON is the object the command writes for these approvals:
+// version 2, the project, and an entry per approval, sorted and deduplicated
+// the way the command sorts them.
+func allowDeleteJSON(project string, ap ...approval) string {
+	seen := map[string]bool{}
+	var entries []string
+	for _, a := range ap {
+		if seen[a.arg()] {
+			continue
+		}
+		seen[a.arg()] = true
+		entries = append(entries, `{"address":`+jsonString(a.address)+`,"before":`+jsonString("type=google_storage_bucket id="+a.id)+`}`)
+	}
+	slices.Sort(entries)
+	return `{"version":2,"gcp_project":` + jsonString(project) + `,"entries":[` + strings.Join(entries, ",") + `]}`
+}
+
+// allowDeleteArgs is the command line for these approvals: the command's own
+// name, then one ADDRESS=IDENTITY argument per approval.
+func allowDeleteArgs(ap ...approval) []string {
+	out := []string{"allow-delete"}
+	for _, a := range ap {
+		out = append(out, a.arg())
+	}
+	return out
+}
+
+// the two approvals most tests here use, and the object they write.
+var (
+	dataApproval = approval{"google_storage_bucket.data", "data-bucket"}
+	webApproval  = approval{"google_cloud_run_v2_job.web", "web-job"}
+)
+
 // TestAllowDeleteCommandAsksBeforeItDropsAnApproval: the write replaces the
 // list, so an invocation that leaves an address out removes an approval the
 // owner gave — and a silently dropped approval is the fail-closed direction
@@ -52,7 +96,7 @@ func allowDeleteAt(t *testing.T, g *gcpfake.GCS, bucket string) (string, bool) {
 // writes a list that drops any of them.
 func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 	r := allowDeleteRig(t)
-	if _, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web"); err != nil {
+	if _, _, err := execute(t, allowDeleteArgs(dataApproval, webApproval)...); err != nil {
 		t.Fatal(err)
 	}
 	before, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
@@ -60,14 +104,14 @@ func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 		t.Fatal("the list was not written")
 	}
 	// No terminal: the removal is refused, and nothing is written.
-	out, _, err := execute(t, "allow-delete", "google_cloud_run_v2_job.web")
+	out, _, err := execute(t, allowDeleteArgs(webApproval)...)
 	if err == nil {
 		t.Fatalf("the removal ran without a confirmation:\n%s", out)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 	}
-	if !strings.Contains(out, "google_storage_bucket.data") {
+	if !strings.Contains(out, dataApproval.arg()) {
 		t.Errorf("the command does not say which approval it would drop:\n%s", out)
 	}
 	// And the refusal names no flag this command lacks. It used to end "or
@@ -81,7 +125,7 @@ func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 	}
 	// A terminal, but the wrong name typed: still nothing written.
 	terminal(t, true)
-	out, _, err = executeStdin(t, "not-the-name\n", "allow-delete", "google_cloud_run_v2_job.web")
+	out, _, err = executeStdin(t, "not-the-name\n", allowDeleteArgs(webApproval)...)
 	if err == nil {
 		t.Fatalf("a mistyped confirmation wrote the list:\n%s", out)
 	}
@@ -89,7 +133,7 @@ func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 		t.Errorf("a mistyped confirmation changed the list: %s → %s", before, after)
 	}
 	// The project's name typed: the shorter list is written.
-	out, _, err = executeStdin(t, initProjectName+"\n", "allow-delete", "google_cloud_run_v2_job.web")
+	out, _, err = executeStdin(t, initProjectName+"\n", allowDeleteArgs(webApproval)...)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -97,13 +141,13 @@ func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 	if !ok {
 		t.Fatal("the confirmed removal wrote nothing")
 	}
-	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_cloud_run_v2_job.web"]}`
+	want := allowDeleteJSON("proj-1234", webApproval)
 	if got != want {
 		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
 	}
 	// And a write that drops nothing asks nothing: the same list again is not
 	// a removal.
-	if _, _, err := execute(t, "allow-delete", "google_cloud_run_v2_job.web"); err != nil {
+	if _, _, err := execute(t, allowDeleteArgs(webApproval)...); err != nil {
 		t.Errorf("re-approving what is already approved asked for a confirmation: %v", err)
 	}
 }
@@ -116,10 +160,10 @@ func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
 // address(es)", which said nothing was being lost.
 func TestAllowDeleteCommandAsksBeforeItReplacesAnUnreadableObject(t *testing.T) {
 	r := allowDeleteRig(t)
-	const unreadable = `{"version":99,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`
+	const unreadable = `{"version":99,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=data-bucket"}]}`
 	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(unreadable))
 	// No terminal: refused, nothing written.
-	out, _, err := execute(t, "allow-delete", "google_cloud_run_v2_job.web")
+	out, _, err := execute(t, allowDeleteArgs(webApproval)...)
 	if err == nil {
 		t.Fatalf("an unreadable list was replaced without a confirmation:\n%s", out)
 	}
@@ -137,11 +181,11 @@ func TestAllowDeleteCommandAsksBeforeItReplacesAnUnreadableObject(t *testing.T) 
 	}
 	// The project's name typed: the object is replaced by the list.
 	terminal(t, true)
-	out, _, err = executeStdin(t, initProjectName+"\n", "allow-delete", "google_cloud_run_v2_job.web")
+	out, _, err = executeStdin(t, initProjectName+"\n", allowDeleteArgs(webApproval)...)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_cloud_run_v2_job.web"]}`
+	want := allowDeleteJSON("proj-1234", webApproval)
 	if got, _ := allowDeleteAt(t, r.gcs, initRunsBucket); got != want {
 		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
 	}
@@ -184,13 +228,13 @@ func terminal(t *testing.T, is bool) {
 // list stays deletable.
 func TestAllowDeleteCommandWritesTheWholeList(t *testing.T) {
 	r := allowDeleteRig(t)
-	out, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web", "google_cloud_run_v2_job.web")
+	out, _, err := execute(t, allowDeleteArgs(dataApproval, webApproval, webApproval)...)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	// Sorted and deduplicated, so one list has one encoding: the object is
 	// compared by eye and by generation.
-	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_cloud_run_v2_job.web","google_storage_bucket.data"]}`
+	want := allowDeleteJSON("proj-1234", dataApproval, webApproval)
 	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
 	if !ok {
 		t.Fatalf("no %s in gs://%s after the command:\n%s", managed.AllowDeleteObject, initRunsBucket, out)
@@ -204,7 +248,7 @@ func TestAllowDeleteCommandWritesTheWholeList(t *testing.T) {
 	// removal: it is confirmed the way any removal is (TestAllowDeleteCommand-
 	// AsksBeforeItDropsAnApproval is where that rule is asserted).
 	terminal(t, true)
-	out, _, err = executeStdin(t, initProjectName+"\n", "allow-delete", "google_cloud_run_v2_job.web")
+	out, _, err = executeStdin(t, initProjectName+"\n", allowDeleteArgs(webApproval)...)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -212,7 +256,7 @@ func TestAllowDeleteCommandWritesTheWholeList(t *testing.T) {
 	if !ok {
 		t.Fatalf("the second command removed the list:\n%s", out)
 	}
-	if want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_cloud_run_v2_job.web"]}`; got != want {
+	if want := allowDeleteJSON("proj-1234", webApproval); got != want {
 		t.Errorf("after the second command gs://%s/%s = %s, want %s (the whole list, not an append)", initRunsBucket, managed.AllowDeleteObject, got, want)
 	}
 }
@@ -228,13 +272,13 @@ func TestAllowDeleteCommandPrintsTheListAndWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "allows no address") {
+	if !strings.Contains(out, "allows no entry") {
 		t.Errorf("with no list the command printed:\n%s", out)
 	}
 	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
 		t.Errorf("printing the list wrote one: gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 	}
-	if _, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web"); err != nil {
+	if _, _, err := execute(t, allowDeleteArgs(dataApproval, webApproval)...); err != nil {
 		t.Fatal(err)
 	}
 	before, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
@@ -245,9 +289,11 @@ func TestAllowDeleteCommandPrintsTheListAndWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, address := range []string{"google_storage_bucket.data", "google_cloud_run_v2_job.web"} {
-		if !strings.Contains(out, address) {
-			t.Errorf("the print does not name %s:\n%s", address, out)
+	// Each line is the argument form, so what the print shows can be pasted
+	// back: the address and the identity it is approved for.
+	for _, a := range []approval{dataApproval, webApproval} {
+		if !strings.Contains(out, a.arg()) {
+			t.Errorf("the print does not name %s:\n%s", a.arg(), out)
 		}
 	}
 	if after, _ := allowDeleteAt(t, r.gcs, initRunsBucket); after != before {
@@ -263,7 +309,7 @@ func TestAllowDeleteCommandPrintsTheListAndWritesNothing(t *testing.T) {
 func TestAllowDeleteCommandRefusesUnderACodingAgentMarker(t *testing.T) {
 	r := allowDeleteRig(t)
 	t.Setenv("CLAUDECODE", "1")
-	out, _, err := execute(t, "allow-delete", "google_storage_bucket.data")
+	out, _, err := execute(t, allowDeleteArgs(dataApproval)...)
 	if err == nil {
 		t.Fatalf("the command ran in a coding agent's session:\n%s", out)
 	}
@@ -285,43 +331,76 @@ func TestAllowDeleteCommandRefusesUnderACodingAgentMarker(t *testing.T) {
 	}
 }
 
-// TestAllowDeleteCommandRefusesAnAddressThatIsNotOne: an address is compared
-// with a plan's by exact equality, so a stray space around one would be an
-// approval of nothing at all. The command trims what it is given, and an
-// argument that is nothing but space is the empty address — the message for
-// it, not the one about the bucket the writer would otherwise fail on.
-func TestAllowDeleteCommandRefusesAnAddressThatIsNotOne(t *testing.T) {
+// TestAllowDeleteCommandRefusesAnArgumentThatIsNotAnEntry: both halves of an
+// entry are compared with a plan's by exact equality, so a stray space around
+// either would be an approval of nothing at all — the command trims what it is
+// given — and an argument that does not carry both halves is refused with the
+// message for it rather than the one about the bucket the writer would
+// otherwise fail on.
+//
+// The identity half is required to begin with the resource type, which is what
+// a refused apply prints (tf.RemoveIdentityText). That is also what makes the
+// form's one ambiguity fail closed rather than silently: an address whose own
+// text contains an "=" (an index key, as in google_x.y["a=b"]) is cut inside
+// the address, so the half after the cut does not begin with "type=" and the
+// argument is refused rather than recorded as an approval that matches
+// nothing.
+func TestAllowDeleteCommandRefusesAnArgumentThatIsNotAnEntry(t *testing.T) {
 	r := allowDeleteRig(t)
-	for _, arg := range []string{"", "   ", "\t"} {
-		out, _, err := execute(t, "allow-delete", arg)
-		if err == nil {
-			t.Fatalf("the command accepted %q:\n%s", arg, out)
-		}
-		if ExitCode(err) != ExitUserError {
-			t.Errorf("%q: exit %d, want %d", arg, ExitCode(err), ExitUserError)
-		}
-		if !strings.Contains(err.Error(), "an empty address") {
-			t.Errorf("%q was refused with the wrong reason: %v", arg, err)
-		}
-		if strings.Contains(err.Error(), "runs_bucket") {
-			t.Errorf("%q was reported as a bucket problem: %v", arg, err)
-		}
+	for name, arg := range map[string]string{
+		"nothing at all":    "",
+		"spaces":            "   ",
+		"a tab":             "\t",
+		"an address alone":  "google_storage_bucket.data",
+		"an identity alone": "=type=google_storage_bucket id=data-bucket",
+		"not an identity":   "google_storage_bucket.data=id=data-bucket",
+		"a bare word":       "google_storage_bucket.data=yes",
+		// The address holds an "=", so the cut lands inside it and the half
+		// after the cut is not an identity: refused, and nothing is written.
+		"an address holding an equals sign": `google_storage_bucket.data["a=b"]=type=google_storage_bucket id=x`,
+		"a trailing equals sign":            "google_storage_bucket.data=",
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, _, err := execute(t, "allow-delete", arg)
+			if err == nil {
+				t.Fatalf("the command accepted %q:\n%s", arg, out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("%q: exit %d, want %d", arg, ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), "ADDRESS=IDENTITY") && !strings.Contains(err.Error(), "an identity begins with the resource type") {
+				t.Errorf("%q was refused with the wrong reason: %v", arg, err)
+			}
+			if strings.Contains(err.Error(), "runs_bucket") {
+				t.Errorf("%q was reported as a bucket problem: %v", arg, err)
+			}
+		})
 	}
 	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
 		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 	}
-	// And what it does write is trimmed, so the object holds addresses that
-	// can match a plan's.
-	if _, _, err := execute(t, "allow-delete", "  google_storage_bucket.data  "); err != nil {
+	// And what it does write is trimmed on both sides of the cut, so the
+	// object holds halves that can match a plan's.
+	trimmed := "  google_storage_bucket.data = type=google_storage_bucket id=data-bucket  "
+	if _, _, err := execute(t, "allow-delete", trimmed); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
 	if !ok {
-		t.Fatal("the trimmed address was not written")
+		t.Fatal("the trimmed argument was not written")
 	}
-	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`
+	want := allowDeleteJSON("proj-1234", dataApproval)
 	if got != want {
 		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+	// And the command is idempotent on the object it just wrote: the same
+	// approvals again are the same bytes, which is what makes the print
+	// paste-backable.
+	if _, _, err := execute(t, allowDeleteArgs(dataApproval)...); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := allowDeleteAt(t, r.gcs, initRunsBucket); again != want {
+		t.Errorf("the same approvals wrote %s, want %s", again, want)
 	}
 }
 
@@ -343,7 +422,7 @@ func TestAllowDeleteCommandNeedsTheDefaultRunsBucket(t *testing.T) {
 	if err := os.WriteFile(r.cfg, []byte(custom), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"allow-delete", "google_storage_bucket.data"}, {"allow-delete"}} {
+	for _, args := range [][]string{allowDeleteArgs(dataApproval), {"allow-delete"}} {
 		out, _, err := execute(t, args...)
 		if err == nil {
 			t.Fatalf("%v ran against a custom runs bucket:\n%s", args, out)
@@ -381,7 +460,7 @@ func TestAllowDeleteCommandRefusesABucketThatIsNotTheProjectsOwn(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := allowDeleteRig(t)
 			seed(t, r)
-			out, _, err := execute(t, "allow-delete", "google_storage_bucket.data")
+			out, _, err := execute(t, allowDeleteArgs(dataApproval)...)
 			if err == nil {
 				t.Fatalf("the command wrote gs://%s/%s:\n%s", initRunsBucket, managed.AllowDeleteObject, out)
 			}
@@ -414,7 +493,7 @@ func allowDeleteGeneration(t *testing.T, g *gcpfake.GCS, bucket string) int64 {
 // approval without the question. Nothing is written, and the error says why.
 func TestAllowDeleteCommandWritesNothingWhenItCannotReadTheList(t *testing.T) {
 	r := allowDeleteRig(t)
-	if _, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web"); err != nil {
+	if _, _, err := execute(t, allowDeleteArgs(dataApproval, webApproval)...); err != nil {
 		t.Fatal(err)
 	}
 	before := allowDeleteGeneration(t, r.gcs, initRunsBucket)
@@ -422,7 +501,7 @@ func TestAllowDeleteCommandWritesNothingWhenItCannotReadTheList(t *testing.T) {
 		t.Fatal("the list was not written")
 	}
 	r.gcs.FailObjectGetsAfter(initRunsBucket, managed.AllowDeleteObject, 0)
-	out, _, err := execute(t, "allow-delete", "google_compute_network.vpc")
+	out, _, err := execute(t, allowDeleteArgs(approval{"google_compute_network.vpc", "vpc-network"})...)
 	if err == nil {
 		t.Fatalf("a write after a failed read ran:\n%s", out)
 	}
@@ -467,7 +546,7 @@ func TestAllowDeleteCommandRefusesAListThatChangedUnderIt(t *testing.T) {
 // a write that dropped the generation fails there.
 func TestAllowDeleteCommandConditionsItsWriteOnWhatItRead(t *testing.T) {
 	r := allowDeleteRig(t)
-	if _, _, err := execute(t, "allow-delete", "google_storage_bucket.data", "google_cloud_run_v2_job.web"); err != nil {
+	if _, _, err := execute(t, allowDeleteArgs(dataApproval, webApproval)...); err != nil {
 		t.Fatal(err)
 	}
 	terminal(t, true)
@@ -479,7 +558,7 @@ func TestAllowDeleteCommandConditionsItsWriteOnWhatItRead(t *testing.T) {
 	cmd.SetOut(out)
 	cmd.SetErr(&errOut)
 	// One address of the two: a removal, which is the branch that asks.
-	cmd.SetArgs([]string{"allow-delete", "google_cloud_run_v2_job.web"})
+	cmd.SetArgs(allowDeleteArgs(webApproval))
 	done := make(chan error, 1)
 	go func() { done <- cmd.Execute() }()
 	select {
@@ -488,7 +567,7 @@ func TestAllowDeleteCommandConditionsItsWriteOnWhatItRead(t *testing.T) {
 		t.Fatalf("the command never asked for the confirmation:\n%s", out.String())
 	}
 	// While it waits for the name: another writer replaces the list.
-	other := []byte(`{"version":1,"gcp_project":"proj-1234","addresses":["google_compute_network.vpc"]}`)
+	other := []byte(allowDeleteJSON("proj-1234", approval{"google_compute_network.vpc", "vpc-network"}))
 	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, other)
 	if _, err := pw.Write([]byte(initProjectName + "\n")); err != nil {
 		t.Fatal(err)
@@ -547,10 +626,10 @@ func TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead(t *testing.T
 	r := allowDeleteRig(t)
 	// A body AllowDelete would not read: the object is there, and it holds
 	// no addresses this command could report.
-	foreign := []byte(`{"version":1,"gcp_project":"proj-1234"}`)
+	foreign := []byte(`{"version":2,"gcp_project":"proj-1234"}`)
 	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, foreign)
 	// No terminal: nothing replaces an object whose contents are unknown.
-	out, _, err := execute(t, "allow-delete", "google_storage_bucket.data")
+	out, _, err := execute(t, allowDeleteArgs(dataApproval)...)
 	if err == nil {
 		t.Fatalf("an unreadable list was replaced without a confirmation:\n%s", out)
 	}
@@ -565,7 +644,7 @@ func TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead(t *testing.T
 	}
 	// A terminal, but the wrong name: still nothing.
 	terminal(t, true)
-	if _, _, err := executeStdin(t, "not-the-name\n", "allow-delete", "google_storage_bucket.data"); err == nil {
+	if _, _, err := executeStdin(t, "not-the-name\n", allowDeleteArgs(dataApproval)...); err == nil {
 		t.Error("a mistyped confirmation replaced an unreadable list")
 	}
 	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); !ok || got != string(foreign) {
@@ -573,7 +652,7 @@ func TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead(t *testing.T
 	}
 	// The name typed: the object is replaced by the list, and the command
 	// says what it holds now.
-	out, _, err = executeStdin(t, initProjectName+"\n", "allow-delete", "google_storage_bucket.data")
+	out, _, err = executeStdin(t, initProjectName+"\n", allowDeleteArgs(dataApproval)...)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -581,7 +660,7 @@ func TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead(t *testing.T
 	if !ok {
 		t.Fatal("the confirmed replacement wrote nothing")
 	}
-	want := `{"version":1,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`
+	want := allowDeleteJSON("proj-1234", dataApproval)
 	if got != want {
 		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
 	}
@@ -594,14 +673,13 @@ func TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead(t *testing.T
 // are fine.
 func TestAllowDeleteCommandRefusesAnOverSizeList(t *testing.T) {
 	r := allowDeleteRig(t)
-	addresses := make([]string, 0, 2500)
-	for i := range cap(addresses) {
-		addresses = append(addresses, fmt.Sprintf("google_cloud_run_v2_job.web_%04d", i))
+	entries := make([]approval, 0, 2500)
+	for i := range cap(entries) {
+		entries = append(entries, approval{fmt.Sprintf("google_cloud_run_v2_job.web_%04d", i), fmt.Sprintf("job-%04d", i)})
 	}
-	args := append([]string{"allow-delete"}, addresses...)
-	out, _, err := execute(t, args...)
+	out, _, err := execute(t, allowDeleteArgs(entries...)...)
 	if err == nil {
-		t.Fatalf("a list of %d addresses was written:\n%s", len(addresses), out)
+		t.Fatalf("a list of %d entries was written:\n%s", len(entries), out)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
@@ -617,10 +695,17 @@ func TestAllowDeleteCommandRefusesAnOverSizeList(t *testing.T) {
 	}
 }
 
-// hostileAddresses are entries an object in the bucket can carry and
+// hostileEntries are entries an object in the bucket can carry and
 // parseDeleteList accepts (it refuses only blank ones): a C1 CSI (U+009B), a
-// bidi override (U+202E), a newline, and a 10,000-character string.
-var hostileAddresses = []string{"csi\u009b31m.x", "bidi‮evil.x", "line\nforged.x", strings.Repeat("z", 10000)}
+// bidi override (U+202E), a newline, and a 10,000-character string — in both
+// halves of the entry, the address and the identity, because the listing
+// prints both.
+var hostileEntries = []approval{
+	{"csi\u009b31m.x", "csi\u009b31m"},
+	{"bidi‮evil.x", "bidi‮evil"},
+	{"line\nforged.x", "line\nforged"},
+	{strings.Repeat("z", 10000), strings.Repeat("z", 10000)},
+}
 
 // assertNoRawHostile fails when out carries any hostile entry as itself: the
 // C1 and bidi characters, the newline inside an entry, or a line longer than
@@ -644,15 +729,7 @@ func assertNoRawHostile(t *testing.T, out string) {
 // ErrorText, so each is safetext.Field'd at the print: the listing and the
 // "this list leaves out" lines.
 func TestAllowDeletePrintsBucketAddressesSanitised(t *testing.T) {
-	list := `{"version":1,"gcp_project":"` + initProject + `","addresses":[`
-	for i, a := range hostileAddresses {
-		if i > 0 {
-			list += ","
-		}
-		b, _ := json.Marshal(a)
-		list += string(b)
-	}
-	list += `]}`
+	list := allowDeleteJSON(initProject, hostileEntries...)
 	t.Run("the listing", func(t *testing.T) {
 		r := allowDeleteRig(t)
 		r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(list))
@@ -660,7 +737,7 @@ func TestAllowDeletePrintsBucketAddressesSanitised(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		if !strings.Contains(out, "allows 4 address(es)") {
+		if !strings.Contains(out, "approves 4 entry(ies)") {
 			t.Fatalf("the hostile list was not read as one, so the print is not exercised:\n%q", out)
 		}
 		assertNoRawHostile(t, out)
@@ -668,7 +745,7 @@ func TestAllowDeletePrintsBucketAddressesSanitised(t *testing.T) {
 	t.Run("the entries a write would drop", func(t *testing.T) {
 		r := allowDeleteRig(t)
 		r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(list))
-		out, _, _ := execute(t, "allow-delete", "google_storage_bucket.data")
+		out, _, _ := execute(t, allowDeleteArgs(dataApproval)...)
 		if !strings.Contains(out, "leaves out 4") {
 			t.Fatalf("the drop listing was not printed:\n%q", out)
 		}

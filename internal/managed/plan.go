@@ -69,21 +69,23 @@ type Spec struct {
 	// refuses every plan: a managed plan is admitted by the managed cover, or
 	// by nothing.
 	Cover Cover
-	// AllowDelete are the addresses the owner approved a delete or a replace
-	// for. They come from the owner-written list at the root of the project's
-	// runs bucket, read fail-closed by the caller (infra/managed.AllowDelete),
-	// and never from the applying command's own arguments: in a managed
-	// project an address the applying session passed is refused rather than
-	// honoured, whatever the owner's list says (D72/D74, and
-	// infra/managed.GuardAllowList is where that is enforced). An empty list
-	// allows no delete and no replace at all.
+	// AllowDelete is the owner's delete list: for each address they approved,
+	// the identity of the object that was at it when they approved it (tf.
+	// DeleteEntry, plan Task 6.3). It comes from the owner-written list at the
+	// root of the project's runs bucket, read fail-closed by the caller
+	// (infra/managed.AllowDelete), and never from the applying command's own
+	// arguments: in a managed project an address the applying session passed is
+	// refused rather than honoured, whatever the owner's list says (D72/D74,
+	// and infra/managed.GuardAllowList is where that is enforced). An empty
+	// list allows no delete and no replace at all, and so does an entry whose
+	// identity is not the one the plan removes.
 	//
-	// Gate hands the same list to both halves of the gate (tf.Guard and the
-	// cover, which is told it through tf.Deletable), so the two cannot be given
-	// different ones, and it is one half of the decision rather than the whole
-	// of it: the resource is judged whatever its address is on this list
+	// Gate hands the same list to both halves of the gate (tf.GuardEntries and
+	// the cover, which is told it through tf.Deletable), so the two cannot be
+	// given different ones, and it is one half of the decision rather than the
+	// whole of it: the resource is judged whatever its address is on this list
 	// (D72/D74).
-	AllowDelete []string
+	AllowDelete []tf.DeleteEntry
 	// Imports are the import blocks the root's discovery wrote: an import is
 	// admitted only when its address and ID are exactly one of them
 	// (tf.Cover.NotCovered's own rule), so a stale imports.tf.json or a hand
@@ -162,7 +164,7 @@ func countChanges(p *tf.Plan) Changes {
 // flag-only finding, which no entry of the real list produces.
 var costFindings = tf.ManagedCosts
 
-// guard is tf.GuardWith with no advice of its own; a variable only so a test
+// guard is tf.GuardEntries with no advice of its own; a variable only so a test
 // can make it refuse in words the real guard never writes.
 //
 // No advice, because the guard's own (tf.AllowDeleteAdvice) names the flag a
@@ -171,7 +173,11 @@ var costFindings = tf.ManagedCosts
 // carrying it would survive into the verdict whenever no line of the refusal
 // is shaped like an address (a moved object's line is not), and tell the
 // reader to pass a flag that is refused (Task 3.2's review, finding 1).
-var guard = func(p *tf.Plan, allowDelete []string) error { return tf.GuardWith(p, allowDelete, "") }
+//
+// Entries rather than addresses, because the list this half of the gate reads
+// is the owner's own (D72/D74): under Task 6.3 an entry approves an address for
+// one object, and the address alone is no longer an approval (tf.GuardEntries).
+var guard = func(p *tf.Plan, entries []tf.DeleteEntry) error { return tf.GuardEntries(p, entries, "") }
 
 // Refusal is one refusal of one address: the gate that made it, the address it
 // is about, and the rule's own words for why — the actions the guard would
@@ -209,7 +215,7 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 	guardErr := guard(plan, spec.AllowDelete)
 	if guardErr != nil {
 		v.Refusals = append(v.Refusals, refusals(guardGate, guardLines(guardErr.Error()))...)
-		v.Listable = tf.Listable(plan, spec.AllowDelete)
+		v.Listable = tf.ListableEntries(plan, spec.AllowDelete)
 	}
 	notCovered := spec.notCovered(plan)
 	v.Refusals = append(v.Refusals, refusals(coverGate, notCovered)...)
@@ -265,25 +271,34 @@ func (s Spec) notCovered(p *tf.Plan) []string {
 		return []string{"no cover: a managed plan is admitted by the managed cover of " + s.what() + ", or by nothing"}
 	}
 	if d, ok := s.Cover.(tf.Deletable); ok {
-		return d.WithDeleteList(s.AllowDelete).NotCovered(p, s.Imports)
+		return d.WithDeleteEntries(s.AllowDelete).NotCovered(p, s.Imports)
 	}
 	return append(s.Cover.NotCovered(p, s.Imports), s.unjudgedDeletes(p)...)
 }
 
-// unjudgedDeletes lists every delete or replace of an address on the owner's
-// list, for the cover that cannot be told the list and so cannot judge the
+// unjudgedDeletes lists every delete or replace of an address the owner's list
+// names, for the cover that cannot be told the list and so cannot judge the
 // resource: the address is the one thing that is not a judgement of it, and a
 // cover that admits every delete would otherwise have a listed one admitted
 // with nothing reading the resource at all. Fail closed, and named: a delete
 // the owner approved still needs the resource it removes to be one a managed
 // plan may carry.
+//
+// An entry is tested by its address alone here, and not by Approves: the cover
+// that cannot be told the list is judging the resource, and an entry bound to
+// another object is already refused by the guard (tf.GuardEntries) whatever
+// this cover says — reading the address is the more fail-closed of the two,
+// and it is the same set of addresses as before Task 6.3.
 func (s Spec) unjudgedDeletes(p *tf.Plan) []string {
 	if p == nil {
 		return nil
 	}
+	named := func(address string) bool {
+		return slices.ContainsFunc(s.AllowDelete, func(e tf.DeleteEntry) bool { return e.Address == address })
+	}
 	var out []string
 	for _, rc := range p.ResourceChanges {
-		if slices.Contains(rc.Change.Actions, "delete") && slices.Contains(s.AllowDelete, rc.Address) {
+		if slices.Contains(rc.Change.Actions, "delete") && named(rc.Address) {
 			out = append(out, safetext.Field(rc.Address)+" (a delete or a replace of an address on the owner's delete list, and the cover this gate was handed cannot be told the list, so the resource is not judged: the address alone never admits one)")
 		}
 	}

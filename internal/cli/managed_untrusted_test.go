@@ -19,6 +19,7 @@ import (
 	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -219,24 +220,32 @@ func TestTheApplyRefusalsMapBoundsEveryValue(t *testing.T) {
 	}
 }
 
-// TestPrintAddressesCapsTheListingAndSaysWhatItLeftOut: the listing of an
-// owner's object is bounded twice — each address a field, and the count of
-// entries capped, with what was left out said rather than silently dropped.
-func TestPrintAddressesCapsTheListingAndSaysWhatItLeftOut(t *testing.T) {
+// TestPrintEntriesCapsTheListingAndSaysWhatItLeftOut: the listing of an
+// owner's object is bounded twice — each entry (address and identity) a field,
+// and the count of entries capped, with what was left out said rather than
+// silently dropped.
+func TestPrintEntriesCapsTheListingAndSaysWhatItLeftOut(t *testing.T) {
 	hostile := hostileCLIValues()
-	many := make([]string, 0, safetext.FieldListMax+5)
+	many := make([]tf.DeleteEntry, 0, safetext.FieldListMax+5)
 	for i := 0; i < safetext.FieldListMax+5; i++ {
-		many = append(many, fmt.Sprintf("google_storage_bucket.a%02d", i))
+		many = append(many, tf.DeleteEntry{
+			Address: fmt.Sprintf("google_storage_bucket.a%02d", i),
+			Before:  fmt.Sprintf("type=google_storage_bucket id=a%02d", i)})
 	}
 	// One entry of each class inside the cap, so the sanitising is exercised
-	// as well as the count.
+	// as well as the count — in the address, and in the identity beside it.
 	last := 0
 	for _, v := range hostile {
-		many[last] = "google_storage_bucket." + v
+		many[last].Address = "google_storage_bucket." + v
+		many[last].Before = "type=google_storage_bucket id=" + v
 		last++
 	}
+	want := make([]string, 0, len(many))
+	for _, e := range many {
+		want = append(want, e.Address+"="+e.Before)
+	}
 	var b strings.Builder
-	printAddresses(&b, many)
+	printEntries(&b, many)
 	out := b.String()
 	noRawHostile(t, "the listing", out, safetext.FieldListMax+1)
 
@@ -248,17 +257,17 @@ func TestPrintAddressesCapsTheListingAndSaysWhatItLeftOut(t *testing.T) {
 		t.Errorf("the listing ends with %q, want %q", lines[len(lines)-1], note)
 	}
 	for i, line := range lines[:safetext.FieldListMax] {
-		if want := safetext.Field(many[i]); line != want {
-			t.Errorf("entry %d is %q, want %q", i, line, want)
+		if w := safetext.Field(want[i]); line != w {
+			t.Errorf("entry %d is %q, want %q", i, line, w)
 		}
 	}
-	if strings.Contains(out, many[len(many)-1]) {
-		t.Errorf("the listing carries %q, past the cap", many[len(many)-1])
+	if strings.Contains(out, many[len(many)-1].Address) {
+		t.Errorf("the listing carries %q, past the cap", many[len(many)-1].Address)
 	}
 
 	// Under the cap nothing is said about leaving anything out.
 	b.Reset()
-	printAddresses(&b, many[:3])
+	printEntries(&b, many[:3])
 	if got := b.String(); strings.Contains(got, "more") || len(strings.Split(strings.TrimSuffix(got, "\n"), "\n")) != 3 {
 		t.Errorf("a listing under the cap is %q, want three lines and no note", got)
 	}
@@ -270,11 +279,14 @@ func TestPrintAddressesCapsTheListingAndSaysWhatItLeftOut(t *testing.T) {
 func TestAllowDeleteListingIsCappedEndToEnd(t *testing.T) {
 	r := allowDeleteRig(t)
 	total := safetext.FieldListMax + 5
-	addresses := make([]string, 0, total)
+	entries := make([]tf.DeleteEntry, 0, total)
 	for i := 0; i < total; i++ {
-		addresses = append(addresses, fmt.Sprintf("google_storage_bucket.a%02d", i))
+		entries = append(entries, tf.DeleteEntry{
+			Address: fmt.Sprintf("google_storage_bucket.a%02d", i),
+			Before:  fmt.Sprintf("type=google_storage_bucket id=a%02d", i),
+		})
 	}
-	body, err := json.Marshal(map[string]any{"version": 1, "gcp_project": initProject, "addresses": addresses})
+	body, err := json.Marshal(managed.DeleteList{Version: managed.AllowDeleteVersion, GCPProject: initProject, Entries: entries})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +295,7 @@ func TestAllowDeleteListingIsCappedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, fmt.Sprintf("allows %d address(es)", total)) {
+	if !strings.Contains(out, fmt.Sprintf("approves %d entry(ies)", total)) {
 		t.Fatalf("the listing was not read as one, so the print is not exercised:\n%q", out)
 	}
 	if !strings.Contains(out, "("+safetext.FieldListNote(5)+")") {
@@ -298,7 +310,7 @@ func TestAllowDeleteListingIsCappedEndToEnd(t *testing.T) {
 	if shown != safetext.FieldListMax {
 		t.Errorf("the listing shows %d entries, want %d", shown, safetext.FieldListMax)
 	}
-	if last := addresses[total-1]; strings.Contains(out, last) {
+	if last := entries[total-1].Address; strings.Contains(out, last) {
 		t.Errorf("the listing carries %q, past the cap:\n%q", last, out)
 	}
 }

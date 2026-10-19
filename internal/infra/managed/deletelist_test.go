@@ -21,15 +21,51 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
-// The delete list's whole shape, byte for byte (Task 1.4, D74): a version,
-// the project the list is about, and the addresses — nothing else. No note,
-// no reason, no comment field: a free-text field in a file a run reads is
-// text an agent would like to write, and the approval's provenance is the
-// object's own version history rather than prose inside it.
-const deleteListJSON = `{"version":1,"gcp_project":"proj-1234","addresses":["google_cloud_run_v2_job.web","module.svc.google_storage_bucket.data"]}`
+// The delete list's whole shape, byte for byte (Task 1.4 and D74; entries from
+// the v2 format, plan Task 6.3): a version, the project the list is about, and
+// the entries — nothing else. No note, no reason, no comment field: a
+// free-text field in a file a run reads is text an agent would like to write,
+// and the approval's provenance is the object's own version history rather
+// than prose inside it.
+//
+// The version is 2 and an entry carries the identity of the object it
+// approves, so an approval is of one object and not of whatever a later plan
+// puts at the address (design §6 item 5). A version-1 object — addresses and
+// no identities — is not a list this package reads: nothing in it says which
+// object was approved, and inventing an identity for it would be the hole the
+// version exists to close. Its addresses are therefore no addresses, which is
+// the fail-closed answer (see TestAllowDeleteFailsClosed's version-1 row).
+const deleteListJSON = `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_cloud_run_v2_job.web","before":"type=google_storage_bucket id=web-0001"},{"address":"module.svc.google_storage_bucket.data","before":"type=google_storage_bucket id=data-0002"}]}`
 
-// deleteListAddresses is what the fixture above holds, in order.
-var deleteListAddresses = []string{"google_cloud_run_v2_job.web", "module.svc.google_storage_bucket.data"}
+// approval is one fixture approval: the Terraform address the owner approved,
+// and the object the plan fixture shows there. The plan and the list are built
+// from the same value, so a fixture cannot approve an object its own plan does
+// not remove — which is exactly what the rule refuses.
+type approval struct{ address, id string }
+
+func (a approval) entry() tf.DeleteEntry {
+	return tf.DeleteEntry{Address: a.address, Before: "type=google_storage_bucket id=" + a.id}
+}
+
+func (a approval) change() tf.ResourceChange {
+	return tf.ResourceChange{Address: a.address, Type: "google_storage_bucket",
+		Change: tf.Change{Actions: []string{"delete"}, Before: map[string]any{"id": a.id}}}
+}
+
+// deleteListApprovals is what the fixture above holds, in order.
+var deleteListApprovals = []approval{
+	{"google_cloud_run_v2_job.web", "web-0001"},
+	{"module.svc.google_storage_bucket.data", "data-0002"},
+}
+
+// deleteListEntries is the fixture's list as the reader returns it.
+func deleteListEntries() []tf.DeleteEntry {
+	out := make([]tf.DeleteEntry, 0, len(deleteListApprovals))
+	for _, a := range deleteListApprovals {
+		out = append(out, a.entry())
+	}
+	return out
+}
 
 // deleteListAt is the delete list's bytes in bucket, and whether it is there
 // at all.
@@ -51,15 +87,13 @@ func deleteListAt(t *testing.T, s *storage.Service, bucket string) (string, bool
 	return string(b), true
 }
 
-// deletePlan is a plan carrying one delete per address: the fixture the
-// fail-closed tests assert against, so what they check is the gate — the
-// list handed to tf.Guard — rather than the reader's return value alone.
-func deletePlan(addresses ...string) *tf.Plan {
+// deletePlan is a plan carrying one delete per approval: the fixture the
+// fail-closed tests assert against, so what they check is the gate — the list
+// handed to tf.GuardEntries — rather than the reader's return value alone.
+func deletePlan(ap ...approval) *tf.Plan {
 	p := &tf.Plan{FormatVersion: "1.2"}
-	for _, a := range addresses {
-		p.ResourceChanges = append(p.ResourceChanges, tf.ResourceChange{
-			Address: a, Type: "google_storage_bucket", Change: tf.Change{Actions: []string{"delete"}},
-		})
+	for _, a := range ap {
+		p.ResourceChanges = append(p.ResourceChanges, a.change())
 	}
 	return p
 }
@@ -78,9 +112,13 @@ func seedDeleteList(t *testing.T, body string) (*storage.Service, string) {
 }
 
 // TestDeleteListJSONShape pins the object's shape against the fixture: three
-// fields, exactly, and a version and a project that say what the list is.
+// fields, exactly, and a version and a project that say what the list is. An
+// entry is two fields of its own — the address and the identity — and neither
+// may be empty: an entry with no identity is not an approval of anything
+// (tf.DeleteEntry), so a list holding one is refused rather than written and
+// then read as an approval of the address alone.
 func TestDeleteListJSONShape(t *testing.T) {
-	d := DeleteList{Version: AllowDeleteVersion, GCPProject: testProject, Addresses: deleteListAddresses}
+	d := DeleteList{Version: AllowDeleteVersion, GCPProject: testProject, Entries: deleteListEntries()}
 	b, err := d.Bytes()
 	if err != nil {
 		t.Fatal(err)
@@ -100,14 +138,28 @@ func TestDeleteListJSONShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(fields) != 3 {
-		t.Errorf("the object holds %d fields (%v): a version, a project and the addresses, and nothing else", len(fields), fields)
+		t.Errorf("the object holds %d fields (%v): a version, a project and the entries, and nothing else", len(fields), fields)
+	}
+	if entries, ok := fields["entries"].([]any); !ok || len(entries) == 0 {
+		t.Fatalf("the fixture's entries are %v, want the two approvals", fields["entries"])
+	} else if first, ok := entries[0].(map[string]any); !ok || len(first) != 2 {
+		t.Errorf("an entry is %v, want the address and the identity and nothing else", entries[0])
 	}
 	for name, bad := range map[string]DeleteList{
-		"no project":      {Version: AllowDeleteVersion, Addresses: deleteListAddresses},
-		"another version": {Version: AllowDeleteVersion + 1, GCPProject: testProject, Addresses: deleteListAddresses},
-		"no addresses":    {Version: AllowDeleteVersion, GCPProject: testProject},
-		"a blank address": {Version: AllowDeleteVersion, GCPProject: testProject, Addresses: []string{"", "a.b"}},
-		"a space address": {Version: AllowDeleteVersion, GCPProject: testProject, Addresses: []string{"a.b", " "}},
+		"no project":      {Version: AllowDeleteVersion, Entries: deleteListEntries()},
+		"another version": {Version: AllowDeleteVersion + 1, GCPProject: testProject, Entries: deleteListEntries()},
+		"no entries":      {Version: AllowDeleteVersion, GCPProject: testProject},
+		"an empty slice":  {Version: AllowDeleteVersion, GCPProject: testProject, Entries: []tf.DeleteEntry{}},
+		"a blank address": {Version: AllowDeleteVersion, GCPProject: testProject, Entries: []tf.DeleteEntry{{Address: "", Before: "type=t id=i"}, {Address: "a.b", Before: "type=t id=i"}}},
+		"a space address": {Version: AllowDeleteVersion, GCPProject: testProject, Entries: []tf.DeleteEntry{{Address: "a.b", Before: "type=t id=i"}, {Address: " ", Before: "type=t id=i"}}},
+		"a blank identity": {Version: AllowDeleteVersion, GCPProject: testProject,
+			Entries: []tf.DeleteEntry{{Address: "a.b", Before: ""}}},
+		"a space identity": {Version: AllowDeleteVersion, GCPProject: testProject,
+			Entries: []tf.DeleteEntry{{Address: "a.b", Before: "  "}}},
+		// A version-1 list is not this shape at all, and the writer refuses to
+		// produce one: addresses with no identities are exactly what v2 exists
+		// to stop being an approval.
+		"the version-1 shape": {Version: 1, GCPProject: testProject, Entries: deleteListEntries()},
 	} {
 		if _, err := bad.Bytes(); err == nil {
 			t.Errorf("a list with %s was encoded: %+v", name, bad)
@@ -120,7 +172,7 @@ func TestDeleteListJSONShape(t *testing.T) {
 func TestWriteDeleteListRoundTrip(t *testing.T) {
 	s, bucket := seedDeleteList(t, "")
 	ctx := context.Background()
-	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses, 0); err != nil {
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListEntries(), 0); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := deleteListAt(t, s, bucket); !ok || got != deleteListJSON {
@@ -130,8 +182,8 @@ func TestWriteDeleteListRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(list, deleteListAddresses) {
-		t.Errorf("AllowDelete() = %v, want %v", list, deleteListAddresses)
+	if !slices.Equal(list, deleteListEntries()) {
+		t.Errorf("AllowDelete() = %v, want %v", list, deleteListEntries())
 	}
 }
 
@@ -142,12 +194,12 @@ func TestWriteDeleteListRoundTrip(t *testing.T) {
 func TestWriteDeleteListWritesTheWholeList(t *testing.T) {
 	s, bucket := seedDeleteList(t, "")
 	ctx := context.Background()
-	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses, 0); err != nil {
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListEntries(), 0); err != nil {
 		t.Fatal(err)
 	}
-	short := []string{deleteListAddresses[1]}
+	short := deleteListEntries()[1:]
 	state, err := ReadDeleteListForWrite(ctx, s, bucket, testProject, testProjectNumber)
-	if err != nil || state.Generation == 0 || !slices.Equal(state.Addresses, deleteListAddresses) {
+	if err != nil || state.Generation == 0 || !slices.Equal(state.Entries, deleteListEntries()) {
 		t.Fatalf("ReadDeleteListForWrite() = %+v, %v; want the first list and its generation", state, err)
 	}
 	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, short, state.Generation); err != nil {
@@ -160,7 +212,7 @@ func TestWriteDeleteListWritesTheWholeList(t *testing.T) {
 	if !slices.Equal(list, short) {
 		t.Errorf("after the second write AllowDelete() = %v, want %v (the whole list, not an append)", list, short)
 	}
-	if err := tf.Guard(deletePlan(deleteListAddresses[0]), list); err == nil {
+	if err := tf.GuardEntries(deletePlan(deleteListApprovals[0]), list, ""); err == nil {
 		t.Error("an address the second write dropped is still deletable")
 	}
 }
@@ -198,7 +250,7 @@ func TestWriteDeleteListNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 				// names no bucket is checked as well as the ones that do.
 				f.AddBucket(testBucket, testProjectNumber, testManaged)
 			}
-			err := WriteDeleteList(context.Background(), s, tc.bucket, tc.project, tc.number, deleteListAddresses, 0)
+			err := WriteDeleteList(context.Background(), s, tc.bucket, tc.project, tc.number, deleteListEntries(), 0)
 			if err == nil {
 				t.Fatal("the list was written into a bucket that is not the project's own")
 			}
@@ -211,29 +263,34 @@ func TestWriteDeleteListNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	// project's own runs bucket, numbered and labelled as the read proves it.
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
-	if err := WriteDeleteList(context.Background(), s, testBucket, testProject, testProjectNumber, deleteListAddresses, 0); err != nil {
+	if err := WriteDeleteList(context.Background(), s, testBucket, testProject, testProjectNumber, deleteListEntries(), 0); err != nil {
 		t.Fatalf("the project's own runs bucket was refused: %v", err)
 	}
-	if err := WriteDeleteList(context.Background(), nil, testBucket, testProject, testProjectNumber, deleteListAddresses, 0); err == nil {
+	if err := WriteDeleteList(context.Background(), nil, testBucket, testProject, testProjectNumber, deleteListEntries(), 0); err == nil {
 		t.Error("the write was made with no storage client")
 	}
 }
 
-// TestWriteDeleteListRefusesNoAddresses: with no addresses the command
-// prints the list rather than emptying it, and the writer refuses for the
-// same reason — a write that emptied the list would be a refusal of every
-// delete dressed as an approval, and the owner's way to refuse a delete is
-// to write the list without it.
-func TestWriteDeleteListRefusesNoAddresses(t *testing.T) {
+// TestWriteDeleteListRefusesNoEntries: with no addresses the command prints
+// the list rather than emptying it, and the writer refuses for the same reason
+// — a write that emptied the list would be a refusal of every delete dressed
+// as an approval, and the owner's way to refuse a delete is to write the list
+// without it. An entry with no identity is refused beside them: it is an
+// address offered as an approval of whatever object a plan puts there, which
+// is the shape the entries rule exists to stop.
+func TestWriteDeleteListRefusesNoEntries(t *testing.T) {
 	s, bucket := seedDeleteList(t, "")
 	ctx := context.Background()
-	for name, addresses := range map[string][]string{
-		"no addresses":    nil,
-		"blank addresses": {"", "  "},
-		"an empty slice":  {},
+	for name, entries := range map[string][]tf.DeleteEntry{
+		"no entries":       nil,
+		"an empty slice":   {},
+		"a blank address":  {{Address: "", Before: "type=t id=i"}},
+		"a blank entry":    {{}},
+		"no identity":      {{Address: "a.b"}},
+		"a blank identity": {{Address: "a.b", Before: " "}},
 	} {
-		if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, addresses, 0); err == nil {
-			t.Errorf("%s: an empty list was written", name)
+		if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, entries, 0); err == nil {
+			t.Errorf("%s: an empty or half-empty list was written", name)
 		}
 	}
 	if _, ok := deleteListAt(t, s, bucket); ok {
@@ -250,15 +307,16 @@ func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
 	s, bucket := seedDeleteList(t, "")
 	ctx := context.Background()
 	// Long enough that the encoding passes the cap, which is what the write
-	// checks rather than the count: an address is a Terraform address, and
-	// the object's size is what the read is bounded by.
-	addresses := make([]string, 0, allowDeleteMaxBytes/20)
-	for i := range cap(addresses) {
-		addresses = append(addresses, fmt.Sprintf("google_cloud_run_v2_job.web_%08d", i))
+	// checks rather than the count: an entry is a Terraform address and an
+	// identity, and the object's size is what the read is bounded by.
+	entries := make([]tf.DeleteEntry, 0, allowDeleteMaxBytes/40)
+	for i := range cap(entries) {
+		entries = append(entries, approval{
+			fmt.Sprintf("google_cloud_run_v2_job.web_%08d", i), fmt.Sprintf("job-%08d", i)}.entry())
 	}
-	err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, addresses, 0)
+	err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, entries, 0)
 	if err == nil {
-		t.Fatalf("a list of %d addresses was written: the read would refuse it", len(addresses))
+		t.Fatalf("a list of %d entries was written: the read would refuse it", len(entries))
 	}
 	if !errors.Is(err, ErrRefused) {
 		t.Errorf("WriteDeleteList() = %v, want a refusal of this package's own", err)
@@ -271,7 +329,7 @@ func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
 	if !errors.Is(err, ErrTooLarge) {
 		t.Errorf("WriteDeleteList() = %v, want ErrTooLarge inside it", err)
 	}
-	other := DeleteList{Version: AllowDeleteVersion + 1, GCPProject: testProject, Addresses: []string{"a"}}
+	other := DeleteList{Version: AllowDeleteVersion + 1, GCPProject: testProject, Entries: []tf.DeleteEntry{{Address: "a", Before: "type=t id=i"}}}
 	if _, err := other.Bytes(); err == nil || errors.Is(err, ErrTooLarge) {
 		t.Errorf("the version refusal = %v, want a refusal that is not ErrTooLarge", err)
 	}
@@ -311,13 +369,14 @@ func TestWriteDeleteListRefusesAListItsOwnReadWouldRefuse(t *testing.T) {
 
 // oversizedDeleteList is a list this package writes in every way but one: it
 // is past allowDeleteMaxBytes. It is marshalled from the same DeleteList the
-// writer writes, and returned with the same list one address shorter, which
-// is the last one at or under the cap.
+// writer writes, and returned with the same list one entry shorter, which is
+// the last one at or under the cap.
 func oversizedDeleteList(t *testing.T) (over, under []byte) {
 	t.Helper()
 	d := DeleteList{Version: AllowDeleteVersion, GCPProject: testProject}
 	for i := 0; ; i++ {
-		d.Addresses = append(d.Addresses, fmt.Sprintf("google_cloud_run_v2_job.web_%08d", i))
+		d.Entries = append(d.Entries, approval{
+			fmt.Sprintf("google_cloud_run_v2_job.web_%08d", i), fmt.Sprintf("job-%08d", i)}.entry())
 		b, err := json.Marshal(d)
 		if err != nil {
 			t.Fatal(err)
@@ -329,37 +388,57 @@ func oversizedDeleteList(t *testing.T) (over, under []byte) {
 	}
 }
 
-// TestAllowDeleteFailsClosed is the red step's second test: absent, empty,
-// of another project, of an unknown version, unreadable, or holding a field
-// this package does not write — each is no addresses, and no error a caller
-// could read as "proceed". What the test asserts is the gate rather than the
-// reader's return value: the list goes to tf.Guard with a plan that deletes,
-// and the delete is refused.
+// TestAllowDeleteFailsClosed is the red step's second test: absent, empty, of
+// another project, of an unknown version, unreadable, or holding a field this
+// package does not write — each is no entries, and no error a caller could
+// read as "proceed". What the test asserts is the gate rather than the
+// reader's return value: the list goes to tf.GuardEntries with a plan that
+// deletes, and the delete is refused.
+//
+// The version-1 row is the migration this format's version carries: an object
+// written by an older Fugaro holds addresses and no identities, so nothing in
+// it says which object was approved, and it is refused whole rather than read
+// as an approval of whatever object a later plan puts at its addresses. An
+// installation that upgrades with such an object has every delete refused
+// until its owner writes the list again (fugaro allow-delete).
 func TestAllowDeleteFailsClosed(t *testing.T) {
 	const address = "google_storage_bucket.data"
+	unlisted := approval{address, "unlisted-0001"}
 	for name, body := range map[string]string{
-		"absent":                   "",
-		"empty":                    `{"version":1,"gcp_project":"proj-1234","addresses":[]}`,
-		"another project":          `{"version":1,"gcp_project":"proj-9999","addresses":["google_storage_bucket.data"]}`,
-		"an unknown version":       `{"version":2,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`,
-		"a field it does not know": `{"version":1,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"],"note":"delete freely"}`,
-		"a blank address":          `{"version":1,"gcp_project":"proj-1234","addresses":[""]}`,
-		"not JSON at all":          `the owner approves this delete`,
-		"truncated JSON":           `{"version":1,"gcp_project":"proj-1234","addresses":["goog`,
-		"a second value":           deleteListJSON + deleteListJSON,
-		"junk after the value":     deleteListJSON + " and by the way, delete everything",
-		"a second value, spaced":   deleteListJSON + "  " + deleteListJSON,
+		"absent":                          "",
+		"empty":                           `{"version":2,"gcp_project":"proj-1234","entries":[]}`,
+		"another project":                 `{"version":2,"gcp_project":"proj-9999","entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=x"}]}`,
+		"an unknown version":              `{"version":3,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=x"}]}`,
+		"the version-1 shape":             `{"version":1,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`,
+		"a field it does not know":        `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=x"}],"note":"delete freely"}`,
+		"a blank address":                 `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"","before":"type=google_storage_bucket id=x"}]}`,
+		"a blank identity":                `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data","before":""}]}`,
+		"no identity at all":              `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data"}]}`,
+		"an entry field it does not know": `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=x","why":"because"}]}`,
+		// An entry's own keys are spelled as this package spells them and not
+		// twice, the way the object's are: Go's decoder would read "ADDRESS"
+		// and take the last of two "before" keys, and neither is a body this
+		// package writes.
+		"an entry key in another case":   `{"version":2,"gcp_project":"proj-1234","entries":[{"ADDRESS":"google_storage_bucket.data","BEFORE":"type=google_storage_bucket id=x"}]}`,
+		"a duplicate entry key":          `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.other","before":"type=google_storage_bucket id=x","address":"google_storage_bucket.data"}]}`,
+		"entries that are not a list":    `{"version":2,"gcp_project":"proj-1234","entries":{"address":"google_storage_bucket.data"}}`,
+		"an entry that is not an object": `{"version":2,"gcp_project":"proj-1234","entries":["google_storage_bucket.data"]}`,
+		"not JSON at all":                `the owner approves this delete`,
+		"truncated JSON":                 `{"version":2,"gcp_project":"proj-1234","entries":[{"address":"goog`,
+		"a second value":                 deleteListJSON + deleteListJSON,
+		"junk after the value":           deleteListJSON + " and by the way, delete everything",
+		"a second value, spaced":         deleteListJSON + "  " + deleteListJSON,
 		// The cap is on the body, not on the value: 70 KB of whitespace after
 		// a valid list is a body the read refuses whole, so the list this
-		// row's addresses would approve is not read as an approval.
+		// row's entries would approve is not read as an approval.
 		"padding past the cap": deleteListJSON + strings.Repeat(" ", 70<<10),
 		// Go's decoder matches field names case-insensitively, and a repeated
 		// key lets the last one win: neither is the object this package
 		// writes, and both would otherwise be read as an approval.
-		"keys in another case":      `{"VERSION":1,"GCP_PROJECT":"proj-1234","ADDRESSES":["google_storage_bucket.data"]}`,
-		"a key in mixed case":       `{"version":1,"Gcp_Project":"proj-1234","addresses":["google_storage_bucket.data"]}`,
-		"a duplicate version key":   `{"version":1,"version":1,"gcp_project":"proj-1234","addresses":["google_storage_bucket.data"]}`,
-		"a duplicate addresses key": `{"version":1,"gcp_project":"proj-1234","addresses":[],"addresses":["google_storage_bucket.data"]}`,
+		"keys in another case":    `{"VERSION":2,"GCP_PROJECT":"proj-1234","ENTRIES":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=x"}]}`,
+		"a key in mixed case":     `{"version":2,"Gcp_Project":"proj-1234","Entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=x"}]}`,
+		"a duplicate version key": `{"version":2,"version":2,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=x"}]}`,
+		"a duplicate entries key": `{"version":2,"gcp_project":"proj-1234","entries":[],"entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=x"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, bucket := seedDeleteList(t, body)
@@ -368,11 +447,11 @@ func TestAllowDeleteFailsClosed(t *testing.T) {
 				t.Fatalf("AllowDelete() = %v with an error (%v): a caller must not read a failure as proceed, and an error is not the shape of a refusal here", list, err)
 			}
 			if len(list) != 0 {
-				t.Fatalf("AllowDelete() = %v, want no addresses", list)
+				t.Fatalf("AllowDelete() = %v, want no entries", list)
 			}
-			err = tf.Guard(deletePlan(address), list)
+			err = tf.GuardEntries(deletePlan(unlisted), list, "")
 			if err == nil {
-				t.Fatal("tf.Guard applied a plan that deletes, with no owner-approved address")
+				t.Fatal("tf.GuardEntries applied a plan that deletes, with no owner-approved entry")
 			}
 			if !strings.Contains(err.Error(), address) {
 				t.Errorf("the guard's refusal does not name %s: %v", address, err)
@@ -390,21 +469,30 @@ func TestAllowDeleteFailsClosed(t *testing.T) {
 		t.Errorf("AllowDelete() from another project's bucket = %v, %v; want no addresses and no error", list, err)
 	}
 	// The positive case, so the rows above cannot pass by every read being
-	// empty: an owner-approved address passes the guard, and one the owner
-	// did not name does not.
+	// empty: a plan removing the objects the owner approved passes the guard,
+	// and one removing another object at the same address — or an address the
+	// owner did not name — does not.
 	s, bucket := seedDeleteList(t, deleteListJSON)
 	list, err = AllowDelete(context.Background(), s, bucket, testProject, testProjectNumber)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(list, deleteListAddresses) {
-		t.Fatalf("AllowDelete() = %v, want the owner's %v", list, deleteListAddresses)
+	if !slices.Equal(list, deleteListEntries()) {
+		t.Fatalf("AllowDelete() = %v, want the owner's %v", list, deleteListEntries())
 	}
-	if err := tf.Guard(deletePlan(deleteListAddresses...), list); err != nil {
-		t.Errorf("a plan deleting the owner's own addresses was refused: %v", err)
+	if err := tf.GuardEntries(deletePlan(deleteListApprovals...), list, ""); err != nil {
+		t.Errorf("a plan deleting the objects the owner approved was refused: %v", err)
 	}
-	if err := tf.Guard(deletePlan(deleteListAddresses[0], address), list); err == nil {
+	if err := tf.GuardEntries(deletePlan(deleteListApprovals[0], unlisted), list, ""); err == nil {
 		t.Error("a plan deleting an address the owner did not name was applied")
+	}
+	// And the case the entries rule is for, read out of a real object rather
+	// than built by hand: the address the owner approved, carrying another
+	// object. The list is the owner's and the address is on it, and the delete
+	// is still refused — one approval is one object (design §6 item 5).
+	reused := approval{deleteListApprovals[0].address, "web-9999"}
+	if err := tf.GuardEntries(deletePlan(reused), list, ""); err == nil {
+		t.Error("an address the owner approved for one object was a standing permission for another one")
 	}
 }
 
@@ -476,8 +564,8 @@ func TestAllowDeleteRefusesWhatItCannotRead(t *testing.T) {
 	// they cannot be passing by every read being empty.
 	s, bucket := seedDeleteList(t, deleteListJSON)
 	list, err := AllowDelete(ctx, s, bucket, testProject, testProjectNumber)
-	if err != nil || !slices.Equal(list, deleteListAddresses) {
-		t.Fatalf("AllowDelete() = %v, %v; want the owner's %v", list, err, deleteListAddresses)
+	if err != nil || !slices.Equal(list, deleteListEntries()) {
+		t.Fatalf("AllowDelete() = %v, %v; want the owner's %v", list, err, deleteListEntries())
 	}
 }
 
@@ -513,7 +601,7 @@ func TestAllowDeleteRefusesAnAddressTheApplyingCommandPasses(t *testing.T) {
 	}
 	// Even the address the owner did approve is refused when it is passed on
 	// the command line: what is refused is the source, not the value.
-	if _, err := GuardAllowList(ctx, s, bucket, testProject, testProjectNumber, []string{deleteListAddresses[0]}); err == nil {
+	if _, err := GuardAllowList(ctx, s, bucket, testProject, testProjectNumber, []string{deleteListApprovals[0].address}); err == nil {
 		t.Error("an owner-approved address passed on the applying command line was accepted")
 	}
 	// With no flags of its own, the same call returns the owner's list: the
@@ -522,8 +610,8 @@ func TestAllowDeleteRefusesAnAddressTheApplyingCommandPasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(list, deleteListAddresses) {
-		t.Errorf("GuardAllowList() = %v, want the owner's list %v", list, deleteListAddresses)
+	if !slices.Equal(list, deleteListEntries()) {
+		t.Errorf("GuardAllowList() = %v, want the owner's list %v", list, deleteListEntries())
 	}
 	// The owner's list approves its own addresses whole: nothing they are a
 	// prefix of, nothing under them, nothing differing in case.
@@ -534,7 +622,7 @@ func TestAllowDeleteRefusesAnAddressTheApplyingCommandPasses(t *testing.T) {
 		"module.svc.google_storage_bucket.DATA",
 		"google_cloud_run_v2_job.web_old",
 	} {
-		if err := tf.Guard(deletePlan(planned), list); err == nil {
+		if err := tf.GuardEntries(deletePlan(approval{planned, "nearby-0001"}), list, ""); err == nil {
 			t.Errorf("the owner's list %v let %q be deleted", list, planned)
 		}
 	}
@@ -622,7 +710,7 @@ func TestRunAccountsHaveNoWritePathToTheDeleteList(t *testing.T) {
 func TestWriteDeleteListRefusesAListThatChangedSinceItsRead(t *testing.T) {
 	s, bucket := seedDeleteList(t, "")
 	ctx := context.Background()
-	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses, 0); err != nil {
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListEntries(), 0); err != nil {
 		t.Fatal(err)
 	}
 	stale, err := ReadDeleteListForWrite(ctx, s, bucket, testProject, testProjectNumber)
@@ -630,17 +718,17 @@ func TestWriteDeleteListRefusesAListThatChangedSinceItsRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Another writer, in between.
-	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses[:1], stale.Generation); err != nil {
+	if err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListEntries()[:1], stale.Generation); err != nil {
 		t.Fatal(err)
 	}
 	for name, gen := range map[string]int64{"a stale generation": stale.Generation, "no object expected": 0} {
-		err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListAddresses[1:], gen)
+		err := WriteDeleteList(ctx, s, bucket, testProject, testProjectNumber, deleteListEntries()[1:], gen)
 		if !errors.Is(err, ErrChanged) {
 			t.Errorf("%s: WriteDeleteList() = %v, want ErrChanged", name, err)
 		}
 	}
-	if list, _ := AllowDelete(ctx, s, bucket, testProject, testProjectNumber); !slices.Equal(list, deleteListAddresses[:1]) {
-		t.Errorf("after the refused writes AllowDelete() = %v, want the other writer's %v", list, deleteListAddresses[:1])
+	if list, _ := AllowDelete(ctx, s, bucket, testProject, testProjectNumber); !slices.Equal(list, deleteListEntries()[:1]) {
+		t.Errorf("after the refused writes AllowDelete() = %v, want the other writer's %v", list, deleteListEntries()[:1])
 	}
 }
 
@@ -654,7 +742,7 @@ func TestReadDeleteListForWriteFailsClosed(t *testing.T) {
 	s, f := newStorage(t)
 	f.AddBucket(testBucket, testProjectNumber, testManaged)
 	state, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber)
-	if err != nil || state.Generation != 0 || state.Addresses != nil || state.Unreadable {
+	if err != nil || state.Generation != 0 || state.Entries != nil || state.Unreadable {
 		t.Fatalf("over no object: %+v, %v; want the zero state", state, err)
 	}
 	f.Put(testBucket, AllowDeleteObject, []byte(deleteListJSON))
@@ -670,9 +758,9 @@ func TestReadDeleteListForWriteFailsClosed(t *testing.T) {
 	}
 	s2, f2 := newStorage(t)
 	f2.AddBucket(testBucket, testProjectNumber, testManaged)
-	f2.Put(testBucket, AllowDeleteObject, []byte(`{"version":1,"gcp_project":"`+testProject+`","addresses":["a"],"note":"x"}`))
+	f2.Put(testBucket, AllowDeleteObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","entries":[{"address":"a","before":"type=t id=i"}],"note":"x"}`))
 	state, err = ReadDeleteListForWrite(ctx, s2, testBucket, testProject, testProjectNumber)
-	if err != nil || !state.Unreadable || state.Generation == 0 || state.Addresses != nil {
+	if err != nil || !state.Unreadable || state.Generation == 0 || state.Entries != nil {
 		t.Errorf("over an object it cannot believe: %+v, %v; want Unreadable with a generation", state, err)
 	}
 	f2.AddBucket(testBucket, testProjectNumber+1, testManaged)
@@ -735,16 +823,16 @@ func deleteListTransport(body func(r *http.Request) io.ReadCloser) roundTripFunc
 // read capped one byte short would see only the valid list.
 func TestTheDeleteListReadsAreCapped(t *testing.T) {
 	ctx := context.Background()
-	reads := map[string]func(s *storage.Service) ([]string, error){
-		"AllowDelete": func(s *storage.Service) ([]string, error) {
+	reads := map[string]func(s *storage.Service) ([]tf.DeleteEntry, error){
+		"AllowDelete": func(s *storage.Service) ([]tf.DeleteEntry, error) {
 			return AllowDelete(ctx, s, testBucket, testProject, testProjectNumber)
 		},
-		"ReadDeleteListForWrite": func(s *storage.Service) ([]string, error) {
+		"ReadDeleteListForWrite": func(s *storage.Service) ([]tf.DeleteEntry, error) {
 			st, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber)
 			if err == nil && !st.Unreadable {
-				return st.Addresses, errors.New("an oversized body read as a list")
+				return st.Entries, errors.New("an oversized body read as a list")
 			}
-			return st.Addresses, err
+			return st.Entries, err
 		},
 	}
 	for name, read := range reads {
@@ -769,7 +857,7 @@ func TestTheDeleteListReadsAreCapped(t *testing.T) {
 // newer list read under an older generation, which would let the write drop
 // approvals the owner was never shown.
 func TestReadDeleteListForWriteReadsTheGenerationItReports(t *testing.T) {
-	newer := `{"version":1,"gcp_project":"` + testProject + `","addresses":["google_storage_bucket.newer"]}`
+	newer := `{"version":2,"gcp_project":"` + testProject + `","entries":[{"address":"google_storage_bucket.newer","before":"type=t id=newer"}]}`
 	s := storageWithTransport(t, deleteListTransport(func(r *http.Request) io.ReadCloser {
 		if r.URL.Query().Get("generation") == "5" {
 			return io.NopCloser(strings.NewReader(deleteListJSON))
@@ -777,8 +865,8 @@ func TestReadDeleteListForWriteReadsTheGenerationItReports(t *testing.T) {
 		return io.NopCloser(strings.NewReader(newer))
 	}))
 	st, err := ReadDeleteListForWrite(context.Background(), s, testBucket, testProject, testProjectNumber)
-	if err != nil || st.Generation != 5 || !slices.Equal(st.Addresses, deleteListAddresses) {
-		t.Fatalf("ReadDeleteListForWrite() = %+v, %v; want generation 5's list %v", st, err, deleteListAddresses)
+	if err != nil || st.Generation != 5 || !slices.Equal(st.Entries, deleteListEntries()) {
+		t.Fatalf("ReadDeleteListForWrite() = %+v, %v; want generation 5's list %v", st, err, deleteListEntries())
 	}
 }
 
@@ -787,9 +875,9 @@ func TestReadDeleteListForWriteReadsTheGenerationItReports(t *testing.T) {
 // read reports it as unreadable, and replacing it asks for the typed
 // confirmation as any other object the command cannot read does.
 func TestReadDeleteListForWriteCallsAnEmptyListUnreadable(t *testing.T) {
-	s, bucket := seedDeleteList(t, `{"version":1,"gcp_project":"`+testProject+`","addresses":[]}`)
+	s, bucket := seedDeleteList(t, `{"version":2,"gcp_project":"`+testProject+`","entries":[]}`)
 	st, err := ReadDeleteListForWrite(context.Background(), s, bucket, testProject, testProjectNumber)
-	if err != nil || !st.Unreadable || st.Addresses != nil {
+	if err != nil || !st.Unreadable || st.Entries != nil {
 		t.Fatalf("over an empty list: %+v, %v; want Unreadable and no addresses", st, err)
 	}
 }
@@ -825,7 +913,7 @@ func TestTheDeleteListRefusesWhenTheBucketReadFails(t *testing.T) {
 	if st, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber); err == nil {
 		t.Errorf("ReadDeleteListForWrite() with the bucket read failing = %+v and no error", st)
 	}
-	if err := WriteDeleteList(ctx, s, testBucket, testProject, testProjectNumber, deleteListAddresses, 5); err == nil || wrote {
+	if err := WriteDeleteList(ctx, s, testBucket, testProject, testProjectNumber, deleteListEntries(), 5); err == nil || wrote {
 		t.Errorf("WriteDeleteList() with the bucket read failing = %v (wrote: %v); want an error and no write", err, wrote)
 	}
 }

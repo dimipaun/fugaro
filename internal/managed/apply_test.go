@@ -449,12 +449,13 @@ func TestApplyStopsAtARefusedGateAndAppliesNothing(t *testing.T) {
 func TestApplyRefusesAnAddressTheCommandLineNamed(t *testing.T) {
 	for _, addr := range []string{planBucket, "module.other.google_storage_bucket.x"} {
 		r := newApplyRig(t, plainRoot())
-		r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+		r.planWithChanges(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+			map[string]any{"id": "bucket-0001"}, nil))
 		req := r.request(t)
 		req.Session = []string{addr}
-		// Even the owner's object allowing the same address is not the point:
-		// what is refused is the source of the address.
-		req.AllowDelete = []string{addr}
+		// Even the owner's object holding an entry that approves the removal is
+		// not the point: what is refused is the source of the address.
+		req.AllowDelete = []tf.DeleteEntry{r.approving(t, planBucket)}
 		_, err := Apply(context.Background(), req)
 		if !errors.Is(err, ErrSessionAddresses) {
 			t.Fatalf("session address %s: %v, want the provenance refusal", addr, err)
@@ -475,9 +476,10 @@ func TestApplyRefusesAnAddressTheCommandLineNamed(t *testing.T) {
 // refuses every delete, so a plan that deletes is refused even when the command
 // line named nothing.
 func TestApplyRefusesADeleteNoOwnerListApproves(t *testing.T) {
-	for _, allow := range [][]string{nil, {}} {
+	for _, allow := range [][]tf.DeleteEntry{nil, {}} {
 		r := newApplyRig(t, plainRoot())
-		r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+		r.planWithChanges(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+			map[string]any{"id": "bucket-0001"}, nil))
 		req := r.request(t)
 		req.AllowDelete = allow
 		if _, err := Apply(context.Background(), req); !errors.Is(err, ErrRefused) {
@@ -489,9 +491,10 @@ func TestApplyRefusesADeleteNoOwnerListApproves(t *testing.T) {
 	}
 	// And the owner's list allowing it admits it, which is what the list is for.
 	r := newApplyRig(t, plainRoot())
-	r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	r.planWithChanges(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+		map[string]any{"id": "bucket-0001"}, nil))
 	req := r.request(t)
-	req.AllowDelete = []string{planBucket}
+	req.AllowDelete = []tf.DeleteEntry{r.approving(t, planBucket)}
 	if _, err := Apply(context.Background(), req); err != nil {
 		t.Errorf("a delete the owner's object approves was refused: %v", err)
 	}
@@ -1223,7 +1226,7 @@ func noAgentMarker(t *testing.T, s string) {
 // moved block with no target): the guard refuses it whatever the owner's list
 // says, so no list is the way past it.
 func moved(addr, from string) map[string]any {
-	ch := change(addr, "google_storage_bucket", []string{"delete"}, nil)
+	ch := removing(addr, "google_storage_bucket", []string{"delete"}, map[string]any{"id": "bucket-0001"}, nil)
 	ch["previous_address"] = from
 	ch["action_reason"] = "delete_because_no_move_target"
 	return ch
@@ -1236,13 +1239,15 @@ func moved(addr, from string) map[string]any {
 func TestManagedRefusalOfWhatNoListClearsNamesNoListAndNoFlag(t *testing.T) {
 	for name, tc := range map[string]struct {
 		change map[string]any
-		allow  []string
+		allow  []tf.DeleteEntry
 		says   string
 	}{
-		"moved, listed":   {moved(planBucket, "module.managed.google_storage_bucket.old"), []string{planBucket}, "moved here from module.managed.google_storage_bucket.old"},
+		"moved, listed": {moved(planBucket, "module.managed.google_storage_bucket.old"),
+			[]tf.DeleteEntry{entry(planBucket, "type=google_storage_bucket id=bucket-0001")}, "moved here from module.managed.google_storage_bucket.old"},
 		"moved, unlisted": {moved(planBucket, "module.managed.google_storage_bucket.old"), nil, planBucket},
-		"unknown action":  {change(planBucket, "google_storage_bucket", []string{"delete", "obliterate"}, nil), []string{planBucket}, "obliterate"},
-		"no actions":      {change(planBucket, "google_storage_bucket", []string{}, nil), nil, "no actions"},
+		"unknown action": {change(planBucket, "google_storage_bucket", []string{"delete", "obliterate"}, nil),
+			[]tf.DeleteEntry{entry(planBucket, "type=google_storage_bucket id=bucket-0001")}, "obliterate"},
+		"no actions": {change(planBucket, "google_storage_bucket", []string{}, nil), nil, "no actions"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newApplyRig(t, plainRoot())
@@ -1345,7 +1350,7 @@ func TestEveryManagedRefusalSiteBoundsUntrustedText(t *testing.T) {
 			bounded(t, name+" in refusals' why", ref.Why, 1)
 		}
 
-		s := Spec{AllowDelete: []string{v}}
+		s := Spec{AllowDelete: []tf.DeleteEntry{{Address: v, Before: v}}}
 		for _, line := range s.unjudgedDeletes(&tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: v, Change: tf.Change{Actions: []string{"delete"}}}}}) {
 			bounded(t, name+" in unjudgedDeletes", line, 1)
 		}
@@ -1362,7 +1367,7 @@ func TestEveryManagedRefusalSiteBoundsUntrustedText(t *testing.T) {
 		r = newApplyRig(t, plainRoot())
 		r.planWithChanges(t, change(v, "google_storage_bucket", []string{"delete"}, nil), moved("module.managed.x.y", v))
 		req = r.request(t)
-		req.AllowDelete = []string{"module.managed.x.y"}
+		req.AllowDelete = []tf.DeleteEntry{entry("module.managed.x.y", "type=google_compute_instance id=me")}
 		_, err := Apply(context.Background(), req)
 		if !errors.Is(err, ErrRefused) {
 			t.Fatalf("%s: %v, want the guard's refusal", name, err)

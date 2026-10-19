@@ -166,11 +166,13 @@ type Request struct {
 	// managed project's own allowlist (Task 1.1), with the projects, region
 	// and buckets of this installation.
 	Cover Cover
-	// AllowDelete are the addresses the owner's own object approves, read
-	// fail-closed by the caller (infra/managed.GuardAllowList). An empty list
-	// allows no delete and no replace at all, which is what the gate then
-	// refuses.
-	AllowDelete []string
+	// AllowDelete is the owner's own object, read fail-closed by the caller
+	// (infra/managed.GuardAllowList): for each address they approve, the
+	// identity of the object that was at it when they approved it (Task 6.3).
+	// An empty list allows no delete and no replace at all, and so does an
+	// entry about another object than the one a plan removes; either is what
+	// the gate then refuses.
+	AllowDelete []tf.DeleteEntry
 	// Session is what the applying command's OWN command line named as
 	// addresses it may delete or replace. fugaro managed apply registers no
 	// such flag, so the production value is nil, and internal/cli asserts that

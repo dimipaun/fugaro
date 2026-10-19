@@ -32,12 +32,13 @@ const (
 // because it never refuses a delete itself, so the refusal the verdict carries
 // is the guard's. It is not the cover a managed apply hands Gate — that is
 // tf.ManagedCover, which judges the resource (managedCover below) — and its
-// WithDeleteList records the list Gate handed it, so a test can see the wiring.
-type admitAll struct{ deletes *[]string }
+// WithDeleteEntries records the list Gate handed it, so a test can see the
+// wiring.
+type admitAll struct{ deletes *[]tf.DeleteEntry }
 
 func (admitAll) NotCovered(*tf.Plan, []tf.ImportKey) []string { return nil }
 
-func (a admitAll) WithDeleteList(allowDelete []string) tf.Deletable {
+func (a admitAll) WithDeleteEntries(allowDelete []tf.DeleteEntry) tf.Deletable {
 	if a.deletes != nil {
 		*a.deletes = slices.Clone(allowDelete)
 	}
@@ -98,6 +99,27 @@ func deleted(addr, typ string, before map[string]any) map[string]any {
 	ch := managedChange(addr, typ, []string{"delete"}, before, nil)
 	ch["change"].(map[string]any)["after"] = nil
 	return ch
+}
+
+// removing is change with the object the plan takes away in before: the shape
+// of a destroy and of a replace's before view, which is what the owner's list
+// is matched against (tf.DeleteEntry, plan Task 6.3). change's own before is
+// empty — it is the fixture for creates — and a removal whose before view
+// identifies no object is refused however the list is written, so a test of
+// the delete rule builds its removals here.
+func removing(addr, typ string, actions []string, before, after map[string]any) map[string]any {
+	ch := change(addr, typ, actions, after)
+	ch["change"].(map[string]any)["before"] = before
+	return ch
+}
+
+// entry is an approval spelled out rather than computed from the plan: for a
+// test whose point is an address the plan does not carry (a stale entry) or an
+// entry bound to another object than the one the plan removes. A test that
+// means "this removal is approved" calls rig.approving instead, which reads the
+// entry off the plan.
+func entry(address, before string) tf.DeleteEntry {
+	return tf.DeleteEntry{Address: address, Before: before}
 }
 
 // bucket is a storage bucket as the installation's module writes it: the one
@@ -202,6 +224,37 @@ func (r *rig) planFile(t *testing.T) string {
 	return p
 }
 
+// plan is the plan the rig has scripted for the fake's show.
+func (r *rig) plan(t *testing.T) *tf.Plan {
+	t.Helper()
+	sh, ok := r.script["show"].(map[string]any)
+	if !ok {
+		t.Fatal("the rig has no scripted plan")
+	}
+	var p tf.Plan
+	if err := json.Unmarshal([]byte(sh["stdout"].(string)), &p); err != nil {
+		t.Fatal(err)
+	}
+	return &p
+}
+
+// approving is the entry the owner's delete list holds for the removal at
+// address in the plan this rig has scripted: the address and the identity of
+// the object the plan shows there, which is what `fugaro allow-delete` records
+// (tf.ApprovalFor). A test that means "this removal is approved" computes its
+// entry from the plan rather than spelling it out, so a fixture cannot approve
+// an object the plan does not show.
+func (r *rig) approving(t *testing.T, address string) tf.DeleteEntry {
+	t.Helper()
+	for _, rc := range r.plan(t).ResourceChanges {
+		if rc.Address == address {
+			return tf.ApprovalFor(rc)
+		}
+	}
+	t.Fatalf("the rig's plan carries no change at %s", address)
+	return tf.DeleteEntry{}
+}
+
 // show scripts the fake's `show -json <plan>` with a plan of these changes.
 func (r *rig) show(t *testing.T, changes ...map[string]any) {
 	t.Helper()
@@ -268,8 +321,8 @@ func (r *rig) applied(t *testing.T) []string {
 }
 
 // spec is the managed project's gate spec: the project's names, the cover and
-// the owner's allow-list.
-func spec(t *testing.T, r *rig, c Cover, allow ...string) Spec {
+// the owner's delete list, as the entries the owner's object holds (Task 6.3).
+func spec(t *testing.T, r *rig, c Cover, allow ...tf.DeleteEntry) Spec {
 	t.Helper()
 	return Spec{Project: project, GCPProject: gcpProject, Cover: c, AllowDelete: allow, TF: r.tf(t)}
 }
@@ -468,7 +521,7 @@ func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
 func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 	for _, msg := range []string{"", "  \n "} {
 		old := guard
-		guard = func(*tf.Plan, []string) error { return errors.New(msg) }
+		guard = func(*tf.Plan, []tf.DeleteEntry) error { return errors.New(msg) }
 		r := newRig(t)
 		r.show(t, bucket(planBucket))
 		v := gate(t, r, spec(t, r, admitAll{}))
@@ -488,8 +541,9 @@ func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 // the rule, this verdict is OK.
 func TestGateRefusesAListedDeleteTheCoverDoesNotJudge(t *testing.T) {
 	r := newRig(t)
-	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
-	v := gate(t, r, spec(t, r, judgesNothing{}, planBucket))
+	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001"}, nil))
+	v := gate(t, r, spec(t, r, judgesNothing{}, r.approving(t, planBucket)))
 	if v.OK {
 		t.Fatal("a delete of an address on the owner's list was admitted by a cover that judges no delete")
 	}
@@ -516,8 +570,10 @@ func TestGateRefusesAListedReplaceTheCoverDoesNotJudge(t *testing.T) {
 	for _, order := range [][]string{{"delete", "create"}, {"create", "delete"}} {
 		t.Run(strings.Join(order, ","), func(t *testing.T) {
 			r := newRig(t)
-			r.show(t, change(planBucket, "google_storage_bucket", order, map[string]any{"name": "fugaro-runs-" + gcpProject}))
-			v := gate(t, r, spec(t, r, judgesNothing{}, planBucket))
+			r.show(t, removing(planBucket, "google_storage_bucket", order,
+				map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001"},
+				map[string]any{"name": "fugaro-runs-" + gcpProject}))
+			v := gate(t, r, spec(t, r, judgesNothing{}, r.approving(t, planBucket)))
 			if v.OK {
 				t.Fatal("a replace of an address on the owner's list was admitted by a cover that judges no delete")
 			}
@@ -536,16 +592,18 @@ func TestGateRefusesAListedReplaceTheCoverDoesNotJudge(t *testing.T) {
 // given different ones — which is how a delete could be admitted by the list
 // one of them was told and refused by the other's.
 func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
-	var covered, guarded []string
+	var covered, guarded []tf.DeleteEntry
 	old := guard
-	guard = func(_ *tf.Plan, allowDelete []string) error { guarded = slices.Clone(allowDelete); return nil }
+	guard = func(_ *tf.Plan, allowDelete []tf.DeleteEntry) error { guarded = slices.Clone(allowDelete); return nil }
 	t.Cleanup(func() { guard = old })
 	r := newRig(t)
-	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
-	if v := gate(t, r, spec(t, r, admitAll{deletes: &covered}, planBucket)); !v.OK {
+	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001"}, nil))
+	approved := r.approving(t, planBucket)
+	if v := gate(t, r, spec(t, r, admitAll{deletes: &covered}, approved)); !v.OK {
 		t.Fatalf("a listed delete both gates admit is refused: %v", v.Refusals)
 	}
-	if !slices.Equal(guarded, []string{planBucket}) {
+	if !slices.Equal(guarded, []tf.DeleteEntry{approved}) {
 		t.Errorf("the guard was handed %v, want the spec's own list", guarded)
 	}
 	if !slices.Equal(covered, guarded) {
@@ -563,13 +621,13 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	}
 	r := newRig(t)
 	r.managedShow(t, allowed())
-	if v := gate(t, r, spec(t, r, managedCover(), addr)); !v.OK {
+	if v := gate(t, r, spec(t, r, managedCover(), r.approving(t, addr))); !v.OK {
 		t.Errorf("a listed delete of a resource the allowlist admits is refused: %v", v.Refusals)
 	}
 	// The resource judged although the address is listed: the plan's own
 	// bucket carries the prefix, this one is Fugaro's state bucket.
 	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fugaro-tfstate-" + gcpProject}))
-	v := gate(t, r, spec(t, r, managedCover(), addr))
+	v := gate(t, r, spec(t, r, managedCover(), r.approving(t, addr)))
 	if v.OK {
 		t.Fatal("a listed delete of a resource outside the managed prefix was admitted")
 	}
@@ -579,7 +637,7 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	// And a resource whose type the allowlist does not carry: the address is
 	// listed, so the guard admits it and the cover's own rule is the refusal.
 	r.managedShow(t, deleted(addr, "google_compute_instance", map[string]any{"name": "fmgd-data"}))
-	v = gate(t, r, spec(t, r, managedCover(), addr))
+	v = gate(t, r, spec(t, r, managedCover(), r.approving(t, addr)))
 	if v.OK {
 		t.Fatal("a listed delete of a type outside the managed allowlist was admitted")
 	}
@@ -600,7 +658,7 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	if !guarded {
 		t.Errorf("refusals %v, want the guard's refusal of %s with its actions", v.Refusals, addr)
 	}
-	if v := gate(t, r, spec(t, r, managedCover(), "module.managed.google_storage_bucket.other")); v.OK {
+	if v := gate(t, r, spec(t, r, managedCover(), entry("module.managed.google_storage_bucket.other", "type=google_storage_bucket id=other"))); v.OK {
 		t.Error("a delete of an address not listed was admitted")
 	}
 }
@@ -612,7 +670,7 @@ func TestGateAdmitsAListedAddressThePlanDoesNotCarry(t *testing.T) {
 	r := newRig(t)
 	r.managedShow(t, managedChange("module.managed.google_storage_bucket.data", "google_storage_bucket",
 		[]string{"create"}, nil, map[string]any{"name": "fmgd-data"}))
-	if v := gate(t, r, spec(t, r, managedCover(), "module.managed.google_compute_instance.gone")); !v.OK {
+	if v := gate(t, r, spec(t, r, managedCover(), entry("module.managed.google_compute_instance.gone", "type=google_compute_instance id=gone"))); !v.OK {
 		t.Errorf("a listed address the plan does not carry changed the verdict: %v", v.Refusals)
 	}
 }
@@ -625,7 +683,7 @@ func TestGateListNeverAuthorizesACreate(t *testing.T) {
 	const gone = "module.managed.google_compute_instance.gone"
 	r := newRig(t)
 	r.managedShow(t, managedChange(gone, "google_compute_instance", []string{"create"}, nil, map[string]any{}))
-	v := gate(t, r, spec(t, r, managedCover(), gone))
+	v := gate(t, r, spec(t, r, managedCover(), r.approving(t, gone)))
 	if v.OK {
 		t.Fatal("a create at an address on the delete list was admitted although its type is not on the allowlist")
 	}
@@ -648,7 +706,7 @@ func TestGateListNeverAuthorizesACreate(t *testing.T) {
 func TestGateListNeverAuthorizesACreateThroughACoverThatJudgesNothing(t *testing.T) {
 	r := newRig(t)
 	r.show(t, change(planBucket, "google_storage_bucket", []string{"create"}, map[string]any{"name": "fugaro-runs-" + gcpProject}))
-	for _, allow := range [][]string{nil, {planBucket}} {
+	for _, allow := range [][]tf.DeleteEntry{nil, {r.approving(t, planBucket)}} {
 		if v := gate(t, r, spec(t, r, judgesNothing{}, allow...)); !v.OK || len(v.Refusals) != 0 {
 			t.Errorf("a create with %v listed gives %v, want it admitted: the list is read for a remove and for nothing else", allow, v.Refusals)
 		}
@@ -690,11 +748,12 @@ func TestGateManagedCoverReceivesSpecImports(t *testing.T) {
 // TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist.
 func TestGateAdmitsADeleteOnlyForAListedAddress(t *testing.T) {
 	r := newRig(t)
-	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
-	if v := gate(t, r, spec(t, r, admitAll{}, planBucket)); !v.OK {
+	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
+		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001"}, nil))
+	if v := gate(t, r, spec(t, r, admitAll{}, r.approving(t, planBucket))); !v.OK {
 		t.Errorf("a delete of a listed address was refused: %v", v.Refusals)
 	}
-	if v := gate(t, r, spec(t, r, admitAll{}, "module.managed.google_storage_bucket.other")); v.OK {
+	if v := gate(t, r, spec(t, r, admitAll{}, entry("module.managed.google_storage_bucket.other", "type=google_storage_bucket id=other"))); v.OK {
 		t.Error("a delete of an address not listed was admitted")
 	}
 	if v := gate(t, r, spec(t, r, admitAll{})); v.OK {

@@ -15,6 +15,7 @@ import (
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -53,8 +54,23 @@ const (
 	// owner approved. Nothing under deploy/terraform names this object; the
 	// test that asserts that is TestTheDeleteListIsNotTerraformManaged.
 	AllowDeleteObject = "fugaro/allow-delete.json"
-	// AllowDeleteVersion is the only version this package reads or writes.
-	AllowDeleteVersion = 1
+	// AllowDeleteVersion is the only version this package reads or writes: 2,
+	// the version whose entries carry the identity of the object each approval
+	// is for (plan Task 6.3, design §6 item 5).
+	//
+	// Version 1 held addresses alone, and this package does not read it. It
+	// cannot: nothing in a version-1 object says which object was approved at
+	// an address, and reading its addresses as approvals of whatever a later
+	// plan puts there is exactly the standing permission the identities
+	// remove. So a version-1 object is no entries — every delete and
+	// replacement is refused until its owner writes the list again — and the
+	// writer reports it as an object it cannot read, which is the same answer
+	// it gives any other body it did not write (ReadDeleteListForWrite,
+	// Unreadable). The upgrade is therefore fail-closed and loud rather than
+	// silent: an installation that upgrades with such an object refuses
+	// deletes it used to allow, and the owner-run command is where the owner
+	// says so again.
+	AllowDeleteVersion = 2
 	// allowDeleteMaxBytes bounds the read: the object is a list of Terraform
 	// addresses, and a caller that acts on it should not be reading a body
 	// someone else uploaded by the megabyte.
@@ -84,15 +100,20 @@ var ErrTooLarge = fmt.Errorf("%w: the list is over the size this package reads b
 // being asked.
 var ErrChanged = errors.New("the delete list changed since it was read")
 
-// DeleteList is what AllowDeleteObject holds: the addresses, the version of
-// the format, and the project the list is about. Nothing else — no note, no
+// DeleteList is what AllowDeleteObject holds: the entries, the version of the
+// format, and the project the list is about. Nothing else — no note, no
 // reason, no comment field. A free-text field in a file a run reads is text
 // an agent would like to write, and the approval's provenance is the
 // object's own version history rather than prose inside it.
+//
+// An entry is tf.DeleteEntry: the Terraform address the owner approved, and
+// the identity of the object that was there when they approved it. It is the
+// gate's own type rather than a copy of it, so the object the owner writes and
+// the rule the gate applies cannot drift about what an approval is.
 type DeleteList struct {
-	Version    int      `json:"version"`
-	GCPProject string   `json:"gcp_project"`
-	Addresses  []string `json:"addresses"`
+	Version    int              `json:"version"`
+	GCPProject string           `json:"gcp_project"`
+	Entries    []tf.DeleteEntry `json:"entries"`
 }
 
 // Bytes is the object's content. A list this package would not read back is
@@ -106,12 +127,19 @@ func (d DeleteList) Bytes() ([]byte, error) {
 		return nil, refusedf("%s: version %d is not the one this package writes (%d)", AllowDeleteObject, d.Version, AllowDeleteVersion)
 	case d.GCPProject == "":
 		return nil, refusedf("%s: no GCP project, so nothing says which installation's list this is", AllowDeleteObject)
-	case len(d.Addresses) == 0:
-		return nil, refusedf("%s: no addresses: an empty list is what an absent one already means, and writing it would refuse every delete under the appearance of an approval", AllowDeleteObject)
+	case len(d.Entries) == 0:
+		return nil, refusedf("%s: no entries: an empty list is what an absent one already means, and writing it would refuse every delete under the appearance of an approval", AllowDeleteObject)
 	}
-	for _, a := range d.Addresses {
-		if strings.TrimSpace(a) == "" {
-			return nil, refusedf("%s: an empty address: every entry names a resource to delete or replace", AllowDeleteObject)
+	for _, e := range d.Entries {
+		if strings.TrimSpace(e.Address) == "" {
+			return nil, refusedf("%s: an entry with no address: every entry names a resource to delete or replace", AllowDeleteObject)
+		}
+		// An entry with no identity is an address offered as an approval of
+		// whatever object a plan puts there, which is what the entries rule
+		// exists to stop (tf.DeleteEntry): it is refused, not written and read
+		// back as a weaker approval than the owner thought they gave.
+		if strings.TrimSpace(e.Before) == "" {
+			return nil, refusedf("%s: an entry with no identity: an approval is of the object the plan showed at the address, and an entry without one approves nothing", AllowDeleteObject)
 		}
 	}
 	data, err := json.Marshal(d)
@@ -137,8 +165,9 @@ func refusedf(format string, a ...any) error {
 }
 
 // WriteDeleteList records the owner's whole approval in the runs bucket of
-// gcpProject: the addresses a run may delete or replace, and nothing about
-// them but the addresses themselves.
+// gcpProject: the entries a run may delete or replace — each an address and
+// the identity of the object the owner approved there — and nothing about
+// them but those two.
 //
 // The caller is the owner-run command (fugaro allow-delete) with the
 // operator's own credentials; no run ever calls this. The write replaces the
@@ -163,12 +192,12 @@ func refusedf(format string, a ...any) error {
 // an API's words, and the owner-run command prints it. The bound is on the
 // message alone, so ErrChanged, ErrRefused and a *googleapi.Error inside it
 // are still matched.
-func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, addresses []string, generation int64) error {
-	return safetext.FieldErr(writeDeleteList(ctx, s, bucket, gcpProject, number, addresses, generation))
+func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, entries []tf.DeleteEntry, generation int64) error {
+	return safetext.FieldErr(writeDeleteList(ctx, s, bucket, gcpProject, number, entries, generation))
 }
 
-func writeDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, addresses []string, generation int64) error {
-	data, err := DeleteList{Version: AllowDeleteVersion, GCPProject: gcpProject, Addresses: addresses}.Bytes()
+func writeDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, entries []tf.DeleteEntry, generation int64) error {
+	data, err := DeleteList{Version: AllowDeleteVersion, GCPProject: gcpProject, Entries: entries}.Bytes()
 	if err != nil {
 		return err
 	}
@@ -192,33 +221,36 @@ func writeDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject
 	return nil
 }
 
-// AllowDelete is the owner's list: the addresses a run may delete or replace
-// in gcpProject, read from the runs bucket the way the marker is read.
+// AllowDelete is the owner's list: the entries a run may delete or replace in
+// gcpProject — an address and the identity of the object approved there — read
+// from the runs bucket the way the marker is read.
 //
 // It fails closed, and it is fail-closed in the direction that matters: no
-// addresses, and no error a caller could read as "proceed". An absent object,
-// an empty list, an object of another project or of an unknown version, a
-// blank address, a body this package cannot parse, one whose top-level fields
-// are not exactly the three this package writes or which repeats one of them
+// entries, and no error a caller could read as "proceed". An absent object, an
+// empty list, an object of another project or of an unknown version (a
+// version-1 object among them: its addresses carry no identities, so they are
+// not read), a blank address, an entry with no identity, a body this package
+// cannot parse, one whose fields — the object's or an entry's — are not
+// exactly the ones this package writes or which repeat one of them
 // (strictFields), one past allowDeleteMaxBytes, a bucket that is not the
 // project's own, a read that fails, an argument that is missing — each is the
 // empty list. The gate that acts on the answer is the fail-closed one
-// (tf.Guard: a delete or a replace not named here is refused), so an empty
-// list is a refusal of every delete rather than a pass, and there is nothing
-// an error would add: a caller that propagated it as "could not check" would
-// have to refuse anyway, and one that treated it as "nothing to check" would
-// be the bug this shape removes.
+// (tf.GuardEntries: a delete or a replace no entry approves is refused), so an
+// empty list is a refusal of every delete rather than a pass, and there is
+// nothing an error would add: a caller that propagated it as "could not check"
+// would have to refuse anyway, and one that treated it as "nothing to check"
+// would be the bug this shape removes.
 // The error is bounded (safetext.FieldErr): it names the bucket, the project
-// and the object's own content, and it is printed. The addresses themselves
-// are returned exactly as the owner wrote them — they are compared against a
-// plan's, and a sanitised copy would admit a different address than the one
-// listed.
-func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) ([]string, error) {
-	addrs, err := allowDelete(ctx, s, bucket, gcpProject, number)
-	return addrs, safetext.FieldErr(err)
+// and the object's own content, and it is printed. The entries themselves are
+// returned exactly as the owner wrote them — they are compared against a
+// plan's own identity by exact string equality, and a sanitised copy would
+// approve a different object than the one listed.
+func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) ([]tf.DeleteEntry, error) {
+	entries, err := allowDelete(ctx, s, bucket, gcpProject, number)
+	return entries, safetext.FieldErr(err)
 }
 
-func allowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) ([]string, error) {
+func allowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) ([]tf.DeleteEntry, error) {
 	if bucket == "" || gcpProject == "" || number == 0 || s == nil {
 		return nil, nil
 	}
@@ -237,19 +269,19 @@ func allowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 	return parseDeleteList(data, gcpProject), nil
 }
 
-// parseDeleteList is the addresses a body approves for gcpProject, nil for a
+// parseDeleteList is the entries a body approves for gcpProject, nil for a
 // body that is not exactly a list this package writes (see AllowDelete).
-func parseDeleteList(data []byte, gcpProject string) []string {
+func parseDeleteList(data []byte, gcpProject string) []tf.DeleteEntry {
 	var d DeleteList
 	if err := strictFields(data); err != nil {
 		return nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	// A field this package does not write is refused rather than ignored: the
-	// object is written by fugaro allow-delete alone, so a fourth field means
-	// this is not that object — a hand-edited file, or one from a future
-	// version whose addresses may mean something else — and the addresses
-	// beside it are not read as an approval.
+	// object is written by fugaro allow-delete alone, so another field means
+	// this is not that object — a hand-edited file, or one from another
+	// version whose entries may mean something else — and the entries beside
+	// it are not read as an approval.
 	dec.DisallowUnknownFields()
 	if dec.Decode(&d) != nil {
 		return nil
@@ -272,23 +304,23 @@ func parseDeleteList(data []byte, gcpProject string) []string {
 		// edited it, and the project it names is what it is an approval of.
 		return nil
 	}
-	for _, a := range d.Addresses {
-		if strings.TrimSpace(a) == "" {
+	for _, e := range d.Entries {
+		if strings.TrimSpace(e.Address) == "" || strings.TrimSpace(e.Before) == "" {
 			return nil
 		}
 	}
-	if len(d.Addresses) == 0 {
+	if len(d.Entries) == 0 {
 		return nil
 	}
-	return slices.Clone(d.Addresses)
+	return slices.Clone(d.Entries)
 }
 
 // DeleteListState is what the writer reads before it writes: the list as it
 // stands, and the generation the write is conditioned on.
 type DeleteListState struct {
-	// Addresses are the approved addresses, nil when there is no object or
-	// one AllowDelete would not believe.
-	Addresses []string
+	// Entries are the approved entries, nil when there is no object or one
+	// AllowDelete would not believe.
+	Entries []tf.DeleteEntry
 	// Generation is the object's generation, 0 when there is none.
 	Generation int64
 	// Unreadable is an object that is there but is not a list AllowDelete
@@ -344,27 +376,51 @@ func readDeleteListForWrite(ctx context.Context, s *storage.Service, bucket, gcp
 		return DeleteListState{}, fmt.Errorf("reading gs://%s/%s for %s: %w", bucket, AllowDeleteObject, gcpProject, err)
 	}
 	list := parseDeleteList(data, gcpProject)
-	return DeleteListState{Addresses: list, Generation: o.Generation, Unreadable: list == nil}, nil
+	return DeleteListState{Entries: list, Generation: o.Generation, Unreadable: list == nil}, nil
 }
 
 // deleteListKeys is what DeleteList marshals, exactly: the field names, in the
 // order the object's shape test pins. strictFields walks a body against them.
-var deleteListKeys = []string{"version", "gcp_project", "addresses"}
+var deleteListKeys = []string{"version", "gcp_project", "entries"}
 
-// strictFields refuses a body whose top-level keys are not exactly the ones
-// DeleteList writes: every key spelled as this package spells it, and none of
-// them twice.
+// deleteListEntryKeys is what one entry marshals, exactly: the address and the
+// identity, in that order. An entry is checked against it the way the object
+// is checked against deleteListKeys, and for the same reason.
+var deleteListEntryKeys = []string{"address", "before"}
+
+// strictFields refuses a body whose keys are not exactly the ones DeleteList
+// writes — the object's own and, one level down, each entry's: every key
+// spelled as this package spells it, and none of them twice.
 //
 // It is needed because Go's own decoding is more forgiving than this object
 // can afford. encoding/json matches a field name case-insensitively, so
-// {"VERSION":1,"Gcp_Project":"proj-1234","ADDRESSES":[…]}, which no version of
+// {"VERSION":2,"Gcp_Project":"proj-1234","ENTRIES":[…]}, which no version of
 // this package has ever written, would be read as an approval; and a repeated
 // key is not an error there either — the last one wins, so a body with two
-// "addresses" keys is believed on the strength of whichever came second. Both
+// "entries" keys is believed on the strength of whichever came second. Both
 // are the same "this is not that object" the caller's DisallowUnknownFields
-// refuses a fourth field over, and the addresses in such a body are not read
-// as an approval.
+// refuses an extra field over, and the entries in such a body are not read as
+// an approval.
+//
+// An entry is walked the same way, and for the same reason at the level that
+// now matters most: "before" is the identity the gate compares, so a body
+// whose entry spells it "BEFORE" or repeats it is a body whose approval is not
+// the one this package wrote — and reading it would decide by whichever key
+// encoding/json happened to keep.
 func strictFields(data []byte) error {
+	return strictObject(data, deleteListKeys, func(key string, value json.RawMessage) error {
+		if key == "entries" {
+			return strictEntries(value)
+		}
+		return nil
+	})
+}
+
+// strictObject walks one JSON object against keys: every key one this package
+// writes, spelled as it spells it, and none of them twice. each, when it is
+// not nil, is called with every key and its value, for the levels below this
+// one.
+func strictObject(data []byte, keys []string, each func(key string, value json.RawMessage) error) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	tok, err := dec.Token()
 	if err != nil {
@@ -373,7 +429,7 @@ func strictFields(data []byte) error {
 	if d, ok := tok.(json.Delim); !ok || d != '{' {
 		return errors.New("not a JSON object")
 	}
-	seen := make(map[string]bool, len(deleteListKeys))
+	seen := make(map[string]bool, len(keys))
 	for dec.More() {
 		kt, err := dec.Token()
 		if err != nil {
@@ -383,7 +439,7 @@ func strictFields(data []byte) error {
 		if !ok {
 			return errors.New("a key that is not a string")
 		}
-		if !slices.Contains(deleteListKeys, key) {
+		if !slices.Contains(keys, key) {
 			return fmt.Errorf("a field this package does not write: %q", key)
 		}
 		if seen[key] {
@@ -394,11 +450,42 @@ func strictFields(data []byte) error {
 		if err := dec.Decode(&value); err != nil {
 			return err
 		}
+		if each != nil {
+			if err := each(key, value); err != nil {
+				return err
+			}
+		}
 	}
 	if _, err := dec.Token(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// strictEntries walks the entries array: every element an object with exactly
+// an entry's two fields. An element that is not an object, or one carrying a
+// key this package does not write, is the same "this is not that object" as
+// above — and an array this package did not write is not read as an approval.
+func strictEntries(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return errors.New("entries that are not a JSON array")
+	}
+	for dec.More() {
+		var item json.RawMessage
+		if err := dec.Decode(&item); err != nil {
+			return err
+		}
+		if err := strictObject(item, deleteListEntryKeys, nil); err != nil {
+			return err
+		}
+	}
+	_, err = dec.Token()
+	return err
 }
 
 // GuardAllowList is the allow-list a command that applies a plan feeds to
@@ -428,7 +515,7 @@ func strictFields(data []byte) error {
 // safetext.FieldListMax with the rest counted (the comment below), and the
 // bucket's name is Field'd here. The sentence itself is not cut short — its
 // last clause is the one its reader acts on.
-func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, applied []string) ([]string, error) {
+func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, applied []string) ([]tf.DeleteEntry, error) {
 	if len(applied) > 0 {
 		// The addresses are repeated to the person they were given by, and
 		// they were given by a command line a coding agent may have written:

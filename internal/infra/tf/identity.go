@@ -30,9 +30,13 @@ import (
 // approval — an entry with no Before approves nothing, whatever its address
 // says — so a list that lost its identities refuses every delete rather than
 // admitting every object at the addresses it names.
+// The two field names are also the owner's object's own (infra/managed's
+// DeleteList marshals a slice of these): an entry is one shape wherever it is
+// written, so the file the owner approves and the rule the gate applies cannot
+// disagree about what an entry is.
 type DeleteEntry struct {
-	Address string
-	Before  string
+	Address string `json:"address"`
+	Before  string `json:"before"`
 }
 
 // RemovalIdentity is the identity of the object a removal takes away, as the
