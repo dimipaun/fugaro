@@ -42,12 +42,16 @@ owner's copy is right and `spec.md` is the file to fix.
 | --- | --- | --- |
 | **D1–D192** | the console (D1–D38), voice (D39–D54b), managed projects (D55–D78), the website (D90–D109), mobile (D110–D129), the credentials service (D130–D159), the mobile functional spec (D160–D179), the website redesign (D180–D192) | **taken**; the highest number written anywhere in `docs/` at `c6009b5f` is **D192** |
 | **D193 onward** | — | **free.** This work takes **no D-number**: its items were **Q1–Q16**, and the owner answered them on 2026-10-19 without a decision number. An answer picks an option; it does not allocate, and it does not approve. The spec is the owner's, and the reconciliation is a reconciliation — neither allocates a decision. |
-| **Checks 1–109** | the live checklist, up to the mobile functional spec's reserved **105–109** | **taken or reserved**; the highest check *section written* is **70c** |
+| **Checks 1–109** | the live checklist, in the blocks its own documents record: **59–61** (console, budget-token channel, project-centric), **62–63** (console v2), **64–66** (voice), **67–68** (managed projects), **69a–69c** and **70a–70c** (the website and its redesign), **80–89** (mobile), **90–99** (the credentials service), **100–109** (the mobile functional spec) | **taken or reserved**, except two blocks that are neither: **70–79** are **unused and deliberately not taken**, and **100–104** are **proposed, not approved**. The highest check *section written* is **70c** |
 | **Check 110** | **claimed by the always-on orchestrator design** (`docs/design/always-on-orchestrator.md`, PR #632, its §7 and Q5) | **claimed, not merged.** This work takes **no check number**, and it must not take 110 while that claim is open: the repository's own rule is that whichever of two open claims merges *second* renumbers itself (`docs/gcp-live-checklist.md`) |
 
 A reserved number is never reused and never renumbered. Neither block above is derived by
-grep alone: the D-block is read from each work's own README, and the check numbers from
-`docs/gcp-live-checklist.md`'s allocation paragraph.
+grep alone: the D-block is read from each work's own README, and the check numbers from the
+paragraphs that allocate them — `docs/gcp-live-checklist.md` for the blocks up to **70a–70c**
+and for mobile's **80–89**, and `docs/mobile/README.md` and
+`docs/credentials-service/README.md` for **90–99** and **100–109**, which the checklist's own
+allocation paragraph does not reach. **70–79** are recorded as unused and deliberately not
+taken, and **100–104** as proposed and not approved, in `docs/mobile/README.md`.
 
 ## What this work collides with, in one paragraph
 
