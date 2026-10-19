@@ -300,6 +300,14 @@ var voiceModuleSection2Audit = []voiceModuleRowAudit{
 // Apple's OS 26 floor -- for the Haiku summariser, and #36 -- the
 // dependency-licence gap -- for the provider retention register, and both are
 // numbers that exist, so only a per-row audit finds them.
+//
+// The audit runs in both directions, and the second direction is the one that
+// keeps it honest: every audit entry must name a row (the table did not move
+// out from under it) and every row must be named by exactly one audit entry. A
+// row added or reworded with no entry would otherwise escape the audit
+// entirely, since the entries are what the test iterates. Rows are read in
+// document order and a first cell may not repeat, so the entry a citation is
+// judged against is never a matter of map iteration order.
 func TestDocsVoiceModuleReconciliationFindingsResolve(t *testing.T) {
 	const path = "docs/voice-module/reconciliation.md"
 	recon := readDoc(t, path)
@@ -345,7 +353,10 @@ func TestDocsVoiceModuleReconciliationFindingsResolve(t *testing.T) {
 		}
 	}
 
-	// §1's and §2's tables, row by row.
+	// §1's and §2's tables, row by row, and both halves of the audit: every
+	// audit entry must name a row (the table did not move out from under it),
+	// and every row must be named by exactly one audit entry (a row added or
+	// reworded later does not escape the citation audit by having no entry).
 	section := func(heading, next string) string {
 		i := strings.Index(recon, heading)
 		if i < 0 {
@@ -357,64 +368,91 @@ func TestDocsVoiceModuleReconciliationFindingsResolve(t *testing.T) {
 		}
 		return recon[i : i+j]
 	}
-	// cellIdx is negative-counted from the end, because a cell may itself
-	// contain a pipe: the last cell before the closing one is the finding
-	// column in §2, and §1's is the second.
-	rows := func(section string, cellIdx int) map[string]string {
-		out := map[string]string{}
-		for _, line := range strings.Split(section, "\n") {
+	// A row is an ordered list of cells, read with the escape-aware splitter: a
+	// pipe inside a cell has to be written `\|`, and it comes back as the pipe
+	// it stands for. cellIdx is counted from the start when it is not negative
+	// and from the end when it is, over the real cells -- §1's finding
+	// citations live in its middle cell, §2's in its last.
+	type tableRow struct{ concept, cell string }
+	rows := func(label, body string, cellIdx int) []tableRow {
+		var out []tableRow
+		seen := map[string]int{}
+		prevTable := false
+		for n, line := range strings.Split(body, "\n") {
 			if !strings.HasPrefix(line, "|") {
+				prevTable = false
 				continue
 			}
-			cells := strings.Split(line, "|")
-			if len(cells) < 4 || strings.HasPrefix(strings.TrimSpace(cells[1]), "---") {
+			header := !prevTable
+			prevTable = true
+			cells := markdownTableCells(line)
+			if header || isTableSeparator(cells) {
 				continue
 			}
 			i := cellIdx
 			if i < 0 {
-				i = len(cells) + i
+				i += len(cells)
 			}
-			out[cells[1]] = cells[i]
+			if i < 0 || i >= len(cells) {
+				t.Errorf("%s: the %s row %q has %d cells, so it has no cell %d: the row and the column moved apart", path, label, strings.TrimSpace(cells[0]), len(cells), cellIdx)
+				continue
+			}
+			if first, dup := seen[cells[0]]; dup {
+				t.Errorf("%s: the %s table has two rows whose first cell is %q (section lines %d and %d), so the audit cannot tell which one a citation came from", path, label, strings.TrimSpace(cells[0]), first, n)
+				continue
+			}
+			seen[cells[0]] = n
+			out = append(out, tableRow{cells[0], cells[i]})
 		}
 		return out
 	}
 	audit := func(label, body string, cellIdx int, wants []voiceModuleRowAudit) {
-		table := rows(body, cellIdx)
-		for _, w := range wants {
-			concept, cell := "", ""
-			for c, v := range table {
-				if strings.Contains(c, w.row) {
-					concept, cell = c, v
-					break
+		table := rows(label, body, cellIdx)
+		if len(table) != len(wants) {
+			t.Errorf("%s: %s has %d rows and the audit has %d entries: every row must be audited, and every entry must name a row", path, label, len(table), len(wants))
+		}
+		matched := map[int]bool{}
+		for _, row := range table {
+			var hits []int
+			for wi, w := range wants {
+				if strings.Contains(row.concept, w.row) {
+					hits = append(hits, wi)
 				}
 			}
-			if concept == "" {
-				t.Errorf("%s: no row of %s matches %q; the table or the audit moved", path, label, w.row)
+			if len(hits) != 1 {
+				t.Errorf("%s: the %s row %q matches %d audit entries, want exactly 1: a row the audit cannot place is a row whose citations nothing checks", path, label, strings.TrimSpace(row.concept), len(hits))
 				continue
 			}
+			wi := hits[0]
+			matched[wi] = true
 			var got []int
-			for _, m := range regexp.MustCompile(`#(\d+)`).FindAllStringSubmatch(cell, -1) {
+			for _, m := range regexp.MustCompile(`#(\d+)`).FindAllStringSubmatch(row.cell, -1) {
 				n, err := strconv.Atoi(m[1])
 				if err != nil {
-					t.Fatalf("%s: unparsable citation %q in the %s row %q", path, m[1], label, concept)
+					t.Fatalf("%s: unparsable citation %q in the %s row %q", path, m[1], label, row.concept)
 				}
 				got = append(got, n)
 			}
 			slices.Sort(got)
-			want := slices.Clone(w.findings)
+			want := slices.Clone(wants[wi].findings)
 			slices.Sort(want)
 			if !slices.Equal(got, want) {
-				t.Errorf("%s: the %s row %q cites %v; the audit, read from §3's findings, expects %v", path, label, concept, got, want)
+				t.Errorf("%s: the %s row %q cites %v; the audit, read from §3's findings, expects %v", path, label, row.concept, got, want)
 			}
 			for _, n := range got {
 				if _, ok := titles[n]; !ok {
-					t.Errorf("%s: the %s row %q cites #%d, which §3 does not define", path, label, concept, n)
+					t.Errorf("%s: the %s row %q cites #%d, which §3 does not define", path, label, row.concept, n)
 				}
 			}
 		}
+		for wi, w := range wants {
+			if !matched[wi] {
+				t.Errorf("%s: no row of %s matches the audit entry %q; the table or the audit moved", path, label, w.row)
+			}
+		}
 	}
-	audit("§1", section("## 1. ", "## 2. "), 2, voiceModuleSection1Audit)
-	audit("§2", section("## 2. ", "## 3. "), -2, voiceModuleSection2Audit)
+	audit("§1", section("## 1. ", "## 2. "), 1, voiceModuleSection1Audit)
+	audit("§2", section("## 2. ", "## 3. "), -1, voiceModuleSection2Audit)
 
 	// The register the brief caught: the design's provider retention-and-training
 	// register is a condition on the cloud rows, and the findings that carry it
@@ -578,6 +616,91 @@ func voiceModuleFinding(t *testing.T, recon string, n int) string {
 	return block
 }
 
+// markdownTableCells splits one GFM table line into its cells. The split is on
+// unescaped pipes only, and an escaped pipe comes back as the pipe it stands
+// for: "| a \| b | c |" is two cells, the first of them "a | b". An unescaped
+// pipe inside a cell is not a pipe in the text -- GFM ends the cell there -- so
+// the splitter is what tells the two apart, and it is the reason a quoted
+// sentence containing one has to be written with the backslash.
+func markdownTableCells(line string) []string {
+	s := strings.TrimSpace(line)
+	s = strings.TrimPrefix(s, "|")
+	if strings.HasSuffix(s, "|") && !strings.HasSuffix(s, `\|`) {
+		s = s[:len(s)-1]
+	}
+	var cells []string
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) && s[i+1] == '|' {
+			b.WriteByte('|')
+			i++
+			continue
+		}
+		if s[i] == '|' {
+			cells = append(cells, b.String())
+			b.Reset()
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return append(cells, b.String())
+}
+
+// tableSeparatorCellRE matches one cell of a table's `|---|` line.
+var tableSeparatorCellRE = regexp.MustCompile(`^:?-{3,}:?$`)
+
+// isTableSeparator reports whether a parsed row is the line that makes the line
+// above it a table header rather than an ordinary paragraph starting with a
+// pipe.
+func isTableSeparator(cells []string) bool {
+	for _, c := range cells {
+		if !tableSeparatorCellRE.MatchString(strings.TrimSpace(c)) {
+			return false
+		}
+	}
+	return true
+}
+
+// TestDocsVoiceModuleFolderTablesAreWellFormed: every table in the folder
+// parses. A cell that carries an unescaped pipe ends there, so the rest of the
+// row is read as further cells -- finding #42's verdict cell was lost that way,
+// its quoted "the network is down | local only" splitting a three-column row
+// into four -- and the wrong cell count is the only symptom. The header's cell
+// count is the contract: every row under it must match, and the line under the
+// header must be the separator, or GFM renders the block as text and the whole
+// table disappears rather than one cell.
+func TestDocsVoiceModuleFolderTablesAreWellFormed(t *testing.T) {
+	for _, path := range []string{
+		"docs/voice-module/README.md",
+		"docs/voice-module/reconciliation.md",
+		"docs/voice-module/spec.md",
+	} {
+		lines := strings.Split(readDoc(t, path), "\n")
+		for i := 0; i < len(lines); i++ {
+			if !strings.HasPrefix(lines[i], "|") {
+				continue
+			}
+			header := markdownTableCells(lines[i])
+			// The block runs to the first line that is not a table row.
+			end := i
+			for end < len(lines) && strings.HasPrefix(lines[end], "|") {
+				end++
+			}
+			if end-i < 2 {
+				t.Errorf("%s:%d: a table of one line: a header needs the separator line under it", path, i+1)
+			} else if !isTableSeparator(markdownTableCells(lines[i+1])) {
+				t.Errorf("%s:%d: the line under the header is %q, not a |---| separator: GFM renders this block as text, so the table is not a table", path, i+2, strings.TrimSpace(lines[i+1]))
+			}
+			for j := i; j < end; j++ {
+				if got := len(markdownTableCells(lines[j])); got != len(header) {
+					t.Errorf("%s:%d: the row has %d cells and the header has %d: an unescaped `|` in a cell ends it there and the rest of the row is read as more cells, so write it `\\|` (row: %s)", path, j+1, got, len(header), strings.TrimSpace(lines[j]))
+				}
+			}
+			i = end - 1
+		}
+	}
+}
+
 // boldCheckNumbers returns the check numbers a document states in bold, one
 // entry per whole number. The bold runs are the tokens, so "**64, 65 and 66**"
 // yields 64, 65 and 66, while a number written plainly -- a date, a "Phase 6",
@@ -604,8 +727,25 @@ func sortedCheckNumbers(set map[string]bool) []string {
 	return out
 }
 
-// Mutation (verified, run and restored): thirteen, all run and restored.
-// (17) Writing the staging verdict back into finding #17 ("which is
+// Mutation (verified, run and restored): eighteen, all run and restored.
+// (20) Writing the pipe in finding #42's quoted sentence unescaped again ("the
+// network is down | local only") fails
+// TestDocsVoiceModuleFolderTablesAreWellFormed with `the row has 4 cells and
+// the header has 3`: that is the defect the escape fixes, and the row's verdict
+// cell is what GFM drops. (21) Adding a §2 row with no audit entry ("| A
+// brand-new spec claim nobody audited |") fails
+// TestDocsVoiceModuleReconciliationFindingsResolve twice -- `§2 has 27 rows and
+// the audit has 26 entries` and `the §2 row "A brand-new spec claim nobody
+// audited" matches 0 audit entries` -- which is the direction the old
+// audit-only-iterates-the-slice loop could not see. (22) Duplicating §2's
+// debounce row fails it with `the §2 table has two rows whose first cell is
+// "Debounce window batches bursts into one utterance"`. (23) Deleting the
+// `{"Debounce window", []int{10}}` entry from voiceModuleSection2Audit fails it
+// with `§2 has 26 rows and the audit has 25 entries` and `the §2 row "Debounce
+// window batches bursts into one utterance" matches 0 audit entries`. (24)
+// Rewording that row's first cell to "Burst batching into one utterance" fails
+// it both ways at once: `matches 0 audit entries` for the row, and `no row of
+// §2 matches the audit entry "Debounce window"` for the entry. (17) Writing the staging verdict back into finding #17 ("which is
 // **STAGED, NOT APPLIED**") fails
 // TestDocsVoiceModuleReconciliationRecordsTheAppliedConsoleWorkflow twice: the
 // document-level refusal (`says "STAGED, NOT APPLIED" about
