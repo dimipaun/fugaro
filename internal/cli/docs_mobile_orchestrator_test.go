@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,7 +87,10 @@ func TestDocsMobileOrchestratorDesignIsWritten(t *testing.T) {
 		// says when a number is taken, not which one.
 		"the next free number at merge time",
 		"## 9. The alternatives, priced",
-		"## 10. Open for the owner",
+		// The questions are the owner's, and the heading records that the owner
+		// answered them: a heading that still read "Open for the owner" would say
+		// the design is waiting on a ruling the owner already gave.
+		"## 10. Answered by the owner on 2026-10-19",
 		"## 11. UNVERIFIED",
 		// The hygiene list, where a collision with work in flight is written down.
 		"## 12. The hygiene list",
@@ -114,10 +118,83 @@ func TestDocsMobileOrchestratorDesignIsWritten(t *testing.T) {
 func TestDocsMobileOrchestratorTakesNoDecisionNumber(t *testing.T) {
 	doc := readDoc(t, orchDesign)
 	if strings.Contains(doc, "\n| **D") {
-		t.Errorf("%s carries a decision-table row: this design may not allocate a decision number, and its questions belong in \"Open for the owner\" as Q1–Q13", orchDesign)
+		t.Errorf("%s carries a decision-table row: this design may not allocate a decision number, and its questions belong in §10 as Q1–Q13", orchDesign)
 	}
 	if !strings.Contains(doc, "allocates no decision number") {
 		t.Errorf("%s does not say in its own words that it allocates no decision number", orchDesign)
+	}
+}
+
+// TestDocsMobileOrchestratorRecordsTheOwnersAnswers: the owner answered Q1–Q13
+// on 2026-10-19, each taking the option the design recommended, and the answer
+// is recorded in place rather than left as a question. The two ways that record
+// rots are checked here: a question that keeps its recommendation and quietly
+// loses its answer, and a sentence elsewhere in the document (or in the README
+// and the plan) that still says the question is open — a reader who finds one of
+// those stops waiting for a ruling that has been given.
+//
+// It also pins the boundary the answers do not cross: an answer is not an
+// approval. The section, the README and the plan have to keep saying so, because
+// "the owner answered Q7: the owner deploys it" is one careless edit away from
+// reading as a scheduled task.
+func TestDocsMobileOrchestratorRecordsTheOwnersAnswers(t *testing.T) {
+	doc := readDoc(t, orchDesign)
+	if !strings.Contains(doc, "## 10. Answered by the owner on 2026-10-19") {
+		t.Errorf("%s has no §10 heading recording the owner's answers of 2026-10-19", orchDesign)
+	}
+	// Every question carries the answer, on the question's own line, so one
+	// cannot be dropped or half-recorded without this failing.
+	for i := 1; i <= 13; i++ {
+		q := fmt.Sprintf("**Q%d —", i)
+		var line string
+		for _, l := range strings.Split(doc, "\n") {
+			if strings.HasPrefix(l, q) {
+				line = l
+				break
+			}
+		}
+		if line == "" {
+			t.Errorf("%s has no %s question", orchDesign, q)
+			continue
+		}
+		if !strings.Contains(line, "**Answered 2026-10-19: the recommended option**") {
+			t.Errorf("%s: %s carries no \"Answered 2026-10-19: the recommended option\" marker:\n\n%.400s", orchDesign, q, line)
+		}
+		// The consequence is what the answer means, so an answer without one is
+		// a tick rather than a record.
+		if !strings.Contains(line, "*Consequence:*") {
+			t.Errorf("%s: %s records no consequence for the answer", orchDesign, q)
+		}
+	}
+	// The sentences that keep an answer from reading as an approval.
+	for _, want := range []string{
+		"An answer is not an approval",
+		"allocates no decision number",
+		"UNSCHEDULED",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not say %q about the answers", orchDesign, want)
+		}
+	}
+	// The stale phrasings. Each of these was in the document while the questions
+	// were open, and each now reads as a ruling still pending.
+	for _, stale := range []string{
+		"Open for the owner",
+		"still asks the owner",
+	} {
+		if strings.Contains(doc, stale) {
+			t.Errorf("%s still says %q: the owner answered Q1–Q13 on 2026-10-19", orchDesign, stale)
+		}
+	}
+	// The README indexes it and the plan names it; both told a reader the
+	// questions were open, so both have to record the answers too.
+	readme := readDoc(t, "docs/mobile/README.md")
+	if !strings.Contains(readme, "answered by the owner on 2026-10-19") {
+		t.Errorf("docs/mobile/README.md does not record that the owner answered Q1–Q13 on 2026-10-19")
+	}
+	plan := readDoc(t, "docs/mobile/implementation-plan.md")
+	if !strings.Contains(plan, "answers of 2026-10-19") {
+		t.Errorf("docs/mobile/implementation-plan.md's P5.1 entry does not record the owner's answers of 2026-10-19")
 	}
 }
 
