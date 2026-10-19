@@ -106,6 +106,258 @@ func TestDocsBudgetTokenChannelSection1IsTheSealedChannel(t *testing.T) {
 	}
 }
 
+// TestDocsBudgetTokenChannelAnswersTheBatchSeal (compute backend plan task 14,
+// SECURITY-SENSITIVE): the Batch half of the seal's carrier used to be an open
+// owner question — the design's own words were "**Open for the owner:** whether
+// Batch should ever run a budget-on run, and through which carrier — this
+// document names none that satisfies §3's constraints" — and the code refused a
+// sealed launch with a message that said "yet", which reads as a mechanism
+// somebody owes. The owner answered on 2026-10-19 (the plan's P1): keep the
+// refusal and document it as a known limit, because a Batch job's variables are
+// the job's definition and the only alternative carrier this design allows is
+// the rejected C2. This test holds the three places that answer now live in —
+// the design's own paragraph, the compute backend design's §1.6 and its C10
+// row, and the refusal `internal/backend/batch/run.go` emits — to the same
+// sentence, so one of them cannot be rewritten back into a question without the
+// others failing here. It is the docs half of
+// TestLaunchRefusesASecretEnv, which holds the message's own shape.
+func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
+	const design = "docs/design/budget-token-channel.md"
+	doc := readDoc(t, design)
+	i := strings.Index(doc, "**The Batch backend refuses a sealed launch")
+	j := strings.Index(doc, "Every symbol below was read on")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no \"The Batch backend refuses a sealed launch\" paragraph followed by the symbol note: the paragraph that states the seal's Batch answer is gone", design)
+	}
+	// The paragraph is wrapped, so a phrase can straddle a line break: the
+	// assertions below are on prose, not on layout.
+	sec := strings.Join(strings.Fields(doc[i:j]), " ")
+	for _, want := range []string{
+		// The answer, in the operator's words: Batch runs no sealed budget
+		// run, and — the correction this test now holds — a minting
+		// installation can launch NO run on that backend, because minting is
+		// the installation's and an installation has one backend. "Its
+		// budget-on path runs on Cloud Run" was the earlier, misleading
+		// wording: it reads as though budget-off runs could still go to Batch.
+		"Batch runs no sealed budget run",
+		"cannot launch any run on Batch",
+		"has to stay on `backend: cloud-run`",
+		// The full minting condition, which the earlier text left short: the
+		// code mints for a budget database with the mode on OR a published
+		// policy (internal/cli/launch_budget.go's budgetMintOn).
+		"a budget database with budget mode on, or a published policy",
+		// The reason, which is what makes the answer a limit rather than a
+		// missing mechanism: the key would live in the job's definition.
+		"the job's definition",
+		// And the reason as the threat model states it: what the carrier adds
+		// is a standing copy in the resource and the reaper as a reader, not a
+		// boundary that the launchers were behind.
+		"a standing copy in the job resource",
+		"widen its audience to the reaper",
+		"documented limit",
+		// The refusal is the code's, and the paragraph says what it is.
+		"ErrRejected",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s's \"refuses a sealed launch\" paragraph does not say %q: the owner answered this question (the compute backend plan's P1, 2026-10-19) and the answer is what an operator reads", design, want)
+		}
+	}
+	// And the question is gone, along with the two wordings this test's own
+	// review corrected: an "Open for the owner" clause sends a reader looking
+	// for a mechanism that is not coming, "budget-on path" promises a run kind
+	// that no installation on this backend can have, and "the set the seal
+	// exists to exclude" contradicts the seal's own threat model (the
+	// launchers are already in the override's audience).
+	for _, refused := range []string{
+		"Open for the owner:** whether Batch should ever run a budget-on run",
+		"an open owner question",
+		"a sealed budget run cannot run on Batch yet",
+		"runs its budget-on path on Cloud Run",
+		"budget-on path",
+		"the set the seal exists to exclude",
+		"a budget database, a published policy and a signer",
+	} {
+		if strings.Contains(sec, refused) {
+			t.Errorf("%s's \"refuses a sealed launch\" paragraph still says %q: the question it asked is answered (keep the refusal, documented as a known limit), and the wording it was answered in has to survive a reader\n\nparagraph: %s", design, refused, sec)
+		}
+	}
+
+	// The compute backend design carries the same answer, in §1.6 and in its
+	// C10 row, so a reader of the design that owns the backend finds it there
+	// too rather than only in the seal's own document.
+	const cbDesign = "docs/design/compute-backend.md"
+	cb := readDoc(t, cbDesign)
+	k := strings.Index(cb, "### 1.6 Secrets")
+	l := strings.Index(cb, "### 1.7 Networking")
+	if k < 0 || l < k {
+		t.Fatalf("%s has no §1.6 followed by §1.7: the section that says what Batch does with secrets is gone", cbDesign)
+	}
+	sec16 := strings.Join(strings.Fields(cb[k:l]), " ")
+	for _, want := range []string{
+		"Batch runs no sealed budget run",
+		"cannot launch any run on Batch",
+		"a budget database with budget mode on, or a published policy",
+	} {
+		if !strings.Contains(sec16, want) {
+			t.Errorf("%s §1.6 does not say %q: §1.6 is where a reader learns what this backend does with a secret, and the seal's answer belongs beside the secretVariables paragraph", cbDesign, want)
+		}
+	}
+	if strings.Contains(sec16, "budget-on path") || strings.Contains(sec16, "budget-on run at all") {
+		t.Errorf("%s §1.6 still says \"budget-on path\"/\"budget-on run\": minting is the installation's and an installation has one backend, so there is no run kind an operator can still send to Batch\n\nsection: %s", cbDesign, sec16)
+	}
+	var c10 string
+	for _, line := range strings.Split(cb, "\n") {
+		if strings.HasPrefix(line, "| C10 |") {
+			c10 = line
+			break
+		}
+	}
+	if c10 == "" {
+		t.Fatalf("%s has no C10 row: the decision table the answer has to reach is gone", cbDesign)
+	}
+	for _, want := range []string{"refuse", "sealed launch", "cannot launch any run on Batch"} {
+		if !strings.Contains(c10, want) {
+			t.Errorf("%s's C10 row does not say %q: §1.6's answer has to reach the decision table too, or the table reads as though the backend carried every secret the design lists\n\nrow: %s", cbDesign, want, c10)
+		}
+	}
+
+	// And the refusal the code emits says the same sentence — the same three
+	// phrases, read out of the source rather than typed twice. The slice is
+	// the refusal *message* and not the file: run.go cites this document in
+	// its comments too, and an assertion over the whole file cannot see the
+	// message's own citation move (which is exactly what the mutation run for
+	// this test found, when the citation was rewritten in the message alone
+	// and this test still passed).
+	run, err := os.ReadFile("../../internal/backend/batch/run.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := strings.Join(strings.Fields(string(run)), " ")
+	const opens = `fmt.Errorf("launching %s: the launch carries`
+	start := strings.Index(code, opens)
+	if start < 0 {
+		t.Fatalf("internal/backend/batch/run.go no longer builds the seal's refusal with %s: this test reads that message", opens)
+	}
+	end := strings.Index(code[start:], "full, kv.Name)")
+	if end < 0 {
+		t.Fatalf("internal/backend/batch/run.go's seal refusal no longer ends at `full, kv.Name)`: this test cannot find the message's end")
+	}
+	message := code[start : start+end]
+	for _, want := range []string{
+		"the job's definition",
+		"docs/design/budget-token-channel.md",
+		// The answer, in the words the documents use: the installation, not a
+		// run, is what cannot use this backend, and it says what the operator
+		// has to do instead. This is the phrase the review of this branch
+		// found missing from the refusal.
+		"cannot launch any run on Batch",
+		"a budget database with budget mode on, or a published policy",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("internal/backend/batch/run.go's refusal does not carry %q, which %s's answer does: the document and the message an operator actually sees have to say the same thing\n\nmessage: %s", want, design, message)
+		}
+	}
+	// The refusal is not allowed to promise a run kind that can still go to
+	// Batch, which "runs its budget-on path on Cloud Run" did.
+	if strings.Contains(message, "budget-on path") {
+		t.Errorf("internal/backend/batch/run.go's refusal still says \"budget-on path\": an installation has one backend, so the refusal has to say that no run of a minting installation can go to Batch\n\nmessage: %s", message)
+	}
+	// The message is refused rather than carried, and the value is never in
+	// it: the entry's name is the most an operator may be shown, which is
+	// checked on the real error in
+	// internal/backend/batch's TestLaunchRefusesASecretEnv too.
+	if strings.Contains(message, "kv.Value") {
+		t.Errorf("internal/backend/batch/run.go's refusal formats the secret's value into its text: the value must never appear in a refusal\n\nmessage: %s", message)
+	}
+}
+
+// TestDocsBudgetTokenChannelNamesTheMintingCondition: the condition under which
+// a launch is sealed is the code's, held to it rather than typed twice. The
+// document's earlier text said "a budget database, a published policy and a
+// signer", which is short of the code in a way that misleads an operator: a
+// configuration with the budget mode on and **no** published policy mints too
+// (the review of this branch found it).
+//
+// The pin is two-sided, because either side can drift alone: the document has
+// to state both disjuncts, and internal/cli/launch_budget.go has to still have
+// them — a code change that drops the mode branch, or makes an absent policy
+// mint, fails here and sends whoever made it back to the paragraph.
+func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
+	// The document's half: both disjuncts, in the words the message and this
+	// test use, and the signer that both branches need.
+	const design = "docs/design/budget-token-channel.md"
+	doc := readDoc(t, design)
+	i := strings.Index(doc, "**The owner's answer: Batch runs no sealed budget run")
+	j := strings.Index(doc, "Every symbol below was read on")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no owner's-answer paragraph followed by the symbol note: the paragraph that states the minting condition is gone", design)
+	}
+	sec := strings.Join(strings.Fields(doc[i:j]), " ")
+	for _, want := range []string{
+		"a budget database with budget mode on, or a published policy",
+		"a signer is required in both cases",
+		"budgetMintOn",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s's answer paragraph does not state %q: an operator has to be able to tell whether their installation mints without reading the code", design, want)
+		}
+	}
+	// The §1.6 half, which is the design that owns the backend.
+	cb := readDoc(t, "docs/design/compute-backend.md")
+	k := strings.Index(cb, "### 1.6 Secrets")
+	l := strings.Index(cb, "### 1.7 Networking")
+	if k < 0 || l < k {
+		t.Fatalf("docs/design/compute-backend.md has no §1.6 followed by §1.7: the section that states the condition is gone")
+	}
+	if sec16 := strings.Join(strings.Fields(cb[k:l]), " "); !strings.Contains(sec16, "a budget database with budget mode on, or a published policy") {
+		t.Errorf("docs/design/compute-backend.md §1.6 does not state the full minting condition (\"a budget database with budget mode on, or a published policy\"): a project whose budget mode is on with no published policy still gets every launch refused, and §1.6 is where that project's operator reads why")
+	}
+
+	// The code's half: the two disjuncts, read out of the functions that
+	// decide them. A rewrite that removes either one changes what "minting"
+	// means, and this assertion is what makes that a red test rather than a
+	// paragraph that quietly stops being true.
+	src, err := os.ReadFile("../../internal/cli/launch_budget.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := strings.Join(strings.Fields(string(src)), " ")
+	// budgetBackendOn: the mode branch, and the database it needs.
+	bs := strings.Index(code, "func budgetBackendOn(lc *localcfg.Config) (bool, error) {")
+	if bs < 0 {
+		t.Fatalf("internal/cli/launch_budget.go no longer has budgetBackendOn, which %s's minting condition is written from", design)
+	}
+	be := strings.Index(code[bs:], "func budgetSignerOn(")
+	if be < 0 {
+		t.Fatalf("internal/cli/launch_budget.go no longer has budgetSignerOn after budgetBackendOn: this test cannot find the end of the condition it reads")
+	}
+	backendOn := code[bs : bs+be]
+	// budgetMintOn: the policy branch.
+	ms := strings.Index(code, "func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {")
+	if ms < 0 {
+		t.Fatalf("internal/cli/launch_budget.go no longer has budgetMintOn, which %s's minting condition names", design)
+	}
+	me := strings.Index(code[ms:], "// projectPolicyRead is the CLI's read")
+	if me < 0 {
+		t.Fatalf("internal/cli/launch_budget.go no longer has the comment that ends budgetMintOn: this test cannot find the end of the function it reads")
+	}
+	mintOn := code[ms : ms+me]
+	for _, want := range []string{
+		// "budget mode on": the mode is what the first branch turns on.
+		"lc.BudgetMode() == localcfg.BudgetOff",
+		// "a budget database": both branches need the address.
+		"lc.Budget.RTDBURL == \"\"",
+		// "a published policy": the second branch's own read.
+		"p, found, err := e.policy.read(ctx, e.lc)",
+		// still mode-or-policy and not mode-and-policy.
+		"if on, err := budgetBackendOn(e.lc); err != nil || on {",
+	} {
+		if !strings.Contains(backendOn, want) && !strings.Contains(mintOn, want) {
+			t.Errorf("internal/cli/launch_budget.go no longer has %q, which %s's minting condition (\"a budget database with budget mode on, or a published policy\") is written from: the code and the document have to change together", want, design)
+		}
+	}
+}
+
 // TestDocsBudgetTokenChannelCitationsExist: the design's load-bearing citations
 // are paths a later implementer has to find — the module that grants the prefix,
 // the package the seal will live in, the runner that parses the marker, the

@@ -13,14 +13,21 @@ import (
 
 // computeBackendPlan is the plan this file pins: docs/plans/2026-10-19-compute-backend.md,
 // the implementation plan for the Cloud Batch compute backend (design
-// docs/design/compute-backend.md), written against the tree branch
-// fugaro/20261019-140014-b55a stands on (= the branch `integration-0.9.5`, cut
+// docs/design/compute-backend.md), written against the tree the branch
+// fugaro/20261019-204914-8a1b stands on (= the branch `integration-0.9.5`, cut
 // from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
-// and this test, the documents and tests a review of them corrected, and no
-// Terraform and no workflow). The one behavioural line among those corrections
+// and this test, the documents and tests a review of them corrected, the
+// credentials-service documents and their own pin test (a later, separate piece
+// of work whose owner ruling is recorded in
+// docs/credentials-service/reconciliation.md §4), and no Terraform and no
+// workflow). The one behavioural line among those corrections
 // is internal/managed/stateaccounts.go's table, which learns the compute
-// module's three types; everything else the branch adds is a comment, a test or
-// a document, and no task of this plan is built.
+// module's three types — the NAT as the table's empty answer, corrected on a
+// later review of the branch; everything else the branch adds is a comment, a
+// test or a document — and, on the review branch after it, **Task 14 of the
+// plan, built**: the seal's carrier on Batch, its refusal kept and documented
+// (see internal/backend/batch/run.go and docs/design/budget-token-channel.md).
+// No other task of this plan is built.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
@@ -502,10 +509,13 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 }
 
 // TestDocsComputeBackendDecisionsAreRecommendations: the plan's own decisions
-// are P1 to P8, every one of them a recommendation and none an answer, and the
-// gate at the foot is UNAPPROVED. A row that acquires an owner's answer must
-// acquire it here and in the gate's own text, so this test is what makes
-// "answered silently" impossible.
+// are P1 to P8, and the owner approved every one of them with its
+// recommendation as written on 2026-10-19, which the section and the gate at
+// the foot both have to say. The state this test exists to make impossible is
+// the silent one: a plan whose decisions are answered (or whose gate is
+// approved, or whose tasks are built) while its own prose still reads as a
+// proposal. So the section says the rows are answers, the gate says APPROVED,
+// and both the Status line and the gate name the one task that has landed.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	for i := 1; i <= 8; i++ {
@@ -514,9 +524,19 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 			t.Errorf("%s no longer carries the %s decision row", computeBackendPlan, row)
 		}
 	}
-	decisions := section(t, doc, "## Decisions this plan defers to the owner", "## Open items")
-	if !strings.Contains(decisions, "**None is answered**") {
-		t.Errorf("%s: the decisions section no longer says none of its rows is answered", computeBackendPlan)
+	decisions := section(t, doc, "## Decisions this plan deferred to the owner", "## Open items")
+	// The one sentence that says the rows stopped being recommendations, and
+	// the sentence that says which of them has been built.
+	for _, want := range []string{
+		"**The owner approved every row below with its recommendation as written, on 2026-10-19**",
+		"**ANSWERED 2026-10-19, and landed (Task 14).**",
+	} {
+		if !strings.Contains(decisions, want) {
+			t.Errorf("%s: the decisions section no longer says %q", computeBackendPlan, want)
+		}
+	}
+	if strings.Contains(doc, "**None is answered**") {
+		t.Errorf("%s still says its own decisions are unanswered; the owner approved them on 2026-10-19, and Task 14 — P1's answer — is built", computeBackendPlan)
 	}
 	// The three the gate says change what gets built, named there as such.
 	// The gate is the file's last section, so it runs to the end of the file.
@@ -526,16 +546,43 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	}
 	gate := doc[i:]
 	for _, want := range []string{
-		"**UNAPPROVED. Nothing in this plan is approved",
-		"**P1 — the seal's carrier.**",
+		"**APPROVED 2026-10-19 (\"Approve and start\")",
+		"**P1 — the seal's carrier. ANSWERED, and landed (Task 14).**",
 		"**P2 — the reaper's impossible permission.**",
 		"**P5 — the release.**",
 		// Task 12 is the owner's alone, and the gate has to say so.
 		"**Task 12 is OWNER-RUN**",
+		// The gate and the Status line agree on what the approval has built:
+		// Task 14, and nothing else.
+		"One task has been built since: Task 14",
+		"**Task 14 is built and nothing else here is**",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
 		}
+	}
+	if strings.Contains(gate, "**UNAPPROVED") {
+		t.Errorf("%s's OWNER APPROVAL GATE still reads UNAPPROVED, while Task 14's commit is on the branch it governs", computeBackendPlan)
+	}
+	// The Status line is where a reader meets the approval first, so it says
+	// the same thing the gate does.
+	status := section(t, doc, "**Status:", "**Spec:**")
+	for _, want := range []string{
+		"**Status: the owner approved this plan on 2026-10-19 (\"Approve and start\")",
+		"and one task of it has been built since: **Task 14**",
+		"**No task's commit exists except Task 14's**",
+	} {
+		if !strings.Contains(status, want) {
+			t.Errorf("%s's Status line no longer says %q", computeBackendPlan, want)
+		}
+	}
+	// The mapping table's last row is the same fact for a reader who checks
+	// the design's outline against this plan rather than reading the prose.
+	if !strings.Contains(doc, "| **Task 14**: the budget seal's carrier on Batch | **built** — this branch, P1's recommended answer |") {
+		t.Errorf("%s's §8.1 mapping table no longer marks Task 14's row built", computeBackendPlan)
+	}
+	if !strings.Contains(doc, "| **dropped** (Task 14's answer needs no fetch, so there is nothing to build) |") {
+		t.Errorf("%s's §8.1 mapping table no longer says Task 13 is dropped rather than deferred", computeBackendPlan)
 	}
 }
 

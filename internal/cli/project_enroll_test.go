@@ -1160,12 +1160,15 @@ func TestProjectShowNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
 // Mutations (each verified, run and restored): accept any name of three or more
 // "/"-segments (drop the alphabet check) — red on `github/*/*`, `github/acme/app
 // b`, `github/acme/app;id` and the uppercase provider; drop the "-"/"."/".."
-// segment rule — red on `-x/y/z`, `github/acme/-app` and `github/acme/..`.
+// segment rule — red on `-x/y/z`, `github/acme/-app` and `github/acme/..`;
+// drop the length bound — red on the name one byte over safetext.FieldMax.
 func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 	for _, ok := range []string{
 		"github/acme/app",
 		"bitbucket/acme/group/app", // a repository path may nest
 		"github/Acme/App",          // the repository alphabet admits A-Z; the provider kind does not
+		// Exactly at the bound (safetext.FieldMax bytes) is still a name.
+		"github/acme/" + strings.Repeat("a", safetext.FieldMax-len("github/acme/")),
 	} {
 		got, is := enrollableArg(ok)
 		if !is {
@@ -1193,6 +1196,9 @@ func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
 		"github/acme/app;id",  // shell metacharacters
 		"github/acme/app`id`", // and backticks
 		"../acme/app",         // a path out of the tree
+		// One byte over the bound every printed name is held to: the advisory
+		// line must not be as long as a run chose.
+		"github/acme/" + strings.Repeat("a", safetext.FieldMax-len("github/acme/")+1),
 	} {
 		if got, is := enrollableArg(bad); is {
 			t.Errorf("enrollableArg(%q) = %q, true; want no command at all", bad, got)

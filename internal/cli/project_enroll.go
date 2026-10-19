@@ -369,13 +369,19 @@ func spendRepos(ctx context.Context, lc *localcfg.Config, now time.Time) (recs [
 		//
 		// What the query itself refuses is not left out, and this is the
 		// distinction the sentence above must not be read as covering: a
-		// document whose *name* is not a name (a slug the registry held with a
-		// "/" in it, so the object's name has more than the two segments
-		// firestore.Client's decode accepts) fails the query, and the listing
-		// reports that error and exits without printing — it fails closed
-		// rather than silently listing a shorter history. That is why the two
-		// durable sources cannot both deliver a multi-segment slug: spendDaily
-		// can only ever name a one-segment one here.
+		// document whose *name* firestore.Client's decode does not accept (not
+		// exactly two segments after /documents/) fails the query, and the
+		// listing reports that error and exits without printing — it fails
+		// closed rather than silently listing a shorter history.
+		//
+		// That is no promise about the slug printed below, which is read from
+		// the document's *fields* (budget.FromFields), not from its name.
+		// Fugaro's own writer never stores a slug with a "/" in it (the ID is
+		// <date>_<slug>, and firestore's validName refuses a "/" in an ID), but
+		// a document written by hand can carry any slug field, a multi-segment
+		// one included. Such a name is treated like every other seen name:
+		// printed bounded and inert, and offered as a command only when
+		// enrollableArg says it is a repository identifier.
 		if r, err := budget.FromFields(d.Fields); err == nil {
 			recs = append(recs, r)
 		}
