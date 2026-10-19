@@ -179,10 +179,10 @@ echo "control       the pristine suite passes, $LAST_TESTS tests, 0 failures"
 #    coincidence.
 mutate_test "control: initialQueue() accepts an unusable now (must be killed)" \
   "  const now = values.now;
-  if (now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');
+  if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');
   if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');" \
   "  const now = values.now;
-  if (now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');
+  if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');
   if (false) return refuse(REFUSAL.INVALID_NOW, 'now');"
 if [ "$last_outcome" != killed ]; then
   echo "REFUSING: the control mutation was not caught, so this harness is not measuring anything" >&2
@@ -226,7 +226,7 @@ run "a prompt with no non-destructive answer stops" \
 # Expire drops exactly the dead prompts: a queue that expires everything would
 # answer questions nobody has stopped waiting for.
 run "expire keeps the prompts that are still alive" \
-  "    if (isExpired(entry.prompt.at, values.now, current.promptTtlMs)) {" \
+  "    if (expiredBy(entry.prompt.at, values.now, current.promptTtlMs)) {" \
   "    if (true) {"
 
 # The two windows (D173). A queued prompt's answer takes the prompt's TTL...
@@ -250,7 +250,7 @@ run "a confirmation is judged on the answer's own at" \
 # what is handed over: an answer to an expired question is an answer to a
 # changed world.
 run "an answer to a dead prompt is refused, with its expiry" \
-  "  if (isExpired(entry.prompt.at, values.now, current.promptTtlMs)) {
+  "  if (expiredBy(entry.prompt.at, values.now, current.promptTtlMs)) {
     // The prompt died before the answer arrived." \
   "  if (false) {
     // The prompt died before the answer arrived."
