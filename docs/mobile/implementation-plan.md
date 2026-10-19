@@ -176,7 +176,7 @@ A reviewer of a **task** should read that task's own "Reviewer tier" line. The S
 | **P-E** | P3.5 | Its own PR — the voice screen is the feature |
 | **P-F** | P4.1 | Its own PR, SECURITY-SENSITIVE |
 | **P-G** | P0.4, P4.2a, P4.2 | Docs PRs; P0.4 is the only PR that writes answers |
-| **P-H** | P2.3, P4.3, P4.4 | **No PR.** Owner-run |
+| **P-H** | P2.3, P4.3, P4.4 | **No PR for the owner-run steps.** P4.4's `mobile/eas.json` and `mobile/app.config.js` are committed code and do come in a PR; the EAS project, the signing keys and the store entries are the owner's and come in none |
 
 ---
 
@@ -266,7 +266,7 @@ P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 | **0** | **P0.1** the shared skeleton · **P2.1** the rules template, golden, parity, version bump · **P3.1** the app skeleton and account store · **P0.4** the answered decisions, written back | **No** — the gate is not passed | P0.1 standard · **P2.1 SECURITY-SENSITIVE** · **P3.1 SECURITY-SENSITIVE** · P0.4 standard | `shared/package.json` · `internal/budget/rules/rules.json.tmpl`, `testdata/rules.golden.json`, `internal/projectpolicy/version.go`, `docs/design/m9-budget-and-dashboard.md` · `mobile/`, and `internal/cli/docs_console_boundary_test.go` if it needs its one entry · `docs/mobile/*` |
 | **1** | **P0.2** the message schema · **P0.3** the URL validator · **P1.2** the lease · **P1.3** the digest and redactor · **P1.4** the staleness rule · **P2.2** the emulator's denial cases · **P3.2** the feed reader and its document rules · **P3.4** the audio interfaces and fakes · **P4.3** the CI job (owner-made) | No | P0.2 standard · **P0.3 SECURITY-SENSITIVE** · **P1.2 SECURITY-SENSITIVE** · P1.3 standard · P1.4 standard · **P2.2 SECURITY-SENSITIVE** · P3.2 standard · P3.4 standard · P4.3 owner | `shared/mailbox-schema/` · `shared/url/` · `shared/lease/` · `shared/digest/` · `shared/presence/` · `internal/budget/rules/emulator_mailbox_test.go` · `mobile/src/feed/` · `mobile/src/audio/` · `.github/workflows/ci.yml` |
 | **2** | **P1.1** the mailbox state machine · **P3.3** the job list · **P4.2a** checks 81, 82 and 89, written into the register | No | **P1.1 SECURITY-SENSITIVE** · P3.3 standard · P4.2a standard | `shared/mailbox/` · `mobile/src/jobs/` · `docs/gcp-live-checklist.md` |
-| **3** | **P1.5** the mailbox simulator · **P3.6** the app's mailbox client · **P4.1** the consumer · **P2.3** the owner-run deploy · **P4.4** the store path (owner-run) | No | P1.5 standard · **P3.6 SECURITY-SENSITIVE** · **P4.1 SECURITY-SENSITIVE** · P2.3 owner · P4.4 owner | `shared/mailbox-sim/` · `mobile/src/mailbox/` · the consumer's files — **D113c answered (ii)**: `internal/cli/mailbox.go` (placeholder name) and one line of `internal/cli/root.go`, in a CLI plan · none (a live deploy) · none (the owner's accounts) |
+| **3** | **P1.5** the mailbox simulator · **P3.6** the app's mailbox client · **P4.1** the consumer · **P2.3** the owner-run deploy · **P4.4** the store path (owner-run) | No | P1.5 standard · **P3.6 SECURITY-SENSITIVE** · **P4.1 SECURITY-SENSITIVE** · P2.3 owner · P4.4 owner | `shared/mailbox-sim/` · `mobile/src/mailbox/` · the consumer's files — **D113c answered (ii)**: `internal/cli/mailbox.go` (placeholder name) and one line of `internal/cli/root.go`, in a CLI plan · none (a live deploy) · `mobile/eas.json` and `mobile/app.config.js` (the store path's two committed files — the EAS project, the signing keys, the store entries and the identity values are the owner's, and come in none) |
 | **4** | **P3.5** the voice screen | No | standard | `mobile/src/voice/` |
 | **5** | **P4.2** checks 80 and 83–88, written into the register | No | standard | `docs/gcp-live-checklist.md` |
 | **unscheduled** | **P5.1** phase 2 hosting · **P5.2** push · **P5.3** the local/remote voice evaluation switch · **P5.4** the conversational front agent | **No, and not scheduled** | — | — |
@@ -556,7 +556,7 @@ P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 
 ### Task P4.4: The EAS project, the signing keys and the store entries — owner-run
 
-**Files.** None in this repository. **Owner-run.**
+**Files.** `mobile/eas.json` (the EAS build and submit profiles: `development`, `preview`, and `internal` — the store profile, `distribution: store`, an Android `app-bundle` and `submit.internal.android.track: internal`, which is C8's one value) and `mobile/app.config.js` (Expo's dynamic config, which resolves the two store identities — the iOS bundle identifier and the Android package name — from EAS environment variables at build time, so that neither is committed to `app.json`; `src/app-config.ids.test.js` and `src/eas-config.test.js` are their tests). **The EAS project itself, the signing keys, the store entries and the two identity values are the owner's**, and no identity value, no key and no key path is committed in either file — the identities are set with `eas env:set`, per environment, by the owner (`mobile/README.md`, "Building for internal testing"). **Owner-run.**
 **Depends on.** P3.1, P4.2a (check 89's text must be in the register before it is run).
 **Verification.** Check 89: a signed build reaches the store's internal track. **No agent performs any step**, and no signing key or store credential enters an agent's environment (Global Constraint 9).
 **Reviewer tier.** owner.

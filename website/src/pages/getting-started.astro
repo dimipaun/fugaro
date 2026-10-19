@@ -1,7 +1,7 @@
 ---
 /**
  * website/src/pages/getting-started.astro — getting started (website plan, Task W1.5;
- * website redesign, part P4).
+ * website redesign, parts P4 and P5; the owner's brief of 2026-10-19).
  *
  * Every sentence a reader acts on here is **rendered, not written**: the commands come
  * from `website/data/install.yaml` (W0.1), whose Go test pins each one to the file its
@@ -11,12 +11,42 @@
  * of the install instructions to exist in this repository and the one most likely to be
  * read, so it is the copy that must not be a copy (finding 21, Global Constraint 6).
  *
+ * **The page in three bands (the owner's feedback of 2026-10-19).** A reader who arrives
+ * here wants one thing first: the command. So the page is ordered the way that reader
+ * reads it, and each band answers one question.
+ *
+ *   1. **Above the fold: the install command and the console.** `#install` opens with the
+ *      one-line path `install.yaml` carries first — the Homebrew cask, whose command is
+ *      `brew install dimipaun/tap/fugaro` — with its copy control, beside the desktop
+ *      console's own option. Nothing else is up there: no sentence about the page, no
+ *      paragraph about where its words come from (D186). `website/test/fold.mjs` holds the
+ *      ordering the claim rests on, and Check 70b is the owner's measurement of the fold
+ *      itself (D187).
+ *   2. **"Set up your installation": what a real installation needs, in order.** The
+ *      install command gets the CLI onto the machine; it does not create a project, a
+ *      GitHub App or a secret. The steps below are `docs/gcp-setup.md`'s preconditions and
+ *      its short path, in the order that document puts them, one line each, and each names
+ *      the document that carries the detail rather than repeating it. No secret value is
+ *      named, and no step is invented: every one of them is a precondition or a step of
+ *      that runbook or of the plugin's `setup` skill, and the links are the only place the
+ *      detail lives.
+ *   3. **"Details": everything else, where it was.** The other install paths — the release
+ *      archive, cosign, `go install`, the plugin — keep the shape P4 gave them, with their
+ *      own notes and citations, and the platform list keeps D94's statuses. A reader who
+ *      wants the archive scrolls to it; a reader who wants the command never had to.
+ *
+ * **The quick path is the file's first path.** `install.yaml`'s header says so, and the
+ * page takes `paths[0]` rather than naming an id of its own: a file that reordered its
+ * paths would put a different path above the fold, and `fold.mjs` — which refuses an
+ * `#install` with no command in it — is what fails if that path is not one a reader can
+ * run. One source of truth per fact (Global Constraint 6).
+ *
  * Three things this page is written to say, and not to say:
  *
- *   - **The plugin path is a first-class step**, not a footnote: `fugaro init`,
- *     `/fugaro:setup` and `fugaro upgrade --local` are rendered beside the Homebrew cask
- *     and the archive, because a "Getting started" that omits the plugin describes half
- *     the install (finding 22). The file's own note says what they do.
+ *   - **The plugin path is a first-class path**, in Details rather than beside the cask:
+ *     `fugaro init`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their
+ *     own note, and the setup steps above them are where a reader meets the first two as
+ *     steps (finding 22).
  *   - **The cosign verification is inline**, with the archive: the verification block is
  *     the release process' own text, and a reader who downloads an archive is one scroll
  *     from the commands that check it (finding 19).
@@ -40,14 +70,14 @@
  * **What the redesign took out (P4).** The page used to open with a paragraph about where
  * its commands come from — `install.yaml`, the Go test, the three files that test holds it
  * to — and every path carried "Commands as printed in <file>" and "Platforms: …" beside
- * its commands. A reader who wants to install Fugaro needs none of that: the page now
- * opens with the install paths themselves, each note says what the path is for, and the
- * `README.md` in the source line at the top of each block is the whole of the citation
- * (D186: a page must not explain why its own text exists). The facts are unchanged and
- * still rendered from `install.yaml`; only the words around them went.
+ * its commands. A reader who wants to install Fugaro needs none of that: each note says
+ * what the path is for, and the file named in the source line under each block is the whole
+ * of the citation (D186: a page must not explain why its own text exists). The facts are
+ * unchanged and still rendered from `install.yaml`; only the words around them went.
  *
  * Nothing here fetches: the page is built from the files in this repository, and the only
- * link it prints is the Releases page `install.yaml` names (Global Constraints 4 and 8).
+ * links it prints are the Releases page `install.yaml` names, the console's own published
+ * assets, and this repository's own documents (Global Constraints 4 and 8).
  */
 import Base from '../layouts/Base.astro'
 import ConsoleOption from '../components/ConsoleOption.astro'
@@ -87,23 +117,49 @@ const nameOf = (id: string): string => platformNames.get(id) ?? id
 // The platforms a path is offered on, in the reader-facing names above: one line per path,
 // short enough to sit beside the citation rather than under it.
 const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
+
+// The paths, in the file's own order and split where the page's bands meet: the first path
+// is the one-line install a reader runs first (`install.yaml`'s header says so), and the
+// rest are the paths a reader chooses between once they know what they are choosing.
+const [quickPath, ...otherPaths] = install.paths
+
+// The two commands the setup steps name, read from the path that owns them rather than typed
+// into a step: `fugaro init` and `/fugaro:setup` are the plugin path's own commands, and a step
+// that printed its own spelling of either would be the fourth copy of the install instructions
+// this page's header refuses. A file that stopped carrying them stops the build here, where the
+// failure names the file, rather than rendering a step about a command that is not in it.
+const pluginPath = install.paths.find((path) => path.id === 'plugin')
+if (pluginPath === undefined || pluginPath.commands.length < 2) {
+  throw new Error(
+    "website/data/install.yaml carries no `plugin` path with its two commands (`fugaro init` and `/fugaro:setup`), which the page's setup steps render",
+  )
+}
+const [initCommand, setupCommand] = pluginPath.commands
+
+// The steps a real installation needs, in the order `docs/gcp-setup.md` puts them. Each one
+// is a precondition or a step of that runbook or of the plugin's `setup` skill, said in one
+// line, with the link carrying the detail: the page states what to do and the document
+// states how. `repo` is the repository `site.yaml` names, so a link into this repository is
+// built from the site's own facts rather than typed here, and `href` is a heading of the
+// document it points at (`website/test/linkcheck.mjs` refuses a fragment that is not one).
+const doc = (path: string, fragment: string): string =>
+  `${site.facts.repository}/blob/HEAD/${path}#${fragment}`
 ---
 
 <Base title="Getting started">
   <h1>Getting started</h1>
 
-  <p>Install Fugaro on macOS or Linux: Homebrew, a release archive, cosign, Go, or the plugin.</p>
+  <p>Install Fugaro on macOS or Linux.</p>
 
   <section id="install">
     <h2>Install</h2>
 
     {/* The section opens with the paths themselves (P5): under the heading comes the CLI
-        option and, at the top of it, the first install path's own commands — a reader who came
-        for the command they run meets it on the first screen rather than under a sentence
-        about the page, in the two-column layout and in the stacked one alike. The one sentence
-        the section carries — that the plugin is a step of the install and not an extra — moves
-        with the order and closes the section, after the options it is about. Its words are
-        P4's and are unchanged: ordering is this part's, copy is not.
+        option and, at the top of it, the quick path's own command — a reader who came for
+        the command they run meets it on the first screen rather than under a sentence about
+        the page, in the two-column layout and in the stacked one alike. The one sentence the
+        section carries moves with the order and closes the section, after the options it is
+        about: it is the way on to the steps below.
 
         The two options are one grid, in document order: the CLI first, the console second,
         which is the order the stacked layout renders at 390 px. */}
@@ -111,38 +167,37 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
       <div class="install-option" data-option="cli">
         <h3>CLI</h3>
 
-        {install.paths.map((installPath) => (
-          <article data-path={installPath.id}>
-            <h4>{installPath.name}</h4>
+        <article data-path={quickPath.id}>
+          <h4>{quickPath.name}</h4>
 
-            {installPath.note !== '' && <p>{installPath.note}</p>}
+          {quickPath.note !== '' && <p>{quickPath.note}</p>}
 
-            {/* The line and the blocks below it are one fact: a path with no commands of its
-                own — the release archive, whose facts are a page and a name template rather
-                than a command line — renders neither, because "from README.md" over an empty
-                list tells a reader to read something that is not there. install.yaml is
-                allowed to carry a path with no commands, so the page has to render that shape
-                as well as the other one. */}
-            {installPath.commands.length > 0 && (
-              <p class="source">
-                From <code>{installPath.source}</code>{installPath.devOnly && ' — development only'} · {platformsOf(installPath.platforms)}
-              </p>
-            )}
+          {quickPath.commands.map((command) => (
+            <div class="command-block" data-copy>
+              <Fragment set:html={copyControlHTML('Copy the install command')} />
+              <pre><code>{command}</code></pre>
+            </div>
+          ))}
 
-            {installPath.releasePage !== '' && (
-              <p class="release">
-                <a href={installPath.releasePage} rel="noopener">{installPath.releasePage}</a>
-              </p>
-            )}
+          {/* The line and the blocks above it are one fact: a path with no commands of its
+              own — the release archive, whose facts are a page and a name template rather
+              than a command line — renders neither, because "from README.md" over an empty
+              list tells a reader to read something that is not there. install.yaml is
+              allowed to carry a path with no commands, so the page has to render that shape
+              as well as the other one. It follows the block it cites, so the command is the
+              first thing under the path's name. */}
+          {quickPath.commands.length > 0 && (
+            <p class="source">
+              From <code>{quickPath.source}</code> · {platformsOf(quickPath.platforms)}
+            </p>
+          )}
 
-            {installPath.commands.map((command) => (
-              <div class="command-block" data-copy>
-                <Fragment set:html={copyControlHTML('Copy the install command')} />
-                <pre><code>{command}</code></pre>
-              </div>
-            ))}
-          </article>
-        ))}
+          {quickPath.releasePage !== '' && (
+            <p class="release">
+              <a href={quickPath.releasePage} rel="noopener">{quickPath.releasePage}</a>
+            </p>
+          )}
+        </article>
       </div>
 
       <div class="install-option" data-option="console">
@@ -158,11 +213,91 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
       </div>
     </div>
 
-    <p>The plugin is a step of the install, not an extra: the commands that drive a run come with it.</p>
+    <p>Then set up your installation.</p>
   </section>
 
-  <section id="platforms">
-    <h2>Platforms</h2>
+  {/* What the command does not do. A reader who runs `brew install` has a binary and no
+      installation: the project, the credentials, the App and the secrets are theirs to make,
+      and `docs/gcp-setup.md` is the runbook that walks them through it. The steps below are
+      that runbook's own preconditions and short path in its own order, one line each, and
+      every one of them links to the document that carries it — the page states what to do
+      and the document states how, so the two cannot drift. The two commands the last steps
+      name are rendered from `install.yaml`'s plugin path rather than typed here, so those
+      steps move with the file too. No secret is named here, and no value is anywhere on this
+      site. */}
+  <section id="setup">
+    <h2>Set up your installation</h2>
+
+    <ol>
+      <li>
+        <a href={doc('docs/gcp-setup.md', 'preconditions')}>A Google Cloud project</a>, billing linked, the Service
+        Usage API on.
+      </li>
+      <li>
+        <a href={doc('docs/gcp-setup.md', 'preconditions')}>gcloud credentials</a> with a quota project, and
+        Terraform 1.9+.
+      </li>
+      <li>
+        <a href={doc('docs/git-providers.md', 'github')}>A GitHub App</a> with four repository permissions.
+      </li>
+      <li>
+        <a href={doc('docs/gcp-setup.md', 'turning-the-shared-budget-on-m9b')}>A Firebase project</a>, if you want
+        the shared budget.
+      </li>
+      <li>
+        <a href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}>Run <code>{initCommand}</code></a> in your own terminal.
+      </li>
+      <li>
+        <a href={doc('docs/gcp-setup.md', '4-a-repository')}>Store the secrets</a> the runs mount, at hidden
+        prompts.
+      </li>
+      <li>
+        <a href={doc('docs/gcp-setup.md', 'the-short-path-fugaro-init-then-fugarosetup')}>Run <code>{setupCommand}</code></a>,
+        merge, run <code>{initCommand}</code> again.
+      </li>
+    </ol>
+  </section>
+
+  {/* Everything else, where it was: the paths a reader chooses between, each with its own
+      note, its own citation and its own commands, and the platform list D94 settles. It is
+      below the steps rather than beside them because the steps are what every reader needs
+      and these are what a reader picks from. */}
+  <section id="details">
+    <h2>Details</h2>
+
+    <h3>Other install paths</h3>
+
+    <div class="install-option">
+      {otherPaths.map((installPath) => (
+        <article data-path={installPath.id}>
+          <h4>{installPath.name}</h4>
+
+          {installPath.note !== '' && <p>{installPath.note}</p>}
+
+          {installPath.commands.map((command) => (
+            <div class="command-block" data-copy>
+              <Fragment set:html={copyControlHTML('Copy the install command')} />
+              <pre><code>{command}</code></pre>
+            </div>
+          ))}
+
+          {installPath.commands.length > 0 && (
+            <p class="source">
+              From <code>{installPath.source}</code> · {platformsOf(installPath.platforms)}
+            </p>
+          )}
+
+          {installPath.releasePage !== '' && (
+            <p class="release">
+              <a href={installPath.releasePage} rel="noopener">{installPath.releasePage}</a>
+            </p>
+          )}
+        </article>
+      ))}
+    </div>
+
+    <h3>Platforms</h3>
+
     <ul>
       {platforms.map((platform) => (
         <li data-platform={platform.id} data-status={platform.status}>
@@ -186,12 +321,22 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
     /* The install section is the one section here that is wider than a measure: two options
        side by side need the width, and the commands inside them are not prose. The one
        sentence the section carries is prose, and it keeps the measure. */
-    #install {
+    #install,
+    #details {
       max-width: none;
     }
 
     #install > p {
       max-width: var(--measure);
+    }
+
+    /* The steps are prose, one line each, and they keep the measure. */
+    #setup ol {
+      max-width: var(--measure);
+    }
+
+    #setup li + li {
+      margin-top: var(--space-xs);
     }
 
     /* The two options, one column until the viewport has room for two: at 390 px this is the
@@ -208,17 +353,17 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
       }
     }
 
-    /* One option, one card: the CLI's paths and the console's own contents are cards of the
+    /* One option, one card: the CLI's path and the console's own contents are cards of the
        same shape, so the two read as two ways to install rather than as a list and a note
-       beside it. */
+       beside it. The details section's card holds the other paths and is the same box. */
     .install-option {
       border: var(--border-width) solid var(--border);
       border-radius: var(--radius-md);
       padding: var(--space-md);
     }
 
-    /* And inside the CLI's card the paths are sections of it rather than cards in a card:
-       the rule between two of them is the whole of the separation they need. */
+    /* And inside the card the paths are sections of it rather than cards in a card: the
+       rule between two of them is the whole of the separation they need. */
     .install-option article {
       border: 0;
       border-top: var(--border-width) solid var(--border);

@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -34,20 +36,37 @@ const (
 	// BudgetGraceEnv shortens the D14 grace (a Go duration, at least 5 s and
 	// at most the default 3 m): it exists for tests and can only tighten.
 	BudgetGraceEnv = "FUGARO_BUDGET_GRACE"
-	// BudgetTokenEnv is set to "1" in a job's environment by the launcher that
-	// minted this run's budget token, and by nothing else: whether a token was
-	// minted is a fact about one launch, so it travels as an execution
-	// override (backend.LaunchSpec.Env) and never through init --repo's
-	// deploy-time environment. It closes a fail-open the security review of
-	// PR #379 found: a run of the same repository can delete a queued run's
-	// token object, and a job whose own mode is off read that as "this project
-	// has published no policy" and ran with no session, no cap and no kill
-	// switch — while the launcher had minted a token precisely because a
-	// policy exists. With the marker set, a missing token is the refusal it
-	// is on a budget-on job, whatever the job's mode; a job with no marker
-	// (every install that never minted one, and every local run) keeps
-	// today's behaviour.
-	BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
+	// BudgetTokenEnv is set in a job's environment by the launcher that minted
+	// this run's budget token, and by nothing else: whether a token was minted
+	// is a fact about one launch, so it travels as an execution override
+	// (backend.LaunchSpec.Env) and never through init --repo's deploy-time
+	// environment. It closes a fail-open the security review of PR #379 found:
+	// a run of the same repository could delete a queued run's token object
+	// (before the seal moved it to tokens/, read-only for a job, D16), and a
+	// token object a run cannot read is still possible (a job account without
+	// its tokens/ grant reads it the way it reads a missing one: GCS answers
+	// both with 403, since the grant carries no list permission), and a job whose own mode is off
+	// read that as "this project has published no
+	// policy" and ran with no session, no cap and no kill switch — while the
+	// launcher had minted a token precisely because a policy exists. With the
+	// marker set, a missing token is the refusal it is on a budget-on job,
+	// whatever the job's mode; a job with no marker (every install that never
+	// minted one, and every local run) keeps today's behaviour.
+	//
+	// Its *value* is the launch's seal key as one unpadded base64url string
+	// (D15): the marker stopped being a one-bit marker when the launcher
+	// started sealing, and became the carrier of a per-execution key. "1" is
+	// still parsed — it is what a launcher from before the seal writes — and
+	// the run then refuses at the take, naming the old launcher (D19's
+	// mixed fleet), rather than reading the token that launcher left
+	// unsealed. The parse is strict and never echoes the value: see
+	// BackendFromEnv.
+	//
+	// The name itself is gitops.BudgetTokenEnv's, and this is an alias of it
+	// rather than a second spelling: internal/gitops strips the variable from
+	// every git call and cannot import this package (this package imports it),
+	// so the one definition lives there and the two cannot drift.
+	BudgetTokenEnv = gitops.BudgetTokenEnv
 )
 
 // Backend is how the run reaches the project's budget database. The zero
@@ -62,6 +81,14 @@ type Backend struct {
 	// the token's absence from the runs bucket is a refusal and never "this
 	// project has published no policy" (see BudgetTokenEnv).
 	TokenMarked bool
+	// TokenKey is the launch's seal key, when the marker's value carried one
+	// (BackendFromEnv): the token object is sealed under it and nothing else
+	// is read. It is nil for a marker of "1", a launcher from before the
+	// seal, and the run then refuses at the take (D19). The key is
+	// a secret: it is registered with the run's redactor as soon as the run
+	// starts (runner.go's addSealKey), and nothing that formats the marker's
+	// value or this field may print it.
+	TokenKey []byte
 	// MalformedEnv is set, beside BackendErr, when the job's environment
 	// carries the backend URL or the launcher's marker and the value could not
 	// be parsed: the fields above are then only as far as the parse got, and
@@ -114,15 +141,31 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 		b.APIKey = key
 	}
 	if hasMarker {
-		// Only the launcher writes this, and it writes "1". Anything else is
-		// damage to the job's environment, which the runner reports as an
-		// infra_error rather than reading as "no marker": the marker is what
-		// makes a missing token fail closed, so a value nobody can interpret
-		// must not be the quiet one.
-		if marker != "1" {
-			return b, fmt.Errorf("%s %q: it must be 1, and only a launcher that minted this run's budget token sets it", BudgetTokenEnv, marker)
+		// Only the launcher writes this: the launch's seal key as one
+		// unpadded base64url string, or "1" from a launcher that predates the
+		// seal (refused later, at the take, with that said).
+		// Anything else is damage to the job's environment, which the runner
+		// reports as an infra_error rather than reading as "no marker": the
+		// marker is what makes a missing token fail closed, so a value nobody
+		// can interpret must not be the quiet one.
+		//
+		// The value is a secret once the launcher seals, and this parse runs
+		// before any redactor exists: internal/cli's runExec calls this at
+		// bootstrap, and the failure reaches the record only later, as the
+		// run's infra_error, when there is no redactor to have registered the
+		// key with. So neither error below carries the value — they name the
+		// variable and the shape it wants instead. The redactor is the second,
+		// weaker half and belongs to the runner (addSealKey).
+		switch {
+		case marker == "1":
+			b.TokenMarked = true
+		default:
+			key, err := token.ParseKey(marker)
+			if err != nil {
+				return b, fmt.Errorf("%s: it must be 1, or the launch's seal key as one unpadded base64url string decoding to %d bytes, and only a launcher that minted this run's budget token sets it", BudgetTokenEnv, token.KeySize)
+			}
+			b.TokenMarked, b.TokenKey = true, key
 		}
-		b.TokenMarked = true
 	}
 	if hasGrace {
 		d, err := time.ParseDuration(grace)
@@ -174,22 +217,52 @@ func (r *run) haltExternal(h runstore.Halt) bool {
 }
 
 // refuseStrayToken ends a budget-on run that has no backend in its job
-// environment but was launched with a budget token: the job was not
-// re-applied after the shared budget was turned on, and the run would
+// environment and no marker, but whose token object the job can read: a
+// launcher minted for it and the job cannot use the token, so the run would
 // otherwise go on outside the shared caps without a word. One bucket read,
-// only for budget-on runs without a backend; with no token object (every
-// install that never turned the shared budget on) it changes nothing.
+// only for budget-on runs without a backend (startBudgetBackend has already
+// refused a marked one, before any read).
+//
+// The read's answers, and what each means here:
+//
+//   - the object (200): a stray token, refused;
+//   - 404: no object, the run goes on;
+//   - 403 (blobx.ErrForbidden): the run goes on. The job account's grant on
+//     tokens/ is a conditioned objectViewer with no storage.objects.list, so
+//     GCS answers its read of a missing object with 403
+//     (docs/design/bucket-iam.md §2.3, live check 7): that is what every run
+//     of an installation without Firebase meets, since no launcher minted
+//     for it. A job with no tokens/ grant gets the same 403 for a present
+//     object, and no answer of the bucket tells the two apart, so the
+//     bucket is not the evidence of a mint here: the marker is
+//     (budget-token-channel.md §4 principle 3). Every launcher that writes
+//     under tokens/ seals the object and hands the key to the execution as
+//     the marker, so a minted run reaches this function only with no
+//     object to find;
+//   - anything else (a 401, a 400, a 5xx after the client's retries, a
+//     driver's fs.ErrPermission, an oversized object): a check that cannot
+//     be made, refused.
 func (r *run) refuseStrayToken(ctx context.Context) error {
 	slug, runID := r.d.Store.Slug(), r.d.Store.RunID()
 	if r.d.Bucket == nil || budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
 		return nil
 	}
-	_, err := token.TakeObject(ctx, r.d.Bucket, slug, runID) // also deletes it
-	if errors.Is(err, token.ErrNoToken) {
+	// Presence, not a take: the object is the launcher's evidence that it
+	// minted, and this run has no backend to use it with. The run's grant on
+	// tokens/ is read-only, so the object stays for the lifecycle rule.
+	present, err := token.ObjectPresent(ctx, r.d.Bucket, slug, runID)
+	if errors.Is(err, blobx.ErrForbidden) {
+		// A missing object's answer to a caller without list permission:
+		// see the doc comment. Logged, so an operator can see the check met
+		// it; no object name and nothing of the error's text.
+		r.d.Log.Info("budget: the token check was answered 403, which is how GCS answers this job for a missing object; no marker, so no token was minted for this run")
 		return nil
 	}
-	if err != nil && !errors.Is(err, token.ErrTokenMismatch) {
+	if err != nil {
 		return fmt.Errorf("checking for a budget token in the runs bucket: %s", r.redact(err.Error()))
+	}
+	if !present {
+		return nil
 	}
 	return fmt.Errorf("the run was launched with a budget token but this job has no budget backend (%s is not set in its environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
 }
@@ -222,7 +295,7 @@ func strayTokenNoBackend() error {
 }
 
 // startBudgetBackend takes the run's Firebase identity and joins the shared
-// budget (plan T6): it reads and deletes the token object, exchanges it,
+// budget (plan T6): it reads and unseals the token object (never deleting it), exchanges it,
 // reads the caps and the kill switches, halts the run if it may not begin,
 // creates the registry entry and starts the heartbeat and the kill watch.
 // A halt here has outcome none and exit 0: nothing was locked or pushed.
@@ -248,12 +321,15 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	if !r.spend.On() {
 		return nil
 	}
-	// The run's identity, taken out of the runs bucket exactly once and shared
-	// with the project policy's read (projectpolicy.go): a second take would
-	// find nothing, because TakeObject deletes the object as it reads it
-	// (finding 2). Its refusals are this function's own, shipped ones: a job
-	// whose backend is damaged, or whose budget is on with no token in the
-	// bucket, stops here (B1).
+	// The run's identity, taken out of the runs bucket once and shared with
+	// the project policy's read (projectpolicy.go): one take, so the policy
+	// read and the session are one identity. The take removes nothing (D16:
+	// the job's grant on tokens/ is read-only, and the object stays until the
+	// lifecycle rule or the launcher removes it), so what makes it
+	// consume-once is the seal — the launcher delivers the key to the one
+	// execution it starts — and never a missing object. Its refusals are this
+	// function's own, shipped ones: a job whose backend is damaged, or whose
+	// budget is on with no token in the bucket, stops here (B1).
 	if _, err := r.budgetClient(ctx); err != nil {
 		return err
 	}
