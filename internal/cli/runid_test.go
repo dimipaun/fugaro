@@ -16,18 +16,25 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
-// recentRunID is runID with *testing.T's helper reporting: runID, in
-// watch_queued_test.go, is the one mint, and it reads lsNow, the clock the
-// listings read. A test whose listing is filtered by recency must mint its
-// run IDs through one of them (or runIDAt, the same in whole days) rather
-// than hard-code a date: a fixed 2026 date passes only until the window
-// slides past it, and then fails on every commit by the calendar, not by a
-// change. That is this repository's time bomb: TestLsNamedRunIsPendingNotError
-// ran a 2026-10-12 run and ls dropped it on 2026-10-19.
-// TestNoFixedRunIDsInRecencyTests guards the rule.
+// mintRunID is the one mint of run IDs in this package's tests: d before now,
+// unique via suffix. now is the clock of the window the id has to land inside,
+// so a test that pins that clock mints and lists against the same time.
+func mintRunID(now func() time.Time, d time.Duration, suffix string) string {
+	return now().UTC().Add(-d).Format("20060102-150405") + "-" + suffix
+}
+
+// recentRunID is mintRunID against lsNow, the clock the listings are windowed
+// by, with *testing.T's helper reporting; runIDAt (runs_test.go) is the same
+// in whole days, and runID (watch_queued_test.go) the same against watchNow,
+// the clock watch is windowed by. A test whose listing is filtered by recency
+// must mint its run IDs through one of them rather than hard-code a date: a
+// fixed 2026 date passes only until the window slides past it, and then fails
+// on every commit by the calendar, not by a change. That is this repository's
+// time bomb: TestLsNamedRunIsPendingNotError ran a 2026-10-12 run and ls
+// dropped it on 2026-10-19. TestNoFixedRunIDsInRecencyTests guards the rule.
 func recentRunID(t *testing.T, offset time.Duration, suffix string) string {
 	t.Helper()
-	return runID(offset, suffix)
+	return mintRunID(lsNow, offset, suffix)
 }
 
 // TestLsWindowFollowsTheClock proves ls's --since window is measured from
@@ -69,15 +76,96 @@ func TestLsWindowFollowsTheClock(t *testing.T) {
 	}
 }
 
+// TestWatchWindowFollowsTheClock is TestLsWindowFollowsTheClock for watch:
+// its windows (the queued scan's queuedLookback and finishedLookback, and the
+// degraded view's degradedSince) are measured from watchNow, the seam runID
+// mints against, not from a wall clock the tests cannot move. The two 400-day
+// cases are the discriminating ones: a run 400 days from the pinned clock is
+// outside every watch window (the widest is finishedLookback, 24h), so only
+// the injected clock could have listed it.
+func TestWatchWindowFollowsTheClock(t *testing.T) {
+	defer func(old func() time.Time) { watchNow = old }(watchNow)
+	real := time.Now().UTC()
+
+	// The queued scan: a run with a claim, listed by the runs bucket's own
+	// mint-time listing.
+	queuedAt := func(t *testing.T, mintAt, listAt time.Time) (string, string) {
+		t.Helper()
+		f := newBudgetFixture(t, "")
+		seedWatch(f, "mine")
+		watchNow = func() time.Time { return mintAt }
+		id := runID(time.Minute, "feed")
+		f.writeTask(t, appSlug, id, "")
+		f.writeClaim(t, appSlug, id, mintAt.Add(-time.Minute))
+		watchNow = func() time.Time { return listAt }
+		out, _, err := execute(t, "watch", "--once", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id, out
+	}
+	// The degraded view: no budget backend, so watch reads run records with
+	// ls's own listing, windowed by degradedSince.
+	degradedAt := func(t *testing.T, mintAt, listAt time.Time) (string, string) {
+		t.Helper()
+		f := newCloudFixture(t)
+		f.run.Project, f.run.Region = "proj-1234", "us-east5"
+		watchNow = func() time.Time { return mintAt }
+		id := runID(time.Minute, "deed")
+		seedRun(t, f, id, "", "someone@example.com", false)
+		watchNow = func() time.Time { return listAt }
+		out, _, err := execute(t, "watch", "--once", "--plain")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id, out
+	}
+	for _, tc := range []struct {
+		name       string
+		mint, list time.Time
+		wantListed bool
+	}{
+		{"30 days ahead", real.Add(30 * 24 * time.Hour), real.Add(30 * 24 * time.Hour), true},
+		{"400 days ahead", real.Add(400 * 24 * time.Hour), real.Add(400 * 24 * time.Hour), true},
+		{"400 days behind", real.Add(-400 * 24 * time.Hour), real.Add(-400 * 24 * time.Hour), true},
+		// The same 400-day-old run is dropped once the clock is real: what
+		// listed it above was the injected clock, not a window wide enough
+		// to hold it by luck.
+		{"400 days behind, listed at the real clock", real.Add(-400 * 24 * time.Hour), real, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, view := range []struct {
+				name string
+				at   func(*testing.T, time.Time, time.Time) (string, string)
+			}{{"queued scan", queuedAt}, {"degraded", degradedAt}} {
+				id, out := view.at(t, tc.mint, tc.list)
+				if got := strings.Contains(out, id); got != tc.wantListed {
+					t.Fatalf("%s: run %s listed = %v, want %v at %s:\n%s",
+						view.name, id, got, tc.wantListed, tc.list.Format(time.RFC3339), out)
+				}
+			}
+		})
+	}
+}
+
 // invocation is one command a test drives, as the command line's own
 // arguments: execute(t, "run", "--pr", "7") is [run --pr 7], and the helpers
 // that wrap a command (lsJSON, executeWatch, wantRefused) bring their
-// command's own arguments with them. Reading arguments rather than source
-// lines keeps a flag named in an expected-error string from counting as a
-// flag passed, and follows an argument list split over several lines.
+// command's own arguments with them. An argument list a test builds in a
+// table and drives indirectly (execute(t, args...)) is read from the table's
+// own []string literal; elements that are not string literals (a variable's
+// run ID, say) are left out, as they are for a direct call. Reading arguments
+// rather than source lines keeps a flag named in an expected-error string
+// from counting as a flag passed, and follows an argument list split over
+// several lines.
 type invocation struct {
+	file string
 	line int
 	args []string
+	// forwarded is true for a call that passes an argument list through from
+	// its own caller (append(...), a variadic spread): the command it names
+	// is the caller's, whose flags are not in this call's literals.
+	forwarded bool
 }
 
 // drives reports whether the invocation passes every argument of want, whole.
@@ -115,11 +203,96 @@ func reviewModePR(i invocation) bool {
 	return false
 }
 
+// isStringSlice reports whether t is []string or [][]string: a test's table
+// of command lines.
+func isStringSlice(t ast.Expr) bool {
+	at, ok := t.(*ast.ArrayType)
+	if !ok {
+		return false
+	}
+	switch el := at.Elt.(type) {
+	case *ast.Ident:
+		return el.Name == "string"
+	case *ast.ArrayType:
+		return isStringSlice(el)
+	}
+	return false
+}
+
+// litInvs reads the command lines out of a string-slice composite literal:
+// [][]string{{"runs", "ls"}, {"run", "--retry", ref}} is two commands and
+// []string{"watch", "--once"} is one. Elements that are not string literals
+// (a variable holding a run ID) are left out, as they are for a direct call,
+// so a table's command still reads as its command and flags.
+func litInvs(cl *ast.CompositeLit) [][]string {
+	var out [][]string
+	var flat []string
+	for _, e := range cl.Elts {
+		switch v := e.(type) {
+		case *ast.CompositeLit:
+			out = append(out, litInvs(v)...)
+		case *ast.BasicLit:
+			if v.Kind != token.STRING {
+				continue
+			}
+			if s, err := strconv.Unquote(v.Value); err == nil {
+				flat = append(flat, s)
+			}
+		}
+	}
+	if len(flat) > 0 {
+		out = append(out, flat)
+	}
+	return out
+}
+
+// stringLits reads every string literal in an expression. A command's
+// argument list can be built inside the call — lsJSON(t, append([]string{
+// "--since", "0"}, args...)...) — and the window the caller chose is one of
+// those literals.
+func stringLits(e ast.Expr) []string {
+	var out []string
+	ast.Inspect(e, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			if s, err := strconv.Unquote(lit.Value); err == nil {
+				out = append(out, s)
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// forwards reports whether a call passes an argument list through from its own
+// caller: a variadic spread (args...) or a list built at the call (append(...,
+// args...)). Such a call's own literals are not the whole command line — the
+// flags the caller chose are missing from it — so a callee's forwarded call is
+// not read as an invocation; the test's own call of that callee is, built
+// literals and all.
+func forwards(c *ast.CallExpr) bool {
+	if c.Ellipsis.IsValid() {
+		return true
+	}
+	for _, a := range c.Args {
+		calls := false
+		ast.Inspect(a, func(n ast.Node) bool {
+			if _, ok := n.(*ast.CallExpr); ok {
+				calls = true
+			}
+			return true
+		})
+		if calls {
+			return true
+		}
+	}
+	return false
+}
+
 // drivenWindow is one recency-windowed entry point a test drives, with the
-// line of the invocation that drives it.
+// invocation that drives it.
 type drivenWindow struct {
-	w    recencyWindow
-	line int
+	w   recencyWindow
+	inv invocation
 }
 
 // recencyWindow is one entry point whose listing is filtered by a window
@@ -132,8 +305,10 @@ type drivenWindow struct {
 type recencyWindow struct {
 	// cmd names the entry point in the guard's failure message.
 	cmd string
-	// window is the production constant the window lives in, so the guard
-	// points at the code the window comes from.
+	// window is the production constant the window lives in, read here for
+	// its value rather than spelled out: rename it, or change its length,
+	// and this guard fails to build or names the window the code now has,
+	// instead of guarding a window that is no longer there.
 	window string
 	// run is the command line that drives the entry point, as whole
 	// arguments. An invocation matching it is on the window's path unless
@@ -157,42 +332,65 @@ type recencyWindow struct {
 }
 
 var recencyWindows = []recencyWindow{
-	{cmd: "runs ls (default --since)", window: "lsDefaultSince", run: []string{"runs", "ls"}, seam: regexp.MustCompile(`lsNow\s*=`), since: true},
-	{cmd: "runs ls --pr", window: "prLookback", run: []string{"runs", "ls", "--pr"}, seam: regexp.MustCompile(`lsNow\s*=`), since: true},
+	{cmd: "runs ls (default --since)", window: lsDefaultSince, run: []string{"runs", "ls"}, seam: regexp.MustCompile(`lsNow\s*=`), since: true},
+	{cmd: "runs ls --pr", window: prLookback, run: []string{"runs", "ls", "--pr"}, seam: regexp.MustCompile(`lsNow\s*=`), since: true},
 	// watch: the queued scan lists run IDs by mint time over queuedLookback
 	// and finishedLookback (watch_queued.go), and the degraded view reads
-	// degradedSince (watch.go). Both clocks are time.Now(); only the
-	// scanner's own now field is a seam (assigned a func, so a bool flag
-	// named now cannot pass for one). Only runs bucket objects have a mint
-	// time: the frame's agent rows come from the /agents registry, which no
-	// window ages.
-	{cmd: "watch", window: "queuedLookback/finishedLookback/degradedSince", run: []string{"watch"},
-		needs: runsBucketWrite, seam: regexp.MustCompile(`\.now\s*=\s*func\(`)},
-	{cmd: "run --pr", window: "followUpLookback", run: []string{"run", "--pr"}, unless: reviewModePR},
+	// degradedSince (watch.go). All three read watchNow (the scanner through
+	// its own now field, which newQueuedScanner defaults to watchNow). Only
+	// runs bucket objects have a mint time: the frame's agent rows come from
+	// the /agents registry, which no window ages.
+	{cmd: "watch", window: queuedLookback.String() + "/" + finishedLookback.String() + "/" + degradedSince.String(),
+		run: []string{"watch"}, needs: runsBucketWrite, seam: regexp.MustCompile(`watchNow\s*=|\.now\s*=\s*func\(`)},
+	{cmd: "run --pr", window: followUpLookback.String(), run: []string{"run", "--pr"}, unless: reviewModePR},
 	// run --retry reads followUpLookback only through recheckFollowUp, for a
 	// stored task that is a follow-up (run.go's reused = spec.IsFollowUp);
 	// any other retry reads its task by run ID and reads no window at all.
-	{cmd: "run --retry (of a stored follow-up)", window: "followUpLookback", run: []string{"run", "--retry"},
+	{cmd: "run --retry (of a stored follow-up)", window: followUpLookback.String(), run: []string{"run", "--retry"},
 		needs: regexp.MustCompile(`followUpSpec\(|prRecord\(|\bPR:\s*[1-9]`)},
-	{cmd: "stats runs", window: "statsDefaultSince", run: []string{"stats", "runs"}, since: true},
-	{cmd: "report", window: "reportDefaultSince", run: []string{"report"}, seam: regexp.MustCompile(`budgetNow\s*=`), since: true},
-	{cmd: "budget preview", window: "previewHistoryWindow", run: []string{"budget", "preview"}, seam: regexp.MustCompile(`budgetNow\s*=`)},
+	{cmd: "stats runs", window: statsDefaultSince, run: []string{"stats", "runs"}, since: true},
+	{cmd: "report", window: reportDefaultSince, run: []string{"report"}, seam: regexp.MustCompile(`budgetNow\s*=`), since: true},
+	{cmd: "budget preview", window: previewHistoryWindow.String(), run: []string{"budget", "preview"}, seam: regexp.MustCompile(`budgetNow\s*=`)},
 }
 
 // runsBucketWrite matches a call that puts a run in the runs bucket, whose ID
 // therefore carries a mint time a windowed listing can age out.
 var runsBucketWrite = regexp.MustCompile(`writeTask\(|writeClaim\(|writeRecord\(|seedSpec\(|seedRun\(|seedRoot\(|seedFollowUp\(|seedPRRuns\(|CreateTask\(|RequestCancel\(`)
 
+// registryKey matches a line whose run ID is an /agents registry key (the only
+// shape a fixed ID takes in seedWatch, the fixture most watch tests share).
+// The frame's agent rows come from the RTDB registry, which no window ages: a
+// key carries no mint time to fall out of a listing, so a fixed ID there is
+// not a date bomb whatever today is. Only the line is skipped; the same ID on
+// a line that seeds the runs bucket is not.
+var registryKey = regexp.MustCompile(`PathAgent\(`)
+
 // TestNoFixedRunIDsInRecencyTests is the guard for recentRunID: it parses
 // this package's own test sources and fails a test that drives any
 // recency-windowed entry point (recencyWindows: runs ls, watch, run --pr,
 // run --retry, stats runs, report, budget preview) and hard-codes a run ID.
 // Such a test is date-lucky: it passes until the clock's window passes the
-// ID's stamp. A test that pins the window's own clock is not date-lucky (its
-// window follows the pinned time), so the guard follows assignments to the
-// seam into the fixtures those tests use. A deliberate fixed ID in a test
-// that cannot pin the clock is exempted with a // runid-guard:allow comment
-// on its line.
+// ID's stamp.
+//
+// The ID may be anywhere the test reaches: its own body, or the body of a
+// fixture it calls (seedPRRuns, seedWatch, seedRun — this package's dominant
+// style), and the driver may be the test's own call or one a helper makes. A
+// command line the test builds in a table ([][]string{{"runs", "ls"}, ...}
+// driven by execute(t, args...)) is read as a command too.
+//
+// Three things are not read as a bomb:
+//   - a test that pins the window's own clock (grep seam): its window follows
+//     the pinned time, so its fixed IDs cannot age out. The pin may be in a
+//     fixture the test calls.
+//   - a fixed ID on a line that is only an /agents registry key
+//     (registryKey): a registry row's ID is a key, not a run with a mint time
+//     for a listing to age out.
+//   - what a callee's forwarded call says (forwards): a helper that passes its
+//     own argument list through does not name the window its caller chose, so
+//     the caller's own invocation of it is what this guard reads.
+//
+// A deliberate fixed ID in a test that none of those cover is exempted with a
+// // runid-guard:allow comment on its line.
 func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 	runIDLit := regexp.MustCompile(`\b\d{8}-\d{6}-[0-9a-f]{4}\b`)
 	fset := token.NewFileSet()
@@ -206,6 +404,7 @@ func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 	type decl struct {
 		fn    *ast.FuncDecl
 		file  string
+		start int // the line the function's body starts on
 		body  []string
 		invs  []invocation
 		calls []string
@@ -228,46 +427,94 @@ func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 				continue
 			}
 			start, end := fset.Position(fn.Pos()).Line, fset.Position(fn.End()).Line
-			dc := &decl{fn: fn, file: name}
+			dc := &decl{fn: fn, file: name, start: start}
 			for i := start; i <= end && i <= len(lines); i++ {
 				dc.body = append(dc.body, lines[i-1])
 			}
+			// parents says what each node sits in, so a composite literal that
+			// is a call's own argument (an append-built command line) is not
+			// read as one standing on its own.
+			parents := map[ast.Node]ast.Node{}
+			var stack []ast.Node
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				c, ok := n.(*ast.CallExpr)
-				if !ok {
+				if n == nil {
+					stack = stack[:len(stack)-1]
 					return true
 				}
-				id, ok := c.Fun.(*ast.Ident)
-				if !ok {
-					return true
+				if len(stack) > 0 {
+					parents[n] = stack[len(stack)-1]
 				}
-				dc.calls = append(dc.calls, id.Name)
-				// A test drives a command through one of these helpers: the
-				// command line is the call's string literals, with the
-				// helper's own command in front.
-				var cmd []string
-				switch id.Name {
-				case "execute", "wantRefused":
-				case "lsJSON":
-					cmd = []string{"runs", "ls"}
-				case "executeWatch":
-					cmd = []string{"runs", "ls", "--watch"}
-				default:
-					return true
-				}
-				for _, a := range c.Args {
-					if lit, ok := a.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-						if v, err := strconv.Unquote(lit.Value); err == nil {
-							cmd = append(cmd, v)
-						}
+				stack = append(stack, n)
+				return true
+			})
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch v := n.(type) {
+				case *ast.CompositeLit:
+					// A command line the function builds in a table and drives
+					// indirectly (for _, args := range [][]string{...} {
+					// execute(t, args...) }).
+					if !isStringSlice(v.Type) {
+						return true
 					}
+					if _, arg := parents[v].(*ast.CallExpr); arg {
+						return true // read below, as part of that call's arguments
+					}
+					for _, args := range litInvs(v) {
+						dc.invs = append(dc.invs, invocation{file: name, line: fset.Position(v.Pos()).Line, args: args})
+					}
+					return true
+				case *ast.CallExpr:
+					id, ok := v.Fun.(*ast.Ident)
+					if !ok {
+						return true
+					}
+					dc.calls = append(dc.calls, id.Name)
+					// A test drives a command through one of these helpers:
+					// the command line is the call's arguments' string
+					// literals, with the helper's own command in front.
+					var cmd []string
+					switch id.Name {
+					case "execute", "wantRefused":
+					case "lsJSON":
+						cmd = []string{"runs", "ls"}
+					case "executeWatch":
+						cmd = []string{"runs", "ls", "--watch"}
+					default:
+						return true
+					}
+					for _, a := range v.Args {
+						cmd = append(cmd, stringLits(a)...)
+					}
+					dc.invs = append(dc.invs, invocation{file: name, line: fset.Position(v.Pos()).Line,
+						args: cmd, forwarded: forwards(v)})
+					return true
 				}
-				dc.invs = append(dc.invs, invocation{line: fset.Position(c.Pos()).Line, args: cmd})
 				return true
 			})
 			decls = append(decls, dc)
 			byName[fn.Name.Name] = append(byName[fn.Name.Name], dc)
 		}
+	}
+
+	// reach returns a function and every function it can reach through calls,
+	// in breadth-first order. A run ID a test only holds in a helper it calls
+	// (this package's dominant style: seedPRRuns, seedWatch, seedRun) is the
+	// test's own ID, and a command a helper drives is a command the test
+	// drives, so both the scan for fixed IDs and the scan for invocations run
+	// over the reachable set, not just the test body.
+	reach := func(tested *decl) []*decl {
+		seen := map[string]bool{tested.fn.Name.Name: true}
+		out := []*decl{tested}
+		for i := 0; i < len(out); i++ {
+			for _, callee := range out[i].calls {
+				if seen[callee] {
+					continue
+				}
+				seen[callee] = true
+				out = append(out, byName[callee]...)
+			}
+		}
+		return out
 	}
 
 	// pinned says whether a function puts seam w's clock under the test's
@@ -278,22 +525,11 @@ func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 		if w.seam == nil {
 			return false
 		}
-		seen := map[string]bool{tested.fn.Name.Name: true}
-		queue := []*decl{tested}
-		for len(queue) > 0 {
-			d := queue[0]
-			queue = queue[1:]
+		for _, d := range reach(tested) {
 			for _, line := range d.body {
 				if w.seam.MatchString(line) {
 					return true
 				}
-			}
-			for _, callee := range d.calls {
-				if seen[callee] {
-					continue
-				}
-				seen[callee] = true
-				queue = append(queue, byName[callee]...)
 			}
 		}
 		return false
@@ -323,42 +559,64 @@ func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 		if !strings.HasPrefix(name, "Test") || name == "TestNoFixedRunIDsInRecencyTests" {
 			continue
 		}
+		rd := reach(d)
 		var windows []drivenWindow
+	windows:
 		for _, w := range recencyWindows {
 			if pinned(d, w) {
 				continue
 			}
 			shown := w.needs == nil
-			for _, line := range d.body {
-				if w.needs != nil && w.needs.MatchString(line) {
-					shown = true
+			if w.needs != nil {
+				for _, x := range rd {
+					for _, line := range x.body {
+						if w.needs.MatchString(line) {
+							shown = true
+						}
+					}
 				}
 			}
 			if !shown {
 				continue
 			}
-			for _, inv := range d.invs {
-				if !inv.drives(w.run...) || (w.unless != nil && w.unless(inv)) {
-					continue
+			for _, x := range rd {
+				for _, inv := range x.invs {
+					if x != d && inv.forwarded {
+						continue // its arguments came from the caller: read them there
+					}
+					if !inv.drives(w.run...) || (w.unless != nil && w.unless(inv)) {
+						continue
+					}
+					if w.since && !inv.noSince() {
+						continue
+					}
+					windows = append(windows, drivenWindow{w, inv})
+					continue windows
 				}
-				if w.since && !inv.noSince() {
-					continue
-				}
-				windows = append(windows, drivenWindow{w, inv.line})
-				break
 			}
 		}
 		if len(windows) == 0 {
 			continue
 		}
-		for i, line := range d.body {
-			id := runIDLit.FindString(line)
-			if id == "" || strings.Contains(line, "runid-guard:allow") {
-				continue
+		// held names the helper a fixed ID lives in, when it is not the
+		// test's own body: the fix belongs there, so the message points
+		// there.
+		held := func(x *decl) string {
+			if x.fn.Name.Name == name {
+				return ""
 			}
-			for _, dw := range windows {
-				t.Errorf("%s:%d: %s hard-codes run ID %s and drives %s at line %d, whose window is %s measured back from the real clock: it passes only until that window passes the ID's date; mint it with recentRunID/runIDAt, or mark the line // runid-guard:allow:\n\t%s",
-					d.file, fset.Position(d.fn.Pos()).Line+i, name, id, dw.w.cmd, dw.line, dw.w.window, strings.TrimSpace(line))
+			return " (held in " + x.fn.Name.Name + ")"
+		}
+		for _, x := range rd {
+			for i, line := range x.body {
+				id := runIDLit.FindString(line)
+				if id == "" || strings.Contains(line, "runid-guard:allow") || registryKey.MatchString(line) {
+					continue
+				}
+				for _, dw := range windows {
+					t.Errorf("%s:%d: %s hard-codes run ID %s%s and drives %s at %s:%d, whose window is %s measured back from the real clock: it passes only until that window passes the ID's date; mint it with recentRunID/runIDAt (watch tests: runID), or mark the line // runid-guard:allow:\n\t%s",
+						x.file, x.start+i, name, id, held(x), dw.w.cmd, dw.inv.file, dw.inv.line, dw.w.window, strings.TrimSpace(line))
+				}
 			}
 		}
 	}

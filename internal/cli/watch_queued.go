@@ -52,6 +52,14 @@ var queuedNextPoll = func() time.Duration {
 // shrink it.
 var queuedOnceWait = 3 * time.Second
 
+// watchNow is the clock watch's recency windows are measured back from: the
+// queued scan's (queuedLookback, finishedLookback; the scanner reads it
+// through its own now field, which newQueuedScanner defaults to this) and the
+// degraded view's (degradedSince). A var so a test can pin it, the way ls
+// tests pin lsNow; runID (watch_queued_test.go) mints against it, so a test
+// that pins it mints and lists against the same time.
+var watchNow = time.Now
+
 // queuedLookback bounds how long a run shows queued: until this long after
 // its launch claim or launch.json (by their own timestamps). A launch older
 // than runstore.ClaimTTL that never got a record stays listed as stuck
@@ -327,7 +335,7 @@ func newQueuedScanner(lc *localcfg.Config, repo string) *queuedScanner {
 			return lsSlugs(ctx, env, &lsOptions{repo: repo}, io.Discard)
 		},
 		listIDs: runstore.ListRunIDs,
-		now:     time.Now,
+		now:     watchNow,
 		readRun: scanRun,
 		workers: queuedWorkers, repoTimeout: queuedRepoTimeout, openTimeout: queuedOpenTimeout,
 	}

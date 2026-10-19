@@ -74,16 +74,16 @@ func (f *budgetFixture) writeResult(t *testing.T, slug, run, status string) {
 		`{"version":1,"run_id":"`+run+`","repo":"acme/app","status":"`+status+`","outcome":"none","started_at":"2026-10-02T09:00:00Z"}`)
 }
 
-// runID is a valid-looking run id minted d before the clock the listings
-// read (lsNow), unique via suffix. It is the one mint in this package's
-// tests: recentRunID (runid_test.go) is runID with *testing.T's helper
-// reporting, and runIDAt (runs_test.go) the same in whole days. They all
-// read lsNow so that a test pinning the clock (TestLsWindowFollowsTheClock)
-// mints and lists against the same time: minting against time.Now() instead
-// would put the id outside the window the test pinned and fail for a reason
-// the test never meant.
+// runID is a valid-looking run id minted d before the clock watch's recency
+// windows read (watchNow: the queued scan's lookbacks and the degraded view's
+// window), unique via suffix. It is the mint the watch tests use, and the
+// clock is the one watch is windowed by: minting against another clock (lsNow,
+// time.Now) would put the id outside the window a test pinning watchNow pins,
+// and fail for a reason the test never meant. recentRunID (runid_test.go) and
+// runIDAt (runs_test.go) are the same mint against lsNow, the clock the
+// listings are windowed by; all three share mintRunID.
 func runID(d time.Duration, suffix string) string {
-	return lsNow().UTC().Add(-d).Format("20060102-150405") + "-" + suffix
+	return mintRunID(watchNow, d, suffix)
 }
 
 func TestWatchShowsClaimedRunAsQueued(t *testing.T) {

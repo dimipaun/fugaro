@@ -146,8 +146,11 @@ func TestJSONOutputsCarryProject(t *testing.T) {
 		}
 		return doc.Project
 	}
-	// Both are minted inside runs ls's default --since window: a fixed date
-	// would age out of it and make the ls row assert the wrong project.
+	// Both are minted inside runs ls's default --since window, so the ls
+	// document really has a row in it. A fixed date would age out of that
+	// window and leave the ls case asserting nothing about a listed run: the
+	// project field comes from the config (runs.go), not from the row, so an
+	// empty listing still names the right project.
 	launched, finished := recentRunID(t, time.Minute, "abcd"), recentRunID(t, time.Minute, "bbbb")
 	exec := seedRun(t, f, finished, "", "", true)
 	f.run.SetState(exec, backend.StateSucceeded)

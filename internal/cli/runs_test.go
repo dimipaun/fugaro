@@ -611,9 +611,10 @@ func TestLsWarnsUnreadableStatus(t *testing.T) {
 }
 
 // runIDAt is a run ID of the day daysAgo days ago, at hhmmss, with suffix
-// hex: runID (watch_queued_test.go) in whole days. Like it, it reads lsNow,
-// the clock the listings read, so a test that pins the clock mints and lists
-// against the same time.
+// hex: recentRunID (runid_test.go) in whole days. Like it, it reads lsNow,
+// the clock the listings are windowed by (runID, in watch_queued_test.go, is
+// the same mint against watchNow, the clock watch is windowed by), so a test
+// that pins that clock mints and lists against the same time.
 func runIDAt(daysAgo int, hhmmss, hex string) string {
 	return lsNow().UTC().AddDate(0, 0, -daysAgo).Format("20060102") + "-" + hhmmss + "-" + hex
 }

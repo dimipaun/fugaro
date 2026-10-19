@@ -49,8 +49,9 @@ type lsOptions struct {
 var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
 
 // lsDefaultSince is runs ls's default --since. It is a constant so the test
-// guard (internal/cli: runid_test.go) can name the window it guards rather
-// than spell "7d" again.
+// guard (internal/cli: runid_test.go) reads the window it guards instead of
+// spelling "7d" again: change this and the guard's message names the new
+// window, rename it and the guard stops building.
 const lsDefaultSince = "7d"
 
 // lsNow is runs ls's clock: --since's window (the default 7d) is measured
