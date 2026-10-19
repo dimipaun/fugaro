@@ -610,9 +610,12 @@ func TestLsWarnsUnreadableStatus(t *testing.T) {
 	}
 }
 
-// runIDAt is a run ID of the day d days ago, at hhmmss, with suffix hex.
+// runIDAt is a run ID of the day daysAgo days ago, at hhmmss, with suffix
+// hex: runID (watch_queued_test.go) in whole days. Like it, it reads lsNow,
+// the clock the listings read, so a test that pins the clock mints and lists
+// against the same time.
 func runIDAt(daysAgo int, hhmmss, hex string) string {
-	return time.Now().UTC().AddDate(0, 0, -daysAgo).Format("20060102") + "-" + hhmmss + "-" + hex
+	return lsNow().UTC().AddDate(0, 0, -daysAgo).Format("20060102") + "-" + hhmmss + "-" + hex
 }
 
 // seedSpec stores spec as its run's task.json and, when launched, starts

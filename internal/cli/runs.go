@@ -48,6 +48,11 @@ type lsOptions struct {
 // bucket still holds is listed.
 var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
 
+// lsDefaultSince is runs ls's default --since. It is a constant so the test
+// guard (internal/cli: runid_test.go) can name the window it guards rather
+// than spell "7d" again.
+const lsDefaultSince = "7d"
+
 // lsNow is runs ls's clock: --since's window (the default 7d) is measured
 // back from it, so which runs a listing shows depends on the day it runs.
 // Tests replace it to pin that window instead of minting run IDs dated
@@ -107,7 +112,7 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
-	f.StringVar(&o.since, "since", "7d", "only runs started within this long (7d, 36h, 90m; 0 for all)")
+	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long (7d, 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")

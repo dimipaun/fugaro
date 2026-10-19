@@ -74,10 +74,16 @@ func (f *budgetFixture) writeResult(t *testing.T, slug, run, status string) {
 		`{"version":1,"run_id":"`+run+`","repo":"acme/app","status":"`+status+`","outcome":"none","started_at":"2026-10-02T09:00:00Z"}`)
 }
 
-// runID is a valid-looking run id minted roughly d ago from now, unique via
-// suffix.
+// runID is a valid-looking run id minted d before the clock the listings
+// read (lsNow), unique via suffix. It is the one mint in this package's
+// tests: recentRunID (runid_test.go) is runID with *testing.T's helper
+// reporting, and runIDAt (runs_test.go) the same in whole days. They all
+// read lsNow so that a test pinning the clock (TestLsWindowFollowsTheClock)
+// mints and lists against the same time: minting against time.Now() instead
+// would put the id outside the window the test pinned and fail for a reason
+// the test never meant.
 func runID(d time.Duration, suffix string) string {
-	return time.Now().Add(-d).UTC().Format("20060102-150405") + "-" + suffix
+	return lsNow().UTC().Add(-d).Format("20060102-150405") + "-" + suffix
 }
 
 func TestWatchShowsClaimedRunAsQueued(t *testing.T) {
