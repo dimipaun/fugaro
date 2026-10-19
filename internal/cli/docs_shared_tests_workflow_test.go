@@ -75,6 +75,18 @@ const (
 	pendingWorkflowsReadmePath = "docs/pending-workflows/README.md"
 	// sharedTestsReadmeHeading opens that document's section on this workflow.
 	sharedTestsReadmeHeading = "## `shared-tests.yml`"
+	// sharedTestsStagedState and sharedTestsAppliedState are the two halves of
+	// the README's status line: the words the copy-in changes, and the whole of
+	// what the check on that line reads.
+	sharedTestsStagedState  = "staged and pending"
+	sharedTestsAppliedState = "applied, not pending"
+	// sharedTestsPendingClaim is the phrase in the README's opening line that
+	// says which file is waiting to be copied in. The line itself is prose and
+	// is not parsed; this one phrase is what the copy-in has to remove.
+	sharedTestsPendingClaim = "pending: `shared-tests.yml`"
+	// sharedTestsStagingEnforcer is the test that holds that document to the
+	// tree. The document has to name it, and this is the name.
+	sharedTestsStagingEnforcer = "TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays"
 )
 
 // sharedTestsStagingStatusRE reads the one machine-readable line in the README
@@ -455,51 +467,133 @@ func TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays(t *testing.T) {
 	readme := sharedTestsReadmeProse(t)
 	_, stagedErr := os.Stat("../../" + stagedSharedTestsWorkflowPath)
 	_, realErr := os.Stat("../../" + realSharedTestsWorkflowPath)
-	staged, real := stagedErr == nil, realErr == nil
 
-	// Neither is the one state with nothing to describe: the job is gone from
-	// both places, and saying which of the two the README should claim would be
-	// inventing a fact.
+	for _, p := range sharedTestsStagingStateProblems(readme, stagedErr == nil, realErr == nil) {
+		t.Error(p)
+	}
+}
+
+// sharedTestsStagingStateProblems returns every disagreement between the
+// README's prose and which of the two files exist, as messages rather than as
+// test failures: taking the state as arguments is what lets
+// TestSharedTestsStagingStateRulesSeeEveryState pin all four combinations
+// against fixtures. That matters here more than it usually would, because one
+// of the four -- copied in and the staged copy removed -- is a state this
+// repository is never in while an agent is working: writing
+// .github/workflows/shared-tests.yml is the owner's step, so without the
+// fixture test the applied half of this check would never be exercised at all.
+//
+// The state is keyed on the staged copy, which is what readSharedTestsWorkflowAt
+// above keys on: while it exists the staged file is the reviewed one, and the
+// README is still telling a reader to copy it.
+func sharedTestsStagingStateProblems(readme string, staged, real bool) []string {
 	if !staged && !real {
-		t.Fatalf("neither %s nor %s exists: the job is in neither place, so there is no staging state for %s to be right about",
-			stagedSharedTestsWorkflowPath, realSharedTestsWorkflowPath, pendingWorkflowsReadmePath)
+		return []string{fmt.Sprintf("neither %s nor %s exists: the job is in neither place, so there is no staging state for %s to be right about",
+			stagedSharedTestsWorkflowPath, realSharedTestsWorkflowPath, pendingWorkflowsReadmePath)}
 	}
+	var problems []string
 
-	// The state is keyed on the staged copy, which is what
-	// readSharedTestsWorkflowAt above keys on: while it exists the staged file
-	// is the reviewed one, and the README is still telling a reader to copy it.
+	// The machine-readable half: one line, and it has to say the state the tree
+	// is in.
 	statuses := sharedTestsStagingStatusRE.FindAllStringSubmatch(readme, -1)
-	if len(statuses) != 1 {
-		t.Fatalf("%s carries %d `**Status: `shared-tests.yml` is ...**` lines, want exactly one: that line is the machine-readable half of this claim, and the copy-in steps change it", pendingWorkflowsReadmePath, len(statuses))
-	}
-	said, want := statuses[0][1], "applied, not pending"
+	want := sharedTestsAppliedState
 	if staged {
-		want = "staged and pending"
+		want = sharedTestsStagedState
 	}
-	if said != want {
-		t.Errorf("%s says shared-tests.yml is %q while %s %s: the document and the directory have to agree in both directions, or a reader is told to copy a file that is already in place, or left believing a copy nobody made",
-			pendingWorkflowsReadmePath, said,
+	switch {
+	case len(statuses) == 0:
+		problems = append(problems, fmt.Sprintf("%s carries no `**Status: `shared-tests.yml` is ...**` line: that line is the machine-readable half of this claim, and the copy-in steps change it", pendingWorkflowsReadmePath))
+	case len(statuses) > 1:
+		problems = append(problems, fmt.Sprintf("%s carries %d `**Status: `shared-tests.yml` is ...**` lines, want exactly one: two of them cannot both be the state of this directory", pendingWorkflowsReadmePath, len(statuses)))
+	case statuses[0][1] != want:
+		problems = append(problems, fmt.Sprintf("%s says shared-tests.yml is %q while %s %s: the document and the directory have to agree in both directions, or a reader is told to copy a file that is already in place, or left believing a copy nobody made",
+			pendingWorkflowsReadmePath, statuses[0][1],
 			map[bool]string{true: stagedSharedTestsWorkflowPath, false: realSharedTestsWorkflowPath}[staged],
-			map[bool]string{true: "is still here", false: "is gone"}[staged])
+			map[bool]string{true: "is still here", false: "is gone"}[staged]))
 	}
 
 	// The opening line, which is prose and is checked as the one phrase the
 	// copy-in has to remove rather than as a whole sentence: it is the line
 	// that says which file is pending.
-	const openingClaim = "pending: `shared-tests.yml`"
-	if got := strings.Contains(readme, openingClaim); got != staged {
-		t.Errorf("%s %s %q, and the staged copy %s: the opening line and the directory must agree (see the copy-in steps in that document -- this is the step that used to be missing)",
+	if got := strings.Contains(readme, sharedTestsPendingClaim); got != staged {
+		problems = append(problems, fmt.Sprintf("%s %s %q, and the staged copy %s: the opening line and the directory must agree (see the copy-in steps in that document -- this is the step that used to be missing)",
 			pendingWorkflowsReadmePath,
-			map[bool]string{true: "does not carry", false: "still carries"}[got], openingClaim,
-			map[bool]string{true: "exists", false: "is gone"}[staged])
+			map[bool]string{true: "still carries", false: "does not carry"}[got], sharedTestsPendingClaim,
+			map[bool]string{true: "exists", false: "is gone"}[staged]))
 	}
 
 	// ... and the document has to name the check that holds it to the tree. A
 	// reader who has just copied the file in has no other way to find out which
 	// test tells them whether they finished.
-	const enforcer = "TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays"
-	if !strings.Contains(readme, enforcer) {
-		t.Errorf("%s never names %s: the paragraph that describes the staged/applied state has to name the check that enforces it, or the name drifts and the reader is left with prose", pendingWorkflowsReadmePath, enforcer)
+	if !strings.Contains(readme, sharedTestsStagingEnforcer) {
+		problems = append(problems, fmt.Sprintf("%s never names %s: the paragraph that describes the staged/applied state has to name the check that enforces it, or the name drifts and the reader is left with prose", pendingWorkflowsReadmePath, sharedTestsStagingEnforcer))
+	}
+	return problems
+}
+
+// TestSharedTestsStagingStateRulesSeeEveryState pins the rules above against
+// every combination of the two files and both README forms, including the two
+// this repository cannot be in: the copy-in (the real file exists, the staged
+// one is gone -- an agent may not create it) and the half-done copy-in (both
+// exist, which the read above treats as still pending, because the staged file
+// is still the reviewed one). Each case asserts the problems *and* that a
+// correct document produces none, so a rule that refused everything would fail
+// here rather than looking strict.
+func TestSharedTestsStagingStateRulesSeeEveryState(t *testing.T) {
+	const (
+		stagedLine  = "**Status: `shared-tests.yml` is staged and pending.**"
+		appliedLine = "**Status: `shared-tests.yml` is applied, not pending.**"
+		stagedOpen  = "**One file is pending: `shared-tests.yml`**"
+		appliedOpen = "**Nothing is pending.**"
+		enforcer    = sharedTestsStagingEnforcer
+	)
+	doc := func(open, status, tail string) string {
+		return open + "\n\n" + status + "\n\n" + tail + "\n"
+	}
+	for _, tc := range []struct {
+		name         string
+		staged, real bool
+		readme       string
+		want         []string // one substring per expected problem, in any order
+	}{
+		{"staged and pending, the state this branch is in", true, false,
+			doc(stagedOpen, stagedLine, enforcer), nil},
+		{"copied in and the staged copy removed", false, true,
+			doc(appliedOpen, appliedLine, enforcer), nil},
+		{"both copies present, which is still pending", true, true,
+			doc(stagedOpen, stagedLine, enforcer), nil},
+		{"staged, but the README already says applied", true, false,
+			doc(appliedOpen, appliedLine, enforcer),
+			[]string{"says shared-tests.yml is", "does not carry"}},
+		{"copied in, but the README still says staged", false, true,
+			doc(stagedOpen, stagedLine, enforcer),
+			[]string{"says shared-tests.yml is", "still carries"}},
+		// (the two above are the pair the review found missing: the same
+		// disagreement, in the two directions)
+		{"the status line gone", true, false,
+			doc(stagedOpen, "", enforcer),
+			[]string{"carries no `**Status:"}},
+		{"two status lines", true, false,
+			doc(stagedOpen, stagedLine+"\n"+appliedLine, enforcer),
+			[]string{"carries 2 `**Status:"}},
+		{"the enforcer no longer named", true, false,
+			doc(stagedOpen, stagedLine, "some other test"),
+			[]string{"never names " + enforcer}},
+		{"neither file", false, false,
+			doc(appliedOpen, appliedLine, enforcer),
+			[]string{"is in neither place"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := sharedTestsStagingStateProblems(tc.readme, tc.staged, tc.real)
+			if len(problems) != len(tc.want) {
+				t.Fatalf("problems = %q, want %d of them (%q)", problems, len(tc.want), tc.want)
+			}
+			for _, want := range tc.want {
+				if !slices.ContainsFunc(problems, func(p string) bool { return strings.Contains(p, want) }) {
+					t.Errorf("no problem names %q; got %q", want, problems)
+				}
+			}
+		})
 	}
 }
 
