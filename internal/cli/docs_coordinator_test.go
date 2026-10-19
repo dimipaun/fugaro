@@ -30,14 +30,26 @@ package cli
 //  * TestDocsCoordinatorQuestionsAreNumberedAndOptioned -- Q1..Q16, contiguous,
 //    each with at least two options and a recommendation.
 //
-// Mutations this file is written to fail on, each run and restored when it was
-// added: (1) delete the README's status sentence, its owner line or its
-// checked-against line; (2) paste a reconciliation paragraph into spec.md, or
-// delete a spec section heading; (3) add a `| **D193** | ... |` allocation row
-// to reconciliation.md, or delete either "no decision number" sentence; (4)
-// change any cited path to one that does not exist -- including a Terraform
-// module cited without its `deploy/terraform/gcp/` prefix; (5) renumber a
-// question, drop one, or leave one with a single option.
+// Mutation (verified, run and restored) -- nine, one per way these documents can
+// rot, each planted and reverted when this file was added:
+//
+//	TestDocsCoordinatorIsWritten
+//	  delete the README's status sentence -> fails, naming it.
+//	TestDocsCoordinatorSpecIsVerbatim
+//	  paste a `### Q1 — ` heading into spec.md -> fails;
+//	  delete `## 9. Long-running behaviour` -> fails.
+//	TestDocsCoordinatorTakesNoDecisionNumber
+//	  add a `| **D193** | ... |` row to reconciliation.md -> fails;
+//	  drop its "It allocates no decision number" sentence -> fails.
+//	TestDocsCoordinatorCitationsExist
+//	  rename a cited path to `internal/budget/modelX.go` -> fails, naming it.
+//	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
+//	  delete Q9 -> fails on every question after it;
+//	  leave Q12 with one option -> fails;
+//	  rename Q14's "Recommended" -> fails.
+//
+// The exception list is the one thing here a mutation cannot prove by itself,
+// so it is checked the other way: the test fails when an entry goes unused.
 
 import (
 	"os"
