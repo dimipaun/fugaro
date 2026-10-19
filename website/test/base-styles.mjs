@@ -1856,6 +1856,20 @@ export function chatSlotFailures(css, html) {
       }, and the picture is a 1459 px-wide capture of a terminal: at 375 px the column it sits in is 327 px, so a width that is not a percentage of that column is the screenshot running past the phone's edge, which is the horizontal scroll the owner's brief for this asset asks the page not to have (owner spec 2026-10-18, item 5)`,
     )
   }
+  // And no rule of the slot's own gives the picture a fixed length at all — the check above
+  // reads the declarations there are, and this one reads the ones a breakpoint could add: a
+  // `width` in pixels inside a media query overrides the percentage above at exactly the
+  // viewports that query answers, which is where the overflow would live.
+  for (const rule of sizes) {
+    const declared = declarations(rule)
+    for (const property of ['width', 'max-width', 'min-width', 'height', 'min-height']) {
+      const value = declared[property]
+      if (value === undefined || !/^\d+(\.\d+)?(px|rem|em|ch|vh|vw|pt)$/.test(value)) continue
+      out.push(
+        `\`${rule.selector}\` gives the watch screenshot a \`${property}: ${value}\`${rule.query ? ` inside ${rule.query}` : ''}, and a length in units is a box the picture does not grow out of: the capture is 1459 logical pixels wide in a column that is 327 px at 375, so the picture's own width has to come from the column (a percentage) and its height from the file's ratio (owner spec 2026-10-18, item 5)`,
+      )
+    }
+  }
   const ratios = sizes.flatMap((rule) => {
     const declared = declarations(rule)
     return ['height', 'aspect-ratio']
@@ -2077,8 +2091,16 @@ test('every chat-conversation refusal fires on the defect it names', () => {
   const fixedHeight = css.replace(/(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{width:100%;)height:auto/, '$1height:441px')
   assert.notEqual(fixedWidth, css, "this fixture fixes the watch screenshot's width in pixels, and the built stylesheet no longer sizes it with a percentage")
   assert.notEqual(fixedHeight, css, "this fixture fixes the watch screenshot's height in pixels, and the built stylesheet no longer lets it follow the file's ratio")
+  // The same defect one breakpoint down: the base rule still tracks the column, and a media
+  // query answers a phone with a fixed width instead — the shape a "just for small screens"
+  // override takes, and the one a check that read only the declarations in front of it would
+  // miss.
+  const imgSelector = /(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\])/.exec(css)?.[1]
+  assert.ok(imgSelector, "this fixture needs the rule that sizes the image in the watch slot, and the built stylesheet no longer carries one to read its selector from")
+  const phoneWidth = `${css}\n@media (max-width:40rem){${imgSelector}{width:900px}}`
   const slotCases = [
     ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
+    ['the screenshot fixed in width inside a breakpoint', phoneWidth, /a length in units is a box the picture does not grow out of/],
     ['a box drawn around the empty slot', `${css}\n.chat-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
     ['the image rule removed with the slot still empty', noImageRule, /no rule sizes the image that goes into the watch screenshot's slot/],
     ['the screenshot given a fixed width', fixedWidth, /the picture is a 1459 px-wide capture of a terminal/],
