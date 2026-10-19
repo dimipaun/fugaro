@@ -36,6 +36,12 @@
 //      taken away leaves a device with no hover to give. The query's `change` is subscribed to,
 //      and each answer binds or unbinds the hover behaviour, without a reload.
 //
+// The rules above are also one function over the script source (`menuFailures`) and one over the
+// stylesheet (`hoverScopeFailures`), which is what lets the file's refusals be kept the way the
+// other gates keep theirs: a case plants each defect in the shipped script and in the built
+// stylesheet, one at a time, and reads the sentence for that defect back. A gate whose refusals
+// have never been seen to fire is a gate nobody knows the shape of.
+//
 // **There is no browser here.** The page is the built artifact parsed by `lib/html.mjs`, wrapped
 // in the DOM calls `site.js` makes plus the browser behaviour the menu depends on — `pointerenter`
 // and `pointerleave` over a subtree, each carrying the pointer type that caused it, the `toggle`
@@ -136,9 +142,10 @@ class StubEvent {
  * screen's `false`; `setPointerHover` changes it under a page that has already loaded.
  * `matchMedia: false` is a browser old enough to have none. `wide` is the viewport the layout is
  * drawn at: at or above the 48rem breakpoint the drawer is not drawn and the panel is; below it
- * the panel is drawn only while the drawer is open.
+ * the panel is drawn only while the drawer is open. `script` is the source run in the page, which
+ * is the file the site ships unless the refusals below hand in a defect planted in it.
  */
-function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
+function stubPage(html, { hover = true, matchMedia = true, wide = true, script = SCRIPT_SOURCE } = {}) {
   const root = parse(html)
   const wrapped = new Map()
   const timers = []
@@ -445,7 +452,7 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
     }
   }
 
-  vm.runInNewContext(SCRIPT_SOURCE, { window, document, navigator: {}, CustomEvent: StubEvent })
+  vm.runInNewContext(script, { window, document, navigator: {}, CustomEvent: StubEvent })
 
   // Where each kind of pointer is: a mouse stays where it was left while a finger taps
   // somewhere else, so each type has a position of its own and a move fires only the enter and
@@ -560,42 +567,66 @@ function isPointerQuery(query) {
   return /hover:\s*hover/.test(query) && /pointer:\s*fine/.test(query)
 }
 
-// ---- 1. the query the behaviour is decided by --------------------------------------------
-
-test('the menu’s hover states are scoped to a pointer that hovers, and to nothing else', () => {
-  const css = pageCss(HOME.html)
+/**
+ * Every way a stylesheet gives the menu a hover state a touch screen would keep, as the
+ * sentences a reader of the failure gets. One function over one stylesheet, so the defect can be
+ * planted in the built CSS and each refusal seen to fire (the refusals below).
+ *
+ * Three rules, and they are the stylesheet's half of the header's first point: the menu's hover
+ * states live in exactly one `@media (hover: hover) and (pointer: fine)` block, that block is the
+ * only place any of them lives, and no width query carries one — the width-based shortcut this
+ * file exists to refuse.
+ *
+ * The block is found by comparing its query with the one this file names, whitespace aside, which
+ * is a stronger statement than asking whether the query *looks* like a pointer's: `@media
+ * (hover: hover) and (pointer: fine)` is the query, character for character, and a rule that
+ * asked the weaker question would be a rule no defect could ever reach — the equality has already
+ * answered it.
+ */
+function hoverScopeFailures(css) {
+  const out = []
   const pointer = mediaBlocks(css).filter((block) => squash(block.query) === squash(`@media ${POINTER_QUERY}{`))
-  assert.equal(
-    pointer.length,
-    1,
-    `the stylesheet carries ${pointer.length} blocks at \`@media ${POINTER_QUERY}\`: the menu's hover states are decided by the pointer's capability, and one query is where that is written`,
-  )
-
-  // Every hover state the menu has lives in that block — the trigger, the links in the list and
-  // the drawer's toggle — so no width query, and no rule outside any query at all, can give a
-  // touch screen a hover mark. This is the assertion that refuses the width-based shortcut:
-  // a rule moved into the 48rem block, or written at the top level, is a rule this file finds.
-  const all = menuHoverSelectors(css)
-  assert.ok(all.length > 0, 'the menu has no hover states at all, so there is nothing for the pointer to open')
-  const inPointer = menuHoverSelectors(pointer[0].body).map(squash)
-  for (const selector of all) {
-    assert.ok(
-      inPointer.includes(squash(selector)),
-      `${selector} is a menu hover state outside \`@media ${POINTER_QUERY}\`: on a touch screen a hover that sticks after a tap is a mark on a group the reader has not opened, and a width query is the wrong question — a tablet is wide and cannot hover`,
+  if (pointer.length !== 1) {
+    out.push(
+      `the stylesheet carries ${pointer.length} blocks at \`@media ${POINTER_QUERY}\`: the menu's hover states are decided by the pointer's capability, and one query is where that is written`,
     )
+    return out
   }
 
-  // And the query the stylesheet scopes those states to is a pointer's, not a viewport's.
-  assert.ok(isPointerQuery(pointer[0].query), `the menu's hover states are scoped to ${pointer[0].query}, which is not a question about the pointer`)
-  for (const block of mediaBlocks(css)) {
-    if (/width/.test(block.query)) {
-      assert.equal(
-        menuHoverSelectors(block.body).length,
-        0,
-        `${block.query} carries a menu hover state: the submenu opens on a pointer that hovers, never on a viewport that is wide enough`,
+  // Every hover state the menu has lives in that block — the trigger, the links in the list and
+  // the drawer's toggle — so no rule outside any query at all, and none in a width query, can give
+  // a touch screen a hover mark. A rule moved into the 48rem block, or written at the top level,
+  // is a rule this function finds.
+  const all = menuHoverSelectors(css)
+  if (all.length === 0) {
+    out.push('the menu has no hover states at all, so there is nothing for the pointer to open')
+    return out
+  }
+  const inPointer = menuHoverSelectors(pointer[0].body).map(squash)
+  for (const selector of all) {
+    if (!inPointer.includes(squash(selector))) {
+      out.push(
+        `${selector} is a menu hover state outside \`@media ${POINTER_QUERY}\`: on a touch screen a hover that sticks after a tap is a mark on a group the reader has not opened, and a width query is the wrong question — a tablet is wide and cannot hover`,
       )
     }
   }
+
+  // And no width query carries one of them: the viewport's size is the wrong question, and it is
+  // the one a stylesheet reaches for first.
+  for (const block of mediaBlocks(css)) {
+    if (/width/.test(block.query) && menuHoverSelectors(block.body).length > 0) {
+      out.push(`${block.query} carries a menu hover state: the submenu opens on a pointer that hovers, never on a viewport that is wide enough`)
+    }
+  }
+
+  return out
+}
+
+// ---- 1. the query the behaviour is decided by --------------------------------------------
+
+test('the menu’s hover states are scoped to a pointer that hovers, and to nothing else', () => {
+  const failures = hoverScopeFailures(pageCss(HOME.html))
+  assert.deepEqual(failures, [], `the menu's hover states are not the ones the pointer decides:\n  ${failures.join('\n  ')}`)
 })
 
 // ---- 2. what the pointer does ------------------------------------------------------------
@@ -928,4 +959,242 @@ test('a browser with no matchMedia to ask keeps the click, and no width is ever 
   for (const query of page.queries) {
     assert.ok(!/width/.test(query), `the script asked ${query}: screen width is not the question — a tablet is wide and cannot hover, and a phone with a mouse attached can`)
   }
+})
+
+// ---- the refusals, kept ------------------------------------------------------------------
+
+/**
+ * Every way a menu script breaks the promises this file holds it to, as the sentences a reader of
+ * the failure gets. One function over one script source, so each defect can be planted in the
+ * shipped file and the refusal seen to fire — a gate whose refusals have never been seen to fire
+ * is a gate nobody knows the shape of.
+ *
+ * The promises are the four points in the header, each in the form a page can be observed in:
+ * what opens a group and on which pointer, how long a close waits, what the control says about
+ * itself, where a stranded focus ends up, and whether the device's answer is watched or sampled
+ * once. They are the cases above said compactly, and the cases above are the detail; what this
+ * function is for is the fixtures below, which plant one defect at a time and read the sentence
+ * back.
+ */
+function menuFailures(script) {
+  const out = []
+  const pageOf = (options = {}) => stubPage(HOME.html, { script, ...options })
+  const awayFrom = (page) => page.find('main')[0]
+
+  // A device that answers the hover query no has no hover behaviour at all: the pointer's
+  // arrival opens nothing, and nothing is ever scheduled. A menu that hovered there would turn
+  // the tap that has always opened a submenu into a close.
+  {
+    const page = pageOf({ hover: false })
+    const group = page.groups[0]
+    page.moveTo(group.querySelector('summary'))
+    if (group.open) {
+      out.push(
+        'a device that answers the hover query no opened a submenu on hover: the tap that used to open it is a close there, and a menu a finger cannot open is no menu',
+      )
+    } else if (page.timers.length > 0) {
+      out.push('a device with no hovering pointer scheduled a close it can never need')
+    }
+  }
+
+  // The half of that rule the query alone cannot answer: a device can answer yes and still have a
+  // finger on it, and the tap sends a pointer of its own before its click does. An arrival taken
+  // for a hover opens the group, and the click the `<summary>` acts on closes it again.
+  {
+    const page = pageOf()
+    const group = page.groups[0]
+    page.tap(group.querySelector('summary'))
+    if (!group.open) {
+      out.push(
+        'a tap on a device that answers the hover query opened nothing: the tap’s own pointer arrival was taken for a hover, and the click that followed closed what it had opened',
+      )
+    }
+  }
+
+  // A close is scheduled a moment after the pointer leaves, and not at once: the cursor crosses
+  // the seam between the summary and the list, and clips the corner of a neighbouring group on
+  // the way. Half a second is the other end of the same rule.
+  {
+    const page = pageOf()
+    const group = page.groups[0]
+    page.moveTo(group.querySelector('summary'))
+    page.moveTo(awayFrom(page))
+    const pending = page.timers.filter((timer) => !timer.cancelled)
+    if (pending.length !== 1) {
+      out.push(`the pointer left a group with ${pending.length} closes scheduled: it owes exactly one`)
+    } else if (pending[0].ms < 100 || pending[0].ms > 500) {
+      out.push(
+        `the close is scheduled ${pending[0].ms} ms after the pointer leaves: a menu that closes at once cannot be entered — the cursor crosses the seam between the trigger and the list — and one that waits half a second hangs over the page`,
+      )
+    }
+  }
+
+  // The control says what it is, at every step, in the one attribute a reader of the DOM looks
+  // for it in — and the markup ships none, so the state can never go stale under a script that
+  // never runs.
+  {
+    const page = pageOf()
+    const group = page.groups[0]
+    const summary = group.querySelector('summary')
+    page.moveTo(summary)
+    if (summary.getAttribute('aria-expanded') !== 'true') {
+      out.push('the pointer opened a submenu and the control did not say so in aria-expanded')
+    } else {
+      page.moveTo(awayFrom(page))
+      page.runTimers()
+      if (summary.getAttribute('aria-expanded') !== 'false') out.push('the submenu closed and the control still said it was open')
+    }
+  }
+
+  // The focus a click or a tap moves opens nothing. The press moves the focus to the trigger on
+  // the way to the click, and a group opened by that focus is closed again by the click that
+  // brought it: the first tap on a group would do nothing, and a click on a closed group whose
+  // trigger did not already hold the focus would do nothing either.
+  {
+    const page = pageOf()
+    const [product, reference] = page.groups
+    const summary = product.querySelector('summary')
+    page.moveTo(summary)
+    page.click(summary) // the pointer is still resting on the trigger, so no arrival fires again
+    page.focus(reference.querySelector('summary'))
+    page.click(summary)
+    if (!product.open) {
+      out.push(
+        'a click on a closed group whose trigger did not hold the focus opened nothing: the focus the press moved opened the group, and the click that followed closed it again',
+      )
+    }
+  }
+
+  // The device's answer is watched rather than sampled once: a pointer plugged in after the page
+  // loaded brings the hover behaviour with it, without a reload.
+  {
+    const page = pageOf({ hover: false })
+    page.setPointerHover(true)
+    const group = page.groups[0]
+    page.moveTo(group.querySelector('summary'))
+    if (!group.open) {
+      out.push('the pointer that arrived after the page did got no hover: the device’s answer was sampled once at load and never asked again')
+    }
+  }
+
+  // A close this file did not ask for is answered too. Opening a group closes its siblings in the
+  // `name` set, the browser stops drawing the list the focus was standing in and drops that focus
+  // before the `toggle` the page hears about the close — so the focus has to have been remembered
+  // as it arrived, and it belongs back on the trigger.
+  {
+    const page = pageOf()
+    const [product, reference] = page.groups
+    const summary = product.querySelector('summary')
+    page.focus(summary)
+    page.focus(product.querySelector('a'))
+    page.moveTo(reference.querySelector('summary'))
+    if (page.document.activeElement !== summary) {
+      out.push('a group the browser closed under the reader’s focus left the focus where it was dropped: it belongs back on the trigger, as Escape and the pointer’s own close leave it')
+    }
+  }
+
+  return out
+}
+
+test('the menu the site ships keeps every rule, so each refusal below is the one thing it breaks', () => {
+  const failures = menuFailures(SCRIPT_SOURCE)
+  assert.deepEqual(failures, [], `the shipped script breaks the menu's own rules:\n  ${failures.join('\n  ')}`)
+})
+
+// The defects, planted in the shipped script one at a time. Each says what it is, the edit that
+// plants it, and the refusals it must bring back — the same script with nothing planted earns
+// none of them.
+const DEFECTS = [
+  {
+    what: 'a script whose pointer arrival opens the group whatever pointer arrived',
+    plant: (source) => source.replace(/(on\(group, 'pointerenter', function \(event\) \{\n)          if \(!hoveringPointer\(event\)\) return\n/, '$1'),
+    refuses: [/a tap on a device that answers the hover query opened nothing/],
+  },
+  {
+    what: 'a script that asks the device once at load and never again',
+    plant: (source) =>
+      source.replace(/\n      if \(query\.addEventListener\) query\.addEventListener\('change', decideHover\)\n      else if \(query\.addListener\) query\.addListener\(decideHover\)/, ''),
+    refuses: [/the pointer that arrived after the page did got no hover/],
+  },
+  {
+    what: 'a script whose close waits no time at all',
+    plant: (source) => source.replace('var CLOSE_AFTER_MS = 200', 'var CLOSE_AFTER_MS = 0'),
+    refuses: [/the close is scheduled 0 ms after the pointer leaves/],
+  },
+  {
+    what: 'a script that opens and closes a group without ever saying what it is',
+    plant: (source) => source.replace(/\n        if \(summary\) summary\.setAttribute\('aria-expanded', group\.open \? 'true' : 'false'\)/, ''),
+    refuses: [/the pointer opened a submenu and the control did not say so in aria-expanded/],
+  },
+  {
+    what: 'a script that opens the group on the focus a press moves',
+    plant: (source) => source.replace(/\n          if \(pointerFocus\) return/, ''),
+    refuses: [
+      /a tap on a device that answers the hover query opened nothing/,
+      /a click on a closed group whose trigger did not hold the focus opened nothing/,
+    ],
+  },
+  {
+    what: 'a script that leaves the focus where the browser dropped it',
+    plant: (source) =>
+      source.replace(/\n        if \(!group\.open && summary && focused && focused !== summary && holds\(group, focused\)\) \{\n          restored = summary\n          summary\.focus\(\)\n        \}/, ''),
+    refuses: [/a group the browser closed under the reader’s focus left the focus where it was dropped/],
+  },
+  {
+    what: 'a script that binds the hover behaviour whatever the device answers',
+    plant: (source) => source.replace('if (query && query.matches) {', 'if (query) {'),
+    refuses: [/a device that answers the hover query no opened a submenu on hover/],
+  },
+]
+
+test('every menu refusal fires on the defect it names', () => {
+  for (const defect of DEFECTS) {
+    const planted = defect.plant(SCRIPT_SOURCE)
+    assert.notEqual(planted, SCRIPT_SOURCE, `${defect.what}: the planted edit changed nothing, so this fixture proves nothing`)
+    const failures = menuFailures(planted)
+    assert.equal(
+      failures.length,
+      defect.refuses.length,
+      `${defect.what}: the gate reported ${failures.length} thing(s), want ${defect.refuses.length}:\n  ${failures.join('\n  ')}`,
+    )
+    for (const [i, pattern] of defect.refuses.entries()) {
+      assert.match(failures[i], pattern, `${defect.what}: the ${i + 1} refusal is not the one it names: ${failures[i]}`)
+    }
+  }
+})
+
+test('the stylesheet refusals fire on the defect each one names', () => {
+  const css = pageCss(HOME.html)
+  const one = (failures, what) => {
+    assert.equal(failures.length, 1, `${what} was not refused once:\n  ${failures.join('\n  ')}`)
+    return failures[0]
+  }
+
+  // The hover states moved out of the pointer's query into a width one: nothing asks about the
+  // pointer any more, and a tablet 1280 px wide is handed a hover it cannot give.
+  const atWidth = css.replace(/@media[^{]*\(\s*hover\s*:\s*hover\s*\)[^{]*\{/, '@media (min-width: 48rem) {')
+  assert.notEqual(atWidth, css, 'the planted query change changed nothing, so this fixture proves nothing')
+  assert.match(one(hoverScopeFailures(atWidth), 'a menu whose hover states live in a width query'), /carries 0 blocks at `@media \(hover: hover\) and \(pointer: fine\)`/)
+
+  // A stylesheet with the query and no hover state under it: the menu would have nothing for a
+  // pointer to open, which is the other half of the same rule.
+  assert.match(
+    one(hoverScopeFailures(`@media ${POINTER_QUERY} { .other:hover { color: red } }`), 'a stylesheet with no menu hover state'),
+    /the menu has no hover states at all/,
+  )
+
+  // The rule written at the top level, where no query guards it: on a touch screen a hover that
+  // sticks after a tap is a mark on a group the reader has not opened.
+  assert.match(
+    one(hoverScopeFailures(`${css}\n.site-nav-group details summary:hover { color: red }\n`), 'a hover state outside every query'),
+    /is a menu hover state outside `@media \(hover: hover\) and \(pointer: fine\)`/,
+  )
+
+  // And the same rule inside the width query, which is the shortcut this file exists to refuse:
+  // a tablet is wide and cannot hover, and a phone with a mouse attached can. This one earns both
+  // sentences — it is outside the pointer's query and inside a width one.
+  const narrow = hoverScopeFailures(`${css}\n@media (min-width: 48rem) { .site-nav-group details summary:hover { color: red } }\n`)
+  assert.equal(narrow.length, 2, `a hover state inside the width query was not refused twice:\n  ${narrow.join('\n  ')}`)
+  assert.match(narrow[0], /is a menu hover state outside/)
+  assert.match(narrow[1], /carries a menu hover state: the submenu opens on a pointer that hovers, never on a viewport that is wide enough/)
 })

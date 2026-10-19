@@ -107,8 +107,10 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Six checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
-with fixtures that keep its refusals running, and none of them needs the network:
+Seven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+with fixtures that keep its refusals running, and none of them needs the network. The count is
+a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
+added or removed without this sentence moving fails there:
 
 - `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
   `#anchor` to an id in its target, every external link is `https:` on `site.yaml`'s
@@ -254,7 +256,15 @@ with fixtures that keep its refusals running, and none of them needs the network
   focus would be closed again by the click that brought it), and hands a keyboard reader's focus
   back when the browser closes the group it was standing in because a sibling in the same `name`
   set opened. Each case was mutation-proved by hand: the defect was planted in the script or the
-  stylesheet, the case was watched failing, and the defect was removed.
+  stylesheet, the case was watched failing, and the defect was removed. The gate's rules are also
+  one function over one script source (`menuFailures`) and one over one stylesheet
+  (`hoverScopeFailures`), so its refusals are kept the way the other gates keep theirs: a case
+  plants each defect in the shipped script — a pointer arrival that opens whatever arrived, an
+  answer sampled once at load and never again, a close that waits no time, a control that never
+  says what it is, a focus a press moved that opens the group, a browser's close nobody answers,
+  and a device that answers the query "no" getting the behaviour anyway — and in the stylesheet,
+  and watches the named refusal come back. Each of those rules was then mutation-proved the other
+  way: removed from the function, with the refusal it names watched failing.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
