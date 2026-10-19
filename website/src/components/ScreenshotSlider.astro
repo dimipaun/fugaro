@@ -8,7 +8,10 @@
  * with `scroll-snap-type: x mandatory`, so a swipe, a trackpad, a scrollbar drag and the
  * keyboard's own arrow keys all move it and the browser lands on a whole screenshot rather
  * than halfway between two; each dot is an `<a href="#…">` pointing at its slide, so a
- * reader who would rather not scroll gets there in one press. That is the whole of the
+ * reader who would rather not scroll gets there in one press — the browser scrolling the
+ * track itself, because a fragment's target brings the scroll container it sits in along
+ * with it (a jump to a slide that is off the right-hand edge does not scroll the page past
+ * the slider). That is the whole of the
  * control, which is why the site's one script file (D183) knows nothing about it.
  *
  * **Keyboard and screen reader.** The track is focusable (`tabindex="0"`) and named, which
