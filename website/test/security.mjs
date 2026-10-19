@@ -374,7 +374,16 @@ export function securityFailures(dist = DIST) {
   const summary = marked(article, 'data-security-summary', fail)
   const reporting = marked(article, 'data-security-reporting', fail)
   const policy = marked(article, 'data-security-policy', fail)
-  if (h1s.length !== 1 || summary === null || reporting === null || policy === null) return out
+
+  // The title rule is recorded rather than returned on, and every check below still runs: a
+  // second `<h1>` used to stop this function at the line that found it, so a page carrying the
+  // one defect also switched off the region balance, both word-for-word comparisons and the
+  // policy link — the four checks that would have reported the rest of what was wrong with it
+  // (round 4 of the review). Only a missing region, which the checks below read, stops this.
+  if (h1s.length !== 1) {
+    fail(`the page carries ${h1s.length} <h1> headings and not the one title the brief gives it: the page's own heading is "Security", and a second one is another page's title inside this one (the owner's brief of 2026-10-19, W1.2)`)
+  }
+  if (h1s.length === 0 || summary === null || reporting === null || policy === null) return out
 
   const regions = [h1s[0], summary, reporting, policy]
   if (prose(text(article)) !== prose(regions.map(text).join(' '))) {
@@ -555,6 +564,28 @@ test('the gate refuses each planted defect', (t) => {
   // A sentence the page adds to itself: the region balance catches it wherever it sits.
   const extra = planted(html, /(<article\b[^>]*data-security-page[^>]*>)/, '$1\n<p>A friendly note about the model.</p>')
   assert.match(verdict(t, extra).join('\n'), /carries text outside/, 'an extra paragraph on the page is not refused')
+
+  // A second title. This is the one defect that used to switch the gate off: the title rule
+  // was a `return`, so a page carrying a second `<h1>` came back with no failure at all and the
+  // region balance, both word-for-word comparisons and the policy link never ran (round 4 of
+  // the review). The rule is recorded now and the rest of the gate still reads the page, which
+  // is what the second assertion holds: the extra heading is also text outside the three
+  // regions, and both are named in the same verdict.
+  const secondTitle = planted(html, /(<article\b[^>]*data-security-page[^>]*>)/, '$1\n<h1>Security notes</h1>')
+  const titles = verdict(t, secondTitle).join('\n')
+  assert.match(titles, /carries 2 <h1> headings/, 'a second title on the page is not refused')
+  assert.match(titles, /carries text outside/, 'the title rule stopped the gate, so the region balance below it never ran')
+
+  // And the same page with a sentence as well: the gate reports both, where before neither was
+  // reported at all.
+  const titledParagraph = planted(
+    html,
+    /(<article\b[^>]*data-security-page[^>]*>)/,
+    '$1\n<h1>Security notes</h1>\n<p>A friendly note about the model.</p>',
+  )
+  const titleAndParagraph = verdict(t, titledParagraph).join('\n')
+  assert.match(titleAndParagraph, /carries 2 <h1> headings/, 'a second title beside an added paragraph is not refused')
+  assert.match(titleAndParagraph, /carries text outside/, 'the second title hid the added paragraph, so the balance never ran')
 
   // A paragraph slipped *inside* the summary, which the balance cannot see: its text is
   // counted as the summary's either way.
