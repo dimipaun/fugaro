@@ -539,13 +539,18 @@ func TestDocsMobileChecks100To104AreTheLastSections(t *testing.T) {
 // has to be one its own steps actually pair and revoke, or the guard's fresh-device
 // rule is vacuous and the row promises bookkeeping the section does not do. Check 100
 // pairs `chk100` and revokes it in its Restore; Check 101 pairs `chk101` and its
-// revocation is step 3; **Check 104 pairs nothing and revokes nothing** — it borrows
-// Check 100's pairing, so it re-runs Check 100's guard block unchanged (`N=chk100`)
-// and a name of its own would be a pairing that never happens.
+// revocation is step 3; **Checks 103 and 104 pair nothing and revoke nothing** — they
+// borrow Check 100's pairing, so 104 re-runs Check 100's guard block unchanged
+// (`N=chk100`) and 103's own guard declares no device at all, and a name of its own in
+// either would be a pairing that never happens and a fresh-device rule that can never
+// fire. 103 is here because it is the same defect 104 had, found in the next round of
+// review: it declared `N=chk103` while its Method said the phone was Check 100's, and
+// `$N` reached nothing but the assertion on itself.
 //
 // Mutation (verified, run and restored): setting Check 104's re-run back to
 // `N=chk104` fails here, and so does deleting the sentence that says 104 pairs and
-// revokes no device; setting Check 101's re-run to `N=chk100` fails here.
+// revokes no device; setting Check 101's re-run to `N=chk100` fails here; giving
+// Check 103 an `N=chk103` device line again fails here.
 func TestDocsMobileChecksDeviceBookkeepingMatchesTheirSteps(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -584,6 +589,121 @@ func TestDocsMobileChecksDeviceBookkeepingMatchesTheirSteps(t *testing.T) {
 	}
 	if strings.Contains(row, "with this check's device name") {
 		t.Error("row 104 says it re-runs the guard block \"with this check's device name\", and Check 104 has no device of its own")
+	}
+
+	// And Check 103, which borrows the same pairing and declares no device: the
+	// defect 104 had, one round later and in the section that never had a Method
+	// sentence to contradict the declaration.
+	section = mobileFlat(docSection(t, path, doc, "## Check 103:"))
+	if strings.Contains(section, "N=chk") {
+		t.Error("Check 103 declares a device name of its own (`N=chk…`): it pairs no device and revokes none — its phone is Check 100's pairing — and no command in the section takes a device name, so the declaration reaches nothing but an assertion on itself and the fresh-device rule it suggests can never fire")
+	}
+	if !strings.Contains(section, "pairs no device and revokes none") {
+		t.Error("Check 103 does not say it pairs and revokes nothing: its phone is Check 100's pairing, borrowed, and a check whose Method does not say so is a reader's reason to pair and revoke a device that is somebody else's")
+	}
+	if !strings.Contains(section, "chk100") {
+		t.Error("Check 103 does not name `chk100`, the pairing it borrows: the phone it speaks through is Check 100's, and a check that does not name it leaves the reader to guess which device node admits it")
+	}
+}
+
+// TestDocsMobileChecksGuardBlocksNameEveryStep: a guard block that says which steps
+// re-run it is a list the reader follows, and a list one step short sends them into
+// the last step with the setup block's variables gone. Check 102's said "(1, 2, 3, 4,
+// 5)" over a section with six steps. A list may close with `Restore` in place of the
+// number of a last step that *is* the Restore — that is how Checks 100 and 103 write
+// theirs — but every other step has to be named.
+//
+// Mutation (verified, run and restored): dropping the 6 from Check 102's list fails
+// here, and so does dropping the 8 from Check 103's.
+func TestDocsMobileChecksGuardBlocksNameEveryStep(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	stepsRE := regexp.MustCompile(`(?m)^([0-9]+)\. \*\*([^*]*)`)
+	for _, num := range []string{"100", "102", "103"} {
+		section := docSection(t, path, doc, "## Check "+num+":")
+
+		var steps []string
+		for _, m := range stepsRE.FindAllStringSubmatch(section, -1) {
+			steps = append(steps, m[2])
+		}
+		if len(steps) == 0 {
+			t.Errorf("Check %s carries no numbered step this pin can read: the list would otherwise be checked against nothing", num)
+			continue
+		}
+
+		// The list lives in a bash comment, so the phrase is split across `#`
+		// lines in the raw text and the regexp steps over the marker.
+		m := mobileStepListRE.FindStringSubmatch(section)
+		if m == nil {
+			t.Errorf("Check %s's guard block does not say which steps re-run it: the block runs in later shells where its variables are gone, and the list is what tells the reader when", num)
+			continue
+		}
+		listed := map[int]bool{}
+		closesWithRestore := false
+		for _, tok := range strings.Split(m[1], ",") {
+			tok = strings.TrimSpace(tok)
+			if tok == "Restore" {
+				closesWithRestore = true
+				continue
+			}
+			n, err := strconv.Atoi(tok)
+			if err != nil {
+				t.Errorf("Check %s's re-run list carries %q, which is neither a step number nor `Restore`", num, tok)
+				continue
+			}
+			listed[n] = true
+		}
+
+		want := len(steps)
+		if closesWithRestore {
+			if !strings.HasPrefix(steps[want-1], "Restore.") {
+				t.Errorf("Check %s's re-run list closes with `Restore`, and the section's last step is %q, which is not the Restore", num, steps[want-1])
+				continue
+			}
+			want--
+		}
+		for n := 1; n <= want; n++ {
+			if !listed[n] {
+				t.Errorf("Check %s's re-run list does not name step %d: the section has %d steps, and a reader who follows the list reaches that step with the setup block's variables unset", num, n, len(steps))
+			}
+		}
+		for n := range listed {
+			if n > len(steps) {
+				t.Errorf("Check %s's re-run list names step %d, and the section has %d steps", num, n, len(steps))
+			}
+		}
+	}
+}
+
+// mobileStepListRE reads a guard block's re-run list — "at the start of every step
+// (1, 2, 3, …, Restore)" — out of the raw section. The phrase is written in a bash
+// comment and wraps, so a line marker may sit between "every" and "step".
+var mobileStepListRE = regexp.MustCompile(`at the start of every\s+(?:#\s*)?step \(([^)]*)\)`)
+
+// TestDocsMobileCheck100RowAgreesTheStopIsInThePairingStep: the row's one-line
+// account of the guard is what a reader takes away from the table, and it said the
+// re-run setup block hard-stops on "the device name this check uses is free". That
+// stopped being true when the stop moved into the pairing step, and it contradicts
+// the Method and TestDocsMobileCheck100RefusesASecondDeviceAtThePairingStep on the
+// one safety property the stop exists for.
+//
+// Mutation (verified, run and restored): putting "and the device name this check uses
+// is free" back into the row fails here.
+func TestDocsMobileCheck100RowAgreesTheStopIsInThePairingStep(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	row := mobileFlat(mobileChecklistRow(readDoc(t, path), "100"))
+	if row == "" {
+		t.Fatal("the checklist has no `| 100 |` row")
+	}
+	if !strings.Contains(row, "hard-stops unless the installation is `fugaro-dev`") {
+		t.Error("row 100 does not say the setup block hard-stops on the installation: that is the stop the block does carry, and the row is where a reader learns it")
+	}
+	if strings.Contains(row, "hard-stops unless the installation is `fugaro-dev` and the device name") {
+		t.Error("row 100 says the re-run setup block hard-stops on the device name being free, and the stop is in the pairing step: the guard block reports that state instead, because it is re-run after this check has paired its own device")
+	}
+	if !strings.Contains(row, "the one pairing step carries the stop") {
+		t.Error("row 100 does not say where the device-name stop is: the row and the Method have to agree on the one safety property the stop exists for")
 	}
 }
 
