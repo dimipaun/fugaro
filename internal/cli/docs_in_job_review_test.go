@@ -403,6 +403,34 @@ func constrainedLine(block string) string {
 	return ""
 }
 
+// constrainedNames returns the question numbers named in a question's own
+// answer — the sentence that lists what it constrains ("It constrains Q2, Q3,
+// …"). That list sits in the question's own prose and drifts on its own: it named eight of
+// the nine Q9 constrains, dropping Q7, while Q7's block, §5's list and the
+// counts all said nine. It is read here so the inline list and the questions it
+// describes cannot disagree.
+func constrainedNames(block string) []int {
+	const lead = "It constrains "
+	i := strings.Index(block, lead)
+	if i < 0 {
+		return nil
+	}
+	s := block[i+len(lead):]
+	if j := strings.IndexByte(s, '.'); j >= 0 {
+		s = s[:j]
+	}
+	ns := []int{}
+	for _, m := range regexp.MustCompile(`Q([0-9]+)`).FindAllStringSubmatch(s, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		ns = append(ns, n)
+	}
+	sort.Ints(ns)
+	return ns
+}
+
 // countWord renders a small count the way the documents spell it in prose. The
 // prose counts are asserted against the lists they describe, so the pin has to
 // compare words with a count and not one literal with another.
@@ -467,6 +495,18 @@ func TestDocsInJobReviewProseCountsMatchTheBlocks(t *testing.T) {
 	sort.Ints(named)
 	if got, want := numbers(named), numbers(q9); got != want {
 		t.Errorf("§5 lists %s as the questions Q9 changes, but %s carry a line naming Q9: the list and the questions it describes have to agree",
+			got, want)
+	}
+
+	// Q9's answer names them in place too, and a list inside a question's own
+	// prose drifts exactly as §5's did: it named eight of the nine, dropping Q7,
+	// while Q7's own block, §5's list and every count said nine. Both lists are
+	// read against the questions themselves, so neither can disagree with them.
+	inline := constrainedNames(questionBlocks(t, recon)[9])
+	if inline == nil {
+		t.Errorf("Q9's answer carries no sentence listing the questions it constrains: an answer that moves other questions has to say which, and the questions themselves are the authority")
+	} else if got, want := numbers(inline), numbers(q9); got != want {
+		t.Errorf("Q9's own answer names %s as the questions it constrains, but %s carry a line naming Q9: the inline list and the questions it describes have to agree",
 			got, want)
 	}
 
@@ -616,6 +656,63 @@ func TestDocsInJobReviewCitationsWereCorrected(t *testing.T) {
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q: this is the corrected form of one of the five citations the first revision got wrong", inJobReviewRecon, want)
+		}
+	}
+}
+
+// TestDocsInJobReviewOnlyInClaimsCarryTheirCarveOut: a sentence of the form "X
+// appears only in Y" is falsified by the sentence itself once the document is in
+// the tree — the sentence is a second place X appears. Finding #40's hmac grep
+// already carried that carve-out ("on a branch carrying this work's own pin —
+// that pin's comments"); finding #36's claim about the three tool-permission
+// flags did not, and five more claims of the same class were wrong against the
+// tree the same way: a document list presented as the whole of it (#10), a list
+// that called every document naming a symbol a plan (R6), an "only env" that is
+// not the only env in a job's environment (#20), a "no credential: field
+// anywhere" the console's own module contradicts (#12), and a "never persisted"
+// the stored transcript contradicts (#34). Each corrected form is pinned here
+// and each retracted absolute form is pinned out.
+func TestDocsInJobReviewOnlyInClaimsCarryTheirCarveOut(t *testing.T) {
+	recon := readDoc(t, inJobReviewRecon)
+	for _, want := range []string{
+		// #36: the flags, and this document's own sentences as the second place.
+		"and in this document's own sentences about them",
+		"the self-reference every grep here carries",
+		// #10: every occurrence is in a document and none in Go, and the list
+		// names all five documents rather than three.
+		"every occurrence in the tree is in a document, never in a `.go` file",
+		"and this document's own sentences about it",
+		// R6: the mentions are documents, not plans.
+		"and every mention of them is in a document rather than in Go",
+		// #20: the budget variables are the runner's own, not a value for the agent.
+		"are ones the runner reads for itself, not a value it hands the agent",
+		// #12 and #34, scoped to the record and to a field of its own.
+		"The record has **no** `credential:` field",
+		"never persisted as a field of its own",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: an \"only in\" claim has to name the second place its own sentence puts the thing, or the tree contradicts it",
+				inJobReviewRecon, want)
+		}
+	}
+	for _, absent := range []string{
+		// #36: the flags "only in voice.md D54", with this document left out of
+		// its own count.
+		"D54, where an app-built",
+		// #10: a three-document list presented as the whole of it.
+		"appears only in documents (",
+		// R6: every document that mentions them is a plan.
+		"and every document that mentions them is a plan",
+		// #20: the grace is the only env.
+		"the only env is the budget-token grace",
+		// #12: no credential field anywhere in the tree.
+		"`credential:` field anywhere",
+		// #34: the finding's text is never persisted at all.
+		"finding is never persisted;",
+	} {
+		if strings.Contains(recon, absent) {
+			t.Errorf("%s carries %q, an absolute form this work retracted: the tree contradicts it, so it must not come back",
+				inJobReviewRecon, absent)
 		}
 	}
 }
