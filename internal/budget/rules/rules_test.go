@@ -1399,20 +1399,6 @@ func TestConfirmTargetsCarryOneShape(t *testing.T) {
 // reader looks for it.
 const credsRoot = "creds"
 
-// credsProbes are the locations under /creds a reader of the plan would ask
-// about: the marks, the leases, the per-run stickiness and the round-robin
-// counter C1.9 keeps there.
-func credsProbes() []string {
-	return []string{
-		credsRoot,
-		credsRoot + "/marks",
-		credsRoot + "/marks/a1",
-		credsRoot + "/leases/r1",
-		credsRoot + "/current/r1",
-		credsRoot + "/roundrobin",
-	}
-}
-
 // TestCredsIsDeniedByAnExplicitNode: the template carries an explicit /creds
 // whose .read and .write are the booleans false, and nothing under it carries a
 // grant. The root's default deny already refuses every client (which is what
@@ -1420,8 +1406,19 @@ func credsProbes() []string {
 // the generated document, where an edit that opened /creds would have to touch
 // it.
 //
+// The denial is checked over **every** path the document generates under
+// /creds, not over a hand-kept list of the ones a reader would name. The
+// runtime half of this suite (creds_emulator_test.go) is behind the `firebase`
+// build tag and does not run in the job that runs this file, so a grant opened
+// anywhere in the family — a wildcard child such as `creds/leases/$r` carrying
+// a TOKEN read, which the fixed list would not name — has to be caught here,
+// where every `go test` sees it. TestRulesPreexistingPathsUnchanged is the
+// second half of the same guard: it refuses a `creds/…` path that appears out
+// of nowhere (isNewCredsPath).
+//
 // Hand mutation this fails on: dropping the node (the location is then absent,
-// not denied by name), or turning either attribute into an expression.
+// not denied by name), turning either attribute into an expression, or adding
+// any node under /creds with a .read or a .write that is not false.
 func TestCredsIsDeniedByAnExplicitNode(t *testing.T) {
 	paths := generatedPaths(t)
 	attrs, ok := paths[credsRoot]
@@ -1439,17 +1436,16 @@ func TestCredsIsDeniedByAnExplicitNode(t *testing.T) {
 		}
 	}
 	// Nothing under it grants anything either: a child grant would re-open the
-	// family the explicit node closes.
-	for _, p := range credsProbes() {
-		if p == credsRoot {
+	// family the explicit node closes, and the walk is over the document, so a
+	// node this file has never heard of — the ones C1.9 will add — is checked
+	// like the rest.
+	for p, a := range paths {
+		if p != credsRoot && !strings.HasPrefix(p, credsRoot+"/") {
 			continue
 		}
-		if a, ok := paths[p]; ok {
-			if v, has := a[".read"]; has && v != false {
-				t.Errorf("/%s .read = %#v, want no grant under /%s", p, v, credsRoot)
-			}
-			if v, has := a[".write"]; has && v != false {
-				t.Errorf("/%s .write = %#v, want no grant under /%s", p, v, credsRoot)
+		for _, attr := range []string{".read", ".write"} {
+			if v, has := a[attr]; has && v != false {
+				t.Errorf("/%s %s = %#v, want false: no client token may reach the cascade's state (O1)", p, attr, v)
 			}
 		}
 	}
@@ -1673,7 +1669,13 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 // entry's two new children. Anything else that appears in the document is a
 // rules change nobody asked for.
 func isNewCredsPath(p string) bool {
-	if p == credsRoot || strings.HasPrefix(p, credsRoot+"/") {
+	// The family is one node, denied whole. A path *under* it is not this
+	// task's addition but a change to what the family contains — the shape a
+	// grant hidden under /creds takes — so it is refused here rather than
+	// waved through by a prefix match (review finding M1: a wildcard child
+	// with a TOKEN read passed this test and was caught only by the emulator,
+	// which does not run in the job that runs this file).
+	if p == credsRoot {
 		return true
 	}
 	for _, pair := range byTierPairs() {
