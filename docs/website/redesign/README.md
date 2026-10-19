@@ -9,7 +9,7 @@ all of them, and it changes what they built — the hero's headline and its exam
 four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
 The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
-gates pass (268 tests, `npm run check`, measured 2026-10-19). The three documents of the
+gates pass (297 tests, `npm run check`, on Node 22.22.0, measured 2026-10-19). The three documents of the
 first line of work said the opposite, in the present tense — [`../README.md`](../README.md)
 `:3` and `:5`, [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — which is reconciliation
@@ -200,24 +200,30 @@ here goes stale the way the byte budgets did before D192.
   the markup and the rotation out of the built stylesheet at the breakpoint, at the page's
   maximum width and below the breakpoint, where the arrow has to point down the column. A
   rotation the check cannot read is refused rather than assumed.
-- **The byte budgets are re-derived in this branch (D192).** Its items change what the
-  artifact weighs — the terminal's transcript goes, the chat comes, `site.js` loses 117 bytes,
-  the flow's stylesheet changes — so all three figures move with it, from the build of
-  2026-10-19: **JavaScript per page 76,086** (three times 25,362; `public/scripts/site.js`
-  20,289 bytes, unmoved since the second round), **page weight per page 927,834** (three times
-  309,278; the docs hub 247,422 bytes) and **whole site 3,059,394** (three times 1,019,798;
-  815,838 bytes across 21 files — re-derived again in the second fix round on this branch,
-  which moved the homepage's order, the flow's treatment, the chat's launch line, the install
-  command's wrapping and the chat's own turns out of the measure's cap, and a fourth time
-  across the third fix round, whose four commits moved the site figure to 814,455, 815,116 and
-  815,212 bytes and the page figure with it, each re-derived in the commit that shipped the
-  bytes, and a fifth time by the fourth round, whose fix for the two-by-two's wrap arrow moved
-  it 626 bytes on the two pages that draw the flow). The
+- **The byte budgets are re-derived over the merged build (D192).** Every item here changes
+  what the artifact weighs — the terminal's transcript goes, the chat comes, `site.js` loses
+  117 bytes, the flow's stylesheet changes — and then `main` came back into the branch, with
+  the menu's hover-open and the six corrections that day and the next made to it, which moved
+  the same script again. So the figures below are derived once, over the build the merge
+  produces, which is the only account of them that is true of the site that ships:
+  **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
+  **page weight per page 1,001,514** (three times 333,838; the docs hub 267,070 bytes) and
+  **whole site 3,161,424** (three times 1,053,808; 843,046 bytes across 21 files). It is the
+  fifth re-derivation on this branch's side — the second fix round moved the homepage's order,
+  the flow's treatment, the chat's launch line, the install command's wrapping and the chat's
+  turns out of the measure's cap; the third's four commits moved the site figure to 814,455,
+  815,116 and 815,212 bytes and the page figure with it; and the fourth's fix for the
+  two-by-two's wrap arrow moved it 626 bytes on the two pages that draw the flow — and each was
+  re-derived in the commit that shipped the bytes. The
   figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site
   figures drifting down as pages grow (they had — page weight and whole site still named the
-  build of 2026-10-18 after four parts added bytes to it).
+  build of 2026-10-18 after four parts added bytes to it). That measurement is taken over
+  `website/dist`, the build the site's own checkout makes, and not over whatever artifact a run
+  was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs the artifact gates over
+  a copy with the console's flag flipped, and that copy is a different build — 2,051 bytes
+  larger at the site figure — rather than another copy of this one.
 - **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
   acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
   `fugaro run` transcript the homepage carried (`Terminal.astro`, D184) is removed from it —

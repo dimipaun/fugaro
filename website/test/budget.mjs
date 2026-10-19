@@ -11,20 +11,21 @@
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
 // now and optimize later"): each is three times the tight derivation below, until a later
 // optimisation pass tightens them back towards these figures. The tight derivation is the
-// build of 2026-10-19 — the 2026-10-18 build, plus the five corrections the menu's halves took
-// that day, named in the first bullet below — the one that ships the site's script (P6), its
-// menu behaviour (P3),
-// the homepage's run animation (P7), the How It Works flow (P8), the consent gate's analytics
-// bootstrap in that same script (W3.2) and the menu's hover-open on a pointer that hovers
-// (the owner's brief of 2026-10-18, item 1) — plus 25 %, which is D192's rule and the rule
-// the README's loose figures are three times:
+// build of 2026-10-19 — THE MERGED ONE, and this is one account of it rather than the two the
+// figures arrived by: `main`'s site, which ships the one script (P6's copy control, P3's
+// menu, W3.2's consent gate and analytics bootstrap in that same file, and the menu's
+// hover-open on a pointer that hovers — the owner's brief of 2026-10-18, item 1 — with the
+// corrections of that day and the next to it, named in the first bullet below), with this
+// branch's redesigned pages on top of it (the homepage's order and run animation, P4, P7 and
+// P8) — plus 25 %, which is D192's rule and the rule the README's loose figures are three
+// times:
 //
-//   - JavaScript per page: 49,870 bytes. The one script the site ships,
+//   - JavaScript per page: 49,724 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
 //     ruling of 2026-10-18 added to a withdrawal, and that ruling's brief item 1: a group's
 //     submenu opens when the pointer arrives at it, bound only where `matchMedia` reports a
 //     pointer that hovers and only for a pointer that reports itself a mouse or a pen, and
-//     re-decided whenever that answer changes), is 39,896 bytes; × 1.25, rounded up. The event
+//     re-decided whenever that answer changes), is 39,779 bytes; × 1.25, rounded up. The event
 //     that says which pointer arrived, and the query's `change` that says the device's answer has
 //     moved, re-derived all three figures here on 2026-10-19; the same day's second correction
 //     did it again — the focus a click or a tap moves is the pointer's and opens nothing (the
@@ -46,13 +47,13 @@
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: 333,772 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
-//     weighed 267,017 bytes: its HTML (the whole generated CLI reference) plus the first-party
+//   - Page weight per page: 333,838 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
+//     weighed 267,070 bytes: its HTML (the whole generated CLI reference) plus the first-party
 //     files it fetches — the script above and the logo and icons the layout links; × 1.25,
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,035,458 bytes. Every file in `dist/` on that build summed to 828,366
+//   - Whole site: 1,053,808 bytes. Every file in `dist/` on that build summed to 843,046
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up.
 //
@@ -479,15 +480,22 @@ test('the README budget lines are read strictly', () => {
 // hold the number to it, so raising a ceiling means re-deriving it from a build the artifact
 // can be measured against — not editing the headline figure.
 //
-// **And the build each number names is this one** (P8's review, and the fixes round on this
-// branch): all three, not only the script's. A derivation that names a build the artifact is
-// not is a number nobody can check against today's build — it drifts down as pages grow, and a
-// budget derived from a smaller build than the site has is a ceiling tighter than the README
-// says it is, which is a lie in the reader's favour that still leaves the × 3 meaningless. So
-// a byte that moves re-derives its figure in the commit that moves it, which is D192's own
-// rule and the plan's ("later parts that add bytes re-derive in their own commit"). The
-// refusal this replaced — a stated build more than a tenth above the real one — is a case of
-// this one, which is why the strictness only ever went up.
+// **And the build each number names is the one the site builds** (P8's review, and the fixes
+// round on this branch): all three, not only the script's. A derivation that names a build the
+// artifact is not is a number nobody can check against today's build — it drifts down as pages
+// grow, and a budget derived from a smaller build than the site has is a ceiling tighter than
+// the README says it is, which is a lie in the reader's favour that still leaves the × 3
+// meaningless. So a byte that moves re-derives its figure in the commit that moves it, which is
+// D192's own rule and the plan's ("later parts that add bytes re-derive in their own commit").
+// The refusal this replaced — a stated build more than a tenth above the real one — is a case
+// of this one, which is why the strictness only ever went up.
+//
+// The build named is `dist/` and not whatever directory this run reads its ceilings in: the
+// merge of `main` into the redesign brought a second artifact with it — `console-option.mjs`
+// builds the site with the console's flag flipped and runs the artifact gates over that copy to
+// prove the flip is safe — and that copy is a different build, 2,051 bytes larger at the site
+// figure, so a derivation held to it would be the flag's own bytes rather than the site's. The
+// case below says so where it measures (`DOCUMENTED_BUILD`).
 const DERIVATIONS = {
   js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
   page: /\*\*Page weight per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the heaviest page[\s\S]*? at ([\d,]+) bytes/,
@@ -516,17 +524,36 @@ export function derivationFailures(readme, measured) {
   return out
 }
 
-function measuredNow() {
-  const pages = builtPages(DIST).map((p) => measurePage(p.html, p.rel, DIST))
+/**
+ * The build the README's figures are a derivation OF: the site's own, `website/dist`, which is
+ * the one `npm run check` makes.
+ *
+ * It is deliberately not `DIST`. `FUGARO_GATES_DIST` is the mechanism the gates document for
+ * reading another artifact, and the one case that uses it — `console-option.mjs`'s released
+ * build — is a DIFFERENT build rather than another copy of this one: flipping
+ * `features.console_downloads` adds the console option's markup to two pages, so that copy's
+ * site figure is 2,051 bytes larger than the one the README documents. Measuring the
+ * derivation against it would take the flag's own bytes for the site's, and the site the
+ * README describes is the one this checkout builds. So the derivation is read where it is
+ * written — over `dist/` — whatever directory the ceilings above are being read in.
+ */
+const DOCUMENTED_BUILD = path.join(SITE, 'dist')
+
+function measuredNow(dist = DOCUMENTED_BUILD) {
+  const pages = builtPages(dist).map((p) => measurePage(p.html, p.rel, dist))
   return {
-    js: statSync(path.join(DIST, SCRIPT)).size,
+    js: statSync(path.join(dist, SCRIPT)).size,
     page: Math.max(...pages.map((m) => m.weight)),
-    site: filesUnder(DIST).reduce((sum, rel) => sum + statSync(path.join(DIST, rel)).size, 0),
+    site: filesUnder(dist).reduce((sum, rel) => sum + statSync(path.join(dist, rel)).size, 0),
   }
 }
 
 test("the README's budgets are D192's derivation from a build this one can be measured against", () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  assert.ok(
+    existsSync(DOCUMENTED_BUILD),
+    `the site's own build is not at ${DOCUMENTED_BUILD}, so the README's derivation cannot be measured against the build it names: \`npm run check\` builds it before the gates read it, and this case is about that build rather than about the directory this run was pointed at`,
+  )
   assert.deepEqual(derivationFailures(readme, measuredNow()), [])
 })
 

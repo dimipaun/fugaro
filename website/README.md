@@ -17,10 +17,12 @@ first page.
 
 **Node 22 LTS**, pinned in `package.json`'s `engines`: `>=22.22.0 <23`. The floor is
 Astro's own requirement rather than a preference, and the ceiling is the major line this
-site is built and checked on — the engines range is the supported toolchain. What was
-verified is narrower: `npm run check` passed on **Node 26.x** (the version the author of
-this change runs, installed with `--engine-strict=false`), and the engines floor is the one
-Astro states. The lockfile was not regenerated on Node 22 here, and no check was run on it.
+site is built and checked on — the engines range is the supported toolchain, and it is the
+line `ci.yml` installs. `npm run check` passes on **Node 22.22.0**, which is what the whole
+of the suite — the build and every `test/*.mjs` — was last run on, and it is the version this
+document's figures were measured under. An earlier revision of this paragraph recorded a run
+on Node 26.x instead, with the engines check disabled: that is not the supported toolchain,
+and nothing here is measured on it any more.
 
 The dependency tree is pinned exactly: `package.json` names `astro` at one version, and
 `package-lock.json` is **committed**, so `npm ci` installs the tree this site was checked
@@ -107,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Seven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Eight checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -130,55 +132,68 @@ added or removed without this sentence moving fails there:
   palette in force.
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
-  each is three times what the build of 2026-10-19 needs — the build that ships the site's one
-  script and its menu (P6, P3), the homepage's run animation (P7), the How It Works flow (P8),
-  W3.2's consent gate, the menu's hover-open on a pointer that hovers (the owner's brief of
-  2026-10-18, item 1), and the two corrections of 2026-10-19 to that behaviour: the event
-  decides which pointer arrived and the device's answer is watched rather than sampled once,
-  and the focus a click or a tap moves opens nothing while a close the browser makes hands the
-  reader's focus back — and a later optimisation pass tightens them.** The gate itself is not
-  loose: a page or a site over the number fails, and the test keeps a case that proves it. The
-  derivation (that build plus 25 %, D192) is in the test's header, and a task that moves the
-  bytes re-derives the numbers here, in the commit that moves them — which is why all three
-  were re-derived in the commit that taught the script the hover behaviour, again in the one
-  that taught it to read the pointer out of the event rather than out of the device's one
-  answer, again in the one that taught it to tell a pointer's focus from the keyboard's, and
-  again in the one that taught it that a close the reader asks for from outside the menu hands
-  nothing back, again in the one that taught the pointer's close to wait for the keyboard, and
-  again in the one that gave the keyboard its own binding —
-  and why the page and the site move with the script (a script every page loads is a page's
-  weight as well as its JavaScript):
-  - **JavaScript per page:** 149,610 bytes. Three times 49,870: the one script the site ships,
-    `public/scripts/site.js` (39,896 bytes), plus 25 %. What the file carries is the copy
-    control of P6 and D183; the menu's Escape/outside-click close of P3; W3.2's consent banner
-    and analytics gate, which moved out of the markup and into this one file, with the cookie
-    deletion the owner's ruling of 2026-10-18 added to a withdrawal; and, from the same
-    ruling's brief, its item 1: a group's submenu opens when the pointer arrives at it on a
-    device whose pointer hovers. That behaviour is bound only where `matchMedia` says the
-    device's pointer hovers and only for a pointer that says it is a mouse or a pen — a tap
-    sends a pointer of its own, and a finger never hovers, so a touch screen keeps the tap it
-    has always had — and the answer is watched rather than sampled once, so a pointer plugged
-    in or taken away after the page has loaded is answered too. The keyboard's focus opens a
-    group so Tab reaches the links inside a closed one; the focus a click or a tap moves opens
-    nothing, because the click that brought it is the `<summary>`'s own toggle and would close
-    what the focus had opened; and a group the browser closes because its sibling in the
-    `name` set opened hands the reader's focus back to its trigger — while a close the reader
-    asks for from outside the menu hands nothing back, because a press on the page's own text
-    moves the focus to the body without a `focusin` to hear, and the trigger of the menu just
-    dismissed is not where the reader is. A group has two readers, and the pointer is only one
-    of them: the close a pointer's departure owes is owed when nobody is left reading, so a
-    keyboard reader standing in the group holds it open and the close lands when the focus
-    goes — and a focus that arrives inside the `CLOSE_AFTER_MS` the close waits cancels it.
-    That keyboard half is bound whatever the device answers, because the keyboard is the
-    device's and not the pointer's: a phone or a tablet with a keyboard attached answers the
-    hover query no, and the menu still has a second level Tab has to be able to enter.
-    Every page loads the file
-    once, so it is the whole of a page's JavaScript, and the test keeps a case that says so
-    over the built artifact.
-  - **Page weight per page:** 1,001,316 bytes. Three times 333,772: the heaviest page, the
-    docs hub, at 267,017 bytes (its HTML — the whole generated CLI reference — plus the
+  each is three times what the build of 2026-10-19 needs, and a later optimisation pass
+  tightens them.** The gate itself is not loose: a page or a site over the number fails, and
+  the test keeps a case that proves it. The derivation (that build plus 25 %, D192) is in the
+  test's header, and a task that moves the bytes re-derives the numbers here, in the commit
+  that moves them; the gate refuses a derivation that names a build other than the one it can
+  measure, so the figures cannot drift down as pages grow.
+
+  **The build of 2026-10-19 is the merged one, and this is one account of it.** The redesign
+  branch merged `main` into it, so the artifact carries both halves at once — `main`'s site,
+  which is the one script the site ships and the behaviour it holds, and this branch's
+  redesigned pages on top of it — and neither half's own account of the figures is the whole
+  story any more. What carries those numbers is, in one list:
+
+  - `main`'s script: the copy control of P6 and D183; the menu's Escape/outside-click close
+    of P3; W3.2's consent banner and analytics gate, which moved out of the markup and into
+    this one file, with the cookie deletion the owner's ruling of 2026-10-18 added to a
+    withdrawal; and, from the same ruling's brief, its item 1 — a group's submenu opens when
+    the pointer arrives at it on a device whose pointer hovers — together with the
+    corrections of 2026-10-19 to that behaviour: the event decides which pointer arrived and
+    the device's answer is watched rather than sampled once; the focus a click or a tap moves
+    opens nothing, while a close the browser makes hands the reader's focus back; a close the
+    reader asks for from outside the menu hands nothing back; the pointer's close waits while
+    a keyboard reader stands in the group; and the keyboard's way into a group is bound
+    whatever the device answers.
+  - this branch's pages: the homepage's order (the promise and its calls to action, the chat,
+    the diagram, the install paths — changes spec item 4), the run animation (P7), the How It
+    Works flow (P8) and the long-page cuts (P4), with the changes spec's items 2 and 3 over
+    all of it.
+
+  Each half moved these figures in its own commits and re-derived them there — the script's
+  six corrections in `main`'s, the redesign's five fix rounds in this branch's — and they are
+  re-derived once more here, because the merge is where the two halves first weigh together.
+  That is the same rule every time (D192), and it is also why **the page and the site move
+  with the script**: a script every page loads is a page's weight as well as its JavaScript.
+
+  - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
+    `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
+    control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
+    to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
+    and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
+    own, and a finger never hovers, so a touch screen keeps the tap it has always had — and
+    the answer is watched rather than sampled once, so a pointer plugged in or taken away
+    after the page has loaded is answered too. The keyboard's focus opens a group so Tab
+    reaches the links inside a closed one; the focus a click or a tap moves opens nothing,
+    because the click that brought it is the `<summary>`'s own toggle and would close what the
+    focus had opened; and a group the browser closes because its sibling in the `name` set
+    opened hands the reader's focus back to its trigger — while a close the reader asks for
+    from outside the menu hands nothing back, because a press on the page's own text moves the
+    focus to the body without a `focusin` to hear, and the trigger of the menu just dismissed
+    is not where the reader is. A group has two readers, and the pointer is only one of them:
+    the close a pointer's departure owes is owed when nobody is left reading, so a keyboard
+    reader standing in the group holds it open and the close lands when the focus goes — and a
+    focus that arrives inside the `CLOSE_AFTER_MS` the close waits cancels it. That keyboard
+    half is bound whatever the device answers, because the keyboard is the device's and not
+    the pointer's: a phone or a tablet with a keyboard attached answers the hover query no,
+    and the menu still has a second level Tab has to be able to enter. Every page loads the
+    file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
+    so over the built artifact.
+  - **Page weight per page:** 1,001,514 bytes. Three times 333,838: the heaviest page, the
+    docs hub, at 267,070 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,106,374 bytes. Three times 1,035,458 (every file in `dist/`, 828,366
+  - **Whole site:** 3,161,424 bytes. Three times 1,053,808 (every file in `dist/`, 843,046
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
