@@ -3136,3 +3136,64 @@ func TestProjectPolicyPublishKeepsCloneURLs(t *testing.T) {
 		t.Errorf("policy show does not print the clone_urls entry:\n%s", shown)
 	}
 }
+
+// TestPolicyRefusalsEscapeTheNodesKeyNames: the top-level key names a refusal
+// prints come from the node, which is a hand-writable object
+// (projectpolicy.Policy.UnknownKeys is whatever the strict decode could not
+// place). A member name is legal JSON whatever it holds: a bidi override
+// (U+202E), a zero-width space (U+200B) or a line separator is not
+// unicode.IsControl, and projectpolicy's checkTopLevelNames refuses duplicates
+// and case-variants of the keys this Fugaro knows, never a name's shape —
+// so a node an operator did not write can rewrite the terminal line it is
+// printed in, which is exactly why the rest of this package prints a name of
+// that provenance through pluginwire.Printable.
+//
+// Both readers of the node are checked, because both word their own refusal:
+// refuseUnknownPolicyKeys (policy show, project show, repos ls) and
+// publishedPolicyOf (the publish, which drops the keys).
+//
+// Mutation (verified, run and restored): print the keys with
+// `strings.Join(p.UnknownKeys, ", ")` again — both halves fail, the raw bidi
+// override back in the message.
+func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
+	f := newProjectFixture(t, "")
+	// The name the node carries: a bidi override inside it and a zero-width
+	// space after the visible word, which is how a key named `future_key`
+	// prints as something else entirely.
+	const hostile = "future‮key​"
+	// The form pluginwire.Printable must produce, written out independently of
+	// it: the runes as their `\u` escape text, which is what a terminal prints
+	// without acting on.
+	const escaped = "future\\u202ekey\\u200b"
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+		hostile:       true,
+	})
+	for _, tc := range []struct {
+		what   string
+		args   []string
+		wantIn string
+	}{
+		{"policy show, which refuses the node it cannot read whole", []string{"project", "policy", "show"}, "never takes effect"},
+		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish", "--yes"}, "publishing would drop them"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			_, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("%s: %v was accepted", tc.what, tc.args)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, tc.wantIn) {
+				t.Fatalf("the refusal is not the one about the unknown key (%q): %s", tc.wantIn, msg)
+			}
+			if !strings.Contains(msg, escaped) {
+				t.Errorf("the node's key name is not escaped in the refusal: %q missing from %s", escaped, msg)
+			}
+			if strings.Contains(msg, hostile) {
+				t.Errorf("the node's key name reaches the terminal raw, so the line's reading is the node's to choose: %q in %s", hostile, msg)
+			}
+		})
+	}
+}

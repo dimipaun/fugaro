@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -379,7 +380,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		return nil, nil
 	case len(p.UnknownKeys) > 0:
 		return nil, userErr("%s lists %s, which this Fugaro does not know: publishing would drop them; upgrade Fugaro (fugaro upgrade), or fix the node by hand",
-			projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
+			projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, nil
 }
@@ -1890,6 +1891,25 @@ func allowSources(ctx context.Context, lc *localcfg.Config) (map[string]string, 
 	return allowSourcesOf(ctx, lc, false)
 }
 
+// unknownPolicyKeysText renders a policy node's unknown top-level keys for a
+// message. They are raw JSON member names of the node, which is hand-writable
+// (projectpolicy.Policy.UnknownKeys is what the strict top-level decode could
+// not place), and a key carrying a bidi override, a zero-width joiner or a
+// line/paragraph separator is a legal JSON name that unicode.IsControl does not
+// catch (checkTopLevelNames refuses duplicates and case-variants of the keys
+// this Fugaro knows, never their shape). Printed raw, such a name can rewrite
+// the line it is printed in — the terminal's reading of everything after it is
+// the file's to choose — so every name goes through pluginwire.Printable, the
+// same escaped form config.ValidateClaudeAccounts and
+// providerConventionRefusal print a name of the same provenance with.
+func unknownPolicyKeysText(keys []string) string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = pluginwire.Printable(k)
+	}
+	return strings.Join(out, ", ")
+}
+
 // refuseUnknownPolicyKeys is what every CLI reader of the published node does
 // with a key this Fugaro does not know: it refuses the node rather than acting
 // on a half-read policy, because a key nobody reads is a policy that never
@@ -1903,7 +1923,7 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 		return nil
 	}
 	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
-		projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
+		projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 }
 
 // notAdmittedNote marks a repository that has run here and that the published
