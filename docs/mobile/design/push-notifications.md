@@ -1287,13 +1287,33 @@ never run before its text is in the register.
 
 ## 9. The privacy statement, and whether the website's privacy page is where it goes
 
-**The website's privacy page is not the place, and this is verifiable rather than a
-preference.** `website/src/pages/privacy.astro` describes **the site** — Google Analytics 4,
-the consent banner, the cookies a withdrawal deletes — and it says so itself under "What this
-page does not cover": the host's request logs and **"the Fugaro program"** go to `/security/`.
-The site is a static Astro build (`website/dist`, `firebase.json`'s hosting block); **push
-notifications are not a thing the site does**, and putting an app's data flow on the site's
-privacy page would be the page claiming something that is not its subject.
+**This section used to answer "no", and that answer is withdrawn: the website's privacy page
+now carries the software's statement.** The evidence the old paragraph rested on no longer
+exists. It said `website/src/pages/privacy.astro` "describes **the site**" and that it "says so
+itself under 'What this page does not cover'", with **"the Fugaro program"** sent to
+`/security/`. Both of those sentences were true of the page as it was; neither is true of the
+page as it ships. The owner's request of 2026-10-19 rewrote it into **two named parts** —
+**"The website"**, which is what it always said (Google Analytics 4, the consent banner, the
+cookies a withdrawal deletes), and **"The software"**, which states what the CLI, the console
+and the phone app do — because the App Store and Play listings need **one** privacy policy URL
+and that URL has to cover the software as well as the site. The "What this page does not
+cover" section is **gone**, so a citation of it is a citation of nothing, and `/security/` is
+no longer where the program's statement is sent. `website/test/privacy.mjs` holds the page's
+two parts, their order and their sentences to the repository — including the phone app's two
+credentials and their storage, and the crash and usage reporting the app will carry with its
+opt-in switch (D193, the same owner's ruling) — and `website/test/consent.mjs` refuses a page
+whose two parts are not siblings, which is what keeps the two scopes readable.
+
+**What that changes here, and what it does not.** A push disclosure now has a stated home on
+the site: it would be **a subsection of "The software"**, beside the credentials and the
+reporting — and it is not there today, because push is not built (Q9). **Push notifications
+are still not a thing the site does**, and the site is still a static Astro build
+(`website/dist`, `firebase.json`'s hosting block); what moved is where the software's
+statement is written, not what the site is. This document claims
+nothing about the page beyond that: it says what the app does with a reader's data, and the
+page's software part is where such a sentence goes when there is one. The two homes below
+still stand, and the first is the one that would carry the trust-model half — the page states
+what the app sends, and `SECURITY.md` is where this installation's reach is set out.
 
 **Where a push privacy statement belongs, if the owner wants one:**
 
@@ -1312,6 +1332,12 @@ privacy page would be the page claiming something that is not its subject.
   none.
 - **An app-facing statement** in the app or on the install page, if one exists when the app
   ships (D120's store listings are owner-run and are the other natural home).
+- **"The software", the privacy page's second part** — the site-side line, and the one a store
+  reviewer would read: it is where the app's credentials, its storage and its reporting are
+  stated today, so a push subsection would sit there rather than in "The website", which is
+  about what the site does with a visitor's browser. It is a *place*, not a promise: no push
+  sentence is on the page now, and `website/test/privacy.mjs` would hold one to this design
+  the way it holds the reporting sentences to D193's.
 
 **What such a statement would have to say**, in the design's own words: the phone registers a
 push token with Google's Firebase Cloud Messaging (and, on iOS, Apple's APNs by relay);
@@ -1598,11 +1624,20 @@ project?**
   **nothing at all** about the phone, the mailbox or notifications (§9). **Stated as what it
   is: the phone's disclosure would be a new section, not an addition to an existing mailbox
   one — SECURITY.md carries no mailbox disclosure today**, and §9's grep is the evidence.
-- *(ii) the website's privacy page*: rejected — that page is about **the site**, and it says so
-  itself; push is not a site behaviour.
+- *(ii) "The software", the second part of the website's privacy page*: **accepted, and it is
+  the shipped state's line rather than a rejected one.** The rejection this bullet carried
+  ("that page is about **the site**, and it says so itself; push is not a site behaviour") was
+  written against a page that had one part and a "What this page does not cover" section. The
+  owner's request of 2026-10-19 gave the page two named parts precisely so the software's
+  statement has a URL the App Store and Play listings can point at, and the software part now
+  states the phone app's credentials, their storage and its crash and usage reporting. Push is
+  still not a site behaviour — which is why a push sentence would go in that part and never in
+  "The website", whose subject is the visitor's browser.
 - *(iii) an app-facing statement at ship time* (D120's store listings, owner-run): also
   appropriate, and not either/or with (i).
-- ***Recommendation: (i) now as a gap to close when a task is approved, (iii) at ship.***
+- ***Recommendation: (i) now as a gap to close when a task is approved, (ii) in the commit that
+  adds push (the page's software part is where the reader and the store reviewer both look), and
+  (iii) at ship.***
 
 **Q9. Is push built at all, given D121?**
 - *Not in v1, A and B (foreground polling and local notifications) only*: **recommended**, and
