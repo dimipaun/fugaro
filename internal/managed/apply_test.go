@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -118,6 +117,13 @@ func (r *applyRig) bin(t *testing.T) func(Credential) (*tf.TF, func(), error) {
 		bin.Out = io.Discard
 		return bin, cleanup, nil
 	}
+}
+
+// questions is every question the apply asked a person, in order.
+func (r *applyRig) questions() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.asked)
 }
 
 // cleanupsRun is how many credential cleanups the apply ran.
@@ -243,6 +249,12 @@ func (r *applyRig) request(t *testing.T) Request {
 		Project:    project,
 		GCPProject: gcpProject,
 		Fact:       Fact{Managed: true},
+		// The whole-project inventory, read and clean: what the command hands
+		// over when its Cloud Asset read found nothing the installation's own
+		// state does not account for (Task 4.5). The rows about the fallback
+		// set their own, and the zero value — a read that was not made at all
+		// — is its own test below.
+		Inventory: CheckedInventory(Decision{}),
 		// A person at a terminal: the session D55's rule leaves alone, so
 		// every test that is not about the rule itself reads the apply's own
 		// sequence rather than the confirmation in front of it.
@@ -887,44 +899,49 @@ func allConditions() []initflow.Conditions {
 //   - a project the read does not say is managed never loses a prompt, and its
 //     decision is CanConfirm's byte for byte;
 //   - a verdict that refused never loses one either;
+//   - an inventory that fell back never loses one, whatever else holds (D59,
+//     Task 4.5): the confirmation the fallback keeps is this one;
 //   - and the removal happens for no class but the one the gate covers, so a
 //     Typed step — money or permanent — never becomes the step that proceeds.
 //
-// A predicate that removes the refusal for any project turns this red.
+// A predicate that removes the refusal for any project, or over a fallback,
+// turns this red.
 func TestManagedRefusalIsRemovedOnlyForAManagedAdmittedPlan(t *testing.T) {
 	n, removed := 0, 0
 	for _, c := range allConditions() {
 		for _, managed := range []bool{false, true} {
 			for _, admitted := range []bool{false, true} {
-				for _, class := range []initflow.ConfirmClass{initflow.YesOrTyped, initflow.Typed} {
-					n++
-					m := initflow.Managed{Managed: managed, Admitted: admitted}
-					got := initflow.CanConfirmManaged(class, c, m)
-					base := initflow.CanConfirm(class, c)
-					removes := managed && admitted && class == initflow.YesOrTyped
-					switch {
-					case c.Agent != "" && removes:
-						removed++
-						if !got {
-							t.Errorf("conditions %+v, %+v: the managed case did not remove the refusal", c, m)
+				for _, fallback := range []bool{false, true} {
+					for _, class := range []initflow.ConfirmClass{initflow.YesOrTyped, initflow.Typed} {
+						n++
+						m := initflow.Managed{Managed: managed, Admitted: admitted, Fallback: fallback}
+						got := initflow.CanConfirmManaged(class, c, m)
+						base := initflow.CanConfirm(class, c)
+						removes := managed && admitted && class == initflow.YesOrTyped && !fallback
+						switch {
+						case c.Agent != "" && removes:
+							removed++
+							if !got {
+								t.Errorf("conditions %+v, %+v: the managed case did not remove the refusal", c, m)
+							}
+						case c.Agent != "" && got:
+							t.Errorf("conditions %+v, %+v: a coding agent's session confirmed a step it may not", c, m)
+						case got != base:
+							t.Errorf("conditions %+v, %+v, class %v: the decision is %v, want CanConfirm's %v", c, m, class, got, base)
 						}
-					case c.Agent != "" && got:
-						t.Errorf("conditions %+v, %+v: a coding agent's session confirmed a step it may not", c, m)
-					case got != base:
-						t.Errorf("conditions %+v, %+v, class %v: the decision is %v, want CanConfirm's %v", c, m, class, got, base)
-					}
-					if m.Removes(initflow.Typed) {
-						t.Errorf("%+v: a Typed step is covered by the gate's removal", m)
+						if m.Removes(initflow.Typed) {
+							t.Errorf("%+v: a Typed step is covered by the gate's removal", m)
+						}
 					}
 				}
 			}
 		}
 	}
-	if want := len(allConditions()) * 8; n != want || n == 0 {
+	if want := len(allConditions()) * 16; n != want || n == 0 {
 		t.Fatalf("the property ran %d combinations, want %d", n, want)
 	}
 	if want := len(allConditions()) * 2 / 3; removed != want {
-		t.Fatalf("the removal happened %d times, want it in the %d rows that are a coding agent's session with a managed project and an admitted plan", removed, want)
+		t.Fatalf("the removal happened %d times, want it in the %d rows that are a coding agent's session with a managed project, an admitted plan and an inventory that did not fall back", removed, want)
 	}
 }
 
@@ -1003,6 +1020,36 @@ func TestTerraformEnvRefusesTheImpersonationVariable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT") {
 		t.Errorf("refusal %v does not name the variable", err)
+	}
+}
+
+// The same assertion, reached through the environment terraform is actually
+// given. The variables providerSettings names by hand are dropped by tf.Env's
+// allowlist before this check ever sees them, so the check's live input is the
+// other half of its rule: a *_CUSTOM_ENDPOINT, which an XDG_-prefixed name
+// passes through (tf.Env passes every XDG_ variable) — that is how a provider
+// endpoint set in the operator's profile reaches terraform and sends the
+// deployer's bearer token to another host.
+//
+// Mutation: delete the providerSettingIn check in TerraformEnv (apply.go) —
+// this test fails and no other one does: the assertions beside it call
+// providerSettingIn directly, so they stay green with the caller's check gone.
+func TestTerraformEnvRefusesAProviderSettingThatPassedTheAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	_, err := TerraformEnv([]string{"PATH=/bin", "XDG_CUSTOM_ENDPOINT=https://proxy.example.invalid"}, dir, filepath.Join(dir, "cache"))
+	if err == nil {
+		t.Fatal("XDG_CUSTOM_ENDPOINT reached terraform's environment")
+	}
+	if !errors.Is(err, ErrProviderSetting) {
+		t.Errorf("the refusal %v is not the provider-setting one", err)
+	}
+	if !strings.Contains(err.Error(), "XDG_CUSTOM_ENDPOINT") {
+		t.Errorf("the refusal %v does not name the variable", err)
+	}
+	// A variable that only looks like one is not refused: the check names the
+	// suffix and the settings, not every XDG_ variable tf.Env passes through.
+	if _, err := TerraformEnv([]string{"PATH=/bin", "XDG_CACHE_HOME=" + dir}, dir, filepath.Join(dir, "cache")); err != nil {
+		t.Errorf("an XDG variable that is not a provider setting was refused: %v", err)
 	}
 }
 
@@ -1329,49 +1376,126 @@ func TestEveryManagedRefusalSiteBoundsUntrustedText(t *testing.T) {
 	}
 }
 
-// TestApplyConsultsNoInventory pins the accepted gap of the owner's ruling of
-// 2026-10-18: the whole-project inventory (Task 4.1) is built and tested but
-// the managed apply does not consult it in 0.8.5, so a resource created
-// outside Fugaro is not detected by the apply. Request carries no Inventory,
-// Assets or Decision, at any depth a field can hold one; wiring the inventory
-// in (Task 4.5, unscheduled, 0.9.0 with Task 6.1) has to change this test on
-// purpose rather than slip in or out unnoticed.
-func TestApplyConsultsNoInventory(t *testing.T) {
-	banned := map[reflect.Type]bool{
-		reflect.TypeOf(Inventory{}):           true,
-		reflect.TypeOf(Decision{}):            true,
-		reflect.TypeOf((*Assets)(nil)).Elem(): true,
+// TestApplyConsultsTheInventory is Task 4.5's wiring, and the whole of D59 in
+// one test: the whole-project inventory's answer reaches the confirmation
+// rule, and where it falls back the run keeps the confirmations it would have
+// had without the managed case.
+//
+// The three ways a run falls back, each one row: a resource the installation's
+// own state does not account for, a whole-project read that failed (the
+// fail-closed direction: an inventory that could not be read is not a clean
+// project), and no read at all — the zero InventoryCheck, which is what a
+// caller that forgot to thread the read through hands over. Under a coding
+// agent's marker all three refuse, and refuse with the inventory's own
+// sentence appended to initflow's, because the confirmation D55 removes for a
+// managed project is exactly the confirmation D59 keeps. Under a person at a
+// terminal all three are ASKED, with the warning printed first, and the plan
+// is then applied: the fallback keeps the confirmation, it does not halt the
+// run.
+func TestApplyConsultsTheInventory(t *testing.T) {
+	foreign := listed("//compute.googleapis.com/projects/"+gcpProject+"/zones/us-east5-a/instances/somebody-elses",
+		"compute.googleapis.com/Instance")
+	for _, tc := range []struct {
+		name string
+		inv  InventoryCheck
+		// want is a fragment of the inventory's own sentence that the refusal
+		// and the warning must carry.
+		want string
+	}{
+		{"a foreign resource", CheckedInventory(Decision{Fallback: true, Cause: CauseForeign, Foreign: []Asset{foreign},
+			Why: "aurora (" + gcpProject + ") holds 1 resource(s) the installation's state does not account for: " + foreign.Name + " (" + foreign.Type + "); this run falls back to confirmations, and nothing is deleted (D59)"}),
+			foreign.Name},
+		{"a read that failed", CheckedInventory(Unread(project, gcpProject, CauseAPIDisabled, "the API is not enabled")),
+			string(CauseAPIDisabled)},
+		{"no read at all", InventoryCheck{}, NotCheckedWhy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A coding agent's session: the case D55 would let through, and
+			// the case the fallback takes back.
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, bucket(planBucket))
+			var out strings.Builder
+			req := r.request(t)
+			req.Conditions = initflow.Conditions{Agent: "CLAUDECODE"}
+			req.Inventory = tc.inv
+			req.Out = &out
+			_, err := Apply(context.Background(), req)
+			if !errors.Is(err, ErrNotConfirmed) {
+				t.Fatalf("a fallback in a coding agent's session: %v, want the confirmation rule's refusal", err)
+			}
+			if !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
+				t.Errorf("the refusal is not initflow's own sentence for the marker:\n%s", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not carry the inventory's own sentence (%q):\n%s", tc.want, err)
+			}
+			bounded(t, "the refusal under a fallback", err.Error(), 4)
+			if !strings.Contains(out.String(), tc.want) {
+				t.Errorf("the warning was not printed before the refusal:\n%s", out.String())
+			}
+			if applied := r.applied(t); len(applied) != 0 {
+				t.Errorf("the refused run applied the plan: %v", applied)
+			}
+			if asked := r.questions(); len(asked) != 0 {
+				t.Errorf("a coding agent's session was asked a question: %v", asked)
+			}
+
+			// A person at a terminal: asked, warned, and then applied.
+			r2 := newApplyRig(t, plainRoot())
+			r2.planWithChanges(t, bucket(planBucket))
+			var out2 strings.Builder
+			req2 := r2.request(t)
+			req2.Inventory = tc.inv
+			req2.Out = &out2
+			res, err := Apply(context.Background(), req2)
+			if err != nil {
+				t.Fatalf("the same fallback in a person's session: %v, want the run the rule leaves alone", err)
+			}
+			if !res.Changed || len(r2.applied(t)) != 1 {
+				t.Fatalf("the person's session applied nothing: %v", r2.calls(t))
+			}
+			if asked := r2.questions(); len(asked) != 1 {
+				t.Errorf("the person was asked %d times, want the one confirmation the fallback keeps: %v", len(asked), asked)
+			}
+			if !strings.Contains(out2.String(), tc.want) {
+				t.Errorf("the person was not warned before being asked:\n%s", out2.String())
+			}
+			// And the answer is not the coding agent's sentence: D55's removal
+			// is not this run's case.
+			if strings.Contains(out2.String(), initflow.AgentProceeded("CLAUDECODE")) {
+				t.Errorf("the person's run printed the coding agent's sentence:\n%s", out2.String())
+			}
+		})
 	}
-	seen := map[reflect.Type]bool{}
-	var walk func(reflect.Type, string)
-	walk = func(ty reflect.Type, path string) {
-		if seen[ty] {
-			return
-		}
-		seen[ty] = true
-		if banned[ty] {
-			t.Errorf("managed.Request reaches %s at %s: the apply now consults the inventory — update the ruling's docs (D59, Task 4.5) with it", ty, path)
-			return
-		}
-		switch ty.Kind() {
-		case reflect.Struct:
-			for i := 0; i < ty.NumField(); i++ {
-				walk(ty.Field(i).Type, path+"."+ty.Field(i).Name)
-			}
-		case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map, reflect.Chan:
-			walk(ty.Elem(), path+"[]")
-		case reflect.Interface:
-			for i := 0; i < ty.NumMethod(); i++ {
-				walk(ty.Method(i).Type, path+"."+ty.Method(i).Name)
-			}
-		case reflect.Func:
-			for i := 0; i < ty.NumIn(); i++ {
-				walk(ty.In(i), path+"(in)")
-			}
-			for i := 0; i < ty.NumOut(); i++ {
-				walk(ty.Out(i), path+"(out)")
-			}
+}
+
+// The other direction, and the one that must not change: an inventory that was
+// read and found nothing keeps D55's answer exactly — the session proceeds
+// unattended, with no warning and no question. A wiring that fell back on every
+// run would pass the test above and fail this one.
+func TestApplyProceedsWhereTheInventoryIsClean(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	var out strings.Builder
+	req := r.request(t)
+	req.Conditions = initflow.Conditions{Agent: "CLAUDECODE"}
+	req.Inventory = CheckedInventory(Decision{})
+	req.Out = &out
+	if _, err := Apply(context.Background(), req); err != nil {
+		t.Fatalf("a clean inventory in a coding agent's session: %v, want the case D55 removes the refusal for", err)
+	}
+	if applied := r.applied(t); len(applied) != 1 {
+		t.Fatalf("the clean case applied nothing: %v", r.calls(t))
+	}
+	if !strings.Contains(out.String(), initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("the clean case did not print initflow's own sentence:\n%s", out.String())
+	}
+	for _, unwanted := range []string{NotCheckedWhy, string(CauseForeign), string(CauseNoReader), "falls back to confirmations"} {
+		if strings.Contains(out.String(), unwanted) {
+			t.Errorf("a clean inventory printed %q:\n%s", unwanted, out.String())
 		}
 	}
-	walk(reflect.TypeOf(Request{}), "Request")
+	if asked := r.questions(); len(asked) != 0 {
+		t.Errorf("the clean case asked a question: %v", asked)
+	}
 }

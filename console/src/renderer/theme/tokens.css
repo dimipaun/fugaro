@@ -1,0 +1,102 @@
+/* console/src/renderer/theme/tokens.css — the console's VOCABULARY.
+ *
+ * docs/design/console-styling.md §3.1 (the table) and §3.7-§3.9 (the roles) are the
+ * authority for every value below, and the plan's Task 6.1 is the task that writes this
+ * file. It holds the steps a rule is allowed to reach for — spacing, radii, type sizes,
+ * leading, weights, the two row heights, the focus ring's width and offset and the two
+ * motion values — and it holds NO COLOUR AT ALL. That split is the website's
+ * (website/src/styles/tokens.css: "the palette is a value set for a fixed vocabulary
+ * rather than a second copy of it"), and it is what lets the contrast test compute every
+ * pair from one small file: a colour here would be a colour that test cannot see.
+ * `console/test/unit/theme-tokens.test.ts` fails on a hex literal, a colour function or a
+ * CSS named colour in this file, by name.
+ *
+ * The very first rule of the font stack is `system-ui`, and no web font is ever fetched:
+ * `font-src 'self'` and `connect-src 'none'` are in force (src/main/protocol.ts), the
+ * console is offline by construction, and a self-hosted face would be a file this bundle
+ * ships for no reason.
+ *
+ * This file is WIRED, and Task 6.2 is the task that wired it: the bundler's stylesheet step
+ * (`tools/bundle-renderer/index.ts`) names this file and `palette.css` in
+ * `THEME_STYLESHEETS`, concatenates them into `dist/bundle/console.css`, `/console.css` is
+ * one of the entries the served root admits (`src/main/protocol.ts`), and each of the three
+ * documents links it with `<link rel="stylesheet" href="./console.css">`. So a value written
+ * here reaches the window on the next `npm run build`, and it reaches it as one served file
+ * rather than four: a task that adds a stylesheet to this directory adds it to
+ * `THEME_STYLESHEETS` in the same commit, because the step refuses both a listed file that
+ * is not there and a `.css` the list does not name. That is what Task 6.1's paragraph here
+ * used to say the opposite of, and why it was rewritten by 6.2 rather than left standing.
+ *
+ * The FILE GROUP, and which task writes each (design §3.1): `tokens.css` and
+ * `palette.css` are Task 6.1's — this file and the value set; `base.css` is Task 6.3's
+ * (the reset, the document, the chrome, the layout, focus, the responsive layers and the
+ * chrome's forced-colors block); `screens.css` is Task 6.4's (the per-screen rules).
+ * They are emitted as ONE served file, `dist/bundle/console.css`, in list order.
+ */
+
+:root {
+  /* Spacing: a 4 px base, mirroring the website's steps so a reader of one knows the
+   * other. §3.8 makes the density rules binding on the rules that read these: a table row
+   * is `--row-height` with `--space-2xs` vertical padding, a panel is separated from the
+   * next by `--space-lg`, a panel's own padding is `--space-sm`, and a screen's `h1` block
+   * has `--space-md` below it and nothing above. */
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+
+  /* Radii and the two stroke widths. `--border-width` is a control's outline and
+   * `--rule-width` a rule between rows; both are 1 px, and both are named so a later rule
+   * that wants the other one says which it means. */
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-pill: 999px;
+  --border-width: 1px;
+  --rule-width: 1px;
+
+  /* Families. `--font-mono` is for every number, id, slug, path, timestamp and log line
+   * (§3.7): their value is that they can be compared character by character, so they are
+   * set with `font-variant-numeric: tabular-nums` by the rules that use it. Prose never is. */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Type sizes, with the role §3.7 gives each: 11px a table's header or a caption, 12px
+   * the dense default (rows, labels, controls, and every number), 13px a screen's prose,
+   * 15px a panel title, 18px the screen's h1. */
+  --font-size-xs: 0.6875rem; /* 11px */
+  --font-size-sm: 0.75rem; /* 12px — the dense default */
+  --font-size-base: 0.8125rem; /* 13px */
+  --font-size-md: 0.9375rem; /* 15px */
+  --font-size-lg: 1.125rem; /* 18px */
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.45;
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* The two row heights, and the rule that keeps a third from appearing (§3.8): a SHORTER
+   * row says `--row-height-compact` (20px), a TALLER one says an explicit multiple of
+   * `--row-height` (`calc(2 * var(--row-height))` for a row carrying two lines), because
+   * no token is taller than this one. */
+  --row-height: 24px;
+  --row-height-compact: 20px;
+
+  /* Focus. The offset is what keeps the ring off the element's own border, so a focused
+   * control is visibly focused and not merely outlined. */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Motion, and how little of it there is (§3.9): one duration and one easing, for a
+   * hover/focus transition and a nav button's state change, and nothing else. The console
+   * animates no chart, no sparkline and no number — a figure that animated would be a
+   * figure whose last frame is a lie about when the value was read — and the global
+   * `prefers-reduced-motion: reduce` rule is written once, in `base.css` (Task 6.3), the
+   * way the website writes its own once, so a new rule cannot forget it. */
+  --duration-fast: 120ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}

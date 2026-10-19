@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -46,11 +47,16 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 			t.Fatalf("copying %s: %v", name, err)
 		}
 	}
-	// Releases from 0.4.0 need docs/releases/vX.Y.Z.md on main; give the
-	// versions these tests release a Highlights file by default.
+	// Releases from 0.4.0 need docs/releases/vX.Y.Z.md on main and an entry in
+	// website/data/release-summaries.yaml; give the versions these tests release
+	// both by default.
 	for _, v := range []string{"1.0.0", "1.0.10"} {
 		writeHighlights(t, seed, v, "- A user-facing change.\n")
 	}
+	writeSummaries(t, seed, map[string]string{
+		"1.0.0":  "A user-facing change.",
+		"1.0.10": "A user-facing change.",
+	})
 	testutil.Git(t, seed, "add", "-A")
 	testutil.Git(t, seed, "commit", "--quiet", "-m", "seed")
 	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
@@ -90,6 +96,35 @@ func newGHState(t *testing.T, r *releaseRepo, checks map[string]string) *ghState
 		env = append(env, "FAKE_GH_CHECK_"+strings.ToUpper(name)+"="+concl)
 	}
 	return &ghState{dir: dir, env: env}
+}
+
+// writeSummaries writes website/data/release-summaries.yaml with one entry per
+// version, in the shape the file documents (`  vX.Y.Z: the sentence` under
+// `summaries:`, website/data/release-summaries.yaml). A version whose sentence
+// is blank writes the tag with nothing after the colon, which is the shape
+// release.sh refuses.
+func writeSummaries(t *testing.T, dir string, entries map[string]string) {
+	t.Helper()
+	path := filepath.Join(dir, "website", "data", "release-summaries.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		"version: 1",
+		"summaries:",
+	}
+	// Sorted, so a case's fixture file is the same on every run.
+	versions := make([]string, 0, len(entries))
+	for v := range entries {
+		versions = append(versions, v)
+	}
+	sort.Strings(versions)
+	for _, v := range versions {
+		lines = append(lines, "  v"+v+": "+entries[v])
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (g *ghState) write(t *testing.T, name, content string) {
@@ -1418,6 +1453,13 @@ func TestHighlightsRequiredFrom040(t *testing.T) {
 				testutil.Git(t, r.local, "commit", "--quiet", "-m", "highlights")
 				testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
 			}
+			// The summaries entry this test is not about (TestSummaries...)
+			// goes in, so a case that expects the run to pass does not stop on
+			// the later precondition instead.
+			writeSummaries(t, r.local, map[string]string{c.version: "Something a user sees."})
+			testutil.Git(t, r.local, "add", "-A")
+			testutil.Git(t, r.local, "commit", "--quiet", "-m", "summary")
+			testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
 			res := runRelease(t, r, g, "", c.version, "--dry-run")
 			if c.want == "" {
 				res.requireSuccess(t)
@@ -1451,6 +1493,85 @@ func TestHighlightsMustBeCommitted(t *testing.T) {
 		writeHighlights(t, r.local, "0.4.0", "- x\n")
 		testutil.Git(t, r.local, "add", "-A")
 		testutil.Git(t, r.local, "commit", "--quiet", "-m", "highlights")
+		res := runRelease(t, r, g, "", "0.4.0", "--dry-run")
+		res.requireFailureContaining(t, "is not origin/main")
+	})
+}
+
+// TestSummariesRequiredFrom040 checks the precondition the changelog page put
+// in the release path: the site's build reads one end-user summary per release
+// from website/data/release-summaries.yaml and stops, naming the file, when a
+// release file has no entry there (website/README.md, website/src/content.ts).
+// So a release whose entry is not on main must be refused before the branch and
+// the pull request — a release that reaches the tag without it publishes a site
+// that cannot build.
+func TestSummariesRequiredFrom040(t *testing.T) {
+	cases := []struct {
+		name    string
+		version string
+		entries map[string]string // nil leaves the file out entirely
+		want    string            // "" means the dry run must succeed
+	}{
+		{"missing file for 0.4.0", "0.4.0", nil, "website/data/release-summaries.yaml"},
+		{"missing entry for 1.2.3", "1.2.3", map[string]string{"1.2.2": "An older release."}, "carries no entry for v1.2.3"},
+		{"blank entry for 0.4.0", "0.4.0", map[string]string{"0.4.0": ""}, "carries no entry for v0.4.0"},
+		{"spaces-only entry for 0.10.0 (numeric compare)", "0.10.0", map[string]string{"0.10.0": "   "}, "carries no entry for v0.10.0"},
+		{"only a longer tag's entry counts as another version", "1.2.3", map[string]string{"1.2.30": "A different release."}, "carries no entry for v1.2.3"},
+		{"present for 0.4.0", "0.4.0", map[string]string{"0.4.0": "Something a user sees."}, ""},
+		{"not needed for 0.3.2", "0.3.2", nil, ""},
+		{"not needed for 0.0.1", "0.0.1", nil, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			g := newGHState(t, r, greenChecks())
+			// The version's Highlights go in first, so a failure below is the
+			// summaries precondition's and not the earlier one's.
+			writeHighlights(t, r.local, c.version, "- Something a user sees.\n")
+			if c.entries != nil {
+				writeSummaries(t, r.local, c.entries)
+			}
+			testutil.Git(t, r.local, "add", "-A")
+			testutil.Git(t, r.local, "commit", "--quiet", "-m", "release notes")
+			testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+
+			res := runRelease(t, r, g, "", c.version, "--dry-run")
+			if c.want == "" {
+				res.requireSuccess(t)
+				return
+			}
+			res.requireFailureContaining(t, c.want)
+			if !strings.Contains(res.out, "website/data/release-summaries.yaml") {
+				t.Errorf("the message must name the file the entry belongs in:\n%s", res.out)
+			}
+			if countLog(t, g, "pr ") != 0 {
+				t.Errorf("a missing summary entry must stop before any pull request:\n%s", res.out)
+			}
+			if out := testutil.Git(t, r.bare, "branch", "--list", "release/v"+c.version); out != "" {
+				t.Errorf("a branch was created: %s", out)
+			}
+		})
+	}
+}
+
+// TestSummariesMustBeCommitted mirrors TestHighlightsMustBeCommitted for the
+// summaries file: an entry that is not on origin/main never counts.
+func TestSummariesMustBeCommitted(t *testing.T) {
+	t.Run("untracked", func(t *testing.T) {
+		r := newReleaseRepo(t)
+		g := newGHState(t, r, greenChecks())
+		writeHighlights(t, r.local, "0.4.0", "- x\n")
+		writeSummaries(t, r.local, map[string]string{"0.4.0": "Something."})
+		res := runRelease(t, r, g, "", "0.4.0", "--dry-run")
+		res.requireFailureContaining(t, "working tree is not clean")
+	})
+	t.Run("committed but unpushed", func(t *testing.T) {
+		r := newReleaseRepo(t)
+		g := newGHState(t, r, greenChecks())
+		writeHighlights(t, r.local, "0.4.0", "- x\n")
+		writeSummaries(t, r.local, map[string]string{"0.4.0": "Something."})
+		testutil.Git(t, r.local, "add", "-A")
+		testutil.Git(t, r.local, "commit", "--quiet", "-m", "release notes")
 		res := runRelease(t, r, g, "", "0.4.0", "--dry-run")
 		res.requireFailureContaining(t, "is not origin/main")
 	})

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Regenerates internal/infra/tf/testdata/golden/*.plan.json: real
-# `terraform show -json` plans of the three roots (and of the Firebase root in
-# the same-project layout) (fresh creates), cut down to
+# `terraform show -json` plans of the three roots (the Firebase root in the
+# same-project layout, and the installation root with the account axis's
+# tfvars and with managed_deployer_scoped set) (fresh creates), cut down to
 # their resource_changes, plus repo-scope-move.plan.json, the one golden made
 # in two steps from a synthetic prior state (see below). Needs terraform, jq
 # and the google provider already in a plugin cache directory (the one fugaro
@@ -54,24 +55,25 @@ adopt_variant() {
 golden=$repo/internal/infra/tf/testdata/golden
 
 # name:root pairs. firebase-same-project is the Firebase root with the
-# installation's own project as the Firebase project (skip_apis set).
-# installation-managed is the installation root with managed_deployer_scoped
-# set: the managed deployer's scoped role and its conditioned binding, which
-# are off by default (0.8.6) and so absent from installation.plan.json, are
-# still planned and covered there.
-for pair in installation:installation installation-managed:installation repo:repo firebase:firebase firebase-same-project:firebase; do
+# installation's own project as the Firebase project (skip_apis set);
+# installation-accounts is the installation root with the account axis's
+# tfvars, so that root has a plan holding an account job (its token mount and
+# the secret grant beside it) beside the no-account one every installation
+# already deploys; installation-managed is the installation root with
+# managed_deployer_scoped set: the managed deployer's scoped role and its
+# conditioned binding, which are off by default (0.8.6) and so absent from
+# installation.plan.json, are still planned and covered there.
+for pair in installation:installation installation-accounts:installation installation-managed:installation repo:repo firebase:firebase firebase-same-project:firebase; do
   r=${pair%%:*}
   root=${pair##*:}
   (
     cd "$tmp/gcp/roots/$root"
-    if [ "$r" = firebase-same-project ]; then
-      cp "$repo/internal/infra/testdata/firebase-same-project.tfvars.json" terraform.tfvars.json
-    fi
-    if [ "$r" = installation-managed ]; then
-      jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json
-    elif [ "$r" = installation ]; then
-      cp "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" terraform.tfvars.json
-    fi
+    case "$r" in
+      firebase-same-project) cp "$repo/internal/infra/testdata/firebase-same-project.tfvars.json" terraform.tfvars.json ;;
+      installation) cp "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" terraform.tfvars.json ;;
+      installation-accounts) cp "$repo/internal/infra/testdata/installation-accounts.tfvars.json" terraform.tfvars.json ;;
+      installation-managed) jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json ;;
+    esac
     sed -i.bak '/backend "gcs" {}/d' main.tf
     "${tfenv[@]}" terraform init -backend=false >/dev/null
     "${tfenv[@]}" terraform plan -out=plan.bin >/dev/null

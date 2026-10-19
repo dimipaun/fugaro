@@ -1495,9 +1495,41 @@ func TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit(t *testing.T) {
 		// pull request this document ships in, so its artifacts are on `main`
 		// and have no merge commit to be named by while it is written.
 		"**\"merged with this change\"** means the artifact is on `main` as of **PR #592**, the pull request that carries this revision",
+		// The fourth notation, and the one P3.5 needed: its directory is in
+		// this revision's tree while its own pull request is a draft for
+		// 0.9.5, so "merged with this change" -- defined above as on `main` as
+		// of #592 -- would be false of it. Without this notation the list had
+		// no true cell to put in P3.5's row.
+		"**\"merged in this revision's tree, draft\"** means the artifact is **in the tree of the pull request that carries this revision of the document**",
+		// And the disambiguation a review asked for: "the pull request that
+		// carries this revision" is #592 two notations above, and #592's tree
+		// has no `mobile/src/voice/`, so the fourth notation has to say which
+		// revision's pull request it means rather than leaving a reader to
+		// pick the one the sentence before it named.
+		"and that is the **0.9.5 voice-screen draft, not #592**",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q; section 2 defines the notations the rest of the document is read with", path, want)
+		}
+	}
+	// And the list's row for P3.5 uses that fourth notation rather than the
+	// third: the directory is in this revision's tree, and P3.5's own pull
+	// request is a draft, so "merged with this change" -- on `main` as of #592
+	// -- is a claim about `main` that is not true of it. Both halves are
+	// pinned, so the two notations cannot collapse into one by an edit to the
+	// table alone.
+	for _, want := range []string{
+		"| P3.5 | `mobile/src/voice` | not merged | merged in this revision's tree, draft |",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; P3.5's work is in this revision's tree and its own pull request is a 0.9.5 draft, which is the fourth notation's case", path, want)
+		}
+	}
+	for _, banned := range []string{
+		"| P3.5 | `mobile/src/voice` | not merged | merged with this change |",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s carries %q again: \"merged with this change\" is defined as on `main` as of #592, and P3.5's pull request is a draft that has not merged", path, banned)
 		}
 	}
 	// Every use of the shorthand names a pull request that is still open. #592
@@ -1953,7 +1985,7 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 110 entries, numbered (1)–(110).
+// Mutation (verified, run and restored): 116 entries, numbered (1)–(116).
 // And twelve for the merged-phase-3 round: the documents said P3.4 was not
 // merged and PR #592 was still open, which the merge made false, and the list
 // of what is not merged was checked against the tree from a copy of itself
@@ -1967,9 +1999,13 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // (94) Deleting §0's P3.4 row fails it with `§0's list has no row for
 // mobile/src/audio`: a directory the list does not name is a claim nothing
 // checks, and the row set is pinned for exactly this.
-// (95) Setting P3.5's cell to "merged" fails it with `says mobile/src/voice is
-// merged, and the directory is not in the tree`: the check is two-sided, so a
-// document may not claim a directory the tree does not have either.
+// (95) Setting P3.5's cell to "not merged" fails it with `says mobile/src/voice
+// is not merged, and the directory exists`: the check is two-sided, so a
+// document may not deny a directory the tree has either. The entry used to
+// record the opposite mutation -- P3.5's cell set to "merged", failing because
+// `mobile/src/voice/` was not in the tree -- and it moved when this revision
+// put the directory there: the cell that is wrong now is the other one, and
+// setting it back to "merged with this change" is a third mutation, below.
 // (96) Putting "are not merged and have no directory in the tree" back fails
 // it on the missing baseline phrasing: the sentence that describes the baseline
 // commit says so, or "not merged" is read as a claim about this tree.
@@ -2013,9 +2049,13 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // `mobile/src/feed`: the check is not about P3.4, it is about any task the
 // tree has outgrown.
 // (107) The control, and the reason (105) and (106) are not a phrase grep:
-// writing "P3.5 (`mobile/src/voice`) is **not merged**" into the same file
-// stays GREEN, because `mobile/src/voice/` is not in the tree -- P3.5 has not
-// merged, and the sentence is true.
+// writing "P3.3 (`mobile/src/jobs/`) is **not merged**" into the same file
+// stays GREEN, because `mobile/src/jobs/` is not in the tree -- P3.3 has not
+// merged, and the sentence is true. The control was P3.5's
+// `mobile/src/voice/` until this revision put that directory in the tree, at
+// which point the same sentence became the offence rather than the control:
+// the paragraph-level check has no memory of which directory plays this part,
+// and the only one left is P3.3's.
 // (108) Putting "the five pull requests that merged after this document was
 // written" back into section 2 fails
 // TestDocsVoiceModuleReconciliationCountsMergedBranchesFromItsOwnTable: the
@@ -2032,6 +2072,44 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // own pull request is one of those two, and it has merged with this change --
 // the mutation came back GREEN before the sentence was pinned, which is why the
 // ban is there now.
+// And five for the review round that put P3.5's work in the tree: two guards on
+// the screen that the review found were not on the path the app takes, and the
+// three document claims the same tree change made false.
+// (111) Deleting `if (sent.ok) lastRefused = null;` from
+// mobile/src/voice/screen.js fails that module's
+// `the refusal a screen shows is the last one, and the message that is accepted
+// clears it`: the snapshot went on showing `offline` over a message that had
+// just left the phone, because `lastRefused` was only ever set.
+// (112) Storing the poll's presence directly instead of through `setPresence`
+// (`const adopted = setPresence(report.presence);` ->
+// `const adopted = Object.freeze({ ok: true }); presence = report.presence;`)
+// fails `the poll's presence goes through that same guard, which is the path
+// the app takes`: the module's rule that a state outside P1.4's four is refused
+// rather than stored was enforced only on the path the app does not use.
+// (113) Deleting `if (!PRESENCE_STATES.includes(value.state)) return
+// refuse(SCREEN_CODES.BAD_PRESENCE, 'state');` fails `P1.4's answer is adopted
+// through one guard, whether a caller or the poll brings it` and the poll's
+// test with it: the guard is what the two paths share, so removing it is
+// visible from both.
+// (114) Dropping the fourth notation's definition ("**\"merged in this
+// revision's tree, draft\"** means the artifact is **in the tree of the pull
+// request that carries this revision**") fails
+// TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit: section 2
+// defines the notations the document is read with, and this one is what makes
+// §0's row for P3.5 a true claim rather than a false one.
+// (115) Setting §0's P3.5 row back to "merged with this change" fails the same
+// test twice -- the row's own pin and the ban -- because "merged with this
+// change" is defined as *on `main` as of PR #592*, and P3.5's own pull request
+// is a draft for 0.9.5 that has not merged. Before the ban it failed only the
+// pin, which is why the notation is stated in both halves.
+// (116) Dropping the fourth notation's disambiguation -- the clause "and that
+// is the **0.9.5 voice-screen draft, not #592**", or the notation's own "this
+// revision of the document" -- fails
+// TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit: two notations
+// above it, "the pull request that carries this revision" is #592, whose tree
+// holds no `mobile/src/voice/`, so a reader left to pick between them reads the
+// fourth as a claim about #592 -- which is false. A review found exactly that
+// ambiguity in the wording this entry's round corrects.
 // (64) Giving a merged pull request's work the branch-only shorthand again
 // ("the reader on `main` (`ebe69147`) subscribes" -> "the reader ⊂ PR #590
 // subscribes") fails TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit:

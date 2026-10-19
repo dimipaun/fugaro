@@ -34,7 +34,8 @@
 //
 // **What a draft is not.** It is not signed and not written: both belong to
 // other modules -- the `mac` to the protocol (P6.3), the signing and the write
-// to the client (P3.6, merged, and not wired to this pipeline yet) -- and P1.3's
+// to the client (P3.6, merged, and wired to this pipeline by P3.5's
+// `src/voice/speaker.js`) -- and P1.3's
 // redactor is applied where the message is written (D118: text is redacted
 // *before it is written*, and the writer is the one that writes). A draft is a
 // value on its way to a screen or to the client; if it were the thing that

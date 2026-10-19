@@ -58,8 +58,13 @@ func TestMarkCreatedSetsUpTheManagedStateBucket(t *testing.T) {
 		return r, e, &out
 	}
 
+	// operators are the installation's own, as the spec carries them: the same
+	// identities var.operators binds in the installation module.
+	operators := []string{"user:owner@example.com", "group:engineers@example.com"}
+
 	t.Run("a managed creation", func(t *testing.T) {
 		r, e, out := managedCreation(t)
+		e.spec.Operators = operators
 		e.markCreated(t.Context())
 
 		want := "fugaro-managed-tfstate-" + newProj
@@ -95,6 +100,26 @@ func TestMarkCreatedSetsUpTheManagedStateBucket(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("%s is not bound to %s on gs://%s: %v", member, managed.DeployerStateRole, want, r.gcs.BucketPolicy(want))
+		}
+		// And beside it the operators' read, in the same write, from the
+		// spec's own operator set: the managed apply's whole-project
+		// inventory reads this bucket with the operator's credential (Task
+		// 4.5, D59), so a run that bound the deployer alone would leave every
+		// operator's inventory read denied and every managed apply of theirs
+		// falling back to confirmations.
+		var bound []string
+		for _, b := range r.gcs.BucketPolicy(want) {
+			if b.Role != managed.OperatorStateRole {
+				continue
+			}
+			if b.Condition != nil {
+				t.Errorf("the operators' binding carries condition %v, want none", b.Condition)
+			}
+			bound = append(bound, b.Members...)
+		}
+		slices.Sort(bound)
+		if wantOps := slices.Sorted(slices.Values(operators)); !slices.Equal(bound, wantOps) {
+			t.Errorf("gs://%s binds %v to %s, want the spec's operators %v", want, bound, managed.OperatorStateRole, wantOps)
 		}
 		// The state of the agent-authored root is a bucket of its own: this
 		// step creates the dedicated one and no other (the installation's own

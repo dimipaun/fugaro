@@ -21,6 +21,11 @@
 //   - **the dashboard loads exactly one script**, `<script src="./console.js"
 //     defer>`, and it is a file the served root actually holds; and **the
 //     refusal document loads none at all**;
+//   - **every document links exactly one stylesheet** (Task 6.2),
+//     `<link rel="stylesheet" href="./console.css">` -- one element, from this
+//     origin, with no `media`, `onload` or `integrity` -- and the served root
+//     actually holds the file it names, served as `text/css` under this same
+//     policy;
 //   - **no document holds inline script text, an `on*` attribute, an inline
 //     style, or a `javascript:` URL.**
 //
@@ -36,10 +41,19 @@
 // would be a test of a file the console does not serve. That the build copies
 // them verbatim is `test/unit/bundle.test.ts`'s assertion.
 
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
-import { CONTENT_SECURITY_POLICY, SERVED_FILES } from '../../src/main/protocol'
-import { builtFile, builtListing } from '../support/built'
+import {
+  CONTENT_SECURITY_POLICY,
+  CSP_HEADER,
+  SERVED_FILES,
+  mediaTypeFor,
+  resolveBundleRequest,
+  serveAppRequest,
+} from '../../src/main/protocol'
+import { BUNDLE_DIR, builtFile, builtListing } from '../support/built'
 
 // The design's own CSP, section 5.1 rule 3, copied by hand rather than built
 // from the constant it is compared against: a test that assembled its
@@ -96,6 +110,11 @@ function scriptElements(document: string): readonly string[] {
   return [...markup(document).matchAll(/<script\b[^>]*>/gi)].map((match) => match[0])
 }
 
+/** linkElements is every `<link ...>` opening tag of a document's markup. */
+function linkElements(document: string): readonly string[] {
+  return [...markup(document).matchAll(/<link\b[^>]*>/gi)].map((match) => match[0])
+}
+
 describe('the console’s CSP', () => {
   it('is the design’s, byte for byte', () => {
     expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)
@@ -125,6 +144,20 @@ describe('the console’s CSP', () => {
     expect(directives(CONTENT_SECURITY_POLICY)['connect-src']).toBe("'none'")
     for (const loosening of ['unsafe-inline', 'unsafe-eval', 'unsafe-hashes', 'strict-dynamic', '*', 'http:']) {
       expect(CONTENT_SECURITY_POLICY, `the CSP allows ${loosening}`).not.toContain(loosening)
+    }
+  })
+
+  it('allows styles from this origin and from nowhere else (Task 6.2)', () => {
+    // The directive the served stylesheet is admitted by, and the whole of the
+    // change Task 6.2 makes to the policy: **none**. `style-src 'self'` was the
+    // third directive before the `<link>` existed, so a stylesheet from
+    // `app://console` is a stylesheet this policy always allowed -- and the
+    // mutation this case refuses is the one a reviewer is told to look for, a
+    // single token added to it. `window.test.ts` pins the same string against
+    // the design's own wording; this is the directive read on its own.
+    expect(directives(CONTENT_SECURITY_POLICY)['style-src']).toBe("'self'")
+    for (const loosening of ['unsafe-inline', 'unsafe-eval', 'unsafe-hashes', '*', 'http:', 'https:']) {
+      expect(directives(CONTENT_SECURITY_POLICY)['style-src'], `style-src allows ${loosening}`).not.toContain(loosening)
     }
   })
 })
@@ -196,6 +229,56 @@ describe('the served documents', () => {
     // into. `window.test.ts` pins the window; this pins the document.
     expect(scriptElements(served('refusal.html'))).toEqual([])
     expect(markup(served('refusal.html'))).not.toContain('console.js')
+  })
+
+  it('give every document exactly one stylesheet, from this origin (Task 6.2)', () => {
+    // One `<link>` per document, and the same one in all three: `./console.css`,
+    // a relative path on this origin, resolved by the bundler as a literal and
+    // by the handler as a path under the root. The refusal document is included
+    // on purpose -- the one page a console below the floor shows must not be the
+    // unstyled one -- and it is asserted here rather than trusted, because a
+    // `<link>` that had been left out of one document is exactly the shape of
+    // this task's own mutation.
+    for (const name of DOCUMENTS) {
+      const links = linkElements(served(name))
+      expect(links.length, `${name} links ${String(links.length)} stylesheets, and exactly one is allowed`).toBe(1)
+      const link = links[0] ?? ''
+      // Exactly the one element and exactly its two attributes: a second
+      // stylesheet, a remote one, a `media` that hid the file on the console's
+      // only rendering mode, an `onload` (an inline handler, which
+      // `style-src`'s `'self'` does not back) or an `integrity` nobody
+      // maintains all fail here.
+      expect(link, `${name}'s stylesheet is not the one this origin serves`).toMatch(
+        /^<link\s+rel="stylesheet"\s+href="\.\/console\.css"\s*\/?>$/,
+      )
+      expect(link, `${name}'s stylesheet carries an attribute this file must not have`).not.toMatch(
+        /\s(?:media|onload|integrity|crossorigin|type|disabled|nonce)\s*=/i,
+      )
+    }
+    // And the file it names is one the served root holds, so the document's one
+    // stylesheet cannot be a 404.
+    expect(builtListing('bundle')).toContain('console.css')
+  })
+
+  it('are served the stylesheet under the same policy, as text/css, from the same root (Task 6.2)', async () => {
+    // The other half of the claim, and the one a reviewer of a
+    // SECURITY-SENSITIVE task should require: the stylesheet is served by the
+    // same `serveAppRequest` as the documents, out of the same root, with the
+    // allow-list's own media type and the CSP header on the response. Nothing
+    // about the response is special-cased for CSS, which is what "the policy is
+    // unchanged" has to mean to be worth anything.
+    expect(mediaTypeFor('/console.css')).toBe('text/css; charset=utf-8')
+    expect(resolveBundleRequest(BUNDLE_DIR, 'app://console/console.css')).toEqual({
+      ok: true,
+      filePath: join(BUNDLE_DIR, 'console.css'),
+      mediaType: 'text/css; charset=utf-8',
+    })
+    const response = await serveAppRequest(BUNDLE_DIR, 'app://console/console.css')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('text/css; charset=utf-8')
+    expect(response.headers.get(CSP_HEADER)).toBe(CONTENT_SECURITY_POLICY)
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    await expect(response.text()).resolves.toBe(builtFile('bundle/console.css'))
   })
 
   it('hold no inline script text, no handler attribute and no javascript: URL', () => {

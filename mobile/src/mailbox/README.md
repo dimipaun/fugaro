@@ -245,14 +245,18 @@ makes is signed by it. The alternative -- putting `acked` inside the tag -- is
 not available: the ack is written after the tag was made, and a launcher that
 could not ack could not release a prompt either.
 
-## The audio stub (P3.4 has merged; this client is not wired to it yet)
+## The audio stub (P3.4 has merged; P3.5 wired this client to it)
 
 P3.4 (`mobile/src/audio/`, the AudioIn/STT/TTS interfaces and their fakes, PR
 #592) landed after this task: it had no directory in the tree when P3.6 was
 written, and this task may not depend on code that is not on `main`. **It has
 since merged with this change** -- `mobile/src/audio/` is the tree's now -- and
-this client still takes this module's own port rather than P3.4's, because
-nothing has wired the two together. So `speaker.js` is a one-method seam of this
+**P3.5 has since wired the two together**: `mobile/src/voice/speaker.js`'s
+`createPipelineSpeaker({ pipeline })` is the adapter the voice screen hands the
+client, so a built app speaks through P3.4's pipeline and the client never
+learns what is behind the port. The port itself stays this module's own -- the
+mailbox module keeps its `MemorySpeaker`, and merging the two into one would be
+a second way to speak. So `speaker.js` is a one-method seam of this
 task's own -- `speak(text)` returning
 `{ ok: true }`, or `{ ok: false, code, field }` with a code from
 `SPEAK_CODES` (`bad-text`, `speak-failed`) -- with `MemorySpeaker` as its
@@ -263,7 +267,8 @@ P3.6 needs from it is exactly one thing: **whether the utterance was spoken**,
 because the ack is written only after it was. Voices, queues, barge-in,
 interruption and latency are P3.4's and P3.5's, and none of them is here.
 `speaker.js` is the file that goes, and its `MemorySpeaker` is what the P3.4
-fakes replace; the merge has happened and the wiring has not.
+fakes replace in a built app -- P3.5 did that wiring; this module still defines
+the port and does not reach for the pipeline itself.
 
 The **secure store is not stubbed**: P3.1 is merged and its `SecretStore` is
 reused, with one addition (below).
@@ -401,6 +406,15 @@ from their absence:
   **A message this client sends is therefore never answered end to end in CI**:
   the "clears the pending message" path is tested with a locally signed `answer`
   record, not with the consumer.
+* **Demo mode (the owner's ruling of 2026-10-19) reuses this module and forks
+  nothing.** `src/demo/` drives THIS client over THIS port double, with the
+  consumer's side delivered into the tree by `MemoryMailboxStore.deliver` --
+  the other end's write, which is not a phone write, is not recorded in
+  `writes()`, and so keeps the one-write-path scan (`write-path.test.js`) a
+  statement about the client. Its tags are made by this directory's own
+  `macOf`, for the reason the bullet above gives: the simulator signs nothing,
+  so it cannot be the demo's other end either (`src/demo/transport.js` says
+  so at the code). Nothing in this directory knows the demo exists.
 * **P3.4's audio and P3.5's voice screen are not here.** `speaker.js` is the
   stub described above -- the interface P3.6 needs and no more. Nothing in this
   directory records audio, transcribes, or decides when to speak.

@@ -428,6 +428,16 @@ func TestDeployerRolesAndAccountAreTheDeployersAlone(t *testing.T) {
 		"the token minter on the deployer":         {typ: sacct, member: person, role: "projects/proj-1/roles/fugaroTokenMinter", after: map[string]any{"service_account_id": onDeployer}},
 		"token creation on the deployer for a job": {typ: sacct, member: job, role: DeployerTokenCreatorRole, after: map[string]any{"service_account_id": onDeployer}},
 		"actAs on a computed account beside it":    {typ: sacct, member: person, role: "roles/iam.serviceAccountUser", unknown: map[string]any{"service_account_id": true}, extra: []ResourceChange{rc("google_service_account", map[string]any{"account_id": DeployerAccountID}, map[string]any{}, "create")}},
+		// And the installation module's OWN scheduler grant, in the same
+		// deployer-creating module: the operators' actAs on the scheduler
+		// account, covered because the module names it at plan time
+		// (installation/scheduler.tf, the literal form deployer.tf's
+		// token-creator grant uses). The row above is the same shape with the
+		// account computed, and it is refused — which is what a scheduler.tf
+		// that read google_service_account.scheduler.name produced, making
+		// the installation apply ask its own confirmation and refuse a grant
+		// that is the module's own.
+		"the operators' actAs on the scheduler, named literally": {typ: sacct, member: person, role: "roles/iam.serviceAccountUser", after: map[string]any{"service_account_id": onScheduler}, extra: []ResourceChange{rc("google_service_account", map[string]any{"account_id": DeployerAccountID}, map[string]any{}, "create")}, covered: true},
 		// (c) other roles to the deployer.
 		"firebaseauth.admin to the deployer":         {typ: project, member: deployer, role: "roles/firebaseauth.admin"},
 		"firebasedatabase.admin to the deployer":     {typ: project, member: deployer, role: "roles/firebasedatabase.admin"},

@@ -82,11 +82,25 @@ type LaunchSpec struct {
 	Timeout time.Duration
 	// Env are extra "NAME=value" variables for this execution only, merged
 	// into the job's own environment (the Cloud Run v2 API merges override env
-	// into the job's; docs/design/project-centric.md §2.2). The launcher sets
-	// the budget marker here — whether it minted a token is a fact about this
-	// launch, not about the job's deploy-time environment, so it cannot come
-	// from init --repo (internal/runner's BudgetTokenEnv, plan R2-8(a)).
+	// into the job's; docs/design/project-centric.md §2.2). They are plain: a
+	// value here is readable in the job's definition and in every listing of it,
+	// so a value that is a secret goes in SecretEnv instead — the budget marker
+	// of a launch that minted is one (a fact about this launch, not about the
+	// job's deploy-time environment, so it cannot come from init --repo either
+	// way; internal/runner's BudgetTokenEnv, plan R2-8(a)). No launcher sets an
+	// entry here today.
 	Env []string
+	// SecretEnv are "NAME=value" variables like Env, for this execution only,
+	// whose value is a secret: today the one entry is the budget marker of a
+	// launch that sealed its token, whose value is the launch's seal key
+	// (docs/design/budget-token-channel.md §7.1, D15). A backend carries a
+	// secret entry only where the design accepts its audience — Cloud Run's
+	// execution override, priced in §7.1 — and refuses the launch where it
+	// cannot (Batch, whose only carrier is the job definition's plain
+	// variables, readable through the Batch API by every launcher (roles/batch.jobsEditor, conditioned on the Fugaro job prefix) and by the reaper (batch.jobs.get), and possibly in the CreateJob audit record — not by a peer run, whose account holds only agentReporter and logWriter, and kept for the job's whole retention). No backend
+	// quotes a secret entry's value in an error. A name may not be in both
+	// Env and SecretEnv.
+	SecretEnv []string
 	// Docker is what the workflow asked for: `docker: true` (design
 	// compute-backend.md §4.2, C16), a real Docker daemon for the run's own
 	// containers. It is the workflow's ask and not a capability, so a backend
@@ -185,10 +199,25 @@ type Execution struct {
 	Scheduled time.Time
 	LogURL    string
 	// Run is "<slug>/<run id>", the FUGARO_RUN the execution was launched
-	// with, when the platform reports the execution's environment; empty
-	// when it does not (the sweeper then treats the execution as possibly
-	// anyone's of its job). Anyone who can start the job can set it, so
-	// it is a hint to keep a registry entry, never evidence to act on.
+	// with, as the platform reports the execution's own environment (Cloud
+	// Run's execution template, internal/backend/gcp); empty when it reports
+	// no such variable (the sweeper then treats the execution as possibly
+	// anyone's of its job, internal/budget).
+	//
+	// It is the binding the CLI's checkExecution applies, and the only one:
+	// gcp.CheckRunExecution refuses an execution whose FUGARO_RUN is not the
+	// run's own <slug>/<run id> before `ls`, `logs`, `diagnose`, `cancel` and
+	// the retry paths act on a name the run's bucket objects — which the run's
+	// own service account can write — named. The job used to be that binding
+	// (JobName(slug, variant)); one project job serves every repository
+	// admitted to a profile, so an execution's job no longer says which run it
+	// is (design §4.1, plan task 3.4 step 2).
+	//
+	// Its limit is stated with it: whoever may start an execution of the job
+	// may set the variable, so it says which launch an execution is, never who
+	// asked for it — while the run's own service account, the writer of the
+	// objects this binds, cannot set another execution's environment. That is
+	// the whole of what it is evidence of, and why it is enough here.
 	Run string
 }
 

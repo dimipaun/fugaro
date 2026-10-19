@@ -117,7 +117,7 @@ func TestWriteManagedSettingsRefusesSymlink(t *testing.T) {
 }
 
 func TestManagedSettingsHoldNoRealKey(t *testing.T) {
-	const realKey = "sk-ant-real-key-123"
+	const realKey = "placeholder-api-key"
 	parent := map[string]string{"ANTHROPIC_API_KEY": realKey, "NO_PROXY": "example.invalid"}
 	vars, err := GatewayVars("api-key", Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}, parent)
 	if err != nil {

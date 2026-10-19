@@ -294,9 +294,19 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	if lc == nil || lc.Name != cfg.Project {
 		return nil, nil, nil
 	}
+	// The reserved provider-key names, before anything that can return early
+	// and independently of the budget, the prices and the pins: a workflow
+	// secret named <entry>-api-key is a name the job's own spec refuses
+	// (infra.SecretMounts) and `fugaro secrets set` refuses to store
+	// (config.ReservedProviderSecret), and it is judged against the owner's
+	// providers, which is why Validate itself cannot make this call. claimed
+	// is the owner's whole table with the layer's claims written over the
+	// entries the run carries, so its key set is lc.Providers' — the same
+	// names, and so the same reservations.
+	problems = append(problems, config.CheckWorkflowProviderSecrets(cfg, claimed)...)
 	o, err := lc.Overrides()
 	if err != nil {
-		return nil, nil, nil // budgetProblems says so
+		return problems, nil, nil // budgetProblems says so
 	}
 	prices, err := priceTableFor(lc.Providers, o, budgetNow())
 	if err != nil {
@@ -339,6 +349,14 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	for _, name := range config.OpenProviders(claimed) {
 		warnings = append(warnings, config.Problem{Path: "providers." + name, Message: claimed[name].OpenToEveryRepoReason()})
 	}
+	// The naming convention (owner ruling of 2026-10-18): a provider's key is
+	// named after its entry, <provider>-api-key. A key stored under any other
+	// name keeps working — nothing is renamed and nothing is migrated — so
+	// this is a warning, never a problem: the file stays valid, and the line
+	// names the entry, the name the key has and the name the convention gives
+	// it. The conventional name stays reserved for that provider either way
+	// (config.ReservedProviderSecret, which the write paths enforce).
+	warnings = append(warnings, config.ProviderSecretWarnings(claimed)...)
 	problems = append(problems, config.CheckProviderAuth(cfg.Agent, claimed)...)
 	agent := cfg.Agent
 	agent.Models.Background = config.EffectiveBackground(agent, claimed)
@@ -1513,13 +1531,18 @@ func usesProfiles(c *config.Config) bool {
 }
 
 // cloneWorkflowWarnings warns, one per workflow, that checkout: clone is
-// valid config but runs nothing yet: cloneSince's launch gate
-// (recipes_skew.go) refuses every checkout: clone launch until fugaro
-// cloneSince ships, since plan Task 17's runner side (the runner's own
-// FUGARO_CHECKOUT support) is in no tagged release yet. The config stays
-// valid — this is for later, once it ships — so it is a warning, not a
-// Problem from Check.
+// valid config but runs nothing yet — while cloneShipped is false
+// (recipes_skew.go): cloneSince's launch gate refuses every checkout: clone
+// launch then, since the runner side (generic-tool plan Task 17) is in no
+// tagged release yet. The config stays valid either way, so it is a
+// warning, not a Problem from Check. cloneShipped is true since 0.9.0, so
+// this reports nothing today; it stays for the flip-back the constant's
+// comment describes, and the check below is what makes that flip-back warn
+// again.
 func cloneWorkflowWarnings(c *config.Config) []config.Problem {
+	if cloneShipped {
+		return nil
+	}
 	var ps []config.Problem
 	for _, name := range slices.Sorted(maps.Keys(c.Workflows)) {
 		if c.Workflows[name].Checkout != config.CheckoutClone {
