@@ -22,6 +22,11 @@
 //   - website/content/costs.json  W0.3's aggregation output, published deliberately and
 //                                 **absent until the owner runs it**: an empty figure is
 //                                 honest, an invented one is not (D96, D97).
+//   - website/data/typical-costs.yaml
+//                                 what a job costs, as the owner measured it on this
+//                                 project's own development runs (the owner's brief of
+//                                 2026-10-19). Hand-written, refreshed by editing the file,
+//                                 and held to the built page by website/test/caps-and-costs.mjs.
 //   - README.md                   the tagline and the subline, which are the two lines
 //                                 under its `# Fugaro` title and are read here rather
 //                                 than copied into a component, so the site and the README
@@ -719,6 +724,142 @@ export function loadInstallFacts(): InstallFacts {
 }
 
 // ---------------------------------------------------------------------------------------
+// website/data/typical-costs.yaml — what a job costs, as the owner measured it on this
+// project's own development runs (the owner's brief of 2026-10-19).
+//
+// It is a hand-written fact file like `site.yaml` and `install.yaml`, and the page that
+// renders it is the caps-and-costs guide: the figures are the ones the owner recorded, the
+// page prints them and no others, and a refresh is an edit here rather than an edit to a
+// page (Global Constraint 6, D96, D97). The sample size is printed beside every figure, and
+// a row drawn from fewer runs than `site.yaml`'s `min_runs` is refused here rather than
+// rendered: the site publishes no figure from a sample thinner than that, and the two
+// cannot disagree (D97).
+// ---------------------------------------------------------------------------------------
+
+/** One kind of run, with the figures the owner measured for it. */
+export interface TypicalCostJob {
+  /** The row's name in a build error, and the built row's own hook. */
+  id: string
+  /** The row's label, as a reader reads it. */
+  name: string
+  /** The sample the row's figures were drawn from. */
+  runs: number
+  medianUSD: number
+  /** The range the middle half of the runs fell in, or null when the file carries none. */
+  middleHalfUSD: { low: number; high: number } | null
+  nineInTenUnderUSD: number
+  /** The most expensive single run of that kind, or null when the file carries none. */
+  worstUSD: number | null
+}
+
+/** website/data/typical-costs.yaml, validated. */
+export interface TypicalCostsFacts {
+  /** The window the runs were taken from, and how many finished in it. `to` is the day the
+   * figures were taken, so the page prints the age of its own numbers. */
+  from: string
+  to: string
+  runs: number
+  jobs: TypicalCostJob[]
+  /** The per-run cap a project inherits: the ceiling a looping run meets. */
+  perRunCapUSD: number
+}
+
+const TYPICAL_COSTS_FILE = 'website/data/typical-costs.yaml'
+
+export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
+  const file = TYPICAL_COSTS_FILE
+  const doc = asMap(
+    parseYAML(
+      readBytes(
+        path.join(DATA_DIR, 'typical-costs.yaml'),
+        'the figures the caps-and-costs guide leads with, as the owner measured them on this project\'s own development runs (the owner\'s brief of 2026-10-19)',
+      ),
+      file,
+    ),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, ['jobs', 'per_run_cap_usd', 'version', 'window'], file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  const window = asMap(doc.window, file, 'window')
+  refuseUnknownKeys(window, ['from', 'runs', 'to'], `${file} window`)
+  const runs = asInt(window.runs, file, 'window.runs')
+  if (runs < minRuns) {
+    throw new Error(
+      `${file}: window.runs is ${runs}, below the minimum of ${minRuns} the site publishes a figure from (website/data/site.yaml, D97). The page prints the window's own count beside its figures, so a window thinner than that is not one this site publishes.`,
+    )
+  }
+
+  // A row's optional figures are read as null rather than defaulted to a number: a page
+  // renders the dash the file's absence means, and it never invents a range (Global
+  // Constraint 6). `middle_half_usd` is the one shape with two numbers in it, and a list of
+  // anything but two is refused here rather than half-read.
+  const jobs = asList(doc.jobs, file, 'jobs').map((entry, index) => {
+    const job = asMap(entry, file, `jobs[${index}]`)
+    refuseUnknownKeys(job, ['id', 'median_usd', 'middle_half_usd', 'name', 'nine_in_ten_under_usd', 'runs', 'worst_usd'], `${file} jobs[${index}]`)
+    const what = `jobs[${index}]`
+    const id = asString(job.id, file, `${what}.id`)
+    const sample = asInt(job.runs, file, `${what}.runs`)
+    if (sample < minRuns) {
+      throw new Error(
+        `${file}: the row "${id}" carries ${sample} runs, below the minimum of ${minRuns} the site publishes a figure from (D97). The page prints the sample size beside every figure, so a row drawn from fewer runs is not one this site publishes.`,
+      )
+    }
+
+    let middleHalfUSD: { low: number; high: number } | null = null
+    if (job.middle_half_usd !== undefined) {
+      const half = asList(job.middle_half_usd, file, `${what}.middle_half_usd`).map((value, at) => asNumber(value, file, `${what}.middle_half_usd[${at}]`))
+      if (half.length !== 2) {
+        throw new Error(
+          `${file}: ${what}.middle_half_usd carries ${half.length} figures, and the range the middle half of the runs fell in is two: the lower and the upper bound, in that order (W1.3 step 2).`,
+        )
+      }
+      if (half[0] > half[1]) {
+        throw new Error(`${file}: ${what}.middle_half_usd is [${half[0]}, ${half[1]}], and the lower bound is above the upper one (W1.3 step 2).`)
+      }
+      middleHalfUSD = { low: half[0], high: half[1] }
+    }
+
+    return {
+      id,
+      name: asString(job.name, file, `${what}.name`),
+      runs: sample,
+      medianUSD: asNumber(job.median_usd, file, `${what}.median_usd`),
+      middleHalfUSD,
+      nineInTenUnderUSD: asNumber(job.nine_in_ten_under_usd, file, `${what}.nine_in_ten_under_usd`),
+      worstUSD: job.worst_usd === undefined ? null : asNumber(job.worst_usd, file, `${what}.worst_usd`),
+    }
+  })
+  if (jobs.length === 0) {
+    throw new Error(`${file}: jobs is empty, and the caps-and-costs guide leads with one row per kind of run (the owner's brief of 2026-10-19).`)
+  }
+  const ids = new Set<string>()
+  for (const job of jobs) {
+    if (ids.has(job.id)) {
+      throw new Error(`${file}: two rows carry the id "${job.id}", and the id is what a build error and the built row's own hook name (W1.3 step 2).`)
+    }
+    ids.add(job.id)
+  }
+
+  const perRunCapUSD = asNumber(doc.per_run_cap_usd, file, 'per_run_cap_usd')
+  if (perRunCapUSD <= 0) {
+    throw new Error(`${file}: per_run_cap_usd is ${perRunCapUSD}, and the cap the page prints as the ceiling a looping run meets is above zero (W1.3 step 2).`)
+  }
+
+  return {
+    from: asString(window.from, file, 'window.from'),
+    to: asString(window.to, file, 'window.to'),
+    runs,
+    jobs,
+    perRunCapUSD,
+  }
+}
+
+// ---------------------------------------------------------------------------------------
 // website/content/ — the generated documents, and the aggregation's published output.
 // ---------------------------------------------------------------------------------------
 
@@ -1039,6 +1180,8 @@ export interface Site {
   subline: string
   /** The generated documents under content/, keyed by file name. */
   documents: { [name: string]: GeneratedDocument }
+  /** What a job costs, as the owner measured it on this project's own development runs. */
+  typicalCosts: TypicalCostsFacts
   /** The aggregation's published figures, or null while the owner has not run it. */
   costs: CostsFacts | null
   fonts: { href: string; type: string }[]
@@ -1066,6 +1209,7 @@ export function loadSite(): Site {
     tagline: loadTagline(),
     subline: loadSubline(),
     documents: loadGeneratedDocuments(),
+    typicalCosts: loadTypicalCosts(facts.minRuns),
     costs: loadCosts(facts.minRuns),
     fonts: loadFonts(),
     sitemapHref: loadSitemapHref(facts.canonicalURL),

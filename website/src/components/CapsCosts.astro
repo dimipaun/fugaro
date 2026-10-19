@@ -1,40 +1,50 @@
 ---
 /**
- * website/src/components/CapsCosts.astro — the caps-and-costs guide's two halves
- * (website plan, Task W1.5).
+ * website/src/components/CapsCosts.astro — the caps-and-costs guide (website plan, Task
+ * W1.5; reworked by the owner's brief of 2026-10-19).
  *
- * The page answers two questions — what a cap is and how to set it, and what runs actually
- * cost — and both answers are **rendered from something the repository already generates**:
+ * The page answers three questions in this order, and the order is the point:
  *
- *   - **The caps half renders the CLI's own reference.** Every command below is a `Usage:`
- *     line and a one-line description read out of `website/content/cli-reference.md`
- *     (W0.4, generated from the command tree), so the guide cannot print a flag the command
- *     does not ship and a renamed flag reaches this page the day the reference is
- *     regenerated (finding 26, Global Constraint 6). The page writes no command of its own —
- *     `website/test/caps-and-costs.mjs` asserts that nothing here carries `fugaro budget`
- *     outside an element the reference filled.
- *   - **The costs half renders the aggregation's own output.** `website/content/costs.json`
- *     is what the owner's run of W0.3's command writes, and the page publishes the figures
- *     it holds — each with the window and the sample size behind it — or, while the file is
- *     absent, the empty state, which is the honest state on day one (D96, D97). No figure
- *     is written here, and none is rounded: a rounded figure is one the JSON does not
- *     carry, and `website/test/caps-and-costs.mjs` fails on any number the file does not
- *     contain.
+ *   1. **What a job costs.** The page leads with a small table — one row per kind of run,
+ *      with the sample size, the median, the middle half and the figure nine runs in ten
+ *      stayed under — rendered from `website/data/typical-costs.yaml`, the owner's own
+ *      measurement of this project's development runs. It is a hand-written fact file, and
+ *      the page writes no figure of its own: every number below is the file's, and
+ *      `website/test/caps-and-costs.mjs` fails on a figure the file does not carry or a
+ *      figure the file carries that the page does not render (Global Constraint 6, D96,
+ *      D97).
+ *   2. **How to set the caps.** The commands are the detail and they sit below the table,
+ *      behind one `<details>`: a reader who came for what a job costs meets the figures
+ *      first, and the whole of `fugaro budget` is one click away. Every command is a
+ *      `Usage:` line and a one-line description read out of `website/content/cli-reference.md`
+ *      (W0.4, generated from the command tree), so the guide cannot print a flag the command
+ *      does not ship and a renamed flag reaches this page the day the reference is
+ *      regenerated (finding 26, Global Constraint 6). The page writes no command of its own
+ *      — `website/test/caps-and-costs.mjs` asserts that nothing here carries `fugaro budget`
+ *      outside an element the reference filled.
+ *   3. **What the owner's own aggregation publishes.** `website/content/costs.json` is what
+ *      the owner's run of W0.3's command writes, and the page publishes the per-recipe
+ *      ranges it holds — each with the window and the sample size behind it — or, while the
+ *      file is absent, the empty state, which is the honest state on day one (D96, D97). No
+ *      figure is written here, and none is rounded: a rounded figure is one the JSON does
+ *      not carry, and the same test fails on any number the file does not contain.
  *
  * What this file deliberately does not do: it does not restate the reference's long
  * descriptions (they carry the amounts' own bounds, which are the command's business and
- * not a page's), it does not print a total the file does not carry, and it does not
- * describe a group the aggregation suppressed. A thin group is absent from the file and
- * the page renders what is there; a file that carries one anyway stops the build in W1.3's
+ * not a page's), it does not print a total either file does not carry, and it does not
+ * describe a group the aggregation suppressed. A thin group is absent from the JSON and the
+ * page renders what is there; a file that carries one anyway stops the build in W1.3's
  * pipeline rather than reaching a reader (D96's answer fixes the minimum at 20 runs).
  *
- * **What the redesign took out (P4).** A paragraph above the command list explained that
- * the list is rendered from `website/content/cli-reference.md` and why that makes it
- * honest, and a second one explained the mode at length; the scope sentences beside each
- * command were long enough to be paragraphs of their own, and the empty state said where a
- * figure would come from in three sentences. The two paragraphs are now one short one, each
- * scope is a line, and the empty state is two sentences — the facts are the same ones, and
- * the page says them in the words a reader scanning a command list needs (D186, D188).
+ * **What the rework of 2026-10-19 took out, and what it added.** The page used to open with
+ * the caps and the whole command list — a reader asking what a run costs met the command
+ * tree first — and the measured figures were last. The owner's brief turns that around: the
+ * figures lead, the commands are the detail behind one `<details>`, and the aggregation's
+ * ranges stay last. The per-command scope sentences went with it, because D188's 250-word
+ * ceiling is a ceiling and the reference's own one-line descriptions already say what each
+ * command does; the lead line the parent command carried went the same way. What the page
+ * gained is the table, its provenance note, and the two rules that hold it: the file's
+ * figures are the page's figures, and the page's figures are the file's.
  */
 import { loadSite } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
@@ -94,43 +104,23 @@ function readReference(body: string): Map<string, ReferenceCommand> {
 const commands = readReference(reference)
 
 /**
- * The commands the guide prints, each with the one sentence that says which scope it
- * covers. The sentence is a map from a scope to a command and not a claim about one: what
- * the command does is the reference's line, rendered beside it.
+ * The commands the guide prints, in the order a reader meets them: the caps and the mode,
+ * what is set now, the estimate before a batch runs, the price table behind it, and both
+ * halves of the kill switch.
  *
  * The same array is the coverage the guide owes — every subcommand of `fugaro budget` the
  * reference carries, checked just below, so a subcommand added to the command tree cannot
  * be left off the page while the page says it prints the whole of the interface. What each
- * scope sentence covers (the project's caps, the defaults a repository without its own
- * inherits, one repository's own caps, the lease limit and the mode, both halves of the
- * kill switch, the estimate before a batch runs and the price table behind it) is a
- * sentence beside the command's own line, and not a claim about what the command does.
+ * command does is the reference's own line, rendered beside it, and not a claim of this
+ * file's.
  */
 const GUIDE = [
-  {
-    path: 'fugaro budget set',
-    scope: "The project's own daily and per-run caps, the defaults a repository inherits, and one repository's own.",
-  },
-  {
-    path: 'fugaro budget show',
-    scope: "What is set now, and what today has counted.",
-  },
-  {
-    path: 'fugaro budget preview',
-    scope: 'A batch’s worst case against the cap left today.',
-  },
-  {
-    path: 'fugaro budget prices',
-    scope: 'The price table the budget counts with.',
-  },
-  {
-    path: 'fugaro budget kill',
-    scope: 'Halt the project, or one repository.',
-  },
-  {
-    path: 'fugaro budget resume',
-    scope: 'Clear a kill switch.',
-  },
+  'fugaro budget set',
+  'fugaro budget show',
+  'fugaro budget preview',
+  'fugaro budget prices',
+  'fugaro budget kill',
+  'fugaro budget resume',
 ]
 
 /**
@@ -142,7 +132,7 @@ const GUIDE = [
  * carried by the regenerated reference and lands here, or the rebuild stops.
  */
 const uncovered = [...commands.keys()].filter(
-  (path) => path.startsWith('fugaro budget ') && !GUIDE.some((entry) => entry.path === path),
+  (path) => path.startsWith('fugaro budget ') && !GUIDE.includes(path),
 )
 if (uncovered.length > 0) {
   throw new Error(
@@ -150,18 +140,30 @@ if (uncovered.length > 0) {
   )
 }
 
-const parent = commands.get('fugaro budget')
-for (const entry of [{ path: 'fugaro budget' }, ...GUIDE]) {
-  const command = commands.get(entry.path)
+for (const path of ['fugaro budget', ...GUIDE]) {
+  const command = commands.get(path)
   if (command === undefined || command.short === '' || command.usage === '') {
     throw new Error(
-      `website/content/cli-reference.md carries no usable section for \`${entry.path}\`: the caps guide prints the CLI reference's own usage lines and one-line descriptions, so a command the reference does not carry is a command this page cannot print. Regenerate the reference with \`go run ./internal/clidoc\` (W0.4, W1.5).`,
+      `website/content/cli-reference.md carries no usable section for \`${path}\`: the caps guide prints the CLI reference's own usage lines and one-line descriptions, so a command the reference does not carry is a command this page cannot print. Regenerate the reference with \`go run ./internal/clidoc\` (W0.4, W1.5).`,
     )
   }
 }
 
+/** The figures the owner measured on this project's own runs. */
+const typical = site.typicalCosts
+
 /** The figures the owner's run of the aggregation published, or null while it has not run. */
 const costs = site.costs
+
+/**
+ * A figure as a reader reads it: dollars and cents, from the value the file carries. The
+ * rounding is of the *display* of a number that is already written to the cent, never of the
+ * number itself — `website/data/typical-costs.yaml` carries `1` for a dollar and the page
+ * prints `$1.00`, and the test holds the printed figure to the file's own value.
+ */
+function money(value: number): string {
+  return `$${value.toFixed(2)}`
+}
 
 /**
  * The counts the page prints, each one a number the file carries or nothing at all.
@@ -193,44 +195,73 @@ const windowRuns = countOf('runs')
 const windowRecipes = countOf('recipes')
 ---
 
-<section id="caps">
-  <h2>The caps</h2>
+<section id="typical-costs">
+  <h2>What a job costs</h2>
 
-  {parent !== undefined && <p class="lede"><strong>{parent.short}</strong></p>}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Job</th>
+        <th scope="col">Runs</th>
+        <th scope="col">Median</th>
+        <th scope="col">Middle half</th>
+        <th scope="col">9 in 10 under</th>
+        <th scope="col">Worst</th>
+      </tr>
+    </thead>
+    <tbody>
+      {typical.jobs.map((job) => (
+        <tr data-job={job.id}>
+          <th scope="row">{job.name}</th>
+          <td>{job.runs}</td>
+          <td>{money(job.medianUSD)}</td>
+          <td>{job.middleHalfUSD === null ? '—' : `${money(job.middleHalfUSD.low)}–${money(job.middleHalfUSD.high)}`}</td>
+          <td>{money(job.nineInTenUnderUSD)}</td>
+          <td>{job.worstUSD === null ? '—' : money(job.worstUSD)}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
 
-  <p>
-    A cap is a ceiling on what a run may spend: <code>observe</code> counts and logs,
-    <code>enforce</code> halts. Every subcommand is below.
+  <p class="note">
+    Fugaro's own runs, {typical.from} to {typical.to}: {typical.runs} finished, model plus
+    compute, an estimate. Mostly DeepSeek through OpenRouter; a Claude model costs more.
+    Not a quote: the caps below are the safety net; the per-run cap is {money(typical.perRunCapUSD)}.
   </p>
+</section>
 
-  <dl class="commands">
-    {GUIDE.map((entry) => {
-      const command = commands.get(entry.path)
-      return (
-        <div class="command" data-guide={entry.path}>
-          <dt>
-            <div class="command-block" data-copy>
-              <Fragment set:html={copyControlHTML('Copy the usage line')} />
-              <code class="usage" data-command={command?.usage}>{command?.usage}</code>
-            </div>
-          </dt>
-          <dd>
-            <p>{command?.short}</p>
-            <p class="scope">{entry.scope}</p>
-          </dd>
-        </div>
-      )
-    })}
-  </dl>
+<section id="caps">
+  <details>
+    <summary><h2>Set the caps</h2></summary>
+
+    <dl class="commands">
+      {GUIDE.map((path) => {
+        const command = commands.get(path)
+        return (
+          <div class="command" data-guide={path}>
+            <dt>
+              <div class="command-block" data-copy>
+                <Fragment set:html={copyControlHTML('Copy the usage line')} />
+                <code class="usage" data-command={command?.usage}>{command?.usage}</code>
+              </div>
+            </dt>
+            <dd>
+              <p>{command?.short}</p>
+            </dd>
+          </div>
+        )
+      })}
+    </dl>
+  </details>
 </section>
 
 <section id="costs">
-  <h2>The measured figures</h2>
+  <h2>Per-recipe ranges</h2>
 
   {costs === null || costs.groups.length === 0 ? (
     <p class="empty">
-      No figures yet: not enough runs behind them. A figure here comes from the owner's own
-      aggregation; an empty figure is honest, an invented one is not.
+      The owner's aggregation has published no range: not enough runs behind it. An empty
+      figure is honest, an invented one is not.
     </p>
   ) : (
     <>
@@ -286,12 +317,6 @@ const windowRecipes = countOf('recipes')
     max-width: var(--measure);
   }
 
-  .lede {
-    border-left: var(--border-width) solid var(--accent);
-    padding-left: var(--space-sm);
-    color: var(--text);
-  }
-
   .command {
     border-top: var(--border-width) solid var(--border);
     padding-block: var(--space-sm);
@@ -305,7 +330,7 @@ const windowRecipes = countOf('recipes')
     overflow-wrap: anywhere;
   }
 
-  .scope,
+  .note,
   .suppressed,
   .window,
   caption {
@@ -322,6 +347,13 @@ const windowRecipes = countOf('recipes')
     border-bottom: var(--border-width) solid var(--border);
     padding: var(--space-2xs) var(--space-xs);
     text-align: left;
+  }
+
+  /* The first table is six short columns and a phone is 390 px wide: the figures keep their
+     own line rather than wrapping mid-number, and the table scrolls sideways when the two
+     do not fit. */
+  #typical-costs td {
+    white-space: nowrap;
   }
 
   .empty {
