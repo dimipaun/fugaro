@@ -300,13 +300,17 @@ const analyticsEnabled = facts.analytics.enabled
           drawer toggle above the panel. Both levels are `<details>`, so both open and close
           with JavaScript off, need no CSP decision and cost nothing of the JavaScript budget;
           `public/scripts/site.js` adds only what `<details>` does not do by itself — Escape
-          and a click outside close what is open, and, on a device whose pointer hovers, a
-          group's submenu opens when the pointer arrives at it (the owner's brief of
-          2026-10-18, item 1). Two things decide that, and the script asks both: `matchMedia`
-          for whether the device's pointer hovers at all — watched, not sampled once, so a
-          pointer plugged in or taken away after the page loaded is answered too — and the
-          event's own pointer, so that a mouse or a pen opens the group and a finger never
-          does, whatever the device answers. A tap therefore goes through the click the
+          and a click outside close what is open; on a device whose pointer hovers, a group's
+          submenu opens when the pointer arrives at it (the owner's brief of 2026-10-18, item
+          1); the keyboard's focus arriving at a trigger opens its group, so Tab reaches the
+          links inside a closed one, while the focus a click or a tap moves opens nothing —
+          the click that brought it toggles the group itself; the trigger's `aria-expanded` is
+          kept in step with the group; and a close that would strand the reader's focus hands
+          it back to the trigger. Two things decide the hover, and the script asks both:
+          `matchMedia` for whether the device's pointer hovers at all — watched, not sampled
+          once, so a pointer plugged in or taken away after the page loaded is answered too —
+          and the event's own pointer, so that a mouse or a pen opens the group and a finger
+          never does, whatever the device answers. A tap therefore goes through the click the
           `<summary>` already has, on every device.
 
           **The panel is the toggle's next sibling, not its child, and that is the one

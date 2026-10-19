@@ -23,7 +23,12 @@
  *     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
  *     own, and a finger never hovers — so a touch screen keeps the tap it has always had. The
  *     answer is watched rather than sampled once, so a pointer plugged in or taken away after
- *     the page loaded is answered too.
+ *     the page loaded is answered too. A group also opens when the keyboard's focus arrives at
+ *     its trigger, which is what lets Tab reach the links inside a closed group — and never when
+ *     a click or a tap brings that focus, because the click that brought it toggles the group
+ *     itself and would close what the focus had opened. A close this file does not ask for is
+ *     answered too: opening a group closes its siblings in the `name` set, and the focus the
+ *     browser drops with them is handed back to the trigger.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -143,10 +148,28 @@
   }
 
   // The focus this file has just given back, and the reason the group it lands on does not
-  // reopen. Both closes below hand the focus to the trigger they closed, and a trigger that
+  // reopen. All three closes below hand the focus to the trigger they closed, and a trigger that
   // reopened what was just closed under it would be a menu no keyboard could dismiss. It is
   // cleared by the next focus that arrives, whichever trigger that lands on.
   var restored = null
+
+  // Where the focus is, remembered as the `focusin` that brought it says. A group can be closed
+  // by the browser rather than by this file — its sibling in the same `name` set opened, which on
+  // a pointer's arrival happens with no key pressed and no focus moved by the reader — and the
+  // browser stops drawing the list the focus is standing in and drops that focus to `<body>`
+  // before the `toggle` this file hears about the close. So the element is remembered as it
+  // arrives: by the time the group is closed, `document.activeElement` is no longer it.
+  var focused = null
+
+  // Whether the focus arriving next is the pointer's rather than the keyboard's. A click or a tap
+  // moves the focus to the `<summary>` on the way to the click, and a group opened by that focus
+  // would be closed again by the very click that brought it: the first tap on a group would do
+  // nothing, and a click on a closed group whose trigger did not already hold the focus would do
+  // nothing either. So the pointer's focus opens nothing — the click does, which is the control's
+  // own behaviour — and the keyboard's focus opens the group, which is what lets Tab reach the
+  // links inside a closed one. A press and a key press are the two things that move the focus,
+  // and each answers the question the other way.
+  var pointerFocus = false
 
   // Close every open menu. A menu closed under the reader's focus would leave that focus on
   // an element that is no longer rendered, so the control that opened it takes the focus
@@ -177,6 +200,12 @@
   // the DOM looks for it. The event does not bubble, so it is caught on the way down instead:
   // one listener, for every group, in every mode.
   //
+  // A close this file did not ask for arrives here too, and only here: opening a group closes
+  // its siblings in the `name` set, which on a pointer's arrival is a close under a keyboard
+  // reader's focus with no key pressed and no focus moved by anyone. The browser has already
+  // stopped drawing the list that focus was in and dropped it, so `focused` above is the only
+  // record of where it was, and the trigger takes it back exactly as the two closes below do.
+  //
   // Nothing writes the attribute before a toggle happens, which is the point: with no script
   // there is no attribute to override the mapping with, and no state to go stale.
   function expanded() {
@@ -188,6 +217,10 @@
         if (!group || !parent || !parent.classList || !parent.classList.contains('site-nav-group')) return
         var summary = group.querySelector(SUMMARY)
         if (summary) summary.setAttribute('aria-expanded', group.open ? 'true' : 'false')
+        if (!group.open && summary && focused && focused !== summary && holds(group, focused)) {
+          restored = summary
+          summary.focus()
+        }
       },
       true,
     )
@@ -295,6 +328,11 @@
           var fromClosing = restored
           restored = null
           if (!summary || event.target !== summary || fromClosing === summary) return
+          // The pointer's focus opens nothing: the click that brought it toggles the group
+          // itself, so a group opened here would be closed again by that click — a first tap
+          // that does nothing, and a click on a closed group that does nothing either. The
+          // keyboard's focus opens it, which is what lets Tab reach the links inside.
+          if (pointerFocus) return
           group.open = true
         })
       })(groups[i])
@@ -307,8 +345,25 @@
 
   function menu() {
     document.addEventListener('keydown', function (event) {
+      // A key press makes the focus that follows the keyboard's own: this is what a Tab to a
+      // group's trigger is, and the `focusin` above opens the group for it.
+      pointerFocus = false
       if (event.key === 'Escape') closeMenus()
     })
+    document.addEventListener('pointerdown', function () {
+      // A pointer's press moves the focus to what it pressed, on the way to the click that
+      // press is making. That focus is not the keyboard's, and the `focusin` above refuses it.
+      pointerFocus = true
+    })
+    document.addEventListener(
+      'focusin',
+      function (event) {
+        // Where the focus is, for the `toggle` in `expanded` above: that listener hears a close
+        // which has already dropped the focus, so the element has to be remembered as it arrives.
+        focused = event.target
+      },
+      true,
+    )
     document.addEventListener('click', function (event) {
       var target = event.target
       if (target && target.closest && target.closest('.site-nav')) return

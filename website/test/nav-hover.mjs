@@ -15,9 +15,15 @@
 //      that query and `public/scripts/site.js` asks the same one with `matchMedia`; this file
 //      holds both to it, and refuses a width query in either.
 //   2. **The states the script drives, driven.** The submenu opens on the pointer's arrival and
-//      on the trigger's focus, closes `CLOSE_AFTER_MS` after the pointer leaves and not before,
+//      on the keyboard's focus, closes `CLOSE_AFTER_MS` after the pointer leaves and not before,
 //      survives a pointer that crosses the seam between the trigger and the list, is left alone
-//      by the click the `<summary>` handles by itself, and says what it is in `aria-expanded`.
+//      by the click the `<summary>` handles by itself, says what it is in `aria-expanded`, and
+//      hands the focus back whenever a close would strand it — the pointer's own close, Escape,
+//      and the browser's close of a group whose sibling in the same `name` set opened.
+//      **The focus a click or a tap moves is not the keyboard's, and opens nothing.** The press
+//      moves the focus to the trigger on the way to the click, so a page that opened the group on
+//      that focus would have the click close it again: a first tap that does nothing, and a click
+//      on a closed group whose trigger did not hold the focus that does nothing either.
 //   3. **A finger never hovers, whatever the device says.** The query answers for the device's
 //      *primary* pointer, and a touch laptop answers it yes; a tap on one of those still sends a
 //      `pointerenter` of its own, carrying `pointerType: 'touch'`, and a tap that opened a group
@@ -33,14 +39,16 @@
 // **There is no browser here.** The page is the built artifact parsed by `lib/html.mjs`, wrapped
 // in the DOM calls `site.js` makes plus the browser behaviour the menu depends on — `pointerenter`
 // and `pointerleave` over a subtree, each carrying the pointer type that caused it, the `toggle`
-// event a `<details>` fires when its `open` attribute changes, `focusin`, the `change` a
-// `MediaQueryList` reports when the device's answer changes, and a `<summary>`'s own activation
-// behaviour (a click toggles its group). Those are the browser's, not the site's, and the stub
-// states each one where it stands. What a real pointer does on a real screen is the owner's live
-// check: the brief's acceptance line — "hovering a top-level item on desktop opens its submenu
-// immediately" — is a rendered gesture, and **Check 70a's step 6 in `docs/gcp-live-checklist.md`
-// is where the owner runs it** (the register, not this file: no step of that check is run by an
-// agent).
+// event a `<details>` fires when its `open` attribute changes, `focusin`, the focus a pointer's
+// press moves to the control it presses, the exclusive set a shared `name` makes (one group
+// opening closes its siblings, which drops the focus a closed `<details>` was holding), the
+// `change` a `MediaQueryList` reports when the device's answer changes, and a `<summary>`'s own
+// activation behaviour (a click toggles its group). Those are the browser's, not the site's, and
+// the stub states each one where it stands. What a real pointer does on a real screen is the
+// owner's live check: the brief's acceptance line — "hovering a top-level item on desktop opens
+// its submenu immediately" — is a rendered gesture, and **Check 70a's step 6 in
+// `docs/gcp-live-checklist.md` is where the owner runs it** (the register, not this file: no step
+// of that check is run by an agent).
 //
 // It reads the built pages out of `dist/`, which `npm run check` builds first, and the script
 // itself out of `public/scripts/site.js`, which the build copies into `dist/` verbatim — so a
@@ -119,7 +127,8 @@ class StubEvent {
 /**
  * A built page as a document `site.js` can run in, with the browser behaviour the menu depends
  * on: `pointerenter`/`pointerleave` over a subtree, each carrying the pointer type that caused
- * it, the `toggle` event a `<details>` fires when its `open` attribute changes, `focusin`, a
+ * it, the `toggle` event a `<details>` fires when its `open` attribute changes, `focusin`, the
+ * focus a press moves to the element it presses, the exclusive set a shared `name` makes, a
  * `<summary>`'s activation behaviour, and the `change` event a `MediaQueryList` fires when the
  * device's answer to the pointer query moves.
  *
@@ -255,8 +264,29 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
     set open(value) {
       if (Boolean(value) === this.open) return
       if (value) this.attrs.set('open', '')
-      else this.attrs.delete('open')
+      else {
+        this.attrs.delete('open')
+        // A closed `<details>` stops drawing its own content in the same breath, and a focus
+        // standing in that content — on a link, say — cannot stay where it is: a browser drops it
+        // (to `<body>`) before the `toggle` below, which is the only event the page hears about
+        // this close. The stub drops it here for the same reason, which leaves the page no way to
+        // know where the focus was but to have remembered it as it arrived.
+        const active = document.activeElement
+        if (active && this.contains(active) && !dom.drawn(active.node)) document.activeElement = null
+      }
       this.dispatch('toggle', { target: this })
+      // A `<details>` carrying a `name` is one of an exclusive set: a browser closes every sibling
+      // that carries the same name when one of them opens. No script asked for that close and the
+      // page still has to answer for it — the group that closed may have been holding the
+      // reader's focus — so the stub models it, the siblings' own `toggle` events and all.
+      if (value) {
+        const name = this.attrs.get('name')
+        if (name) {
+          for (const other of document.querySelectorAll('details[name]')) {
+            if (other !== this && other.getAttribute('name') === name) other.open = false
+          }
+        }
+      }
     }
     getClientRects() {
       return dom.drawn(this.node) ? [{}] : []
@@ -311,6 +341,30 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
     run(type, event, capture) {
       for (const listener of this.listeners.get(type) ?? []) if (listener.capture === capture) listener.handler.call(this, event)
     }
+  }
+
+  /**
+   * A pointer's press and lift on an element, and the focus the press moves to it. The focus is
+   * not decoration: a browser moves it to the control on the way to the click, so the page's
+   * `focusin` runs *before* the click does. A stub that skipped it would let a page that opens a
+   * group on `focusin` pass a case in which the click that follows closes the group again — which
+   * is the defect the cases below are written to catch, and one only a real press can show.
+   */
+  function press(element, type) {
+    element.dispatch('pointerdown', { pointerType: type, bubbles: true, target: element })
+    element.focus()
+    element.dispatch('pointerup', { pointerType: type, bubbles: true, target: element })
+  }
+
+  /**
+   * The click event, and then the element's own activation behaviour: a `<summary>` toggles its
+   * group, and a page that cancelled the click does not get it.
+   */
+  function activate(element) {
+    const event = element.dispatch('click', { bubbles: true, target: element })
+    const group = element.name === 'summary' ? element.parentElement : null
+    if (group && group.name === 'details' && !event.defaultPrevented) group.open = !group.open
+    return event
   }
 
   const document = {
@@ -412,8 +466,16 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
     timers,
     queries,
     find: (selector) => document.querySelectorAll(selector),
-    /** Focus an element, as Tab or a click does. */
-    focus: (element) => element.focus(),
+    /**
+     * Focus an element as the keyboard does: the key press that moves the focus, and then the
+     * focus. Both halves matter — the page tells a keyboard's focus from a pointer's by the press
+     * that brought it, so a focus with no key press before it is the pointer's and opens nothing.
+     * A click is `click` below, which brings its own press and its own focus.
+     */
+    focus(element) {
+      document.dispatch('keydown', { key: 'Tab', target: document.activeElement })
+      return element.focus()
+    },
     /**
      * Move the pointer to an element, as a browser does: `pointerleave` on every element the
      * pointer left — the ancestors of where it was that are not ancestors of where it went —
@@ -436,17 +498,16 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
     },
     /**
      * A finger's tap, as a touch screen delivers it: the pointer's arrival carrying
-     * `pointerType: 'touch'`, the press and the lift, the pointer leaving as the finger is
-     * destroyed, and then the click the browser synthesises from all of it — the one the
-     * `<summary>` acts on. A hover-capable touch screen sends every one of these too, which is
-     * the case the script's pointer-type check exists for.
+     * `pointerType: 'touch'`, the press and the lift with the focus the press moves, the pointer
+     * leaving as the finger is destroyed, and then the click the browser synthesises from all of
+     * it — the one the `<summary>` acts on. A hover-capable touch screen sends every one of these
+     * too, which is the case the script's pointer-type check exists for.
      */
     tap(element) {
       this.moveTo(element, 'touch')
-      element.dispatch('pointerdown', { pointerType: 'touch', bubbles: true, target: element })
-      element.dispatch('pointerup', { pointerType: 'touch', bubbles: true, target: element })
+      press(element, 'touch')
       this.moveTo(null, 'touch')
-      return this.click(element)
+      return activate(element)
     },
     /**
      * Change the device's answer to the pointer query, as a browser does when a mouse is plugged
@@ -460,16 +521,16 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
       }
     },
     /**
-     * Click an element, as a browser does: the event, then the element's own activation
-     * behaviour. For a `<summary>` that is the disclosure the menu is built on — the click
-     * toggles the `<details>` it belongs to — and a page that cancelled the click would not get
-     * it, which is the defect the case below is written to catch.
+     * Click an element, as a browser does: the pointer's press, which moves the focus to the
+     * element, the lift, and then the click event with the element's own activation behaviour —
+     * for a `<summary>` the disclosure the menu is built on, a click toggling its `<details>`.
+     * The press is part of the gesture here because the page can tell a pointer's press from a
+     * key press, and does: the focus a click brings is the pointer's, and one that opened a group
+     * would be closed again by the click that brought it.
      */
     click(element) {
-      const event = element.dispatch('click', { bubbles: true, target: element })
-      const group = element.name === 'summary' ? element.parentElement : null
-      if (group && group.name === 'details' && !event.defaultPrevented) group.open = !group.open
-      return event
+      press(element, 'mouse')
+      return activate(element)
     },
     /** Press a key at the focused element, which is where a keyboard's events arrive. */
     key(key) {
@@ -628,6 +689,32 @@ test('the click the menu was built on still toggles a group', () => {
   assert.equal(hovering.open, true, 'a second click did not reopen the group')
 })
 
+test('a click opens a group whose trigger did not already hold the focus', () => {
+  // The pointer is resting on Product — a click closed the group a moment ago, so no arrival
+  // fires again — and the reader's focus is on another group's trigger. A click moves the focus
+  // to the trigger it presses on the way to the click, and a group opened by that focus would be
+  // closed again by the click that brought it: the press would do nothing at all.
+  const page = stubPage(HOME.html)
+  const [product, reference] = page.groups
+  const summary = product.querySelector('summary')
+
+  page.moveTo(summary)
+  page.click(summary)
+  assert.equal(product.open, false, 'the click did not close the group the pointer had opened')
+  page.focus(reference.querySelector('summary'))
+  assert.equal(reference.open, true, 'the focus arriving at a trigger did not open its group')
+  assert.equal(product.open, false, 'the group the focus opened did not close its sibling in the same name set')
+
+  page.click(summary)
+  assert.equal(
+    product.open,
+    true,
+    'a click on a closed group whose trigger did not hold the focus opened nothing: the focus the press moved opened the group and the click that followed closed it again',
+  )
+  assert.equal(reference.open, false, 'the click that opened a group did not close the sibling in its name set')
+  assert.ok(page.document.activeElement === summary, 'the click did not move the focus to the trigger it pressed')
+})
+
 test('the drawer opens by its own click and not by the pointer: the mobile menu is unchanged', () => {
   const page = stubPage(HOME.html, { wide: false })
   const drawer = page.find('.site-nav-drawer')[0]
@@ -673,6 +760,32 @@ test('the keyboard opens a group, Escape closes it and gives the focus back, and
   page.focus(page.groups[1].querySelector('summary'))
   page.focus(summary)
   assert.equal(group.open, true, 'the guard against reopening outlived the focus it was written for')
+})
+
+test('a group a sibling closes hands the reader’s focus back to its own trigger', () => {
+  // A keyboard reader is standing on a link inside Product when a pointer arrives at Reference:
+  // no key was pressed and the reader moved nothing, but the exclusive set closes Product, the
+  // browser stops drawing the list the focus is in, and the focus goes to `<body>`. Escape and
+  // the pointer's own close both hand the focus back; this close is the browser's, and the page
+  // hears only the `toggle` — so the focus has to have been remembered as it arrived, because by
+  // then `document.activeElement` is no longer it.
+  const page = stubPage(HOME.html)
+  const [product, reference] = page.groups
+  const summary = product.querySelector('summary')
+  const link = product.querySelector('a')
+
+  page.focus(summary)
+  page.focus(link)
+  assert.ok(page.document.activeElement === link, 'the stub would not focus a link inside an open group')
+
+  page.moveTo(reference.querySelector('summary'))
+  assert.equal(product.open, false, 'the sibling in the same name set did not close the open group')
+  assert.equal(reference.open, true, 'the pointer did not open the group it arrived at')
+  assert.ok(
+    page.document.activeElement === summary,
+    'a group closed under the reader’s focus left the focus where the browser dropped it: it belongs back on the trigger, as Escape and the pointer’s own close leave it',
+  )
+  assert.equal(product.open, false, 'the focus handed back to the trigger reopened the group the sibling had closed')
 })
 
 test('every way a submenu opens and closes says so in aria-expanded', () => {

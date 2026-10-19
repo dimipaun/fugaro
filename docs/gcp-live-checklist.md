@@ -4172,13 +4172,20 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    then hover the same group with the machine's own mouse or trackpad and it opens on the
    pointer's arrival as step 6's first half says. Do the same after unplugging the mouse and
    again after plugging it back in, without reloading: the page re-decides rather than keeping
-   the answer it loaded with.
+   the answer it loaded with. Then, on the mouse again, **click** a group whose submenu is
+   **closed** and whose trigger does **not** already hold the focus — click *Product* once to
+   close what the pointer opened, move the focus to *Reference*'s trigger, then click *Product*
+   again: it opens on that first press. A click moves the focus to the trigger it presses on the
+   way to the click, and a group opened by that focus would be closed again by the click that
+   brought it, so this press is the one that would do nothing at all. The same press on a
+   **touch laptop** is the tap above.
    **FACT:** what the pointer's arrival did with no click, whether the list stayed open with
    the pointer inside it, roughly how long the submenu stayed open after the pointer left and
    whether coming back kept it, the document's scroll width with the last group open (not
    wider than the viewport), on the emulated touch device that hovering opened nothing and the
-   tap still toggled, and on the touch laptop that a tap opened and a second tap closed the
-   group the query would have called a hover. **The fix, if a group does not open on hover, is in
+   tap still toggled, on the touch laptop that a tap opened and a second tap closed the group
+   the query would have called a hover, and that a click on a closed group whose trigger did not
+   hold the focus opened it. **The fix, if a group does not open on hover, is in
    `public/scripts/site.js` or `src/styles/base.css`** — the query, the binding or the delay —
    and never in the reader's expectations: this is the behaviour the brief asks for, not a
    bonus.
@@ -4207,7 +4214,9 @@ repositions the panel without displaying it takes away. **And on a device whose 
 hovers, a group's submenu opens when the pointer arrives at it with no click, stays open while
 the pointer is inside the list, closes a moment after the pointer leaves, and opens again if
 the pointer comes back inside that moment — while the same page on a touch device shows no
-hover behaviour at all and keeps its tap** (the owner's brief of 2026-10-18, item 1: step 6).
+hover behaviour at all and keeps its tap.** **And a click on a closed group opens it on the
+first press, whether or not its trigger already held the focus** (the owner's brief of
+2026-10-18, item 1: step 6).
 
 **Fails when:** the header at 390 × 844 is taller than one row or the document scrolls
 sideways; the drawer does not open, or Escape or an outside click leaves it open, or the focus
@@ -4224,7 +4233,9 @@ by opening off the right edge. **And on the pointer side (step 6):** a group tha
 when the pointer arrives at it, or that closes the instant the pointer crosses from the summary
 into the list (which is what a close with no delay does), or that stays open after the pointer
 has left and gone elsewhere, or one that opens on a **touch** device — where a hover that
-arrives with the tap turns the tap that used to open the group into a close. The wide menu's
+arrives with the tap turns the tap that used to open the group into a close — or a **click** on
+a closed group that does nothing at all, which is what a group opened by the focus the click
+moves and then toggled shut by the click itself looks like. The wide menu's
 two groups of links are *not* a
 failure: the dropdowns are D182's decision. The **structural** half of each of those is already
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the wide block to

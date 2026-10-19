@@ -131,18 +131,20 @@ with fixtures that keep its refusals running, and none of them needs the network
   each is three times what the build of 2026-10-19 needs — the build that ships the site's one
   script and its menu (P6, P3), the homepage's run animation (P7), the How It Works flow (P8),
   W3.2's consent gate, the menu's hover-open on a pointer that hovers (the owner's brief of
-  2026-10-18, item 1), and that behaviour's own correction of 2026-10-19: the event decides
-  which pointer arrived, and the device's answer is watched rather than sampled once — and a
-  later optimisation pass tightens them.** The gate itself is not loose: a page or a site over
-  the number fails, and the test keeps a case that proves it. The derivation (that build plus
-  25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
-  here, in the commit that moves them — which is why all three were re-derived in the commit
-  that taught the script the hover behaviour, and again in the one that taught it to read the
-  pointer out of the event rather than out of the device's one answer — and why the page and
-  the site move with the script (a script every page loads is a page's weight as well as its
-  JavaScript):
-  - **JavaScript per page:** 113,334 bytes. Three times 37,778: the one script the site ships,
-    `public/scripts/site.js` (30,222 bytes), plus 25 %. What the file carries is the copy
+  2026-10-18, item 1), and the two corrections of 2026-10-19 to that behaviour: the event
+  decides which pointer arrived and the device's answer is watched rather than sampled once,
+  and the focus a click or a tap moves opens nothing while a close the browser makes hands the
+  reader's focus back — and a later optimisation pass tightens them.** The gate itself is not
+  loose: a page or a site over the number fails, and the test keeps a case that proves it. The
+  derivation (that build plus 25 %, D192) is in the test's header, and a task that moves the
+  bytes re-derives the numbers here, in the commit that moves them — which is why all three
+  were re-derived in the commit that taught the script the hover behaviour, again in the one
+  that taught it to read the pointer out of the event rather than out of the device's one
+  answer, and again in the one that taught it to tell a pointer's focus from the keyboard's —
+  and why the page and the site move with the script (a script every page loads is a page's
+  weight as well as its JavaScript):
+  - **JavaScript per page:** 127,254 bytes. Three times 42,418: the one script the site ships,
+    `public/scripts/site.js` (33,934 bytes), plus 25 %. What the file carries is the copy
     control of P6 and D183; the menu's Escape/outside-click close of P3; W3.2's consent banner
     and analytics gate, which moved out of the markup and into this one file, with the cookie
     deletion the owner's ruling of 2026-10-18 added to a withdrawal; and, from the same
@@ -151,13 +153,17 @@ with fixtures that keep its refusals running, and none of them needs the network
     device's pointer hovers and only for a pointer that says it is a mouse or a pen — a tap
     sends a pointer of its own, and a finger never hovers, so a touch screen keeps the tap it
     has always had — and the answer is watched rather than sampled once, so a pointer plugged
-    in or taken away after the page has loaded is answered too. Every page loads the file
+    in or taken away after the page has loaded is answered too. The keyboard's focus opens a
+    group so Tab reaches the links inside a closed one; the focus a click or a tap moves opens
+    nothing, because the click that brought it is the `<summary>`'s own toggle and would close
+    what the focus had opened; and a group the browser closes because its sibling in the
+    `name` set opened hands the reader's focus back to its trigger. Every page loads the file
     once, so it is the whole of a page's JavaScript, and the test keeps a case that says so
     over the built artifact.
-  - **Page weight per page:** 965,037 bytes. Three times 321,679: the heaviest page, the
-    docs hub, at 257,343 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 978,957 bytes. Three times 326,319: the heaviest page, the
+    docs hub, at 261,055 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,070,095 bytes. Three times 1,023,365 (every file in `dist/`, 818,692
+  - **Whole site:** 3,084,015 bytes. Three times 1,028,005 (every file in `dist/`, 822,404
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -242,10 +248,13 @@ with fixtures that keep its refusals running, and none of them needs the network
   the menu was built on, leaves the touch path with no hover behaviour at all — a finger's tap
   opens and closes a group even on a device that answers the query "yes", where the tap's own
   pointer would otherwise be taken for a hover — binds and unbinds the behaviour when the
-  device's answer changes under a loaded page, opens on focus and closes on Escape with the
-  focus given back, and reads `aria-expanded` at every step. Each case was mutation-proved by
-  hand: the defect was planted in the script or the stylesheet, the case was watched failing,
-  and the defect was removed.
+  device's answer changes under a loaded page, opens on the keyboard's focus and closes on
+  Escape with the focus given back, reads `aria-expanded` at every step, opens a closed group on
+  the first click even though the press moves the focus to the trigger (a group opened by that
+  focus would be closed again by the click that brought it), and hands a keyboard reader's focus
+  back when the browser closes the group it was standing in because a sibling in the same `name`
+  set opened. Each case was mutation-proved by hand: the defect was planted in the script or the
+  stylesheet, the case was watched failing, and the defect was removed.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull

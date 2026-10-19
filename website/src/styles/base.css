@@ -123,7 +123,14 @@ a.skip-link:focus {
  * `<details>` — the markup is in `layouts/Base.astro`, with the note on why the panel is the
  * toggle's sibling rather than its child — so the menu opens and closes with JavaScript off.
  * `public/scripts/site.js` adds only what `<details>` does not do by itself: Escape and a
- * click outside close what is open.
+ * click outside close what is open; a group's submenu opens when the pointer arrives at it on a
+ * device whose pointer hovers (the query block below) and closes a moment after the pointer
+ * leaves; the keyboard's focus arriving at a trigger opens its group, so Tab reaches the links
+ * inside one that is closed; the trigger's `aria-expanded` is kept in step with the group; and a
+ * close that would strand the reader's focus hands it back to the trigger. The click is the
+ * `<summary>`'s own in every mode and the script does not touch it — which is why the focus a
+ * click or a tap brings opens nothing, and a tap on a touch laptop opens a group instead of
+ * opening it and closing it again with the click that follows.
  *
  * The header keeps one row at every width: it does not wrap, and the drawer hangs from its
  * bottom edge rather than becoming a second row inside it (the complaint RF3 measured: 177 px
