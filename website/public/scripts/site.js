@@ -28,7 +28,10 @@
  *     a click or a tap brings that focus, because the click that brought it toggles the group
  *     itself and would close what the focus had opened. A close this file does not ask for is
  *     answered too: opening a group closes its siblings in the `name` set, and the focus the
- *     browser drops with them is handed back to the trigger.
+ *     browser drops with them is handed back to the trigger. A close the *reader* asks for from
+ *     somewhere else is not answered that way: a press outside the menu forgets where the focus
+ *     was, because a click on the page's own text moves it to the body without a `focusin` to
+ *     hear, and the focus a reader has just dismissed the menu from stays where they put it.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -350,10 +353,18 @@
       pointerFocus = false
       if (event.key === 'Escape') closeMenus()
     })
-    document.addEventListener('pointerdown', function () {
+    document.addEventListener('pointerdown', function (event) {
       // A pointer's press moves the focus to what it pressed, on the way to the click that
       // press is making. That focus is not the keyboard's, and the `focusin` above refuses it.
       pointerFocus = true
+      // And a press outside the group the remembered focus is in is the reader leaving it. The
+      // focus goes to what was pressed, or — where that can take no focus at all, a paragraph of
+      // the page's own text — to the body, and that last one fires no `focusin` anywhere: the
+      // element remembered above would stay the link the reader has walked away from, and a close
+      // their press asks for would hand the focus back to a trigger they were leaving. So it is
+      // forgotten here, and a close that follows has nothing to give back.
+      var pressed = event.target && event.target.closest ? event.target.closest(GROUP_DETAILS) : null
+      if (focused && !(pressed && holds(pressed, focused))) focused = null
     })
     document.addEventListener(
       'focusin',

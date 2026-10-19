@@ -4195,12 +4195,18 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    does (so the submenu may already be open by the time the key is pressed; Escape closes it
    and the same Tab opens it again) — read the header's height again, and confirm the three
    links are
-   visible under it; then close it with Escape and again by clicking elsewhere. Do it for the
+   visible under it; then close it with Escape and again by clicking elsewhere — and for that
+   second close, first Tab *into* the open group's links so the focus is inside it, then click a
+   paragraph of the page's own text: the group closes and the focus **stays on the page**, on
+   nothing at all, and is not pulled back onto the summary the reader has just dismissed. Do it
+   for the
    **last** group as well, and read `document.documentElement.scrollWidth` with a group open.
    **FACT:** the header's height before opening and with the group open — **the same number
    twice**, because the wide dropdown is out of the header's flow, exactly as the narrow
    drawer's panel is — the links that appeared, the document's scroll width with the last
-   group open (not wider than the viewport), and what each of the two closes did.
+   group open (not wider than the viewport), what each of the two closes did, and where the
+   focus was after the click on the page (not on the group's summary, and with no focus ring
+   on it).
 
 **Passes when:** the header at 390 × 844 is one row — roughly 56 px rather than 177, with no
 sideways scroll — the drawer opens by keyboard, closes on Escape and on an outside click with
@@ -4216,7 +4222,12 @@ the pointer is inside the list, closes a moment after the pointer leaves, and op
 the pointer comes back inside that moment — while the same page on a touch device shows no
 hover behaviour at all and keeps its tap.** **And a click on a closed group opens it on the
 first press, whether or not its trigger already held the focus** (the owner's brief of
-2026-10-18, item 1: step 6).
+2026-10-18, item 1: step 6). **And a close the reader asks for from outside the menu answers
+with nothing:** the focus a reader has put inside an open group is handed back to the trigger
+only when the browser itself closed the group (a sibling opening, or Escape); a click on the
+page's own text — which moves the focus to the body and fires no `focusin` — closes the group
+and leaves the focus where the reader put it, not on the trigger of the menu they have just
+dismissed (step 7).
 
 **Fails when:** the header at 390 × 844 is taller than one row or the document scrolls
 sideways; the drawer does not open, or Escape or an outside click leaves it open, or the focus
@@ -4235,7 +4246,10 @@ into the list (which is what a close with no delay does), or that stays open aft
 has left and gone elsewhere, or one that opens on a **touch** device — where a hover that
 arrives with the tap turns the tap that used to open the group into a close — or a **click** on
 a closed group that does nothing at all, which is what a group opened by the focus the click
-moves and then toggled shut by the click itself looks like. The wide menu's
+moves and then toggled shut by the click itself looks like — or, on the pointer side of step 7,
+**the focus jumping back onto a closed group's summary** after a click on the page's own text
+dismissed it, which is what a handback that cannot tell the browser's close from the reader's
+looks like. The wide menu's
 two groups of links are *not* a
 failure: the dropdowns are D182's decision. The **structural** half of each of those is already
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the wide block to

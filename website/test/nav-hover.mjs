@@ -19,7 +19,10 @@
 //      survives a pointer that crosses the seam between the trigger and the list, is left alone
 //      by the click the `<summary>` handles by itself, says what it is in `aria-expanded`, and
 //      hands the focus back whenever a close would strand it — the pointer's own close, Escape,
-//      and the browser's close of a group whose sibling in the same `name` set opened.
+//      and the browser's close of a group whose sibling in the same `name` set opened — and
+//      hands nothing back for a close the **reader** asked for from somewhere else: a press on
+//      the page's own text moves the focus to the body without a `focusin` to hear, and the focus
+//      stays where they put it rather than on the trigger of the menu they just dismissed.
 //      **The focus a click or a tap moves is not the keyboard's, and opens nothing.** The press
 //      moves the focus to the trigger on the way to the click, so a page that opened the group on
 //      that focus would have the click close it again: a first tap that does nothing, and a click
@@ -46,7 +49,8 @@
 // in the DOM calls `site.js` makes plus the browser behaviour the menu depends on — `pointerenter`
 // and `pointerleave` over a subtree, each carrying the pointer type that caused it, the `toggle`
 // event a `<details>` fires when its `open` attribute changes, `focusin`, the focus a pointer's
-// press moves to the control it presses, the exclusive set a shared `name` makes (one group
+// press moves — onto the control it presses where that can take one, and onto nothing where it
+// cannot, which is a page's own text — the exclusive set a shared `name` makes (one group
 // opening closes its siblings, which drops the focus a closed `<details>` was holding), the
 // `change` a `MediaQueryList` reports when the device's answer changes, and a `<summary>`'s own
 // activation behaviour (a click toggles its group). Those are the browser's, not the site's, and
@@ -134,9 +138,10 @@ class StubEvent {
  * A built page as a document `site.js` can run in, with the browser behaviour the menu depends
  * on: `pointerenter`/`pointerleave` over a subtree, each carrying the pointer type that caused
  * it, the `toggle` event a `<details>` fires when its `open` attribute changes, `focusin`, the
- * focus a press moves to the element it presses, the exclusive set a shared `name` makes, a
- * `<summary>`'s activation behaviour, and the `change` event a `MediaQueryList` fires when the
- * device's answer to the pointer query moves.
+ * focus a press moves — onto what was pressed when that can take one, and onto nothing at all
+ * when it cannot — the exclusive set a shared `name` makes, a `<summary>`'s activation
+ * behaviour, and the `change` event a `MediaQueryList` fires when the device's answer to the
+ * pointer query moves.
  *
  * `hover` is the device's answer to the pointer query — a pointer that hovers, or a touch
  * screen's `false`; `setPointerHover` changes it under a page that has already loaded.
@@ -351,15 +356,44 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true, script =
   }
 
   /**
-   * A pointer's press and lift on an element, and the focus the press moves to it. The focus is
-   * not decoration: a browser moves it to the control on the way to the click, so the page's
-   * `focusin` runs *before* the click does. A stub that skipped it would let a page that opens a
-   * group on `focusin` pass a case in which the click that follows closes the group again — which
-   * is the defect the cases below are written to catch, and one only a real press can show.
+   * The element a browser would move the focus to if this one were pressed: the pressed element
+   * itself when it can take a mouse's focus — a link with an `href`, a `<summary>`, a button, a
+   * form control, anything with a `tabindex` — and otherwise the nearest ancestor that can. A
+   * paragraph of the page's own text has neither, which is the case that matters below.
+   */
+  function pressTarget(node) {
+    for (let at = node; at && at.name !== '#document'; at = at.parent) {
+      if (at.attrs.has('tabindex')) return at
+      if (at.name === 'a' && at.attrs.has('href')) return at
+      if (['summary', 'button', 'input', 'select', 'textarea'].includes(at.name)) return at
+    }
+    return null
+  }
+
+  /**
+   * A pointer's press and lift on an element, and the focus the press moves. The focus is not
+   * decoration: a browser moves it to the control on the way to the click, so the page's `focusin`
+   * runs *before* the click does. A stub that skipped it would let a page that opens a group on
+   * `focusin` pass a case in which the click that follows closes the group again — which is the
+   * defect the cases below are written to catch, and one only a real press can show.
+   *
+   * And a press only moves the focus where the browser would: onto what can take one, or, where
+   * nothing pressed can — a paragraph, a heading, the page's own text — onto nothing at all. That
+   * second half is not a detail: the element that had the focus is blurred and no `focusin` is
+   * fired anywhere, so a page that remembered where the focus was has nothing to correct it with
+   * and the memory goes stale exactly where a close may follow.
    */
   function press(element, type) {
     element.dispatch('pointerdown', { pointerType: type, bubbles: true, target: element })
-    element.focus()
+    const target = pressTarget(element.node)
+    if (target) dom.wrap(target).focus()
+    else {
+      const previous = document.activeElement
+      if (previous) {
+        document.activeElement = null
+        previous.dispatch('focusout', { target: previous })
+      }
+    }
     element.dispatch('pointerup', { pointerType: type, bubbles: true, target: element })
   }
 
@@ -819,6 +853,31 @@ test('a group a sibling closes hands the reader’s focus back to its own trigge
   assert.equal(product.open, false, 'the focus handed back to the trigger reopened the group the sibling had closed')
 })
 
+test('a click on the page closes the menu and leaves the focus where the reader put it', () => {
+  // The other half of the rule above, and the one a close the reader asks for must not answer:
+  // the reader has the focus on a link inside Product and presses the page's own text, which
+  // cannot take a focus — so the browser moves the focus to the body and fires no `focusin`
+  // anywhere, and the page's memory of where the focus was goes stale. The press closes the menu,
+  // and the close must leave the focus where the reader put it rather than pulling it back to the
+  // trigger of the menu they have just dismissed.
+  const page = stubPage(HOME.html)
+  const group = page.groups[0]
+  const summary = group.querySelector('summary')
+
+  page.focus(summary)
+  page.focus(group.querySelector('a'))
+  assert.ok(page.document.activeElement === group.querySelector('a'), 'the stub would not focus a link inside an open group')
+
+  const text = page.find('main p')[0]
+  assert.ok(text, 'the built homepage has no paragraph outside the menu, so there is nothing to press')
+  page.click(text)
+  assert.equal(group.open, false, 'a click on the page outside the menu did not close the open group')
+  assert.ok(
+    page.document.activeElement !== summary,
+    'the click that dismissed the menu handed the focus back to the trigger: the reader asked for the close and the focus belongs where they put it, not on a trigger they were leaving',
+  )
+})
+
 test('every way a submenu opens and closes says so in aria-expanded', () => {
   const page = stubPage(HOME.html)
   const group = page.groups[0]
@@ -1093,6 +1152,24 @@ function menuFailures(script) {
     }
   }
 
+  // And the other half of that rule, which is the one a close the *reader* asks for must not
+  // answer: a press on the page's own text cannot take a focus, so the browser moves it to the
+  // body and fires no `focusin` anywhere — and the trigger of the menu the reader has just
+  // dismissed is not where they are.
+  {
+    const page = pageOf()
+    const group = page.groups[0]
+    const summary = group.querySelector('summary')
+    page.focus(summary)
+    page.focus(group.querySelector('a'))
+    page.click(page.find('main p')[0])
+    if (page.document.activeElement === summary) {
+      out.push(
+        'a click on the page outside the menu handed the focus back to the trigger of the menu it closed: the reader asked for the close, and the focus belongs where they put it',
+      )
+    }
+  }
+
   return out
 }
 
@@ -1144,6 +1221,15 @@ const DEFECTS = [
     what: 'a script that binds the hover behaviour whatever the device answers',
     plant: (source) => source.replace('if (query && query.matches) {', 'if (query) {'),
     refuses: [/a device that answers the hover query no opened a submenu on hover/],
+  },
+  {
+    what: 'a script that hands the focus back for a close the reader asked for',
+    plant: (source) =>
+      source.replace(
+        /\n      var pressed = event\.target && event\.target\.closest \? event\.target\.closest\(GROUP_DETAILS\) : null\n      if \(focused && !\(pressed && holds\(pressed, focused\)\)\) focused = null/,
+        '',
+      ),
+    refuses: [/a click on the page outside the menu handed the focus back to the trigger/],
   },
 ]
 
