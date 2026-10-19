@@ -4597,12 +4597,13 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
 3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
    1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
    block's bottom is under the viewport's height on each. The block is the whole of it — the
-   command and the control beside it — and the section's heading and the `From …` line sit above
-   it, so a block whose bottom is inside the first screen is a block a reader meets without
-   scrolling. RF5 measured this page's first screen as the internal paragraph, with the commands
-   after it; P5's change is the ordering, and this step is where the position of the result is
-   read. **FACT:** the command, its bottom at both widths, and whether the whole block is above
-   the fold at each.
+   command and the control beside it — and the section's heading sits above it and the `From …`
+   line sits below it: the command is the first thing under the path's name, and the citation
+   that names the file it came from follows the block it cites, so a block whose bottom is inside
+   the first screen is a block a reader meets without scrolling. RF5 measured this page's first
+   screen as the internal paragraph, with the commands after it; P5's change is the ordering, and
+   this step is where the position of the result is read. **FACT:** the command, its bottom at
+   both widths, and whether the whole block is above the fold at each.
 
 4. **The consent banner is over the page, and it covers nothing this check claims.** The banner is
    `position: fixed` at the foot of the window (read where it sits out of
