@@ -18,11 +18,11 @@
 //
 // The one field that reads a file outside `docs/releases/` is `released`, and it reads the
 // **plugin's own version** (`plugin/.claude-plugin/plugin.json`): an entry is released when
-// its version is at or below that one. The release process lands the plugin's version bump on
-// `main` in the commit that publishes the release, before the tag is cut, so on `main` the
-// version equals the latest published release — and a release file written ahead of its bump
-// is correctly not yet released. The number is a file in this repository rather than a tag,
-// which is deliberate: the deploy build checks out without tags, and a changelog that read
+// its version is at or below that one. The release process merges the plugin's version bump to
+// `main` (`scripts/release.sh`'s "release: vX.Y.Z" PR) and only then pushes the tag, so on
+// `main` the version equals the latest published release — and a release file written ahead of
+// its bump is correctly not yet released. The number is a file in this repository rather than a
+// tag, which is deliberate: the deploy build checks out without tags, and a changelog that read
 // `git tag --list` printed "not yet released" for every release on the deployed site.
 
 import { readFileSync, readdirSync } from 'node:fs'
