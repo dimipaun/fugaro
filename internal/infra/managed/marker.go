@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
 	storage "google.golang.org/api/storage/v1"
 
@@ -55,6 +56,29 @@ const (
 	// is the shape the plan's Task 4.2 asks for: the read of Task 0.2 is
 	// taught this version, and any version it does not know stays refused.
 	MarkerVersionBudget = 2
+
+	// ProjectLabelKey and ProjectLabelValue are the second half of what makes
+	// a project managed: a label on the GCP project itself, written by the
+	// run that created it, in the same step that writes the object above
+	// (Task 3.0; the plan's own spelling, `fugaro_managed=true`, and the
+	// design's §5.1 item 3 records the spec's `fugaro-managed` as the name
+	// not taken).
+	//
+	// It is a second mark and never a substitute: the object stays the whole
+	// authority (D56/D57), and the label can only ever narrow what the object
+	// says — a project is managed only when both agree, so an absent label, a
+	// label with any other value and a project the read cannot fetch are all
+	// "not managed". A label that could widen would be a way for anything
+	// holding resourcemanager.projects.update to talk a run out of its
+	// confirmations, which is the boundary this whole feature rests on
+	// (design finding 14).
+	//
+	// It is not gcp.LabelManaged/gcp.ManagedValue, which are the
+	// installation's label on the *runs bucket* (internal/backend/gcp) and a
+	// different key on a different kind of object. A project label key lives
+	// for the life of the project, which is why the two are declared apart.
+	ProjectLabelKey   = "fugaro_managed"
+	ProjectLabelValue = "true"
 )
 
 // Budget is the monthly amount and the currency a managed creation was
@@ -321,6 +345,125 @@ func writeMarker(ctx context.Context, s *storage.Service, bucket, created, proje
 			return fmt.Errorf("gs://%s/%s is already there: the creation fact is written once, by the run that created the project", bucket, MarkerObject)
 		}
 		return err
+	}
+	return nil
+}
+
+// WriteManagedLabel writes the other half of the creation fact: the
+// ProjectLabelKey=ProjectLabelValue label on the GCP project itself (Task
+// 3.0). It is called from the same place and the same moment WriteMarker is —
+// the operator-run path that created the project (init's markCreated) — so
+// that the two marks are one step and cannot disagree about whether the run
+// tried. It is deliberately not reachable from anywhere else: nothing a
+// coding agent's session runs writes it (no agent session can create a
+// project at all: projectStage.Apply needs a terminal and a typed
+// confirmation), and neither does `fugaro managed apply`, which only reads.
+//
+// created and project are WriteMarker's, with the same gate and for the same
+// reason: a run that created no project (created == "") writes nothing, and a
+// call naming a project the run did not create is an error rather than a
+// label for either. Adding Firebase to an existing project is not creating
+// one (D73), so this is not a way to label the owner's own projects — which
+// matters more here than it does for the object, because a project label is
+// visible to everyone who can read the project. An owner who wants one of
+// those projects labelled uses WriteManagedLabelForFlag, below, whose gate is
+// the command's own.
+//
+// It is idempotent in the one direction that is not dangerous: a project that
+// already carries exactly this label is left alone (the mark is written once,
+// and a second run writing the same value changes nothing). A project
+// carrying the key with any other value is refused rather than overwritten —
+// a label someone else put there is not this package's to replace, and
+// `fugaro_managed=false` is a statement, not an empty slot. The other labels
+// the project carries are preserved: a Resource Manager v1 update replaces
+// the whole label map, so this reads it, adds its own key and sends the
+// result back.
+//
+// Like WriteMarker, the caller warns rather than fails: the project exists
+// either way, and a project with the object and no label is the fail-closed
+// direction — the read answers "not managed" for it, with a reason naming the
+// label (docs/gcp-setup.md carries the owner-run backfill).
+func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project string) error {
+	if created == "" {
+		return nil
+	}
+	if project == "" || project != created {
+		return fmt.Errorf("refusing to label project %q as %s: this run created %q, and the label records a creation — adding Firebase to an existing project, a project this run did not create, is not one", project, ProjectLabelKey, created)
+	}
+	return writeManagedLabel(ctx, c, project, "the run that created the project")
+}
+
+// WriteManagedLabelForFlag writes the same label under the other gate a
+// managed project can be made by: `fugaro managed flag` (Task 6.1), where the
+// project is an EXISTING one — the owner's, or a project an earlier run
+// created without --managed — and no run of ours ever created it.
+//
+// That is the one difference from WriteManagedLabel, and it is the whole
+// reason this entry point exists: the creation write refuses a project it did
+// not create (there, "created" is evidence; here it would be false, and
+// requiring it would make the command unable to do the thing it is for). The
+// gate that replaces it belongs to the command, not to this package, and it
+// is a stronger one than a string comparison: managed_flag.go refuses a
+// coding agent's session and any Fugaro run's process before this is reached
+// (agentMarker and managedFlagRunMarkers), and the confirmation is the
+// project's exact GCP project ID typed at the owner's own terminal
+// (confirmTypedGCPProject) — D58's answer, and the reason the label is
+// written only ever by an owner-run command (design finding 14: a label is a
+// write to the privilege boundary the feature rests on).
+//
+// Everything else is writeManagedLabel's, shared and unchanged: the same
+// value, the same refusals, the same labels kept, and the same fail-closed
+// direction when it cannot write (the object is the authority and the label
+// narrows; an unlabelled project reads as not managed). Nothing but
+// managed_flag.go may call this — the flag's typed confirmation is a
+// parameter of the command, not of this function, so a caller that skips the
+// command skips the gate.
+func WriteManagedLabelForFlag(ctx context.Context, c *crm.Service, project string) error {
+	if project == "" {
+		return fmt.Errorf("refusing to write the %s label: no project name", ProjectLabelKey)
+	}
+	return writeManagedLabel(ctx, c, project, "the owner flagging the project")
+}
+
+// writeManagedLabel is the write both gates above end in, so that the label
+// itself has exactly one implementation: read the project, leave a project
+// that already carries the label alone, refuse one carrying the key with
+// another value, keep every other label, write once. who names the writer in
+// that refusal — the two callers are the two hands a project becomes managed
+// by, and the operator reading it should be told which of them it was.
+func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string) error {
+	if c == nil {
+		return fmt.Errorf("refusing to label %s as managed: no Resource Manager client", project)
+	}
+	p, err := c.Projects.Get(project).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("reading project %s before labelling it %s=%s: %w", project, ProjectLabelKey, ProjectLabelValue, err)
+	}
+	// Absent is the ordinary case — nothing has ever written this label but
+	// this function — and "" is treated as absent: the key with an empty
+	// value is not a value this package writes, and it is not the label.
+	if v := p.Labels[ProjectLabelKey]; v != "" {
+		if v == ProjectLabelValue {
+			return nil
+		}
+		return fmt.Errorf("refusing to label %s as %s=%s: it already carries %s=%s, and the label is written once, by %s", project, ProjectLabelKey, ProjectLabelValue, ProjectLabelKey, v, who)
+	}
+	labels := make(map[string]string, len(p.Labels)+1)
+	for k, v := range p.Labels {
+		labels[k] = v
+	}
+	labels[ProjectLabelKey] = ProjectLabelValue
+	// The project read above, with one field changed, is what goes back, and
+	// the whole object rather than the labels alone: projects.update replaces
+	// the project's editable state — the display name and the label map — with
+	// the request's, so a body holding only labels takes the owner's display
+	// name off the project. gcloud and Terraform send the object they read for
+	// the same reason. The labels go in as the copy built above rather than as
+	// p.Labels itself, so that nothing here edits the map the read answered
+	// with.
+	p.Labels = labels
+	if _, err := c.Projects.Update(project, p).Context(ctx).Do(); err != nil {
+		return fmt.Errorf("labelling project %s %s=%s: %w", project, ProjectLabelKey, ProjectLabelValue, err)
 	}
 	return nil
 }

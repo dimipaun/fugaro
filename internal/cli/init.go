@@ -128,13 +128,24 @@ func newInitCmd() *cobra.Command { return newInitCmdWith(&initOptions{}) }
 
 // initCreation is what a run of init --create-project did, as the run itself
 // knows it (not inferred from the cloud afterwards): the project it created,
-// whether the project was already there when it was read, and whether this
-// run wrote the creation fact — with managed.WriteMarker's create-only
-// precondition, so a fact someone else put there first is never this run's.
+// whether the project was already there when it was read, and how much of the
+// mark it wrote.
+//
+// The mark is TWO writes (Task 3.0) and both are kept apart here, because the
+// half state is real and its recovery differs: Fact is the creation fact in
+// the runs bucket, written with managed.WriteMarker's create-only
+// precondition, so a fact someone else put there first is never this run's;
+// Marked is both halves — Fact and the fugaro_managed label on the project —
+// which is what the read requires and so the only thing that makes the
+// project managed. A run that wrote Fact and not the label (the label needs
+// resourcemanager.projects.update, which the credentials init runs on may
+// lack) has created a project the read answers "not managed" for, and the
+// owner-run label write is its way back.
 type initCreation struct {
 	Created string
 	Existed bool
-	Marked  bool
+	Fact    bool // the creation fact is in the runs bucket: this run wrote it
+	Marked  bool // and the project carries the label: both halves, so managed
 }
 
 // newInitCmdWith is newInitCmd over options the caller holds: fugaro
@@ -681,8 +692,17 @@ func runInit(r *initRun) error {
 //
 // The fact is the project this run created, and nothing else (D73: adding
 // Firebase to an existing project is not creating one, so init --firebase
-// writes nothing). The write itself refuses anything but that fact
-// (managed.WriteMarker); what is here is the rest: which bucket — the
+// writes nothing). It has two halves since Task 3.0 — the object above, and
+// the fugaro_managed label on the GCP project itself — and they are written
+// here together because they are one fact about one creation: the read
+// requires both (managed.readFact), so a run that wrote one and not the other
+// has marked nothing and says so rather than reporting a half-mark. This is
+// the only writer of either, and it is on the operator-run creating path, so
+// neither mark has a path from a coding agent's session or from a managed
+// apply.
+//
+// The write itself refuses anything but that fact
+// (managed.WriteMarker, managed.WriteManagedLabel); what is here is the rest: which bucket — the
 // project's own, under the name the read of Task 0.2 looks in and no other —
 // which project number, and what to say when it cannot be written.
 //
@@ -783,14 +803,58 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	if err == nil {
 		err = managed.WriteMarker(ctx, e.c.Storage, bucket, r.res.Created, r.gcpProject, number, budget)
 	}
-	if err != nil {
-		r.warn(fmt.Sprintf("project %s was created but not marked as managed in gs://%s (%v): the marker is written once, by the run that creates the project, so nothing is skipped for it until an owner-run command marks it", r.res.Created, bucket, err))
-		return
+	fact := err == nil
+	// The first half is on disk from here on, and a caller that acts on what
+	// this run did (fugaro restore) has to tell it from the whole mark: the
+	// object without the label is a project the read answers "not managed"
+	// for, and it is a project an owner-run label away from being complete.
+	if fact {
+		if c := r.o.created; c != nil {
+			c.Fact = true
+		}
 	}
-	if c := r.o.created; c != nil {
-		c.Marked = true
+	// The other half of the same fact, in the same step and on the same
+	// values: the fugaro_managed label on the project itself (Task 3.0).
+	// Both or neither — a project with the object and no label is not
+	// managed to the read (managed.readFact requires both), so a run that
+	// wrote one and not the other has not marked the project and must not
+	// say it did. The two are one operator-run step, which is the whole
+	// reason they are here rather than spread across two: the writers of
+	// either are this run and the owner's own `fugaro managed flag` (Task
+	// 6.1), both on the operator's own credentials before a person, and
+	// neither a coding agent's session (which cannot create a project at
+	// all — projectStage.Apply needs a terminal and a typed confirmation)
+	// nor `fugaro managed apply`, which only reads, reaches one.
+	if err == nil {
+		err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
 	}
-	fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s)\n", r.res.Created, bucket, managed.MarkerObject)
+	marked := err == nil
+	switch {
+	case marked:
+		if c := r.o.created; c != nil {
+			c.Marked = true
+		}
+		fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s, labelled %s=%s)\n", r.res.Created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
+	case fact:
+		// The half-written mark: the object landed and the label did not.
+		// What completes it is an owner's own command, and which one depends
+		// on what the object records — the split restore's own refusal draws
+		// (restore.go): the flag replaces a fact that records no amount and
+		// writes both halves in one command, while the fact a --managed
+		// creation writes already records one, no command of ours rewrites a
+		// fact that does, and there the label goes on the project itself. The
+		// warning this replaced gave both halves to the creating run alone
+		// and offered the flag for both states, which for the second refuses.
+		r.warn(fmt.Sprintf("project %s was created but not marked as managed (%v): gs://%s/%s holds the creation fact and the project does not carry the label %s=%s, and the read requires both, so nothing is skipped for it. What completes the mark is the owner's own command at their terminal, and which one depends on what the object records: `fugaro managed flag %s --budget N --budget-currency CCC` replaces a creation fact that records no amount, writing the amount and the label in the same command, while a fact that already records one is replaced by no command of ours — for it the label goes on the project itself (gcloud projects update %s --update-labels %s=%s), the backfill docs/gcp-setup.md carries", r.res.Created, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, r.res.Created, r.res.Created, managed.ProjectLabelKey, managed.ProjectLabelValue))
+	default:
+		// Nothing of the fact is there, so the read answers "not managed"
+		// for a project no half of it describes. The flag is still the way
+		// out: it writes the object where none exists as readily as it
+		// replaces the version-1 one (managed.writeFlag), on the owner's own
+		// credentials at their terminal, and a later run of ours cannot —
+		// this function returns above for every run that creates no project.
+		r.warn(fmt.Sprintf("project %s was created but not marked as managed (%v): gs://%s/%s was not written and the project carries no %s=%s label, and the read requires both, so nothing is skipped for it. No later run of ours writes either half — a run that creates no project records nothing — and the mark is completed by the owner's own command at their terminal: `fugaro managed flag %s --budget N --budget-currency CCC` writes the creation fact and the label in the same command", r.res.Created, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, r.res.Created))
+	}
 
 	// D77's state bucket, the other half of what a managed project needs
 	// before an apply can run under the deployer: the state of the
@@ -805,8 +869,20 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// the outcome of the run — a project that is marked but has no state
 	// bucket is the fail-closed direction (a managed apply finds nowhere to
 	// keep its state and says so, rather than writing it somewhere else).
+	//
+	// It is not gated on the mark above, and a run whose label write failed
+	// reaches it: this step is what an apply under the deployer needs, this
+	// function is its one writer in the tree, and no later run gets here — a
+	// run that creates no project returns before it. Skipping it because the
+	// marks are half-written would take with it the one step nothing later can
+	// take, on the very paths the warning above sends a person to, which end
+	// in a managed apply.
+	what := "was created"
+	if marked {
+		what = "was created and marked as Fugaro-managed"
+	}
 	if err := managedmode.EnsureManagedStateBucket(ctx, managedmode.InfraStore{Clients: e.c}, r.res.Created, e.spec.Region, e.spec.Operators); err != nil {
-		r.warn(fmt.Sprintf("project %s was created and marked as Fugaro-managed, but its managed state bucket was not set up (%v): a managed apply has nowhere to keep its state until an owner-run command sets it up", r.res.Created, err))
+		r.warn(fmt.Sprintf("project %s %s, but its managed state bucket was not set up (%v): a managed apply has nowhere to keep its state until an owner-run command sets it up", r.res.Created, what, err))
 		return
 	}
 	// The operators are named in the sentence as well as bound: the read the

@@ -801,3 +801,25 @@ func TestSetupSkillSecretsStepReadsMissingFromSecretsLs(t *testing.T) {
 		t.Error("SKILL.md still has the sentence whose pronoun binds to doctor")
 	}
 }
+
+// TestSetupSkillSaysWhoWritesTheManagedMarks (round-2 review, nit 2): a
+// managed project's two marks are written by two operator-run steps — the run
+// that creates the project (managed.WriteManagedLabel) and the owner's
+// flagging command for one that already exists
+// (managed.WriteManagedLabelForFlag, which exists because the creation write
+// refuses a project no run created) — so the sentence listing the marks may
+// not hand both of them to the creating run alone, and the skill and its
+// reference have to keep naming the existing-project route that writes them
+// together. Both directions are pinned: the false sentence coming back fails
+// the first check, and dropping the flag's own claim fails the second.
+func TestSetupSkillSaysWhoWritesTheManagedMarks(t *testing.T) {
+	skill := setupFiles(t)["skills/setup/SKILL.md"]
+	if strings.Contains(skill, "both written by the creating run") {
+		t.Error("SKILL.md gives both managed marks to the creating run alone, and the owner's flagging command writes both too")
+	}
+	reference := setupFiles(t)["skills/setup/reference/managed.md"]
+	const both = "It writes the label `fugaro_managed=true` on the project as well, in the same command"
+	if !strings.Contains(reference, both) {
+		t.Errorf("reference/managed.md does not say the flagging command writes the label too:\nwant %q", both)
+	}
+}

@@ -1600,6 +1600,18 @@ managed apply rather than applied without a budget control. The amount is the
 budget ALERT amount the installation's Terraform creates and nothing else —
 this command does not create or change a budget, and it makes no billing call.
 
+It writes BOTH marks a managed project carries, in one step: that object and
+the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
+requires both — the label is what a project can be narrowed by, and a project
+without it is not managed whatever its runs bucket holds — so writing the
+object alone would leave this project exactly as unmanaged as it was. The
+label is written on the project, by the account running this command, which is
+why the account needs resourcemanager.projects.update on it; the project's
+other labels are kept. A project that already carries that key with another
+value is refused rather than overwritten — the label someone else put there is
+a statement, not an empty slot — and the object written first is not taken
+back, so that refusal says which half is there and which is missing.
+
 What flagging gives up, stated before it writes: the marker is what turns the
 typed confirmation off (D55), so from this project's next apply on, the
 deterministic gate, the whole-project inventory, the owner-written delete list
