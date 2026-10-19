@@ -155,10 +155,25 @@ const BENEFITS = [
 
 <style>
   /* Tokens only (W1.2): the section names the palette, the spacing scale, the type scale and
-     the radii, and defines none of them. The section's own gutter and its room below are the
-     page's rule (`src/pages/index.astro`), because every top-level block on the homepage
-     carries its own — a block that padded both would pad the gap between two blocks twice,
-     which is what `website/test/base-styles.mjs`'s `homeRhythmFailures` refuses. */
+     the radii, and defines none of them.
+
+     **The section's own gutter and its room below are declared here, in this component's rule**
+     (review round 6). They were in `src/pages/index.astro`'s `.home-chat, .home-flow,
+     .home-benefits` rule, and Astro scopes a page's selector to the elements the page renders:
+     the `<div class="home-chat">` and `<div class="home-flow">` carry the page's scope, and this
+     `<section>` is rendered by this component and carries `Benefits.astro`'s — so the page's
+     rule never matched the section, the section kept no padding at all, and its text ran edge to
+     edge on a phone. The rule is where the element is rendered, the same as `Hero.astro`'s and
+     `HomeInstall.astro`'s; and it is one block's rule rather than the page's three, so a block
+     that pads both sides of a gap is now visible in one file. The gap is padded once: this
+     section pads below itself and not above, which is what
+     `website/test/base-styles.mjs`'s `homeRhythmFailures` refuses a pair of blocks for. */
+  .home-benefits {
+    max-width: var(--page-max);
+    margin: 0 auto;
+    padding: 0 var(--space-md) var(--space-3xl);
+  }
+
   .benefits-title {
     margin: 0 0 var(--space-md);
     font-family: var(--font-sans);

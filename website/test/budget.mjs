@@ -32,8 +32,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 980,837 bytes where this repository's own clone, which carries the
-// tags, builds 979,322.
+// deployed site's — builds 980,920 bytes where this repository's own clone, which carries the
+// tags, builds 979,405.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -68,7 +68,7 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,226,047 bytes. Every file in `dist/` on that build summed to 980,837
+//   - Whole site: 1,226,150 bytes. Every file in `dist/` on that build summed to 980,920
 //     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
 //     `fugaro watch` assets); × 1.25, rounded up. **It is the build with no tags** — the one
 //     the gates make, and the one the deployed site is — and the changelog page's own "not yet
@@ -134,6 +134,12 @@
 //     homepage and How It Works, in their HTML. The page weight and the script stand where they
 //     stood: the heaviest page is the docs hub, which renders no flow. The caption is two words
 //     shorter than the one it replaces, which the homepage's word count carries.
+//   - **The benefits' block rule** (the review of round 6) moved the site figure alone,
+//     980,837 → **980,920**, by **83 bytes**: the section's gutter and the room below it are
+//     declared in `Benefits.astro` now, where the page's rule declared them for a selector the
+//     page's scope never reached, so the page's rule is the two blocks the page renders and the
+//     section's rule writes the same three declarations again. The page weight and the script
+//     stand where they stood (the docs hub is the heaviest page and renders none of this).
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -588,7 +594,7 @@ test('the README budget lines are read strictly', () => {
 // site was in before the console's release, which the checkout no longer builds — and runs the
 // artifact gates over that copy, so the flag's two states are both held to the ceilings. A
 // derivation held to that copy would be the flag's own bytes rather than the site's: measured on
-// this build, **1,572 bytes smaller** at the site figure — 979,265 against the 980,837 below — the
+// this build, **1,572 bytes smaller** at the site figure — 979,348 against the 980,920 below — the
 // console option's markup on the three pages that render it (the console page's downloads
 // 1,100, Getting Started's option 386 and the homepage's call to action 86), and
 // nothing at all at the page weight. The direction is the flag's own: turning
@@ -647,8 +653,8 @@ export function derivationFailures(readme, measured) {
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 980,837 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 979,322 with the tags this
+ * builds to two different site figures — 980,920 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 979,405 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation

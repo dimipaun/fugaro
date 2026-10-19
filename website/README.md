@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **980,837 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **980,920 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **979,322 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **979,405 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -162,7 +162,7 @@ added or removed without this sentence moving fails there:
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 979,265 with the flag off to 980,837 with it on:
+    moves the **site figure up by 1,572 bytes**, from 979,348 with the flag off to 980,920 with it on:
     the console option's own markup on the three pages that render it — the console page's
     downloads section (each artifact's checksum beside its link, and the verification command)
     1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
@@ -269,6 +269,15 @@ added or removed without this sentence moving fails there:
     which renders no flow. The
     caption is two words shorter than the one it replaces, which the homepage's word count
     below carries.
+  - **The benefits' block rule** (the review of round 6) moved the site figure alone,
+    980,837 → **980,920**, by **83 bytes**: the section's gutter and the room below it are now
+    declared in the component that renders the section, where they were declared on the page and
+    reached nothing — Astro scopes a page's selector to the elements the page renders, so the
+    section, rendered by `Benefits.astro`, never carried the page's scope. The page's rule now
+    names the two blocks the page renders and the section's rule writes the three declarations
+    out again, which is the whole of the 83 bytes. The page weight and the script did not move:
+    the heaviest page is the docs hub, which renders none of this, and it is one page's inline
+    stylesheet either way.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -296,7 +305,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,678,141 bytes. Three times 1,226,047 (every file in `dist/`, 980,837
+  - **Whole site:** 3,678,450 bytes. Three times 1,226,150 (every file in `dist/`, 980,920
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 

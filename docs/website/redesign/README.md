@@ -230,7 +230,7 @@ here goes stale the way the byte budgets did before D192.
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,580** (three times 49,860; `public/scripts/site.js` 39,888 bytes),
   **page weight per page 1,000,974** (three times 333,658; the docs hub 266,926 bytes) and
-  **whole site 3,678,141** (three times 1,226,047; the gates' own build of the site, 980,837
+  **whole site 3,678,450** (three times 1,226,150; the gates' own build of the site, 980,920
   bytes across 23 files, the `fugaro watch` assets below included). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
@@ -287,7 +287,12 @@ here goes stale the way the byte budgets did before D192.
   to cite `README.md#How it works` — on the two pages that render the flow, the homepage and
   How It Works. The page weight and the script stay where they were: the docs hub renders no
   flow. The caption is two words shorter than the one it replaced, so the homepage measures 294
-  words where the benefits left it at 296 (the reading below).
+  words where the benefits left it at 296 (the reading below). **The round after that is the
+  review of round 6**, which moved the site figure alone again, 980,837 → **980,920**, by 83
+  bytes: the benefits' gutter and the room below it are declared in `Benefits.astro` now, the
+  file that renders the section, where the page's rule named the class and never reached the
+  element — Astro scopes a page's selector to the elements the page renders, and the section is
+  rendered by a component. The page weight and the script stay where they were.
   **The figures above are the build this branch ships.**
   The
   figures live in `website/README.md` and nowhere else, and
@@ -301,15 +306,15 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **980,837 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **979,322 with the tags this repository's clone carries**,
+  to **980,920 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **979,405 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
   the artifact gates over a copy with the console's flag flipped off — the state the checkout
   built until the console's release turned it on — and that copy is a different build — **1,572
-  bytes smaller at the site figure** than the gates' own, 979,265 against 980,837, measured (the
+  bytes smaller at the site figure** than the gates' own, 979,348 against 980,920, measured (the
   console page's downloads 1,100, Getting Started's option 386 and the homepage's call to
   action 86), and the page weight where it was — rather than another copy of this one.
   **The direction is the one the flag's own round gave it, read the other way:** turning the
@@ -757,11 +762,17 @@ changes are cited as the feedback's own.
 - **The measurements, and the check that is still the owner's.** Nothing here was rendered: no
   browser was driven for this round, and no screenshot is committed — this run cannot see one.
   What the gates read is the artifact and the stylesheet: the homepage is 294 words against the
-  300-word ceiling and its lead 23 against 40 (`budget.mjs`), the section's own vertical
-  padding is read out of the built CSS at the three widths the rhythm gate uses, so the block
-  pads the gap above it once and not twice (`base-styles.mjs`), the section is a
-  named landmark under the page's fourth `h2` with four `h3`s under it (`a11y.mjs`), and the
-  homepage's bytes are re-derived from the gates' own build (D192). **Whether the page then
-  looks right is the owner's check (70a–70c, D190)** — the two-column grid, the rule above each
-  benefit and the prompt line's bubble are the parts of this round a gate can only say is
-  present.
+  300-word ceiling and its lead 23 against 40 (`budget.mjs`), the section is a named landmark
+  under the page's **sixth** `h2` — the chat's title, the flow's four step names and then this
+  one, with the install heading after it — carrying four `h3`s (`a11y.mjs`), and the homepage's
+  bytes are re-derived from the gates' own build (D192). **Its vertical padding is read out of
+  the built CSS at the three widths the rhythm gate uses, and that reading is the correction of
+  round 6**: the rule that pads the section is the one `Benefits.astro` declares, which is the
+  rule that reaches it, and the page's `.home-benefits` rule that named the class and carried
+  the page's scope never matched the element at all — `base-styles.mjs` reads a selector against
+  the `data-astro-cid-…` the element carries, and a block the stylesheet names and no rule
+  reaches is now a refusal of its own rather than a block read as having no padding. With the
+  section's rule in force, the block pads the gap above it once and not twice. **Whether the
+  page then looks right is the owner's check (70a–70c, D190)** — the two-column grid, the rule
+  above each benefit and the prompt line's bubble are the parts of this round a gate can only
+  say is present.
