@@ -336,10 +336,10 @@ func checkProjectJobOAuth(profile, auth, selected string) error {
 }
 
 // projectJobAgentAuth is the agent.auth a launch on a shared project job runs
-// under: the checkout's fugaro.yaml resolved over spec.ProjectLayer — the
-// project layer the task carries into task.json, which is what the runner
-// applies over the fugaro.yaml of the ref it checks out (config.Resolve, the
-// same two documents through the same function).
+// under: the launcher's own checkout's fugaro.yaml resolved over
+// spec.ProjectLayer — the project layer the task carries into task.json —
+// through config.Resolve, the runner's own function, so the two documents are
+// composed exactly as the run composes them.
 //
 // It is deliberately not the checkout's own resolution (co.Agent.Auth), which
 // launchProjectJobFor has in hand and used to read here. Three things make that
@@ -360,6 +360,19 @@ func checkProjectJobOAuth(profile, auth, selected string) error {
 //     it, carries an OAuth layer into a run while the launcher's own resolution
 //     now says api-key — the exact launch task 3.4a exists to refuse, and one
 //     this check would let through if it read co.
+//
+// The two documents are not both the run's, and the difference is the file.
+// The layer is the run's: the task carries the bytes the run applies. The
+// fugaro.yaml is the *working tree* of the checkout this command runs in,
+// while the run resolves the file at the ref it clones (runner.go's blobless
+// checkout of spec.Ref). The checkout is at least the launched repository's —
+// checkoutRoot refuses one whose origin is not spec.Repo's — so the file is
+// that repository's, at possibly another ref and with whatever uncommitted
+// edits the working tree carries. Reading spec.Ref's own copy here would mean
+// fetching that ref into the operator's checkout, a network write into a
+// repository this command does not own, so it does not; instead the refusal
+// names the copy it judged, and an operator whose working tree is not what
+// this launch is to be judged on checks out or commits the file first.
 //
 // A resolution that cannot be made is refused rather than guessed at: an
 // unknown credential is one the job may not be able to serve, and the run would
@@ -425,6 +438,6 @@ func (e *cloudEnv) projectJobAgentAuth(ctx context.Context, spec *task.Spec) (st
 // not `checkout: clone` keeps the per-repository job it has always had
 // (design §4.4).
 func checkProjectJobAuthUnknown(repo, why string) error {
-	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on those same two documents rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job (a workflow that is not `checkout: clone` keeps the job it has always had). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
+	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that layer with the fugaro.yaml of your own checkout's working tree — the same repository, but not necessarily the ref the run will clone — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job (a workflow that is not `checkout: clone` keeps the job it has always had). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
 		repo, why)
 }

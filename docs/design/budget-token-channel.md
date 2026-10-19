@@ -118,8 +118,8 @@ Five steps, all of them shipped:
 | step | where |
 | --- | --- |
 | **Mint** | `internal/cli/launch_budget.go`: `mintBudgetToken` (the decision is `budgetMintOn`) mints `token.Claims{Slug, Run, FX, FP, RB}` with `token.Mint` through `token.IAMSigner` built by `tokenSigner` |
-| **Deliver** | `internal/budget/token/object.go`: `PutObject` writes the custom token at `ObjectKey(slug, run)` = `runs/<slug>/<run>/budget-token`, create-if-absent (`ErrObjectExists`); the runs bucket's lifecycle rule deletes an untaken one after a day (`deploy/terraform/gcp/modules/installation/bucket.tf`, `google_storage_bucket.runs`); `DeleteObject` removes it after a launch that did not start (`dropBudgetToken`) |
-| **Take** | `internal/runner/projectpolicy.go`: `takeBudgetToken` → `token.TakeObject` (`internal/budget/token/object.go`), which reads the object, **deletes it**, and refuses one whose own `fs`/`fr` claims are not the names the read used (`checkNames`, same file). `budgetClient` takes exactly once per run and shares the result with the budget session |
+| **Deliver** | `internal/budget/token/object.go`: `PutObject` writes the custom token at `ObjectKey(slug, run)` = `tokens/<slug>/<run>/budget-token` (the `tokens/` prefix of §7.2 and D16, which shipped at 0.9.0), create-if-absent (`ErrObjectExists`); the runs bucket's lifecycle rule deletes an untaken one after a day (`deploy/terraform/gcp/modules/installation/bucket.tf`, `google_storage_bucket.runs`); `DeleteObject` removes it after a launch that did not start (`dropBudgetToken`) |
+| **Take** | `internal/runner/projectpolicy.go`: `takeBudgetToken` → `token.TakeObject` (`internal/budget/token/object.go`), which **reads the object and does not delete it** — the job account's grant on `tokens/` is read-only (D16), so the take never issues a delete it knows is denied — and refuses one whose own `fs`/`fr` claims are not the names the read used (`checkNames`, same file). `budgetClient` takes exactly once per run and shares the result with the budget session; the once-only property is that memoization (`budgetIdentity.done`), not the object's disappearance, which no longer happens |
 | **Exchange** | `internal/budget/token/exchange.go`: `Exchange` turns the custom token into an ID token; its claims, `fs`, `fr`, `fx`, `fp`, `rb` and the uid `UID`, are the run's database identity, and they are what the rules test (`internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/rules.go`, e.g. `auth.token.fs == $slug && auth.token.fr == $run`). The claims and `UID` are declared in `internal/budget/token/token.go` |
 | **Mark** | `internal/cli/run.go` sets `lspec.Env = []string{runner.BudgetTokenEnv + "=1"}`; `internal/backend/backend.go`'s `LaunchSpec.Env` carries it into the execution's container override (`internal/backend/gcp/run.go`, `Launch`), and `internal/runner/budget_session.go`'s `BackendFromEnv` parses it |
 
@@ -133,8 +133,12 @@ Two properties of that channel are load-bearing and easy to lose in a redesign:
   an error or a message" — which is where the invariant is written. `mintBudgetToken`'s own doc
   comment is about the mint it performs (the earlier attempt's object is replaced) and does not carry
   the sentence.
-- **The take is the consume.** `TakeObject` deletes as it reads, so a token can be used once, and a
-  run that finds none where its own marker says one was minted refuses to start rather than run
+- **The take is the consume, and the consume is the key.** `TakeObject` reads the object and leaves
+  it in place (the job's grant on `tokens/` is read-only, D16), so what makes a token usable once is
+  the key, delivered once to one execution in that launch's override (§7.1, D15), and the run's own
+  memoization of the take (`budgetIdentity.done`); the object's stay in the bucket is no second
+  delivery. A run that finds none where its own marker says one was minted refuses to start rather
+  than run
   without a session, a cap or a kill switch (`budgetClient`'s `TokenMarked` branch). That refusal
   is the fail-closed path the L-b finding of PR #379 hardened: an environment that cannot be
   parsed is `MalformedEnv` and stops the run whatever its mode.

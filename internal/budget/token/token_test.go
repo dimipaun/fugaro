@@ -421,6 +421,99 @@ func TestDeleteObjectForbiddenIsNotSilentSuccess(t *testing.T) {
 	}
 }
 
+// A delete that fails for any other reason (the 503 of an overloaded backend,
+// not the 403 of a grant) is reported too, and it is neither ErrForbidden nor
+// silent success: the launcher's cleanup must not report a token removed that
+// is still in the bucket.
+func TestDeleteObjectReportsOtherFailures(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	g, b := bucket(t)
+	c := claims()
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(9)); err != nil {
+		t.Fatal(err)
+	}
+	g.FailObjectDeletes(1)
+	err := token.DeleteObject(ctx, b, c.Slug, c.Run)
+	if err == nil || errors.Is(err, blobx.ErrForbidden) {
+		t.Fatalf("a delete the backend refused with 503 = %v, want a plain failure", err)
+	}
+	if !strings.Contains(err.Error(), "deleting the token object failed") {
+		t.Errorf("err = %v, want it to say the delete failed", err)
+	}
+	if _, _, rerr := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); rerr != nil {
+		t.Fatalf("the object should still be there: %v", rerr)
+	}
+}
+
+// ObjectPresent is what a run with no budget backend reads to learn whether a
+// launcher minted for it: presence, never a take. Its failure is returned, not
+// read as "no object" — internal/runner's refuseStrayToken stops on it, and a
+// 404 that is really an unreadable object must not launch a run outside the
+// caps a minted token stands for.
+//
+// Mutation (run, restored): return false, nil from ObjectPresent's error arm —
+// "the object is not readable" launches.
+func TestObjectPresent(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, b := bucket(t)
+	c := claims()
+	if ok, err := token.ObjectPresent(ctx, b, c.Slug, c.Run); err != nil || ok {
+		t.Fatalf("presence before a mint = %v, %v; want false, nil", ok, err)
+	}
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(10)); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := token.ObjectPresent(ctx, b, c.Slug, c.Run); err != nil || !ok {
+		t.Fatalf("presence after a mint = %v, %v; want true, nil", ok, err)
+	}
+	// A check that cannot be made is not "no object": the caller
+	// (internal/runner's refuseStrayToken) stops on the error, and a
+	// (false, nil) read as "nothing was minted" would launch the run outside
+	// the caps the launcher minted for. The read is failed here by its
+	// context, the one failure of b.Exists' own that no GCS status can model:
+	// gocloud folds both a 404 and a 403 into (false, nil), which is what
+	// makes the error arm worth holding.
+	dead, cancel := context.WithCancel(ctx)
+	cancel()
+	ok, err := token.ObjectPresent(dead, b, c.Slug, c.Run)
+	if ok || err == nil {
+		t.Fatalf("an unreadable object = %v, %v; want false and an error", ok, err)
+	}
+	if !strings.Contains(err.Error(), "checking for the token object failed") {
+		t.Errorf("err = %v, want it to say the check failed", err)
+	}
+	// Names that cannot be keys are refused rather than read.
+	for _, bad := range [][2]string{{"", c.Run}, {c.Slug, ""}, {"a/b", c.Run}} {
+		if _, err := token.ObjectPresent(ctx, b, bad[0], bad[1]); err == nil {
+			t.Errorf("ObjectPresent(%q, %q) = nil, want a refusal", bad[0], bad[1])
+		}
+	}
+}
+
+// A put that fails other than by finding the object already there is reported
+// with the bucket's own status, and nothing of it is left: the launcher
+// replaces an earlier attempt's object only under its own key (D17), so a
+// create the grant refuses must not read as a written token.
+func TestPutObjectReportsAWriteFailure(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	g, b := bucket(t)
+	c := claims()
+	g.DenyWrites("runs", token.ObjectPrefix)
+	err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(11))
+	if err == nil || errors.Is(err, token.ErrObjectExists) {
+		t.Fatalf("a create the grant refuses = %v, want a plain failure", err)
+	}
+	if !strings.Contains(err.Error(), "writing the token object failed") {
+		t.Errorf("err = %v, want it to say the write failed", err)
+	}
+	if _, _, rerr := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); !errors.Is(rerr, blobx.ErrNotExist) {
+		t.Fatalf("a refused create left an object: %v", rerr)
+	}
+}
+
 func TestExchangeGivesTheRunsIdentity(t *testing.T) {
 	e := newEnv(t)
 	c := claims()

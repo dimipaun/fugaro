@@ -293,9 +293,12 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 		return nil
 	}
 	// The run's identity, taken out of the runs bucket exactly once and shared
-	// with the project policy's read (projectpolicy.go): a second take would
-	// find nothing, because TakeObject deletes the object as it reads it
-	// (finding 2). Its refusals are this function's own, shipped ones: a job
+	// with the project policy's read (projectpolicy.go): the take is memoized
+	// in r.ident (budgetIdentity.done, set by budgetClient and read here), so
+	// the session and the policy read open with the one token this run took.
+	// TakeObject itself is read-only (the job's grant on tokens/ admits no
+	// delete, D16), so nothing here rests on a second read finding nothing.
+	// Its refusals are this function's own, shipped ones: a job
 	// whose backend is damaged, or whose budget is on with no token in the
 	// bucket, stops here (B1).
 	if _, err := r.budgetClient(ctx); err != nil {

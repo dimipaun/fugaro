@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -304,6 +305,43 @@ func TestRunnerWithTheMarkerAndNoBackendRefuses(t *testing.T) {
 	}
 	if len(g.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
 		t.Fatalf("the run went on: calls = %d, rec = %+v", len(g.agent.calls), rec)
+	}
+}
+
+// TestRunnerWithNoBackendAndAnUnreadableBucketStops: the same state, with the
+// job's environment carrying no backend *and* no marker, so the run finds the
+// launcher's token only by looking in the runs bucket (refuseStrayToken). A
+// check that cannot be made must stop the run: a failed read read as "no token
+// is there" would let it go on with the environment ceiling while the bucket
+// holds exactly the evidence that the project has a budget this run cannot
+// read. The fake answers the presence check's request with a 400, a failure
+// that is neither "the object is not there" nor a permission — the two gocloud
+// folds into (false, nil) — which is what makes it an unreadable bucket rather
+// than a missing object.
+//
+// Mutation (run, restored): read ObjectPresent's error as "not present"
+// (return nil from the arm) — the run goes on and the test finds no refusal.
+func TestRunnerWithNoBackendAndAnUnreadableBucketStops(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", "")
+	gcs := gcpfake.NewGCS(t)
+	nb := gcs.Bucket(t, "runs")
+	b.bucket, b.deps.Bucket = nb, nb
+	b.mint(time.Now())
+	// The job was never re-applied: no database, no API key, no marker.
+	b.deps.Backend = runner.Backend{}
+	// A read of an object of the runs bucket fails for a reason that is
+	// neither "the object is not there" nor a permission the caller may read
+	// as one, which is what makes it a check that cannot be made at all.
+	gcs.RefusePath("/storage/v1/b/runs/o/", 400, "INVALID_ARGUMENT", "", "injected read failure")
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a run whose token check failed must stop: rec = %+v", rec)
+	}
+	if !strings.Contains(err.Error(), "checking for a budget token") {
+		t.Errorf("the refusal does not name the check that failed: %v", err)
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("the run went on: calls = %d, rec = %+v", len(b.agent.calls), rec)
 	}
 }
 
