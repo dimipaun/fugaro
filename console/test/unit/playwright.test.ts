@@ -29,6 +29,10 @@
 // runtime -- which is exactly the environment where the e2e file cannot run at
 // all.
 
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
 // The config as Playwright loads it: `defineConfig` returns the object it is
@@ -37,6 +41,9 @@ import { describe, expect, it } from 'vitest'
 // conditionals inside the config, of which it has two (`forbidOnly` and
 // `retries` both branch on `process.env.CI`).
 import config from '../../playwright.config'
+
+/** E2E_DIR is where the specs live, from this file's location. */
+const E2E_DIR = fileURLToPath(new URL('../e2e', import.meta.url))
 
 describe('playwright.config.ts', () => {
   it('is the config the e2e run uses', () => {
@@ -66,10 +73,57 @@ describe('playwright.config.ts', () => {
     ).toBe('none')
   })
 
+  it('resolves the Electron runtime before any worker exists: globalSetup must be set', () => {
+    // The intermittent `Error: electron.launch: spawn ETXTBSY` (and its ENOENT
+    // twin: the same failed CI job, run 39174336894 attempt 1) is the electron
+    // package unpacking its runtime into `node_modules/electron/dist` while
+    // another Playwright worker execs the same file. `globalSetup` runs once,
+    // in the main process, BEFORE the first worker is forked, so resolving the
+    // binary there is what removes the race rather than papering over it.
+    // Removing this line reintroduces it; changing it is a deliberate edit that
+    // has to explain where the runtime is fetched instead.
+    expect(
+      config.globalSetup,
+      'the Electron runtime must be resolved once, before any worker can launch it: without globalSetup two workers unpack node_modules/electron/dist at the same time and one of them execs a file the other is writing (ETXTBSY), or execs it before it exists (ENOENT)',
+    ).toBe('./test/support/globalSetup.ts')
+  })
+
   it('keeps one golden per theme per platform, in test/e2e/__screenshots__', () => {
     // CI runs the e2e pass on macOS and on Linux under one check name, and the
     // two draw different pixels: the file name carries the platform, so each
     // leg compares against its own recording (review round 2 of PR 494).
     expect(config.snapshotPathTemplate).toBe('{testDir}/__screenshots__/{arg}-{platform}{ext}')
+  })
+
+  it('is the file Playwright calls, and not an empty stand-in', async () => {
+    // The path above is asserted as a string; this is the other half -- the
+    // module at that path exports the one function Playwright's loader looks
+    // for. Importing it here is safe and deliberate: the module resolves the
+    // binary only when the function is *called*, and a unit suite that
+    // downloaded an Electron runtime would be a unit suite that cannot run on a
+    // machine with no Chromium libraries at all.
+    const setup: { default?: unknown } = await import('../support/globalSetup')
+    expect(typeof setup.default, 'test/support/globalSetup.ts must default-export the setup function').toBe('function')
+  })
+
+  it('launches every spec through test/support/launch.ts, never electron.launch directly', () => {
+    // The helper is where the runtime is resolved before the spawn and where
+    // ETXTBSY is retried. A spec that went back to calling `electron.launch`
+    // itself would look correct, pass, and reintroduce the flake on a cold
+    // `node_modules` -- the failure mode this guard exists for, since only the
+    // worker that spawns the binary can see it.
+    const specs = readdirSync(E2E_DIR)
+      .filter((name) => name.endsWith('.spec.ts'))
+      .sort()
+    expect(specs.length, 'there are specs to check, and this guard covers every one of them').toBeGreaterThan(0)
+    for (const spec of specs) {
+      const text = readFileSync(join(E2E_DIR, spec), 'utf8')
+      expect(text, `${spec} imports Playwright's Electron launcher directly; use launchConsole from ../support/launch`).not.toMatch(
+        /_electron as electron/,
+      )
+      expect(text, `${spec} calls electron.launch directly; use launchConsole from ../support/launch`).not.toMatch(
+        /\belectron\.launch\(/,
+      )
+    }
   })
 })
