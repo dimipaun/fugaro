@@ -746,8 +746,8 @@ func TestDocsConsoleStylingAccentOnALightGround(t *testing.T) {
 		"`#17A8E6` on **white** is\n**2.70:1**",
 		"`#F2F6FA` the same value is **2.49:1**",
 		// And the token the light set names for accent text, since the accent
-		// cannot be it.
-		"**`--accent-ink` `#085A82`** is the darker step",
+		// itself cannot be it.
+		"**`--accent-ink` `#085A82`** is nevertheless the tone for accent text",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s lacks %q", path, want)

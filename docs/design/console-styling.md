@@ -562,16 +562,15 @@ needs its own accent step rather than the same value:
 - **`--accent` `#0B6E9E`** is the light accent: **5.17:1** on `--ground`, **5.62:1** on
   `--surface`, **4.80:1** on `--surface-alt`. It clears 4.5:1 as text on all three and 3:1
   as a boundary, so **on a light ground the accent may be a rule, a focus ring, a filled
-  control's background and text** — the light set does not need the dark set's split.
-- **`--accent-ink` `#085A82`** is the darker step for the places the accent is text inside
-  a hovered or tinted control: **6.92 / 7.51 / 6.42**. The pair exists on the light set for
-  the same reason it exists on the dark one — a fill and a text tone carry different
-  contrast requirements — but the roles are not mirrored: on the dark set the ink is the
-  *lighter* tone, on the light set it is the *darker* one.
-- **`--accent` is never body text on `--surface-alt` in the light set without the ink
-  step**: 4.80:1 clears 4.5:1, but only just, and a hovered row is exactly where the
-  background stops being the value the table measured. §3.4 is the table; it is computed on
-  the surface, not on the hover.
+  control's background and text**: unlike the dark set's, it does not *depend* on a second
+  tone to be legible as text.
+- **`--accent-ink` `#085A82`** is nevertheless the tone for accent text inside a hovered or
+  tinted control: **6.92 / 7.51 / 6.42**. It exists for the same reason the pair exists on
+  the dark set — a fill and a text tone carry different contrast requirements — and for one
+  more: `--accent` on `--surface-alt` clears 4.5:1 by 0.30, and a hovered row is exactly
+  where the background stops being the value §3.4 measured. The rows of that table are
+  computed on the surface, not on the hover. The roles are not mirrored between the sets:
+  on the dark set the ink is the *lighter* tone, on the light set the *darker* one.
 
 | Token | Value | Hue | Role |
 |---|---|---|---|
