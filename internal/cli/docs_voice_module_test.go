@@ -144,6 +144,33 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 		}
 	}
 
+	// Two claims in this document were wrong about the text of the document they
+	// describe, and both are pinned the way they failed. The design's own §11 is
+	// the authority on what its first revision's questions became -- six
+	// consolidated into four, the first revision's Q1 no longer written as a
+	// question, only Q4 carried forward -- and spec.md states the foreground rule
+	// once, in the *Goal*. A reader who is told the questions were kept, or that
+	// the *Goal* says something twice, checks a design and a spec that say
+	// otherwise.
+	for _, want := range []string{
+		"consolidated its first revision's six questions into four",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("docs/voice-module/reconciliation.md lacks %q: §1 has to state what the design's own §11 records about its first revision's questions", want)
+		}
+	}
+	for _, banned := range []string{
+		"kept Q1–Q3",
+		// The *Goal* is named rather than "the spec", so the ban holds wherever
+		// in a sentence the claim comes back.
+		"*Goal* states it twice",
+		"*Goal* says twice",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("docs/voice-module/reconciliation.md says %q: the design's §11 says its six questions were consolidated into four and only Q4 was carried forward, and spec.md states the foreground rule exactly once", banned)
+		}
+	}
+
 	// The README's list of the checks this module touches and finding #44's must
 	// be the same list, in both directions: the index says what the document
 	// says, and a check in one and not the other is how "103" went missing from
@@ -949,7 +976,102 @@ func sortedCheckNumbers(set map[string]bool) []string {
 	return out
 }
 
-// Mutation (verified, run and restored): twenty-four, all run and restored.
+// voiceModuleMutationHeader opens this file's trailing mutation log: the one
+// line that states how many mutations the log records.
+const voiceModuleMutationHeader = "// Mutation (verified, run and restored): "
+
+// voiceModuleMutationEntryRE matches one entry of that log: a comment line
+// opening with the entry's number. Every mutation is written that way -- its
+// number first, then what was planted and which test caught it -- so the count
+// the header states and the entries under it can be compared.
+var voiceModuleMutationEntryRE = regexp.MustCompile(`^// \((\d+)\) `)
+
+// TestDocsVoiceModuleMutationLogIsSelfConsistent reads this file's own trailing
+// mutation log and checks it against itself. The log is a claim like any other
+// in this repository -- it says how many mutations were planted, run, seen to
+// fail and restored -- and that count went stale once: the header said
+// twenty-four while the log listed thirty, because a commit added to the log
+// and not to the sentence above it. The count and the entries are compared here
+// rather than trusted, and the entries must run from (1) with no gap and no
+// repeat.
+func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
+	const path = "internal/cli/docs_voice_module_test.go"
+	lines := strings.Split(readDoc(t, path), "\n")
+
+	stated := 0
+	for i, line := range lines {
+		if !strings.HasPrefix(line, voiceModuleMutationHeader) {
+			continue
+		}
+		if stated != 0 {
+			t.Errorf("%s:%d: a second mutation log header (%q): the file carries one log, and a second count states it twice", path, i+1, line)
+		}
+		if n, err := strconv.Atoi(regexp.MustCompile(`\d+`).FindString(line[len(voiceModuleMutationHeader):])); err == nil {
+			stated = n
+		}
+	}
+	if stated == 0 {
+		t.Fatalf("%s: no mutation log header (%q ...) stating a count: the log and its count are checked against each other, so neither can be read", path, voiceModuleMutationHeader)
+	}
+
+	seen := map[int]bool{}
+	var entries []int
+	for i, line := range lines {
+		m := voiceModuleMutationEntryRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		if seen[n] {
+			t.Errorf("%s:%d: the mutation log numbers an entry (%d) twice: each mutation is planted, run and restored once, and a repeat hides the entry that lost its number", path, i+1, n)
+		}
+		seen[n] = true
+		entries = append(entries, n)
+	}
+
+	if len(entries) != stated {
+		t.Errorf("%s: the mutation log's header says %d and the log has %d entries (%v): the count is a claim about the entries under it, and it went stale once when a commit added to the log without editing the header", path, stated, len(entries), entries)
+	}
+	for n := 1; n <= stated; n++ {
+		if !seen[n] {
+			t.Errorf("%s: the mutation log has no entry (%d) though its header says %d: the entries run from (1) with no gap, so a missing number is a deleted or a misnumbered entry", path, n, stated)
+		}
+	}
+	for n := range seen {
+		if n > stated {
+			t.Errorf("%s: the mutation log has an entry (%d) above the %d its header states: the header undercounts the log", path, n, stated)
+		}
+	}
+}
+
+// Mutation (verified, run and restored): 37 entries, numbered (1)–(37).
+// (34) Writing "kept Q1–Q3" back into §1's sentence about the design's first
+// revision fails TestDocsVoiceModuleFolderIsWritten with `says "kept Q1–Q3"`:
+// the design's own §11 says its six questions were consolidated into four, so
+// the ban is what keeps the corrected sentence from drifting back.
+// (35) Writing the *Goal*'s foreground rule back as "states it twice" in
+// finding #4 fails it with `says "*Goal* states it twice"`: spec.md states it
+// once, in one sentence, and this document's own "twice" elsewhere means "in
+// two places".
+// (36) Dropping the consolidation from §1 ("consolidated its first revision's
+// questions") fails it with `lacks "consolidated its first revision's six
+// questions into four"` -- the positive half of the same pin, so the claim has
+// to be stated, not merely not-contradicted.
+// (37) Writing "says twice" back into Q4's option (1) fails it with `says
+// "*Goal* says twice"`: the option is the record of what was asked, and its
+// one description of the spec has to be true for the same reason.
+// (31) Changing this log's own header to "24 entries" while the log still lists
+// thirty fails TestDocsVoiceModuleMutationLogIsSelfConsistent with `the mutation
+// log's header says 24 and the log has 30 entries` -- the stale count that test
+// exists for, reproduced on purpose.
+// (32) Renumbering the log's last entry (30) to (31) fails it with `the
+// mutation log has no entry (30) though its header says 30` and `the mutation
+// log has an entry (31) above the 30 its header states`.
+// (33) Renumbering (29) to (28) fails it with `the mutation log numbers an
+// entry (28) twice` and `the mutation log has no entry (29)`.
 // (25) Stripping the answered marker from Q7's heading ("### Q7 — ... D45 says
 // nothing bounds it?") fails
 // TestDocsVoiceModuleReconciliationRecordsEveryAnswer with `Q7's heading does
@@ -958,44 +1080,53 @@ func sortedCheckNumbers(set map[string]bool) []string {
 // (26) Changing Q4's answer paragraph to "option (2)" fails it with `Q4's
 // answer is option (2); the question recommends option (1)` -- the answer and
 // the option it records are compared, so an answer cannot silently take a
-// different option from the one the question recommended. (27) Writing "§5's
+// different option from the one the question recommended.
+// (27) Writing "§5's
 // questions are the gate" back into §0 fails it with `still says a question is
-// open: "§5's questions are the gate"`. (28) Renaming §5a's Q9 table row so it
+// open: "§5's questions are the gate"`.
+// (28) Renaming §5a's Q9 table row so it
 // no longer starts with a question number fails it twice: `§5a's table has 11
 // rows and §5 has 12 questions besides Q1: every answer must be in both places`
-// and `§5a's table has no row for Q9`. (29) Adding an invented citation to Q5's
+// and `§5a's table has no row for Q9`.
+// (29) Adding an invented citation to Q5's
 // answer ("the spec's openWakeWord/Porcupine bullet is **dropped** (#33)") fails
 // it with `Q5's answer cites #33, which the option it records does not cite:
 // the answer records the option, it does not extend it` -- #33 is a finding
-// that exists, which is why only a per-answer comparison catches it. (30)
-// Putting "Q2–Q13 stay open" back into the README's question line fails
+// that exists, which is why only a per-answer comparison catches it.
+// (30) Putting "Q2–Q13 stay open" back into the README's question line fails
 // TestDocsVoiceModuleFolderIsWritten with `docs/voice-module/README.md still
 // says a question is open: "Q2–Q13 stay open"`.
 // (20) Writing the pipe in finding #42's quoted sentence unescaped again ("the
 // network is down | local only") fails
 // TestDocsVoiceModuleFolderTablesAreWellFormed with `the row has 4 cells and
 // the header has 3`: that is the defect the escape fixes, and the row's verdict
-// cell is what GFM drops. (21) Adding a §2 row with no audit entry ("| A
+// cell is what GFM drops.
+// (21) Adding a §2 row with no audit entry ("| A
 // brand-new spec claim nobody audited |") fails
 // TestDocsVoiceModuleReconciliationFindingsResolve twice -- `§2 has 27 rows and
 // the audit has 26 entries` and `the §2 row "A brand-new spec claim nobody
 // audited" matches 0 audit entries` -- which is the direction the old
-// audit-only-iterates-the-slice loop could not see. (22) Duplicating §2's
+// audit-only-iterates-the-slice loop could not see.
+// (22) Duplicating §2's
 // debounce row fails it with `the §2 table has two rows whose first cell is
-// "Debounce window batches bursts into one utterance"`. (23) Deleting the
+// "Debounce window batches bursts into one utterance"`.
+// (23) Deleting the
 // `{"Debounce window", []int{10}}` entry from voiceModuleSection2Audit fails it
 // with `§2 has 26 rows and the audit has 25 entries` and `the §2 row "Debounce
-// window batches bursts into one utterance" matches 0 audit entries`. (24)
-// Rewording that row's first cell to "Burst batching into one utterance" fails
-// it both ways at once: `matches 0 audit entries` for the row, and `no row of
-// §2 matches the audit entry "Debounce window"` for the entry. (17) Writing the staging verdict back into finding #17 ("which is
+// window batches bursts into one utterance" matches 0 audit entries`.
+// (24) Rewording that row's first cell to "Burst batching into one utterance"
+// fails it both ways at once: `matches 0 audit entries` for the row, and `no row of
+// §2 matches the audit entry "Debounce window"` for the entry.
+// (17) Writing the staging verdict back into finding #17 ("which is
 // **STAGED, NOT APPLIED**") fails
 // TestDocsVoiceModuleReconciliationRecordsTheAppliedConsoleWorkflow twice: the
 // document-level refusal (`says "STAGED, NOT APPLIED" about
 // .github/workflows/console-release.yml: ... so the file is applied`) and the
-// finding's own `applied, not staged`. (18) Dropping the copy-in commit
+// finding's own `applied, not staged`.
+// (18) Dropping the copy-in commit
 // (`7fdfa61`, "Add console release workflow") from #17 fails it with `finding
-// #17 does not state "7fdfa61"`. (19) Replacing the deep verification clause
+// #17 does not state "7fdfa61"`.
+// (19) Replacing the deep verification clause
 // with a generic one ("`codesign --verify --deep --strict` -- `--deep` is what
 // reaches the nested binary -- plus" -> "a signature check plus") fails it with
 // `finding #17 does not state "codesign --verify --deep --strict"`: the
@@ -1003,25 +1134,33 @@ func sortedCheckNumbers(set map[string]bool) []string {
 // (7) Pointing §2's Haiku row at #33 (Apple's OS 26 floor) instead of #26 fails
 // TestDocsVoiceModuleReconciliationFindingsResolve with `the §2 row " A small
 // fast LLM (Haiku) turns a batch into one spoken line " cites [11 33]; the
-// audit, read from §3's findings, expects [11 26]`. (8) Writing "#45" back into
+// audit, read from §3's findings, expects [11 26]`.
+// (8) Writing "#45" back into
 // #18's consequence fails it with `cites #45, which §3 does not define: the
-// findings run #1..#44`. (9) Pointing §1's Q3 row at #25 instead of #19 fails
-// it on the §1 row's own line. (10) Replacing the register paragraph's
+// findings run #1..#44`.
+// (9) Pointing §1's Q3 row at #25 instead of #19 fails
+// it on the §1 row's own line.
+// (10) Replacing the register paragraph's
 // (#26)/(#28) with (#36) fails it three times: both names missing, and the
-// paragraph citing the dependency-licence gap. (11) Dropping
+// paragraph citing the dependency-licence gap.
+// (11) Dropping
 // "*(Recommended.)*" from Q5's first option bullet fails
 // TestDocsVoiceModuleReconciliationAllocatesNoDecisions with `### Q5 — Which
-// wake word ... does not recommend first`. (12) Renaming §5a's heading fails
+// wake word ... does not recommend first`.
+// (12) Renaming §5a's heading fails
 // TestDocsVoiceModuleFolderIsWritten with `lacks "## 5a. Owner's answers"`.
 // (13) Removing "103" from the README's check list fails the same test with
-// `docs/voice-module/README.md does not list check 103`. (14) Reverting every
+// `docs/voice-module/README.md does not list check 103`.
+// (14) Reverting every
 // `voice-evaluation-switch.md` link to `cloud-stt-tts.md` fails
 // TestDocsVoiceModuleReconciliationCitationsExist with `does not disclose its
-// branch-only citations`. (15) Adding "and **111** to the console line" to the
+// branch-only citations`.
+// (15) Adding "and **111** to the console line" to the
 // README's sentence fails TestDocsVoiceModuleFolderIsWritten the other way
 // round, with `docs/voice-module/README.md lists check 111, which finding #44
 // does not: the index and the document have drifted apart` -- the direction the
-// old substring loop could not see. (16) Editing a line of spec.md that no
+// old substring loop could not see.
+// (16) Editing a line of spec.md that no
 // verbatim check covers ("Log latency to first partial" -> "Log the latency to
 // first partial") fails it with `docs/voice-module/spec.md is not the text
 // committed verbatim at eea279f1 (sha256 b82c8f84..., want 26a2e884...)`: the
@@ -1030,10 +1169,11 @@ func sortedCheckNumbers(set map[string]bool) []string {
 // And three older ones, all run and restored.
 // (4) Putting the marker claim back into the README ("the text between the
 // `=== SPEC TEXT ===` markers") fails TestDocsVoiceModuleFolderIsWritten twice,
-// once for each banned string. (5) Wrapping spec.md in "=== SPEC TEXT ===" and
+// once for each banned string.
+// (5) Wrapping spec.md in "=== SPEC TEXT ===" and
 // "=== END OF SPEC TEXT ===" lines fails it once per delimiter line, and the
-// SHA-256 pin too (the spec is no longer the text committed at eea279f1). (6)
-// Writing "Two paths cited below are not on `main`" back into the
+// SHA-256 pin too (the spec is no longer the text committed at eea279f1).
+// (6) Writing "Two paths cited below are not on `main`" back into the
 // reconciliation fails TestDocsVoiceModuleReconciliationCitationsExist.
 //
 // And three older ones, one per test.
@@ -1042,9 +1182,11 @@ func sortedCheckNumbers(set map[string]bool) []string {
 // `docs/voice-module/spec.md lacks "App stays in the foreground while talking
 // (no background listening)." (the spec must be verbatim)` -- and with the
 // SHA-256 pin, which reports the same edit as a whole-file mismatch rather than
-// as one missing sentence. (2) Renumbering
+// as one missing sentence.
+// (2) Renumbering
 // reconciliation.md's last owner question, "### Q13 —" to "### Q14 —", fails
 // TestDocsVoiceModuleReconciliationAllocatesNoDecisions twice -- Q13 missing,
-// Q14 present. (3) Renaming docs/design/voice.md on disk fails
+// Q14 present.
+// (3) Renaming docs/design/voice.md on disk fails
 // TestDocsVoiceModuleReconciliationCitationsExist with `cites
 // "docs/design/voice.md", which does not exist at this commit`.
