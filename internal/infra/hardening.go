@@ -77,6 +77,20 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 			case bd.Condition != nil && bd.Role == "roles/storage.objectUser" && bd.Condition.Title == gcp.LauncherBucketConditionTitle &&
 				bd.Condition.Expression == gcp.LauncherBucketCondition(bucket) && bd.Condition.Description == "":
 				writer[m] = true
+			case bd.Condition != nil && bd.Role == "roles/storage.objectUser" && bd.Condition.Title == gcp.LegacyLauncherBucketConditionTitle &&
+				bd.Condition.Expression == gcp.LegacyLauncherBucketCondition(bucket) && bd.Condition.Description == "":
+				// The launchers' own grant in its pre-0.9.0 form, on an
+				// installation not re-initialised since the budget token moved
+				// to tokens/. Not writer[m]: the run this member starts cannot
+				// write its sealed token, and the loop below says so from the
+				// launchers list. The fix is the init that replaces the
+				// binding, never a removal — the member holds the runs/ write
+				// it is supposed to hold, and taking it away would break
+				// launching (this case used to fall through to the catch-all
+				// below, which prints remove-iam-policy-binding --all).
+				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
+					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " under the launchers' pre-0.9.0 runs/-only condition (titled " + gcp.LegacyLauncherBucketConditionTitle + "): the installation has not been re-initialised since the budget token moved to tokens/, so its launchers cannot write the sealed budget token",
+					Fix:     "an operator runs fugaro init (" + sealRelease + " or later), which replaces the grant"})
 			case bd.Condition != nil && fugaroAccountMember.MatchString(m) && bd.Role == "roles/storage.objectUser":
 				// A job or build account under its own prefixes (the guard checks the shape).
 			case bd.Condition != nil:

@@ -257,11 +257,15 @@ func (b *Bucket) ReadMax(ctx context.Context, key string, limit int) ([]byte, in
 
 // ReadStrict is Read, except that an HTTP 403 is ErrForbidden (with the
 // googleapi.Error still reachable through errors.As) rather than
-// ErrNotExist, and a 404 stays ErrNotExist. Only the shared-config readers
+// ErrNotExist, and a 404 stays ErrNotExist. The shared-config readers
 // (internal/cli/sharedcfg.go) and fugaro image refresh's record read may use
 // the strict variants: they run as launchers or operators holding
 // unconditional objectAdmin (which includes list), for whom a 403 means no
-// access.
+// access. So may internal/budget/token's ObjectPresent, and for the same
+// reason rather than a different one: it runs as the job account, whose grant
+// on tokens/ is a conditional objectViewer, so a 403 there means the grant
+// does not cover the name it asked for — the one state its caller must not
+// read as "no object" (docs/design/budget-token-channel.md §7.2).
 func (b *Bucket) ReadStrict(ctx context.Context, key string) ([]byte, int64, error) {
 	return b.read(ctx, key, MaxReadBytes, true)
 }

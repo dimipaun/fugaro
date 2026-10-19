@@ -421,6 +421,74 @@ func TestDeleteObjectForbiddenIsNotSilentSuccess(t *testing.T) {
 	}
 }
 
+// ObjectPresent's three answers, and the one it must never give: a refused
+// read is not "no token object". A job account whose tokens/ grant is missing
+// — the repository not re-applied since the budget token moved there — is
+// refused exactly the way a missing object is reported (gocloud folds the GCS
+// 403 into gcerrors.NotFound), so the caller that asks this question to decide
+// whether a budget-on run may go on (the runner's refuseStrayToken) would be
+// answered "absent" and let the run continue with no session and no kill
+// switch. The read is strict, and a 403 is the error, as in DeleteObject.
+func TestObjectPresent(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	c := claims()
+	key := token.ObjectKey(c.Slug, c.Run)
+	t.Run("an absent object is false, no error", func(t *testing.T) {
+		_, b := bucket(t)
+		present, err := token.ObjectPresent(ctx, b, c.Slug, c.Run)
+		if present || err != nil {
+			t.Fatalf("ObjectPresent of nothing = %v, %v", present, err)
+		}
+	})
+	t.Run("a present object is true", func(t *testing.T) {
+		_, b := bucket(t)
+		if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(9)); err != nil {
+			t.Fatal(err)
+		}
+		present, err := token.ObjectPresent(ctx, b, c.Slug, c.Run)
+		if !present || err != nil {
+			t.Fatalf("ObjectPresent of the token object = %v, %v", present, err)
+		}
+	})
+	// A present object whose read is refused: the state of a job whose
+	// tokens/ grant is missing. Not (false, nil), which reads as "this run
+	// was never given a token".
+	t.Run("a refused read of a present object is an error, not false", func(t *testing.T) {
+		g, b := bucket(t)
+		if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(9)); err != nil {
+			t.Fatal(err)
+		}
+		g.FailObjectGetsAfter("runs", key, 0)
+		present, err := token.ObjectPresent(ctx, b, c.Slug, c.Run)
+		if err == nil {
+			t.Fatalf("a refused read of the token object = %v, nil: it reads as \"no token object\"", present)
+		}
+		if present {
+			t.Fatalf("ObjectPresent of a refused read = true, %v", err)
+		}
+		if !errors.Is(err, blobx.ErrForbidden) {
+			t.Fatalf("a refused read = %v, want ErrForbidden", err)
+		}
+	})
+	// The read is a STRICT one: the same 403 answers the same way whether it
+	// is the presence check that meets it or the object's bytes are wanted.
+	// (The fake's own deny knob, DenyWrites, is a write-only refusal and must
+	// not make this read fail: the grant a job holds on tokens/ is read-only,
+	// so a refused *write* says nothing about the read.)
+	t.Run("a write-only refusal does not make the read fail", func(t *testing.T) {
+		g, b := bucket(t)
+		if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(9)); err != nil {
+			t.Fatal(err)
+		}
+		g.DenyWrites("runs", token.ObjectPrefix+"/")
+		present, err := token.ObjectPresent(ctx, b, c.Slug, c.Run)
+		if !present || err != nil {
+			t.Fatalf("ObjectPresent with writes denied = %v, %v", present, err)
+		}
+	})
+}
+
 func TestExchangeGivesTheRunsIdentity(t *testing.T) {
 	e := newEnv(t)
 	c := claims()

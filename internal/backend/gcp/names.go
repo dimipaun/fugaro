@@ -610,6 +610,31 @@ func ProjectTokenBucketConditionTitle(saID string) string {
 // one rather than as this one.
 const LauncherBucketConditionTitle = "fugaro-launchers-runs-tokens"
 
+// LegacyLauncherBucketConditionTitle and LegacyLauncherBucketCondition are
+// the launchers' objectUser grant as every release before 0.9.0 wrote it:
+// the runs/-only expression under the old title (H5, before the widening
+// above). No release writes them any more — the installation module's
+// precondition refuses them, so an apply replaces the binding — but a
+// reader that must judge an *installed* policy meets them for as long as an
+// installation has not been re-initialised, and must read them as this
+// grant's old form rather than as a stranger's condition
+// (internal/infra's RunsBucketFindings; a removal suggested for it would
+// take away the runs/ write a launcher is supposed to hold). They are
+// defined here, beside their replacement, so the two spellings cannot drift
+// apart.
+const LegacyLauncherBucketConditionTitle = "fugaro-launchers-runs"
+
+// LegacyLauncherBucketCondition is the expression LauncherBucketCondition
+// built before the budget token moved to tokens/, and the title above is its
+// title. It embeds bucket unescaped exactly as LauncherBucketCondition does,
+// and panics for the same reason on a name outside [a-z0-9._-].
+func LegacyLauncherBucketCondition(bucket string) string {
+	if !bucketNameRE.MatchString(bucket) {
+		panic(fmt.Sprintf("gcp.LegacyLauncherBucketCondition: bucket name %q has a byte outside [a-z0-9._-]", bucket))
+	}
+	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
+}
+
 // bucketNameRE is the charset LauncherBucketCondition accepts: narrower than
 // GCS's own bucket name rules, but every bucket Fugaro creates or accepts
 // already fits it (tfvars.go's "fugaro-runs-" prefix check does not enforce
