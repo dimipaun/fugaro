@@ -2,7 +2,7 @@
  * plan Task 6.4; design section 2's inventory, with sections 3.5, 3.7, 3.8, 4.2
  * and 4.4 as the rules it keeps).
  *
- * This is the fourth and last layer of the one stylesheet the three documents
+ * This is the last layer of the one stylesheet the three documents
  * link: `tokens.css` is the vocabulary, `palette.css` the value set, `base.css`
  * the reset, the document and the chrome, and this file is the per-screen rules
  * — Live, Spend, Projects, Run detail, the degraded and unavailable screens, the
@@ -453,8 +453,17 @@ li.live-run-stuck .live-run-flag {
   letter-spacing: 0.08em;
 }
 
+/* The queued row's left border is a **rule**, so it takes `--accent`: section
+ * 3.2's role cell gives that token the rules ("structure: rules, the focus ring,
+ * a filled control, the cap bar below its threshold"), and the rail's selected
+ * row draws its own 3 px left border in it (section 4.1). It is **not**
+ * `--accent-ink`, whose cell is "the accent **as text** -- links, an accent
+ * heading": that is the tone for text, and a border is not text. `queued` is not
+ * one of the five state colours either, so the structural tone is the one the
+ * design leaves for it, and `test/unit/theme-tokens.test.ts` holds
+ * `--accent-ink` to text. */
 li.live-run-queued {
-  border-left: 3px solid var(--accent-ink);
+  border-left: 3px solid var(--accent);
 }
 
 li.live-run-stuck {
@@ -739,8 +748,19 @@ section.projects-panel[data-state='not-built'] {
   border-left: 3px solid var(--warn);
 }
 
+/* A panel the CLI could `read` is the normal panel, and its left rule is
+ * **structure**, so it takes `--accent` -- the token section 3.2's role cell
+ * gives the rules to, and the one the rail's selected row draws its own 3 px
+ * left border in (section 4.1). It is **not** `--ok`: section 3.5 rule 4
+ * licenses that tone for exactly two readings -- measured-and-inside-the-cap,
+ * and the rail's `running` row -- and a panel the CLI read is neither of them,
+ * so painting it `--ok` is the decorative use section 6.1 rule 3 forbids. Adding
+ * a reading to that rule means amending the rule and section 3.2's role cell in
+ * the same edit, which is how the rail's `running` arrived; a tone whose stated
+ * role it does not have is a rule an implementer cannot justify against the
+ * design. */
 section.projects-panel[data-state='read'] {
-  border-left: 3px solid var(--ok);
+  border-left: 3px solid var(--accent);
 }
 
 /* The kill panel and a killed repository: `KILLED by <who> <when> "<reason>"`,

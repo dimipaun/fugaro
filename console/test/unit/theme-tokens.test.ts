@@ -71,8 +71,8 @@ function readTheme(name: string): string {
 
 /** readThemeDirectory reads every stylesheet of a directory as a Map of file name to text,
  * in name order. The "a light theme cannot arrive silently" case below walks this rather
- * than the two files this task writes: the directory is the theme, and Tasks 6.3 and 6.4
- * add two more files to it.
+ * than the files one task writes: the directory is the theme, and the tasks after this one
+ * add their own files to it.
  *
  * **The directory is a parameter, and the positive controls hand it a temporary one.** The
  * controls have to plant a file for the walk to find, and planting it in the real
@@ -274,14 +274,23 @@ function borderOffences(files: ReadonlyMap<string, string>): string[] {
 
 // ---- where `--ok` may be painted -------------------------------------------------------
 
-/** OK_SELECTORS are the only selectors a rule may paint `--ok` on. Design section 3.5
- * rule 4 gives the tone exactly two readings -- "measured and inside the cap" and the
- * rail's `running` row -- and forbids it decoratively (section 6.1 rule 3), so the licence
- * is a short list and not a principle a rule can stretch: the rail's `running` state, the
- * Live sparkline's `measured` bar, and a Projects panel the CLI could `read`. */
+/** OK_SELECTORS are the only selectors a rule may paint `--ok` on, and the list is the
+ * design's licence rather than the code's usage: section 3.5 rule 4 gives the tone
+ * **exactly two** readings -- "measured and inside the cap" and the rail's `running` row
+ * (section 3.2's role cell says the same two) -- and forbids it decoratively (section 6.1
+ * rule 3), so an entry here is a reading the design names and nothing else.
+ *
+ * **The two entries are those two readings, and the file's own history is why the
+ * distinction is written down.** The list once held a third, a Projects panel the CLI could
+ * `read`; the rule that painted it `--ok` was transcribed into this list rather than
+ * derived from the design, so the case whose whole purpose is to keep `--ok` to its
+ * licensed readings accepted a reading the design licenses nowhere -- a "read" panel is not
+ * "measured and inside the cap" and is not the rail's `running` row. The panel's rule draws
+ * `--accent` now (a rule is structure, which is what that token's role cell gives it), and
+ * a reading added to rule 4 means amending the design in the same edit and adding its
+ * selector here. */
 const OK_SELECTORS: readonly string[] = Object.freeze([
   "div.live-bar[data-state='measured']",
-  "section.projects-panel[data-state='read']",
   "span.console-rail-state[data-state='running']",
 ])
 
@@ -295,6 +304,44 @@ function okSelectors(css: string): readonly string[] {
     for (const one of (selector ?? '').split(',')) out.push(one.trim())
   }
   return out.filter((one) => one !== '').sort()
+}
+
+// ---- where `--accent-ink` may be painted ------------------------------------------------
+
+/** INK_PROPERTIES are the declarations a rule may read `--accent-ink` in, and the list is
+ * the design's role cell rather than a preference: section 3.2 gives the token one job --
+ * "the accent **as text** -- links, an accent heading" -- while the cell above it gives the
+ * **rules** to `--accent` ("structure: rules, the focus ring, a filled control, the cap bar
+ * below its threshold"), and section 4.1 draws the rail's selected row's 3 px left border in
+ * that token. So a border, an outline or a fill painted `--accent-ink` is the text tone used
+ * for structure: the same misreading that put `--ok` on a stage and a panel. */
+const INK_PROPERTIES: readonly string[] = Object.freeze(['color'])
+
+/** accentInkOffences is every declaration that reads `--accent-ink` for something other than
+ * text, as `screens.css: li.live-run-queued { border-left: 3px solid var(--accent-ink) }`. It
+ * is the mirror of `okSelectors`: that one asks *where* a state tone is painted and holds a
+ * list of selectors, while this one asks *what* an ink tone is painted as and reads every
+ * declaration of both files, so a border added later is caught without anyone remembering to
+ * name it here. */
+function accentInkOffences(files: ReadonlyMap<string, string>): string[] {
+  const offences: string[] = []
+  for (const [name, css] of files) {
+    for (const [, selector, body] of stripComments(css).matchAll(RULE)) {
+      for (const declaration of (body ?? '').split(';')) {
+        const colon = declaration.indexOf(':')
+        if (colon === -1) continue
+        const property = declaration.slice(0, colon).trim().toLowerCase()
+        const value = declaration.slice(colon + 1).trim()
+        if (!/var\(--accent-ink\)/.test(value)) continue
+        if (INK_PROPERTIES.includes(property)) continue
+        offences.push(
+          `${name}: ${(selector ?? '').trim()} { ${property}: ${value} } -- --accent-ink is ` +
+            `the accent as text (design section 3.2), and structure is --accent's`,
+        )
+      }
+    }
+  }
+  return offences
 }
 
 // ---- colour arithmetic ---------------------------------------------------------------
@@ -611,14 +658,46 @@ describe("the console's theme tokens", () => {
       [...OK_SELECTORS].sort(),
     )
 
-    // And the clause is real: a planted state rule that is not one of the three readings is
-    // refused, which is what the case above would have said about the stage rule.
+    // And the clause is real: a planted state rule that is not one of the two readings is
+    // refused, which is what the case above would have said about the stage rule -- and
+    // about the Projects panel that held a third entry here, which is the reading the
+    // design licenses nowhere.
     const planted = okSelectors('span.run-stage-passed { color: var(--ok); }')
     expect(planted).toEqual(['span.run-stage-passed'])
     expect(
       planted.filter((one) => !OK_SELECTORS.includes(one)),
       'a planted --ok use the licence list accepted',
     ).toEqual(['span.run-stage-passed'])
+    expect(
+      okSelectors("section.projects-panel[data-state='read'] { border-left: 3px solid var(--ok); }").filter(
+        (one) => !OK_SELECTORS.includes(one),
+      ),
+      "a read Projects panel painted --ok passed the licence list; the design's two readings are the cap bar and the rail's running row",
+    ).toEqual(["section.projects-panel[data-state='read']"])
+  })
+
+  it('paints --accent-ink as text, and draws no rule or fill with it', () => {
+    // The regression this keeps out is the mirror of the one above: `--accent-ink` is the
+    // accent **as text** (design section 3.2's role cell) and `--accent` is the accent as
+    // **structure**, so a rule that paints a border, an outline or a fill with the ink token
+    // has used the text tone for structure. `li.live-run-queued`'s left border did exactly
+    // that; the token it wants is `--accent`, which is what section 4.1 draws the rail's
+    // selected row's own left border in.
+    const files = new Map(LINE_SHEETS.map((name) => [name, readTheme(name)]))
+    const inkUses = [...files.values()].flatMap((css) => stripComments(css).match(/var\(--accent-ink\)/g) ?? [])
+    expect(inkUses.length, 'the scan read no --accent-ink use at all, so this case is vacuous').toBeGreaterThan(0)
+    expect(accentInkOffences(files), 'a rule draws something that is not text with --accent-ink').toEqual([])
+
+    // And the clause is real: the planted border is refused, and the same border in
+    // `--accent` is not -- so the case is about the token and not about borders.
+    expect(
+      accentInkOffences(new Map([['planted.css', "li.live-run-queued { border-left: 3px solid var(--accent-ink); }"]])),
+    ).toEqual([
+      'planted.css: li.live-run-queued { border-left: 3px solid var(--accent-ink) } -- --accent-ink is the accent as text (design section 3.2), and structure is --accent\'s',
+    ])
+    expect(
+      accentInkOffences(new Map([['planted.css', 'li.live-run-queued { border-left: 3px solid var(--accent); }']])),
+    ).toEqual([])
   })
 
   it('separates the five state colours by hue, so no two fills rely on lightness', () => {

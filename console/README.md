@@ -2693,10 +2693,11 @@ a scratch copy of the staged file and turned the named test red:
 
 ## The theme's tokens, and the palette they are painted in (Task 6.1)
 
-`src/renderer/theme/` holds the console's styling, in the four files the plan's File
-Structure tree promised and the design's section 3.1 lays out. All four exist as of Task
-6.4, and the column below names the task that wrote each — which is also the phase's order,
-and the order the bundler concatenates them in:
+`src/renderer/theme/` holds the console's styling, in the files the plan's File Structure
+tree promised and the design's section 3.1 lays out — the directory's whole contents, which
+is what `THEME_STYLESHEETS` names. Every one of them exists as of Task 6.4, and the column
+below names the task that wrote each — which is also the phase's order, and the order the
+bundler concatenates them in:
 
 | File | Holds | Written by |
 |---|---|---|
@@ -2720,7 +2721,7 @@ the reason it was rewritten rather than left standing.
 > these two files yet … They are inert until Task 6.2 lands the bundler's stylesheet step,
 > the `/console.css` entry in `SERVED_FILES`, the three `<link>` elements and the unit tests
 > that pin them: a merge of this file pair alone changes nothing on screen. When 6.2 lands,
-> the four files become **one** served artifact, `dist/bundle/console.css`, concatenated in
+> the files become **one** served artifact, `dist/bundle/console.css`, concatenated in
 > the design's order (vocabulary, values, then the rules that read them) — and the
 > packaged-file list in this README and in `package.json`'s `build.files` has to name it,
 > which `test/unit/build-files.test.ts` holds (`bundlerOutputs` gains it in that task's
@@ -2771,7 +2772,7 @@ the file, and two different reasons put them elsewhere:
 
 ## The wiring: the stylesheet is bundled, served and linked (Task 6.2)
 
-Task 6.1 wrote the theme's two stylesheets and nothing read them. This task makes them a
+Task 6.1 wrote the theme's tokens and palette and nothing read them. This task makes them a
 file the console **serves** and every document **links**, and it is the SECURITY-SENSITIVE
 one of the phase, because the thing it touches is the served root and the policy that
 governs it. What it does, in four pieces:
@@ -2993,7 +2994,7 @@ bounded by the newline. Widening the body to `[\s\S]` was tried, observed and re
 buys `image-set("\nhttps://…" 1x)` — a `<bad-string-token>` the tokenizer drops before any
 URL is resolved — and pays for it with `image-set('http://cdn.example/x.png' 1x)` and
 `-webkit-image-set('//cdn.example/a"b.png' 2x)`, which both stop being refused the moment an
-*unbalanced* quote precedes them in the same file. Both theme files hold an apostrophe in
+*unbalanced* quote precedes them in the same file. The theme files hold an apostrophe in
 their prose, so those two cases failed on the widened body and passed on the narrow one. The
 `url()` scan, whose quoted body is not bounded by the newline, refuses the LF spelling;
 `bundle.test.ts`'s probe asserts both halves so the asymmetry is a decision rather than an
@@ -3035,8 +3036,8 @@ The `--border`-is-decorative scan is Task 6.4's and the window-background compar
 ## The layout, and the installation rail (Task 6.3)
 
 Task 6.1 wrote the vocabulary and Task 6.2 made the stylesheet a file the console serves and
-every document links; nothing painted yet. This task is the third layer, `base.css`, and it
-is the first that paints: the reset, the document as a two-column grid, the rules for the
+every document links; nothing painted yet. This task is `base.css`, the layer that paints
+first: the reset, the document as a two-column grid, the rules for the
 chrome, the focus ring, the responsive layers, and the chrome's `@media (forced-colors:
 active)` block. It is also the task that **draws the installation rail** — the canvas's one
 structural addition, which the owner approved on 2026-10-19.
@@ -3216,7 +3217,7 @@ Each was planted for real, run, and removed; the failure is the red step.
 | every `data-collapsed` in §2 renamed | `theme-selectors.test.ts`, 2 cases |
 | `base.css` left unlisted in `THEME_STYLESHEETS` | `npm run build`, with `… holds base.css, which THEME_STYLESHEETS does not list` — observed while this task was being written |
 | the stray-`.css` case still planting `base.css` | `bundle.test.ts`, on the planted file — it is listed now, so the case was moved to `screens.css` |
-| the newline-append case destructuring exactly two names | `bundle.test.ts`, on the third stylesheet — the case is generic over the list now |
+| the newline-append case destructuring exactly two names | `bundle.test.ts`, on `screens.css` — the case is generic over the list now |
 
 ### What this task does not own
 
@@ -3232,7 +3233,7 @@ change 6.6 exists to record once, at the end, rather than mid-phase.
 Task 6.3 drew the layout and the rail, and nothing had yet styled a screen: the four screens,
 the degraded and unavailable screens, the refusal document and the picker were drawing into a
 document whose reset, grid and chrome were painted and whose contents were not. This task is
-the fourth and last layer, `src/renderer/theme/screens.css`, plus the **one code change the
+the last layer, `src/renderer/theme/screens.css`, plus the **one code change the
 whole styling work makes** — the fifth number hook.
 
 | Where | What changed |
@@ -3337,8 +3338,29 @@ stage green — and `--ok` is reserved for measured-and-inside-cap and the rail'
 (§3.5 rule 4). No tone can be right for a class that carries two states, so the stage's name,
 word and deadline are labels; the failure's alarm is the diagnosis panel's `run-failed-word`,
 the element that knows which it is. A new case in `theme-tokens.test.ts` pins `--ok` to its
-three licensed readings (the rail's `running`, a `measured` sparkline bar, a `read` Projects
-panel), which is what that mistake would have to get past.
+two licensed readings (a `measured` sparkline bar, the rail's `running` row), which is what
+that mistake would have to get past.
+
+**That case held a third entry, and the follow-up to this task removed it.** The list of
+licensed selectors carried `section.projects-panel[data-state='read']` — the rule that painted
+a read Projects panel's left border `--ok` — so the case whose whole purpose is to keep `--ok`
+to the readings §3.5 rule 4 names accepted a reading the design licenses nowhere: a read panel
+is not "measured and inside the cap" and is not the rail's `running` row, and §6.1 rule 3
+forbids the tone decoratively. The list had been transcribed from the stylesheet rather than
+read off the design, which is exactly how a guard stops guarding. Both ends moved: the panel's
+rule draws `--accent` (a rule is **structure**, which is §3.2's role cell for that token, and
+§4.1 draws the rail's selected row's own 3 px left border in it), and the entry left the list —
+so the list and the stylesheet still hold each other in both directions, and a reading added
+to §3.5 rule 4 means amending the design in the same edit and adding its selector here.
+
+**The ink token has the mirror case, added with the same follow-up.** `--accent-ink` is the
+accent **as text** (§3.2's role cell: "links, an accent heading") and `--accent` is the accent
+as structure, so a rule that paints a border, an outline or a fill with the ink token has used
+the text tone for structure — which `li.live-run-queued`'s left border did, and which is why
+it draws `--accent` now. The case reads every declaration of `base.css` and `screens.css`
+rather than a list of selectors, so a border added later is caught without anyone remembering
+to name it, and it is proved against a planted `--accent-ink` border that is refused and the
+same border in `--accent` that is not.
 
 ### The `--border`-is-decorative scan, and the clause that had to be a box
 

@@ -576,8 +576,8 @@ written, kept:* `One file, two value sets, one vocabulary` — the file held a l
 dark set and a `color-scheme` decided which one was used, the mechanism §3.6 records and
 the ruling removed.
 
-The plan's tree carries all four `src/renderer/theme/*.css` lines, each annotated with the
-task that writes it (`docs/plans/2026-10-15-desktop-console.md:120` — the tree as this change
+The plan's tree carries a `src/renderer/theme/*.css` line per stylesheet, each annotated with
+the task that writes it (`docs/plans/2026-10-15-desktop-console.md:120` — the tree as this change
 leaves it). This design fills in what each file holds: Task 6.1's **Scope** names
 `tokens.css` and `palette.css`, and Tasks 6.3 and 6.4 own `base.css` and `screens.css`.
 
@@ -1400,13 +1400,13 @@ self-review. Nothing here loosens a policy.
 
 ### 5.1 The stylesheet files
 
-Four source files under `console/src/renderer/theme/` (§3.1), emitted as **one** served
-file, `dist/bundle/console.css`, served at `/console.css`. One file and not four, for the
-same reason the scripts are bundled: the served root is a flat allow-list
-(`SERVED_FILES`), and the handler's refusals are pinned on paths that name **files under
-one root**. A second stylesheet would be a second entry in the allow-list for no gain;
-four requests to a `app://` handler whose only job is to read a file is four times the
-work for one page paint.
+The theme directory's whole contents, under `console/src/renderer/theme/` (§3.1), emitted as
+**one** served file, `dist/bundle/console.css`, served at `/console.css`. One file and not one
+per source file, for the same reason the scripts are bundled: the served root is a flat
+allow-list (`SERVED_FILES`), and the handler's refusals are pinned on paths that name **files
+under one root**. A second stylesheet would be a second entry in the allow-list for no gain;
+a request per theme file to a `app://` handler whose only job is to read a file is that many
+times the work for one page paint.
 
 ### 5.2 How the bundler emits it
 
@@ -1434,10 +1434,12 @@ export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
 **The list grows with the files, one entry per task, and that is forced by the refusal
 below rather than chosen for tidiness.** The list is the theme directory's *whole contents*
 and the bundler refuses a listed file that is missing, so a task that landed the final
-four-name list before the last two files existed would turn `npm run build` red — the
+whole-directory list before the last files existed would turn `npm run build` red — the
 wiring task cannot list a stylesheet no task has written yet. The list is therefore
-introduced by the task that lands the first two files ([Task 6.2](#72-task-62--the-wiring--security-sensitive))
-and each later task appends its own file in the same commit that creates it:
+introduced by the task that lands the bundler step itself ([Task 6.2](#72-task-62--the-wiring--security-sensitive)),
+naming the files the directory already holds — Task 6.1 writes `tokens.css` and `palette.css`
+with no list to hold them — and each later task appends its own file in the same commit that
+creates it:
 
 | Task | Creates | `THEME_STYLESHEETS` after it |
 |---|---|---|
@@ -1447,7 +1449,7 @@ and each later task appends its own file in the same commit that creates it:
 | 6.4 | `screens.css` | `tokens.css`, `palette.css`, `base.css`, `screens.css` |
 
 **Every intermediate state is green**, and each one is a real build: at 6.2 the artefact is
-the two files that exist, concatenated in list order, and the served root grows a
+the files that exist at that point, concatenated in list order, and the served root grows a
 stylesheet whose only content is the custom properties and `color-scheme` — a file that
 paints nothing yet but is served, linked and asserted. What no state has is a listed file
 that is absent, or a `.css` in the theme directory that is not listed: the first is the
@@ -1562,7 +1564,7 @@ any file under `src/renderer/`; and the CSP assertions above refuse `'unsafe-inl
 
 | File | Change |
 |---|---|
-| `console/test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**, and `required.length` (the preload paths plus the list) 7 → **8**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` **read from the list**, in list order — not of four hard-coded names, so the case is already true at 6.2 with two files in it and stays true as 6.3 and 6.4 append theirs; a case that the theme directory holds no `.css` outside the list |
+| `console/test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**, and `required.length` (the preload paths plus the list) 7 → **8**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` **read from the list**, in list order — not of hard-coded names, so the case is already true at 6.2 of the files that exist then and stays true as 6.3 and 6.4 append theirs; a case that the theme directory holds no `.css` outside the list |
 | `console/test/unit/csp-document.test.ts` | a case that **every** document's `<link>` elements are exactly one, `rel="stylesheet"`, `href="./console.css"`, and carry no `media`/`onload`/`integrity`; the existing "no `<style>`, no `style` attribute" cases stay and now cover the stylesheet's existence too |
 | `console/test/unit/window.test.ts` | unchanged in substance: the CSP/no-`bypassCSP` assertions already cover the CSS response, and the served-document cases still compare byte-identical HTML — its `<link>` is part of that HTML, so the file the window loads is still the file the test read |
 | `console/test/unit/build-files.test.ts` | `bundlerOutputs` gains `'dist/bundle/console.css'`, so `build.files` in `console/package.json` **must** gain it (and `console/README.md`'s list must name it) — the packaged app would otherwise ship without its stylesheet, which is the exact failure this test exists to catch |
@@ -1683,7 +1685,7 @@ should reuse the arithmetic of rather than re-derive):
   `screens.css` uses `--border` where the property is `outline` or where the border marks
   a control (a scan of the CSS text, in the spirit of `screen-literals.test.ts`). **This
   one case is Task 6.4's and not Task 6.1's**: it is the first of the file's two cases that
-  read something other than `palette.css`, and the two files it reads are created by Tasks
+  read something other than `palette.css`, and the files it reads are created by Tasks
   6.3 and 6.4 — see [§7.4](#74-task-64--the-screens). Task 6.1 writes the file and its
   palette cases; Task 6.4 adds this case at the point where both stylesheets exist;
 - a case asserts **the main process's window background equals the ground the window is
@@ -1767,7 +1769,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    hyphen, one left over from an earlier revision of §7.5 that named a heading since
    rewritten;
 4. a **plan test** that [Phase 6](#7-the-build-plan-phase-6) exists, that its
-   six task headings are there, that the four `theme/*.css` files are in the plan's tree,
+   six task headings are there, that the `theme/*.css` files are in the plan's tree,
    and that the phase names all six of the [§8](#8-open-for-the-owner) questions. **It also
    carries the two-set pin**: it reads both this document and the plan for the phrases that
    assume two value sets — `light and dark`, `light dark`, `light-dark(`,
@@ -1909,7 +1911,7 @@ file's own numbering, in the five places that file carries a phase: one section
 `## Phase 6 — …`; **six** `### Task 6.n:` headings; **one** row in the Phase summary table;
 **five** rows in the PR groups table (`J` to `J5`, one row per PR *group* — the phase is six
 tasks across five groups, since `J3` is the two PRs of Tasks 6.3 and 6.4); and
-**four** lines in the File Structure tree, one per `theme/*.css` file. **These six tasks are
+**one line per `theme/*.css` file** in the File Structure tree. **These six tasks are
 `APPROVED by the owner on 2026-10-19`**, and so is this document: the owner's approval is the
 go, **Q1** is answered by it (option (b), dark only) while **Q2 to Q6 stand as §8 writes
 them**, and the plan's phase heading, summary row and PR rows say the same. *The heading as first written,
@@ -1948,16 +1950,16 @@ element with no keys. 6.6 (the frames) is last and owner-run.
 
 ### 7.2 Task 6.2 — the wiring — SECURITY-SENSITIVE
 
-- **Scope:** the bundler's stylesheet step (§5.2) — `THEME_STYLESHEETS` **with the two
-  files that exist at this point** (`tokens.css`, `palette.css`, both from Task 6.1), the
+- **Scope:** the bundler's stylesheet step (§5.2) — `THEME_STYLESHEETS` **with the files
+  that exist at this point** (`tokens.css`, `palette.css`, both from Task 6.1), the
   refusals, the `dist/bundle/console.css` artefact and its ownership; `SERVED_FILES`
   (§5.3); the three `<link>` elements (§5.4); `build.files` and the README's list (§5.6);
   and the tests that pin all of it — `bundle.test.ts`, `csp-document.test.ts`,
   `build-files.test.ts`, and the `style` scan extension to `screen-literals.test.ts` (§5.5).
-  **The four-name list is not this task's**, and cannot be: the bundler refuses a listed
-  file that is missing, so Tasks 6.3 and 6.4 append their own file, each in the commit that
-  creates it (§5.2's table). What this task lands is a list that is true of the directory
-  on the day it merges, and a build whose artefact is the two files in it.
+  **The whole-directory list is not this task's**, and cannot be: the bundler refuses a
+  listed file that is missing, so Tasks 6.3 and 6.4 append their own file, each in the commit
+  that creates it (§5.2's table). What this task lands is a list that is true of the
+  directory on the day it merges, and a build whose artefact is the files in it.
 - **Files:** `console/tools/bundle-renderer/index.ts`, `console/src/main/protocol.ts`,
   the three `.html` documents, `console/package.json`, `console/README.md`,
   `console/test/unit/{bundle,csp-document,build-files,screen-literals}.test.ts`.
@@ -2150,7 +2152,7 @@ the one this round found still standing.
 The seventh is the plan's
 own: `6.2` removed from Global Constraints rule 9's list, which
 `TestPlanRule9ListsEveryFlaggedHeading` catches. **And the ordering test (§6.5's tenth)
-carries eight of its own**, one per case, planted and reverted: the four-name
+carries eight of its own**, one per case, planted and reverted: the whole-directory
 `THEME_STYLESHEETS` literal restored; `base.css` put back into Task 6.2's `**Files**`; the
 window-background case put back into Task 6.1's `**Tests**`; a later task named in Task
 6.3's `**Tests**`; `THEME_STYLESHEETS` removed from Task 6.3's `**Files**`; §6.3's
@@ -2284,8 +2286,8 @@ draws five states in one colour and asks the operator to read five pieces of tex
 
 ### 9.4 Recommended
 
-**The `<link>` to one bundled `console.css`, four source files, `style-src 'self'`
-untouched** — §5 in full. It is the smallest change that paints the screens, it keeps the
+**The `<link>` to one bundled `console.css`, the theme directory's whole contents,
+`style-src 'self'` untouched** — §5 in full. It is the smallest change that paints the screens, it keeps the
 CSP exactly as the design wrote it, it keeps every byte the window paints readable as a
 file, and it is the shape the website already uses for its own tokens.
 

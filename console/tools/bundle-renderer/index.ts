@@ -57,12 +57,13 @@
 // two lists equal.
 //
 // **The stylesheet step (Task 6.2; design section 5.2), and why it is here.**
-// The console's style is four source files under `src/renderer/theme/`, and the
-// served root is a flat allow-list (`SERVED_FILES`), so the four are emitted as
-// **one** file, `dist/bundle/console.css`, served at `/console.css` and linked
-// from each of the three documents. One file and not four, for the reason the
-// scripts are bundled. The step is in this tool because this tool already owns
-// the output directory.
+// The console's style is the theme directory's whole contents -- every `.css`
+// under `src/renderer/theme/`, named by `THEME_STYLESHEETS` below and by nothing
+// else -- and the served root is a flat allow-list (`SERVED_FILES`), so the
+// directory's files are emitted as **one** file, `dist/bundle/console.css`,
+// served at `/console.css` and linked from each of the three documents. One file
+// and not one per source file, for the reason the scripts are bundled. The step
+// is in this tool because this tool already owns the output directory.
 //
 // It reads the theme directory and refuses, with the same `BundleRefusal`:
 //
