@@ -46,6 +46,14 @@ func TestDocsMobilePushDesignIsWritten(t *testing.T) {
 		// The cost and the threat model.
 		"no per-message charge",
 		"lock screen",
+		// The spoof's real power, stated rather than softened: a forged push is
+		// written by the attacker, so the sender's content-free payload is not a
+		// property of the channel and the lock screen is not an authenticated
+		// surface. What is bounded is the ACTION, not the lie.
+		"attacker-authored",
+		"not an authenticated surface",
+		"only a doorbell",
+		"data-only",
 		// The check it names and deliberately does not write.
 		"Check 88",
 		"does not write it",
@@ -155,6 +163,17 @@ func TestDocsMobilePushIsIndexedAndPlanned(t *testing.T) {
 	index := readDoc(t, "docs/mobile/README.md")
 	if !strings.Contains(index, design) {
 		t.Errorf("docs/mobile/README.md does not index %s", design)
+	}
+	// The row's one-line summary of the threat model must not repeat the
+	// conflation this document's §5 attacker 2 corrects: a spoofed push is
+	// ATTACKER-authored, so it can carry any title it likes on the lock screen,
+	// and "harmless because it carries nothing" is exactly the sentence that
+	// mistake produces. What the spoof cannot do is make the app act.
+	if strings.Contains(index, "harmless because it carries nothing") {
+		t.Errorf("docs/mobile/README.md's %s row still says %q, which claims the spoof's content-free payload is a property of the channel rather than of this design's sender", design, "harmless because it carries nothing")
+	}
+	if !strings.Contains(index, "attacker-authored") {
+		t.Errorf("docs/mobile/README.md's %s row does not say a spoofed push is attacker-authored", design)
 	}
 
 	plan := readDoc(t, "docs/mobile/implementation-plan.md")

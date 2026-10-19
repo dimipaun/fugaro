@@ -44,9 +44,10 @@ about **while away from the desk**:
 1. **it finished** — the run reached a settled outcome and a pull request is ready for review;
 2. **it failed** — the run ended `infra_error`, errored, or was halted (the budget halt, the
    kill switch, a cancellation);
-3. **it needs the owner's answer** — the mailbox carries a prompt (D166's prompt node, plan
-   P6.3) that the orchestrator cannot proceed without, and that expires at **D118's TTL**
-   (the owner's 72 hours, set on 2026-10-17);
+3. **it needs the owner's answer** — the mailbox carries a prompt — an inbox/outbox message of
+   `kind: prompt` (**D168 as amended**, plan **P6.3** for the field and **P6.5** for the queue
+   and the interrupt policy; D160, D173) — that the orchestrator cannot proceed without, and
+   that expires at **D118's TTL** (the owner's 72 hours, set on 2026-10-17);
 4. **a budget threshold was crossed** — a cap, a kill switch or a per-run ceiling the person
    set is now binding on a run.
 
@@ -143,6 +144,15 @@ branch, not a PR number, not a code excerpt. The reason is not politeness: a loc
 read by whoever is standing there, and the push provider and the OS see the payload in the
 clear. The provider's logs are not this project's to redact.
 
+**This is a statement about the sender, not about the channel, and the difference is load
+bearing.** "Content-free" describes what **this design's sender** writes; it is not a property
+of FCM, of APNs, or of a notification. A push an attacker writes is **attacker-authored**, and
+it can carry whatever title and body that attacker chooses — "your run needs approval: tap to
+confirm" is entirely available to it (§5 attacker 2). Nothing in §3 or §4 can prevent that,
+because the attacker is not sending through this design. What §3.9 and §4 rules 3, 7, 8 and 9
+bound is the **consequence**: a forged push can lie, and cannot make the app act or make the
+app's own screen agree with the lie.
+
 **The opaque identifier must be genuinely opaque, and this is a real requirement rather than a
 word.** A run id is not opaque: `internal/task/task.go`'s `NewRunID` is a timestamp plus two
 random bytes, and `Slug` is computable from the repository path (budget-token-channel.md §2
@@ -167,9 +177,13 @@ Two consequences fall out of this and both are deliberate:
 
 - **A push can be lost without harm.** The mailbox is authoritative and the push is
   best-effort; a dropped notification costs a delay, never a message.
-- **A push cannot be forged into an action.** Because nothing actionable is in the payload,
-  the strongest a spoofed notification can do is make the app open on a screen that shows the
-  truth. §5 turns this into the document's central rule.
+- **A push cannot be forged into an action.** Because nothing actionable is in *this design's*
+  payload and because tapping opens the app and nothing else, a spoofed notification cannot
+  cause a cancel, a merge, a confirmation or any other act — it can only make the app open,
+  and what it opens on is state read from the authenticated mailbox, not from the push. It can
+  still **lie on the lock screen** before the owner ever opens the app (§3.9, §5 attacker 2),
+  and that residual is stated there rather than argued away. §5 turns the action half of this
+  into the document's central rule.
 
 ### 3.3 The channel: FCM, with APNs behind it
 
@@ -190,9 +204,10 @@ for Android, and FCM's APNs relay for iOS. The reasons are the project's own:
 
 **What FCM sees.** The device's registration token, the payload, the delivery time, and the
 project it belongs to. **What APNs sees** on iOS: the same payload, relayed. **What the OS and
-the lock screen see**: the payload, in the clear. All three are the reason §3.1's payload is
-content-free — the design does not attempt to hide the payload from the provider, because it
-cannot; it makes the payload not worth hiding.
+the lock screen see**: the payload, in the clear. All three are the reason §3.1's payload —
+**the sender's payload**, and only that one (§3.9) — is content-free: the design does not
+attempt to hide what the legitimate sender writes from the provider, because it cannot; it
+makes what the legitimate sender writes not worth hiding.
 
 **The alternative: Expo's push service.** The app is an Expo app (`mobile/package.json`,
 `mobile/app.json`), and Expo's push service is the path of least resistance for an Expo build:
@@ -316,7 +331,9 @@ The candidates, priced:
     account that, under project-centric phase 3, is **shared between repositories**
     (budget-token-channel.md §2). A push-send grant on a shared job account is a grant every
     run of the profile holds, and a compromised run could then notify the owner of a
-    fabricated "needs your answer" — which is exactly the phishing surface §5 forbids. **Reject
+    fabricated "needs your answer" — exactly the phishing surface §5 attacker 2 bounds and
+    cannot close, and here it would be authored by the installation's *own* run rather than by
+    an outsider. **Reject
     for the job account; the console's D33 already rejected the analogous widening for the
     desktop.**
   - *The one place (A) is defensible*: the **gateway**'s threshold case, where the budget
@@ -333,7 +350,10 @@ The candidates, priced:
     whose own comment is "only this account (and no job account) holds one on the FP". It
     reads the run registry (`internal/budget/registry.go`'s entries), the spend and kill
     nodes, and the mailbox's outbox — the four categories' sources — and it gains exactly one
-    thing: the FCM send permission, held by **one account**, not by every run.
+    thing: the FCM send permission, held by **one account**, not by every run. Keeping the
+    sender off the run accounts is not a nicety: because a push has no sender signature
+    (§3.9), any account that can send can lie on the lock screen, and one account is the
+    smallest number of places that power can live.
   - *Where the sender's own state lives*: a **dedupe and cap ledger**, written **by the
     sender's own admin identity** and read by it, under `config/admin` (`rules.json.tmpl`'s
     `"admin": { ".read": false, ".write": false }` — no client write, ever) or in Firestore
@@ -396,6 +416,51 @@ exactly as (b) is**). **Recommendation: (b) again** — the mailbox is the app's
 path, and this design does not add a second one; where the role is not held, the switch is an
 admin act like pairing, and this document does not pretend a toggle in the app is free of it.
 
+### 3.9 The phone's side: what it does with a push it did not expect
+
+§3.1's content-free payload is a rule the **sender** obeys. The phone cannot rely on it, and
+this subsection is where the design says so instead of letting §3.1 imply a guarantee the
+channel does not give. Three facts bound what the phone can do:
+
+- **The OS will not tell the app who wrote the notification.** iOS and Android deliver a
+  remote notification from the installation's FCM project identically whether the owner's
+  sender or an attacker holding the same credential sent it; there is no sender signature on
+  a push, and this design does not pretend otherwise.
+  **The lock screen is not an authenticated surface, and it cannot be made one.** A forged
+  push's title and body are shown to the user by the OS, in the attacker's words, before any
+  Fugaro code runs.
+- **The app's own screen is the authenticated surface, and it is built from the mailbox.**
+  Tapping a push opens the app; the app signs in and renders **only** what it reads from its
+  own authenticated mailbox and budget families under the claims it already holds (§3.2). A
+  lure in a notification's title has no path into that screen: it is not stored, not rendered
+  as state, and not quoted.
+- **The app composes its own alert text wherever the platform allows.** The recommended shape
+  is a **data-only** push — the payload is a category (and, under Q6 *(ii)*, an opaque id) with
+  no display text — and the app builds the user-visible notification **locally** from state it
+  resolved through the mailbox. An id the app cannot resolve is **ignored**: an unknown id
+  produces no alert at all, which is the only behaviour that makes the opaque id safe rather
+  than decorative. Where a platform requires the alert text to travel in the push (a visible
+  notification on a phone where the app may not run), the sender's own text is generic by
+  construction — §4 rule 1 — and the OS may display whatever any sender wrote, which is the
+  residual below, not a defect of the app's design.
+
+**What the user is told, and it is part of the design rather than a footnote:** *a push is
+only a doorbell — verify in the app.* The app says it where it can (the notification channel's
+own description, the app's first screen after a tap, the pairing screen), because the one
+control that works against a forged push is the user's habit of opening the app rather than
+acting on the banner. This is also why §4 rule 3 is absolute: the moment a push could carry a
+confirmation, a forged push would carry one too.
+
+**Residual risk, stated plainly and not argued away:** an attacker who holds the
+installation's FCM send credential **can** buzz the owner's phone with a false, urgent-sounding
+message of their choosing, at a time of their choosing, and no part of this design prevents
+it; the app's screen shows the truth only *after* the owner taps. So the credential is the
+asset that matters: one account holds it (§3.6), ambient identity, no key on any laptop, and
+the high-value confirmations stay where they already are — in the app, MAC-verified, and never
+in a notification (D169, §4 rule 3). The fully-closed alternative is not to have push at all,
+which is what §10's A and B and Q9 already offer; the mitigation here bounds the **harm**, not
+the **lie**.
+
 ## 4. What a push must never carry, and what it must never do
 
 This is the document's spine. Each line is a requirement, not a preference.
@@ -418,10 +483,21 @@ This is the document's spine. Each line is a requirement, not a preference.
    ambient identity; no credential lives on the laptop (§3.6).
 6. **Never a widening beyond one sender.** Exactly one account gains the FCM send permission
    (§3.6 rule (B)); no run's job account gains it.
-7. **Never a lock-screen leak.** Because (1) holds, the lock screen shows a category and
-   nothing else — which is the point of stating (1) as an absolute.
-8. **Never trusted input.** The app treats the payload as untrusted display text at most, and
-   in the recommended shape (§3.2, Q6) it does not read it at all beyond the tap.
+7. **Never a lock-screen leak *from this sender* — and never a claim that the lock screen is
+   safe.** Because (1) holds, **this design's** pushes put a category and nothing else on the
+   lock screen. That is a statement about the sender, not about the channel: a push an
+   attacker writes is attacker-authored and can display any text at all (§3.1, §5 attacker 2),
+   and the OS cannot tell the two apart (§3.9). The rule binds what we write; §3.9's "only a
+   doorbell" is what covers what an attacker writes.
+8. **Never trusted input.** The app reads the payload for a category (and, under Q6 *(ii)*, an
+   opaque id) and **nothing else**: no field of it becomes state, becomes a link, or becomes
+   rendered text. An id it cannot resolve through the mailbox is ignored and produces no
+   alert, and the user-visible text is composed by the app from the mailbox rather than taken
+   from the push, wherever the platform allows (§3.9).
+9. **Never an authenticated surface.** The lock screen and the notification shade are not the
+   app and cannot be made trustworthy by anything this design does (§3.9); the app's own
+   screen, behind sign-in, is the only place the truth is shown. Any user-facing text about
+   push says so — "a push is only a doorbell; verify in the app".
 
 ## 5. The threat model, with the attacker's capabilities stated
 
@@ -435,24 +511,50 @@ client (§3.4), it is deletable with the device node (§3.5), and it grants no r
 **Attacker 2 — the FCM send credential.** *Capability*: the attacker can send an arbitrary
 notification to any device of the installation, with an arbitrary payload and arbitrary title.
 This is the **real** push-specific adversary, and it is worth stating without softening: a
-compromised FCM credential can make the phone buzz with anything. *What it buys*: a buzz, and
-a title in the provider's and OS's logs. *What it does not buy*: it cannot forge mailbox
-content (the rules' `mac` and the claims bind that, P6.3/D169), it cannot make the app act, and
-— because §4's rule (1) means a **genuine** push carries no repo, run, amount or text — **the
-spoof is indistinguishable from the real thing and therefore useless for phishing.** An
-attacker who wants to lure the owner into "approve this urgent merge" must put the lure
-somewhere, and there is nowhere in a content-free push to put it. *What the design does*: §4
-rules (1) and (3), plus the sender credential being one account's (§3.6) rather than every
-run's. **This is why the sender is not the shared job account**: a run that could send pushes
-*could* name a repository in the title, and the whole argument in this paragraph would collapse.
+compromised FCM credential can make the phone buzz with anything. *What it buys*: a buzz, **an
+arbitrary title and body on the lock screen**, and a record in the provider's and OS's logs.
+**The spoof is not content-free.** §3.1's content-free payload is a property of what *this
+design's sender* writes, not of the channel — an attacker holding the credential authors the
+payload, so "your run needs approval: tap to confirm" is fully available to them, and the OS
+displays it in their words before any Fugaro code runs (§3.9). Anyone who reads §3.1 as a
+security property of push has read it wrong; this paragraph is the correction.
+
+*What it does not buy*: it cannot forge mailbox content (the rules' `mac` and the claims bind
+that, P6.3/D169); **it cannot make the app act** — tapping opens the app and nothing else, so
+there is no confirmation, cancel, merge or answer reachable from a notification (§4 rule 3);
+and it cannot make the app **show** the lie, because the app renders only what it reads from
+its own authenticated mailbox and **ignores an opaque id it cannot resolve** (§3.2, §3.9). So
+the lure buys one lock-screen glance and dies at the app's first screen — a real phishing
+window, and a bounded one.
+
+*What the design does about it, stated as what it is rather than as a cure*: §4 rules (1), (3),
+(7), (8) and (9) — nothing actionable in our payload, no rendering of any payload as state, no
+claim that the shade is trustworthy; §3.9's app-side shaping (a **data-only** push whose alert
+text the app composes locally from resolved mailbox state, where the platform allows, and an
+ignored unknown id); the user-facing instruction that **a push is only a doorbell, verify in
+the app**; and the sender credential being one account's (§3.6) rather than every run's.
+
+**Residual risk, plainly: this design does not prevent a forged push from lying to the owner.**
+It prevents the lie from becoming an act, and it shortens the lie's life to the moment the app
+is opened; it cannot stop the buzz, the text, or the timing, because there is no sender
+signature on a push and the OS cannot distinguish our sender from an attacker who holds the
+same credential (§3.9). The honest defences are therefore the ones this document already
+argues for elsewhere: keep the credential on **one** account with no key on any laptop (§3.6)
+— **which is exactly why the sender is not the shared job account**, since a run that could
+send pushes could name a repository in the title and the app-side mitigations would be all
+that stood between the owner and a targeted lure; keep every high-value confirmation in the
+app, MAC-verified (D169); and, if the owner judges even that window too wide, §10's A and B and
+Q9 are the alternative — the way to close it completely is not to have push.
 
 **Attacker 3 — the push provider, the OS, and whoever reads the lock screen.** *Capability*:
 Google (and Apple, for the relay), the OS, and any bystander see the payload. *What this design
 does*: makes the payload carry nothing (§3.1). The design does **not** claim end-to-end
 secrecy — it cannot, FCM and APNs see the payload by construction — and it does not pretend
 the payload is encrypted for the phone, because the phone has no key the push path would need.
-The mitigation is content-free payloads, and it is sufficient precisely because §3.2 fetches
-the truth elsewhere.
+The mitigation is that **the sender's** payload is content-free (§3.1), and it is sufficient
+for *this* attacker — a provider learns a category and a device address, not a repository —
+precisely because §3.2 fetches the truth elsewhere. It is not a mitigation against attacker 2,
+who writes their own payload.
 
 **Attacker 4 — a stolen or lost phone.** *Capability*: the device, its push token, and the
 app's storage. *Bounded by*: D166's revocation (delete the node — no delivery, no reads),
@@ -483,7 +585,7 @@ against.
 | quiet hours | suppressed at the sender before FCM is called | nothing during the window |
 | the payload would need the detail to make sense | it does not carry it — the app fetches (§3.2) | a generic buzz, then the truth on open |
 | the phone is offline when the push arrives | FCM queues or drops it per platform policy; the mailbox is unaffected | possibly nothing; the app catches up on open |
-| an attacker spams spoofed pushes (§5 attacker 2) | **nothing can be done at the sender** — the design bounds the *harm*, not the nuisance: the payload is content-free, so the spam is indistinguishable from real alerts and carries no lure | buzzes; the owner may revoke and re-pair |
+| an attacker spams spoofed pushes (§5 attacker 2) | **nothing can be done at the sender** — it is not our sender, so no rule of §4 binds it. The design bounds the *harm*, not the nuisance **and not the lie**: a forged push is attacker-authored, so its title and body can say anything (§3.1, §3.9) and the OS shows them; what it cannot do is make the app act, or survive the app's own screen, which renders only the authenticated mailbox and ignores an unresolvable id (§4 rules 3, 8) | buzzes carrying the attacker's text; the app shows the truth on open; the owner may revoke and re-pair, which stops our sender, not the attacker |
 
 **The rule every row obeys: a push failing is never worse than no push.** No row ends in a
 false action, a lost message, or a blocked run.
@@ -541,7 +643,9 @@ the lock screen); the app shows the detail only after the authenticated mailbox 
 the device node stops delivery at once (§3.5); a suppressed category and quiet hours suppress
 at the sender; the storm cap holds; a stale token is reaped; and — the step that matters most —
 **a hand-crafted push with a lure in the title causes the app to open and show the truth, never
-to act** (§4 rule 3, §5 attacker 2). A check is never run before its text is in the register.
+to act and never to render the lure as state or as a link** (a data-only push with an
+unresolvable id produces no alert at all) — §4 rules 3 and 8, §3.9, §5 attacker 2. A check is
+never run before its text is in the register.
 
 ## 9. The privacy statement, and whether the website's privacy page is where it goes
 
@@ -569,8 +673,11 @@ privacy page would be the page claiming something that is not its subject.
 
 **What such a statement would have to say**, in the design's own words: the phone registers a
 push token with Google's Firebase Cloud Messaging (and, on iOS, Apple's APNs by relay);
-notifications contain **no run title, repository name, code, error text or amount** — only a
-category — and the detail is fetched by the app over an authenticated connection; the token is
+notifications **that Fugaro sends** contain **no run title, repository name, code, error text
+or amount** — only a category — and the detail is fetched by the app over an authenticated
+connection, so a notification is never the source of truth (a notification Fugaro did not send
+is not covered by this sentence, and the statement should say so rather than imply it — §3.9);
+the token is
 stored in the installation's own Firebase project and deletable by revoking the device; and no
 third party beyond Google (and Apple) is in the path **on the recommended channel** — which is
 itself an argument for not choosing Expo's relay (§3.3).
@@ -581,7 +688,7 @@ itself an argument for not choosing Expo's relay (§3.3).
 | --- | --- | --- | --- | --- |
 | **A. In-app polling only** | **nothing new** — the app already holds a live database connection (D112) and a mailbox stream | while the app is **open and foregrounded** | **best**: no provider, no token, no server, nothing leaves the device | zero |
 | **B. Local notifications while the app is open** | `expo-notifications` locally; **no server, no token, no provider** | while the app is **open** (the OS posts a banner from a change the app itself observed) | **best**: the notification never leaves the device | zero |
-| **C. Push (FCM + APNs)** | a sender (§3.6), a token store (§3.4), a generation bump, an Apple membership, an FCM credential | **whenever the phone is on**, app closed or backgrounded | **bounded**: the payload is content-free by construction, but Google/Apple/the OS see it, and the token is a new stored datum | §7 |
+| **C. Push (FCM + APNs)** | a sender (§3.6), a token store (§3.4), a generation bump, an Apple membership, an FCM credential | **whenever the phone is on**, app closed or backgrounded | **bounded, and not closed**: the payload **our sender** writes is content-free by construction, but Google/Apple/the OS see it, a **forged** push is attacker-authored and the OS cannot tell the two apart (§3.9), and the token is a new stored datum | §7 |
 
 **Recommendation: A and B in v1; C only when the owner decides the foreground experience is
 insufficient — and then C exactly as §3 designs it.**
@@ -607,6 +714,10 @@ bent are §4's rules (content-free, never-a-confirmation) and §3.6's choice of 
 - Never reopen `config/admin` to a client write (§3.5, rejecting (c)).
 - Never claim the payload is hidden from the provider — it is not, and §3.1's content-free
   payload is the honest mitigation (§5 attacker 3).
+- Never claim a push is safe because it is content-free: that describes what **our sender**
+  writes, and a **forged** push is attacker-authored, can say anything on the lock screen, and
+  cannot be told apart by the OS. What is bounded is the act and the app screen, not the lie
+  (§3.1, §3.9, §5 attacker 2, §4 rules 3, 7, 8 and 9).
 - Never ship before the device node it hangs off is approved (P6.4's generation 3).
 
 ## 12. Open for the owner
@@ -690,7 +801,9 @@ write `config/admin`?**
 **Q6. Does the payload carry the opaque id at all, or only the category?**
 - *(i) Category only*: the app fetches whatever changed from its own mailbox after opening;
   **recommended** — it is the strongest privacy and needs no server-side id mapping, and §3.2
-  already establishes the app needs no pointer.
+  already establishes the app needs no pointer. This is also the shape §3.9 pairs with a
+  **data-only** push whose alert text the app composes locally, so that the words on the lock
+  screen are Fugaro's and not a payload's wherever the platform allows.
 - *(ii) Category plus a random opaque id*, mapped server-side to the detail: useful only if the
   app ever needs to know *which* thing changed before it can read (it does not), and it adds a
   stored mapping whose theft is a correlation surface.
