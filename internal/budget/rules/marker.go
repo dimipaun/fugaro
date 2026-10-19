@@ -38,6 +38,21 @@ package rules
 // release), never a silent drop. The refusal below of a marker *above*
 // `CredsRulesVersion` guards only future releases; a release that shipped
 // before this one cannot be taught to write this marker.
+//
+// The downgrade is not only something an older binary may do of its own
+// accord — it is something that release's own `fugaro doctor` keeps telling
+// every launcher to do. Its doctor compares the deployed document with the one
+// it generates, finds them different (this document carries the /creds node and
+// the new children; that one does not) and reports `policy-rules-skew` with the
+// remedy "re-run `fugaro init --firebase`". An operator who follows that advice
+// with the older binary in hand performs exactly the downgrade above, and the
+// fix text's "upgrade instead if the release is newer" cannot resolve it: both
+// sides are `RulesVersion` 3, and that binary reads no `credsRules` marker, so
+// from where it stands the deployed document is the newer one. Nothing this
+// release can ship changes what an already-shipped binary prints; what this
+// release does about it is read `credsRules` *beside* `policyRules` in its own
+// doctor (C1.21), so a current binary can tell "older deploy" from "newer
+// deploy" and say which way the redeploy should go.
 
 // PathCredsRulesMarker is the credentials family's generation marker,
 // `config/limits/credsRules`.

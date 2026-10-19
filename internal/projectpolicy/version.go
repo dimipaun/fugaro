@@ -199,6 +199,21 @@ const PolicyRulesVersion = 1
 // C1.17), never a silent drop; the plan's non-adopters section states it in
 // full.
 //
+// One thing that section and this one both have to say plainly, because it is
+// the direction the redeploy comes from: a release in *this* line that predates
+// the credentials children is generation 3 as well, so its `fugaro doctor` sees
+// the deployed document differ from the one it generates, warns
+// `policy-rules-skew` and prescribes "re-run `fugaro init --firebase`" — the
+// redeploy that takes the children away. It cannot be told otherwise from
+// where it stands: the marker reads 3, which is its own generation, and it
+// knows nothing of `config/limits/credsRules`. The "upgrade instead if the
+// rules came from a newer Fugaro" parenthetical in that fix text does not
+// reach it either, for the same reason. Only a binary that reads the second
+// marker beside the first can tell the two apart, which is what the doctor
+// work of C1.21 is for; this binary's doctor does not read it yet, so until
+// C1.21 the trap is recorded here and in `internal/budget/rules`'s KNOWN GAP
+// rather than reported.
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
 const RulesVersion = 3
