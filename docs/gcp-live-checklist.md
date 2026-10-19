@@ -4482,8 +4482,9 @@ fi
 
 **A step whose command does not exist yet is a step this check runs later.** P6.6 (`fugaro pair`)
 and P6.8 (pairing in the app) have not shipped, so `fugaro pair ls` prints nothing on this tree
-today and the guard's fresh-device note never fires and step 2's stop never triggers. That is the register's own rule
-working rather than a defect: **the text is written now and running it is the owner's, later**,
+today: the guard's fresh-device note never fires and step 2's stop never triggers. That is the
+register's own rule working rather than a defect: **the text is written now and running it is the
+owner's, later**,
 and each step's FACT is what the command printed — never a format remembered from the plan.
 
 1. **The ground the check stands on.** Record, before pairing anything: `fugaro version`; the
@@ -4613,8 +4614,8 @@ change, and the two hard stops are the same two. The guard block **reports** a d
 carrying `$N` rather than stopping on it — it is re-run after step 1 has paired this check's own
 device, so a stop there would put steps 2–9 out of reach — and the stop that refuses a second
 device under this name is **step 1's**, which is Check 100's step 2 and is run once.
-**Never `belong`**: nothing here names,
-reads or revokes a `belong` device, and the one place one can appear is `fugaro pair ls`, which
+**Never `belong`**: nothing here names, reads or revokes a `belong` device, and the one place one
+can appear is `fugaro pair ls`, which
 this check reads for its own device only. **No agent runs any step of this check — every command
 is yours.** What changes is one pairing and its revocation, and the Restore has nothing left to
 revoke: step 3 is the revocation.
