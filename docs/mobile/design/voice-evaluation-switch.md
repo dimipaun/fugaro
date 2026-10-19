@@ -2,7 +2,7 @@
 
 **Status: design only; nothing is implemented.** No line of an Expo app, no rules change, no shared module, no provider client and no server-side hop exists for this document's subject, and none is added by the change that writes it. **Check 85 — the on-device STT/TTS bake-off — has not been run**: no `## Check 85` section and no summary row exists anywhere in [docs/gcp-live-checklist.md](../../gcp-live-checklist.md), no device was measured, and **no latency number exists**. Every sentence here that depends on latency is conditional on Check 85's measured results.
 
-**This revision is written to the owner's ruling of 2026-10-19**, which is quoted in §1 and which **relaxes Voice D44 for evaluation only**. It is **not** D44's second explicit decision: adopting remote voice stays a later decision, taken after the owner has used both. This document allocates no decision number — its open questions are **Q1–Q4** at the end — writes no check (it names one, **110**), and amends no ruling in any other document. It was `docs/mobile/design/cloud-stt-tts.md` in its first revision; the earlier content is kept where it still holds, and §11 records what changed.
+**This revision is written to the owner's ruling of 2026-10-19**, which is quoted in §1 and which **relaxes Voice D44 for evaluation only**. It is **not** D44's second explicit decision: adopting remote voice stays a later decision, taken after the owner has used both. This document allocates no decision number — its open questions are **Q0–Q4** at the end — writes no check (it names one, **110**), and **amends exactly one ruling: `implementation-plan.md`'s Global Constraint 12, for the evaluation switch only, as stated in full in §1a, and subject to the owner's acknowledgement that §1a asks for as Q0**. It amends nothing else, in this or any other document. It was `docs/mobile/design/cloud-stt-tts.md` in its first revision; the earlier content is kept where it still holds, and §11 records what changed.
 
 **Owner:** the Fugaro owner (`dimipaun`). **Date:** 2026-10-19. **Amended:** 2026-10-19 (the evaluation switch).
 
@@ -20,9 +20,40 @@ The owner wants **an in-app switch between local and remote speech-to-text and t
 6. **Local fallback when remote fails**; the interaction never blocks.
 7. **Live Check 85's bake-off runs the same prompts through both** engines, so the owner's impression has numbers beside it.
 
-Three questions the owner left open are **Q1–Q3** at the end: which providers to try; whether the hop reuses the budget gateway or is a new minimal proxy; and how the switch is persisted, including whether a project may force local-only.
+Three questions the owner left open are **Q1–Q3** at the end: which providers to try; whether the hop reuses the budget gateway or is a new minimal proxy; and how the switch is persisted, including whether a project may force local-only. **A fourth — Q0, the acknowledgement of the amendment §1a needs — is this document's own, and it gates the build.**
 
 **Why a switch and not a decision now.** D46's own answer is that the bake-off's numbers "are the ones the owner's second egress decision, if it is ever taken, is taken against". A switch turns that from a document into an experience: the owner can speak a real command, hear the reply, and *then* weigh the latency and the privacy rather than reading a table. The cost of a switch over a decision is that the code for both paths has to exist before either is chosen — which is why this document spends most of its length on what must be true **while remote is on**, not on whether remote is good.
+
+## 1a. What this amends
+
+**One ruling, and only this one: [implementation-plan.md](../implementation-plan.md)'s Global Constraint 12, and only for the evaluation switch.** Everything else in this document amends nothing — it adds no rule, changes no decision, and takes none.
+
+**Global Constraint 12 as it stands** (line 89): "**The app never stores or uploads audio** (D118, answered 2026-10-17 as recommended). STT is on-device; the mailbox carries text."
+
+**As amended for the evaluation switch, and only for it:**
+
+- **Audio may be uploaded** — that is the whole of the change — and **only** to a provider on the project's allow-list (§4.3), **only** when the owner has turned the remote switch on for that direction (§4.1) and recorded consent for that named provider, **never** while a confirmation is pending and **never** on a destructive-command path (§5), and **never stored by the app beyond the live stream**: no buffer, no spool, no retry queue, no file (§4.5, §5 rules 3 and 10).
+- **The half of the constraint that "stores" covers is not relaxed at all.** The app still stores no audio, the mailbox still carries **text**, and that text is still redacted before it is written (D118, D44).
+- **The earlier "voice local-only" ruling — Voice D44 — is relaxed for testing only.** D44's answer, "local-only for v1", stays the rule for **what ships**; what the ruling of 2026-10-19 permits is an **evaluation** of the remote path. **Adoption of cloud voice stays a later decision** — D44's second explicit egress decision — and is not taken, implied or pre-empted here (§1, §10).
+- **The raw-session-recording experiment is separate and local-only**, and this document amends nothing for it: a recording made to measure a latency stays on the device, outside the repository and outside this switch, which is the rule the voice plan already set for it ([2026-10-16-voice.md](../../plans/2026-10-16-voice.md) §11, "audio fixtures are synthesised").
+
+**Q0 exists because an amendment is the owner's to make, not this document's.** Nothing is built until it is answered.
+
+### Every other document that states the old rule
+
+Each of these states the never-upload half as a rule today, and **each needs its own sentence amended once the owner acknowledges the amendment Q0 asks about** — this document does not do it for them, and does not pretend they already say something else:
+
+| document | where the old rule is stated |
+|---|---|
+| [implementation-plan.md](../implementation-plan.md) | **Global Constraint 12**, line 89 — the text above, and the one this document amends |
+| [reconciliation.md](../reconciliation.md) | the **D118** row: "**The app never stores or uploads audio** — STT is on-device (D44), so the audio never leaves the device"; and the same reading restated at line 63 ("D44/D46 (local-only STT/TTS, bake-off by measurement)") |
+| [voice.md](../../design/voice.md) | **D44**'s answer ("Local-only for v1"), its V7 phase in §5.3 together with the held checks **65** and **66**, and §7.4's promise "your machine stays your business" |
+| [2026-10-16-voice.md](../../plans/2026-10-16-voice.md) | **V4.4** ("v1's whole provider path is local-only"), **V7.1** (conditional on a second egress decision), the **V-M** group, and §11's fixture rule ("audio fixtures are synthesised") |
+| this document | §3, §4.5 and §5, where the reliance on the constraint is written; those sentences point here |
+
+Two documents are **not** this document's to amend even after acknowledgement: [spec.md](../spec.md) and [functional-spec-v0.1.md](../functional-spec-v0.1.md) are the owner's text **verbatim**, and a verbatim document is never edited in place.
+
+**The amendment is asked for, not asserted.** Until **Q0** is answered, the design's own sentences that depend on it (§3, §4.1, §4.5, §5) describe an amendment **proposed**, and the constraint on `main` stands.
 
 ## 2. What exists today (verified against `main`)
 
@@ -30,7 +61,7 @@ Three questions the owner left open are **Q1–Q3** at the end: which providers 
 
 **Voice D44's answer stands, and it is the one this ruling relaxes.** [voice.md](../../design/voice.md) D44: "**Local-only for v1** … cloud only by a **second, explicit owner decision**, and then governed by a **list in the console's local settings whose syntax is `config.ModelProvider.AllowDataTo`'s and whose default is the opposite of it**"; "**absent means nothing leaves the machine**"; "**The list's unit is *the project*, not the repository**". The same cell states that "**`allow_data_to` does not cover this today**". Its V7 phase — "cloud providers, only if the owner takes the second egress decision … the provider clients, the policy list (**deny by default**, D44), the disclosure that this spend is outside the caps (as D45's is), and the privacy write-up" — is **out of v1 and unbuilt**, and its register holds checks **65 and 66**, "held for the signed-build microphone check and for the cloud-provider check that can exist only if the owner takes the second egress decision (D44, D46)". **A switch that reaches a provider for evaluation goes beyond what V7's phase gate permits, which is exactly why it needs the 2026-10-19 ruling in writing and why it is not the second decision.**
 
-**The local-only rule is written as a global constraint, not an implication.** [implementation-plan.md](../implementation-plan.md) Global Constraint 12: "**The app never stores or uploads audio** (D118, answered 2026-10-17 as recommended). STT is on-device; the mailbox carries text."
+**The local-only rule is written as a global constraint, not an implication.** [implementation-plan.md](../implementation-plan.md) Global Constraint 12: "**The app never stores or uploads audio** (D118, answered 2026-10-17 as recommended). STT is on-device; the mailbox carries text." **That is the constraint §1a amends, for the evaluation switch and only for it**, and every sentence below that relies on it is written against the amendment §1a proposes rather than against the constraint as it stands on `main`.
 
 **The app holds exactly two credential items per account.** Global Constraint 4: "The app holds exactly two items per account, both in platform secure storage, both never logged and never in a settings file: a Firebase Auth ID token, and — only if D113b's pairing-key question is answered (a) — the per-pairing MAC key … Never a Fugaro or cloud admin credential, never an LLM key, never a service-account JSON, never a `fugaro` config file." Voice D42's cell is the same rule on the console's side and names why a provider key on a machine is a decision and not a detail: `SECURITY.md`'s "**Cloud keys stay in the cloud.**"
 
@@ -171,7 +202,7 @@ Point 7. Check 85 is written by **P4.2**, whose row on `main` reads "**85** | Th
 
 ## 5. What the app must never send, and the destructive-command rule
 
-A list, and each entry is a rule a test can hold:
+A list, and each entry is a rule a test can hold. **These ten rules are the limits *inside* §1a's amendment** — the amendment is what permits an upload at all, and this list is what it permits **of**; if Q0 is answered "no", every rule here is satisfied trivially, because nothing is ever sent.
 
 1. **A spoken confirmation's audio**, and anything while a confirmation is pending (rules 2 and 3 below make this structural rather than a filter).
 2. **Nothing at all while a confirmation is pending** — not "the confirmation", not "the audio of it": **nothing**. This is written as a rule about a *state*, not about a *phrase*, because the app cannot know which utterance will turn out to be the confirmation until it has been transcribed, and by then the audio is gone.
@@ -203,7 +234,7 @@ A list, and each entry is a rule a test can hold:
 
 **Three candidates, chosen for what the switch needs** (a streaming STT path, a TTS path, and a provider the installation can already reach):
 
-**1. Google Cloud Speech-to-Text and Text-to-Speech.** Read: [Data logging](https://cloud.google.com/speech-to-text/docs/data-logging) — "**By default, Cloud Speech-to-Text does not log customer audio data or transcripts.** However … you can opt into the data logging program. This program allows Google to use logged customer data to refine and improve the service quality of Cloud STT — and in exchange, you gain access to discounted pricing", and "**Your logged data is not deleted when you delete your project.** Fill out the deletion request form to request to have your data deleted." [Supported languages](https://cloud.google.com/speech-to-text/v2/docs/speech-to-text-supported-languages) — **`ro-RO` (Romanian, Romania) is listed, with `chirp` and `chirp_2`**. [Text-to-Speech pricing](https://cloud.google.com/text-to-speech/pricing) — a per-character rate was read ("**US$30 per 1 million characters**", Instant custom voice); **the rest of the TTS rate card and the whole STT rate card did not render extractably on 2026-10-19 and are UNVERIFIED** (both pages are client-side). **Retention:** the default is no logging and thus no Google-side copy, which is the strongest of the three entries; opt-in logging changes that materially and is **not** to be enabled for this feature. **Training:** not on by default; the opt-in programme trains and Google "retains ownership of the models trained from that data" — another reason the option stays off. **Streaming:** `chirp`/`chirp_2` are Google's streaming-capable models; **latency UNVERIFIED**. **Cost note:** an installation's GCP project already holds Secret Manager and a data-processing relationship, which is the practical argument for this one.
+**1. Google Cloud Speech-to-Text and Text-to-Speech.** Read: [Data logging](https://cloud.google.com/speech-to-text/docs/data-logging) — "**By default, Cloud Speech-to-Text does not log customer audio data or transcripts.** However … you can opt into the data logging program. This program allows Google to use logged customer data to refine and improve the service quality of Cloud STT — and in exchange, you gain access to discounted pricing", and "**Your logged data is not deleted when you delete your project.** Fill out the deletion request form to request to have your data deleted." [Supported languages](https://cloud.google.com/speech-to-text/v2/docs/speech-to-text-supported-languages) — **`ro-RO` (Romanian, Romania) is listed, with `chirp` and `chirp_2`**. [Text-to-Speech pricing](https://cloud.google.com/text-to-speech/pricing) — the rate card's rows, read on 2026-10-19: **Chirp 3: HD voices — US$0.00003 per character (US$30 per 1 million characters), free for the first 1 million characters**; **Instant custom voice — US$0.00006 per character (US$60 per 1 million characters), free tier "Not available"**. **The rest of that rate card and the whole STT rate card are UNVERIFIED** (both pages are client-side; the earlier revision of this document attributed the US$30 figure to Instant custom voice, which was **wrong** — §11 records the correction). **Retention:** the default is no logging and thus no Google-side copy, which is the strongest of the three entries; opt-in logging changes that materially and is **not** to be enabled for this feature. **Training:** not on by default; the opt-in programme trains and Google "retains ownership of the models trained from that data" — another reason the option stays off. **Streaming:** `chirp`/`chirp_2` are Google's streaming-capable models; **latency UNVERIFIED**. **Cost note:** an installation's GCP project already holds Secret Manager and a data-processing relationship, which is the practical argument for this one.
 **2. Deepgram.** Read: [pricing](https://deepgram.com/pricing) — streaming, pay-as-you-go, per minute: **Flux English $0.0065/min** (regular $0.0077), **Flux Multilingual $0.0078/min**, **Nova-3 Monolingual $0.0048/min** (regular $0.0077), **Nova-3 Multilingual $0.0058/min** (regular $0.0092). The page describes Flux as "**Conversational speech recognition for real-time voice agents** … with built-in turn detection, natural interruption handling, and ultra-low latency", which is the property D46's end-of-turn criterion is about. **Retention and training: UNVERIFIED** — its privacy policy was not retrievable on 2026-10-19 (the URL fetched returned a 404) and this document will not guess. **Languages:** Nova-3 Multilingual advertises "automatic language detection"; **Romanian specifically UNVERIFIED**. **Latency UNVERIFIED**: "ultra-low latency" is the vendor's phrase, not a number, and Check 85 is where a number comes from.
 **3. ElevenLabs (TTS only).** Read: [privacy policy](https://elevenlabs.io/privacy-policy) — the retention section reads "**We generally keep your personal information for as long as necessary to provide you with our Services or as otherwise required or permitted by law** … After this we will either securely delete or de-identify it", which is an **open-ended retention statement with no window**, and the training section describes training on "**publicly available or third-party information**" rather than on customer audio. **Price, languages, streaming latency: UNVERIFIED** (its pricing page fetched but rendered client-side, so no number was read). **This entry's retention is the weakest of the three and its row should say so**; it is proposed for the TTS direction because voice quality is the whole reason to use it, and the register exists so that trade-off is visible.
 
@@ -259,7 +290,7 @@ The owner has decided **that** there is a switch. What remains is **how**, and t
 - **The file is renamed** from `docs/mobile/design/cloud-stt-tts.md`, because it is no longer a design about the cloud half alone.
 - **The open questions are consolidated from six to four.** The first revision's Q1 (D44's second decision) is no longer written as a question to answer but as a decision still owed, stated in §1, §10 and the Open section, because the 2026-10-19 ruling changed its shape while leaving it untaken; its "which holder of the key" question becomes Q2; its persistence question stands as Q3; its check-number question is carried as Q4. The questions the hop dissolved — how the phone learns the policy, and the fifth read family — are gone with §4.2's consumer delivery.
 
-**Still owed, and not decided here:** Voice D44's second explicit decision (adoption), Check 85 (the measurement), and Q1–Q3 below.
+**Still owed, and not decided here:** **Q0** (the owner's acknowledgement of §1a's amendment to Global Constraint 12 — the one that gates the build), Voice D44's second explicit decision (adoption), Check 85 (the measurement), and **Q1–Q4** below.
 
 **Corrected in review round 2 (2026-10-19), and recorded rather than quietly applied:**
 
@@ -268,9 +299,16 @@ The owner has decided **that** there is a switch. What remains is **how**, and t
 - **The register's data source is now stated.** §4.3 had said "a name with no register row is refused by the app" while the register was this document's §7 and the policy node carries no terms. The register now lives **with the hop**, and the refusal is the hop's; the app refuses only what it can know locally — a name with no recorded consent.
 - **`redactWriter` was mis-cited and is no longer cited here.** It is defined in `internal/gateway/route.go` (not `log.go`) and, in its own comment's words, "replaces every occurrence of key in what is written through it" — it is a credential scrubber, not a body-logging rule. The precedent for "no body logged" is `internal/gateway`'s `callLog` (`log.go`), and §4.4 point 6 and §8 now cite that instead. Same class as the earlier `Allows` → `AllowsData` citation.
 
+**Corrected in review round 3 (2026-10-19), and recorded rather than quietly applied:**
+
+- **This document does amend a ruling, and now says so in one place.** The header had claimed it "amends no ruling in any other document" while §3, §4.1, §5 and §4.5 all rely on remote STT — which uploads raw audio — against Global Constraint 12's "The app never stores or uploads audio". **§1a is new**: it amends Global Constraint 12 for the evaluation switch and for nothing else, states the exact scope of the amendment, relaxes Voice D44 for testing only while keeping adoption of cloud voice a later decision, keeps the raw-session-recording experiment separate and local-only, **lists every other document that states the old rule** and says each needs its own sentence amended once the owner acknowledges — and puts that acknowledgement to the owner as **Q0**, which gates the build.
+- **The register misattributed Google's TTS price.** "US$30 per 1 million characters" is **Chirp 3: HD voices** on the cited page (free for the first 1 million characters); **Instant custom voice** is **US$60 per 1 million characters** with no free tier. §7 now says both, correctly; the rest of the card and the STT rate card are **UNVERIFIED**.
+- **The "Still owed" list omitted questions it named elsewhere.** It read "Q1–Q3" while §11 itself carries Q4 and §1a adds Q0; it now reads **Q0–Q4**.
+- **The check-number reading in §13 was incomplete.** It omitted **67–68** (managed projects) and the website's rows; the reading is now written name by name. The answer is unchanged — **110** — and §13 says how it was derived.
+
 ## 12. What this adds to the plan (Phase 5, UNSCHEDULED)
 
-Nothing is scheduled and nothing is approved. The task this document elaborates is **[implementation-plan.md](../implementation-plan.md) Task P5.3**, whose entry this change edits to describe the evaluation switch. **No task is added and none leaves UNSCHEDULED.**
+Nothing is scheduled and nothing is approved. The task this document elaborates is **[implementation-plan.md](../implementation-plan.md) Task P5.3**, whose entry this change edits to describe the evaluation switch. **No task is added and none leaves UNSCHEDULED** — and, on top of the plan's own gate, **none of it starts before Q0 is answered** (§1a), because the remote half is the half that needs Global Constraint 12 relaxed.
 
 If it were ever scheduled, the work is: **the pure switch-and-indicator function in `shared/`** (the one new pure logic, §4.2, which takes the hop's project-status answer as an input) with vectors and a mutation proof, in the shape of `shared/command` and `shared/confirm`; **the two device-local settings and the consent sheet** in the app; **the policy node** `config/policy/voice/**` with its golden, parity test and `RulesVersion` bump (P2.1's shape); **the hop**, which is the new component and the SECURITY-SENSITIVE heart of the task; **the provider clients**, which V7 already names for the console and which this design recommends be **reused from `shared/`** rather than written twice (D119); and **the register of §7**, kept current by the owner.
 
@@ -280,7 +318,29 @@ If it were ever scheduled, the work is: **the pure switch-and-indicator function
 
 **Check 85 — the bake-off — has not been run**, and its text is not in the register: no `## Check 85` section and no summary row exists in [docs/gcp-live-checklist.md](../../gcp-live-checklist.md). Check 85 is written by P4.2 and owner-run; under this ruling it runs **the same prompts through the local engine and each admitted remote provider** (§4.7).
 
-**The remote half would need its own check, and the next free live-check number, read from the register, is 110.** The reading, so a later reader can repeat it: **80–89 are fully allocated** (all ten rows are written in the mobile plan's table); **90–99** belong to the credentials service ("reserved for this work's owner-run checks"); **100–109** belong to the functional spec v0.1 (**105–109 "reserved and unused"**); **69a–69c and 70a–70c** belong to the website work, and 70c is the highest `## Check` section written; **nothing above 109 is claimed by any document or any open pull request**, so **110 is the next free number**.
+**The remote half would need its own check, and the next free live-check number, read from the register, is 110.** The reading is written out name by name, so a later reader can repeat it rather than trust it — from [gcp-live-checklist.md](../../gcp-live-checklist.md) and the plans that reserve each block:
+
+| numbers | whose they are |
+|---|---|
+| **1–18** | summary rows only, no sections — the register says so of itself |
+| **19–47** | written as `## Check N` sections (28 of them; 39 is written 39a–39f in the retire-image-mirror plan) |
+| **48–56** | the project-centric plan |
+| **57** | a summary row whose section lives in [compute-backend.md](../../design/compute-backend.md) §7.2 |
+| **58** | the artifact-runs work |
+| **59 (59a, 59b)** | the console plan |
+| **60, 61** | the budget-token channel and the monorepo folder export (owner-allocated) |
+| **62–63** | the console v2 pair |
+| **64–66** | the voice work — 64 is the one it writes; **65 and 66 are held**, 66 for the cloud-provider check D44/D46 gate |
+| **67–68** | **managed projects** — 67 is written as 67a and 67b, and 68 is the deployer account's live IAM check ([2026-10-16-managed-projects.md](../../plans/2026-10-16-managed-projects.md) §2, [README.md](../README.md)'s "Checks 67–68") |
+| **69a–69c** | the website work — 69a (the site is live and honest), 69b (nothing phones home), 69c |
+| **70a–70c** | the website redesign — 70a (the mobile header), 70b (the gist above the fold), 70c (the copy controls); **70c is the highest `## Check` section written** |
+| **71–79** | **unclaimed** — the mobile README records "Checks 70–79 are unused and deliberately not taken", a sentence written before the redesign claimed 70a–70c |
+| **80–89** | this work, and **all ten rows are written** |
+| **90–99** | the credentials service ("reserved for this work's owner-run checks") |
+| **100–109** | the functional spec v0.1 — **100–104 proposed**, **105–109 reserved and unused** |
+| **110 upward** | **nothing is claimed by any document or any open pull request**, so **110 is the next free number** |
+
+The earlier revision of this section reached the same answer but skipped **67–68** and the website's **70a–70c**, which is why the table is written out in full here; the answer did not change.
 
 **This document names 110 and writes nothing.** The convention is the register's and the mobile plan's: "**the phase that ships the check writes them**", and "a check is never run before its text is in the register". Check 110 would have to establish, on a real device against a real provider in a sandbox: that **no audio leaves the device while a confirmation is pending**; that a project with `force_local` produces no remote call; that a remote read-back or confirmation never occurs (§5 rule 3); that a provider outage produces a local answer and **no queue**; and that the indicator's state matches the route taken. **None of that is written here.**
 
@@ -292,7 +352,17 @@ If it were ever scheduled, the work is: **the pure switch-and-indicator function
 
 **And one item that is not a design question at all: Voice D44's second explicit egress decision — *adopting* remote voice — is still owed and still untaken.** The owner's ruling of 2026-10-19 permits the app to carry the switch **so that the decision can be taken by use**; it is not that decision, and this document does not treat it as taken (§1, §10).
 
-**Q1–Q3 are the three the owner left open.** **Q4** is carried from this document's first revision because it is still unresolved. Each states its options, the recommendation and why. **Nothing here is built, and none of these blocks the switch's design — they block its schedule.**
+**Q1–Q3 are the three the owner left open.** **Q4** is carried from this document's first revision because it is still unresolved, and **Q0** is this document's own — the acknowledgement §1a asks for, and the one that gates everything. Each states its options, the recommendation and why. **Nothing here is built: Q1–Q4 block the switch's schedule, and Q0 blocks the build itself.**
+
+### Q0 — Do you acknowledge that Global Constraint 12 is amended for the evaluation switch?
+
+**What is being asked, in one sentence.** Remote STT **uploads raw audio**, which [implementation-plan.md](../implementation-plan.md)'s Global Constraint 12 forbids today ("The app never stores or uploads audio"), and this design has been relying on that constraint being relaxed **for the evaluation switch only**, exactly as §1a sets out — nothing else relaxed, no audio stored, the mailbox still text, D44 relaxed for testing only and adoption still a later decision.
+
+**Options.** **(a) Yes, as described** — Global Constraint 12 is amended for the evaluation switch, within §1a's scope, and the four documents §1a lists are amended to match. **(b) Yes, with changes** — the owner narrows or widens §1a's scope (for instance: only one direction while evaluating; or only on a sandbox project; or no provider outside the installation's own GCP project). **(c) No, keep local-only** — the switch ships **local-only**, the remote half is not built, and this document's §3/§4/§5 stay a written design of what a later decision would have to answer.
+
+**Recommendation: (a).** The three points that make it safe are all inside the amendment and not around it — the allow-list (§4.3), the owner's own switch and consent (§4.1), and the freeze during a confirmation and on destructive paths (§5) — and (c) would leave the owner deciding on a provider by reading a table instead of by using one, which is what the ruling of 2026-10-19 asked to change. **(b) is a real option and not a polite one**: a sandbox-project-only evaluation would be strictly safer with almost no loss, and if the owner prefers it, §1a's scope narrows accordingly.
+
+**Until Q0 is answered, nothing is built** — no hop, no provider client, no settings, no rules node — and **no other document's sentence is rewritten**. This is the same gate discipline the plan already uses: an amendment the owner has not acknowledged is not applied.
 
 ### Q1 — Which remote providers to try
 
