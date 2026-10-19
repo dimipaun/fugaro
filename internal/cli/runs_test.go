@@ -56,7 +56,7 @@ func TestLsFiltersAndTotals(t *testing.T) {
 	e1 := seedRun(t, f, today+"-090000-aaaa", "b1", "someone@example.com", true)
 	seedRun(t, f, today+"-091000-bbbb", "b1", "other@example.com", true)
 	seedRun(t, f, today+"-092000-cccc", "b2", "someone@example.com", false)
-	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since
+	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since // runid-guard:allow
 	f.run.SetState(e1, backend.StateRunning)
 
 	out, _, err := execute(t, "runs", "ls", "--json")
@@ -610,9 +610,14 @@ func TestLsWarnsUnreadableStatus(t *testing.T) {
 	}
 }
 
-// runIDAt is a run ID of the day d days ago, at hhmmss, with suffix hex.
+// runIDAt is a run ID of the day daysAgo days ago, at hhmmss, with suffix
+// hex: recentRunID (runid_test.go) in whole days. Like it, it reads lsNow,
+// the clock the listings are windowed by, so a test that pins that clock mints
+// and lists against the same time. The follow-up commands (run --pr, run
+// --retry) read the wall clock instead: mint their runs with wallRunIDAt
+// (runid_test.go).
 func runIDAt(daysAgo int, hhmmss, hex string) string {
-	return time.Now().UTC().AddDate(0, 0, -daysAgo).Format("20060102") + "-" + hhmmss + "-" + hex
+	return mintRunIDAt(lsNow, daysAgo, hhmmss, hex)
 }
 
 // seedSpec stores spec as its run's task.json and, when launched, starts
@@ -846,10 +851,12 @@ func TestLsPRColumn(t *testing.T) {
 			lines[fields[0]] = l
 		}
 	}
-	if l := lines[appSlug+"/"+r.fu1]; !strings.HasSuffix(l, "#7 https://github.com/acme/app/pull/7 (draft)") {
+	// The BY cell follows the PR column, and none of these runs recorded a
+	// launcher (seedSpec's launch.json carries none): a dash.
+	if l := lines[appSlug+"/"+r.fu1]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("finished follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+waiting]; !strings.HasSuffix(l, "#7") {
+	if l := lines[appSlug+"/"+waiting]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("unlaunched follow-up line = %q\n%s", l, human)
 	}
 	if l := lines[appSlug+"/"+r.plain]; l != "" {
@@ -901,7 +908,9 @@ func TestLsShowsDraftInProgress(t *testing.T) {
 	for _, line := range strings.Split(human, "\n") {
 		switch {
 		case strings.Contains(line, run):
-			if !strings.HasSuffix(strings.TrimSpace(line), "https://github.com/acme/app/pull/7 (draft)") {
+			// The BY cell (a dash: seedRun's launch.json records no launcher)
+			// follows the PR column.
+			if !strings.Contains(line, "https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(line), "-") {
 				t.Errorf("running line: %q", line)
 			}
 		case strings.Contains(line, done):
@@ -1158,5 +1167,243 @@ func TestSingularNounAliases(t *testing.T) {
 		if _, _, err := execute(t, args...); err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
+	}
+}
+
+// TestLsLauncherColumn: every listing shows who started each run — the
+// column is always there, with the launcher's short form (the part before
+// the @ of an address) and a dash for a run whose launch.json recorded
+// none. Mutation caught: showing the whole address, or leaving the column
+// out when no run has a launcher.
+func TestLsLauncherColumn(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{
+		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded", LaunchedBy: "dana@example.com"},
+		{Run: "acme-app/20261007-110000-abcd", Status: "running", LaunchedBy: "ci-runner"},
+		{Run: "acme-app/20261007-120000-abcd", Status: "running"},
+	}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if !strings.Contains(lines[0], "BY") {
+		t.Fatalf("no BY column even though a run has a launcher:\n%s", out)
+	}
+	for i, want := range map[int]string{1: "dana", 2: "ci-runner", 3: "-"} {
+		cell := strings.TrimSpace(lines[i][strings.LastIndex(lines[i], "  "):])
+		if cell != want {
+			t.Errorf("row %d's BY cell = %q, want %q:\n%s", i, cell, want, out)
+		}
+	}
+	if strings.Contains(out, "dana@example.com") {
+		t.Errorf("the whole address reached the text column:\n%s", out)
+	}
+}
+
+// TestLsLauncherColumnSanitizesHostileValues: the launcher is written by
+// whoever launched the run, so it is untrusted text like an OAuth account
+// or a recipe name and must clear the same bar: no extra tabwriter column
+// or row, no escape, bidi or line-separator rune, no unbounded width.
+// Mutation caught: interpolating r.LaunchedBy into the cell as it is.
+func TestLsLauncherColumnSanitizesHostileValues(t *testing.T) {
+	fields := func(line string) []string {
+		return regexp.MustCompile(`  +`).Split(strings.TrimRight(line, " "), -1)
+	}
+	huge := strings.Repeat("x", 10_000)
+	hostile := []string{
+		"a\tb@example.com", "a\nb@example.com", "a\rb@example.com", "esc\x1b[2Jc@example.com",
+		"bidi" + string(rune(0x202e)) + "evil@example.com",
+		"line" + string(rune(0x2028)) + "sep@example.com",
+		"para" + string(rune(0x2029)) + "graph@example.com",
+		"@" + huge,
+	}
+	for _, by := range hostile {
+		var b strings.Builder
+		rows := []runview.Row{{Run: "acme-app/20261007-100000-abcd", Status: "succeeded", Stage: "implement",
+			PR: 7, PRURL: "https://example.com/pr/7", LaunchedBy: by}}
+		if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("launcher %q: %d lines, want 3 (header, row, totals):\n%q", by, len(lines), out)
+		}
+		hdr, row := fields(lines[0]), fields(lines[1])
+		if len(row) != len(hdr) {
+			t.Fatalf("launcher %q: row has %d fields, header has %d (a tab or newline widened/split the table):\n%q", by, len(row), len(hdr), out)
+		}
+		if n := utf8.RuneCountInString(out); n > 600 {
+			t.Fatalf("launcher %q: output is %d runes, not bounded:\n%.80q...", by, n, out)
+		}
+		for _, r := range out {
+			if r == '\x1b' || (r >= 0x202a && r <= 0x202e) || r == 0x2028 || r == 0x2029 {
+				t.Fatalf("launcher %q: hostile rune %U survived in:\n%q", by, r, out)
+			}
+		}
+	}
+}
+
+// seedSpecBy seeds spec and, when launched, writes a launch.json that
+// records by as its launcher: the shape fugaro run writes (seedSpec's own
+// launch records none, the pre-0.4.0 shape).
+func seedSpecBy(t *testing.T, f *cloudFixture, spec *task.Spec, by string) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, spec.RunID)
+	if err := s.CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, spec.RunID)
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: spec.RunID, Execution: exec, LaunchedBy: by, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLsLauncherComesFromLaunchJSON: the launcher is launch.json's own
+// record — not the task's RequestedBy, which is a different field a
+// different writer fills — the JSON carries it in full, the text column
+// carries its short form, and a run whose launch.json recorded none has no
+// key at all and a dash.
+func TestLsLauncherComesFromLaunchJSON(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	seedSpecBy(t, f, firstRunSpec(today+"-090000-aaaa"), "dana@example.com")
+	seedSpecBy(t, f, firstRunSpec(today+"-091000-bbbb"), "") // launched, no launched_by
+
+	got, _ := lsJSON(t)
+	if len(got.Runs) != 2 {
+		t.Fatalf("runs = %v", runIDs(got.Runs))
+	}
+	byRun := map[string]string{}
+	for _, r := range got.Runs {
+		byRun[r.RunID] = r.LaunchedBy
+	}
+	if byRun[today+"-090000-aaaa"] != "dana@example.com" {
+		t.Fatalf("launched_by = %q, want the launch.json's value", byRun[today+"-090000-aaaa"])
+	}
+	if byRun[today+"-091000-bbbb"] != "" {
+		t.Fatalf("a launch.json with no launched_by produced %q", byRun[today+"-091000-bbbb"])
+	}
+	// The key is absent from the wire, not "" or null — and the task's own
+	// RequestedBy is still there beside it, so the absent key is not the
+	// task's identity having been dropped.
+	out, _, err := execute(t, "runs", "ls", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, r := range doc.Runs {
+		if r["run_id"] != today+"-091000-bbbb" {
+			continue
+		}
+		seen = true
+		if v, ok := r["launched_by"]; ok {
+			t.Fatalf("absent launcher still emitted launched_by = %v", v)
+		}
+		if r["requested_by"] != "someone@example.com" {
+			t.Fatalf("requested_by = %v, want the task's own (proving launched_by is not read from it)", r["requested_by"])
+		}
+	}
+	if !seen {
+		t.Fatalf("the no-launcher run is missing:\n%s", out)
+	}
+	// The text listing agrees: the short form, and a dash for the run whose
+	// launch.json recorded no launcher.
+	human, _, err := execute(t, "runs", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human, "dana") || strings.Contains(human, "dana@example.com") {
+		t.Fatalf("text listing does not show the short form:\n%s", human)
+	}
+	var dashLine string
+	for _, l := range strings.Split(human, "\n") {
+		if strings.Contains(l, "091000") {
+			dashLine = l
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(dashLine), "-") {
+		t.Fatalf("row without a launcher's BY cell = %q, want a dash:\n%s", dashLine, human)
+	}
+}
+
+// TestLsFollowUpShowsItsOwnLauncher: a follow-up records its own launcher at
+// its own launch, so the PR's listing shows each run's own — the follow-up's
+// identity, not the first run's. Mutation caught: carrying the previous
+// run's launcher onto a follow-up's row.
+func TestLsFollowUpShowsItsOwnLauncher(t *testing.T) {
+	f := newCloudFixture(t)
+	root, fu := runIDAt(0, "090000", "aaaa"), runIDAt(0, "100000", "bbbb")
+	seedSpecBy(t, f, firstRunSpec(root), "dana@example.com")
+	writeRecord(t, f, root, prRecord(root, "", 7, 1))
+	seedSpecBy(t, f, followUpSpec(fu, root, root, 7), "ci-runner@proj.iam.gserviceaccount.com")
+
+	got, _ := lsJSON(t, "--pr", "7", "--repo", "acme/app")
+	if len(got.Runs) != 2 {
+		t.Fatalf("runs = %v", runIDs(got.Runs))
+	}
+	byRun := map[string]string{}
+	for _, r := range got.Runs {
+		byRun[r.RunID] = r.LaunchedBy
+	}
+	if byRun[root] != "dana@example.com" || byRun[fu] != "ci-runner@proj.iam.gserviceaccount.com" {
+		t.Fatalf("launchers = %v, want each run's own", byRun)
+	}
+	human, _, err := execute(t, "runs", "ls", "--pr", "7", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human, "dana") || !strings.Contains(human, "ci-runner") || strings.Contains(human, "ci-runner@") {
+		t.Fatalf("text listing does not show both short forms:\n%s", human)
+	}
+}
+
+// TestLsLauncherShortFormAndClip: runs ls has a BY column showing the short form of the
+// launcher (the part before an @, the whole value otherwise), a dash when none
+// was recorded, and a value past the column's cap is clipped so one launch.json
+// cannot widen the table. Mutation caught: no clip, full address, no dash.
+func TestLsLauncherShortFormAndClip(t *testing.T) {
+	long := strings.Repeat("c", maxNameCellRunes+30)
+	rows := []runview.Row{
+		{Run: "acme-app/20261007-100000-aaaa", Status: "succeeded", LaunchedBy: "dana@example.com"},
+		{Run: "acme-app/20261007-100000-bbbb", Status: "succeeded", LaunchedBy: "ci-runner@proj.iam.gserviceaccount.com"},
+		{Run: "acme-app/20261007-100000-cccc", Status: "succeeded", LaunchedBy: "plain-id"},
+		{Run: "acme-app/20261007-100000-dddd", Status: "succeeded"},
+		{Run: "acme-app/20261007-100000-eeee", Status: "succeeded", LaunchedBy: "@example.com"},
+		{Run: "acme-app/20261007-100000-ffff", Status: "succeeded", LaunchedBy: long},
+	}
+	var b strings.Builder
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for id, want := range map[string]string{"aaaa": "dana", "bbbb": "ci-runner", "cccc": "plain-id", "dddd": "-", "eeee": "-",
+		"ffff": strings.Repeat("c", maxNameCellRunes) + "…"} {
+		found := false
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "-"+id) {
+				found = true
+				f := strings.Fields(l)
+				if got := f[len(f)-1]; got != want {
+					t.Errorf("run %s: BY = %q, want %q\n%s", id, got, want, out)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no row for %s:\n%s", id, out)
+		}
+	}
+	if strings.Contains(out, "@") {
+		t.Errorf("an address reached the text table:\n%s", out)
 	}
 }

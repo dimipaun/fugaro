@@ -333,7 +333,34 @@ func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretR
 // shape): the set of secrets claude setup-token mints a value for, so
 // init's prompts (initsecrets.go) know when to mention it.
 func isClaudeOAuthSecret(name string) bool {
-	return name == "claude-oauth-token" || strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix)
+	return config.ClaudeOAuthSecret(name)
+}
+
+// codexOAuthRefusal is the one message every refusal of a Codex OAuth
+// credential name uses (config.CodexOAuthToken, and the whole
+// codex-oauth-token-<name> namespace behind it): the name is reserved ahead
+// of the harness (owner ruling of 2026-10-18), so there is nothing to store a
+// value for and no path — `secrets set` in either scope, or init's prompt —
+// that may write one. name goes through Printable, since a name reaching this
+// path may not have passed config.SecretNameRE (a reserved name skips that
+// check, so codex-oauth-token-<anything> reaches here).
+func codexOAuthRefusal(name string) error {
+	return userErr("%s is reserved for the Codex harness's OAuth credential (%s, and names starting %s); Fugaro does not drive Codex yet, so nothing mounts one and there is nowhere for this value to go",
+		pluginwire.Printable(name), config.CodexOAuthToken, config.CodexOAuthTokenPrefix)
+}
+
+// providerConventionRefusal is the one message every refusal of a configured
+// provider's conventional key name uses when the name is not that provider's
+// own secret (config.ReservedProviderSecret): storing a workflow's or another
+// provider's value under it would be captured the day the key is renamed to
+// the convention. provider and name are config-sourced names, stated with
+// Printable — and so is the conventional name derived from provider, which
+// carries the same characters through: a provider entry named with a bidi
+// override would otherwise reach the terminal raw inside the sentence that
+// names the name it reserves.
+func providerConventionRefusal(provider, name string) error {
+	return userErr("%s is reserved for model provider %s's key: the convention names a provider's key after its entry (%s), and that name belongs to that provider whatever its .secret is written as today, so no other value may be stored under it. Store the workflow's own secret under a name of its own",
+		pluginwire.Printable(name), pluginwire.Printable(provider), pluginwire.Printable(config.ProviderSecretConvention(provider)))
 }
 
 // claudeOAuthAccountAllowed reports whether name (shaped
@@ -379,6 +406,18 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		// The name is not quoted: a value typed in its place must not be echoed.
 		return userErr("the secret NAME must be one of %s, or a workflow secret's name matching %s",
 			strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "), config.SecretNameRE)
+	}
+	if config.CodexOAuthSecret(name) {
+		// Refused here, before the scope decision, before the checkout is
+		// read and before any cloud call: no spelling of the command
+		// (--project-wide, --repo, a bare command in a checkout) may store a
+		// value under a reserved Codex name, and the refusal does not depend
+		// on which scope it would have gone to. Neither this check nor the
+		// scope it precedes assumes config.Validate ran: a workflow can no
+		// longer declare such a name, and this is the write path's own,
+		// independent refusal (the Claude namespace's claudeOAuthAccountRefusal
+		// is the same shape, decided per account and per repository).
+		return codexOAuthRefusal(name)
 	}
 	if err := o.checkScope(cmd); err != nil {
 		return err
@@ -459,6 +498,16 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 			return userErr("model provider %s does not list %s in allow_data_to, so its key is not stored for it: store the project's copy instead, which the repositories it does list mount, with '%s secrets set %s --project-wide'",
 				p, r.repo, selfCommand(), quoteWord(name))
 		}
+	} else if p, ok := config.ReservedProviderSecret(env.lc.Providers, name); ok {
+		// The conventional name of a configured provider's key, which is not
+		// that provider's own .secret (a name that *is* a provider's secret
+		// took the branch above): <p>-api-key belongs to p's key wherever p's
+		// key is written today (config.ReservedProviderSecret, and the
+		// convention the owner ruled on 2026-10-18), so a workflow's value
+		// stored under it would be read as p's key the day the key is renamed
+		// to the convention. Both names are config-sourced, so both are stated
+		// with Printable.
+		return providerConventionRefusal(p, name)
 	} else if !reserved {
 		// A workflow secret must be one the repository declares: a typo
 		// would store an orphan nothing mounts, and a value typed as NAME
@@ -655,6 +704,14 @@ func projectWideRefusal(lc *localcfg.Config, name string) error {
 	}
 	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
 		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(account)+".allow_data_to")
+	}
+	if p, ok := config.ReservedProviderSecret(lc.Providers, name); ok {
+		// Reserved for a configured provider's key and not that provider's own
+		// secret, so the generic sentence below would be wrong about the name
+		// ("no project-wide meaning"): it has one, and it is not this
+		// command's to write. Read in the same order as projectWideAccepted,
+		// which refuses it for the same reason.
+		return providerConventionRefusal(p, name)
 	}
 	return userErr("%s has no project-wide meaning: only a reserved secret (%s), a model provider's key, or a named Claude account's token is stored project-wide",
 		pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))

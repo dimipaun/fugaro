@@ -665,6 +665,52 @@ func TestRedrawsAreCoalesced(t *testing.T) {
 	}
 }
 
+// The screen shows what the scan read about each run: the job a run is in and
+// who launched it are in the run's own launch.json, not in the RTDB registry
+// entry a live row is built from (facts.go), so the model has to merge them
+// like every other surface does (MergeFacts; watchOnce and watchStream in
+// internal/cli). A screen that does not shows "-" for the launcher of every
+// running run while `watch --json` names it.
+//
+// Mutation caught: leaving MergeFacts out of model.rebuild (the launcher line
+// stays a dash), and a tick that rebuilds on m.dirty alone (the map lands
+// between two updates with no change to any row, so nothing else makes a
+// frame).
+func TestScreenAppliesRunFacts(t *testing.T) {
+	x := newTM(t)
+	var facts Facts
+	x.m.o.Facts = func() Facts { return facts }
+	x.seed()
+	x.key("down") // onto acme/app's one run, r1
+	x.key("space")
+	if got := detailValue(x.screen(), "by"); got != "-" {
+		t.Fatalf("before the scan: by = %q, want the dash a run with nothing recorded shows", got)
+	}
+	job := "fugaro-aurora-1a2b3c4d"
+	facts = Facts{RunKeyOf("acme/app", "r1"): RunFacts{
+		JobRef:     JobRef{Job: job, Profile: "work", Provider: "github", Account: "work"},
+		LaunchedBy: "dana@example.com",
+	}}
+	// A scan lands between two frames: no update arrives and no row changes.
+	// The tick is what turns the new map into the next frame, exactly as it
+	// turns a PR-state answer into one.
+	x.m.Update(renderMsg{})
+	if got := detailValue(x.screen(), "by"); got != "dana@example.com" {
+		t.Fatalf("after the scan: by = %q, want the launcher the scan read:\n%s", got, x.screen())
+	}
+	found := false
+	for _, b := range x.m.view.Repos {
+		for _, r := range b.Runs {
+			if r.Run == "r1" && r.Job == job {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the run's job did not reach the view: %+v", x.m.view.Repos)
+	}
+}
+
 func TestWindowResizeAndTooNarrow(t *testing.T) {
 	x := newTM(t)
 	x.seed()

@@ -573,7 +573,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	}
 	// A policy that carries profiles must define the one every workflow that
 	// names none runs on (projectpolicy.validProfiles applies the same rule to
-	// the node, and checkPolicyWeWouldWrite would refuse it there). It is
+	// the node, and checkPolicyBytes would refuse it there). It is
 	// refused here, before the node is built, so that the operator is told
 	// which file to fix: the alternative is a repository selecting a profile
 	// nobody defined, which is refused at run start, one run at a time.
@@ -618,13 +618,30 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		return nil, false, userErr("--remove-routing drops the published policy's routing block, and %s writes one (routing: %s): one of the two has to go", lc.Name, routingText(lc.Routing))
 	}
 	keepRouting := silent && !removeRouting
+	// The accounts block is DERIVED, never written by hand (D3): it is the
+	// operator's claude_accounts.<name>.allow_data_to, qualified with the
+	// provider of the profile(s) that name the account, for the accounts some
+	// profile names. The refusal below is the operator's file being wrong
+	// about an account — one nothing defines, or one whose allow_data_to is
+	// empty — and it is made here, before the node is built, so the sentence
+	// names the file rather than the node. The profiles are then judged
+	// against it by the node's own rules (checkPolicyBytes decodes the
+	// document this function returns), which is where the subset rule fires:
+	// a profile admitting a repository one of its accounts does not cover is
+	// refused before anything is written.
+	profiles := policyProfiles(lc)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	if err != nil {
+		return nil, false, userErr("%v", err)
+	}
 	pol := &projectpolicy.Policy{
 		Version:    projectpolicy.Version,
 		Budget:     projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
 		AllowRepos: nonNil(allow),
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
-		Profiles:   policyProfiles(lc),
+		Profiles:   profiles,
+		Accounts:   accounts,
 	}
 	switch {
 	case !silent:
@@ -689,7 +706,7 @@ func policyProviders(lc *localcfg.Config) map[string]projectpolicy.Provider {
 //
 // The block is published exactly as the file spells it, and the rules that
 // make it usable are the policy's own (projectpolicy.validProfiles, run by
-// checkPolicyWeWouldWrite before anything is written): the default profile
+// checkPolicyBytes before anything is written): the default profile
 // defined, every provider named and known, cpu/memory a Cloud Run shape, the
 // timeout within Cloud Run's ceiling, and every allow_repos pattern of the
 // profile's own provider. Refusing them here too would be a second copy of
@@ -1092,6 +1109,12 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// that stopped existing — which refuses the runs of every workflow that
 	// selected it.
 	diffLines(out, profileLines(old), profileLines(new))
+	// The accounts block is derived from the operator's config, and it is
+	// what decides which repositories may use which account's token (D3), so
+	// a change to it is a line an operator reading a publish must see: a list
+	// that grew is one more repository whose runs hold that token, and one
+	// that shrank is a run that will be refused.
+	diffLines(out, accountLines(old), accountLines(new))
 	// The routing switch moves with this publish: it comes from the operator's
 	// config, so a route that appeared or changed is a line an operator reading
 	// money-and-data-sharing changes must see — a route that quietly starts
@@ -1117,6 +1140,26 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 			fmt.Fprintf(out, "  allow_repos %s (kept from the published node)\n", r)
 		}
 	}
+}
+
+// accountLines is one line per account of the accounts block, for the diff
+// and for `policy show`: the repositories that account's token may be used by
+// (D3). A nil policy (no node published) has no accounts.
+func accountLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := make(map[string]string, len(p.Accounts))
+	for _, name := range p.AccountNames() {
+		out["account "+name] = accountText(p.Accounts[name])
+	}
+	return out
+}
+
+// accountText is one account as one line: its repositories, which is the whole
+// of what an accounts entry carries.
+func accountText(a projectpolicy.Account) string {
+	return fmt.Sprintf("allow_repos %s", strings.Join(a.AllowRepos, ", "))
 }
 
 // profileLines is one line per value of every profile, and one per job it
@@ -1153,8 +1196,18 @@ func profileText(pr projectpolicy.Profile) string {
 		// with job_profile:, and every run of it mounts these secrets.
 		allow += " (warning: every enrolled repository can select this profile and read its secrets; give it its own allow_repos)"
 	}
-	return fmt.Sprintf("provider %s, cpu %d, memory %s, timeout %s, secrets %s, allow_repos %s",
+	line := fmt.Sprintf("provider %s, cpu %d, memory %s, timeout %s, secrets %s, allow_repos %s",
 		pr.Provider, pr.CPU, pr.Memory, pr.TimeoutClass, secrets, allow)
+	// The accounts the profile serves, when it serves any: one job is
+	// deployed per (profile, provider, account), so a reader that cannot see
+	// this list cannot tell a profile that serves an account from one that
+	// serves none — and the accounts are what decides which job a run lands
+	// on. A profile that lists none reads exactly as it did before this
+	// release (the field is absent from the node).
+	if len(pr.ClaudeAccounts) > 0 {
+		line += fmt.Sprintf(", claude_accounts %s", strings.Join(pr.ClaudeAccounts, ", "))
+	}
+	return line
 }
 
 // profileJobsText is the jobs a profile maps to. Design §4.1 deploys one job
@@ -1289,6 +1342,7 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"allow_repos":           fmt.Sprintf("%v", nonNil(p.AllowRepos)),
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
 		"profiles":              profilesText(p),
+		"accounts":              accountsText(p),
 	}
 }
 
@@ -1299,6 +1353,15 @@ func profilesText(p *projectpolicy.Policy) string {
 		return "none (a workflow that selects one is refused at run start)"
 	}
 	return strings.Join(p.ProfileNames(), ", ")
+}
+
+// accountsText is the policy's account names as one line, for the diff's
+// summary row (the per-account lines carry the repositories).
+func accountsText(p *projectpolicy.Policy) string {
+	if len(p.Accounts) == 0 {
+		return "none (no profile serves a Claude account)"
+	}
+	return strings.Join(p.AccountNames(), ", ")
 }
 
 // deleteProjectPolicy removes the published policy (B5): the child nodes of
@@ -1745,6 +1808,12 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 		pr := p.Profiles[name]
 		fmt.Fprintf(out, "  profile %s: %s\n", name, profileText(pr))
 		fmt.Fprintf(out, "  profile %s jobs: %s\n", name, profileJobsText(name, pr))
+	}
+	// One line per account, then its repositories: what decides which
+	// repositories a run of an account's job may hold that account's token
+	// (D10, the owner's ruling that this command prints the block).
+	for _, name := range p.AccountNames() {
+		fmt.Fprintf(out, "  account %s: %s\n", name, accountText(p.Accounts[name]))
 	}
 	for _, name := range slices.Sorted(maps.Keys(p.Providers)) {
 		pv := p.Providers[name]

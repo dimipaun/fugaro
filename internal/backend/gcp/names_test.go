@@ -1,13 +1,19 @@
 package gcp
 
 import (
+	"go/ast"
+	"go/parser"
+	gotoken "go/token"
+	"io/fs"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -310,12 +316,49 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{BucketConditionTitle("fugaro-x-12345678"), "fugaro-fugaro-x-12345678"},
 		{BucketCondition("b", []string{"runs", "cache"}, "s"),
 			`resource.name.startsWith("projects/_/buckets/b/objects/runs/s/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/s/")`},
-		{LauncherBucketConditionTitle, "fugaro-launchers-runs"},
+		{LauncherBucketConditionTitle, "fugaro-launchers-runs-tokens"},
 		{LauncherBucketCondition("fugaro-runs-proj-1234"),
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
+		// The launchers' grant as every release before 0.9.0 wrote it: what a
+		// reader must recognise as that grant's old form rather than as a
+		// stranger's condition (internal/infra's RunsBucketFindings), and the
+		// bytes no release writes any more.
+		{LegacyLauncherBucketConditionTitle, "fugaro-launchers-runs"},
+		{LegacyLauncherBucketCondition("fugaro-runs-proj-1234"),
 			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/")`},
+		{TokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-tokens-fugaro-x-12345678"},
+		{TokenBucketCondition("b", "s"), `resource.name.startsWith("projects/_/buckets/b/objects/tokens/s/")`},
+		// The project job's pair (plan task 3.2 step 2): the widened objectUser
+		// grant on runs/, cache/ and locks/, and the read-only one on the whole
+		// of tokens/. Both are slugless, and neither is the per-repository
+		// builder called with an empty slug, which refuses
+		// (TestProjectBucketConditionHasNoSlug).
+		{ProjectBucketCondition("b", []string{"runs", "cache"}),
+			`resource.name.startsWith("projects/_/buckets/b/objects/runs/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/")`},
+		{ProjectTokenBucketCondition("fugaro-runs-proj-1234"),
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
+		{ProjectTokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-project-tokens-fugaro-x-12345678"},
+		// The three title prefixes the plan reader matches on
+		// (internal/infra/tf) are these, and a project job's title must not
+		// read as a per-repository job's: the prefix of one is not a prefix of
+		// the other's titles.
+		{BucketConditionTitlePrefix, "fugaro-"},
+		{TokenBucketConditionTitlePrefix, "fugaro-tokens-"},
+		{ProjectTokenBucketConditionTitlePrefix, "fugaro-project-tokens-"},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+	// The plan reader takes a tokens/ expression for a repository's job grant
+	// only under the title built from the member
+	// (internal/infra/tf's jobAccountGrant), so the per-repository title and
+	// the project job's must not be readable as each other: a title built with
+	// one prefix never is a title built with the other.
+	for _, id := range []string{"fugaro-x-12345678", "fugaro-p-standard-git-0ca96e64"} {
+		if got, other := TokenBucketConditionTitle(id), ProjectTokenBucketConditionTitle(id); got == other ||
+			strings.HasPrefix(got, ProjectTokenBucketConditionTitlePrefix) || strings.HasPrefix(other, TokenBucketConditionTitlePrefix) {
+			t.Errorf("the per-repository and project tokens/ titles are not told apart: %q vs %q", got, other)
 		}
 	}
 }
@@ -347,6 +390,26 @@ func TestLauncherBucketConditionRejectsBadBucketNames(t *testing.T) {
 	// A bucket name of only the allowed characters never panics.
 	if got := LauncherBucketCondition("fugaro-runs-proj-1234"); got == "" {
 		t.Error("a valid bucket name panicked")
+	}
+	// The old form embeds the bucket the same way, so it takes the same guard.
+	for _, bad := range []string{`fugaro-runs-proj-1234"`, "fugaro runs proj", ""} {
+		t.Run("legacy "+bad, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("LegacyLauncherBucketCondition(%q) did not panic", bad)
+				}
+			}()
+			LegacyLauncherBucketCondition(bad)
+		})
+	}
+	// The old form is not the new one (the new expression *starts* with the
+	// old clause — it is that clause plus tokens/ — so the two are told apart
+	// by the whole string and by the title, which is what every reader
+	// compares): a reader that confused them would accept the runs/-only
+	// write as the widened grant, the failure this pair exists to name.
+	b := "fugaro-runs-proj-1234"
+	if got, want := LegacyLauncherBucketCondition(b), LauncherBucketCondition(b); got == want || LegacyLauncherBucketConditionTitle == LauncherBucketConditionTitle {
+		t.Errorf("the launchers' old form and its replacement are not told apart: %q vs %q, titles %q vs %q", got, want, LegacyLauncherBucketConditionTitle, LauncherBucketConditionTitle)
 	}
 }
 
@@ -1005,4 +1068,133 @@ func TestProjectBucketConditionHasNoSlug(t *testing.T) {
 		}()
 		BucketCondition(bucket, JobBucketPrefixes, "")
 	}()
+}
+
+// TestTheTokenPrefixIsTheTokenPackages: the grants name the prefix the token
+// objects live under (token.ObjectKey), and the job's prefixes never include
+// it: the job's objectUser on tokens/ would let a peer run delete a queued
+// run's token (docs/design/budget-token-channel.md §7.2, D16). The prefix is
+// one constant on both sides, so a move of the object without the grants (or
+// the reverse) fails here.
+func TestTheTokenPrefixIsTheTokenPackages(t *testing.T) {
+	if TokenBucketPrefix != token.ObjectPrefix || !strings.HasPrefix(token.ObjectKey("s", "r"), TokenBucketPrefix+"/s/") {
+		t.Fatalf("TokenBucketPrefix = %q, token.ObjectKey = %q", TokenBucketPrefix, token.ObjectKey("s", "r"))
+	}
+	for _, p := range append(append([]string{}, JobBucketPrefixes...), BuildBucketPrefixes...) {
+		if p == TokenBucketPrefix {
+			t.Fatalf("%q is a prefix an account may write", p)
+		}
+	}
+}
+
+// TestEveryNameInThisFileIsUsed: every exported declaration of names.go is
+// named somewhere outside it. The file is the one definition of every name the
+// deployer, the install guard, doctor and the readers compare against, so a
+// second spelling of one of them is not dead weight but a trap: it is a
+// constant or a builder that reads like the definition and is not the one
+// anything compares byte for byte. This is what a merge leaves behind when two
+// branches fixed the same thing — the pre-0.9.0 launcher condition was
+// declared twice here, once as the legacy pair and once as a second copy of
+// it, after the two lines met.
+//
+// The name of a declaration this test is about must not be written in this
+// file: naming it here would count as a use of it (the walk reads every other
+// Go file, tests included), which is the one way to defeat the check.
+//
+// Mutation (run, restore): re-adding any exported declaration of names.go that
+// no other file refers to — the duplicate pair, or a copy of any builder under
+// a second name — fails this test naming it.
+func TestEveryNameInThisFileIsUsed(t *testing.T) {
+	fset := gotoken.NewFileSet()
+	f, err := parser.ParseFile(fset, "names.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var declared []string
+	for _, d := range f.Decls {
+		switch x := d.(type) {
+		case *ast.FuncDecl:
+			if x.Name.IsExported() {
+				declared = append(declared, x.Name.Name)
+			}
+		case *ast.GenDecl:
+			for _, s := range x.Specs {
+				switch sp := s.(type) {
+				case *ast.ValueSpec:
+					for _, n := range sp.Names {
+						if n.IsExported() {
+							declared = append(declared, n.Name)
+						}
+					}
+				case *ast.TypeSpec:
+					if sp.Name.IsExported() {
+						declared = append(declared, sp.Name.Name)
+					}
+				}
+			}
+		}
+	}
+	if len(declared) < 20 {
+		t.Fatalf("names.go declares only %d exported names: this test is reading the wrong file", len(declared))
+	}
+	// Every other Go file of the repository, tests included: a name the
+	// deployer, the guard, doctor, a reader or a test uses is used, and the
+	// point is only that names.go declares nothing no other file has heard of
+	// — which is what the pair the merge left behind was.
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := filepath.Join(root, "internal", "backend", "gcp", "names.go")
+	// Compiled once: the walk visits thousands of files, and a pattern built
+	// per file per name is the whole cost of this test.
+	refs := make([]struct {
+		name string
+		re   *regexp.Regexp
+	}, 0, len(declared))
+	for _, name := range declared {
+		refs = append(refs, struct {
+			name string
+			re   *regexp.Regexp
+		}{name, regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)})
+	}
+	used := map[string]bool{}
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", ".terraform", "dist", "build":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".go":
+		default:
+			return nil
+		}
+		if path == self {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, r := range refs {
+			if !used[r.name] && r.re.Match(data) {
+				used[r.name] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range declared {
+		if !used[name] {
+			t.Errorf("names.go declares %s and no other file in the repository names it: a second spelling of a name this file is the definition of is what a merge leaves behind, and a reader compares against the wrong one", name)
+		}
+	}
 }

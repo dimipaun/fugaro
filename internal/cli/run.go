@@ -529,6 +529,13 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				return launchResult{}, err
 			}
 		}
+		// The seal's gate (D19): a launch that mints hands its execution the
+		// seal key in the marker, which only a runner at sealSince or later
+		// parses without echoing and reads the token for. Judged here, before
+		// the claim, the mint or the object, like the gates above.
+		if err := env.sealGate(ctx, slug, spec, kind, clone, warn); err != nil {
+			return launchResult{}, err
+		}
 		if err := checkMaxParallel(ctx, env); err != nil {
 			return launchResult{}, err
 		}
@@ -1659,10 +1666,15 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
-	// The run's budget identity: minted and left in the bucket before the
-	// execution can start, by the one CLI that holds the claim. A failure
-	// here means nothing started, so the claim goes back.
-	minted, err := env.mintBudgetToken(hctx, slug, spec, job)
+	// The run's budget identity: minted, sealed under a key drawn for this
+	// launch and left in the bucket before the execution can start, by the
+	// one CLI that holds the claim. A failure here means nothing started, so
+	// the claim goes back. sealKey is the only copy of the key: it goes into
+	// this execution's marker and nowhere else (D15). job, when the launch
+	// resolved a shared project job, is the job the identity window is
+	// measured from (project_job.go).
+	sealKey, err := env.mintBudgetToken(hctx, slug, spec, job)
+	minted := sealKey != nil
 	if err != nil {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
@@ -1698,11 +1710,18 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// the marker set, a missing token stops the run whatever the job's own
 		// mode (internal/runner's BudgetTokenEnv, plan R2-8(a)). It is an
 		// execution override — minting is a fact about this launch, not about
-		// the job's deploy-time environment.
-		lspec.Env = []string{runner.BudgetTokenEnv + "=1"}
+		// the job's deploy-time environment — and its value is the launch's
+		// seal key, the one thing that opens the object (D15): handed to this
+		// execution and no other. A backend that cannot carry a secret where
+		// only the execution and the override's own audience read it refuses
+		// the launch rather than carry it (backend.LaunchSpec.SecretEnv).
+		lspec.SecretEnv = []string{sealMarker(sealKey)}
 	}
 	ref, err := env.be.Launch(lctx, lspec)
 	cancel()
+	// A backend error may quote the request it was given; the key is in that
+	// request, so it is taken out of the error before anything formats it.
+	err = sealRedact(err, sealKey)
 	if err != nil {
 		if errors.Is(err, backend.ErrRejected) {
 			// Definitive: the platform refused, so nothing started. Drop our

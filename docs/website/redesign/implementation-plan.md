@@ -123,7 +123,7 @@ owner looks at the logo beside the accent (RU3).
 **Independently mergeable because** it changes colour tokens and nothing structural, and
 a revert is the import line and the `PALETTE_IN_FORCE` line.
 
-### P3 — the two-level menu and the mobile drawer (RF3, RF4; D182)
+### P3 — the two-level menu and the mobile drawer (RF3, RF4; D182) — *the drawer was retired on 2026-10-19; see the amendment at the end of this part*
 
 **What.** `website/src/layouts/Base.astro`'s `NAV` becomes groups (D182's
 recommendation: *Product*, *Reference*, *Project*, with Home as the wordmark link that
@@ -170,6 +170,14 @@ openable and closable by keyboard, and the menu usable with JavaScript disabled.
 - **Budgets (D192).** The script grew 20,406 → 26,573 bytes on 2026-10-18 and 26,573 → 30,222 → 33,934 → 35,002 → 37,700 → 39,896 bytes on 2026-10-19, and the README's three figures are re-derived in each commit that ships it. **Where the figures live is `website/README.md`'s budget list, and `website/test/budget.mjs` is the authority for them**: its header carries the derivation (that build plus 25 %) and its `derivationFailures` case reads the README's numbers back and refuses a figure that is not three times the tight derivation of a build the artifact can be measured against — so no number repeated in a plan is ever the one enforced. At this commit they are JavaScript per page **149,610**, page weight **1,001,316**, whole site **3,106,374**.
 - **The runtime half is the owner's, and Check 70a grew a step for it.** Check 70a's step 6 is the brief's acceptance line: the pointer's arrival, the move into the list, the departure and the return, with an emulated touch device (or a phone) as the other half, and — added on 2026-10-19 — the device the query answers **yes** for and a finger still uses (a touch laptop, or a phone with a mouse attached): a tap there opens the group and a second tap closes it, and unplugging the pointer and plugging it back in re-decides without a reload; the keyboard step that used to be 6 is 7. The second 2026-10-19 round added the acceptance the first one's fix needed: **a click on a closed group whose trigger did not hold the focus opens it on that press**, on the mouse and as a tap. Four of that check's statements said what the menu did **before** this amendment, and each is corrected: the script's "only job in the menu" was the two closes (step 4), the wide groups were "closed" (step 5), a group was opened "by keyboard" (the keyboard step, which is 7 now — tabbing to the summary opens it before the key is pressed), and step 6's touch half and its pass/fail lists name the click that must open a group. Until that step runs, the rendered hover behaviour is **UNVERIFIED** in a browser, and the stub DOM is not a pointer.
 
+**Amended 2026-10-19 (owner's brief, item 1) — THE THREE GROUP LABELS ARE THE PHONE'S MENU, and the drawer and its one toggle are retired.** The brief this change was run from asks, as its first item, that the three group labels sit in the header's row on a phone with no `Menu` button, each tapping open its own panel of links, and that they fit beside the wordmark at 375 px with the wordmark's **text** hidden below about 380 px and the mark kept. So the paragraph above is read with this amendment: **"rendered as a two-level menu on a wide viewport and as a drawer behind a single toggle on a narrow one" is now "the same two-level menu at every width"** — one `<details name="site-nav-group">` per group, the shared `name` making the browser keep the three exclusive, a panel across the header's own width on a phone and the same list as a dropdown under its label from 48 rem up. `.site-nav-drawer`, `.site-nav-toggle` and `.site-nav-panel` and the sibling combinator that showed the panel are gone, and `site.js`'s `holds()` loses the drawer branch it kept for the panel. **D182's group decision is untouched** (three groups of three, Home as the wordmark, Privacy in the footer); what changed is what a phone does with them.
+
+- **The wordmark's breakpoint is 390 px, not the ruling's 380.** The row is measured rather than estimated: at 381 px the wordmark's text plus the three labels is a few pixels wider than the header's content box in the font the built site falls back to, and a row that does not fit is a row that scrolls sideways. The text is hidden the way a visually-hidden label is — absolutely positioned, one pixel, clipped — and **not** with `display: none` or `visibility: hidden`: the wordmark is the link home, and a link whose accessible name is thrown away is announced as nothing.
+- **A label and every link in a panel are at least 44 px tall, at every width**, which is the target size the brief asks the menu to be measured against. The header grew 65 px → 77 px and a wide dropdown 114 px → 150 px, which is a change the brief's acceptance asks for.
+- **The gate moves with the menu, and `nav-hover.mjs`'s phone case with it.** `base-styles.mjs`'s `navLayoutFailures` is rewritten for the four invariants of the menu that is (three labels in one row at both widths, the header one row with the list out of its flow, a phone's row fitting, an open that moves nothing) and `navFailures` for the markup's shape, with the toggle, the panel and the drawer refused **by name**; each rule keeps a case that plants the defect and reads the refusal back. `nav-hover.mjs`'s phone case asserts what replaced the toggle — the labels are drawn with nothing in front of them, a pointer that does not hover opens nothing, a tap opens the group — and `copy.mjs`'s stub DOM loses the panel and the drawer branch it carried. **Every case was mutation-proved by hand.**
+- **Check 70a moves with it too.** The drawer step becomes the three labels: at 390 and at 375 the header is one row with the wordmark's mark and no text, each label opens its own panel by tap and by keyboard, Escape closes it, and the menu still reaches every link with **JavaScript off**; at 320 px the same three labels fit. The one-row claim is measured at each width rather than at 390 alone, because the labels and the links grew to 44 px.
+- **Budgets (D192).** The removal is 278 bytes off the base stylesheet every page inlines and 181 off the script, so 459 off the page figure and 3,239 off the site's, re-derived in the commit that ships them. `website/README.md` carries the figures; this bullet does not, on purpose.
+
 ### P4 — cut the text, and gate it (RF5–RF8, RF23, RF24; D186, D188, D189)
 
 **What.**
@@ -186,8 +194,11 @@ openable and closable by keyboard, and the menu usable with JavaScript disabled.
   `/security/` renders a short "In short" section that the owner adds at the top of
   `SECURITY.md` (the page stays byte-identical to the file, so
   `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` does not change; **this needs the
-  owner's text for `SECURITY.md` first**); `/changelog/` renders the first Highlights line
-  of the newest releases above the full list, selected from the release files.
+  owner's text for `SECURITY.md` first**); `/changelog/` renders the product summary of every
+  release above its own entry, read from `website/data/release-summaries.yaml` — the owner's
+  changelog feedback of 2026-10-19 replaced D189's "first Highlights line of the newest
+  releases" reading for this page, and the release files' own Highlights are one click away in
+  a `<details>` block (`docs/website/redesign/README.md`, "The 2026-10-19 changelog brief").
 - Every other page's copy is rewritten short and scannable to D188's numbers: headings
   keep their meaning, the paragraphs under them shrink. FAQ answers stay traceable to the
   document each one names (each answer's `source`, which the page already enforces).
@@ -247,6 +258,30 @@ owner.
 
 **Independently mergeable because** it moves blocks within pages, and neither P4's nor
 P5's tests assert the other's layout. It reads best after P4.
+
+**Amended 2026-10-19 (owner's feedback on the page this part is about) — GETTING STARTED IS
+THREE BANDS, AND WHAT THE COMMAND DOES NOT DO IS ITS OWN SECTION.** The owner's reading of
+the page, after P4 and P5 shipped: "above the fold: just `brew install dimipaun/tap/fugaro`
+and Console links, then we need a section with what you need to do for the actual
+installation (Firebase etc), rest are details, later." So `getting-started.astro` is now
+`#install` (the quick path `install.yaml` carries first, with its copy control, beside the
+console option, and one closing sentence), `#setup` ("Set up your installation": seven
+one-line steps in `docs/gcp-setup.md`'s own order — its preconditions and its short path —
+each naming the document that carries the detail), and `#details` ("Details": the other
+install paths as P4 left them, and the platform list D94 settles). **Nothing P5 claims is
+undone**: `#install` still opens with a command, the two options are still in that section
+in that order, and the page's first command block is what Check 70b measures. The page
+stays inside D188's 250-word ceiling, so the words the new list costs are paid for out of
+the page's own copy rather than out of the ceiling — `install.yaml`'s archive, cosign and
+plugin notes and names are shorter for it, and the notes the Go test pins (the Homebrew
+"tested on macOS", the go install's three phrases) are untouched. `install.yaml`'s header
+now says the first path is the quick path, because that is what puts it above the fold.
+The bands are held by a gate rather than by this paragraph: `website/test/fold.mjs` gains a
+fourth rule — Getting Started's sections are exactly `#install`, `#setup`, `#details` in
+that order, `#setup` is an `ol` and every step in it names the document behind it — so the
+two things the reader came for cannot drift back down a page that grows. The site's own
+build is 1,654 bytes heavier (12 of them the Firebase step's own wording), re-derived in
+`website/README.md` in the same commits (D192).
 
 ### P6 — a copy button on every command block (RF13, RF14, RF15; D183, D192)
 
@@ -408,7 +443,7 @@ they enforce:
 | the accent versus the logo's hue | `website/test/accent.mjs` (new) | new gate; decodes the PNG with `node:zlib` | P2 |
 | `.site-nav ul{display:flex}` and the one-`aria-current` rule | `website/test/base-styles.mjs` | rewritten for the two-level menu, with the page's current marker still exactly one | P3 |
 | provenance phrases | `website/test/meta.mjs` (new) | new gate | P4 |
-| "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; the summary block is release-file text it accepts (D189); an exception only under D189's alternative (a) | P4 |
+| "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; under D189 the summary block was release-file text it accepted, and since the owner's changelog feedback of 2026-10-19 the two sources are the release files and `website/data/release-summaries.yaml`, both of them files the page renders rather than prose it writes | P4 |
 | the security page = `SECURITY.md` byte for byte | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` | **unchanged** under D189's recommendation (the summary is in `SECURITY.md`) | P4 |
 | copy controls | `website/test/copy.mjs` (new) | new gate | P6 |
 | reduced-motion path per animation | `website/test/a11y.mjs` | **unchanged**, and every new animation must satisfy it | P7, P8 |
@@ -464,7 +499,7 @@ is reconciliation §9):
 
 1. **D180** — the accent: the logo's hue, `#17A8E6`, as a fourth palette file made the one in force.
 2. **D181** — the warning colour: keep the role, move it to amber `#F5A524`.
-3. **D182** — the menu: *Product*, *Reference*, *Project*, Home as the wordmark, Privacy stays in the footer, a drawer on mobile.
+3. **D182** — the menu: *Product*, *Reference*, *Project*, Home as the wordmark, Privacy stays in the footer, a drawer on mobile — **the drawer is retired (owner's brief, 2026-10-19, item 1): the three group labels are the phone's menu**, and the groups themselves are unchanged (the amendment at the end of P3).
 4. **D183** — the JavaScript: one first-party file, no CSP or allow-list edit.
 5. **D184** — the run animation: today's command plus README's numbered steps, labelled as the documented sequence (alternative: a dated capture of a real run).
 6. **D185** — How It Works: the brief's four steps with quoted captions, cache and security boundary as annotations.

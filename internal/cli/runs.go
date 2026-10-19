@@ -48,6 +48,26 @@ type lsOptions struct {
 // bucket still holds is listed.
 var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
 
+// lsDefaultWindow is runs ls's default --since as a span, and the two
+// spellings of it are built from that one number: lsDefaultSince is what the
+// flag takes (parseSince's "Nd" form) and lsDefaultDays is what the help text
+// says ("7 days"). Variables, not constants, for prLookback's reason — they
+// are derived — but nothing writes 7 or "7d" a second time. The test guard
+// (internal/cli: runid_test.go) reads lsDefaultSince, so change the window
+// here and the guard's failure message names the new one.
+var (
+	lsDefaultWindow = 7 * 24 * time.Hour
+	lsDefaultDays   = int(lsDefaultWindow / (24 * time.Hour))
+	lsDefaultSince  = fmt.Sprintf("%dd", lsDefaultDays)
+)
+
+// lsNow is runs ls's clock: --since's window (lsDefaultSince by default) is
+// measured back from it, so which runs a listing shows depends on the day it
+// runs.
+// Tests replace it to pin that window instead of minting run IDs dated
+// against the day the test happens to run (internal/cli: runid_test.go).
+var lsNow = time.Now
+
 // lsFilter selects the runs loadRows reads.
 type lsFilter struct {
 	slugs  []string
@@ -68,16 +88,17 @@ type lsDoc struct {
 	Warnings []string `json:"warnings"`
 }
 
-// newRunsCmd is "fugaro runs". ls is its only subcommand today; the 0.7.0
-// top-level `fugaro ls` tombstone was deleted by #350 in 0.7.5 (design
-// generic-tool §5, G17; the owner's 2026-10-14 ruling moved the deletion from
-// 0.8.0 to the next release — the one that became 0.7.5, #370; plan Task 29).
+// newRunsCmd is "fugaro runs": ls lists the runs, and stats aggregates them
+// by the person who started each one. The 0.7.0 top-level `fugaro ls`
+// tombstone was deleted by #350 in 0.7.5 (design generic-tool §5, G17; the
+// owner's 2026-10-14 ruling moved the deletion from 0.8.0 to the next
+// release — the one that became 0.7.5, #370; plan Task 29).
 func newRunsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd())
 	return cmd
 }
 
@@ -87,7 +108,7 @@ func newLsCmd() *cobra.Command {
 		Use:   "ls",
 		Short: "List runs with their status, stage, cost and PR",
 		Long: "List runs, newest first, joining the runs bucket with what the backend knows.\n\n" +
-			"By default ls shows the last 7 days of the local config's repositories (every\n" +
+			"By default ls shows the last " + strconv.Itoa(lsDefaultDays) + " days of the local config's repositories (every\n" +
 			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
 			"only when its result.json says so; an execution that ended without finalizing\n" +
 			"is an infra_error.\n\n" +
@@ -101,7 +122,7 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
-	f.StringVar(&o.since, "since", "7d", "only runs started within this long (7d, 36h, 90m; 0 for all)")
+	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
@@ -161,7 +182,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	// --watch would otherwise read them again on every redraw.
 	warnings := imageWarnings(ctx, env, f.slugs, time.Now().UTC())
 	for {
-		now := time.Now()
+		now := lsNow()
 		if since > 0 {
 			f.since = now.Add(-since)
 		}
@@ -550,7 +571,7 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	// never reached finalize, has none and does not widen every other run's
 	// columns for it.
 	showFiles := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ChangedFiles != nil })
-	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
+	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
 	if showRecipe {
 		header += "\tRECIPE"
 	}
@@ -575,7 +596,7 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r), launcherCell(r))
 		if showRecipe {
 			name := r.Recipe
 			if name == "" {
@@ -621,6 +642,24 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	_, err := fmt.Fprintln(w, line)
 	return err
+}
+
+// launcherCell is a row's BY cell: who started the run, in the short form a
+// column has room for (the part before the @ of an address, the whole value
+// for anything else — a service account name, a CI identity), or "-" for a
+// run whose launch.json recorded no launcher. Several people start runs on
+// one project at once, so the column is always there, and the dash is a fact
+// ("nobody recorded"), never a placeholder for one.
+//
+// The launcher is untrusted text a launcher wrote, so it is clipped and
+// escaped like every other name column, whether or not it arrived through
+// runview.Join's own sanitising.
+func launcherCell(r runview.Row) string {
+	by := runview.LauncherShort(r.LaunchedBy)
+	if by == "" {
+		return "-"
+	}
+	return cellOneLine(clipRunes(by, maxNameCellRunes))
 }
 
 // statusCell is a row's status; a halted run says which limit halted it.

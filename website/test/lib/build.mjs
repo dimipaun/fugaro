@@ -22,13 +22,16 @@ import { REPO, SITE } from './html.mjs'
 const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
 
-// The one part of `plugin/` a site build does read, and the reason `plugin` is no longer a
-// skip of its own: the hero's chat quotes the skills the reader's agent reads
-// (`website/src/components/AgentChat.astro`, changes spec of 2026-10-18 item 3), so a copy
-// of the repository has to carry `plugin/skills`. The plugin's Go sources and its fixtures
-// are what a build does not read, and every copy of the repository — this one and the five
-// test files that stage their own — leaves those out through this constant.
-export const READ_UNDER_PLUGIN = new Set(['skills'])
+// The parts of `plugin/` a site build does read, and the reason `plugin` is no longer a skip
+// of its own: the hero's chat quotes the skills the reader's agent reads
+// (`website/src/components/AgentChat.astro`, changes spec of 2026-10-18 item 3), so a copy of
+// the repository has to carry `plugin/skills`; and the changelog decides which releases are
+// published from the plugin's own version (`src/lib/changelog.mjs`, the owner's brief of
+// 2026-10-19), so it carries `plugin/.claude-plugin` too — a copy without it would fail the
+// build rather than build a site. The plugin's Go sources and its fixtures are what a build
+// does not read, and every copy of the repository — this one and the five test files that
+// stage their own — leaves those out through this constant.
+export const READ_UNDER_PLUGIN = new Set(['.claude-plugin', 'skills'])
 // The caches a build writes inside node_modules, which each copy must own.
 const CACHES = new Set(['.vite', '.astro'])
 

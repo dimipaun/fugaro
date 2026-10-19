@@ -201,20 +201,47 @@ func (s *secretsStage) canPrompt() bool {
 		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
 
-// allowedClaudeOAuthMounts is mounts with every claude-oauth-token-<name>
-// entry this repository is not a configured, allowed account for dropped —
-// never prompted for, never stored. config.Validate (internal/config/validate.go)
-// already refuses a workflow from ever declaring a secret in this reserved
-// namespace, so in practice mounts (infra.SecretMounts's output, which
-// includes a workflow's own declared secrets unfiltered) never carries one
-// once a checkout's fugaro.yaml parses at all; this is the second,
-// independent layer that drops it regardless, whatever path it arrived by
-// (a bypassed or future-weakened Validate, a cached config, or any other
-// caller), matching secretsSet's own refusal of the same shape.
-func allowedClaudeOAuthMounts(accounts map[string]config.ClaudeAccount, repo string, mounts []infra.SecretMount) []infra.SecretMount {
+// allowedHarnessOAuthMounts is mounts with every harness OAuth credential
+// this stage may not store dropped — never prompted for, never stored. Two
+// families, for two different reasons:
+//
+//   - a claude-oauth-token-<name> entry this repository is not a configured,
+//     allowed account for (the rule this filter has always enforced);
+//   - any Codex name at all — codex-oauth-token and the whole
+//     codex-oauth-token-<name> namespace — because the harness's OAuth
+//     credential is reserved ahead of the harness itself (config.CodexOAuthToken,
+//     owner ruling of 2026-10-18): Fugaro does not drive Codex, so no account
+//     and no provider of it exists to allow one, and a value stored here would
+//     be the token the harness reads the day it lands;
+//   - a name that is the conventional key name of a configured provider and
+//     not that provider's own secret (config.ReservedProviderSecret): the
+//     name belongs to that provider's key (the convention of 2026-10-18), so a
+//     workflow's value stored under it would become the provider's credential.
+//
+// config.Validate (internal/config/validate.go) already refuses a workflow
+// from ever declaring a secret of the first two shapes, and
+// infra.SecretMounts refuses one that is a provider's key, so in practice
+// mounts (SecretMounts's output, which includes a workflow's own declared
+// secrets) never carry any of them once a checkout's fugaro.yaml parses at
+// all; this is the second, independent layer that drops them regardless,
+// whatever path they arrived by (a bypassed or future-weakened Validate, a
+// cached config, an older local config, or any other caller), matching
+// secretsSet's own refusals of the same shapes.
+func allowedHarnessOAuthMounts(lc *localcfg.Config, repo string, mounts []infra.SecretMount) []infra.SecretMount {
 	out := make([]infra.SecretMount, 0, len(mounts))
 	for _, m := range mounts {
-		if strings.HasPrefix(m.Logical, config.ClaudeOAuthTokenPrefix) && !claudeOAuthAccountAllowed(accounts, m.Logical, repo) {
+		if strings.HasPrefix(m.Logical, config.ClaudeOAuthTokenPrefix) && !claudeOAuthAccountAllowed(lc.ClaudeAccounts, m.Logical, repo) {
+			continue
+		}
+		if config.CodexOAuthSecret(m.Logical) {
+			continue
+		}
+		if p, reserved := config.ReservedProviderSecret(lc.Providers, m.Logical); reserved && lc.Providers[p].Secret != m.Logical {
+			// A provider's *own* key mount (SecretMounts built it from
+			// p.Secret, with the runner's variable) is kept: it is exactly the
+			// value this stage exists to take. What is dropped is the name
+			// reserved for that provider's key while the provider's key is
+			// stored under another one.
 			continue
 		}
 		out = append(out, m)
@@ -307,7 +334,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 				s.skip = "fugaro.yaml's secrets cannot be worked out: " + oneLine(err.Error())
 				return
 			}
-			for _, m := range allowedClaudeOAuthMounts(lc.ClaudeAccounts, repo, mounts) {
+			for _, m := range allowedHarnessOAuthMounts(lc, repo, mounts) {
 				if m.Logical == config.AnthropicSecret && !needsKey {
 					// No call of this run goes to Anthropic, so there is
 					// nothing to ask for: the run never calls it (design
@@ -618,6 +645,21 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		// stores a value for one even if that filter were ever wrong or
 		// skipped (defense in depth, review finding).
 		return claudeOAuthAccountRefusal(name, s.tg.repo)
+	}
+	if config.CodexOAuthSecret(name) {
+		// The same independent backstop for the Codex harness's reserved
+		// names (config.CodexOAuthToken, owner ruling of 2026-10-18):
+		// allowedHarnessOAuthMounts keeps them out of tg.wanted, and this
+		// refuses one even if that filter were ever wrong or skipped, before
+		// any value is read.
+		return codexOAuthRefusal(name)
+	}
+	if p, reserved := config.ReservedProviderSecret(s.e.lc.Providers, name); reserved && s.e.lc.Providers[p].Secret != name {
+		// And the same for the name reserved for a configured provider's key
+		// while the provider's key is stored under another one
+		// (config.ReservedProviderSecret): the value would become that
+		// provider's credential the day the key is renamed to the convention.
+		return providerConventionRefusal(p, name)
 	}
 	defer noCoreDumps()()
 	var (

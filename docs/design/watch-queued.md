@@ -57,7 +57,7 @@ listing (see §5).
 (ADC) and documents that it "needs only the Viewer role on the Firebase
 project" (`gcp-setup.md`). The runs bucket is a different credential domain:
 `init` grants read access to launchers and operators, and write access to
-operators (launchers write only `runs/` since 0.7.0, once an operator applies it — [bucket-iam.md](bucket-iam.md)),
+operators (launchers write only `runs/` and, since 0.9.0, `tokens/`, where a launch writes its sealed budget token — [bucket-iam.md](bucket-iam.md) — once an operator applies it),
 and *removes* the project's convenience Viewer binding from it
 on purpose, because the bucket holds run transcripts and caches
 (`gcp-setup.md` §6.1, "The state and runs buckets have no project-wide

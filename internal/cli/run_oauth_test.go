@@ -443,7 +443,7 @@ func TestFollowUpRefusesDisallowedInheritedAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	root := runIDAt(1, "090000", "a1a6")
+	root := wallRunIDAt(1, "090000", "a1a6")
 	spec := &task.Spec{Version: 1, RunID: root, Repo: "acme/other", Ref: "develop", Workflow: "svc", Task: "x",
 		RequestedBy: "someone@example.com", OAuthToken: "acme-overflow"}
 	if err := runstore.Open(b, otherSlug, root).CreateTask(ctx, spec); err != nil {
@@ -456,7 +456,7 @@ func TestFollowUpRefusesDisallowedInheritedAccount(t *testing.T) {
 	if err := runstore.Open(b, otherSlug, root).WriteRecord(ctx, rec); err != nil {
 		t.Fatal(err)
 	}
-	fu := runIDAt(0, "120000", "a1a7")
+	fu := wallRunIDAt(0, "120000", "a1a7")
 	_, _, err = execute(t, "run", "--repo", "acme/other", "--pr", "9", "--run-id", fu, "more work")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-overflow") || !strings.Contains(err.Error(), "claude_accounts") {
 		t.Fatalf("err = %v", err)
