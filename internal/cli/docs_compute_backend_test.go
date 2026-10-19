@@ -165,8 +165,12 @@ var computeBackendSymbols = map[string][]string{
 		// the plan's "no literal 412 anywhere" claim rests on this constant.
 		"TestLaunchRefusesASecretEnv", "testSocketGID",
 	},
-	"internal/cli/cloud.go": {"openCloudFor", "checkExecution"},
-	"internal/cli/run.go":   {"Backend: backend.CloudRun"},
+	// Task 8 is what these two entries changed: the opener map the seam is
+	// opened from is one function now (cloudOpeners, with batchOptions beside
+	// it), and the launch record's backend is read from the codec of the
+	// backend the launch ran on rather than written as Cloud Run's constant.
+	"internal/cli/cloud.go": {"openCloudFor", "checkExecution", "cloudOpeners", "batchOptions", "launchBackend"},
+	"internal/cli/run.go":   {"Backend: launchBackend(env.be)"},
 	"internal/cli/recipes_skew.go": {
 		"batchProvisionShipped", "batchProvisionDisabled", "refuseBatchProvisionNotShipped",
 	},
@@ -211,16 +215,17 @@ const computeBackendTodoMarker = "TODO(compute-backend Task 8)"
 
 // computeBackendCommentMarkers is the other half of the table, as counts: names
 // the plan cites that live in comments rather than in code, so they are checked
-// against the file as written. **The count is the assertion.** One Contains per
-// file passes with one of run.go's two markers deleted — the file still carries
-// the marker, so it reads as present while a call site has lost the note that
-// says Task 8 owns it — and the plan's own sentence is a distribution, not a
-// total: one in `internal/cli/cloud.go`, two in `internal/cli/run.go`. The three
-// are the whole of it, and TestDocsComputeBackendTodoMarkersAreCounted walks the
-// repository to hold both halves of that sentence.
+// against the file as written. **The count is the assertion**, and Task 8 is
+// what took the counts to zero: step 6 removes each marker with the call site it
+// marks, so what the counts assert now is the markers' absence — a zero here
+// plus the walk in TestDocsComputeBackendTodoMarkersAreCounted, which fails on a
+// marker in any file. The two paths stay listed, because they are the two sites
+// the plan's sentence names (one in `internal/cli/cloud.go`, two in
+// `internal/cli/run.go`) and a table that dropped them would be a test that
+// stopped looking where the markers were.
 var computeBackendCommentMarkers = map[string]int{
-	"internal/cli/cloud.go": 1,
-	"internal/cli/run.go":   2,
+	"internal/cli/cloud.go": 0,
+	"internal/cli/run.go":   0,
 }
 
 // stripLineComments removes a file's line comments (`//` in Go, `#` in HCL),
@@ -278,18 +283,23 @@ func TestDocsComputeBackendSymbolsExist(t *testing.T) {
 }
 
 // TestDocsComputeBackendTodoMarkersAreCounted: the plan says the three
-// `TODO(compute-backend Task 8)` markers are the whole of what the seam has not
+// `TODO(compute-backend Task 8)` markers were the whole of what the seam had not
 // reached — one in internal/cli/cloud.go, two in internal/cli/run.go — and that
-// Task 8 removes each one with the call site it marks. A per-file Contains
-// cannot hold that: deleting one of run.go's two markers leaves the other one
-// answering for both, so the file still reads as "the marker is there" while a
-// call site has lost the note that says Task 8 owns it.
+// Task 8 removes each one with the call site it marks. Both halves are still
+// asserted, and the second one is inverted by Task 8's own step 6 ("the counts
+// go to zero and the assertion becomes the markers' absence"): a per-file
+// Contains could never hold the removal, because deleting one of run.go's two
+// markers left the other answering for both — the file still read as "the marker
+// is there" while a call site had lost the note that said Task 8 owned it.
 //
 // So the markers are counted, per file and in total, and the count is held
-// against a walk of the repository in both directions: a marker the table does
-// not name is a call site the plan has not accounted for, and a count that has
-// dropped is a marker removed without its call site moving. This file is the one
-// path the walk skips, because it quotes the marker in its own text.
+// against a walk of the repository in both directions: with the counts at zero,
+// a marker anywhere is a call site the plan has not accounted for — the marker
+// went with the call site, so one that is still there is a call site the seam
+// has not reached — and the two paths the plan's sentence names must stay in the
+// table, so the absence is asserted where the markers were rather than nowhere.
+// This file is the one path the walk skips, because it quotes the marker in its
+// own text.
 func TestDocsComputeBackendTodoMarkersAreCounted(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	// The distribution is the plan's sentence, not this test's invention, so the
@@ -332,24 +342,27 @@ func TestDocsComputeBackendTodoMarkersAreCounted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The two paths the plan's sentence names are the table's whole key set:
+	// dropping one would be a test that stopped looking exactly where the
+	// markers were.
+	for _, path := range []string{"internal/cli/cloud.go", "internal/cli/run.go"} {
+		if _, ok := computeBackendCommentMarkers[path]; !ok {
+			t.Errorf("computeBackendCommentMarkers no longer lists %s, one of the two files %s names as a marker's home: the zero has to be asserted where the marker was", path, computeBackendPlan)
+		}
+	}
 	total := 0
 	for path, want := range computeBackendCommentMarkers {
 		total += want
-		got, ok := seen[path]
-		if !ok {
-			t.Errorf("%s carries no %q marker, and %s's Task 8 names the call site in it as one of the three: either the marker went before the call site did, or the call site moved and this table has to move with it", path, computeBackendTodoMarker, computeBackendPlan)
-			continue
-		}
-		if got != want {
-			t.Errorf("%s carries %d %q markers, want %d: %s counts the three markers rather than checking one substring per file, so a file that still carries one is not a file whose other marker may go unnoticed", path, got, computeBackendTodoMarker, want, computeBackendPlan)
+		if got := seen[path]; got != want {
+			t.Errorf("%s carries %d %q markers, want %d: Task 8 removes each marker with the call site it marks, so a marker still here is a call site the seam has not reached (or one whose removal left the note behind)", path, got, computeBackendTodoMarker, want)
 		}
 	}
-	if total != 3 {
-		t.Errorf("computeBackendCommentMarkers accounts for %d markers, and %s says the three `TODO(compute-backend Task 8)` sites are the whole of it", total, computeBackendPlan)
+	if total != 0 {
+		t.Errorf("computeBackendCommentMarkers accounts for %d markers: Task 8's step 6 removes the three, so every count is zero", total)
 	}
 	for path, n := range seen {
 		if _, ok := computeBackendCommentMarkers[path]; !ok {
-			t.Errorf("%s carries %d %q markers and is not in computeBackendCommentMarkers: the three the plan names are the whole of it, so a fourth site is either a call site the plan has not accounted for or a marker a task left behind", path, n, computeBackendTodoMarker)
+			t.Errorf("%s carries %d %q markers and is not in computeBackendCommentMarkers: the three the plan names were the whole of it, so a fourth site is either a call site the plan has not accounted for or a marker a task left behind", path, n, computeBackendTodoMarker)
 		}
 	}
 }

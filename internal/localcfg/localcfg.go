@@ -456,20 +456,30 @@ type Batch struct {
 	// cannot open.
 	SocketGID int `yaml:"socket_gid,omitempty"`
 	// TaskTimeout is the task timeout a run's job gets when the launch names
-	// none, as any duration in this file ("90m", "1h30m"). Empty means
-	// backend.DefaultTaskTimeout, Cloud Run's own default, so a Batch
-	// installation's jobs are not bounded differently from the rest.
+	// none (a launch that carries its own total, from --total-timeout, always
+	// wins: it is the run's own bound).
+	//
+	// Left out, the default is backend.MaxRunTime, the longest any run of
+	// this installation may legitimately be active: the failure directions of
+	// this field are not symmetric, and a bound shorter than a workflow's
+	// would truncate a run that was doing nothing wrong, while a longer one
+	// costs a stuck job machine time the reaper already bounds. So the
+	// default is the ceiling every run is already held to, and an operator
+	// who wants the jobs bounded more tightly writes it here. The workflow's
+	// own timeouts.total is where this value comes from once the enable task
+	// reads it per workflow (internal/cli's batchTimeouts).
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
 }
 
 // BatchTaskTimeout is the task timeout a Batch job gets when the launch names
-// none: the config's batch.task_timeout, or backend.DefaultTaskTimeout when
-// this file sets none.
+// none: the config's batch.task_timeout, or backend.MaxRunTime when this file
+// sets none (see Batch.TaskTimeout's comment for why the default is the
+// ceiling rather than a small number).
 func (c *Config) BatchTaskTimeout() time.Duration {
 	if c.Batch != nil && c.Batch.TaskTimeout.Set && c.Batch.TaskTimeout.Duration > 0 {
 		return c.Batch.TaskTimeout.Duration
 	}
-	return backend.DefaultTaskTimeout
+	return backend.MaxRunTime
 }
 
 // validateBatch checks the batch block's field spellings (see Batch). It is
@@ -508,9 +518,9 @@ func validateBatch(bad func(string, ...any), c *Config) {
 	if b.TaskTimeout.Set && b.TaskTimeout.Duration <= 0 {
 		// Unlike a cap, a written 0 is not a spelling of the default: it is
 		// either a mistake or a claim that a job may run for no time at all,
-		// and the key can simply be left out. backend.DefaultTaskTimeout is
-		// what an omitted key means.
-		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.DefaultTaskTimeout)
+		// and the key can simply be left out. backend.MaxRunTime is what an
+		// omitted key means.
+		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.MaxRunTime)
 	}
 	for _, k := range slices.Sorted(maps.Keys(b.Secrets)) {
 		// The value is never printed: it is refused precisely because a
@@ -540,6 +550,14 @@ type Endpoints struct {
 	Logging       string `yaml:"logging,omitempty"`
 	SecretManager string `yaml:"secret_manager,omitempty"`
 	CloudBuild    string `yaml:"cloud_build,omitempty"`
+	// Batch is the Cloud Batch API root, read by the Batch backend the
+	// compute-backend plan's Task 8 wires (internal/cli/cloud.go's
+	// cloudOpeners). Like the others it is for fakes and emulators: an
+	// installation sets none of them, and an empty value is the real
+	// endpoint. Only the backend's own API is here -- the reaper's Compute
+	// Engine root is not a CLI client's endpoint, it is the reaper job's
+	// (internal/backend/batch/reap.go's Endpoints).
+	Batch string `yaml:"batch,omitempty"`
 	// The APIs only fugaro init calls: bucket and IAM policy reads and
 	// writes, service accounts, registries, the project's number, and the
 	// enable of Cloud Resource Manager.

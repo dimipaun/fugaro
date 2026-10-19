@@ -502,14 +502,14 @@ func TestBatchSectionReadsEveryField(t *testing.T) {
 	if plain.Batch != nil {
 		t.Error("a config with no batch block has one")
 	}
-	if d := plain.BatchTaskTimeout(); d != backend.DefaultTaskTimeout {
-		t.Errorf("BatchTaskTimeout() with no block = %v, want backend.DefaultTaskTimeout (%v)", d, backend.DefaultTaskTimeout)
+	if d := plain.BatchTaskTimeout(); d != backend.MaxRunTime {
+		t.Errorf("BatchTaskTimeout() with no block = %v, want backend.MaxRunTime (%v)", d, backend.MaxRunTime)
 	}
 	// Leaving the key out is how a config takes the default; writing 0 is not
 	// (TestBatchSectionValidation below).
 	if c, err := Parse([]byte(sample + strings.Replace(batchSample, "  task_timeout: 1h30m\n", "", 1))); err != nil {
 		t.Fatal(err)
-	} else if d := c.BatchTaskTimeout(); d != backend.DefaultTaskTimeout {
+	} else if d := c.BatchTaskTimeout(); d != backend.MaxRunTime {
 		t.Errorf("BatchTaskTimeout() with no task_timeout = %v, want the default", d)
 	}
 }
