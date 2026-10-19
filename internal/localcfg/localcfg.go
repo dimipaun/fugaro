@@ -1074,6 +1074,14 @@ func (c *Config) validate() error {
 		{"iam_credentials", c.Endpoints.IAMCredentials}, {"identity_toolkit", c.Endpoints.IdentityToolkit},
 		{"firestore", c.Endpoints.Firestore}, {"firebase_rules", c.Endpoints.FirebaseRules},
 		{"cloud_asset", c.Endpoints.CloudAsset},
+		// The Batch API root is the opener's, not init's (internal/cli's
+		// cloudOpeners hands it to internal/backend/batch), but it is the
+		// same kind of value: internal/backend/batch's clientOptions passes
+		// it to option.WithEndpoint with the operator's ADC attached, so a
+		// plain-http root elsewhere would send that token to a stranger.
+		// Every sibling is refused here for that reason, and this one is no
+		// different.
+		{"batch", c.Endpoints.Batch},
 	} {
 		if ep.url == "" {
 			continue

@@ -236,12 +236,16 @@ func TestParseEndpoints(t *testing.T) {
 			t.Errorf("%s: err = %v", bad, err)
 		}
 	}
-	// The endpoints only fugaro init uses are checked the same way.
-	for _, field := range []string{"storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler", "service_usage"} {
+	// The endpoints only fugaro init uses, and endpoints.batch -- the Batch
+	// API root the opener hands to internal/backend/batch, whose
+	// clientOptions attaches that same token to it (internal/cli/cloud.go's
+	// cloudOpeners) -- are checked the same way. One field is set per
+	// iteration, so the sum is that field's own value.
+	for _, field := range []string{"batch", "storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler", "service_usage"} {
 		c, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://127.0.0.1:9/\" }\n"))
 		if err != nil {
 			t.Errorf("%s: %v", field, err)
-		} else if e := c.Endpoints; e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler+e.ServiceUsage != "http://127.0.0.1:9/" {
+		} else if e := c.Endpoints; e.Batch+e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler+e.ServiceUsage != "http://127.0.0.1:9/" {
 			t.Errorf("%s: endpoints = %+v", field, e)
 		}
 		if _, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://example.com/\" }\n")); err == nil || !strings.Contains(err.Error(), "endpoints."+field) {
