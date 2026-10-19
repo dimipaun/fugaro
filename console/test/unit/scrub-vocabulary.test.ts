@@ -21,7 +21,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { isVerifySummary, randomTimeShiftMs, scrubDocument } from '../../tools/scrub-fixture/scrub'
+import { isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument } from '../../tools/scrub-fixture/scrub'
 
 /** raw is the smallest document the scrub accepts: one run, one repo, a total
  * that recomputes. Its values are invented here and identify nothing. */
@@ -120,7 +120,11 @@ describe('the scrub: the verify line verify.go writes', () => {
    * LINES is one line per variant `Record.Summary` (internal/verify/verify.go)
    * can produce, with the writer's own spellings: the kinds, the rerun flag, the
    * two status words, the counts a test run carries, the failed and flaky name
-   * lists, the timeout, the warning and the not-clean-tree note.
+   * lists, the timeout, the warning and the not-clean-tree note. The exit codes
+   * are the ones the writer can actually carry: `internal/procgroup/procgroup.go`
+   * leaves `code` at -1 when the process never started or was killed by a signal
+   * -- which is what its own timeout does -- and `verify.go` records that code as
+   * `ExitCode` verbatim, so `exit -1` is an ordinary timed-out verify.
    */
   const LINES: ReadonlyArray<readonly [string, string]> = [
     ['the dash internal/watch/build.go writes for an empty verify', '-'],
@@ -131,7 +135,9 @@ describe('the scrub: the verify line verify.go writes', () => {
     ['the upper-case failure word', 'fugaro verify test #5: FAILED (exit 1, 41 tests, 2 failures)'],
     ['failed names', 'fugaro verify test #6: FAILED (exit 1, 41 tests, 2 failures: TestA, TestB)'],
     ['flaky names', 'fugaro verify test #7: passed (exit 0, 41 tests, 0 failures; flaky: TestC, TestD)'],
-    ['a timeout', 'fugaro verify build #8: FAILED (exit 124; timed out)'],
+    ['a timeout', 'fugaro verify build #8: FAILED (exit -1; timed out)'],
+    ['a test killed by its own timeout', 'fugaro verify test #8: FAILED (exit -1, 41 tests, 3 failures: TestA, TestB, TestC; timed out)'],
+    ['a command killed by a signal without a timeout', 'fugaro verify lint #13: FAILED (exit -1)'],
     ['a warning', 'fugaro verify test #9: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml)'],
     ['a dirty tree', 'fugaro verify lint #10: passed (exit 0; working tree not clean, so this run cannot mark the PR ready: commit first)'],
     ['every tail at once', 'fugaro verify test --rerun-failed #11: FAILED (exit 1, 41 tests, 2 failures: TestA; flaky: TestB; timed out; warning: no JUnit reports found under **/junit*.xml; working tree not clean, so this run cannot mark the PR ready: commit first)'],
@@ -190,6 +196,45 @@ describe('the scrub: the verify line verify.go writes', () => {
       at(doc, 'runs', 0)['verify'] = line
       expect(() => scrubDocument(doc, 0), line).toThrow(/a value outside the CLI vocabulary/)
     }
+  })
+
+  /**
+   * The scrub takes any text in the writer's two open slots, because a real
+   * recording's test names are the writer's own output and a vocabulary that
+   * refused one would refuse an ordinary run. The fixture's scan cannot afford
+   * that: it is the positive allow-list over a committed file, and an open slot
+   * lets an identifying string ride in one. So the scan uses the pinned matcher,
+   * and these are its two directions.
+   */
+  it('accepts every line the writer produces when the slots are pinned too', () => {
+    for (const [what, line] of LINES) expect(isKnownVerifySummary(line), what).toBe(true)
+    const full = 'fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: TestA, pkg/sub.TestB; warning: no JUnit reports found under **/junit*.xml)'
+    const head = 'fugaro verify test #5: passed (exit 0'.length
+    for (let n = head; n <= full.length; n++) {
+      expect(isKnownVerifySummary([...full].slice(0, n).join('')), `cut at ${n}`).toBe(true)
+    }
+  })
+
+  it('refuses, when pinned, the text the CLI does not write into a slot', () => {
+    for (const line of [
+      'fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll suite)',
+      'fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: Acme Payroll, whatever)',
+    ]) {
+      // The scrub's own rule takes it: it is the writer's grammar, and the
+      // writer fills these slots from the repository it ran in.
+      expect(isVerifySummary(line), line).toBe(true)
+      expect(isKnownVerifySummary(line), line).toBe(false)
+    }
+    // The warning sentence is the CLI's own text, not a slot: `Record.Summary`
+    // writes one sentence there (`no JUnit reports found under ` + the repo's
+    // globs), so both matchers refuse a warning the CLI cannot write, and the
+    // Go drift test is what fails first if verify.go ever gains a second one.
+    const prose = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: the Acme Payroll build was slow)'
+    expect(isVerifySummary(prose)).toBe(false)
+    expect(isKnownVerifySummary(prose)).toBe(false)
+    const globs = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml)'
+    expect(isVerifySummary(globs)).toBe(true)
+    expect(isKnownVerifySummary(globs)).toBe(true)
   })
 })
 

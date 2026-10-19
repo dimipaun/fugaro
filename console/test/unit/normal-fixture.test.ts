@@ -25,7 +25,7 @@ import { describe, expect, it } from 'vitest'
 import { loadFixture } from '../../src/source/fixture'
 import type { JSONDoc } from '../../src/source/source'
 import { normalFixture } from '../../tools/scrub-fixture/index'
-import { QUEUED_NOTE_SHAPE, VOCAB, isVerifySummary, scrubDocument } from '../../tools/scrub-fixture/scrub'
+import { QUEUED_NOTE_SHAPE, VOCAB, isKnownVerifySummary, scrubDocument } from '../../tools/scrub-fixture/scrub'
 
 const FIXTURE = 'test/fixtures/normal.ndjson'
 
@@ -135,7 +135,11 @@ function normalise(text: string): string {
 
 /** SHAPES is the positive allow-list: a string value must pass one of these.
  * The verify line is a matcher rather than a regular expression because it is a
- * PREFIX of what verify.go writes (the registry clips it); see scrub.ts. */
+ * PREFIX of what verify.go writes (the registry clips it); see scrub.ts. It is
+ * the PINNED matcher, `isKnownVerifySummary`, not the scrub's own
+ * `isVerifySummary`: the open one takes any text in the failed-name, flaky-name
+ * and warning-globs slots, so a string this file never vouched for could ride in
+ * one of them and still pass this list. */
 const SHAPES: ReadonlyArray<(value: string) => boolean> = [
   /^(<project>|\[redacted-url\])$/,
   /^r-[0-9a-f]{8}\/r-[0-9a-f]{8}$/,
@@ -148,7 +152,7 @@ const SHAPES: ReadonlyArray<(value: string) => boolean> = [
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
   new RegExp(`^(${VOCAB.connectionState.join('|')}|${VOCAB.stage.join('|')}|${VOCAB.auth.join('|')}|${VOCAB.health.join('|')}|${VOCAB.deadline.join('|')}|${VOCAB.status.join('|')}|${VOCAB.outcome.join('|')})$`),
   /^\d{1,2}$/,
-  isVerifySummary,
+  (value: string) => isKnownVerifySummary(value),
   (value: string) => QUEUED_NOTE_SHAPE.test(value),
   /^(redacted@example\.invalid|example reason|example halt reason|example-recipe|example-workflow)$/,
   /^https:\/\/example\.invalid\/example-owner\/example-repo\/pull\/\d+$/,
@@ -242,6 +246,20 @@ describe('the normal fixture: nothing real is in it', () => {
     expect(scan('{"at":"2026-01-01T00:00:00Z","document":{"surprise":"-"}}\n')).toContain('an unknown key')
     expect(scan(line('some real looking title'))).toContain('a string outside the allow-list')
     expect(scan(line('# Task: example task 1'))).toEqual([])
+  })
+
+  it('refuses a verify line whose slots carry text the CLI does not write there', () => {
+    // The verify line is the one value whose middle the CLI fills from the
+    // repository: the test names its reports carry and the globs it reads. A
+    // line shaped like the writer's is not enough -- what sits in those slots
+    // has to be a name list or a glob list, or the positive allow-list would
+    // wave through an identifying string wearing a verify line's clothes.
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll suite)'))).toContain('a string outside the allow-list')
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: Acme Payroll, whatever))'))).toContain('a string outside the allow-list')
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: the Acme Payroll build was slow)'))).toContain('a string outside the allow-list')
+    // ...and the slots the CLI really fills still pass, cut or whole.
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: TestA, pkg/sub.TestB)'))).toEqual([])
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml, **/buil'))).toEqual([])
   })
 
   it('finds a removed value with a changed prefix, and a removed number', () => {

@@ -42,6 +42,14 @@
 // now, day, kill.at and the run IDs all come from the shifted clock, and every
 // age_seconds stays as it was, so they stay consistent.
 //
+// `verify` is the one kept value whose middle the CLI fills from the repository
+// it ran in, so it has two rules: `isVerifySummary`, which the scrub applies and
+// which takes any text in those slots, and `isKnownVerifySummary`, which the
+// fixture's own scan applies and which pins them to a name list and a glob list.
+// The scrub's rule has to be the open one: a real recording's test names are the
+// writer's own output, and a vocabulary that refused one would refuse an
+// ordinary run, which is the failure the lists below exist to avoid.
+//
 // Nothing about a removed value is ever persisted, not even a hash: a bare hash of
 // a low-entropy value (a small integer, an amount, a repo-style name) is recovered
 // by dictionary. `removedValues` hands the removed values to the caller in memory
@@ -118,6 +126,11 @@ export const VERIFY_STATUSES = ['passed', 'FAILED'] as const
 export const VERIFY_RERUN_FLAG = '--rerun-failed'
 /** VERIFY_CLEAN_TREE is verify.go's note for a run that found the tree dirty. */
 export const VERIFY_CLEAN_TREE = 'working tree not clean, so this run cannot mark the PR ready: commit first'
+/** VERIFY_WARNING_PREFIX is verify.go's own opening for the one warning it
+ * writes -- `rec.Warning = "no JUnit reports found under " + strings.Join(
+ * s.Reports, ", ")` -- so the sentence is the CLI's, and only the globs after it
+ * come from the repository. */
+export const VERIFY_WARNING_PREFIX = 'no JUnit reports found under '
 /**
  * VERIFY_CLIP_RUNES is internal/runner's `verifySummaryRunes`: the registry
  * clips the summary to this many runes before the document carries it, so a
@@ -126,23 +139,51 @@ export const VERIFY_CLEAN_TREE = 'working tree not clean, so this run cannot mar
 export const VERIFY_CLIP_RUNES = 120
 
 /**
+ * VerifySlot names the two places `Record.Summary` writes text this file cannot
+ * know: the failed and flaky name lists, and the report globs after the warning
+ * sentence.
+ */
+type VerifySlot = 'names' | 'globs'
+
+/**
  * VERIFY_TAIL is the writer's tail, part by part, after the `(exit <code>`
  * VERIFY_HEAD matches: `Record.Summary` in internal/verify/verify.go, in the
  * order it appends them. `parts` are the literal texts, `digits` a `%d`, and
- * `free` a slot the writer fills with text this file cannot know (test names, a
- * warning sentence) -- and it is filled from repository text, so the shape
- * accepts it and the fixture's own scan is what a committed value must pass.
+ * `free` a slot the writer fills from the repository -- the test names its
+ * reports carry, and the globs it was configured to read.
  */
-type VerifyPart = { readonly text: string } | { readonly digits: true } | { readonly free: true }
+type VerifyPart = { readonly text: string } | { readonly digits: true } | { readonly free: VerifySlot }
 const VERIFY_TAIL: readonly (readonly VerifyPart[])[] = [
   [{ text: ', ' }, { digits: true }, { text: ' tests, ' }, { digits: true }, { text: ' failures' }],
-  [{ text: ': ' }, { free: true }],
-  [{ text: '; flaky: ' }, { free: true }],
+  [{ text: ': ' }, { free: 'names' }],
+  [{ text: '; flaky: ' }, { free: 'names' }],
   [{ text: '; timed out' }],
-  [{ text: '; warning: ' }, { free: true }],
+  [{ text: '; warning: ' + VERIFY_WARNING_PREFIX }, { free: 'globs' }],
   [{ text: '; ' + VERIFY_CLEAN_TREE }],
   [{ text: ')' }],
 ]
+
+/**
+ * VERIFY_SLOTS is what the CLI can put in each free slot, twice over: `full`
+ * matches a whole piece, `cut` one the clip stopped inside. `names` is a list of
+ * test names as the reporters write them; `globs` is the comma-separated list of
+ * report globs `internal/verify/verify.go` joins into its warning.
+ *
+ * Only `isKnownVerifySummary` uses them. `isVerifySummary` -- the rule the scrub
+ * itself applies -- takes any text in a slot on purpose: a real recording's test
+ * names are the writer's own output, and a vocabulary that refused one would
+ * refuse an ordinary run, which is the failure this file's lists exist to avoid.
+ */
+const VERIFY_SLOTS: Record<VerifySlot, { full: RegExp; cut: RegExp }> = {
+  names: {
+    full: /^[A-Za-z0-9_][A-Za-z0-9_.:/\-]*(?:, [A-Za-z0-9_][A-Za-z0-9_.:/\-]*)*$/,
+    cut: /^[A-Za-z0-9_][A-Za-z0-9_.:/\-]*(?:, [A-Za-z0-9_][A-Za-z0-9_.:/\-]*)*(?:, ?)?$/,
+  },
+  globs: {
+    full: /^\S+(?:, \S+)*$/,
+    cut: /^\S*(?:, \S*)*$/,
+  },
+}
 /** VERIFY_TEST_TAIL_FROM is the index of the first tail part a non-test kind
  * does not write: only a test run carries the counts. */
 const VERIFY_TEST_TAIL_FROM = 1
@@ -152,9 +193,14 @@ const VERIFY_TEST_TAIL_FROM = 1
  * record number, the status and the exit code that opens the parenthesised tail.
  * It is never itself cut short, which is a consequence rather than a choice: the
  * whole head is under VERIFY_CLIP_RUNES runes, so a clip can only land after it.
+ *
+ * The exit code is signed because `internal/procgroup/procgroup.go` leaves it at
+ * -1 when the process never started or was killed by a signal -- its own timeout
+ * kills the group -- and `internal/verify/verify.go` records that code as
+ * `ExitCode` verbatim, so a timed-out verify writes `(exit -1; timed out)`.
  */
 export const VERIFY_HEAD = new RegExp(
-  `^fugaro verify (${VERIFY_KINDS.join('|')})( ${VERIFY_RERUN_FLAG})? #\\d+: (${VERIFY_STATUSES.join('|')}) \\(exit \\d+`,
+  `^fugaro verify (${VERIFY_KINDS.join('|')})( ${VERIFY_RERUN_FLAG})? #\\d+: (${VERIFY_STATUSES.join('|')}) \\(exit -?\\d+`,
 )
 
 /**
@@ -168,8 +214,29 @@ export const VERIFY_HEAD = new RegExp(
  * (the writer appends it only when it has something to say), and the cut may
  * land inside any of them, so "is this a prefix of what the writer can write"
  * is the question, and this walks the parts to answer it.
+ *
+ * The slots are open: whatever the repository put in them, the writer wrote.
  */
 export function isVerifySummary(value: string): boolean {
+  return verifySummary(value, false)
+}
+
+/**
+ * isKnownVerifySummary is the same question with the slots pinned to the
+ * vocabularies the CLI writes into them (VERIFY_SLOTS): a test-name list, and
+ * the report globs after the warning sentence.
+ *
+ * The scrub does not use it, for the reason VERIFY_SLOTS gives. The fixture's
+ * own scan does, because there the slots are the one place a value could carry
+ * text this file never vouched for: `isVerifySummary` alone would let an
+ * identifying string ride in a `: <names>` or `; warning:` slot and pass the
+ * positive allow-list.
+ */
+export function isKnownVerifySummary(value: string): boolean {
+  return verifySummary(value, true)
+}
+
+function verifySummary(value: string, pinned: boolean): boolean {
   if (value === '-') return true
   // A control character is not something the writer produces (internal/runner
   // runs the summary through pluginwire.Printable first).
@@ -178,15 +245,17 @@ export function isVerifySummary(value: string): boolean {
   if (head === null) return false
   const rest = value.slice(head[0].length)
   const from = head[1] === 'test' ? 0 : VERIFY_TEST_TAIL_FROM
-  return isPrefixOfTail(VERIFY_TAIL.slice(from), rest)
+  return isPrefixOfTail(VERIFY_TAIL.slice(from), rest, pinned)
 }
 
 /** isPrefixOfTail reports whether `rest` is a prefix of some line the groups can
  * render: every group may be absent, every literal may be cut short, a digit run
- * is any number of digits (a cut may land inside it), and a free slot absorbs
- * whatever is left. Memoised on (group, part, offset) -- the free slots make the
- * walk branch, and the same positions are reached by many routes. */
-function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string): boolean {
+ * is any number of digits (a cut may land inside it), and a free slot is either
+ * open -- it absorbs whatever is left -- or pinned to its vocabulary, in which
+ * case it takes a whole piece or the piece a cut left. Memoised on (group, part,
+ * offset): the free slots make the walk branch, and the same positions are
+ * reached by many routes. */
+function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string, pinned: boolean): boolean {
   const width = rest.length + 1
   const memo = new Map<number, boolean>()
   const walkGroup = (group: number, at: number): boolean => {
@@ -219,8 +288,18 @@ function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string
       for (let n = 1; n <= run.length; n++) if (walkPart(group, part + 1, at + n)) return true
       return false
     }
-    for (let n = 0; n <= tail.length; n++) if (walkPart(group, part + 1, at + n)) return true
-    return false
+    if (!pinned) {
+      for (let n = 0; n <= tail.length; n++) if (walkPart(group, part + 1, at + n)) return true
+      return false
+    }
+    const slot = VERIFY_SLOTS[piece.free]
+    // A whole piece of the slot's vocabulary, then the rest of the line.
+    for (let n = tail.length; n > 0; n--) {
+      if (slot.full.test(tail.slice(0, n)) && walkPart(group, part + 1, at + n)) return true
+    }
+    // Or the cut stopped inside the slot, or exactly at its start (an empty
+    // tail here is a prefix of a line whose slot the writer filled).
+    return tail === '' || slot.cut.test(tail)
   }
   return walkGroup(0, 0)
 }

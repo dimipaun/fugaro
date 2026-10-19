@@ -4924,9 +4924,27 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	sameSet(t, "mode", sourceValues(t, "internal/budget/model.go", readDoc(t, "internal/budget/model.go"),
 		`Mode\w+ = "([a-z]+)"`), tsList(t, scrub, `\bmode: \[([^\]]*)\]`, "VOCAB.mode"))
 
-	// The verify kinds: the three `fugaro verify` can run.
-	sameSet(t, "verify kind", sourceValues(t, "internal/verify/verify.go", readDoc(t, "internal/verify/verify.go"),
-		`Kind\w+\s+Kind = "([a-z]+)"`), tsList(t, scrub, `VERIFY_KINDS = \[([^\]]*)\]`, "VERIFY_KINDS"))
+	// The verify kinds: the three `fugaro verify` can run. Held in variables
+	// rather than passed straight to sameSet because the head grammar below is
+	// built from them.
+	verifyGo := readDoc(t, "internal/verify/verify.go")
+	kinds := sourceValues(t, "internal/verify/verify.go", verifyGo, `Kind\w+\s+Kind = "([a-z]+)"`)
+	sameSet(t, "verify kind", kinds, tsList(t, scrub, `VERIFY_KINDS = \[([^\]]*)\]`, "VERIFY_KINDS"))
+
+	// The two status words `Record.Summary` picks between, the flag it appends
+	// to the kind, the one warning sentence it writes, and the note it appends
+	// to a run that found the tree dirty. The last two are the CLI's own text
+	// sitting in the middle of the line: the scrub spells them out, so a second
+	// warning or a reworded note fails here rather than making the recorder
+	// refuse an ordinary run.
+	statuses := sourceValues(t, "internal/verify/verify.go", verifyGo, `status (?::=|=) "([A-Za-z]+)"`)
+	sameSet(t, "verify status", statuses, tsList(t, scrub, `VERIFY_STATUSES = \[([^\]]*)\]`, "VERIFY_STATUSES"))
+	rerun := sourceValues(t, "internal/verify/verify.go", verifyGo, `kind \+= " ([^"]+)"`)
+	sameSet(t, "verify rerun flag", rerun, []string{tsConst(t, scrub, "VERIFY_RERUN_FLAG")})
+	sameSet(t, "verify warning", sourceValues(t, "internal/verify/verify.go", verifyGo,
+		`rec\.Warning = "([^"]*)"`), []string{tsConst(t, scrub, "VERIFY_WARNING_PREFIX")})
+	sameSet(t, "verify clean-tree note", sourceValues(t, "internal/verify/verify.go", verifyGo,
+		"s \\+= \"; ([^\"]*)\"\n\t}\n\treturn s"), []string{tsConst(t, scrub, "VERIFY_CLEAN_TREE")})
 
 	// The connection states, the healths and the deadlines: three inline tables
 	// in internal/watch/json.go, keyed by the constants they render.
@@ -4951,12 +4969,93 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 		readDoc(t, "internal/runstore/artifact.go"), `Outcome\w+\s+Outcome = "([a-z]+)"`)...)
 	sameSet(t, "outcome", outcomes, tsList(t, scrub, `\boutcome: \[([^\]]*)\]`, "VOCAB.outcome"))
 
-	// The verify line's spelling, which is not a list but three literals the
-	// scrub may not paraphrase: `Record.Summary` writes the failure word in
-	// upper case, opens with `(exit `, and appends the rerun flag to the kind.
-	for _, want := range []string{"FAILED", "(exit ", "--rerun-failed"} {
-		if !strings.Contains(scrub, fmt.Sprintf("'%s'", want)) && !strings.Contains(scrub, want) {
-			t.Errorf("%s does not carry verify.go's %q: the verify shape would refuse the line the CLI writes", scrubTS, want)
+	// The verify line's head grammar, which is neither a list nor prose: the
+	// pattern is read out of scrub.ts as the expression it is, its `${...}`
+	// interpolations are filled with the values read above, and the result is
+	// compiled here and tried against lines built from verify.go's own format
+	// string -- carrying the exit code internal/procgroup/procgroup.go leaves
+	// for a process it killed, which is what its own timeout does.
+	//
+	// A literal dropped from the pattern, an exit code narrowed to `\d+`, or a
+	// pattern that spells the kinds out instead of interpolating the list this
+	// test compares, fails here. The comment above the pattern in the file
+	// spells the same literals out, and cannot stand in for it: a substring
+	// check over the whole file passes on the comment alone.
+	head := verifyHeadPattern(t, scrub, kinds, statuses, rerun[0])
+	headRE, err := regexp.Compile(head)
+	if err != nil {
+		t.Fatalf("%s: VERIFY_HEAD is not a pattern this test can compile: %v (%s)", scrubTS, err, head)
+	}
+	format := sourceValues(t, "internal/verify/verify.go", verifyGo, `"(fugaro verify %s #%d: %s \(exit %d)"`)[0]
+	killed := sourceValues(t, "internal/procgroup/procgroup.go",
+		readDoc(t, "internal/procgroup/procgroup.go"), `code := (-?\d+)`)[0]
+	var lines []string
+	for _, kind := range kinds {
+		for _, status := range statuses {
+			for _, code := range []string{"0", killed} {
+				lines = append(lines, verifySummaryLine(format, kind, "3", status, code))
+			}
+		}
+		lines = append(lines, verifySummaryLine(format, kind+" "+rerun[0], "5", statuses[0], killed))
+	}
+	for _, line := range lines {
+		if !headRE.MatchString(line) {
+			t.Errorf("%s: VERIFY_HEAD (%s) does not match the line verify.go writes: %q", scrubTS, head, line)
 		}
 	}
+}
+
+// tsConst returns the single-quoted value of one `const NAME = '...'` in
+// scrub.ts, so a literal the pattern is built from can be compared with the Go
+// source's own.
+func tsConst(t *testing.T, scrub, name string) string {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)const ` + name + ` = '([^']*)'`).FindStringSubmatch(scrub)
+	if m == nil {
+		t.Fatalf("%s: %s is not a const holding one single-quoted string", scrubTS, name)
+	}
+	return m[1]
+}
+
+// verifyHeadPattern returns scrub.ts's VERIFY_HEAD as a pattern this test can
+// compile: the template literal's escapes undone, and its `${...}`
+// interpolations replaced by the values the Go source writes. An interpolation
+// this test does not know, or a pattern that no longer uses the one holding the
+// kinds or the statuses, is a failure: the pattern has to be built from the
+// lists this test compares, not retyped beside them.
+func verifyHeadPattern(t *testing.T, scrub string, kinds, statuses []string, rerun string) string {
+	t.Helper()
+	m := regexp.MustCompile("(?s)VERIFY_HEAD = new RegExp\\(\\s*`([^`]*)`").FindStringSubmatch(scrub)
+	if m == nil {
+		t.Fatalf("%s: VERIFY_HEAD is not a new RegExp(...) over one template literal; this test reads its source", scrubTS)
+	}
+	pattern := strings.ReplaceAll(m[1], `\\`, `\`)
+	for _, sub := range []struct{ expr, value string }{
+		{"${VERIFY_KINDS.join('|')}", "(" + strings.Join(kinds, "|") + ")"},
+		{"${VERIFY_STATUSES.join('|')}", "(" + strings.Join(statuses, "|") + ")"},
+		{"${VERIFY_RERUN_FLAG}", rerun},
+	} {
+		if !strings.Contains(pattern, sub.expr) {
+			t.Fatalf("%s: VERIFY_HEAD no longer interpolates %s: the pattern must be built from the list this test compares, not retyped beside it", scrubTS, sub.expr)
+		}
+		pattern = strings.ReplaceAll(pattern, sub.expr, sub.value)
+	}
+	if strings.Contains(pattern, "${") {
+		t.Fatalf("%s: VERIFY_HEAD interpolates something this test cannot fill: %s", scrubTS, pattern)
+	}
+	return pattern
+}
+
+// verifySummaryLine renders verify.go's own format string the way the writer
+// does: `fugaro verify %s #%d: %s (exit %d` takes the kind, the record number,
+// the status and the exit code, in that order.
+func verifySummaryLine(format, kind, n, status, code string) string {
+	for _, value := range []string{kind, n, status, code} {
+		at := strings.Index(format, "%")
+		if at < 0 {
+			break
+		}
+		format = format[:at] + value + format[at+2:]
+	}
+	return format
 }

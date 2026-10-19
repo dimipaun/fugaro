@@ -802,13 +802,19 @@ test allows to mention a `console/` path, reading this file as bytes and
 importing nothing from it, so the allow-list keeps its single entry — reads the
 lists back out of the file and compares them with the constants the source writes
 them from: the runner's stage names, the config's allowed `agent.auth`, the
-budget's modes, the three verify kinds, and the connection, health, deadline,
-status and outcome tables. The list that was too *short* is the failure that
-review found: a stage the runner writes and the scrub does not know is not a
-leak, it is a recorder that throws on an ordinary run. `bootstrap`, `provision`,
-`review_first` and `finalize` were missing from `stage`, `vertex` from `auth`,
-and `warn` was a mode
-no CLI writes.
+budget's modes, the three verify kinds, the two status words and the rerun flag,
+the one warning sentence and the clean-tree note, and the connection, health,
+deadline, status and outcome tables. The verify line's *head* is not a list but a
+grammar, so it is held differently: the test reads `VERIFY_HEAD`'s regex source
+out of the file, fills its `${...}` interpolations with the values it derived,
+compiles it and tries it against lines built from `verify.go`'s own format
+string — with the exit code `internal/procgroup/procgroup.go` leaves for a
+process it killed, which is `-1`, so a timed-out verify writes `(exit -1; timed
+out)` and a pattern narrowed to `\d+` fails there. The list that was too *short*
+is the failure that review found: a stage the runner writes and the scrub does
+not know is not a leak, it is a recorder that throws on an ordinary run.
+`bootstrap`, `provision`, `review_first` and `finalize` were missing from
+`stage`, `vertex` from `auth`, and `warn` was a mode no CLI writes.
 
 **Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
 `repo-at-cap` (they need cloud writes), and the other cases still await a
@@ -827,10 +833,25 @@ against forbidden substrings and a positive allow-list of shapes, and the scrub'
 refusals, each mutation-proven. Held by `test/unit/scrub-vocabulary.test.ts`: that
 the scrub accepts every stage, auth and mode the CLI writes and refuses what it
 does not, that the verify shape is the one `internal/verify/verify.go` writes
-(every tail variant, the `FAILED` spelling, and the 120-rune clip) and refuses a
-line it cannot, that the nullable Go fields may be null, and that the clock shift
-is drawn per run — all mutation-proven, and the vocabularies themselves pinned
-against the Go source by the drift test named above.
+(every tail variant, the `FAILED` spelling, the `exit -1` a killed process
+leaves, and the 120-rune clip) and refuses a line it cannot, that the nullable Go
+fields may be null, and that the clock shift is drawn per run — all
+mutation-proven, and the vocabularies themselves pinned against the Go source by
+the drift test named above.
+
+**The scan pins the verify line's slots; the scrub does not.** The verify line is
+the one value whose middle the CLI fills from the repository it ran in — the test
+names its reports carry and the globs it was configured to read — so `scrub.ts`
+has two matchers for it. `isVerifySummary` is the scrub's rule and leaves those
+slots open on purpose: a real recording's test names are the writer's own output,
+and a vocabulary that refused one would refuse an ordinary run. The fixture's
+scan uses `isKnownVerifySummary`, the same grammar with the slots pinned to a
+name list and a glob list, because there the slots are the one place a string
+this file never vouched for could ride: with the open matcher in the allow-list,
+`fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll
+suite)` passed the scan. The warning sentence is not a slot in either matcher —
+`Record.Summary` writes one sentence there, and the drift test fails first if
+`verify.go` ever gains a second one.
 
 ### The eight recordings, and why seven of them are missing
 
