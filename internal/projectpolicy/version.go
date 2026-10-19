@@ -177,6 +177,28 @@ const PolicyRulesVersion = 1
 // (generation 2) refuses `fugaro init --firebase` against the generation-3
 // marker rather than deploying its older rules over it, and its doctor warns.
 //
+// Generation 3 also carries the credentials children, and they deliberately
+// did not make a generation 4 (credentials-service plan, task C1.3): the
+// `/creds` node (denied to every run token — the service is its only writer,
+// D136/O1), the agent entry's `credential` (a name, never a value) and
+// `waiting_until`, and the by-tier split of real spend under the counters that
+// already exist. They are optional, validated children of nodes a run already
+// writes and only a `cascade` run writes them, so an installation that has not
+// opted in behaves identically — where a bump would make `projectpolicy.Read`
+// answer "not found" and drop every published policy (caps, `allow_repos`,
+// routing, prices) on any installation whose owner has not redeployed the
+// rules yet, and make the publish gate refuse there. The price of not bumping
+// is that this marker cannot answer "does the deployed document carry the
+// credentials children", so the same deploy records that generation separately:
+// `config/limits/credsRules` (`internal/budget/rules`.CredsRulesVersion, 1),
+// which a `cascade` launch, the service's init stage and doctor require, and
+// which the deploy refuses to put this binary's document under when it names a
+// newer one. The gap this leaves — an older Fugaro redeploying its own document
+// while its generation check does not fire and it does not know the new marker
+// — is a named halt at the run's first refused write (HaltCredsRulesDenied,
+// C1.17), never a silent drop; the plan's non-adopters section states it in
+// full.
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
 const RulesVersion = 3
