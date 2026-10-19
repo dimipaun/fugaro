@@ -206,11 +206,14 @@ func TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives(t *testing.T) {
 // only required reviewer is the owner, the trigger the build would run on,
 // least privilege, pinned actions -- and that the runbook writes no workflow
 // file, only the shape a later staged file under docs/pending-workflows/ would
-// have (Global Constraint 8). It also pins the precedent claim to the tree:
-// exactly one environment exists today (website-live), release.yml signs
-// keyless with no environment, the console's console-release.yml is planned and
-// not staged, and a v*-only deployment-branch policy cannot be reached by a
-// dispatch from main.
+// have (Global Constraint 8). It also pins the precedent claim to the tree as
+// the tree is now: the repository has two protected environments --
+// website-promote.yml's `website-live` and the console's `console-release`,
+// both installed and both declared on a job -- release.yml signs keyless with
+// no environment, and a v*-only deployment-branch policy cannot be reached by a
+// dispatch from main. The environment set itself is *derived* from the workflow
+// files by TestDocsMobileEasRunbookNamesEveryProtectedEnvironment; this test
+// refuses the stale sentences an earlier revision of the page carried.
 func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *testing.T) {
 	doc := runbook(t)
 	for _, want := range []string{
