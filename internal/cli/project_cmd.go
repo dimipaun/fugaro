@@ -234,6 +234,14 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return err
 		}
+		// Every child the widening phase will write is read back before the first
+		// write of this publish, so a child this Fugaro could not read is a
+		// refusal with nothing written rather than a node the next publish has to
+		// stop on (admissionBytes).
+		desiredBytes, err := admissionPatch(desired)
+		if err != nil {
+			return fmt.Errorf("%w%s", err, narrowedNote(narrowedSoFar))
+		}
 		var existing map[string]json.RawMessage
 		if _, err := db.Get(ctx, projectpolicy.PathRepos(), &existing); err != nil {
 			return dbErr(lc, err, false)
@@ -246,7 +254,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
-			admissions, err := widenAdmissions(ctx, db, lc, desired, now)
+			admissions, err := widenAdmissions(ctx, db, lc, desired, desiredBytes, now)
 			if err != nil {
 				return fmt.Errorf("%w; %s was set, but the admissions at %s are not as the config asks: they were narrowed first and never widened, so the repositories that lost an account stay admitted to the accounts they kept; run the publish again",
 					err, projectpolicy.PathShared(), projectpolicy.PathRepos())
@@ -1252,6 +1260,55 @@ func patchPolicyJSON(raw []byte, key string, val any) ([]byte, error) {
 // set of accounts it admits is exactly what this function has to narrow, and a
 // node whose meaning is unknown is a node whose narrowing cannot be computed.
 // (Removing such a child is refused by the same rule, below.)
+// admissionBytes is the document a publish writes for one repository child, and
+// the reader's own verdict on it before it is written — checkPolicyBytes, for the
+// children.
+//
+// The shared node is decoded before it is written and a child was not, so a
+// child this Fugaro could not read back went to the database and was discovered
+// by the *next* publish, which then refuses the whole node and stops every later
+// publish of the project until an operator fixes it by hand: DecodeRepo is
+// strict, and tightenAdmissions refuses to write over a child it cannot read.
+// No config reaches that today — the names are config.ValidClaudeAccountRef's
+// own (DeriveAccounts checks each one), the account names are map keys, and
+// repoAdmissions sorts and never repeats one — so this is the second door on a
+// rule the first door already holds, and it is here because the two ways in are
+// a rule the writer and the reader could come to disagree about and a future
+// caller of these phases. (Security review m-6.)
+//
+// The bytes it returns are what the caller patches, so the document that is
+// written and the document that was read back cannot be two spellings of the
+// same admission.
+func admissionBytes(slug string, accounts []string) (json.RawMessage, error) {
+	raw, err := json.Marshal(projectpolicy.RepoPolicy{Credentials: &projectpolicy.RepoCredentials{Accounts: accounts}})
+	if err != nil {
+		return nil, remote(err)
+	}
+	switch decoded, found, err := projectpolicy.DecodeRepo(raw); {
+	case err != nil:
+		return nil, userErr("the admission this publish would write for %s is not a node this Fugaro can read back (%v), so nothing was written: a child node holds the NAMES of the accounts its repository may use, and each must be a name the project policy's accounts block carries — check this machine's config with 'fugaro validate'", slug, err)
+	case !found || decoded == nil:
+		return nil, userErr("the admission this publish would write for %s is not a node this Fugaro can read back, so nothing was written: check this machine's config with 'fugaro validate'", slug)
+	}
+	return raw, nil
+}
+
+// admissionPatch is admissionBytes over a whole phase's children, keyed by slug.
+// The phase's write is one multi-path patch, so every child it would carry is
+// checked before any of them is written: a refusal has to come before the patch,
+// not out of the middle of it.
+func admissionPatch(desired map[string][]string) (map[string]json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(desired))
+	for _, slug := range slices.Sorted(maps.Keys(desired)) {
+		raw, err := admissionBytes(slug, desired[slug])
+		if err != nil {
+			return nil, err
+		}
+		out[slug] = raw
+	}
+	return out, nil
+}
+
 func tightenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, desired map[string][]string, existing map[string]json.RawMessage) (now map[string][]string, lines []string, err error) {
 	now = make(map[string][]string, len(existing))
 	updates := make(map[string]any, len(existing))
@@ -1302,7 +1359,11 @@ func tightenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config
 			}
 			continue
 		}
-		updates[key] = projectpolicy.RepoPolicy{Credentials: &projectpolicy.RepoCredentials{Accounts: keep}}
+		raw, err := admissionBytes(key, keep)
+		if err != nil {
+			return nil, nil, err
+		}
+		updates[key] = raw
 		now[key] = keep
 		lines = append(lines, fmt.Sprintf("  admits %s: narrowed to %s (%s no longer admits this repository)", key, strings.Join(keep, ", "), strings.Join(accountsWithout(admitted, keep), ", ")))
 	}
@@ -1322,7 +1383,7 @@ func tightenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config
 // child that already holds the desired names is not written again — so a
 // publish of an unchanged config writes no child at all, and cannot fail on
 // one.
-func widenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, desired, now map[string][]string) ([]string, error) {
+func widenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, desired map[string][]string, desiredBytes map[string]json.RawMessage, now map[string][]string) ([]string, error) {
 	updates := make(map[string]any, len(desired))
 	var lines []string
 	for _, slug := range slices.Sorted(maps.Keys(desired)) {
@@ -1330,7 +1391,7 @@ func widenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, 
 		if cur := now[slug]; len(cur) == len(desired[slug]) && slices.Equal(cur, desired[slug]) {
 			continue
 		}
-		updates[slug] = projectpolicy.RepoPolicy{Credentials: &projectpolicy.RepoCredentials{Accounts: desired[slug]}}
+		updates[slug] = desiredBytes[slug]
 	}
 	if len(updates) == 0 {
 		return lines, nil

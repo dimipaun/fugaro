@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -652,5 +653,86 @@ func rewriteProjectExtra(t *testing.T, f *projectFixture, old, new string) {
 	}
 	if err := os.WriteFile(f.path, []byte(strings.Replace(cfg, old, new, 1)), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAdmissionsAreReadBackBeforeTheyAreWritten: a child node is put through the
+// reader the launcher uses (projectpolicy.DecodeRepo) before this publish
+// patches it — checkPolicyBytes, for the children (security review m-6). The
+// bytes that are written are the bytes the reader was asked about, so the
+// document written and the document read back cannot be two spellings of one
+// admission, and a child this Fugaro would refuse is a refusal with nothing
+// written rather than a node the *next* publish stops on: DecodeRepo is strict,
+// and tightenAdmissions refuses to write over a child it cannot read.
+//
+// No config reaches the refusal today — the account names are
+// config.ValidClaudeAccountRef's own (DeriveAccounts checks each one), they are
+// the accounts block's map keys, and repoAdmissions sorts them and never repeats
+// one — which is why this test calls the guard directly instead of through a
+// fixture: it is the second door on a rule the first door already holds, and the
+// door has to work. Its two ways in are a rule the writer and the reader could
+// come to disagree about, and a future caller of the two phases.
+//
+// Mutation (verified, run and restored): return the marshalled document without
+// decoding it (the state this review found) — every case below fails.
+func TestAdmissionsAreReadBackBeforeTheyAreWritten(t *testing.T) {
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A child of valid names: the bytes, and the reader's answer to them.
+	raw, err := admissionBytes(slug, []string{"ops", "spare"})
+	if err != nil {
+		t.Fatalf("a child naming two valid accounts was refused: %v", err)
+	}
+	decoded, found, err := projectpolicy.DecodeRepo(raw)
+	if err != nil || !found || decoded == nil {
+		t.Fatalf("the bytes this publish would write are not a node this Fugaro reads back (%v): %s", err, raw)
+	}
+	if got := decoded.AdmittedAccounts(); !slices.Equal(got, []string{"ops", "spare"}) {
+		t.Errorf("the child reads back as %v, want the accounts it was built from", got)
+	}
+
+	// A name the reader refuses (an account name is lower-case): refused here,
+	// where the slug says which repository it was for.
+	_, err = admissionBytes(slug, []string{"Ops"})
+	if err == nil {
+		t.Fatal("a child naming an account the reader refuses was allowed to be written")
+	}
+	for _, want := range []string{slug, "not a node this Fugaro can read back", "fugaro validate"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+
+	// An empty admission is the state DecodeRepo refuses so that a hand-written
+	// node cannot take tier A away from a repository by accident: the writer
+	// does not produce one either.
+	if _, err := admissionBytes(slug, nil); err == nil {
+		t.Error("a child admitting no account was allowed to be written")
+	}
+
+	// The phase's patch is checked whole, before any of it is written: one
+	// unreadable child beside a good one is no patch at all.
+	other, err := task.Slug("github", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admissionPatch(map[string][]string{slug: {"ops"}, other: {"Ops"}}); err == nil {
+		t.Error("a patch carrying one unreadable child was allowed")
+	}
+	// And the bytes a patch carries are the bytes admissionBytes checked, so
+	// what is written and what was read back cannot drift apart.
+	one, err := admissionBytes(slug, []string{"ops"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch, err := admissionPatch(map[string][]string{slug: {"ops"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(patch[slug]) != string(one) {
+		t.Errorf("the patched child is %s, want the bytes that were read back (%s)", patch[slug], one)
 	}
 }
