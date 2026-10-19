@@ -27,6 +27,12 @@
 //      moves the focus to the trigger on the way to the click, so a page that opened the group on
 //      that focus would have the click close it again: a first tap that does nothing, and a click
 //      on a closed group whose trigger did not hold the focus that does nothing either.
+//      **And the keyboard's way in is not the pointer's to give.** It is bound whatever the
+//      device answers, because the keyboard is the device's and not the pointer's: a phone or a
+//      tablet with a keyboard attached answers the hover query no, and the menu still has a
+//      second level Tab must be able to enter. The guard that keeps a close from reopening the
+//      group it handed the focus back to lasts exactly the focus it was written for, so a reader
+//      who takes the focus out of the menu and comes back to the same trigger opens it again.
 //   3. **A finger never hovers, whatever the device says.** The query answers for the device's
 //      *primary* pointer, and a touch laptop answers it yes; a tap on one of those still sends a
 //      `pointerenter` of its own, carrying `pointerType: 'touch'`, and a tap that opened a group
@@ -269,7 +275,13 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true, script =
     }
     // The state the menu is in, as the attribute every level of it agrees on. A browser fires
     // `toggle` at the element when this attribute changes — that is what the page's
-    // `aria-expanded` listener reads — and the stub does the same, in the same breath.
+    // `aria-expanded` listener reads — and the stub does the same, in the same breath. That is
+    // a divergence, and a deliberate one: a browser queues the event as a task, and the stub
+    // firing it here is what lets a case see the state a close leaves behind — the page's own
+    // listeners run with the attribute already moved, as a queued event would find it. Nothing
+    // the page does may depend on which of the two it is given: the guard against reopening is
+    // cleared by the next focus to arrive anywhere else, so it expires the same way under either
+    // model — which is what the case holding that guard to its focus is written against.
     get open() {
       return this.attrs.has('open')
     }
@@ -872,6 +884,54 @@ test('the keyboard opens a group, Escape closes it and gives the focus back, and
   assert.equal(group.open, true, 'the guard against reopening outlived the focus it was written for')
 })
 
+test('the guard against reopening lasts only for the focus the close handed back', () => {
+  const page = stubPage(HOME.html)
+  const group = page.groups[0]
+  const summary = group.querySelector('summary')
+
+  page.focus(summary)
+  page.focus(group.querySelector('a'))
+  page.key('Escape')
+  assert.equal(group.open, false, 'Escape left the submenu open')
+  assert.ok(page.document.activeElement === summary, 'Escape did not leave the focus on the trigger it closed from')
+
+  // The reader leaves the menu altogether — the focus goes to the footer, outside every group,
+  // where no group's own listener can hear it — and comes back to the same trigger. That
+  // arrival is a reader's, and it opens the group: the guard was written for the focus the
+  // close handed back, and it cannot outlive the reader walking away from it.
+  const away = page.find('footer a')[0]
+  assert.ok(away, 'the built homepage has nothing outside the menu for the focus to leave to')
+  page.focus(away)
+  page.focus(summary)
+  assert.equal(
+    group.open,
+    true,
+    'the guard against reopening outlived the focus it was written for: a reader who left the menu and came back cannot reach the links inside',
+  )
+})
+
+test('the keyboard opens a group on a device with no hovering pointer', () => {
+  // A phone or a tablet with a keyboard attached: the query answers no, so the hover behaviour
+  // is never bound — and the menu still has a second level, which Tab has to be able to enter.
+  // The keyboard is the device's, not the pointer's, so this is bound whatever the query says.
+  const page = stubPage(HOME.html, { hover: false })
+  const group = page.groups[0]
+  page.focus(group.querySelector('summary'))
+  assert.equal(
+    group.open,
+    true,
+    'a device with no hovering pointer has a menu the keyboard cannot enter: the links inside a closed group are unreachable by Tab',
+  )
+
+  // And the same after a pointer is taken away mid-session, which unbinds the hover behaviour
+  // and must not take the keyboard with it.
+  const page2 = stubPage(HOME.html)
+  page2.setPointerHover(false)
+  const group2 = page2.groups[1]
+  page2.focus(group2.querySelector('summary'))
+  assert.equal(group2.open, true, 'taking the pointer away took the keyboard’s way into the menu with it')
+})
+
 test('a group a sibling closes hands the reader’s focus back to its own trigger', () => {
   // A keyboard reader is standing on a link inside Product when a pointer arrives at Reference:
   // no key was pressed and the reader moved nothing, but the exclusive set closes Product, the
@@ -1255,6 +1315,41 @@ function menuFailures(script) {
     }
   }
 
+  // The keyboard's way into a group is not the pointer's to give. A device that answers the hover
+  // query no — a phone, a tablet — has a keyboard the moment one is attached, and a reader who
+  // Tabs to a trigger has to reach the links inside it: a group that opens only where a pointer
+  // hovers is a menu with a level that cannot be entered at all.
+  {
+    const page = pageOf({ hover: false })
+    const group = page.groups[0]
+    page.focus(group.querySelector('summary'))
+    if (!group.open) {
+      out.push(
+        'a device with no hovering pointer has a menu the keyboard cannot enter: a group that opens only where the pointer hovers leaves the links inside it unreachable by Tab',
+      )
+    }
+  }
+
+  // The guard against reopening is written for the one focus a close hands back to the trigger,
+  // and it lasts exactly that long. A reader who leaves the menu altogether — the focus goes
+  // outside every group, where no group's own listener hears it — and comes back to the same
+  // trigger has arrived at it as a reader: the group opens for them as it did the first time.
+  {
+    const page = pageOf()
+    const group = page.groups[0]
+    const summary = group.querySelector('summary')
+    page.focus(summary)
+    page.focus(group.querySelector('a'))
+    page.key('Escape')
+    page.focus(page.find('footer a')[0] ?? awayFrom(page))
+    page.focus(summary)
+    if (!group.open) {
+      out.push(
+        'a group stayed shut for a reader who left the menu and came back to its trigger: the guard against reopening outlived the focus it was written for',
+      )
+    }
+  }
+
   return out
 }
 
@@ -1339,6 +1434,25 @@ const DEFECTS = [
         '\n          closeWhenNobodyIsReading()\n        })',
       ),
     refuses: [/the close the pointer asked for fired under the keyboard reader who had arrived inside the delay/],
+  },
+  {
+    what: 'a script that binds the keyboard’s way into a group with the pointer’s hover',
+    // The keyboard's half of the menu written where the pointer's half is, which is the shape a
+    // device with no hovering pointer cannot enter: the hover behaviour is never bound there, and
+    // the links inside a closed group go with it.
+    plant: (source) =>
+      source
+        .replace('\n    keyboardGroups()\n', '\n')
+        .replace(
+          "        on(group, 'pointerenter', function (event) {",
+          "        on(group, 'focusin', function (event) {\n          var fromClosing = restored\n          restored = null\n          if (!summary || event.target !== summary || fromClosing === summary) return\n          if (pointerFocus) return\n          group.open = true\n        })\n\n        on(group, 'pointerenter', function (event) {",
+        ),
+    refuses: [/a device with no hovering pointer has a menu the keyboard cannot enter/],
+  },
+  {
+    what: 'a script whose guard against reopening outlives the focus it was written for',
+    plant: (source) => source.replace(/\n      if \(restored && event\.target !== restored\) restored = null/, ''),
+    refuses: [/a group stayed shut for a reader who left the menu and came back to its trigger/],
   },
 ]
 

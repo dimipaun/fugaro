@@ -11,20 +11,20 @@
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
 // now and optimize later"): each is three times the tight derivation below, until a later
 // optimisation pass tightens them back towards these figures. The tight derivation is the
-// build of 2026-10-19 — the 2026-10-18 build, plus the four corrections the menu's pointer half
-// took that day, named in the first bullet below — the one that ships the site's script (P6), its
+// build of 2026-10-19 — the 2026-10-18 build, plus the five corrections the menu's halves took
+// that day, named in the first bullet below — the one that ships the site's script (P6), its
 // menu behaviour (P3),
 // the homepage's run animation (P7), the How It Works flow (P8), the consent gate's analytics
 // bootstrap in that same script (W3.2) and the menu's hover-open on a pointer that hovers
 // (the owner's brief of 2026-10-18, item 1) — plus 25 %, which is D192's rule and the rule
 // the README's loose figures are three times:
 //
-//   - JavaScript per page: 47,125 bytes. The one script the site ships,
+//   - JavaScript per page: 49,870 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
 //     ruling of 2026-10-18 added to a withdrawal, and that ruling's brief item 1: a group's
 //     submenu opens when the pointer arrives at it, bound only where `matchMedia` reports a
 //     pointer that hovers and only for a pointer that reports itself a mouse or a pen, and
-//     re-decided whenever that answer changes), is 37,700 bytes; × 1.25, rounded up. The event
+//     re-decided whenever that answer changes), is 39,896 bytes; × 1.25, rounded up. The event
 //     that says which pointer arrived, and the query's `change` that says the device's answer has
 //     moved, re-derived all three figures here on 2026-10-19; the same day's second correction
 //     did it again — the focus a click or a tap moves is the pointer's and opens nothing (the
@@ -35,19 +35,24 @@
 //     close the reader asks for from outside the menu gives nothing back — and the fourth did it
 //     again: a group has two readers, and the pointer's close is owed when nobody is left reading,
 //     so a keyboard reader standing in the group holds it open, the close lands when the focus
-//     goes, and a focus arriving inside `CLOSE_AFTER_MS` cancels the close the pointer asked for.
+//     goes, and a focus arriving inside `CLOSE_AFTER_MS` cancels the close the pointer asked for
+//     — and the fifth re-derived all three again: the keyboard's way into a group is bound beside
+//     the browser's own state rather than inside the hover behaviour, because the keyboard is the
+//     device's and not the pointer's, so a phone or a tablet with a keyboard attached answers the
+//     hover query no and still has a second level Tab can enter; and the guard that keeps a close
+//     from reopening the group it handed the focus back to lasts for that focus and no longer.
 //     Every page
 //     loads the script exactly once, so the file's own size IS the whole of a page's
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: 331,027 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
-//     weighed 264,821 bytes: its HTML (the whole generated CLI reference) plus the first-party
+//   - Page weight per page: 333,772 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
+//     weighed 267,017 bytes: its HTML (the whole generated CLI reference) plus the first-party
 //     files it fetches — the script above and the logo and icons the layout links; × 1.25,
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,032,713 bytes. Every file in `dist/` on that build summed to 826,170
+//   - Whole site: 1,035,458 bytes. Every file in `dist/` on that build summed to 828,366
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up.
 //

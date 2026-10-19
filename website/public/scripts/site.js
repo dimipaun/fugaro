@@ -151,9 +151,13 @@
   }
 
   // The focus this file has just given back, and the reason the group it lands on does not
-  // reopen. All three closes below hand the focus to the trigger they closed, and a trigger that
+  // reopen. Both closes below hand the focus to the trigger they closed, and a trigger that
   // reopened what was just closed under it would be a menu no keyboard could dismiss. It is
-  // cleared by the next focus that arrives, whichever trigger that lands on.
+  // cleared by the next focus that arrives anywhere else: the group's own listener reads it on
+  // the way up, for the handback it was written for, and the document's own clears it for every
+  // other arrival — so the guard lasts exactly the focus it was written for, and a reader who
+  // takes the focus out of the menu and comes back to the same trigger is arriving at it rather
+  // than being handed it back.
   var restored = null
 
   // Where the focus is, remembered as the `focusin` that brought it says. A group can be closed
@@ -229,6 +233,37 @@
     )
   }
 
+  // The keyboard's way into a group (the owner's brief of 2026-10-18, item 1), bound whatever
+  // the device answers — beside `expanded` above rather than inside the hover behaviour below,
+  // which is the pointer's own. A reader who tabs to a trigger has to be able to reach the links
+  // inside a closed `<details>` — Tab from the trigger then goes into the list rather than past
+  // it — and that reader is the device's keyboard rather than its pointer: a phone or a tablet
+  // with a keyboard attached answers the hover query "no", and a menu whose second level only a
+  // hovering pointer can open is a menu that keyboard cannot enter at all.
+  //
+  // What opens the group is the keyboard's focus and never the pointer's (see `pointerFocus`
+  // above), and never the focus a close has just handed back to the trigger, which is where the
+  // reader who dismissed a menu is left rather than somewhere they asked to be.
+  function keyboardGroups() {
+    var groups = document.querySelectorAll(GROUP_DETAILS)
+    for (var i = 0; i < groups.length; i++) {
+      ;(function (group) {
+        var summary = group.querySelector(SUMMARY)
+        group.addEventListener('focusin', function (event) {
+          var fromClosing = restored
+          restored = null
+          if (!summary || event.target !== summary || fromClosing === summary) return
+          // The pointer's focus opens nothing: the click that brought it toggles the group
+          // itself, so a group opened here would be closed again by that click — a first tap
+          // that does nothing, and a click on a closed group that does nothing either. The
+          // keyboard's focus opens it, which is what lets Tab reach the links inside.
+          if (pointerFocus) return
+          group.open = true
+        })
+      })(groups[i])
+    }
+  }
+
   // Whether an event came from a pointer that hovers. The device's answer to `HOVER_QUERY` is
   // about its *primary* pointer, and a device can answer yes and still have a finger on it: a
   // touch laptop has a trackpad and a screen, and a tablet with one has both too. What the
@@ -272,12 +307,12 @@
   // delivered as a mouse's too — the compatibility events every browser sends after a tap —
   // and `hoveringPointer` above is what refuses it.
   //
-  // A group opens when the pointer arrives and when its trigger takes the focus — a keyboard
-  // reader who tabs to a group has to be able to reach the links inside it, and Tab from the
-  // trigger then goes into the list rather than past it — and it closes `CLOSE_AFTER_MS` after
-  // the pointer leaves. What this file does not touch is the click: a `<summary>` toggles its
-  // own group, so a click on a group the pointer has already opened closes it, which is what
-  // the control did before any of this and what a reader pressing it is asking for.
+  // A group opens when the pointer arrives and closes `CLOSE_AFTER_MS` after the pointer leaves.
+  // The keyboard's way into a group is `keyboardGroups` above, which is bound whether or not the
+  // device has a pointer to hover with; what is bound here is the pointer's half alone. What this
+  // file does not touch is the click: a `<summary>` toggles its own group, so a click on a group
+  // the pointer has already opened closes it, which is what the control did before any of this
+  // and what a reader pressing it is asking for.
   //
   // A group has two readers, and the pointer is only one of them. The keyboard's focus is the
   // other, and it outranks the pointer: a pointer that leaves a group somebody is standing in
@@ -373,18 +408,6 @@
           stopClosing()
           closeWhenNobodyIsReading()
         })
-
-        on(group, 'focusin', function (event) {
-          var fromClosing = restored
-          restored = null
-          if (!summary || event.target !== summary || fromClosing === summary) return
-          // The pointer's focus opens nothing: the click that brought it toggles the group
-          // itself, so a group opened here would be closed again by that click — a first tap
-          // that does nothing, and a click on a closed group that does nothing either. The
-          // keyboard's focus opens it, which is what lets Tab reach the links inside.
-          if (pointerFocus) return
-          group.open = true
-        })
       })(groups[i])
     }
 
@@ -422,12 +445,22 @@
       },
       true,
     )
+    document.addEventListener('focusin', function (event) {
+      // The guard against reopening is written for the one focus a close hands back to the
+      // trigger, and it lasts exactly that long: a focus arriving anywhere else — the page's own
+      // text, a link in the footer — is the reader having moved on, and the trigger they come
+      // back to afterwards is a trigger they have arrived at, which opens as it did the first
+      // time. Read on the way up, after the group's own listener has had the focus the guard was
+      // written for, and never for that focus itself.
+      if (restored && event.target !== restored) restored = null
+    })
     document.addEventListener('click', function (event) {
       var target = event.target
       if (target && target.closest && target.closest('.site-nav')) return
       closeMenus()
     })
     expanded()
+    keyboardGroups()
 
     // The device's answer to the pointer's question, asked once and then watched. A browser
     // with no `matchMedia` to ask cannot answer, and a menu whose hover behaviour is guessed at

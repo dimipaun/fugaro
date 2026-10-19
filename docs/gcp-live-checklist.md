@@ -4207,6 +4207,10 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    nothing at all, and is not pulled back onto the summary the reader has just dismissed. Do it
    for the
    **last** group as well, and read `document.documentElement.scrollWidth` with a group open.
+   Then on the **emulated touch device of step 6** — a device that answers the pointer query
+   no — Tab to a group's trigger: its submenu opens there too, because the keyboard is the
+   device's and not the pointer's, and its links are reachable by Tab; open the drawer first on
+   that width, since the groups are inside it.
    **FACT:** the header's height before opening and with the group open — **the same number
    twice**, because the wide dropdown is out of the header's flow, exactly as the narrow
    drawer's panel is — the links that appeared, the document's scroll width with the last
@@ -4226,7 +4230,10 @@ repositions the panel without displaying it takes away. **And on a device whose 
 hovers, a group's submenu opens when the pointer arrives at it with no click, stays open while
 the pointer is inside the list, closes a moment after the pointer leaves, and opens again if
 the pointer comes back inside that moment — while the same page on a touch device shows no
-hover behaviour at all and keeps its tap.** **And a click on a closed group opens it on the
+hover behaviour at all and keeps its tap.** **And the keyboard's way into a group is not the
+pointer's to give:** on a device that answers the hover query no (step 6's emulated touch
+device), Tab to a group's trigger still opens its submenu, so the links inside a closed group
+are reachable by Tab there too. **And a click on a closed group opens it on the
 first press, whether or not its trigger already held the focus** (the owner's brief of
 2026-10-18, item 1: step 6). **And a close the reader asks for from outside the menu answers
 with nothing:** the focus a reader has put inside an open group is handed back to the trigger
@@ -4255,7 +4262,9 @@ a closed group that does nothing at all, which is what a group opened by the foc
 moves and then toggled shut by the click itself looks like — or, on the pointer side of step 7,
 **the focus jumping back onto a closed group's summary** after a click on the page's own text
 dismissed it, which is what a handback that cannot tell the browser's close from the reader's
-looks like. The wide menu's
+looks like. Or, on the keyboard side of step 7, **a device that answers the hover query no
+whose menu the keyboard cannot enter** — a group whose submenu opens only when a hovering
+pointer arrives at it, which leaves the links inside it unreachable by Tab. The wide menu's
 two groups of links are *not* a
 failure: the dropdowns are D182's decision. The **structural** half of each of those is already
 refused by `website/test/base-styles.mjs` — `navLayoutFailures` holds the wide block to
