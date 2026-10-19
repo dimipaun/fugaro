@@ -330,8 +330,10 @@ test('the build refuses every shape of the owner\'s measurement its reader does 
   // page leads with, and the page prints each one as a fact about the owner's own runs. So a
   // shape the reader does not accept is refused at the build rather than half-read: a version
   // it does not know, a window or a row thinner than the site's minimum, a middle half that
-  // is not two ascending figures, two rows under one id, or a cap of nothing — each would put
-  // a figure, a sample or a ceiling on the page that nothing behind it supports.
+  // is not two ascending figures, two rows under one id, a cap of nothing, or a figure that is
+  // not a whole number of cents — each would put a figure, a sample or a ceiling on the page
+  // that nothing behind it supports, and the last would put a *rounded* one there, which is a
+  // figure neither the file nor the measurement behind it carries.
   const cases = [
     ['version: 1\n', 'version: 2\n', /version is not 1/, 'a version this reader does not know'],
     ['  runs: 980\n', '  runs: 5\n', /window\.runs is 5/, "a window thinner than the site's own minimum"],
@@ -340,6 +342,8 @@ test('the build refuses every shape of the owner\'s measurement its reader does 
     ['middle_half_usd: [0.17, 0.59]\n', 'middle_half_usd: [0.59, 0.17]\n', /the lower bound is above the upper one/, 'a middle half that descends'],
     ['  - id: review\n', '  - id: task\n', /two rows carry the id "task"/, 'two rows under one id'],
     ['per_run_cap_usd: 10\n', 'per_run_cap_usd: 0\n', /per_run_cap_usd is 0/, 'a cap of nothing'],
+    ['    median_usd: 0.36\n', '    median_usd: 0.365\n', /median_usd is 0\.365, which is not a whole number of cents/, "a figure the page prints to the cent and would have to round"],
+    ['per_run_cap_usd: 10\n', 'per_run_cap_usd: 9.999\n', /per_run_cap_usd is 9\.999, which is not a whole number of cents/, 'a cap the page prints to the cent and would have to round'],
   ]
   for (const [from, to, expected, what] of cases) {
     const built = buildWithData(t, 'typical-costs.yaml', from, to)

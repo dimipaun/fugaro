@@ -466,6 +466,25 @@ function asNumber(value: Value, file: string, what: string): number {
   return value
 }
 
+/**
+ * A figure the page prints in dollars and cents: every figure of the owner's measurement is
+ * one, and each is printed to the cent and never rounded (`money()` in the caps-and-costs
+ * guide, and `website/data/typical-costs.yaml`'s own promise that a figure is never rounded
+ * there). So a figure that is not a whole number of cents is refused here rather than rounded
+ * on the page: `0.365` would print as `$0.36`, which is a figure neither the file nor the
+ * measurement behind it carries. The tolerance is float noise on a decimal written by hand
+ * (`0.1 + 0.2`), an order of magnitude of room for a third decimal.
+ */
+function asCents(value: Value, file: string, what: string): number {
+  const figure = asNumber(value, file, what)
+  if (Math.abs(figure * 100 - Math.round(figure * 100)) > 1e-6) {
+    throw new Error(
+      `${file}: ${what} is ${figure}, which is not a whole number of cents, and the page prints every figure it carries in dollars and cents without rounding it (W1.3 step 2).`,
+    )
+  }
+  return figure
+}
+
 function asURL(value: Value, file: string, what: string): string {
   const text = asString(value, file, what)
   let url: URL
@@ -814,7 +833,7 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
 
     let middleHalfUSD: { low: number; high: number } | null = null
     if (job.middle_half_usd !== undefined) {
-      const half = asList(job.middle_half_usd, file, `${what}.middle_half_usd`).map((value, at) => asNumber(value, file, `${what}.middle_half_usd[${at}]`))
+      const half = asList(job.middle_half_usd, file, `${what}.middle_half_usd`).map((value, at) => asCents(value, file, `${what}.middle_half_usd[${at}]`))
       if (half.length !== 2) {
         throw new Error(
           `${file}: ${what}.middle_half_usd carries ${half.length} figures, and the range the middle half of the runs fell in is two: the lower and the upper bound, in that order (W1.3 step 2).`,
@@ -830,10 +849,10 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
       id,
       name: asString(job.name, file, `${what}.name`),
       runs: sample,
-      medianUSD: asNumber(job.median_usd, file, `${what}.median_usd`),
+      medianUSD: asCents(job.median_usd, file, `${what}.median_usd`),
       middleHalfUSD,
-      nineInTenUnderUSD: asNumber(job.nine_in_ten_under_usd, file, `${what}.nine_in_ten_under_usd`),
-      worstUSD: job.worst_usd === undefined ? null : asNumber(job.worst_usd, file, `${what}.worst_usd`),
+      nineInTenUnderUSD: asCents(job.nine_in_ten_under_usd, file, `${what}.nine_in_ten_under_usd`),
+      worstUSD: job.worst_usd === undefined ? null : asCents(job.worst_usd, file, `${what}.worst_usd`),
     }
   })
   if (jobs.length === 0) {
@@ -847,7 +866,7 @@ export function loadTypicalCosts(minRuns: number): TypicalCostsFacts {
     ids.add(job.id)
   }
 
-  const perRunCapUSD = asNumber(doc.per_run_cap_usd, file, 'per_run_cap_usd')
+  const perRunCapUSD = asCents(doc.per_run_cap_usd, file, 'per_run_cap_usd')
   if (perRunCapUSD <= 0) {
     throw new Error(`${file}: per_run_cap_usd is ${perRunCapUSD}, and the cap the page prints as the ceiling a looping run meets is above zero (W1.3 step 2).`)
   }

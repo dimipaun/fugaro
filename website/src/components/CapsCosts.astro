@@ -176,10 +176,12 @@ const typical = site.typicalCosts
 const costs = site.costs
 
 /**
- * A figure as a reader reads it: dollars and cents, from the value the file carries. The
- * rounding is of the *display* of a number that is already written to the cent, never of the
- * number itself — `website/data/typical-costs.yaml` carries `1` for a dollar and the page
- * prints `$1.00`, and the test holds the printed figure to the file's own value.
+ * A figure as a reader reads it: dollars and cents, from the value the file carries. This is
+ * padding and never rounding — `website/data/typical-costs.yaml` carries `1` for a dollar and
+ * the page prints `$1.00` — and the loader makes that true rather than trusting it: a figure
+ * that is not a whole number of cents is refused at the build (`asCents` in `src/content.ts`),
+ * so there is no figure here for `toFixed` to round, and the test holds the printed figure to
+ * the digits the file itself carries.
  */
 function money(value: number): string {
   return `$${value.toFixed(2)}`

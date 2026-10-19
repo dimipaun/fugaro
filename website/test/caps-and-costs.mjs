@@ -113,6 +113,24 @@
 // file's: they are shapes of the data file, and that file is where they are planted.
 // The cases here were unchanged by all three, and the page's word count is 249 of
 // D188's 250 — the note's own sentence was kept to the word the ceiling had left.
+//
+// **The second review's finding, and the red step behind the change it made.** The page
+// prints a figure to the cent with `toFixed(2)`, the loader accepted any finite number,
+// and `money()` below rounded the file's figure the same way — so a file carrying a third
+// decimal was rounded on the page and passed *both* directions of this case, against the
+// file's own promise that a figure is never rounded there. Planted, with `median_usd: 0.36`
+// written `0.365` in `website/data/typical-costs.yaml`:
+//
+//   $ node --test --test-name-pattern='renders exactly website/data/typical-costs.yaml' test/caps-and-costs.mjs
+//   ✔ the page renders exactly website/data/typical-costs.yaml, in the field each figure is for
+//   ℹ pass 1   ℹ fail 0
+//
+// — green, with the page printing `$0.36` for the file's `0.365` (`(0.365).toFixed(2)` is
+// `"0.36"`). The fix is at the source rather than at the print: `src/content.ts`'s `asCents`
+// refuses a figure that is not a whole number of cents, so `money()` in the page can only
+// pad, and the `money()` here prints the digits the file itself carries instead of rounding
+// them. With the same fixture planted the build refuses the row, which is what the change
+// to `layout.mjs`'s refusal cases holds.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -340,9 +358,21 @@ function readTypicalCosts() {
   return out
 }
 
-/** A figure as the page prints it: dollars and cents, from the value the file carries. */
+/**
+ * A figure as the page prints it: the digits `website/data/typical-costs.yaml` itself carries,
+ * padded to cents and never rounded. Padding is all the page does with them — the loader
+ * refuses a figure that is not a whole number of cents (`asCents` in `src/content.ts`), so a
+ * figure this function had to round would be one the page cannot print — and re-applying the
+ * page's own rounding here would be the gate agreeing with the defect it exists for: a file
+ * carrying `0.365` printed as `$0.36` passed both directions while this function rounded too.
+ */
 function money(value) {
-  return `$${Number(value).toFixed(2)}`
+  const [whole, fraction = ''] = String(value).trim().split('.')
+  assert.ok(
+    /^\d+$/.test(whole) && fraction.length <= 2,
+    `website/data/typical-costs.yaml carries ${value}, which is not a whole number of cents for the page to print without rounding it`,
+  )
+  return `$${whole}.${fraction.padEnd(2, '0')}`
 }
 
 /** The middle half as the page prints it: a range, or a dash where the file carries none. */
