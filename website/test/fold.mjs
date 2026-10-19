@@ -12,15 +12,21 @@
 // What a hermetic test *can* prove is the ordering and the content the fold claim rests on,
 // and that is what this file does — on the built artifact, which is what a reader receives:
 //
-//   1. **The homepage's lead is the promise and nothing else.** Between the page's `h1` and
-//      its first `h2` there is one element, and it is the lead paragraph. This is the shape
-//      P5 gave the hero: the install section's heading sits above the commands, so the
-//      promise is the whole of the text a reader meets before the first section — and so the
-//      lead ceiling in `budget.mjs` is a ceiling on the promise rather than on the commands
-//      (D188's lead is the region between the two headings, wherever each of them sits).
-//      A hero whose install block sat between the promise and the heading would put the
-//      commands, the terminal and the "every install path" link inside the lead, and the page
-//      would say nothing about the promise above them.
+//   1. **The homepage's lead is the promise and its call to action, and nothing else.**
+//      Between the page's `h1` and its first `h2` there are exactly two elements: the lead
+//      paragraph and the row of links under it. This is the shape P5 gave the hero, with the
+//      one thing the changes spec of 2026-10-18 adds to it (item 4: the promise, its primary
+//      call to action, then the picture), so the promise is the whole of the prose a reader
+//      meets before the first heading — and so the lead ceiling in `budget.mjs` is a ceiling
+//      on the promise rather than on the commands (D188's lead is the region between the two
+//      headings, wherever each of them sits). The first `h2` is the chat's own "Through your
+//      agent" — the chat is the first block under the promise (review round 5) and its
+//      heading is inside it — which is what lets that block sit directly under the promise
+//      without entering the lead region: the block the first `h2` belongs to is taken out of
+//      the region whole, so a figure that lost its heading would push the whole of itself
+//      into the lead and be refused here. A hero whose install block sat between the promise
+//      and that heading would put the commands, the chat and the "every install path" link
+//      inside the lead, and the page would say nothing about the promise above them.
 //   2. **Getting Started's first section opens with its commands.** Inside `#install`, no
 //      paragraph of the section's own precedes the first command block, and the section's
 //      own sentence is still there, after the paths. P5 moved that sentence from under the
@@ -47,10 +53,29 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, builtPages, find, parse, textOf, walk } from './lib/html.mjs'
 
-/** The elements of a built page's `main`, in document order; `null` when it has no `main`. */
+/**
+ * The elements of a built page's `main`, in document order, with `main` beside them; `null`
+ * when the page has no `main`. `main` comes back too because rule 1 needs the page's own
+ * top-level blocks: the homepage's first `h2` is the chat's own heading, and the chat's
+ * figure — its title, its turns, its caption — sits between the `h1` and that heading
+ * without being the lead.
+ */
 function elementsOf(page) {
   const main = find(parse(page.html), 'main')
-  return main === null ? null : [...walk(main)]
+  return main === null ? null : { main, els: [...walk(main)] }
+}
+
+/** True when `el` is `block` or sits inside it. */
+function within(el, block) {
+  for (let node = el; node !== null; node = node.parent) if (node === block) return true
+  return false
+}
+
+/** The direct child of `main` an element belongs to: the top-level block it is part of. */
+function blockOf(el, main) {
+  let node = el
+  while (node.parent !== null && node.parent !== main) node = node.parent
+  return node
 }
 
 /**
@@ -66,8 +91,9 @@ export function foldFailures(dist) {
   const out = []
 
   for (const page of builtPages(dist)) {
-    const els = elementsOf(page)
-    if (els === null) continue
+    const read = elementsOf(page)
+    if (read === null) continue
+    const { main, els } = read
 
     const firstH2 = els.findIndex((el) => el.name === 'h2')
     const firstPre = els.findIndex((el) => el.name === 'pre')
@@ -80,18 +106,31 @@ export function foldFailures(dist) {
       )
     }
 
-    // Rule 1: the lead region of the homepage is the promise, and nothing else.
+    // Rule 1: the lead region of the homepage is the promise and its call to action, and
+    // nothing else.
     if (page.url === '/') {
       const h1 = els.findIndex((el) => el.name === 'h1')
       if (h1 !== -1 && firstH2 !== -1) {
-        const lead = els.slice(h1 + 1, firstH2)
-        const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : '')).join(', ')
-        if (shape !== 'p.hero-lead') {
+        // The region between the `h1` and the first `h2`, with the elements of the block that
+        // `h2` belongs to taken out. On the homepage that heading is the chat's own title, so
+        // the figure, its turns, its caption and the watch block under them all sit between
+        // the `h1` and it: they are the illustration the page puts directly under the promise
+        // (review round 5), and none of them is the lead.
+        const owner = blockOf(els[firstH2], main)
+        const lead = els.slice(h1 + 1, firstH2).filter((el) => !within(el, owner))
+        const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : ''))
+        // What the lead region may hold: the promise, the row of links under it, and the
+        // links in that row — nothing else. A `figure`, an `ol`, a `pre` or a section's own
+        // paragraph is what the refusal below is about, and the first of them is named in it.
+        const allowed = ['p.hero-lead', 'p.hero-actions', 'a.hero-cta', 'a.hero-cta-quiet']
+        const foreign = shape.filter((element) => !allowed.includes(element))
+        if (foreign.length > 0) {
           out.push(
-            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape}): the promise is the whole of the page's gist above the fold, so the install block, the terminal and the link after them belong to the section the heading opens (P5, D188)`,
+            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape.join(', ')}), and ${JSON.stringify(foreign[0])} is not the promise or its call to action: the lead paragraph and the one link under it are the whole of the page's gist above the fold, so the diagram, the chat and the install block belong below it (changes spec 2026-10-18, item 4; P5, D188)`,
           )
         }
-        if (lead.length === 1 && textOf(lead[0]).trim() === '') {
+        const promise = lead.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-lead'))
+        if (promise !== undefined && textOf(promise).trim() === '') {
           out.push(`${page.rel} opens with an empty lead paragraph: the page's gist above the fold is its tagline and nothing else (P5, RF5)`)
         }
       } else if (h1 !== -1) {
@@ -157,9 +196,12 @@ test('each rule refuses the ordering it is about, and passes the page that keeps
   // that keeps every one of them: the gate has to report each defect and leave the good page
   // alone, or it is a gate whose refusals have never been seen to fire.
   const dist = distOf(t, {
-    // The homepage with its install block above the section heading: the command is in the
-    // lead, and above the heading that names it (rules 1 and 3).
-    'index.html': page('<h1>t</h1><p class="hero-lead">the promise</p><pre>brew install fugaro</pre><h2>Install</h2>'),
+    // The homepage with its install block above the section heading: the promise and its call
+    // to action are the lead, and the command is neither — it is in the lead region and above
+    // the heading that names it (rules 1 and 3).
+    'index.html': page(
+      '<h1>t</h1><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a></p><pre>brew install fugaro</pre><h2>Install</h2>',
+    ),
     // The install section with a sentence about itself under its heading, before the paths
     // (rule 2, the ordering P5 changed). Its own closing sentence is there as well, so the
     // one failure this page earns is the ordering and not the other half of the rule.
@@ -178,7 +220,10 @@ test('each rule refuses the ordering it is about, and passes the page that keeps
 
   assert.equal(of('index.html').length, 2, `the homepage's two broken rules are not both reported:\n${failures.join('\n')}`)
   assert.match(of('index.html')[0], /prints a command before its first `h2`/)
-  assert.match(of('index.html')[1], /holds 2 element\(s\) between its `h1` and its first `h2` \(p\.hero-lead, pre\)/)
+  assert.match(
+    of('index.html')[1],
+    /holds 4 element\(s\) between its `h1` and its first `h2` \(p\.hero-lead, p\.hero-actions, a\.hero-cta, pre\), and "pre" is not the promise or its call to action/,
+  )
 
   assert.equal(of('getting-started/index.html').length, 1, `the install section's broken ordering is not reported:\n${failures.join('\n')}`)
   assert.match(of('getting-started/index.html')[0], /opens with a sentence of its own before its first command/)
@@ -202,6 +247,22 @@ test('a page that drops the install section\'s own sentence is refused too', (t)
 
   assert.equal(failures.length, 1, failures.join('\n'))
   assert.match(failures[0], /carries no sentence of its own after the commands/)
+})
+
+test('the promise and its call to action above the fold are enough, and nothing else is', (t) => {
+  // The shape the changes spec of 2026-10-18 asks for (item 4: the promise, its call to
+  // action, then the picture), on its own: the lead region holds the promise and the row of
+  // links, the first `h2` opens the block below it — the chat's own title, on the homepage as
+  // it now stands — and the gate passes it. The
+  // case beside this one plants the same page with a command block added, so the two together
+  // are what makes "the call to action is allowed and the command is not" a checked rule
+  // rather than a description of today's markup.
+  const dist = distOf(t, {
+    'index.html': page(
+      '<h1>t</h1><p class="hero-lead">the promise</p><p class="hero-actions"><a class="hero-cta" href="/getting-started/">Get started</a><a class="hero-cta-quiet" href="/how-it-works/">How it works</a></p><div class="home-chat"><figure class="chat"><h2 class="chat-title">Through your agent</h2></figure></div>',
+    ),
+  })
+  assert.deepEqual(foldFailures(dist), [], 'a homepage that keeps the promise and its call to action as its whole lead region was refused')
 })
 
 test('a homepage with an empty lead, or with no section after its h1, is refused', (t) => {

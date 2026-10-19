@@ -8,8 +8,10 @@
 // script to be able to drive it:
 //
 //   - **Every command carries exactly one control.** A command is a `<pre>` (an install
-//     block, a code block of the rendered CLI reference, the terminal's own line) or a
-//     `code.usage` (the caps guide's usage lines, which are commands but not `<pre>`).
+//     block, a code block of the rendered CLI reference, the hero's `fugaro watch` snippet)
+//     or a `code.usage` (the caps guide's usage lines, which are commands but not `<pre>`).
+//     A line the reader did not type — the agent's launch in the hero's chat — is not a
+//     command block at all and carries none (changes spec of 2026-10-18, item 3).
 //   - **The control is in the markup, `hidden`, and the command is too.** This is D183's
 //     "no broken control": the control is emitted hidden and the script reveals it, so a
 //     reader whose browser runs no script — or whose browser has no clipboard to write to —
@@ -21,10 +23,11 @@
 //     screen-reader user cannot find by the word they can see (WCAG 2.5.3). The name is
 //     resolved the way a browser resolves one — `aria-label`, then `aria-labelledby`, then the
 //     button's text — which is also how `website/test/a11y.mjs` resolves the first two.
-//   - **What the script would copy is the command it sits on.** The script copies the
-//     block's `[data-copy-source]` when there is one and its first `pre`/`code` otherwise,
-//     so that is what this file resolves — for every block, not only for the terminal that
-//     marks its own source.
+//   - **What the script would copy is the command it sits on.** The script copies the block's
+//     first `pre`/`code` — the element the command is written in — so that is what this file
+//     resolves, for every block and for every page. There is no marker for a block to name a
+//     source of its own: every command the site prints is the whole of what its block copies,
+//     and decoration drawn beside a command (a prompt) is what this file refuses below.
 //
 // Every refusal below is a fixture, run on every check: the rule is only worth stating if
 // the check that enforces it refuses the defect it names. `FUGARO_GATES_DIST` points the
@@ -84,8 +87,7 @@ function nameOf(el, byId) {
 
 /** The element the script would copy out of a block, by the rule it uses. */
 function sourceOf(block) {
-  const inside = [...walk(block)]
-  return inside.find((el) => el.attrs.has('data-copy-source')) ?? inside.find((el) => el.name === 'pre' || el.name === 'code') ?? null
+  return [...walk(block)].find((el) => el.name === 'pre' || el.name === 'code') ?? null
 }
 
 /** A node's text with the layout taken out of it, which is how two renderings compare. */
@@ -172,17 +174,16 @@ export function copyFailures(html, rel) {
     if (text === '') {
       fail('a command block holds no text: the command is in the markup in full, and a block whose text is somewhere else is one the script copies empty')
     } else if (!source || !text.includes(words(source))) {
-      fail(`the copy control would copy ${JSON.stringify(source ? words(source).slice(0, 60) : '')}, which is not part of the command it sits on (${JSON.stringify(text.slice(0, 60))}): the script copies the block's [data-copy-source] or its first pre/code, and the control has to be on the command it copies`)
+      fail(`the copy control would copy ${JSON.stringify(source ? words(source).slice(0, 60) : '')}, which is not part of the command it sits on (${JSON.stringify(text.slice(0, 60))}): the script copies the block's first pre/code, and the control has to be on the command it copies`)
     }
-    // And nothing inside what it copies may be decoration either: the terminal's `$` prompt
-    // is aria-hidden drawing, and a source that holds it — the terminal's `<pre>` when the
-    // command loses its own marker — puts the prompt, and every line after the command, on
-    // the clipboard.
+    // And nothing inside what it copies may be decoration either: the copied element is the
+    // command, so a prompt drawn beside one would go on the clipboard with it — and every line
+    // after the command too, if the prompt shares the block's `<pre>`.
     if (source && [...walk(source)].some((el) => el.attrs.get('aria-hidden') === 'true' && textOf(el).trim() !== '')) {
-      fail(`the copy control copies ${JSON.stringify(words(source).slice(0, 60))}, which holds decoration the page marks aria-hidden (a prompt): mark the command itself with data-copy-source`)
+      fail(`the copy control copies ${JSON.stringify(words(source).slice(0, 60))}, which holds decoration the page marks aria-hidden (a prompt): what the block copies is the command, so the decoration belongs outside the block the control sits on`)
     }
     if (source && ariaHidden(source)) {
-      fail('the copy control copies text inside aria-hidden: the script puts that text on the clipboard, and the page tells a screen reader it is decoration — the terminal marks the `$` prompt this way, and the source is the command beside it rather than the prompt')
+      fail('the copy control copies text inside aria-hidden: the script puts that text on the clipboard, and the page tells a screen reader it is decoration — a prompt beside a command is marked this way, and the source is the command beside it rather than the prompt')
     }
 
     // Nothing here may be inside aria-hidden: the keyboard reaches what a screen reader
@@ -278,8 +279,9 @@ test('every copy-control refusal fires on the defect it names', () => {
     ['a status that interrupts', page(block({ status: ' aria-live="assertive"' })), /announced politely/],
     ['no status line at all', page(block().replace('<span class="copy-status" data-copy-status role="status" aria-live="polite"></span>', '')), /holds 0 status lines/],
     ['a control inside aria-hidden', page(block().replace('<div class="command-block" data-copy>', '<div class="command-block" data-copy aria-hidden="true">')), /inside aria-hidden/],
-    ['a control that copies decoration', page(block({ command: '<pre><code><span aria-hidden="true">$ </span><span aria-hidden="true" data-copy-source>fugaro run</span></code></pre>' })), /copies text inside aria-hidden/],
-    ['a block whose control copies something else', page(block({ command: '<pre><code>fugaro run</code></pre><span data-copy-source>a different command</span>' })), /is not part of the command it sits on/],
+    ['a control that copies decoration', page(block({ command: '<pre><code><span aria-hidden="true">$ </span>fugaro run</code></pre>' })), /holds decoration the page marks aria-hidden/],
+    ['a command the page tells a screen reader is not there', page(block().replace('<pre>', '<pre aria-hidden="true">')), /copies text inside aria-hidden/],
+    ['a block whose first code element is not its command', page(block({ command: '<code>a stray span</code><pre><code>fugaro run</code></pre>' })), /is not part of the command it sits on/],
   ]
   for (const [what, html, expected] of cases) {
     const failures = failuresOf(html)
@@ -287,28 +289,27 @@ test('every copy-control refusal fires on the defect it names', () => {
   }
 })
 
-test('the terminal copies its command and not the prompt drawn beside it', () => {
-  // The one block that marks its own source. The `$` prompt and the caret are decoration the
-  // page marks `aria-hidden`, so the script's fallback — the block's first `pre`/`code` —
-  // would put the prompt on the clipboard and the marker is what keeps it off.
-  const terminal = (source = ' data-copy-source') =>
-    page(
-      `<div class="terminal" data-copy><div class="terminal-chrome"><div class="terminal-dots" aria-hidden="true"><span class="terminal-dot"></span></div><div class="command-controls"><span class="copy-status" data-copy-status role="status" aria-live="polite"></span><button type="button" class="copy-button" data-copy-button aria-label="Copy the command" hidden>Copy</button></div></div><pre class="terminal-body"><code><span class="terminal-prompt" aria-hidden="true">$ </span><span class="terminal-command"${source}>fugaro run "add a flag"</span><span class="terminal-caret" aria-hidden="true"></span></code></pre></div>`,
-    )
+test('the homepage offers `fugaro watch` in one block with one control, and the agent\'s launch in none', () => {
+  // Item 3's shape, held on the built page rather than on a fixture: the homepage's one
+  // command block besides the install paths is the watch snippet, and the agent's launch — a
+  // status line the reader did not type — is a paragraph in the chat, in no block and with no
+  // control. A page that wrapped the launch in a `[data-copy]` block would be offering the
+  // reader a command they never ran, which is the defect this case is here for. (The block is
+  // `chat-watch` and the launch is `turn-status`: item 3 asks for the launch as "a subtle
+  // tool-call / status line", so it is not a command block at all.)
+  const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const page = parse(html)
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  const watch = [...walk(page)].find((el) => classes(el).includes('chat-watch'))
+  assert.ok(watch, 'the homepage carries no watch snippet block, and the hero offers `fugaro watch` as its one command besides the install paths (changes spec 2026-10-18, item 3)')
+  assert.ok(watch.attrs.has('data-copy'), 'the watch snippet is in no [data-copy] block')
+  assert.equal(words(sourceOf(watch)), 'fugaro watch', `the watch block's control would copy ${JSON.stringify(words(sourceOf(watch)))}, and the block holds the command and nothing else`)
+  assert.deepEqual(failuresOf(html), [], 'the built homepage breaks the copy control\'s rule')
 
-  // As the component writes it, the block passes — and what the script resolves is the command
-  // span, not the `<pre>` that holds the prompt.
-  assert.deepEqual(failuresOf(terminal()), [])
-  const block_ = [...walk(parse(terminal()))].find((el) => el.attrs.has('data-copy'))
-  assert.equal(sourceOf(block_).attrs.get('class'), 'terminal-command')
-
-  // Without the marker the fallback is the `<pre>`, whose text includes the prompt: that is a
-  // real difference in what a reader gets, so the check has to see it. It refuses the variant
-  // below, where the marker sits on the decoration instead of beside it.
-  assert.match(failuresOf(terminal(' data-copy-source aria-hidden="true"')).join('\n'), /copies text inside aria-hidden/)
-  // And the variant the comment above is about: no marker at all, so the fallback copies the
-  // `<pre>` — prompt and all.
-  assert.match(failuresOf(terminal('')).join('\n'), /holds decoration the page marks aria-hidden/)
+  const status = [...walk(page)].find((el) => classes(el).includes('turn-status'))
+  assert.ok(status, "the homepage chat carries no status line, and the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)")
+  assert.equal(blockOf(status), null, "the agent's launch is inside a [data-copy] block, and the reader did not type it: the homepage offers `fugaro watch` to copy, not the launch (changes spec 2026-10-18, item 3)")
+  assert.deepEqual([...walk(status)].filter((el) => el.attrs.has('data-copy-button')), [], "the agent's launch carries a copy control of its own (changes spec 2026-10-18, item 3)")
 })
 
 // ---- the script itself (P3, P6, D183) -----------------------------------------------------
@@ -621,7 +622,7 @@ test('site.js reveals every control and copies exactly the command each one sits
     for (const block of blocks) {
       const button = block.querySelector('[data-copy-button]')
       assert.equal(button.hidden, false, `${rel}: site.js left a copy control hidden on a browser with a clipboard`)
-      const command = block.querySelector('[data-copy-source]') ?? block.querySelector('pre, code')
+      const command = block.querySelector('pre, code')
       const before = page.written.length
       button.dispatch('click')
       await flush()
@@ -635,12 +636,15 @@ test('site.js reveals every control and copies exactly the command each one sits
       assert.equal(block.querySelector('[data-copy-status]').textContent, 'Copied', `${rel}: a copy that happened was not announced`)
     }
     if (rel === 'index.html') {
-      const terminal = page.find('.terminal')[0]
-      terminal.querySelector('[data-copy-button]').dispatch('click')
+      // The hero's one command besides the install paths, clicked the way a reader clicks it
+      // (changes spec 2026-10-18, item 3): what lands on the clipboard is the command, and it
+      // is a command README.md prints.
+      const watch = page.find('.chat-watch')[0]
+      watch.querySelector('[data-copy-button]').dispatch('click')
       await flush()
       const copied = page.written.at(-1)
-      assert.match(copied, /^fugaro run /, `the terminal's control copied ${JSON.stringify(copied)}: it copies the invocation, not the prompt or the transcript under it`)
-      assert.ok(readme.includes(copied), `the terminal's control copied ${JSON.stringify(copied)}, which is not the command README.md prints`)
+      assert.equal(copied, 'fugaro watch', `the watch snippet's control copied ${JSON.stringify(copied)}: it copies the command the reader is asked to run, not the note beside it`)
+      assert.ok(readme.includes(copied), `the watch snippet's control copied ${JSON.stringify(copied)}, which is not the command README.md prints`)
     }
   }
   assert.ok(pages >= 3, `site.js ran on ${pages} pages with commands; finding 13 measured three`)
