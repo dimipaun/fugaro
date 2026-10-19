@@ -13,6 +13,7 @@ const client = createMailboxClient({
   account,                    // D114's tuple: { id, firebaseProjectId, authUid, fugaroProject }
   keys,                       // a SecretStore (the Keychain port)
   store,                      // { write(path, value), read(path) } -- the database, behind a port
+  connection,                 // { isOnline() } -- the SDK's own "would this be sent" flag (P6.10)
   speaker,                    // { speak(text) } -- P3.4's seam (see "The audio stub" below)
   now,                        // D117's server-anchored now, in ms
   newId,                      // a fresh message id per call
@@ -210,6 +211,81 @@ that repeats one silently loses the second utterance. That is a real limit, not
 a footnote: the app's id source is D117/P3.2's, and this is the contract it must
 meet.
 
+## The offline gate (P6.10; D167, G21)
+
+The SDK queues a write made while the device is offline and sends it on
+reconnect. That is the hazard the functional-spec reconciliation names **G21**
+-- "accepting messages into the void": a command spoken in a tunnel runs an hour
+later, or arrives past the consumer's replay window and is refused silently --
+and **D167** (the owner's, 2026-10-17) is that the app **never relies on that
+queue**. `gate.js` is the decision; this file is what it does with it.
+
+```js
+connection.setOnline(false);
+await client.send('cancel the docs refactor');
+// { ok: false, code: 'no-connection', field: 'connection',
+//   message: 'No connection. I have not sent that.', told: true }
+client.unsent();   // [{ text: 'cancel the docs refactor', at: …, code: 'no-connection' }]
+client.pending();  // [] -- nothing was queued
+```
+
+**Three rules, and each has its own test.**
+
+* **Nothing is written, and the owner is told.** `send`, `flush` and `poll` ask
+  the connection gate **before** any read, write, key read or speak, so nothing
+  reaches the SDK and nothing reaches its queue. The refusal carries the code,
+  the field, the sentence and whether it was spoken (`told`); the sentence comes
+  from `OFFLINE_SPEECH`, one table, so this module and the screens that render
+  it cannot end up saying two different things about one reason.
+* **`send` asks the presence gate too**, over the **last poll's heartbeat,
+  re-judged at the moment the owner speaks** -- not the verdict the poll
+  computed. A consumer that was live five minutes ago and has gone quiet since
+  is `stale` now, and the sentence is refused. `flush` and `poll` deliberately
+  do **not** ask it: presence is what a poll *observes*, and refusing to look
+  until the observation is good is a circle. Re-delivering a record already in
+  the outbox is not the hazard -- P1.1's ledger answers it as a duplicate, and
+  its window refuses it if it is too old.
+* **An action record is never queued.** `send(text, { action })` writes D169's
+  record once and forgets it: it is not in `outbound`, so `flush` cannot re-send
+  it, `pending()` cannot offer it and `unsent()` does not keep its text. A write
+  that did not land is reported and dropped; the owner confirms again (P6.2),
+  which is a new action id and a new confirmation, not a silent retry.
+
+**Where the presence half of the gate comes from.** `poll()` is the only thing
+in the app that looks at the heartbeat, and it leaves the **raw look** behind
+(the read's result, the validated heartbeat and the tag verdict), not the
+presence it produced. `send` re-runs `presenceOf` over it with the current time,
+which is why a stale consumer is caught by an ordinary send and not only by a
+`poll` that happens to be in flight.
+
+**An action that is gated offline is refused and NOT kept** -- the two rules meet
+there: nothing is written, and there is no unsent text either, because resending
+a destructive command means confirming it again.
+
+## The one limit of the gate, named
+
+**A phone that has never polled has observed nothing, and the gate lets it
+send.** D167's two conditions are "no connection" and "the consumer stale or
+offline"; `presence === null` is neither of them -- it is the absence of an
+observation, and inventing a refusal from it would leave a freshly paired phone
+unable to say its first sentence. The gate is a gate on what the phone has
+**seen**. The residual risk is bounded by things that already exist and not by
+this module's judgement: the consumer's own replay window (P1.1, six hours for a
+command, D173) refuses a record that arrives late, and D118's 72-hour mailbox
+retention bounds what is stored at all. A phone that has polled once and seen
+its consumer go quiet is refused from then on, which is the case the plan's
+wording is about.
+
+**What the gate cannot do, and does not claim to do.** It is an observation of
+the connection and of the heartbeat, not a lock. A connection that drops between
+the gate and the write is a write the SDK will hold -- there is no port method
+that could see that, and the plan's own wording is "pending writes are cancelled
+**or never issued**": this module takes the second half, by never issuing. The
+alternative -- a `cancelPending()` on the database port, and the client calling
+it before every write -- would widen P3.6's two-method port to guard against a
+race it cannot detect anyway, and `store.js` keeps the SDK's cancel on the double
+(`cancelPending`, tested) precisely to show what is NOT being relied on.
+
 ## Two known limits, named rather than left to be found
 
 **The phone does not check how old a message in its outbox is.** A message that
@@ -289,7 +365,7 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 34 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 51 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -339,6 +415,23 @@ than a claim.
 | a P1.4 refusal is handed out as the reason (`state.code`) | `a signed heartbeat P1.4 will not judge is offline for this module's own reason` |
 | the double's ack is classified by suffix alone (in `store.js`) | `only a message's own `acked` child is an ack: an id of `acked` is a message` -- and, run against `client.test.js`, `a message whose id is `acked` is a message in both directions` |
 | the leak fence treats any occurrence as a leak (in `secure-store.js`) | `the fence catches the material coming out, not its characters coinciding` -- and, run against `client.test.js`, `a pairing key short enough to turn up inside its own tag still speaks` |
+| **The offline gate (P6.10)** | |
+| the connection gate in `send` is asked at all | `with no connection nothing is written, and the owner is told why` |
+| `send` judges the last poll's heartbeat again, at the time the owner speaks | `a consumer that has gone quiet since the last poll refuses the sentence` |
+| the poll keeps its observation for the gate | the same test |
+| the refusal speaks the sentence (the owner is TOLD) | `with no connection nothing is written, and the owner is told why` |
+| a gated utterance is kept as unsent text | the same test |
+| a gated ACTION is not kept as unsent text | `a gated action is not kept as unsent text either` |
+| an action record is recognised as one | `an action record is written once and never queued` |
+| an action that landed is not put in the outbox queue | the same test |
+| an action whose write failed is not kept for a retry | `an action whose write did not land is dropped, not retried` |
+| `flush` writes nothing with no connection | `flush writes nothing while the connection is down, and keeps what it has` |
+| `poll` does nothing at all with no connection | `an offline poll does nothing at all, and hears nothing` |
+| a connection that is not `true` is offline (in `gate.js`) | `no connection refuses whatever the consumer looks like` |
+| a live consumer must be a VERIFIED one (in `gate.js`) | `a presence that is not evidence of a live consumer refuses` |
+| an unobserved consumer is not a refusal (in `gate.js`) | `a connected phone with nothing observed may send` |
+| a clock that disagrees is its own reason, not offline's (in `gate.js`) | `a live, verified consumer may be sent to, and nothing else may` |
+| the store's SDK holds a write made with no connection (in `store.js`) | `a write made with no connection is held, not refused, and not stored` -- and, run against `client.test.js`, `the client never relies on the SDK's offline queue: nothing is ever issued` |
 
 Two of those mutations **survived** when the proof was first run, and both were
 fixed rather than argued away -- the two guards had no test that could tell them
@@ -360,7 +453,9 @@ from their absence:
   double (`store.js`), which models the two rules that a re-send meets
   (`!data.exists()` on a message, `data.parent().exists()` on the ack, at the
   one position the template has that rule -- `outbox/$msg/acked`, so an id of
-  `acked` is an ordinary message) and
+  `acked` is an ordinary message) and, since P6.10, the SDK's **offline write
+  queue** (`setOffline`, `pendingWrites`, `flushQueue`, `cancelPending`), which
+  is not a rule of the tree at all but a behaviour of the client library -- and
   nothing else -- no auth, no durability, no listeners, no quota. The deployed
   rules are checks **81/82**, owner-run, and none of them is run here.
 * **The template does not accept `mac` yet, and that is P6.4's task.** This
@@ -377,9 +472,12 @@ from their absence:
   before the rules refuse the write. `store.js`'s double deliberately does not
   model a field allow-list: the shape is the schema's rule, and P6.3's tests
   hold it.
-* **The Realtime Database adapter does not exist yet.** `store.js` is the port
-  and its double; the SDK adapter is `mobile/index.js`'s wiring (P3.2's and
-  P6.10's territory), and there is no test for it because there is no file.
+* **The Realtime Database adapter does not exist yet, and neither does the
+  connection's.** `store.js` is the port and its double, and `connection.js` is
+  the second port P6.10 adds; both real adapters are `mobile/index.js`'s wiring,
+  and there is no test for either because there is no file. What the connection
+  adapter owes is stated in `connection.js`: it must be the SDK's own "would this
+  write be sent" flag, and not a second opinion from the network stack.
 * **Metro, and the `shared/` imports.** This directory imports
   `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
   and `../../../shared/digest/redact.js` -- the app's own modules and the shared
@@ -399,9 +497,13 @@ from their absence:
 * **P3.4's audio and P3.5's voice screen are not here.** `speaker.js` is the
   stub described above -- the interface P3.6 needs and no more. Nothing in this
   directory records audio, transcribes, or decides when to speak.
-* **The rendering.** `pending()` is D167's unsent text for a screen to show;
-  the text screen (P6.9) and the offline gate (P6.10) are later tasks, and
-  nothing here draws anything.
+* **The rendering.** `pending()` (what the outbox has not answered) and
+  `unsent()` (what the offline gate refused, D167's "unsent text the user can
+  resend") are what a screen shows. The text screen (**P6.9**) and the voice
+  screen's offline state (**P3.5**, **P6.12**) are other tasks; nothing here
+  draws anything. What the gate DOES give them is the sentence, in
+  `OFFLINE_SPEECH`/`offlineSpeech`, so that a screen says the same thing the
+  phone said out loud.
 * **The key's own handling on a device.** That `expo-secure-store` returns the
   item, that the Keychain is locked when the app is backgrounded, and that a
   read fails then, are P3.1's port and P3.1's tests; here the key arrives
