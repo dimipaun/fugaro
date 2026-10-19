@@ -43,6 +43,15 @@ heartbeat is the orchestrator's write and this client only reads it.
 `client.test.js` asserts the whole write set of a mixed scenario against this
 table, rather than asserting each call's path on its own.
 
+**The claim is enforced, not only observed** (the PR #604 review asked for
+this). `write-path.test.js` is a scan over the app's source in the style of
+P3.1's `src/boundary.test.js`: no file but `client.js` may call the store's
+`write`, no file but the entry may import a `firebase` module or name a path
+through `.ref(`, each rule has a positive control in real code and a control
+that the allow-list is not vacuous. A second write path added by P3.2 or P3.3
+-- the tasks that bring the real adapter -- fails this file rather than
+review.
+
 ## What every message carries
 
 `{ id, sender, text, at, mac }` -- and nothing else. The text is **redacted
@@ -66,6 +75,20 @@ write, report, refusal or pending entry contains the key.
 an unreadable one (`key-unreadable`), `send` refuses *before* the store is
 called: the test asserts the store's write log is empty, not merely that the
 write failed.
+
+**A text nobody can sign is not a key problem** (the PR #604 review's finding).
+`canonicalBytes` throws for the characters the two languages spell differently
+-- U+2028 and U+2029, which Go's encoder escapes and JavaScript's does not, and
+an unpaired surrogate -- so no tag can be computed for them at all. Inside the
+key's callback that throw is indistinguishable from a Keychain that would not
+open, and the owner would be sent to re-pair over a character in their own
+sentence. `send` therefore asks `canonicalBytes` **before the key is touched**
+and refuses with `unsignable` and the field it is about; the test asserts the
+key was never asked for, nothing was written, and no id was recorded as used.
+The neighbouring case is the schema's and keeps the schema's code: a control
+character (U+0007, DEL) *is* signable, so the tag is made and
+`validateMessage` refuses the record as `bad-character`, which is the reason
+the sentence cannot be sent.
 
 ## What it verifies before it speaks
 
@@ -139,6 +162,36 @@ that repeats one silently loses the second utterance. That is a real limit, not
 a footnote: the app's id source is D117/P3.2's, and this is the contract it must
 meet.
 
+## Two known limits, named rather than left to be found
+
+**The phone does not check how old a message in its outbox is.** A message that
+verifies under the pairing's key is spoken whenever it arrives, whatever its
+`at` says -- a correctly signed outbox record stamped a year ago is read out
+(probed, not assumed, in the PR #604 review). The client does not drop it, and
+that is a decision rather than an oversight: `at` is D117's server-anchored
+time and P1.1's ledger is the authority on what is too old to act on (its TTL,
+the same 72 h O5 number as `MAILBOX_TTL_MS`), so a second window here would be a
+second rule the consumer does not share, refusing messages the consumer would
+still act on. **What a replay actually requires is the consumer's identity**:
+P2.1's template lets only `CONSUMER` write `outbox`, and only with
+`!data.exists()`, so a message cannot be planted or re-planted there by anyone
+who can read the phone's mailbox. If the owner wants the age rule on this side
+as well, it is a small change (drop an outbox message older than
+`MAILBOX_TTL_MS`) and it belongs to whoever owns D118's window next.
+
+**`acked` is outside the signed bytes** (P6.3/D171: `canonicalBytes` omits
+`mac` and `acked`, and the phone reads `acked: true` as "I have already spoken
+this"). The rules grant that one boolean child to the mailbox's own writer, so
+anyone who can mint a token for this uid -- the launcher, which by D114's design
+holds the same operator identity -- can pre-ack a genuine message and the phone
+will never speak it. **That is a limit of the design, and it is the shallow one
+on purpose**: pre-acking *hides* a message; it cannot make the phone act, speak
+a sentence of the attacker's, or make the consumer do anything, because every
+record the phone reads is verified under the pairing's key and every write it
+makes is signed by it. The alternative -- putting `acked` inside the tag -- is
+not available: the ack is written after the tag was made, and a launcher that
+could not ack could not release a prompt either.
+
 ## The audio stub (P3.4 is not merged)
 
 P3.4 (`mobile/src/audio/`, the AudioIn/STT/TTS interfaces and their fakes, PR
@@ -168,11 +221,14 @@ P3.6 is the task that needed it; the PR says so.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 15 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 20 guards, one planted bug each
 ```
 
-Every mutation disables exactly one guard in `client.js` and must make
-`client.test.js` fail. It finds a working node rather than assuming one (this
+Every mutation disables exactly one guard and must make that guard's own suite
+fail: `client.js` and `client.test.js` for most of them, and -- since the fix
+round for PR #604 -- `mac.js` with `mac.test.js` (the tag comparison) and
+`src/app/root.js` with `write-path.test.js` (the one-write-path scan), each
+mutation naming its file and its suite. It finds a working node rather than assuming one (this
 repository's base image keeps node off PATH), runs a positive control (the
 pristine suite passes, over tests that ran) and a negative control (a `refuse()`
 that always succeeds must be caught) before any verdict is trusted, and asserts
@@ -197,6 +253,11 @@ than a claim.
 | the `spoken` set stops suppressing a second speak | `an ack that did not land is retried, and the message is not spoken a second time` |
 | the `acked === true` guard drops | `a message this phone acked in an earlier run is not spoken again after a restart` |
 | the queue is bypassed (`serial` calls the pass directly) | `two polls in flight together speak the message once, not twice` |
+| the pre-key `unsignable` check drops | `a text nobody can sign is refused as unsignable, and never as key-unreadable` |
+| the schema validation before the write drops | `a control character is refused with the schema's reason, and nothing is written` |
+| a `raw` write function is added to the client object | `the client object is exactly its six names, and nothing else is on it` |
+| `sameTag` compares only the first eight hex characters (in `mac.js`) | `a tag that differs only past the eighth character is refused too` |
+| a second write path is planted in `src/app/root.js` | the three rules of `write-path.test.js` |
 
 Two of those mutations **survived** when the proof was first run, and both were
 fixed rather than argued away -- the two guards had no test that could tell them

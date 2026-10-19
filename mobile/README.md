@@ -46,14 +46,14 @@ module plugged in by `index.js` at the bottom of the tree.
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
-| `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
+| `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
 
 ## The mailbox client, and the app's write set
 
 `src/mailbox/` is where the app talks to the database, and it is the only place
-that does (`src/mailbox/README.md` has the rule sheet). Two things about it
+that does (`src/mailbox/README.md` has the rule sheet). Three things about it
 belong in this file:
 
 * **The app's write set is exactly two paths** (D113): its own inbox message
@@ -63,6 +63,11 @@ belong in this file:
   per-pairing MAC key, and every record it reads -- outbox messages and the
   heartbeat -- is verified against that key before a word is spoken or an ack
   is written.
+* **The one-write-path claim is enforced by a scan.** `src/mailbox/write-path.test.js`
+  (P3.1's `src/boundary.test.js` shape) fails if any file but
+  `src/mailbox/client.js` calls the store's `write`, if any file but `index.js`
+  imports a `firebase` module or names a path through `.ref(` — so P3.2 and
+  P3.3 cannot bring a second write set in with the real adapter.
 * **One pass at a time.** `send`, `flush` and `poll` share a queue: an ack is
   written only after the message was spoken, so two passes in flight together
   would both speak it, and a screen that polls on a timer and on a reconnect
@@ -236,6 +241,12 @@ a class rather than as an incident:**
   is a statement about this code, not about a phone. No iOS bundle identifier or
   Android package is committed: those are the owner's, and they differ per
   installation (D125).
+* **The two limits the module names.** `src/mailbox/README.md` records them with
+  their decisions: the phone does not check how old an outbox message is (a
+  signed one with an old `at` is spoken; a replay needs the consumer's identity,
+  which the rules require), and `acked` is outside the tag (P6.3/D171), so a
+  token minted for this uid could pre-ack a genuine message -- which hides a
+  message and cannot make anything act.
 * **The mailbox against a real database, and its deployed rules.** P3.6's client
   is tested against the port's double, which models the two rules a re-send
   meets and nothing else: no auth, no listeners, no quota, no project. Checks

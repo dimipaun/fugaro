@@ -198,7 +198,7 @@ killed=0
 run "the fresh-id guard (an id already minted is refused)" \
   "    if (minted.has(id)) return refuse(CLIENT_CODES.ID_CONFLICT, 'newId');" ""
 run "the direction the phone signs for" \
-  "const tag = await withKey((key) => macOf(base, key, 'inbox'));" \
+  "const tag = await withKey((key) => macOf(base, key, WRITE_DIRECTION));" \
   "const tag = await withKey((key) => macOf(base, key, 'outbox'));"
 run "the tag is the keyed one, not a placeholder" \
   "    const record = Object.freeze({ ...base, mac: tag.result });" \
@@ -273,4 +273,4 @@ if [ "$survivors" -ne 0 ] || [ "$unapplied" -ne 0 ] || [ "$killed" -ne "$guards"
   echo "FAILED: a guard above is not proved by any test" >&2
   exit 1
 fi
-echo "OK: every guard in client.js is killed by a test in client.test.js"
+echo "OK: every guard is killed by a test in its own suite"
