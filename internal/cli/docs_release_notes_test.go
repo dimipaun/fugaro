@@ -2,25 +2,34 @@ package cli
 
 import (
 	"os"
+	"os/exec"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/watch"
+	"github.com/spf13/cobra"
 )
 
 // The release notes of 0.9.0 (docs/releases/v0.9.0.md) are the Highlights the
 // release page publishes, and they are the one document nothing else in the
 // tree reads: a claim in them that the tree does not hold is a claim no
 // compiler, no schema and no other test can catch, and the file is written
-// once, before the tag, by someone reading a branch. These tests are the pin:
-// the first holds the file to the format docs/releases/README.md states (3 to
+// once, before the tag, by someone reading a branch. These tests are the pin.
+// The first holds the file to the format docs/releases/README.md states (3 to
 // 6 user bullets, `###` headings and no `##`, the two section titles the
-// website's changelog check recognises), and the second holds each of its
-// claims about this release to the symbol the tree carries it in, so a claim
-// whose symbol moves — `sealSince`, `cloneShipped`, the policy version that
-// says 0.9.0 — fails here rather than shipping on the release page.
+// website's changelog check recognises, each operator step labelled with the
+// place it is run in). The second holds each claim about this release to the
+// fact in the tree that makes it true — the Go symbol that builds the name, the
+// cobra command that carries the flag, the shipped gate that decides whether the
+// feature is usable at all — rather than to a substring of the sentence: a
+// claim whose symbol moves fails here rather than shipping on the release page.
 const releaseNotesV090 = "../../docs/releases/v0.9.0.md"
 
 // releaseNotesSections are the two headings docs/releases/README.md names, and
@@ -134,41 +143,55 @@ func releaseNotesStepPlace(step string) bool {
 }
 
 // TestReleaseNotesV090ClaimsHoldInTheTree pins each claim the notes make about
-// this release to the symbol the tree carries it in. The pairs are deliberate:
-// the sentence is asserted beside the constant, so a claim and its symbol
-// cannot drift apart in either direction — a feature that moves to another
-// release fails here because the notes still say 0.9.0, and a claim rewritten
-// while its symbol stands fails here because the sentence it was checked
-// against is gone.
+// this release to the fact in the tree that makes it true. Each pair is
+// deliberate: the sentence is asserted beside the symbol, command or constant
+// the claim rests on, so a claim and its fact cannot drift apart in either
+// direction — a feature that moves to another release fails here because the
+// notes still say 0.9.0, and a sentence rewritten while its fact stands fails
+// here because the text it was checked against is gone.
+//
+// Nothing here is a claim checked against itself, and nothing is matched as a
+// bare word: the object path comes from the function that builds it, the label
+// from the constants that write it, the profile key from the struct's own YAML
+// tag, the console keys from the console's own closed list, the operator steps
+// and the `--by` value from cobra's definitions, and the managed and Batch
+// paragraphs from the shipped gates the commands refuse on.
 //
 // Mutation (verified, each planted and reverted): flip `cloneShipped` to false;
-// change `sealSince` to "0.8.5"; drop the row naming 0.9.0 from
-// projectpolicy.VersionSince; delete the sealed token's object name from the
-// first bullet; drop a step's `**Per installation**` label; add two bullets so
-// the file carries eight; write a section as `## Known limits`; rename Check 60
-// in the limits; drop the `fugaro managed flag` sentence; rewrite the
-// project-export, provision-batch and scoped-role limits into descriptions of
-// the commands; and replace the base image's pin with the copy it stopped being
-// — each of which fails here.
+// change `sealSince` to "0.8.5"; change `token.ObjectKey`'s last segment; drop
+// the row naming 0.9.0 from projectpolicy.VersionSince; rename
+// managed.ProjectLabelKey; rename the `claude_accounts` YAML tag; remove
+// `launched_by` from the console's RUN_KEYS; remove `--local` from fugaro
+// upgrade; move `fugaro managed flag` under another parent; set
+// `userStatsByUser` to "person"; rename the watch table's BY column; delete the
+// sealed token's object name from the first bullet; drop a step's
+// `**Per installation**` label; add two bullets so the file carries eight;
+// write a section as `## Known limits`; write "Managed projects return" back
+// into the highlights; rewrite the project-export, provision-batch and
+// scoped-role limits into descriptions of the commands; and replace the base
+// image's pin with the copy it stopped being — each of which fails here or in
+// TestReleaseNotesV090ManagedWordingMatchesTheGates.
 func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 	notes := readReleaseNotesV090(t)
+	names := func(s string) bool { return strings.Contains(notes, s) }
 
-	// The seal: the notes say the token is encrypted under a per-launch key and
-	// written under tokens/, and the tree says the release that reads a sealed
-	// token is this one.
-	if !strings.Contains(notes, "`tokens/<slug>/<run>/budget-token`") {
-		t.Errorf("%s does not name the sealed token's object (tokens/<slug>/<run>/budget-token, internal/budget/token's ObjectKey)", releaseNotesV090)
+	// The seal: the notes name the object a sealed budget token is written at,
+	// and internal/budget/token.ObjectKey is the name that object has — the
+	// same constant the banner grants, the job's read-only condition and the
+	// bucket's lifecycle rule are written from, and the envelope's additional
+	// authenticated data. The release whose runner reads a sealed token is this
+	// one (sealSince).
+	object := token.ObjectKey("<slug>", "<run>")
+	if !names("`" + object + "`") {
+		t.Errorf("%s does not name the sealed token's object as the tree builds it (%q, internal/budget/token.ObjectKey): `tokens/` alone is not the name, and a reader who writes the object by hand has to have it", releaseNotesV090, object)
 	}
 	if sealSince != "0.9.0" {
 		t.Errorf("sealSince is %q: the notes say the seal ships in 0.9.0, and the constant is the release whose runner reads a sealed token", sealSince)
 	}
-	if !strings.Contains(notes, "seal") {
-		t.Errorf("%s no longer claims the sealed budget token", releaseNotesV090)
-	}
 
 	// The clone gate: the notes say a `checkout: clone` workflow reaches a
 	// shared job, which is true only while cloneShipped is true.
-	if !strings.Contains(notes, "`checkout: clone`") {
+	if !names("`checkout: clone`") {
 		t.Errorf("%s no longer names `checkout: clone`", releaseNotesV090)
 	}
 	if !cloneShipped {
@@ -181,25 +204,125 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		t.Errorf("projectpolicy.Version is %d and VersionSince names %q for it; the notes describe this release's rollout, so the version it publishes must be the one this release introduced",
 			projectpolicy.Version, got)
 	}
-	if !strings.Contains(notes, "fugaro project policy publish --delete") {
+	if !names("`fugaro project policy publish --delete`") {
 		t.Errorf("%s does not carry the republish the version bump needs (a publish refuses to overwrite a node written in another version)", releaseNotesV090)
 	}
 
-	// The rest of the release's surface, each named as the command or key a
-	// reader would look for.
-	for what, want := range map[string]string{
-		"the named accounts":     "claude_accounts",
-		"the managed flag":       "fugaro managed flag",
-		"the managed apply":      "fugaro managed apply",
-		"the managed label":      "fugaro_managed=true",
-		"runs stats by person":   "fugaro runs stats --by user",
-		"who launched a run":     "launched_by",
-		"the BY column":          "BY column",
-		"the launcher's grant":   "`tokens/`",
-		"the installer's repair": "fugaro project repos add",
+	// The named accounts: the key the notes tell an operator to write is the
+	// one the local config parses, read off the struct's own YAML tag rather
+	// than restated.
+	if want := yamlTagOf(t, reflect.TypeOf(localcfg.Config{}), "ClaudeAccounts"); !names(want) {
+		t.Errorf("%s does not name %s, the key the local config parses named Claude accounts from (internal/localcfg.Config.ClaudeAccounts)", releaseNotesV090, want)
+	}
+
+	// The managed project's second mark, as the writer spells it: the notes name
+	// the label a managed project carries, and these two constants are what
+	// managed.WriteManagedLabel and managed.WriteManagedLabelForFlag put on the
+	// project.
+	if want := managed.ProjectLabelKey + "=" + managed.ProjectLabelValue; !names(want) {
+		t.Errorf("%s does not name %s, the label internal/infra/managed writes and the managed read requires (managed.ProjectLabelKey, managed.ProjectLabelValue)", releaseNotesV090, want)
+	}
+
+	// The windows and the breakdown of `fugaro runs stats`: the value the notes
+	// pass to --by is the command's own, and the flag's default is that value —
+	// a breakdown renamed in the command fails here rather than sending a
+	// reader to `--by` with a word the command refuses.
+	stats := commandAt(t, "runs", "stats")
+	byFlag := stats.Flags().Lookup("by")
+	if byFlag == nil {
+		t.Fatalf("fugaro runs stats has no --by flag, and %s names `fugaro runs stats --by user`", releaseNotesV090)
+	}
+	if byFlag.DefValue != userStatsByUser {
+		t.Errorf("fugaro runs stats' --by defaults to %q and userStatsByUser is %q: the notes and the command must agree on the breakdown", byFlag.DefValue, userStatsByUser)
+	}
+	if !names("`fugaro runs stats --by " + userStatsByUser + "`") {
+		t.Errorf("%s does not name `fugaro runs stats --by %s`, the only breakdown the command publishes (userStatsByUser)", releaseNotesV090, userStatsByUser)
+	}
+
+	// The BY column: the notes say watch and runs ls name each run's launcher
+	// under it, and watch's own plain frame is where the column's name is
+	// written — the header a reader sees, not a word in these notes.
+	if !names("BY column") {
+		t.Errorf("%s no longer says the launcher is shown in a BY column", releaseNotesV090)
+	}
+	if !watchHasBYColumn(t) {
+		t.Errorf("fugaro watch's plain frame has no BY column (internal/watch/plain.go's RUN table header): %s offers one to its reader", releaseNotesV090)
+	}
+
+	// The console's accepted keys: the notes name the five keys this release
+	// added, and console/src/shared/schema.ts's RUN_KEYS and FINISHED_KEYS are
+	// the closed lists that decide whether a document is refused whole.
+	for _, key := range []string{"job", "profile", "provider", "account", "launched_by"} {
+		if !names("`" + key + "`") {
+			t.Errorf("%s does not name the console key %q this release added", releaseNotesV090, key)
+		}
+		for _, list := range []string{"RUN_KEYS", "FINISHED_KEYS"} {
+			if !consoleSchemaKeys(t, list)[key] {
+				t.Errorf("console/src/shared/schema.ts's %s does not list %q: a key the CLI writes and the list omits makes the console refuse the whole document, which is the skew %s says is gone", list, key, releaseNotesV090)
+			}
+		}
+	}
+
+	// The operator steps: every command and flag they name is one the CLI
+	// carries, by cobra's own definitions, so a step a reader cannot run fails
+	// here. The place each is run in is the format test's business above.
+	for _, c := range []struct{ path, flag string }{
+		{"upgrade", "local"},
+		{"upgrade", ""},
+		{"init", "firebase"},
+		{"init", "repo"},
+		{"init", "create-project"},
+		{"doctor", ""},
+		{"project policy show", ""},
+		{"project policy publish", "delete"},
+		{"project repos add", ""},
+		{"project repos rm", ""},
+		{"image refresh", ""},
 	} {
-		if !strings.Contains(notes, want) {
-			t.Errorf("%s does not name %s (%q), which this release ships", releaseNotesV090, what, want)
+		words := c.path
+		if c.flag != "" {
+			words += " --" + c.flag
+			if cmd := commandAt(t, strings.Split(c.path, " ")...); cmd.Flags().Lookup(c.flag) == nil {
+				t.Errorf("fugaro %s has no --%s flag, and %s tells an operator to run it", c.path, c.flag, releaseNotesV090)
+			}
+		}
+		if !names("`fugaro " + words) {
+			t.Errorf("%s does not name `fugaro %s`, which the tree carries and this release's operators run", releaseNotesV090, words)
+		}
+	}
+
+	// The commands that must NOT exist, because the notes say they do not ship:
+	// `fugaro project export` is the known limit's own example of a promise this
+	// release does not keep, and a command added under that name would make the
+	// sentence false while every other check here still passed.
+	if cmd := findCommand("project", "export"); cmd != nil {
+		t.Errorf("fugaro project export exists (%q), and %s states it is not in this release", cmd.CommandPath(), releaseNotesV090)
+	}
+	if !names("`fugaro project export` is not in this release") {
+		t.Errorf("%s does not state plainly that `fugaro project export` is not in this release", releaseNotesV090)
+	}
+
+	// The shipped gates. Both are shut in this tree (internal/cli/recipes_skew.go),
+	// and a gate that is shut has to be said to be shut: the notes may not offer
+	// a gated feature as something a reader can use, and the paragraphs that
+	// carry the refusal are asserted here so the wording cannot quietly become a
+	// description of the feature.
+	if !managedDeployerShipped {
+		if !names("Managed projects stay disabled") {
+			t.Errorf("%s does not say managed projects stay disabled, and managedDeployerShipped is false: every command that would create a managed project or act as its deployer refuses before any cloud call", releaseNotesV090)
+		}
+		for _, gone := range []string{"Managed projects return", "managed projects return"} {
+			if names(gone) {
+				t.Errorf("%s says %q, and managedDeployerShipped is false: no managed apply runs at all in this release", releaseNotesV090, gone)
+			}
+		}
+	}
+	if !batchProvisionShipped {
+		if !names("`fugaro init --provision-batch` refuses") {
+			t.Errorf("%s does not say `fugaro init --provision-batch` refuses, and batchProvisionShipped is false", releaseNotesV090)
+		}
+		if cmd := commandAt(t, "init"); cmd.Flags().Lookup("provision-batch") == nil {
+			t.Errorf("fugaro init has no --provision-batch flag, and %s describes what it does when it refuses (batchProvisionShipped is false: the flag stays, the provisioning refuses)", releaseNotesV090)
 		}
 	}
 
@@ -211,30 +334,28 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 	// signature and pins the digest the installation's own remote repository
 	// serves — so an operator step that describes a copy sends the reader to a
 	// billable build that no longer happens.
-	if !strings.Contains(notes, "`-pinned` tag") || !strings.Contains(notes, "nothing is copied") {
-		t.Errorf("%s does not describe what `fugaro image refresh` does with the base image: it resolves this release's `-pinned` tag, verifies the cosign signature and pins the digest the installation's remote repository serves (nothing is copied, and nothing is pushed)", releaseNotesV090)
+	if !names("`-pinned` tag") || !names("nothing is copied") {
+		t.Errorf("%s does not describe what `fugaro image refresh` does with the base image: it resolves this release's `-pinned` tag, verifies the cosign signature and pins the digest the installation's own remote repository serves (nothing is copied, and nothing is pushed)", releaseNotesV090)
 	}
 	for _, absent := range []string{"copies this release's base image", "copies the base image", "copy of the base image"} {
-		if strings.Contains(notes, absent) {
+		if names(absent) {
 			t.Errorf("%s says %q: the base image is not copied any more (docs/release.md, internal/cli/image_refresh.go), so the notes may not describe a copy", releaseNotesV090, absent)
 		}
 	}
 
-	// The known limits: the checks this release cannot run, and the three
-	// things it deliberately does not claim. Each is a sentence a reader
-	// relies on, so the wording that says it is pinned rather than the shape:
-	// a limit rewritten into a feature — "`fugaro project export` is not in
-	// this release" turned into a description of what it does — is the one
-	// edit this list exists to refuse.
+	// The known limits: the checks this release cannot run, and the things it
+	// deliberately does not claim. Each is a sentence a reader relies on, so the
+	// wording that says it is pinned rather than the shape: a limit rewritten
+	// into a feature is the one edit this list exists to refuse.
 	for what, want := range map[string]string{
 		"the sealed token's live check":  "Check 60",
 		"the shared job's live check":    "Check 53",
 		"the not-yet-run marker":         "NOT RUN",
-		"the scoped deployer's absence":  "The managed deployer's scoped role is still not created",
+		"the scoped deployer's absence":  "The deployer account, its create-and-read role and your impersonation grant are created as before",
 		"the Batch backend still off":    "`fugaro init --provision-batch` refuses",
 		"the project export not shipped": "`fugaro project export` is not in this release",
 	} {
-		if !strings.Contains(notes, want) {
+		if !names(want) {
 			t.Errorf("%s does not say %s (%q) under `### Known limits`", releaseNotesV090, what, want)
 		}
 	}
@@ -255,40 +376,218 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 	}
 }
 
+// TestReleaseNotesV090ManagedWordingMatchesTheGates is the other half of the
+// managed paragraph: the notes name four commands as refusing, and with the
+// shipped gates closed the CLI refuses exactly those, while `fugaro managed
+// flag` — which the notes say runs — is not refused by the gate at all. An
+// earlier draft of these notes offered `managed flag`, a `--managed` creation
+// and a `managed apply` as things a user can do; this is the test that would
+// have caught it, and the one a gate moved back onto the flag command fails.
+//
+// Mutation (verified, each planted and reverted): call
+// refuseManagedNotShipped() from managedFlag; drop `fugaro managed apply` from
+// the refusals the notes name; and drop `fugaro restore` from them.
+func TestReleaseNotesV090ManagedWordingMatchesTheGates(t *testing.T) {
+	closeShippedGates(t)
+	notes := readReleaseNotesV090(t)
+
+	// Each of these is refused by the gate, before any cloud call, and named in
+	// the notes as a command that refuses: the reader is not left to discover it
+	// at a terminal. The names are the spellings the notes use, so a step that
+	// drops one is the failure.
+	for _, c := range []struct {
+		notes string
+		args  []string
+	}{
+		{"`fugaro init --create-project --managed`", []string{"init", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"}},
+		{"`fugaro init --managed`", []string{"init", "--managed"}},
+		{"`fugaro managed apply`", []string{"managed", "apply", "infra"}},
+		{"`fugaro restore`", []string{"restore", "fugaro-newproj-1234", "infra"}},
+	} {
+		out, err := runGated(t, c.args...)
+		if err == nil || !strings.Contains(err.Error(), managedDisabled) {
+			t.Errorf("fugaro %s: exit %d (%v), want the user error %q\n%s", strings.Join(c.args, " "), ExitCode(err), err, managedDisabled, out)
+		}
+		if !strings.Contains(notes, c.notes) {
+			t.Errorf("%s does not name %s among the commands that refuse while managedDeployerShipped is false", releaseNotesV090, c.notes)
+		}
+	}
+
+	// And `fugaro managed flag` is the one managed command the notes say runs:
+	// it is not refused by the gate. It stops later — this is a scratch
+	// directory with no project config — but never with the shipped gate's
+	// message, which is the difference the notes draw.
+	out, err := runGated(t, "managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD")
+	if err != nil && strings.Contains(err.Error(), managedDisabled) {
+		t.Errorf("fugaro managed flag is refused by the shipped gate (%v), and %s says it runs:\n%s", err, releaseNotesV090, out)
+	}
+	if strings.Contains(out, managedDisabled) {
+		t.Errorf("fugaro managed flag printed the shipped gate's refusal, and %s says it runs:\n%s", releaseNotesV090, out)
+	}
+	if !strings.Contains(notes, "`fugaro managed flag` itself does run") {
+		t.Errorf("%s does not say what `fugaro managed flag` does while managedDeployerShipped is false: it runs, and writes marks only the refused apply reads", releaseNotesV090)
+	}
+}
+
+// commandAt walks the root command's tree for the command a release note names,
+// and fails if the tree does not carry it: the words are what a reader types
+// after `fugaro`.
+func commandAt(t *testing.T, path ...string) *cobra.Command {
+	t.Helper()
+	cmd := findCommand(path...)
+	if cmd == nil {
+		t.Fatalf("fugaro %s: no such command (the tree's own definitions are the authority a release note is checked against)", strings.Join(path, " "))
+	}
+	return cmd
+}
+
+// findCommand is commandAt without the failure, for the notes' one claim about
+// a command that must not exist.
+func findCommand(path ...string) *cobra.Command {
+	cmd := NewRootCmd()
+	for _, word := range path {
+		var next *cobra.Command
+		for _, c := range cmd.Commands() {
+			if c.Name() == word {
+				next = c
+				break
+			}
+		}
+		if next == nil {
+			return nil
+		}
+		cmd = next
+	}
+	return cmd
+}
+
+// yamlTagOf is a struct field's YAML key, so a note that tells an operator
+// which key to write is checked against the struct that parses it rather than
+// against the note's own spelling.
+func yamlTagOf(t *testing.T, typ reflect.Type, field string) string {
+	t.Helper()
+	f, ok := typ.FieldByName(field)
+	if !ok {
+		t.Fatalf("%s has no field %s", typ, field)
+	}
+	tag := f.Tag.Get("yaml")
+	if tag == "" {
+		t.Fatalf("%s.%s has no yaml tag", typ, field)
+	}
+	return strings.Split(tag, ",")[0]
+}
+
+// watchHasBYColumn renders fugaro watch's plain frame and looks for a BY column
+// in the runs table's header: the claim is about the frame a reader sees, so it
+// is checked against the frame and not against the header's literal.
+func watchHasBYColumn(t *testing.T) bool {
+	t.Helper()
+	var b strings.Builder
+	v := watch.View{Mode: "enforce", Day: "2026-10-19", Conn: watch.Connection{Kind: watch.ConnLive},
+		Repos: []watch.RepoBlock{{Name: "acme/app", Runs: []watch.RunRow{{Run: "r-1", Title: "work", Stage: "coding", LaunchedBy: "dana"}}}}}
+	if err := watch.RenderPlain(&b, "aurora", v, nil, watch.PlainOptions{ASCII: true}); err != nil {
+		t.Fatalf("rendering fugaro watch's plain frame: %v", err)
+	}
+	for _, line := range strings.Split(b.String(), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "RUN") {
+			continue
+		}
+		for _, cell := range releaseNotesCellRE.Split(strings.TrimSpace(line), -1) {
+			if strings.TrimSpace(cell) == "BY" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// releaseNotesCellRE splits a tabwriter-rendered table line into its cells: the
+// columns are separated by two or more spaces.
+var releaseNotesCellRE = regexp.MustCompile(`  +`)
+
+// consoleSchema is the console's own closed list of the JSON keys it accepts
+// from `watch --json` and `runs ls --json`.
+const consoleSchema = "../../console/src/shared/schema.ts"
+
+// consoleSchemaKeys is the keys of the exported array name in the console's
+// schema, so the notes' claim that a key no longer refuses a document whole is
+// checked against the list that decides it.
+func consoleSchemaKeys(t *testing.T, name string) map[string]bool {
+	t.Helper()
+	data, err := os.ReadFile(consoleSchema)
+	if err != nil {
+		t.Fatalf("reading %s: %v", consoleSchema, err)
+	}
+	src := string(data)
+	head := "export const " + name + " = ["
+	i := strings.Index(src, head)
+	if i < 0 {
+		t.Fatalf("%s does not declare %s: the console's closed shapes are what the release notes' console bullet is checked against", consoleSchema, name)
+	}
+	rest := src[i+len(head):]
+	j := strings.Index(rest, "]")
+	if j < 0 {
+		t.Fatalf("%s: %s is not closed with ]", consoleSchema, name)
+	}
+	keys := map[string]bool{}
+	for _, m := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(rest[:j], -1) {
+		keys[m[1]] = true
+	}
+	// The parser's own guard: these two are keys of every document the lists
+	// describe, so a parse that finds them is a parse of the list.
+	for _, want := range []string{"run", "slug"} {
+		if !keys[want] {
+			t.Fatalf("%s: %s parsed without %q (%d keys): the parse is broken, and a list read wrong is not a fact", consoleSchema, name, want, len(keys))
+		}
+	}
+	return keys
+}
+
 // releaseFilesDir is the directory of Highlights files whose format
 // docs/releases/README.md states, and which the website's changelog page reads.
 const releaseFilesDir = "../../docs/releases"
 
-// TestReleaseFilesCarryNoMarkdownLinks holds every release file to the
-// renderer's contract: `website/src/components/Changelog.astro`'s inline()
-// renders “ `code` “ and `**bold**` and nothing else — "The files carry no
-// link, no image and no other construct — the generator hands the lines over as
-// written" — so a markdown link in a release file is printed as its own literal
-// text on the changelog page, and the repository-relative path it carries
-// resolves nowhere in the GitHub release body either. No gate catches it: the
-// site's link checker scans built HTML for hrefs (raw markdown produces none)
-// and its changelog check asserts only that a rendered line is the file's own
-// text verbatim. The rule is over the directory rather than over v0.9.0.md
-// because the property is the format's — v0.9.0.md was the first release file to
-// carry a link, and it is the only one that has. `README.md` is skipped by name,
-// the way the site's own check skips it: the format document is where the
-// documents a release may name are linked.
+// TestReleaseFilesCarryNoMarkdownLinks holds every release file that is not yet
+// published to the renderer's contract: `website/src/components/Changelog.astro`'s
+// inline() renders “ `code` “ and `**bold**` and nothing else — "The files carry
+// no link, no image and no other construct — the generator hands the lines over
+// as written" — so a markdown link in a release file is printed as its own
+// literal text on the changelog page, and the repository-relative path it
+// carries resolves nowhere in the GitHub release body either. No gate catches
+// it: the site's link checker scans built HTML for hrefs (raw markdown produces
+// none) and its changelog check asserts only that a rendered line is the file's
+// own text verbatim.
+//
+// The rule is over the files whose release has no tag yet, rather than over
+// v0.9.0.md alone, because the property is the format's: a file is published
+// once, from the tag, and v0.8.6.md carries one such link in its managed
+// projects limit — a page already rendered and a release body already out, so
+// rewriting it now would edit history rather than fix a page. `README.md` is
+// skipped by name, the way the site's own check skips it: the format document is
+// where the documents a release may name are linked.
 //
 // Mutation (verified, planted and reverted): put
 // `[docs/project-layer.md](../project-layer.md)` back into the 0.9.0 notes'
 // known limits — the link this test was written for.
 func TestReleaseFilesCarryNoMarkdownLinks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git on PATH: whether a release file is published yet is read from its tag")
+	}
 	entries, err := os.ReadDir(releaseFilesDir)
 	if err != nil {
 		t.Fatalf("reading %s: %v", releaseFilesDir, err)
 	}
-	files := 0
+	files, checked := 0, 0
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".md") || name == "README.md" {
 			continue
 		}
 		files++
+		if gitTagExists(t, strings.TrimSuffix(name, ".md")) {
+			continue
+		}
+		checked++
 		data, err := os.ReadFile(releaseFilesDir + "/" + name)
 		if err != nil {
 			t.Fatalf("reading %s/%s: %v", releaseFilesDir, name, err)
@@ -304,4 +603,18 @@ func TestReleaseFilesCarryNoMarkdownLinks(t *testing.T) {
 	if files == 0 {
 		t.Errorf("%s holds no release file: the enumeration is broken, and a rule over no files is not a rule", releaseFilesDir)
 	}
+	if checked == 0 {
+		t.Errorf("%s holds no unpublished release file: every file in it is tagged, so this rule has nothing left to hold, and the next release's file is the one it is for", releaseFilesDir)
+	}
+}
+
+// gitTagExists reports whether the repository carries the tag name — the
+// question a published release file is answered by.
+func gitTagExists(t *testing.T, name string) bool {
+	t.Helper()
+	out, err := exec.Command("git", "-C", "../../", "tag", "--list", name).Output()
+	if err != nil {
+		t.Fatalf("git tag --list %s: %v", name, err)
+	}
+	return strings.TrimSpace(string(out)) == name
 }
