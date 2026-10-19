@@ -574,9 +574,11 @@ a class rather than as an incident:**
   **This includes P4.4's two files**: `app.config.js` is exercised as a
   function of a base config and an environment (which is what its tests call
   it with), and **Expo's own loader has never read it** — the `({ config }) =>`
-  form and the ESM `export default` are the documented shape for a
-  `"type": "module"` package, and neither has been checked against a real
-  `expo start`. `eas.json` is parsed and asserted as JSON; **no `eas` command
+  form and the ESM `export default` are what that loader does (`@expo/config`'s
+  `evalConfig` resolves `result.default` and then calls it with a request whose
+  `config` is the `app.json` `expo` object with Expo's defaults filled in,
+  `Config.ts`), but the shape was read off the loader's source and has not been
+  through a real `expo start`. `eas.json` is parsed and asserted as JSON; **no `eas` command
   has been run**, so the profiles are as correct as the register's text says
   they must be and not as correct as a build would show.
 * **The SDKs themselves.** `expo`, `expo-secure-store`,

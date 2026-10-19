@@ -262,4 +262,11 @@ test("Expo's entry reads process.env, and refuses a call with no static config",
     const message = refusal(() => resolveConfig(bad, build()));
     assert.match(message, /static config/);
   }
+  // ... and the entry reads `context?.config`, so a loader that calls it with
+  // `null` gets that same sentence rather than a `TypeError` from
+  // destructuring, which is what a build log would show without saying what is
+  // wrong.
+  for (const context of [undefined, null, {}, { config: null }]) {
+    assert.match(refusal(() => appConfig(context)), /static config/);
+  }
 });

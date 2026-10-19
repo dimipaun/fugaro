@@ -42,9 +42,13 @@
 // messages describe the shape the value must have and never echo it.
 //
 // **ESM, and why.** `mobile/package.json` is `"type": "module"`, so this file
-// is a module and the tests import it as one; Expo's own config loader accepts
-// the `export default ({ config }) => ...` form (its documented dynamic-config
-// shape, transpiled by its loader), which is why the same file serves both.
+// is a module and the tests import it as one; Expo's own loader reads the
+// `export default ({ config }) => ...` form -- `@expo/config`'s `evalConfig`
+// resolves `result.default` and then calls it with the request built in
+// `Config.ts` (`config` is the `app.json` `expo` object with Expo's defaults
+// filled in) -- which is why the same file serves both. That shape was read
+// off the loader's source; **it has not been run against a real `expo start`
+// here** (README, "What is not verified here").
 
 /** The two variables, by platform. The names are this task's, and a rename is deliberate. */
 export const ID_VARIABLES = Object.freeze({
@@ -172,7 +176,13 @@ export function resolveConfig(config, env = process.env) {
   };
 }
 
-/** Expo's entry point: the static `expo` object in, the build's config out. */
-export default function appConfig({ config } = {}) {
-  return resolveConfig(config, process.env);
+/**
+ * Expo's entry point: the static `expo` object in, the build's config out.
+ *
+ * `context?.config` rather than destructuring, so a loader that calls this
+ * with `null` gets the file's own message about the static config instead of
+ * a `TypeError` a build log would show without saying what is wrong.
+ */
+export default function appConfig(context = {}) {
+  return resolveConfig(context?.config, process.env);
 }
