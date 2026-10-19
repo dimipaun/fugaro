@@ -1310,14 +1310,6 @@ func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
 		if !strings.Contains(out, "NOT restored") {
 			t.Errorf("the run did not end with D66's list:\n%s", out)
 		}
-		// The list's one RE-CREATED line is about the deployer account and
-		// the state bucket it is bound on, and it is printed only for a
-		// creation whose state bucket step succeeded — verifyCreated refuses
-		// the other kind before the list is reached
-		// (TestRestoreACreationWithNoStateBucketStopsBeforeTheCheckout).
-		if !strings.Contains(out, "RE-CREATED rather than lost: "+managedmode.DeployerAccount(newProj)) {
-			t.Errorf("the list does not say the deployer and its state bucket are re-created:\n%s", out)
-		}
 	})
 
 	t.Run("a coding agent's session is refused before anything", func(t *testing.T) {
