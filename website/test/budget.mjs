@@ -30,8 +30,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 845,103 bytes where this repository's own clone, which carries the
-// tags, builds 843,588.
+// deployed site's — builds 979,298 bytes where this repository's own clone, which carries the
+// tags, builds 977,783.
 //
 //   - JavaScript per page: 49,724 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -66,8 +66,9 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,056,379 bytes. Every file in `dist/` on that build summed to 845,103
-//     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
+//   - Whole site: 1,224,123 bytes. Every file in `dist/` on that build summed to 979,298
+//     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
+//     `fugaro watch` assets below);
 //     × 1.25, rounded up. **It is the build with no tags** — the one the gates make, and the
 //     one the deployed site is — and the changelog page's own "not yet released" labels are
 //     1,515 bytes of it; a full clone, whose checkout carries the release tags, builds the same
@@ -88,6 +89,20 @@
 //     inlined rule. The README states the same figures and the same reason, one bullet up from
 //     this file's name in its gates list, and the case below is what holds the figures to the
 //     build.
+//     **This round is the `fugaro watch` screenshot landing on the homepage**, and it moved the
+//     site figure alone: the owner's capture and its transcription
+//     (`public/images/fugaro-watch.png`, 130,533 bytes, and `fugaro-watch.txt`, 3,363 — the
+//     assets of PR #622, published as the owner took them, with the transcription beside the
+//     picture as the text a reader gets when it does not arrive) were committed but placed on
+//     no page, and `public/` is served, so a build produced both of them and this figure — every
+//     file in `dist/` — was simply not counting them. The `<img>` the slot now holds is 299
+//     bytes of the homepage's markup on top of that. So the site sum is 979,298 bytes, the
+//     figure **1,224,123 tight and 3,672,369 stated**. The page weight is where it was: the
+//     picture is on the homepage, and the heaviest page is the docs hub (267,095 bytes), which
+//     renders neither the chat nor the screenshot — the homepage goes from 94,007 to 224,839
+//     bytes, and is still not the one the ceiling is derived from. The script's 39,779 bytes and
+//     its 49,724-byte figure are untouched, which is the third of the three the round leaves
+//     alone.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
