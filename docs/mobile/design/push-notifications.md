@@ -602,6 +602,10 @@ app-data clear, and occasionally otherwise, and FCM reports a stale token back a
   already trusts. **It is not a choice between equals: (a)'s registration cannot be built at
   all, so the push node's existence depends on this message** — which is why §3.4's table gives
   this principal the create and why the plan's P5.2 records the consumer as a prerequisite.
+  **That consumer is a named task**: it is **P6.7**, the task that reads the account's inbox
+  in the `fugaro mailbox` consumer P4.1 builds (the plan names the file at P4.1 and P6.7; it
+  is **not in the tree yet**), and applying a registration message is one more thing it does
+  with a message it has already verified.
   **But read the message node before promising that this costs nothing, because the mailbox is
   as closed as the pairing node was.** `mailbox/$mb/inbox/$msg` in `rules.json.tmpl` names
   exactly `id`, `sender`, `text`, `at`, `mac`, `agent`, `kind`, `options`, `reply_to` and

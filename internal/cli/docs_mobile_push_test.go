@@ -762,10 +762,43 @@ func TestDocsMobilePushRegistrationTokenHasACarrier(t *testing.T) {
 		}
 	}
 
-	// The prerequisite has to be in the plan, in both places a reader looks.
-	for _, want := range []string{"a mailbox-schema and rules change", "**P6.7**"} {
-		if !strings.Contains(plan, want) {
-			t.Errorf("%s does not record %q among P5.2's prerequisites: the design's only registration path needs a field the mailbox does not have and a consumer to apply it", planPath, want)
+	// The design has to name the task, not only "the consumer": a prerequisite
+	// a reader cannot find in the plan is the gap this finding was about.
+	for _, want := range []string{"**P6.7**, the task that reads the account's inbox"} {
+		if !strings.Contains(flat, normSpace(want)) {
+			t.Errorf("%s does not name %q where it gives the registration principal its create: the plan's prerequisite and the design's prose have to name the same task", docPath, want)
+		}
+	}
+
+	// The prerequisite has to be in the plan, in BOTH places a reader looks —
+	// the task block (read by whoever builds it) and the dependency table (read
+	// by whoever schedules it) — so the two cannot drift apart.
+	row := ""
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "| P5.2 ") {
+			row = strings.TrimSpace(line)
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no P5.2 row in its Cross-task dependencies table", planPath)
+	}
+	block := ""
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(line, "**Depends on.** The owner's **later, separate yes to push**") {
+			block = line
+			break
+		}
+	}
+	if block == "" {
+		t.Fatalf("%s's P5.2 block no longer opens its Depends-on paragraph with the owner's later yes", planPath)
+	}
+	for _, want := range []string{"**P6.7**", "**a mailbox-schema and rules change**"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's P5.2 dependency row does not record %q: the design's only registration path needs a consumer to apply the message and a field the mailbox does not have: %s", planPath, want, row)
+		}
+		if !strings.Contains(block, want) {
+			t.Errorf("%s's P5.2 block does not record %q in its Depends-on paragraph: %s", planPath, want, block)
 		}
 	}
 }
