@@ -25,10 +25,11 @@
 //      declares and the page does not name is refused, and the page naming a product that neither
 //      the telemetry plan nor the dependency carries is refused unless it says which version of
 //      the app carries the reports (`telemetryFailures`). The sentences a reader is owed are
-//      listed rather than trusted — what is sent, what is never sent, the switch's default and
-//      where the switch is, Google as the holder, and Google's own policy linked rather than
-//      restated. Everything else that collects is still refused, by name, over the whole of
-//      `mobile/`: the page names two reporters, so a third one would be a flow nobody was told
+//      listed rather than trusted — what is sent, what is never sent, the app versions that
+//      carry the reports having no switch to turn them off, and what a reader can do instead,
+//      Google as the holder, and Google's own policy linked rather than restated. Everything
+//      else that collects is still refused, by name, over the whole of `mobile/`: the page
+//      names two reporters, so a third one would be a flow nobody was told
 //      about (`collectingFailures`). The names are listed rather than asked for by pattern,
 //      because a pattern that tried to recognise an analytics SDK would be a pattern that misses
 //      the next one. The section a reader deletes an app to find is held too, and held on its
@@ -219,8 +220,10 @@ export const TELEMETRY_CLAIMS = Object.freeze([
   { page: 'credentials and your keys', why: "D111's two items are never sent anywhere" },
   { page: 'mailbox', why: 'nothing from the reader\'s own mailbox reaches the Fugaro project' },
   { page: 'no advertising identifier', why: 'google_analytics_adid_collection_enabled is false, and the scan below holds the tree to it' },
-  { page: 'off until you turn it on', why: "the ruling's opt-in: collection is off until the reader turns it on, which is the default the page must state" },
-  { page: "the app's settings", why: 'the switch is in the app, and the page has to say where' },
+  { page: 'no switch inside the app', why: "the owner's ruling of 2026-10-19: the versions that carry these reports send them whether or not a reader wants them sent, so the page has to say there is no switch rather than leave the reader looking for one" },
+  { page: 'uninstalling the app stops them', why: "uninstalling is the one thing that stops the reports, so the page owes a reader that sentence and not a switch the app does not have" },
+  { page: 'not installing it avoids them', why: 'a reader who has not installed the app is owed the other half: the reports arrive with the installation, and not installing the version is what keeps them away' },
+  { page: 'carry none of these reports', why: "the reports are the app's alone: the two other tools the software part covers carry none of them, and the page says so rather than leaving a reader of that part to guess. The clause names those two and not the website, whose own measurement is part one's subject — a software-part sentence calling the website unmeasured would contradict the half above it, and the flag that decides that half is not this gate's to read" },
   { page: 'Google holds', why: "the data is held by Google as Firebase's processor for the Fugaro project, which is what the page says rather than restating Google's policy" },
 ])
 
@@ -240,7 +243,7 @@ export const DELETION_SECTION = 'Deleting your data'
 export const DELETION_CLAIMS = Object.freeze([
   { page: 'the Fugaro project', why: 'the section has to name the project that holds the reports, or "your own accounts" reads as the whole of the answer' },
   { page: 'does not remove', why: 'the reports are the one thing deleting the app leaves behind, and a reader who deletes the app is owed that sentence' },
-  { page: 'stops the sending', why: 'the section says how the reporting is stopped — the app\'s own switch — rather than leaving deleting the app as the only thing a reader can do' },
+  { page: 'Uninstalling the app stops the sending', why: 'the section says how the reporting is stopped, and since the owner\'s ruling of 2026-10-19 the only thing that stops it is uninstalling the app — the version that carries the reports has no switch to turn them off' },
   { page: 'issue tracker', why: 'a report already sent is not the reader\'s to delete, so the section names the route by which they ask' },
 ])
 
@@ -897,15 +900,25 @@ test("the page naming a reporter the repository does not hold, or the app holdin
     'the sentence about which version carries the reports is direction B\'s to waive, and it is not: it is the owner\'s requirement in both states',
   )
 
-  // The claims the reader is owed, one planted omission at a time: the ban list, the default,
-  // and the link to Google's own policy.
-  for (const [what, gone] of [
-    ['the ban list', page.replaceAll('Never sent:', 'Also sent:')],
-    ['the default', page.replaceAll('off until you turn it on', 'on unless you turn it off')],
-    ['Google as the holder', page.replaceAll('Google holds', 'It is held')],
+  // The claims the reader is owed, one planted omission at a time: the ban list, the absence of
+  // a switch in the versions that carry the reports, what a reader can do instead, what a reader
+  // who has not installed the app gets, the two other tools carrying none of the reports, and
+  // the link to Google's own policy. Each case asserts the refusal names the claim it planted
+  // absent, and not merely that something failed: a case that only counts failures proves a
+  // sentence is refused by *a* rule, which is not the same as the rule written to hold it.
+  for (const [what, gone, claim] of [
+    ['the ban list', page.replaceAll('Never sent:', 'Also sent:'), 'Never sent'],
+    ['the absence of a switch', page.replaceAll('no switch inside the app', 'a switch in the settings'), 'no switch inside the app'],
+    ['what a reader can do instead', page.replaceAll('uninstalling the app stops them', 'the app stops them'), 'uninstalling the app stops them'],
+    ['what not installing the app avoids', page.replaceAll('not installing it avoids them', 'installing it is what avoids them'), 'not installing it avoids them'],
+    ['the two other tools carrying none of the reports', page.replaceAll('carry none of these reports', 'send nothing of their own'), 'carry none of these reports'],
+    ['Google as the holder', page.replaceAll('Google holds', 'It is held'), 'Google holds'],
   ]) {
     const failures = telemetryFailures({ ...base, page: gone })
-    assert.ok(failures.length >= 1, `a page that lost ${what} was not refused`)
+    assert.ok(
+      failures.some((line) => line.includes(`does not say ${JSON.stringify(claim)}`)),
+      `a page that lost ${what} was not refused for that claim: ${failures.join('\n')}`,
+    )
   }
   const unlinked = telemetryFailures({ ...base, page: page.replace(FIREBASE_PRIVACY, 'https://example.net/policy') })
   assert.match(unlinked.join('\n'), /does not link Google's own Firebase privacy policy/)
@@ -929,9 +942,13 @@ test("the page naming a reporter the repository does not hold, or the app holdin
     telemetryFailures({ ...base, page: noSection }).some((line) => /has no "Deleting your data" section/.test(line)),
     'a page that lost the deletion section altogether is accepted, so a reader deleting the app has nothing to read',
   )
+  // The section replaced with the old page's own sentences, the ones this rule was written
+  // for. The fixture reads to the end of the paragraph rather than to a sentence inside it,
+  // so the shipped wording can move without the fixture going silently inert — the failure
+  // below says so when it does not match.
   const old = page.replace(
-    /Everything else the software holds[\s\S]*?report already sent\./,
-    'Everything the software holds lives in your own accounts, your own cloud project and your own devices. Removing the installation removes it.',
+    /Everything else the software holds[\s\S]*?<\/p>/,
+    'Everything the software holds lives in your own accounts, your own cloud project and your own devices. Removing the installation removes it.</p>',
   )
   assert.notEqual(old, page, 'the fixture did not replace the deletion section, so this case proves nothing')
   const oldFailures = telemetryFailures({ ...base, page: old })
