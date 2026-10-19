@@ -4412,3 +4412,165 @@ the clipboard's permissions and the live region's announcement are the browser's
 here reads a token or a key and no agent runs any step of it.** Until this check runs, the
 controls' **runtime** behaviour is **UNVERIFIED** — the markup's shape is not a clipboard —
 and the row above stays **NOT RUN**.
+
+## Check 100: pairing, end to end, and the code the operator types (installation `fugaro`, project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P6.11** of the mobile plan
+([mobile/implementation-plan.md](mobile/implementation-plan.md), Phase 6, which the owner
+approved on 2026-10-18), from decisions **D165** (two tokens: the QR carries the Firebase config
+and a short-lived pairing token and **no key**), **D166** (the allowlist is the device node
+`config/admin/devices/$uid`), **D171** (the per-pairing MAC key travels encrypted to the phone's
+public key, after the operator confirms its fingerprint) and the reconciliation's **U5**
+(whether `signInWithCustomToken` honours an `exp` below an hour). It is the **live** half of
+P6.6 and P6.8: the fakes prove what fakes can prove — a wrong typed code writes nothing, the
+delivered payload is unreadable without the phone's private key, `exp` is at most five minutes —
+and a real camera, a real operator typing a code and a real keychain are what this check adds.
+
+**What it needs, and nothing else.** A phone with a **signed build** (check 89's artifact), the
+CLI at your own terminal holding **both** of P6.6's roles — the `token_minter` custom role on the
+signer, and `roles/firebasedatabase.admin` to write the device node — and the deployed rules
+generation of P6.4 (P2.3's owner-run deploy, whose marker check 82 reads back). It needs **no
+repository at all** and names none: nothing below reads or writes one.
+
+**Method.** One installation (`fugaro`, project `fugaro-dev`), one phone, one pairing session at
+a time. **Never `belong`** (EdgeWeb's and EdgeServer's): no step below names a `belong` device,
+and the one place a `belong` device can appear — `fugaro pair ls` — is read for the count of
+this check's own device and nothing else. **No agent runs any step of this check — every command
+is yours**, typed at your own terminal, and the phone's half is yours too. **What changes, and
+how it is undone:** one pairing per attempt (one `p~` Auth user, one `pairing/<uid>` node, one
+`m~` user, one device node and one keychain item), all of them under this check's own device
+name, and the Restore revokes them; the pairing nodes of an abandoned session are recorded and
+left to the sweep rather than deleted by hand.
+
+⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block
+at the start of every step and before the Restore.** It is Check 43's guard shape in this
+check's variables: the same three stops, the same `${VAR:?}` discipline. It makes one local
+`fugaro doctor` call and two `fugaro pair ls` calls, and nothing below the three stops runs
+unless all three pass.
+
+```bash
+# === Check 100: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1, 2, 3, 4, 5, 6, Restore). It is idempotent, and nothing below the
+# three hard stops runs unless all three pass. ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+N=chk100                     # this check's device name: the ONLY device it pairs or revokes
+A=chk100@fugaro.invalid      # the account this check's phone signs in with: this check's own, never the owner's
+
+# ${VAR:?} everywhere: an empty variable is a hard error, never an empty
+# argument that a command would resolve from its ambient configuration.
+[ "$P" = fugaro-dev ] && [ -n "$N" ] && [ -n "$A" ] \
+  || { echo "Check 100 stopped: re-run the whole setup block (P=$P must be fugaro-dev; N=$N A=$A must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 100 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+# The fresh-device rule: this check pairs one device and revokes it, so a device
+# already carrying its name is a leftover attempt, not something to pair beside.
+if fugaro pair ls --project fugaro 2>/dev/null | grep -q "${N:?}"; then
+  echo "Check 100 stopped: a device named $N is already paired on this installation — revoke it (fugaro pair revoke $N) or run the Restore first, rather than pairing a second one under this check's name" >&2
+  exit 1
+fi
+if fugaro pair ls --project fugaro 2>/dev/null | grep -qi 'belong'; then
+  echo "Check 100 note: this installation has a belong device paired. No step below names, revokes or reads it; it is not this check's." >&2
+fi
+:
+```
+
+**A step whose command does not exist yet is a step this check runs later.** P6.6 (`fugaro pair`)
+and P6.8 (pairing in the app) have not shipped, so `fugaro pair ls` prints nothing on this tree
+today and the guard's fresh-device stop passes trivially. That is the register's own rule
+working rather than a defect: **the text is written now and running it is the owner's, later**,
+and each step's FACT is what the command printed — never a format remembered from the plan.
+
+1. **The ground the check stands on.** Record, before pairing anything: `fugaro version`; the
+   phone's model and OS and the app's **build id** (it must be the signed build of check 89);
+   `fugaro doctor --project fugaro`'s `project:` line; and the installed rules generation, as
+   check 82's marker reads it back. **FACT:** those five, and `fugaro pair ls`'s output **as it
+   stands before this check pairs anything** — a `belong` device may appear in it, and that is
+   recorded as not this check's rather than acted on.
+
+2. **The QR, the request node, and the code the phone shows.** Run
+   `fugaro pair --project fugaro --name "$N"` and scan the QR with the phone's camera.
+   **FACT:** that the QR carries the Firebase config and **one** token and **no key**; the
+   token's `exp` in **whole minutes**, read locally from the token, which must be **at most 5**;
+   the pairing uid's prefix, which must be `p~`; the code the phone shows and the fingerprint it
+   is derived from; and that `pairing/<uid>/request` now holds a `key` and an `at`. **Never
+   paste the token itself into the record** — the FACT is the minute count and the prefix, not
+   the credential. Then the one-shot rule, in the same step: **FACT:** that a second write to
+   that request node is **denied**, which is the deployed rule's `newData.exists() &&
+   !data.exists()` doing its work (D165).
+
+3. **The operator types the code, and the delivery.** Type the code the phone shows, at the
+   prompt. **FACT:** that `fugaro pair` accepted it; the device uid's prefix, which must be `m~`
+   and **never `r~`** (`r~` is a run's); that the device node `config/admin/devices/$uid` now
+   exists and the rules' `USER` conjunct reads it; that the phone received the device token and
+   the per-pairing MAC key and holds them **in platform secure storage** — exactly **two** items
+   for this account and no third (D111: the ID token and the MAC key) — with the key in no
+   settings file, no log line and no fixture; and that the `p~` Auth user and its `pairing/<uid>`
+   nodes are gone once the delivery was read (P6.6's carried-over rule, which is what makes a
+   session one-shot in practice and not only in the rules). **FACT:** the pairing's wall clock,
+   from `fugaro pair` to the delivery being read.
+
+4. **The refusal: a photograph of the QR.** With step 2's request node already written,
+   photograph (or screenshot) the QR and sign in with it on a second device or an emulator.
+   **FACT:** that the sign-in succeeds as the same `p~` uid — a QR is a credential and that is
+   why it is short-lived; that the second sign-in's write of `pairing/$uid/request` is
+   **denied**, because the node is one-shot and the phone got there first; that its read of
+   `pairing/$uid/delivery` returns bytes it **cannot decrypt**, because the payload is encrypted
+   to the phone's public key and the second device's key is not that key (D171, G15); and that
+   the device token and the MAC key reached the **real phone**. The pass belongs to the phone,
+   not to the photograph. Then the other order, in the same step: **FACT:** what happens when
+   the photograph is used **first**, on a fresh session — the photograph's key is the one in the
+   request node, and step 5 is the outcome, because the operator types the code the *phone*
+   shows and that code is not the photograph's key's fingerprint.
+
+5. **The refusal: a wrong typed code.** Start a fresh session (`fugaro pair` mints a new `p~`),
+   let the phone write its public key, and type a code that is **not** the one it shows (change
+   one character). **FACT:** that `fugaro pair` refused and named the mismatch; that **no device
+   node was written**; that no device token and no MAC key were delivered and the phone holds
+   nothing; and that the request node still stands, so the session is not retryable — a second
+   attempt is a new pairing, which is the shape D165 chose. P6.6's test pins the fake's half of
+   this ("a wrong typed code writes nothing"); **this is the live half**, and its FACT is what
+   the CLI printed rather than what the test asserted.
+
+6. **The first read the device token permits.** With a pairing that succeeded, have the phone
+   read its own mailbox — its own outbox and the heartbeat (D112's user-claim read grant, which
+   the device node is a conjunct of). **FACT:** that the read succeeds, and the consumer's
+   heartbeat showing this phone's account present with its freshness. Nothing is written by the
+   phone in this check: its two writes are checks 80's and 81's subjects, and pairing is not
+   proved by writing.
+
+7. **Restore.** `fugaro pair revoke "$N"`: the device node is deleted **first**, then the Auth
+   user, then the laptop's keychain item for that pairing's MAC key (D166's order). **FACT:**
+   that the node is gone, that `fugaro pair ls` no longer lists `$N`, and that the app no longer
+   holds the account. A `p~` session left behind by step 4's other order or by step 5 is
+   **recorded and left**: its user and its nodes can outlive the five-minute token, the sweep is
+   what removes them, and deleting them by hand would hide whether it does.
+
+**Passes when:** the QR carries a short-lived `p~` pairing token and **no key**; the phone's
+public key reaches its one-shot request node and a second write to it is denied; the device uid
+is `m~` and never `r~`, `mu` is that uid, and the device node exists; the device token and the
+MAC key reach the phone **only after** the operator types the code the phone shows, and they
+live in secure storage as exactly two items; a photograph of the QR gets a request node it
+cannot write again and a delivery it cannot decrypt; a wrong code writes nothing; and the phone
+can read its own mailbox once paired.
+
+**Fails when:** the QR carries the MAC key, or a token whose `exp` is more than five minutes
+away; the request node accepts a second write, so a photograph of the QR can displace the real
+phone's key; a device node is written **before** the typed code matches, or one is written at
+all on a wrong code; the device uid is `r~` (a run's uid, which the sweeper's own `r~` rule and
+`task.ValidRunID`'s form make a real collision, not a cosmetic one); the delivered payload is
+readable by a second device; a token, a key or the private key appears in a settings file, a log
+line, a fixture or this record; or the pairing's leftovers are silently deleted by hand instead
+of being recorded. What failing looks like: `pairingClaim`'s `auth.uid.beginsWith('p~')` missing
+from the deployed rules, so an `m~` device can write a request node too; the request node's
+`.write` losing its `!data.exists()` conjunct; `fugaro pair` writing the device node before the
+code is compared.
+
+**Paste back:** the five facts of step 1; the QR's contents as a shape (config + one token, no
+key), the token's `exp` in minutes and the pairing uid's prefix; the code's derivation and the
+one-shot denial's exact error; the device uid's prefix, the device node's path and the two
+secure-storage items; the photograph's three outcomes (sign-in, denied write, undecryptable
+delivery); the wrong code's refusal text and the absence of any node; the paired phone's first
+read; and the Restore's state, with any `p~` leftovers named. **Never the token, the key, the
+private key or the code itself.** **No step here is run by an agent and nothing here touches
+`belong`.** Until this check runs, the pairing flow's live behaviour is **UNVERIFIED** — the
+fakes are not a camera — and row 100 above stays **NOT RUN**.
