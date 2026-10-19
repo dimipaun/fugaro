@@ -36,7 +36,9 @@ func runGated(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
-// While managedDeployerShipped is false (0.8.6), every command that would
+// While managedDeployerShipped is false (0.8.6 onward: 0.9.0 still ships with
+// the scoped role gated off, and the redesign is planned for 0.9.5), every
+// command that would
 // create a managed project or act as its deployer refuses with the one
 // message, as a user error, before anything else: the message is the first
 // refusal of each, so no other check (and no cloud call, which every one of
@@ -84,7 +86,7 @@ func TestShippedGateMessages(t *testing.T) {
 			t.Errorf("managedDisabled does not say %q", want)
 		}
 	}
-	for _, want := range []string{"--provision-batch is disabled in this release", "batch.jobs.cancel", "0.9.0"} {
+	for _, want := range []string{"--provision-batch is disabled in this release", "batch.jobs.cancel", "a later release"} {
 		if !strings.Contains(batchProvisionDisabled, want) {
 			t.Errorf("batchProvisionDisabled does not say %q", want)
 		}
@@ -145,8 +147,8 @@ func TestDoctorSaysManagedDeployerIsDisabled(t *testing.T) {
 	if c.Severity != "info" {
 		t.Errorf("severity %q, want info", c.Severity)
 	}
-	if !strings.Contains(c.Problem, "disabled in this release") || !strings.Contains(c.Problem, "0.9.0") {
-		t.Errorf("the line does not say the scoped role is disabled in this release and returns in 0.9.0: %q", c.Problem)
+	if !strings.Contains(c.Problem, "disabled in this release") || !strings.Contains(c.Problem, "0.9.5") {
+		t.Errorf("the line does not say the scoped role is disabled in this release and returns in 0.9.5: %q", c.Problem)
 	}
 	if checksFail([]doctorCheck{*c}, true) {
 		t.Error("the managed-deployer line fails doctor --strict")
