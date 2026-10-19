@@ -580,6 +580,7 @@ func restoreNewProjectID(lc *localcfg.Config, id string) error {
 // and after the move and are passed through unchanged.
 func restoreApplyCloud(o cloudOptions) cloudOptions {
 	o.gcpProject = ""
+	o.region = ""
 	return o
 }
 
