@@ -424,12 +424,24 @@ func TestDocsMobilePushSaysWhoDeletesThePushNode(t *testing.T) {
 // being in the tree, and this test holds that citation to the tree in both
 // directions: every symbol the paragraph quotes must be in
 // `internal/budget/rules/rules.go`, the commit named must be the one the design
-// says it read, and the "on a branch, not on main" wording must be gone.
+// says it read, and the "on a branch, not on main" claim must be gone.
+//
+// The last of those is checked as a *shape* and not as one remembered sentence.
+// The first version of this guard listed the exact phrase it had been written
+// against, and a later revision of §3.9 carried the same claim in different
+// words — "the symbols live on a branch, not on `main`" — so the guard passed on
+// the defect it exists to catch. It now flattens the document and matches the
+// claim's shapes (`live on a branch`, `not on \`main\“, `none of those symbols
+// exists`), which is what makes the wording's survival impossible rather than
+// just unlikely.
 //
 // Mutation (verified, run and restored): renaming `MaxMacLength` in rules.go,
 // `macField` in shared/mailbox-schema/index.js or `verifyMac` in
-// shared/mailbox-schema/mac.js, or dropping "are in the tree now" from the
-// paragraph: this test fails, each way.
+// shared/mailbox-schema/mac.js; dropping "are in the tree now" from the
+// paragraph; and re-planting the surviving claim in §3.9 ("the symbols live on a
+// branch, not on `main`"), and each of its variants alone ("live on a branch",
+// "are not on `main`", "none of those symbols exists"): this test fails, each
+// way.
 func TestDocsMobilePushMACEevidenceIsInTheTree(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	doc := readDoc(t, docPath)
@@ -463,18 +475,29 @@ func TestDocsMobilePushMACEevidenceIsInTheTree(t *testing.T) {
 		}
 	}
 
-	// (c) the pre-merge wording, which sent a reader to a branch for symbols
-	// that are on main and said main did not carry them. The document keeps one
-	// historical mention of the symbols' absence, explicitly dated to `90ba554`,
-	// which is why these needles are the old *claims* and not the bare words.
-	for _, bad := range []string{
-		"none of those symbols exists",
-		"On PR #601's branch",
-		"the symbol is on #601's branch and NOT on main",
-		"not in this branch's tree",
+	// (c) the pre-merge *claim*, as a class rather than as the one sentence this
+	// guard was first written against. A needle list is only as good as the
+	// sentence it remembers, and the sentence that survived the last round read
+	// "the symbols live on a branch, not on `main`" in §3.9 — one word away from
+	// the phrase the list held, and therefore invisible to it. So the shapes
+	// below are regexes over the flattened text: "live(s) on a branch", "not on
+	// `main`", "none of those symbols exists", each of which asserts, in the
+	// present tense, that the symbols are somewhere other than this tree.
+	//
+	// Two honest mentions are deliberately out of reach: the header's sentence
+	// about the *earlier revision* ("... the MAC symbols were **not in the
+	// tree**", dated to `90ba554`) and §3.4's "in the tree rather than on a
+	// branch", which is the correction itself. Both are past tense or a denial,
+	// so the verbs are part of the patterns.
+	for _, bad := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:live|lives|are|is) on (?:a|the|that|#601's) branch\b`),
+		regexp.MustCompile("(?i)not on `main`"),
+		regexp.MustCompile(`(?i)none of (?:those|these) symbols exists\b`),
+		regexp.MustCompile(`(?i)not in this branch's tree`),
+		regexp.MustCompile(`(?i)on PR #601's branch`),
 	} {
-		if strings.Contains(flat, normSpace(bad)) {
-			t.Errorf("%s still carries %q, which describes the tree before #601 merged: the symbols are in the tree now and the paragraph has to say so", docPath, bad)
+		if m := bad.FindString(flat); m != "" {
+			t.Errorf("%s still says %q, which describes the tree before #601 merged: the symbols are in the tree now and the paragraph has to say so", docPath, m)
 		}
 	}
 
@@ -524,8 +547,12 @@ func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
 		"the registration principal",
 		"the same registration principal",
 		"the sender",
-		// The prohibition that keeps revocation single-act.
-		"never creates the node when `devices/$uid` is absent",
+		// The prohibition that keeps revocation single-act. It is not "never
+		// create the push node" — the registration principal may create that one
+		// (see TestDocsMobilePushRegistrationRowAgreesWithTheProse, which is
+		// where the two readings are reconciled); what may never happen is a
+		// write into `devices/**`, the family whose existence is the admission.
+		"never writes `devices/**`",
 		// §3.5 (a)'s prose: pairing registers the token, so it is one of the
 		// push node's writers and not only the device node's.
 		"pairing writes both nodes in one act",
@@ -562,6 +589,84 @@ func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
 	}
 	if pairRows != 2 {
 		t.Errorf("%s's writers table has %d `fugaro pair` rows (the device node's and the push node's), want 2", docPath, pairRows)
+	}
+}
+
+// TestDocsMobilePushRegistrationRowAgreesWithTheProse: §3.4's writers table
+// forbade the registration principal from ever creating `config/admin/push/$uid`
+// when `devices/$uid` was absent, while two other passages of the SAME document
+// described exactly that write as the ordinary consequence of a re-registration
+// racing a revoke — §3.5 (b)'s "a re-registration message the phone sent before
+// the revoke and the consumer processes after it writes `push/$uid`", and the
+// reaping paragraph, which names that in-flight message as one of the paths that
+// leaves the two nodes out of step. A table the design calls its single source
+// of truth cannot forbid what the design relies on.
+//
+// Which side moves is decided by the rules, not by taste: `rules.json.tmpl`
+// denies `config/admin` to clients only (".read": false, ".write": false), and
+// the registration principal writes with `roles/firebasedatabase.admin`, which
+// bypasses the rules — so no rule can couple the push node to the device node on
+// the write side, and an implementation could not have honoured the prohibition.
+// The row therefore permits the create and keeps the guarantee that matters
+// (never `devices/**`), and this test pins the row and both prose passages
+// against each other so the three cannot drift apart again.
+func TestDocsMobilePushRegistrationRowAgreesWithTheProse(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+	flat := normSpace(doc)
+
+	rows := writersTableRows(t, doc)
+	if len(rows) == 0 {
+		t.Fatalf("%s's writers table has no rows for this guard to check", docPath)
+	}
+	var found int
+	for _, r := range rows {
+		if !strings.Contains(r.node, "(token, platform, updated_at)") ||
+			!strings.Contains(r.writer, "the registration principal") ||
+			strings.Contains(r.writer, "the same registration principal") {
+			continue
+		}
+		found++
+		// The row may not forbid the create: the principal holds
+		// `roles/firebasedatabase.admin`, so the prohibition would describe an
+		// enforcement nothing has, and §3.5 (b) depends on the write landing.
+		for _, bad := range []string{
+			"never creates the node when `devices/$uid` is absent",
+			"never creates the node",
+			"never creates `push/$uid`",
+		} {
+			if strings.Contains(r.never, bad) {
+				t.Errorf("%s's registration-principal row forbids %q, but §3.5 (b) and §3.4's reaping paragraph both rely on that create (the orphan reaped after a revoke, and the in-flight re-registration): %q", docPath, bad, r.never)
+			}
+		}
+		// ...and it has to say the create is permitted, and keep the one
+		// guarantee that is left to it.
+		for _, want := range []string{"including a create", "never writes `devices/**`"} {
+			if !strings.Contains(r.writes+r.never, want) {
+				t.Errorf("%s's registration-principal row does not carry %q: the row has to permit the create the prose describes and keep the prohibition that stops it re-admitting a device", docPath, want)
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("%s's writers table has %d rows for the registration principal's token write, want 1: this guard's marker moved", docPath, found)
+	}
+
+	// The two prose passages, each stated positively, so the table cannot be
+	// made consistent by deleting the prose instead of by correcting the row.
+	for _, want := range []string{
+		// §3.5 (b): the write after a revoke is a create, and it says so.
+		"**creates** `push/$uid`",
+		"§3.4's table records that this principal may create it",
+		// §3.4's reaping paragraph: the in-flight re-registration is one of the
+		// paths that leaves the two nodes out of step.
+		"a re-registration the consumer had in flight when the revoke landed — a create, which §3.4's table permits (§3.5 (b))",
+		// And the reason the table permits it, decided from the template.
+		"database admin bypasses the rules",
+		"no rule can couple `push/$uid` to `devices/$uid` on the write side",
+	} {
+		if !strings.Contains(flat, normSpace(want)) {
+			t.Errorf("%s lacks %q: the writers table, §3.5 (b) and the reaping paragraph have to give one account of who may create the push node", docPath, want)
+		}
 	}
 }
 

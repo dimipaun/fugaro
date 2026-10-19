@@ -420,8 +420,9 @@ There are two deletion paths, and they are not alternatives:
   re-registration principal and §3.8's preferences writer write the push node too.
 - **The sender reaps an orphaned `push/$uid` on its next sweep** — a push node whose
   `devices/$uid` is gone. This is the **net, not the mechanism**: it covers a revoke written by
-  a principal that removed only the device node, a re-registration the consumer had in flight
-  when the revoke landed (§3.5 (b)), and any other path that leaves the two nodes out of step.
+  a principal that removed only the device node, **a re-registration the consumer had in flight
+  when the revoke landed — a create, which §3.4's table permits (§3.5 (b))** — and any other
+  path that leaves the two nodes out of step.
   It is idempotent with the first path — the node is already gone.
 
   **So the answer to "does revoke delete the push node?" is yes, and the reaping is why a
@@ -444,7 +445,7 @@ rows may forbid the other's write, and neither does:
 | `config/admin/devices/$uid` | **`fugaro pair`** (D165/P6.6) | creates the node, with the pairing's own fields | never re-creates a node `pair revoke` deleted (only a fresh, typed-code pairing does); its `push/**` write is **row 3's, in this same act** — pairing makes no other `push/**` write, and no later one |
 | `config/admin/devices/$uid` | **`fugaro pair revoke`** (D166/P6.6) | **deletes** the node — the one revocation act | never writes anything before deleting |
 | `config/admin/push/$uid` (token, platform, updated_at) | **`fugaro pair`** | the registration the pairing session itself has (§3.5 (a)) | writes `devices/$uid` **only in row 1's same act** — never a push node for a device it did not just pair, and never a *re*-registration (that is the next row's) |
-| `config/admin/push/$uid` (token, platform, updated_at) | **the registration principal** — §3.5 (b), Q3's recommendation: the principal that applies the app's mailbox re-registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message | **never creates the node when `devices/$uid` is absent**; never writes a MAC-less or unvalidated token; never writes `devices/**` |
+| `config/admin/push/$uid` (token, platform, updated_at) | **the registration principal** — §3.5 (b), Q3's recommendation: the principal that applies the app's mailbox re-registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message — **including a create**, when revoke has already deleted the node (§3.5 (b): that write after a revoke is the orphan §3.4 reaps) | never writes a MAC-less or unvalidated token, and **never writes `devices/**`** — because the admission is pairing's alone, whatever this principal writes leaves a device un-admitted |
 | `config/admin/push/$uid/prefs` | **the same registration principal** (§3.8: the controls are written the same way, through the mailbox and (b)) | the per-category switches and the quiet-hours zone name and window | never writes a switch the app did not ask for, and never `devices/**` |
 | `config/admin/push/$uid/ledger` | **the sender** (§3.6, §3.7) — its **only** write to either node | the dedupe key of an event it has sent, the cap window's timestamps, and the pending intent it will retry (§6) | never writes a token, a platform or a pref, never writes **content** (§3.6: a device, a category, a timestamp, a state-change key), never `devices/**`, and never **creates** a node whose `devices/$uid` is absent |
 | `config/admin/push/$uid` | **the sender** (§3.6) | **deletes** a stale token entry, and deletes the whole node when it is empty or orphaned | never writes a marker, never writes a token, never **creates** a node (§3.4 "reaping deletes; it never marks") |
@@ -456,6 +457,20 @@ written by `fugaro pair` and deleted by `fugaro pair revoke`, and by nothing els
 is written by pairing, the registration principal, the preferences writer and the sender's ledger,
 and deleted by revoke and by the sender's reaping*; *no client, run account or app writes either*.
 §3.5 (a)/(b), §3.6, §3.7, §3.8 and §6 each state their own row of it.
+
+**Why the table lets the registration principal create the push node, decided from
+`rules.json.tmpl` rather than from taste.** The template says exactly one thing about
+`config/admin`: `"admin": { ".read": false, ".write": false }`, restated on its
+`devices/$uid` child — a denial aimed at **client** tokens, which says nothing at all about an
+IAM principal. The registration principal is one: it holds `roles/firebasedatabase.admin`
+(§3.5 (b)), and **database admin bypasses the rules**, so no rule can couple `push/$uid` to
+`devices/$uid` on the write side. A row forbidding that create would be describing an
+enforcement the rules do not have, and §3.5 (b) relies on the write's landing after a revoke —
+which is the orphan §3.4 reaps. **What makes the sibling safe is therefore not what the rules
+do about the write, but what happens on the read and afterwards**: the sender sends only when
+**both** nodes exist (rule 2), no client can read either node, and the reaper deletes an orphan —
+so a `push/$uid` created after the device node is gone is **inert**, and it can never re-admit a
+device, because this principal's write is not itself an admission.
 
 **The ledger's home is the push node and nowhere else.** The sender's dedupe and cap state is
 per device (§3.7 keys it on `(device, category, state-change key)`, and the cap is per device per
@@ -544,9 +559,12 @@ app-data clear, and occasionally otherwise, and FCM reports a stale token back a
   admin act in the same sense pairing is**, and it is not something this design can promise for
   free. **And the write lands on the push node, never on `devices/**`** — which is what makes
   (b) safe to run on a timer and after a revoke: a re-registration message the phone sent
-  before the revoke and the consumer processes after it writes `push/$uid`, which the rules do
-  not read and the sender does not send to while `devices/$uid` is gone. (a)'s reaping is the
-  fallback, and Q3 asks the owner to choose between them, naming the role each depends on.
+  before the revoke and the consumer processes after it **creates** `push/$uid` — the node
+  revoke deleted, and §3.4's table records that this principal may create it, because it writes
+  with `roles/firebasedatabase.admin` and the rules deny only clients — a node the rules do not
+  read and the sender does not send to while `devices/$uid` is gone. (a)'s reaping is the
+  fallback, and that orphan is exactly what it is for; Q3 asks the owner to choose between them,
+  naming the role each depends on.
 - **(c) Let the app write its own push node.** A rules grant for the phone to write
   `config/admin/push/$uid/**` under the `MAILBOX` identity. Cheapest for the user and **the
   one shape this design rejects**: it reopens `config/admin` to a client write, which D166
@@ -814,10 +832,11 @@ not, and the correction is §5 attacker 2's:** every principal that holds or wou
 permission in this design **also holds `roles/firebasedatabase.admin`** on the Firebase
 project — the history account (`iam.tf`'s `history_database`), admins and budget admins
 (`local.admins`), and project owners and editors — and **database admin bypasses the rules**.
-The rules check only the **`mac` field's shape**, and the evidence is quoted with its branch and
-date because **the symbols live on a branch, not on `main`** — see §5's "*the rules cannot
-verify a tag*" paragraph for the exact symbols, the quote and what `main` carries instead. What
-matters here is the consequence: the rules can require a well-formed tag and nothing more. So:
+The rules check only the **`mac` field's shape** — and the symbols that do it are **in the tree
+now**, in the generation #601 merged: §5's "*the rules cannot verify a tag*" paragraph reads them
+out of `internal/budget/rules/rules.go` at `origin/main`'s **`371038f`** (read 2026-10-19), with
+the comment that says so. What matters here is the consequence: the rules can require a
+well-formed tag and nothing more. So:
 
 - **For mailbox state, the only bound is the app verifying the MAC with the per-pairing key**,
   and §4 rule 11 makes that a requirement: **no mailbox-derived state is shown, and no alert is
