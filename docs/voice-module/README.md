@@ -30,7 +30,7 @@ And one in-flight design is the same subject seen from the module's side: **[doc
 
 | | |
 |---|---|
-| **Baseline** | `origin/main` at `82ba600d984a420c595cf06417af6d781c18535a` — "console: frame the golden screenshots on the screen, not the window (#619)", 2026-10-18 |
+| **Baseline** | `origin/main` at `82ba600d984a420c595cf06417af6d781c18535a` — "console: frame the golden screenshots on the screen, not the window (#619)", 2026-10-18. One cited path is **not** there: `console/scripts/notarize-and-staple.sh` was added by #626 after this commit, and finding #17 says so |
 | **Date of the check** | 2026-10-19 |
 | **Branches read** | PR #584, #590, #592, #602, #604, #633, #634 — fetched read-only, never modified |
 | **Rules** | every finding cites a path and a symbol, never a bare line number; provider claims are checked against the providers' own public documentation and anything unverifiable is marked **UNVERIFIED** and never asserted |

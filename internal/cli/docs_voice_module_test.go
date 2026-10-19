@@ -847,6 +847,221 @@ func TestDocsVoiceModuleReconciliationRecordsTheAppliedConsoleWorkflow(t *testin
 	}
 }
 
+// voiceModuleQuotation is one quotation the reconciliation makes, paired with
+// the file it attributes those words to. A quotation that is not verbatim is
+// the failure class a review of this document found twice -- the gateway was
+// described in words the package does not contain, and the mailbox schema's
+// size bound was quoted as "<=4096 cu" when the README says "1-4096 code
+// units" -- so every pair is checked in both directions: the words must be in
+// the document, and they must be in the source the document names. The quote
+// is written here as the source has it; voiceModuleQuoteText below is what
+// makes a quotation spanning two lines of a Go comment compare equal.
+type voiceModuleQuotation struct {
+	quote  string // the words, exactly as the source has them
+	source string // the repo-relative path the document attributes them to
+}
+
+var voiceModuleQuotations = []voiceModuleQuotation{
+	// #29: the gateway's shape is its own package doc's sentence, not a
+	// paraphrase of it. The document said "a loopback, in-runner proxy that
+	// swaps a short-lived token for the real key"; "in-runner" is in no file,
+	// and the swap is not what the package says it does.
+	{
+		"a loopback proxy between Claude Code and the model API that holds the real credential",
+		"internal/gateway/gateway.go",
+	},
+	// #29: the agent's side of the same mechanism, from the doc comment that
+	// carries GatewayVars.
+	{
+		"never the real model credential",
+		"internal/agent/env.go",
+	},
+	// #29: --project-wide's sentence is the comment on secretsOptions.projectWide
+	// in the CLI, which is where a reader looking for the flag finds it. The
+	// document cited docs/design/project-secrets.md section 4, which does not
+	// carry this sentence.
+	{
+		"stores or lists the secret once per Fugaro project rather than per repository (design docs/design/project-secrets.md §4)",
+		"internal/cli/secrets.go",
+	},
+	// #29: the reader rule is in that design's "Who reads" paragraph, not in
+	// its section 4 -- the same design file, a different place in it.
+	{
+		"Only a job's own service account, granted `secretAccessor` **per secret, per job**, exactly as today",
+		"docs/design/project-secrets.md",
+	},
+	// #27: the schema's size bound and the redaction promise, in the README's
+	// own words.
+	{
+		"1–4096 code units",
+		"shared/mailbox-schema/README.md",
+	},
+	{
+		"**already redacted** when it arrives (P1.3)",
+		"shared/mailbox-schema/README.md",
+	},
+	// #37: the spec's Cleanup line says "record", not "report". The finding
+	// turns on the requirement being new, so the requirement's own verb is the
+	// thing that has to be quoted correctly.
+	{
+		"record how much of the reply was actually heard and pass that to the agent",
+		"docs/voice-module/spec.md",
+	},
+	// #25: voice.md D54 part (3)'s condition, in full: the document's shortened
+	// "only if U7 finds it can surface a prompt" is not the sentence.
+	{
+		"only if U7 finds that a callback can surface a prompt the app can show and wait on",
+		"docs/design/voice.md",
+	},
+	// #4 and #20: two finding titles that quoted the spec's Goal and its
+	// pipeline box in words the spec does not use.
+	{
+		"App stays in the foreground while talking (no background listening)",
+		"docs/voice-module/spec.md",
+	},
+	{
+		"orchestrator/LLM",
+		"docs/voice-module/spec.md",
+	},
+	// R13: the example utterance is the grammar's own cancel command, so the
+	// rule it illustrates is illustrated with a phrase that exists.
+	{
+		"Fugaro, cancel that",
+		"shared/command/README.md",
+	},
+}
+
+// voiceModuleQuoteText folds a quotation and its source into one comparable
+// line: the comment leaders that split a Go comment, the emphasis and code
+// markers that wrap markdown words, and every run of whitespace. Without this
+// a quotation is only checkable against a source that happens to wrap its
+// lines the way the quoting document does.
+func voiceModuleQuoteText(s string) string {
+	s = strings.ReplaceAll(s, "//", " ")
+	s = strings.NewReplacer("**", "", "`", "").Replace(s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// TestDocsVoiceModuleReconciliationQuotesAreVerbatim: every quotation this
+// document makes of a file in this repository is in that file, word for word.
+// A review of an earlier revision found two quotations whose words the cited
+// source does not contain -- the failure class is silent, because a quotation
+// mark reads as evidence -- so the pairs are pinned, the wrong versions are
+// banned, and the two citations #29 got wrong are pinned in their corrected
+// form. Quotations of the providers' public documentation, of the brief that
+// asked for this document, and of the document's own headings are outside this
+// test by construction: the document says in section 0 which is which.
+func TestDocsVoiceModuleReconciliationQuotesAreVerbatim(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+	flat := voiceModuleQuoteText(recon)
+	for _, q := range voiceModuleQuotations {
+		want := voiceModuleQuoteText(q.quote)
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s no longer quotes %q from %s", path, q.quote, q.source)
+		}
+		source := voiceModuleQuoteText(readDoc(t, q.source))
+		if !strings.Contains(source, want) {
+			t.Errorf("%s quotes %q as %s's words, and that file does not contain them", path, q.quote, q.source)
+		}
+	}
+	// The wrong versions must not come back: each was a quotation the cited
+	// source does not carry.
+	for _, banned := range []string{
+		"a loopback, in-runner proxy that swaps a short-lived token for the real key",
+		"≤4096 cu",
+		"report how much of the reply was actually heard",
+		"only if U7 finds it can surface a prompt",
+		`"Stays in the foreground, no background listening"`,
+		`"The orchestrator/LLM"`,
+		`"Summarising spoken lines must never include secrets"`,
+		`"may this leave the machine at all, under what conditions, and how the answer is carried"`,
+		`"the app needs a process"`,
+		`"Fugaro, cancel it"`,
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s carries %q again; that is a quotation its source does not contain, or this document's own words in quotation marks", path, banned)
+		}
+	}
+	// The two citations #29 got wrong, pinned in the corrected form.
+	for _, want := range []string{
+		"the flag's own comment on `secretsOptions.projectWide`, in that file",
+		`the reader rule from ` + "`docs/design/project-secrets.md`" + `'s "Who reads" paragraph`,
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; #29 must cite where the quoted words actually are", path, want)
+		}
+	}
+	// And section 0 must keep the audit's own accounting: which quotations are
+	// outside the tree, and which renderings are the only ones used.
+	for _, want := range []string{
+		"**Quotations.** Every quotation in this document was checked word for word against its source",
+		"**Six quotations were not verbatim and are corrected in this revision**",
+		"**two citations were wrong**",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; section 0 is where the quotation audit is accounted for", path, want)
+		}
+	}
+}
+
+// TestDocsVoiceModuleReconciliationPinsItsBaseline: the document's baseline is
+// one commit, and it says which of its citations that commit does not carry.
+// A review found the framing claiming "every path exists there" while finding
+// #17 names console/scripts/notarize-and-staple.sh, which #626 added after
+// 82ba600d -- so the exception is named in section 0 and again in #17, and the
+// README's baseline row says it too. The same paragraph's claim about the
+// mobile plan's phases was wrong in the other direction: Phase 3 is the app,
+// and its merged part is under mobile/src/ (P3.1: the skeleton and the account
+// store), not under shared/, which is where Phases 0 and 1 live.
+func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+	for _, want := range []string{
+		"the **one exception** is `console/scripts/notarize-and-staple.sh`",
+		"**#626 added after the baseline**",
+		"**Phase 3 is the app and lives under `mobile/src/`, not `shared/`**",
+		"**P3.1** (the skeleton and the account store)",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q", path, want)
+		}
+	}
+	for _, banned := range []string{
+		// The sentence a review caught: it merged Phase 3 into shared/.
+		"Phases 0, 1 and parts of 3 are **merged on `main`** as the pure-logic packages under `shared/`",
+		// And the unqualified claim about the baseline.
+		"every path exists there and every symbol named was read there",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s carries %q again; that is the claim a review corrected", path, banned)
+		}
+	}
+	// #17 must say the script is post-baseline, not just who added it.
+	finding := voiceModuleFinding(t, recon, 17)
+	if !strings.Contains(finding, "after the baseline commit") {
+		t.Errorf("%s: finding #17 names the notarize script without saying it postdates the baseline", path)
+	}
+	// The README's baseline row carries the same exception, because that table
+	// is what a reader checks the document's freshness against.
+	readme := readDoc(t, "docs/voice-module/README.md")
+	if !strings.Contains(readme, "was added by #626 after this commit") {
+		t.Errorf("docs/voice-module/README.md's baseline row does not carry the one post-baseline path")
+	}
+	// And the correction is checked against the tree it describes: Phase 3's
+	// merged packages are under mobile/src/, and shared/ carries none of them.
+	for _, dir := range []string{"mobile/src/skeleton", "mobile/src/accounts"} {
+		if _, err := os.Stat("../../" + dir); err != nil {
+			t.Errorf("%s: %s does not exist, so Phase 3's merged part is not where the document says: %v", path, dir, err)
+		}
+	}
+	for _, dir := range []string{"shared/feed", "shared/mailbox-client"} {
+		if _, err := os.Stat("../../" + dir); err == nil {
+			t.Errorf("%s: %s exists, so Phase 3 is under shared/ after all and the correction is wrong", path, dir)
+		}
+	}
+}
+
 // voiceModuleFinding returns finding #n's block: its heading up to the next
 // finding or section heading. Findings are addressed by number, so a retitled
 // finding does not move the pin.
@@ -1047,7 +1262,45 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 37 entries, numbered (1)–(37).
+// Mutation (verified, run and restored): 51 entries, numbered (1)–(51).
+// (38) Writing "a loopback, in-runner proxy that swaps a short-lived token for
+// the real key" back into #29 fails
+// TestDocsVoiceModuleReconciliationQuotesAreVerbatim twice: once as the banned
+// string, once as the package doc's own sentence missing from the document.
+// (39) Writing "≤4096 cu" back into #27 fails it the same way, and with `no
+// longer quotes "1–4096 code units" from shared/mailbox-schema/README.md`.
+// (40) Changing the spec's *Cleanup* line back to "report how much of the reply
+// was actually heard" fails it: spec.md says "record".
+// (41) Shortening voice.md D54's condition back to "only if U7 finds it can
+// surface a prompt" fails it, as a ban and as a missing quotation.
+// (42) Restoring finding #4's title to "Stays in the foreground, no background
+// listening" fails it: spec.md's *Goal* says "App stays in the foreground while
+// talking (no background listening)".
+// (43) Restoring finding #20's title to "The orchestrator/LLM" fails it:
+// spec.md's pipeline says "orchestrator/LLM", with no article and lower case.
+// (44) Replacing #29's corrected citation ("the flag's own comment on
+// `secretsOptions.projectWide`, in that file") with the old
+// `docs/design/project-secrets.md` §4 fails it.
+// (45) Shortening "the reader rule from `docs/design/project-secrets.md`'s "Who
+// reads" paragraph" back to "the reader rule" fails it: the design's §4 is the
+// storage decision, and the rule is in the paragraph named.
+// (46) Pointing the gateway quotation at `internal/agent/env.go` instead of
+// `internal/gateway/gateway.go` fails it with `quotes ... as
+// internal/agent/env.go's words, and that file does not contain them` -- the
+// source direction is live, not only the document-side ban.
+// (47) Replacing §0's Quotations paragraph with "**Quotations.** All quotes
+// checked." fails it with `lacks "**Quotations.** Every quotation ..."`.
+// (48) Writing "Phases 0, 1 and parts of 3 are **merged on `main`** as the
+// pure-logic packages under `shared/`" back into §0 fails
+// TestDocsVoiceModuleReconciliationPinsItsBaseline: Phase 3 is the app, and it
+// lives under `mobile/src/`.
+// (49) Deleting the baseline paragraph's exception clause fails that test with
+// `lacks "the **one exception** is ..."`, and restores "every path exists
+// there", which it bans.
+// (50) Changing #17's "after the baseline commit" to "before it" fails it:
+// console/scripts/notarize-and-staple.sh postdates 82ba600d.
+// (51) Dropping the README's baseline-row exception ("was added by #626 after
+// this commit") fails it: the table is what a reader checks freshness against.
 // (34) Writing "kept Q1–Q3" back into §1's sentence about the design's first
 // revision fails TestDocsVoiceModuleFolderIsWritten with `says "kept Q1–Q3"`:
 // the design's own §11 says its six questions were consolidated into four, so
