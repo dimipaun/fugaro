@@ -84,7 +84,7 @@ func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 // NormalizeRepoArgs is argv with a bare --repo (no "=value" and no token
 // after it) rewritten to --repo=, whose empty value the commands that take it
 // read as "the repository this checkout belongs to": resolveSecretRepo for
-// secrets set/ls, and checkoutRepoFlag for budget set/kill/resume.
+// secrets set/ls, and namedRepo for budget set/kill/resume.
 //
 // --repo takes an optional value, which pflag has no way to declare: the flag
 // itself is an ordinary string flag (no NoOptDefVal of its own), so cobra
