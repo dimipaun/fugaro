@@ -237,6 +237,44 @@ func TestDocsMobileOrchestratorCheckNumberIsFree(t *testing.T) {
 	}
 }
 
+// TestDocsMobileOrchestratorAttributionsAreRight: the citations that name a
+// finding or a phrase have to name the one that actually says it. Three of them
+// were wrong once: the "this repository never runs interactively" sentence was
+// attributed to docs/design/voice.md's F16 (which is a different finding — "no
+// fugaro voice, and no local socket"), the register's "first number free past
+// every reservation above it" was quoted for 58 as well as 61 (58's sentence
+// drops "free"), and the laptop credential's rules bypass was hung on
+// internal/infra/firebasedb.go's dbErr, which says only that the database
+// refused you. The register's own phrases are asserted here too, so the
+// document's claim about the register cannot go stale silently.
+func TestDocsMobileOrchestratorAttributionsAreRight(t *testing.T) {
+	doc := readDoc(t, orchDesign)
+	for _, wrong := range []string{
+		"voice.md`'s F16",
+		"`dbErr` says so in as many words",
+		"`dbErr`)", // the bypass is D113b's; dbErr never states one
+	} {
+		if strings.Contains(doc, wrong) {
+			t.Errorf("%s still carries %q: the citation names a finding or a symbol that does not say it", orchDesign, wrong)
+		}
+	}
+	if !strings.Contains(doc, "**F12**") {
+		t.Errorf("%s no longer cites docs/design/voice.md's F12, which is where \"this repository never runs interactively\" is written", orchDesign)
+	}
+	if !strings.Contains(doc, "drops *free*") {
+		t.Errorf("%s quotes the register's numbering phrase without marking 58's variant", orchDesign)
+	}
+	register := readDoc(t, "docs/gcp-live-checklist.md")
+	for _, phrase := range []string{
+		"the first number free past every reservation above it",
+		"the first number past every reservation",
+	} {
+		if !strings.Contains(register, phrase) {
+			t.Errorf("docs/gcp-live-checklist.md no longer writes %q: %s's claim about the register has gone stale", phrase, orchDesign)
+		}
+	}
+}
+
 // TestDocsMobileOrchestratorKillPathMatchesTheTree: the design names the
 // repository kill node as the tree writes it — `config/kill/repos/<slug>`
 // (internal/budget/model.go's PathKillRepo, and the rules' KILLS_OFF macro
