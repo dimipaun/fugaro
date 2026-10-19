@@ -1362,6 +1362,9 @@ type projectAccountJob struct {
 // A profile that lists no account contributes nothing: its no-account job
 // carries no Claude token, and an installation that uses no accounts gets no
 // check at all from this (the same silence claudeAccountsStoredCheck keeps).
+// A profile whose provider deploys no shared job contributes nothing either
+// (SharedJobProvider): it may list accounts — the policy admits it — but no
+// job of it mounts one, so there is no token for doctor to look for.
 //
 // The two halves come from the local config rather than from the published
 // policy, because that is the document doctor can read on a machine that has
@@ -1372,6 +1375,17 @@ func projectAccountJobs(lc *localcfg.Config) []projectAccountJob {
 	var out []projectAccountJob
 	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 		pr := lc.Profiles[name]
+		// A Bitbucket profile is skipped, not refused (internal/infra's
+		// ProjectJobs and SharedJobProvider, design project-named-oauth-tokens
+		// §4.4, D5 amended): no shared job is deployed for it, so no job of
+		// it mounts a token, and reporting one here would fail doctor — a
+		// missing token is an ordinary check, so it fails the exit code —
+		// over a job that does not exist, telling the owner to store a
+		// credential nothing reads. The predicate is the deployer's own, so
+		// the two cannot disagree about which profiles have jobs.
+		if !infra.SharedJobProvider(pr.Provider) {
+			continue
+		}
 		for _, account := range config.ProjectJobAccounts(pr) {
 			token, serves := config.ProjectJobTokenAccount(pr, account)
 			if !serves {

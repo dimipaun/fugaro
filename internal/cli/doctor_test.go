@@ -2521,6 +2521,37 @@ func TestDoctorProjectAccountStoredSilentWithNoAccounts(t *testing.T) {
 	}
 }
 
+// TestDoctorProjectAccountStoredSkipsAProfileWithNoSharedJob: a Bitbucket
+// profile may list Claude accounts — the policy admits it (projectpolicy
+// imposes no provider rule on a profile's accounts), a Bitbucket
+// repository's workflow may select it, and the runner only requires a
+// selected profile to be defined — but no shared job is ever deployed for it
+// (SharedJobProvider, internal/infra's ProjectJobs, design
+// project-named-oauth-tokens §4.4, D5 amended): it stays on the
+// per-repository path. No job of such a profile mounts a token, so doctor
+// must not report one: a missing token is an ordinary check, so it fails
+// doctor's exit code, and the owner would be told to store a credential for
+// a job that does not exist.
+//
+// Mutation (run, restored): drop the SharedJobProvider skip in
+// projectAccountJobs. This test finds the phantom job.
+func TestDoctorProjectAccountStoredSkipsAProfileWithNoSharedJob(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n"+
+		"project_secrets:\n  claude-oauth-token:\n    allow_data_to: [acme/app]\n"+
+		"profiles:\n  bb: { provider: bitbucket, cpu: 2, memory: 4Gi, timeout_class: 6h, claude_accounts: [acme-personal, default] }\n")
+	// Everything else this rig's config asks for is stored, so the exit code
+	// is the phantom job's and nothing else's: with the skip the run is
+	// clean, without it doctor fails on a job that is never deployed.
+	putProjectSecret(t, r.sm, "aurora", "claude-oauth-token-acme-personal", []byte("fake-token-0123456789"))
+	_, checks := doctorProjectAccounts(t, r)
+	if c, ok := doctorCheckByID(checks, "project-account-stored"); ok {
+		t.Fatalf("a Bitbucket profile's accounts produced a check for a job that is never deployed: %+v", c)
+	}
+}
+
 // TestDoctorProjectAccountStoredFailsClosedWhenUnreachable: the profile
 // serves an account and the secrets list could not be read, so whether the
 // container has a version is unknown, not no. doctor warns rather than going

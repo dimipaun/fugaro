@@ -267,6 +267,16 @@ type CredentialsService struct {
 	Secrets []string `json:"secrets"` // logical names, project-wide containers
 }
 
+// MountedByTheCredentialsService reports whether the service, not the job,
+// is the identity that reads this logical secret. It is the one place that
+// answers it, and the workflow module's accessor grant asks the same
+// question of the same list (modules/workflow/sa.tf), so the mount and the
+// grant can never disagree about which secrets the service holds: a job
+// mounts exactly what its account may read.
+func MountedByTheCredentialsService(cs *CredentialsService, logical string) bool {
+	return cs != nil && slices.Contains(cs.Secrets, logical)
+}
+
 // RepoInstallation are the installation values a repository root needs.
 type RepoInstallation struct {
 	// ProjectName comes from the installation's outputs; the repository
@@ -777,6 +787,19 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		return WorkflowSpec{}, err
 	}
 	for _, m := range mounts {
+		if MountedByTheCredentialsService(c.inst.CredentialsService, m.Logical) {
+			// The installation's credentials service is the identity that
+			// reads this one (D143, D146), and the workflow module drops the
+			// job account's accessor grant with it. The mount goes with the
+			// grant, in the same commit and by the same list: a job that kept
+			// the mount would point a secret_key_ref at a secret its account
+			// can no longer read, and the execution would die at instance
+			// start — the failure modules/project/sa.tf warns about for the
+			// shared jobs. The secret itself is untouched: it is still the
+			// installation's, still required (RequiredSecrets), and still what
+			// the service reads.
+			continue
+		}
 		if _, dup := ws.SecretEnv[m.Env]; dup {
 			collisions = append(collisions, m.Env)
 		}

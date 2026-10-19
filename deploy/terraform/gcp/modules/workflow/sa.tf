@@ -65,6 +65,12 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
 # accounting. The drop is by logical name, so a repository's own copy of a
 # model secret loses its grant too. Everything else the workflow mounts —
 # the provider credential, a repository's own secrets — is granted as before.
+#
+# The mount goes with the grant, and by the same list: internal/infra's
+# MountedByTheCredentialsService drops the secret_env entry when it builds
+# the job's spec, so the two never disagree. This filter is what holds when
+# they could — a tfvars written by an older fugaro, or hand-edited — because
+# a job that mounts a secret its account cannot read dies at instance start.
 resource "google_secret_manager_secret_iam_member" "job" {
   for_each = toset([
     for name in values(var.workflow.secret_env) :

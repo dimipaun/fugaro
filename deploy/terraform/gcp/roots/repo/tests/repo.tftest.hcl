@@ -1531,7 +1531,7 @@ run "credentials_service_on" {
   assert {
     condition = length([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env :
     e if length(e.value_source) > 0]) == 3
-    error_message = "the job must still mount its three secrets: removing a model secret's mount is C1.20's change, and this task leaves a job mounting what it mounts today"
+    error_message = "the module mounts exactly the secret_env it is given: the entry for a secret the service holds is dropped in internal/infra (MountedByTheCredentialsService), before any tfvars is written, and this test's tfvars still names it. The filter above is the module's own half — it holds for a tfvars an older fugaro wrote, where the mount is still there"
   }
   assert {
     condition = (length(google_cloud_run_v2_service_iam_member.credentials) == 1 &&

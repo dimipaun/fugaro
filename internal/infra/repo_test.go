@@ -12,6 +12,7 @@ import (
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 func TestRepoWorkdirPath(t *testing.T) {
@@ -208,6 +209,70 @@ func TestRepoVarsCarryTheCredentialsService(t *testing.T) {
 	got := doc.Installation.CredentialsService
 	if got == nil || !reflect.DeepEqual(*got, *in.Installation.CredentialsService) {
 		t.Errorf("the tfvars' installation.credentials_service = %+v, want %+v", got, in.Installation.CredentialsService)
+	}
+}
+
+// A job mounts exactly what its account may read. With the credentials
+// service on, the module drops the job account's secretAccessor on the
+// secrets the service holds (modules/workflow/sa.tf), so the job must not
+// mount them: a secret_key_ref to a secret the account cannot read fails the
+// execution at instance start, which is the failure the sibling module's own
+// comment warns about for the shared jobs. The mount and the grant ask the
+// same question of the same list, in the same commit.
+//
+// The secret itself is not touched: it stays the installation's, still what
+// `fugaro secrets ls` reports as required (RequiredSecrets), and still what
+// the service reads. Only this job's mount of it goes.
+func TestNoModelMountWithTheCredentialsService(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	in.Cfg.Agent.Auth = "api-key"
+	off, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.Workflows["web"].SecretEnv["ANTHROPIC_API_KEY"] != config.AnthropicSecret {
+		t.Fatalf("the fixture does not mount the Anthropic key: %v", off.Workflows["web"].SecretEnv)
+	}
+	if _, ok := off.Secrets[config.AnthropicSecret]; !ok {
+		t.Fatal("the fixture does not carry the Anthropic secret's ID")
+	}
+
+	in.Installation.CredentialsService = &CredentialsService{
+		Name:    "fugaro-credentials",
+		Region:  "us-east5",
+		Secrets: []string{config.AnthropicSecret},
+	}
+	on, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := on.Workflows["web"]
+	if logical, ok := web.SecretEnv["ANTHROPIC_API_KEY"]; ok {
+		t.Errorf("with the credentials service on the job still mounts %s = %q: %v", "ANTHROPIC_API_KEY", logical, web.SecretEnv)
+	}
+	if _, ok := web.SecretIDs[config.AnthropicSecret]; ok {
+		t.Errorf("with the credentials service on the job still carries the Anthropic secret's ID: %v", web.SecretIDs)
+	}
+	if _, ok := on.Secrets[config.AnthropicSecret]; ok {
+		t.Errorf("with the credentials service on the root still references the Anthropic container: %v", on.Secrets)
+	}
+	if list := web.Env[runner.SecretEnvsVar]; strings.Contains(list, config.AnthropicSecret) {
+		t.Errorf("%s = %q still names %s: the redaction list is what the job mounts", runner.SecretEnvsVar, list, config.AnthropicSecret)
+	}
+	// Everything else the workflow mounts is mounted as before: the drop is
+	// by the service's own list, not a blanket one.
+	if web.SecretEnv["FUGARO_BITBUCKET_TOKEN"] != "bitbucket-token" {
+		t.Errorf("the drop took the provider credential with it: %v", web.SecretEnv)
+	}
+	// And a service that holds another secret leaves the model key alone:
+	// what decides is the list, not the opt-in.
+	in.Installation.CredentialsService.Secrets = []string{"sandbox-probe"}
+	other, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Workflows["web"].SecretEnv["ANTHROPIC_API_KEY"] != config.AnthropicSecret {
+		t.Errorf("a service that does not hold the model key dropped its mount anyway: %v", other.Workflows["web"].SecretEnv)
 	}
 }
 
