@@ -2249,9 +2249,12 @@ identity Gatekeeper and the notary record keep.
 - **Automatic updates.** `build.publish` is `null`, the script passes
   `--publish never`, there is no feed, and `electron-updater` is not a
   dependency: Task 4.4 is the auto-update task and brings all of that with it.
-- **An icon.** There is no `build/icon.icns`, so the bundle carries Electron's
-  default icon. It is a packaging wart, not a security property, and it needs an
-  asset file that no task has produced.
+- **An icon** — *filled in on 2026-10-19, by the icon task at the end of this
+  document.* This bullet used to read that there is no `build/icon.icns`, so the
+  bundle carries Electron's default icon, and that it is a packaging wart rather
+  than a security property needing an asset file no task had produced. The asset
+  file now exists: `build.mac.icon` names `console/build/icon.png`, the
+  website's own mark, and a packaged bundle carries it.
 - **Any signed build.** No bundle has been signed or notarised here; one
   unsigned universal pack was run (above). The signed build is Check 59a's job,
   and design §12 item 4 stays open until it has run.
@@ -3387,3 +3390,95 @@ implemented in**: Playwright's Electron launch needs a display and a GTK/NSS/gli
 image does not have. `npm run test:unit` is green there and `tsc --noEmit` typechecks the
 specs; the e2e suite is the one verification this branch could not complete, and the pull
 request says so.
+
+## The application icon: the website's mark (the owner's brief of 2026-10-19)
+
+The console's icon is the **website's own mark**, not a second drawing of it, and there is
+one file on disk rather than two to keep in step: `console/build/icon.png` is
+byte-for-byte `brand/app-icon-1024.png`, the opaque app-icon master that
+`scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` — the file
+`brand/README.md` and `website/README.md` both name as the source of truth for every icon
+the site serves. The website's own home-screen icon,
+`website/public/android-chrome-512x512.png`, is the same composition (the artwork cropped,
+centred on the palette's `--ground` at 80 % extent) at half the size, so the console and a
+visitor's browser tab are showing the same picture.
+
+### 1024, and why that is not an upscale
+
+The brief offered the site's 512 px icon as the fallback if that were the best artwork
+there is, with the instruction to say so rather than smooth a 512 up to 1024. It is not the
+best there is. `brand/app-icon-1024.png` is a genuine 1024 render of the same artwork from
+the same generator, written by the same `fit(art, size, 0.80, ground)` call the site's 512
+is, and the source logo is 1024 x 1024 to begin with. So the console takes the 1024 and
+nothing is resampled upwards. `test/unit/icon.test.ts` asserts the size, the opacity
+(colour type 2 — a `.icns` with holes in it shows the desktop through the mark) and the
+bytes; the PR records that the website's largest *served* file is 512 and that the console
+therefore went to the brand master for the 1024 rather than to `public/`.
+
+### Where the packager takes it, and where a running console does
+
+- **The bundle.** `build.mac.icon` in `console/package.json` names
+  `build/icon.png` — the string `CONSOLE_ICON_RELATIVE_PATH` writes once, in
+  `src/main/icon.ts` — and electron-builder converts the 1024 PNG to the bundle's `.icns`
+  on the macOS release runner (`docs/pending-workflows/console-release.yml` runs
+  `npm run package` on `macos-15`). **No `.icns` is committed**: it is a derived binary
+  only the packing step needs, and committing one would be a second copy of the artwork to
+  regenerate by hand. The icon is deliberately *not* in `build.files`: it goes into the
+  bundle as the application's icon, not into the asar as an asset, and `fuses.test.ts`'s
+  exact-list test still holds every pattern there to `.js`, `.html` or `.css`.
+- **The dock, while unpackaged.** `npm run build && npx electron .` — what a developer
+  does, and what `test/e2e/` launches — has no bundle, so the dock would show Electron's
+  own icon. `installDevDockIcon` (`src/main/icon.ts`) gives the process the console's icon
+  through `app.dock.setIcon`, and `src/main/index.ts` calls it as the first thing `main()`
+  does, before any window exists. It answers `false` — and touches nothing — in three
+  cases, each a real one rather than a defensive check: not macOS (`app.dock` is
+  `undefined`), already packaged (the bundle carries the icon), and no dock handed in.
+- **`BrowserWindow`'s `icon` option is not used, and that is deliberate.** macOS ignores
+  it: a window's chrome and the dock take the *application's* icon, which on macOS is the
+  bundle's. A key that does nothing on the only platform this console runs on would be
+  worse than absent, and pointing it at a file the packaged app does not carry is exactly
+  the broken pointer the `<link>` rule in this document refuses. The dev-time dock icon is
+  macOS's own door for the same job.
+
+### Refresh, when the mark changes
+
+The copy is a copy, so a regenerated brand master (a palette change moves the ground
+colour, which is what re-running `scripts/gen-brand-icons.py` records) leaves the console's
+icon stale **until the equality test says so**:
+
+```sh
+python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png
+```
+
+That is the whole sync. It is a byte copy rather than a build step on purpose: electron's
+packing runs on a macOS runner that has no Pillow, `build/icon.png` is a committed file the
+dev-time dock reads from the checkout, and a derivation script would be a second
+implementation of the generator's own decision to keep in step.
+
+### The tests, and the mutations each one was run against
+
+`test/unit/icon.test.ts` (9 tests), and every one of them was seen red against a planted
+change before it was committed:
+
+| Claim | Mutation it was run against |
+|---|---|
+| the bytes are the master's | a 1024 x 1024 RGB PNG of the ground colour alone planted as `build/icon.png` — "is the app-icon master, byte for byte" red |
+| the picture is the site's | the same planted file: "is the picture the website serves…" red, naming block 421 at 218.06 against a tolerance of 8. The site's *maskable* icon, a different composition of the same mark, measures 218.87 the same way; the site's 512 measures **3.96**, which is what the tolerance is set from (see the test) |
+| it is a 1024, opaque PNG | the site's 512 icon planted in its place — the size assertion red ("expected 512 to be 1024"); that file is opaque too, so the colour-type half of the test is what the `logo.png` in `public/` would fail |
+| the packaging config names it | `build.mac.icon` pointed at `build/icon.icns` — "is the icon the packaging config names…" red |
+| the dock icon is set on macOS, unpackaged | `deps.packaged` dropped from `installDevDockIcon`'s guard — "does nothing once packaged" red; `deps.platform` dropped — "does nothing off macOS" red |
+| the entry point wires it | `packaged: app.isPackaged` in `src/main/index.ts` replaced with `packaged: true` — "is the icon the entry point actually installs" red |
+
+The last row is a source scan, the same shape as `startup.test.ts`'s: `src/main/index.ts`
+imports Electron's *runtime* and cannot be imported under vitest, so "the entry point
+installs it" is read off the file's text.
+
+### What this task does not own
+
+Nothing under `.github/workflows/` — the release workflow is staged in
+`docs/pending-workflows/` and is the owner's to copy in, so the PNG-to-`.icns` conversion
+is asserted as *what that file's `npm run package` will do*, not as something this branch
+ran. Apple's icon shape: macOS draws its own rounded-rect mask over a full-bleed icon, and
+the mark is not redrawn, recoloured or inset to anticipate it — that would be editing the
+website's artwork. And any signed or notarised build: unchanged from Task 4.1's record
+above.
