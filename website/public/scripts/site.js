@@ -140,13 +140,10 @@
     )
   }
 
-  // Whether a menu holds the element: the drawer's panel is its toggle's next sibling rather
-  // than its child (see the layout's note), so "inside the drawer" is the toggle or that panel.
+  // Whether a menu holds the element. A group's list is the `<details>`'s own child (see the
+  // layout's note), so "inside the group" is what the element's own ancestry says.
   function holds(details, element) {
-    if (!element) return false
-    if (details.contains(element)) return true
-    var panel = details.nextElementSibling
-    return !!(panel && details.classList.contains('site-nav-drawer') && panel.contains(element))
+    return !!element && details.contains(element)
   }
 
   // The focus this file has just given back, and the reason the group it lands on does not
