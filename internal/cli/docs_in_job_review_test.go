@@ -184,16 +184,37 @@ func TestDocsInJobReviewStatesTheBriefCorrections(t *testing.T) {
 	if _, err := os.Stat("../../.claude/rules"); err == nil {
 		t.Errorf(".claude/rules now exists: %s's correction that this repository has none is stale", inJobReviewRecon)
 	}
-	for _, doc := range []struct{ path, text string }{{inJobReviewRecon, recon}, {inJobReviewREADME, readme}} {
-		for _, want := range []string{
+	// What each document must carry, as the substance of each correction and
+	// not merely a mention of the symbol: a document that says the runner never
+	// force-pushes while quoting --force-with-lease in an example must fail.
+	for _, doc := range []struct {
+		path string
+		text string
+		want []string
+	}{
+		{inJobReviewRecon, recon, []string{
 			// Correction 1: no CLAUDE.md, no .claude/rules here.
 			"CLAUDE.md",
 			".claude/rules",
 			// Correction 2: the runner does force-push its own run branch, with
-			// a lease; checkpoints never force and the base branch is never pushed.
+			// a lease; checkpoint pushes are the fast-forward-only ones; the
+			// base branch is never pushed at all.
+			"does** force-push",
 			"force-with-lease",
+			"fast-forward only",
+			"base branch is never pushed",
 			"PushFastForward",
-		} {
+		}},
+		{inJobReviewREADME, readme, []string{
+			"CLAUDE.md",
+			".claude/rules",
+			"force-with-lease",
+			"fast-forward only",
+			"base branch is never pushed",
+			"PushFastForward",
+		}},
+	} {
+		for _, want := range doc.want {
 			if !strings.Contains(doc.text, want) {
 				t.Errorf("%s lacks %q: the brief's wrong version of this fact must not be left standing alone", doc.path, want)
 			}
