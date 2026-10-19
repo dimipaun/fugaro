@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -437,8 +436,16 @@ func TestTelemetryPlanAgreesWithItsOwnRegistration(t *testing.T) {
 	if highest == 0 {
 		t.Fatal("the register carries no written check section: this assertion would otherwise pass whatever the plan claims about the highest one")
 	}
-	want := fmt.Sprintf("## Check %d", highest)
-	if !strings.Contains(doc, want) {
-		t.Errorf("%s does not state %q: the register's highest written check section is %d, and the plan's \"free block after 104\" rests on that reading — a stated premise is read from the register, not remembered", telemetryPlan, want, highest)
+	// The SENTENCE, not the token: the plan names `## Check 89` in three other
+	// places (§1's table, this paragraph's own correction, §12's rows), so a
+	// bare Contains would stay green while the stated premise said something
+	// else — which is exactly how the false premise survived the first pin.
+	stated := regexp.MustCompile("highest check section written is `## Check ([0-9]+)[a-z]?`")
+	m := stated.FindStringSubmatch(telemetryPlain(doc))
+	if m == nil {
+		t.Fatalf("%s no longer states the highest written check section in the shape \"the highest check section written is `## Check N`\": the premise the free block rests on has to be findable, and this test cannot check a sentence it cannot locate", telemetryPlan)
+	}
+	if got, _ := strconv.Atoi(m[1]); got != highest {
+		t.Errorf("%s states the highest check section written is %q, and the register's is ## Check %d: the plan's \"free block after 104\" rests on that reading, and a stated premise is read from the register rather than remembered", telemetryPlan, m[1], highest)
 	}
 }
