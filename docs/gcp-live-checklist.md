@@ -300,7 +300,8 @@ sub-lettering convention for one line of work's several live steps (43a–43f,
 phones home) are written below by Task W2.2; **69c** (the published ranges are
 real) is Task W2.3's and is written in the level after W2.2's, so it is not in
 this file yet and its absence is not a gap in the numbering. The number was free
-when W2.2 merged: the highest written `## Check N` section here was **58**, and
+when W2.2 merged (`4b6a45d`, #535): the highest written `## Check N` section in
+the file that commit merged into, read at `4b6a45d^`, was **58**, and
 59 (as 59a/59b), 60, 61, 62–63, 64–66 and 67–68 are reserved by the console,
 budget-token-channel, project-centric, console-v2, voice and managed-projects
 lines, each recorded above. **The website work holds 69 and up, and the mobile
@@ -317,9 +318,12 @@ P5 and P6), in the same sub-lettering convention. All three are written below:
 **70c** (the copy control in a real browser, with a real clipboard) by **P6** — so the
 block this paragraph proposes is complete, where the one Check 69 arrived in is not
 (69c is still Task W2.3's, as the paragraph above says). The number was free when P3 and
-P6 merged (and when P5 did): the highest written `## Check N` section here was **69b**,
-the website work holds 69 and up, and no document in the tree wrote `70` (the redesign
-plan checked that on 2026-10-18). The redesign's §8 proposes this block for the owner to
+P6 merged (`b9c349a`, #575): the highest written `## Check N` section in the file that
+commit merged into, read at `b9c349a^`, was **69b**, and the website work holds 69 and up.
+That commit writes 70a and 70c, so the file ends at `70c` there — and it still ends at
+`70c` at P5's merge (`24ef3aef`, #603), which is why 70b, P5's check, is the one written
+last. No document in the tree wrote `70` when the redesign plan proposed this block
+(checked 2026-10-18). The redesign's §8 proposes this block for the owner to
 confirm with `D180`–`D192` in `docs/website/redesign/reconciliation.md` §9, and the parts
 write their checks rather than waiting on the confirmation because a live check is
 what the owner runs: if the owner allocates differently, these sections renumber

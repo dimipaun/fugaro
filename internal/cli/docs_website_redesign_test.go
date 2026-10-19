@@ -20,10 +20,11 @@ package cli
 // The two tests on the entry pin its two halves the way TestWebsiteChecklistHasCheck69aAnd69b
 // pins the website plan's 69a and 69b -- the row a reader meets first and the section it
 // points at -- because a check that exists as a section but not as a row is a check nobody
-// reads first, and a row with no section is a command nobody can follow. The three tests
-// beside them hold the facts this comment and the section's own wording rest on: the plan's
-// attribution of the ceilings to P4, the register's note about its block of three, and the
-// selectors the check reads its numbers through.
+// reads first, and a row with no section is a command nobody can follow. The tests beside
+// them hold the facts this comment and the section's own wording rest on: the plan's
+// attribution of the ceilings to P4, the register's notes about its block of three and about
+// the commit each "the number was free" reading was taken at, the "as of main's commit" note
+// the three sections open with, and the selectors the check reads its numbers through.
 //
 // What the pair holds 70b to, beyond the shape every entry in the register has:
 //
@@ -356,6 +357,77 @@ func TestWebsiteChecklist70NoteDoesNotClaimCheck69IsComplete(t *testing.T) {
 	// here as it was written, so the wording cannot drift back to it.
 	if strings.Contains(flat, "69a–69c arrived in is complete") {
 		t.Errorf("%s's note about check 70 says the block Check 69 arrived in is complete: it is not -- 69c is not in this file yet, as the paragraph above the note says", path)
+	}
+}
+
+// highestFreeClaim is the register's "the number was free when ... merged" claim, as the two
+// website notes write it: the part's merge and its pull request, the commit the reading was
+// taken at, and the highest `## Check N` section the file carried there.
+var highestFreeClaim = regexp.MustCompile("was free when (.+?) merged \\(`([0-9a-f]{7,40})`, #([0-9]+)\\): the highest written `## Check N` section in the file that commit merged into, read at `([0-9a-f]{7,40})\\^`, was \\*\\*([0-9a-z]+)\\*\\*")
+
+// TestWebsiteChecklistHighestWrittenClaimsReadAtTheCommitBeforeTheMerge pins the two register
+// notes that say a check number "was free when" a part merged -- the Check 69 note's sentence
+// for 69, and the Check 70 note's for 70. Each states the highest `## Check N` section the file
+// carried at that moment, and such a statement is true of the file *before* the merging commit:
+// the merge is what writes the part's own checks. A note that reads the state at the merge
+// commit itself gets the count and the reason wrong, which is how this test came to exist --
+// the Check 70 note read "the highest written `## Check N` section here was **69b**" as the
+// state "when P3 and P6 merged (and when P5 did)", and 70c was in the file at both of those
+// commits, written by the first of them.
+//
+// The shape is what makes the claim checkable rather than remembered: the merge and its pull
+// request are named, the reading says which commit it was taken at and that commit is the
+// merge's parent, the section the file ended at is named, and the file really carries it. Git
+// history is not readable from this test -- CI checks out with `fetch-depth: 2` -- so the pin is
+// on the text saying where its fact comes from; the derivation it stands for is
+// `git show <merge>^:docs/gcp-live-checklist.md | grep '^## Check'`.
+func TestWebsiteChecklistHighestWrittenClaimsReadAtTheCommitBeforeTheMerge(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(doc), " ")
+
+	found := highestFreeClaim.FindAllStringSubmatch(flat, -1)
+	if len(found) < 2 {
+		t.Fatalf("%s carries %d dated \"was free when ... merged\" claims, want the two the register's website notes make (Check 69's for 69, Check 70's for 70): a claim that says which section was the highest written one and does not say which commit it read is a claim about today, and today moves", path, len(found))
+	}
+
+	// The two readings, in the order the register writes them.
+	want := []struct {
+		merge, pr, number string
+	}{
+		{"4b6a45d", "535", "58"},  // W2.2, whose own commit writes 69a and 69b
+		{"b9c349a", "575", "69b"}, // P3 and P6, whose own commit writes 70a and 70c
+	}
+	for i, m := range found {
+		part, merge, pr, readAt, number := m[1], m[2], m[3], m[4], m[5]
+		if i < len(want) {
+			w := want[i]
+			if merge != w.merge || pr != w.pr || number != w.number {
+				t.Errorf("%s reads the claim about %s as %s's merge (`%s`, #%s) ending at `## Check %s`, want `%s` (#%s) ending at `## Check %s`: the number, the commit and the reading are one fact, so a correction edits all three", path, part, part, merge, pr, number, w.merge, w.pr, w.number)
+				continue
+			}
+		}
+		// The reading is the state the merge found, so it is taken at the merge's parent: at
+		// the merge itself the part's own checks are already written into the file.
+		if readAt != merge {
+			t.Errorf("%s reads the highest written section for %s at `%s^`, not at the merge it names, `%s`: the merge commit is what writes the part's own checks, so a reading taken there counts them as written and the number stops looking free", path, part, readAt, merge)
+		}
+		if !strings.Contains(doc, "## Check "+number+":") {
+			t.Errorf("%s says the file ended at `## Check %s` at `%s^`, and carries no `## Check %s:` section: the claim names a section a reader cannot find", path, number, readAt, number)
+		}
+	}
+
+	// The half the Check 70 note got wrong, pinned where it now stands: what the file ends at
+	// after each merge. #575's own commit writes 70a and 70c, so the file ends at 70c there,
+	// and it still ends at 70c at #603's -- which is why 70b, P5's own check, is the section
+	// written last, by the check-70b work, rather than by P5's merge.
+	for _, claim := range []string{
+		"so the file ends at `70c` there",
+		"it still ends at `70c` at P5's merge (`24ef3aef`, #603)",
+	} {
+		if !strings.Contains(flat, claim) {
+			t.Errorf("%s no longer carries %q: the Check 70 note has to say what the file ends at after the merges that took the number, because 70 was free for P5's check only while 70c was the highest written section", path, claim)
+		}
 	}
 }
 
