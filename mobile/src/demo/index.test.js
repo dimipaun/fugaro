@@ -155,6 +155,38 @@ test('a second confirmation is refused: one confirmation spends one action', asy
   assert.equal(state.sent.length, 5, 'the refused phrase was still a sent utterance');
 });
 
+test('leaving during a confirmation is answered, not thrown at', async () => {
+  // The reviewer taps Confirm and then "Leave demo mode" while the phrase is
+  // still being sent. Confirming reads the demo it started with -- not the
+  // module's `running`, which `leave` has just set to null -- so the leave is
+  // answered with the inactive state rather than with a TypeError from a screen.
+  const { demo } = await entered();
+  const pending = demo.confirm();
+  const left = demo.leave();
+  assert.equal(left.active, false);
+  const after = await pending;
+  assert.equal(after.active, false);
+  assert.equal(demo.active(), false);
+  assert.equal(demo.state().active, false);
+});
+
+test('a confirmation in flight does not land on the demo entered after it', async () => {
+  // Leave, tap "Try the demo" again, and the phrase from the FIRST demo is still
+  // being sent: it must be dropped, not recorded against the new demo's
+  // destructive command (which the reviewer has not confirmed).
+  const { demo } = await entered();
+  const pending = demo.confirm();
+  demo.leave();
+  const second = await demo.enter();
+  await pending;
+
+  assert.equal(second.active, true);
+  assert.equal(demo.state().destructive.phase, 'pending');
+  assert.equal(demo.state().destructive.confirmed, null, 'a stale phrase authorised the action');
+  assert.equal(demo.state().sent.length, DEMO_UTTERANCES.length + 1, 'the stale phrase was recorded');
+  assert.deepEqual(demo.state().problems, []);
+});
+
 test('entering the demo twice is the same demo, not a second one', async () => {
   // A double tap on "Try the demo" must not send the sample utterances twice,
   // and must not wipe what the reviewer has already done (the screen's control
@@ -205,6 +237,39 @@ test('leaving while the demo is still being built leaves it off', async () => {
   // And the next entry is a whole demo: abandoning a run leaves nothing behind.
   assert.equal((await demo.enter()).active, true);
   assert.equal(demo.state().sent.length, DEMO_UTTERANCES.length + 1);
+});
+
+test('entering again while an abandoned run is still in flight starts the demo', async () => {
+  // The reviewer taps "Try the demo", taps "Leave demo mode" before it has
+  // finished, and taps "Try the demo" again -- all while the first run is still
+  // going. That third tap must start a demo: joining the ABANDONED run would
+  // answer it with the inactive state and start nothing at all, which is a
+  // control that silently does nothing.
+  const demo = createDemoMode();
+  let changes = 0;
+  demo.subscribe(() => { changes += 1; });
+  const first = demo.enter();
+  demo.leave();
+  const second = demo.enter();
+
+  assert.equal((await second).active, true, 'the second tap started no demo');
+  assert.equal(demo.active(), true);
+  assert.equal(demo.state().active, true);
+  assert.equal(demo.state().sent.length, DEMO_UTTERANCES.length + 1);
+
+  // The abandoned run ENDING must not put the live run's place in flight back to
+  // empty on its way out -- that would let the next tap start a third run, and
+  // the reviewer would have two demos from two taps. (`await first` retires the
+  // abandoned run; `second` is still going.)
+  await first;
+  const third = demo.enter();
+  const [a, b] = await Promise.all([second, third]);
+  assert.equal(a, b, 'the tap after the abandoned run started a second demo');
+  // One publish: the live run landing. The abandoned run publishes nothing (it
+  // never had a demo to show), and the two taps that joined the live run are one
+  // demo, not two.
+  assert.equal(changes, 1, 'the demo was entered more than once');
+  assert.equal(a.active, true);
 });
 
 test('leaving the demo drops everything, and entering again starts fresh', async () => {

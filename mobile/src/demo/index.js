@@ -110,10 +110,17 @@ export function createDemoMode(options = {}) {
   /** Everything the demo owns while it is running; `null` when it is not. */
   let running = null;
   /**
-   * The `enter()` still in flight, if any. `running` is assigned only at the END
-   * of a run -- there are awaits in between -- so it cannot be the guard against
-   * a double tap on its own: two taps in the same tick would both find it null
-   * and both build a demo. This one is set synchronously, before the first await.
+   * The `enter()` still in flight, if any: `{ epoch, promise }`. `running` is
+   * assigned only at the END of a run -- there are awaits in between -- so it
+   * cannot be the guard against a double tap on its own: two taps in the same
+   * tick would both find it null and both build a demo. This one is set
+   * synchronously, before the first await.
+   *
+   * It carries the epoch the run started in, because a run the reviewer already
+   * LEFT is not a run a later tap may join: joining it would answer that tap with
+   * the inactive state and start nothing, which is a control that silently does
+   * nothing. `leave` bumps the epoch, so the record goes stale by itself and a
+   * new run may start while the abandoned one is still winding down.
    */
   let entering = null;
   /**
@@ -234,12 +241,20 @@ export function createDemoMode(options = {}) {
    */
   async function enter() {
     if (running !== null) return snapshot;
-    if (entering !== null) return entering;
-    entering = run(epoch);
+    // Join the run in flight -- but only one started in the epoch we are in now.
+    // A run the reviewer has left (see `leave`) is abandoned, and joining it
+    // would answer this tap with the inactive state and start no demo.
+    if (entering !== null && entering.epoch === epoch) return entering.promise;
+
+    const mine = run(epoch);
+    entering = Object.freeze({ epoch, promise: mine });
     try {
-      return await entering;
+      return await mine;
     } finally {
-      entering = null;
+      // Only this run's own record is cleared: a `leave()` and the run started
+      // after it may be holding this slot by the time an abandoned run ends, and
+      // clearing theirs would let the next tap start a third demo.
+      if (entering !== null && entering.promise === mine) entering = null;
     }
   }
 
@@ -348,16 +363,25 @@ export function createDemoMode(options = {}) {
    *   the record or the refusal
    */
   async function confirm() {
-    if (running === null || running.machine === null || !running.machine.ok) {
+    // The demo this confirmation belongs to, held for the whole call. The
+    // module's `running` is NOT re-read after the await below: `leave()` sets it
+    // to null while the phrase is in flight, and a screen that tapped Confirm and
+    // then left would be answered with a TypeError instead of the inactive state.
+    const run = running;
+    if (run === null || run.machine === null || !run.machine.ok) {
       return snapshot;
     }
-    const heard = await running.client.send(DEMO_DESTRUCTIVE.confirmation);
+    const heard = await run.client.send(DEMO_DESTRUCTIVE.confirmation);
+    // Left -- or left and entered again -- while the phrase was being sent: this
+    // run's work is dropped whole rather than landing on a demo that is no longer
+    // there (`running !== run` covers both, since a new run replaces it).
+    if (running !== run) return snapshot;
     if (!heard.ok) {
-      running.problems.push(Object.freeze({ at: 'confirm-send', code: heard.code }));
+      run.problems.push(Object.freeze({ at: 'confirm-send', code: heard.code }));
       publish(buildState());
       return snapshot;
     }
-    const verdict = step(running.machine.state, {
+    const verdict = step(run.machine.state, {
       type: 'confirm',
       now,
       utteranceId: heard.id,
@@ -366,18 +390,18 @@ export function createDemoMode(options = {}) {
       confirmationId: DEMO_DESTRUCTIVE.confirmationId,
       target: { ...DEMO_DESTRUCTIVE.target },
     });
-    running.sent.push(Object.freeze({
+    run.sent.push(Object.freeze({
       ok: true, id: heard.id, text: DEMO_DESTRUCTIVE.confirmation, code: null,
     }));
     if (verdict.ok) {
       // The state advances: the next step is judged against what this one spent.
-      running.machine = verdict;
-      running.confirmed = verdict.record;
-      running.refused = null;
+      run.machine = verdict;
+      run.confirmed = verdict.record;
+      run.refused = null;
     } else {
       // A refusal carries no state (P6.2), so the machine keeps the one it had
       // -- which is the state that holds the spent confirmation id.
-      running.refused = Object.freeze({ code: verdict.code, field: verdict.field });
+      run.refused = Object.freeze({ code: verdict.code, field: verdict.field });
     }
     publish(buildState());
     return snapshot;
@@ -389,8 +413,10 @@ export function createDemoMode(options = {}) {
    * it was entered, and entering it again starts from the sample data rather
    * than from the last reviewer's session.
    *
-   * Leaving also abandons an entry that is still in flight (the epoch below), so
-   * the way out is answered whatever the run is doing.
+   * Leaving also abandons an entry that is still in flight, and a confirmation
+   * still being sent, so the way out is answered whatever the demo is doing --
+   * and the next tap on "Try the demo" starts a whole new run rather than
+   * joining the abandoned one.
    *
    * @returns {object} the inactive state
    */
