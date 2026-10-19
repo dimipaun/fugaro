@@ -534,10 +534,19 @@ func TestDocsReleaseChecklistNamesEveryPolicyVersion(t *testing.T) {
 // stopped claiming the discovery surface is missing. An operator told a
 // shipped command is "not yet" looks for another way to do the work.
 //
+// The review's doc findings are pinned here too, because a row that describes
+// a command wrongly is one an operator plans against: the `repos ls` row said
+// a failed read "says so" (it is an error, and the command prints nothing)
+// and that each entry carries its provider (nothing prints one), and §10 said
+// the policy commands ship "in this release" where the release is what a
+// reader needs. The `sync` row has to say how wide to install the App, because
+// what it enumerates is exactly the installation's grant.
+//
 // Mutation (verified, run and restored): drop the "Three things" paragraph,
-// put `repos ls`'s "and the repositories running now" back, or restore §10's
-// "without the fuller discovery answer phase 4 adds" — this test fails,
-// naming it.
+// put `repos ls`'s "and the repositories running now" back, restore §10's
+// "without the fuller discovery answer phase 4 adds", restore the old
+// "(a project with no Firebase backend, or a read that failed, says so …)"
+// clause, or drop the App-scope sentence — this test fails, naming it.
 func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	for _, want := range []string{
@@ -554,6 +563,10 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 		"the ones the allow-list does not already admit, in **one batch, confirmed once**",
 		"the discovery answer has shipped too",
 		"never removes an entry",
+		// The review's doc findings (see above).
+		"ship in 0.9.5 (§7)",
+		"Install the App on the repositories you mean to run, and no wider",
+		"a read that **fails** is an error, and the command then prints nothing at all",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md lacks %q", want)
@@ -563,6 +576,10 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 		"| `fugaro project repos ls` | The allow-list with each entry's source, and the repositories running now |",
 		"without the fuller discovery answer phase 4 adds",
 		"phase 4's discovery surface is where a durable answer comes from",
+		// The rows the review corrected: a failed read is not a note, and no
+		// provider is printed, so neither claim may come back.
+		"or a read that failed, says so instead of printing an empty history",
+		"each with its canonical name and its provider",
 	} {
 		if strings.Contains(doc, notWant) {
 			t.Errorf("docs/project-layer.md still says %q, which task 4.1 made false", notWant)

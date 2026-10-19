@@ -5141,9 +5141,13 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	sameSet(t, "stage", stages, tsList(t, scrub, `\bstage: \[([^\]]*)\]`, "VOCAB.stage"))
 
 	// The auth values: the config's allowed set, which is the one a run is
-	// launched with, plus the dash the wall view writes for an empty one.
-	auth := sourceValues(t, "internal/config/validate.go", readDoc(t, "internal/config/validate.go"),
-		`\[\]string\{([^}]*)\}, c\.Agent\.Auth`)
+	// launched with, plus the dash the wall view writes for an empty one. The
+	// set is config.AgentAuths in defaults.go — validate.go's own check and the
+	// run's account gate both read it (config.KnownAgentAuth), so it is the one
+	// list, and this scan follows it there rather than reading a copy out of the
+	// validator's call site.
+	auth := sourceValues(t, "internal/config/defaults.go", readDoc(t, "internal/config/defaults.go"),
+		`AgentAuths = \[\]string\{([^}]*)\}`)
 	allowed := quoted(auth[0])
 	if len(allowed) == 0 {
 		t.Fatalf("internal/config/validate.go: the allowed-auth set parsed as empty")
