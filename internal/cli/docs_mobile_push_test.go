@@ -15,7 +15,7 @@ import (
 // tokens live, what sends them, rate limiting, the user controls, the threat
 // model, the failure modes, the cost, the privacy statement and the
 // alternatives — names the live check by number and leaves it unwritten, and
-// keeps its questions as Q1–Q9 for the owner rather than allocating a decision
+// keeps its questions as Q1–Q10 for the owner rather than allocating a decision
 // number. Its red state is this test: the document did not exist.
 func TestDocsMobilePushDesignIsWritten(t *testing.T) {
 	const path = "docs/mobile/design/push-notifications.md"
@@ -33,10 +33,38 @@ func TestDocsMobilePushDesignIsWritten(t *testing.T) {
 		"FCM",
 		"APNs",
 		"Expo",
-		// Where the push tokens live, who may read them, and the generation.
+		// Where the push data lives and the rule that protects revocation: a
+		// SIBLING of the device node, so no routine push write can recreate a
+		// revoked device node and un-revoke it. `config/admin/devices/$uid` must
+		// remain, because it is the node the sibling hangs beside and the node
+		// the design forbids every writer but pair/pair revoke to touch.
 		"config/admin/devices/$uid",
+		"config/admin/push/$uid",
+		"ever touches `devices/**`",
 		"rules generation 3",
 		"RulesVersion",
+		// The sender's authority, named exactly rather than described: the
+		// permission, the role it must NOT be, and the reason the sender may
+		// take nothing from args or env.
+		"firebasecloudmessaging.messages.create",
+		"roles/firebasecloudmessaging.admin",
+		"runWithOverrides",
+		// The category set reconciled with the decision the owner actually made,
+		// and the read grant the excluded categories would need.
+		"D160",
+		"the phone cannot see them",
+		"tension (b1)",
+		// The quiet-hours datum, corrected: a zone name, not an offset.
+		"IANA",
+		// The provider claims the review could not verify, marked rather than
+		// asserted.
+		"UNVERIFIED",
+		// The two open questions this round added: retention (D121's own words)
+		// and the app-composed text's content rule.
+		"Q10",
+		"retention question",
+		// The console precedent the local-text rule borrows.
+		"D33",
 		// Which component sends, and the constraint the brief puts on it.
 		"ambient",
 		"operator's machine",
@@ -246,5 +274,50 @@ func TestDocsMobilePushIsIndexedAndPlanned(t *testing.T) {
 	// yet" is the red state, and the four strings above can all survive it.
 	if strings.Contains(entry, "**Files.** None yet") {
 		t.Errorf("docs/mobile/implementation-plan.md's P5.2 entry still says %q, so the design's files are not named", "**Files.** None yet")
+	}
+	// The Files line must not describe a producer-written queue: §3.6(B) rejects
+	// it ("No producer writes anything"), so a plan that still promises "a new
+	// sender in internal/cli (draining a pending-push node)" sends a later
+	// implementer to build the shape the design ruled out. The four strings
+	// above all survive this sentence, so it needs its own guard.
+	if strings.Contains(entry, "draining a pending-push node") {
+		t.Errorf("docs/mobile/implementation-plan.md's P5.2 entry still says %q, which is the producer-writes-a-queue shape §3.6(B) rejects", "draining a pending-push node")
+	}
+
+	// Every relative markdown link in the entry must resolve. The entry linked
+	// `../design/push-notifications.md`, which lands on docs/design/ — a file
+	// that does not exist — and the substring check above cannot see it, because
+	// "design/push-notifications.md" is present either way. So the link TARGET is
+	// resolved on disk, from the plan's own directory.
+	for _, target := range markdownLinkTargets(entry) {
+		if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "#") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join("../../docs/mobile", target)); err != nil {
+			t.Errorf("docs/mobile/implementation-plan.md's P5.2 entry links %q, which does not resolve from docs/mobile/: %v", target, err)
+		}
+	}
+	if len(markdownLinkTargets(entry)) == 0 {
+		t.Errorf("docs/mobile/implementation-plan.md's P5.2 entry carries no markdown link at all, so the design is not reachable from the plan")
+	}
+}
+
+// markdownLinkTargets returns the target of every `[text](target)` link in s,
+// in order. It is deliberately shallow — the plan's own links are simple
+// relative paths — and it ignores an image, which this document does not use.
+func markdownLinkTargets(s string) []string {
+	var out []string
+	for i := 0; ; {
+		open := strings.Index(s[i:], "](")
+		if open < 0 {
+			return out
+		}
+		open += i
+		close := strings.Index(s[open:], ")")
+		if close < 0 {
+			return out
+		}
+		out = append(out, s[open+2:open+close])
+		i = open + close + 1
 	}
 }

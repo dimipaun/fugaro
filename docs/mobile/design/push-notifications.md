@@ -20,9 +20,11 @@ v1, and a decision of its own later". So this document decides nothing on its ow
 so that the owner can answer that later decision against real options rather than from
 scratch, and so that the answer's cost is priced before anything is built.
 
-Every claim about the code below was checked against `origin/main` at `82ba600`, by reading
-the file and the symbol named. Symbols are cited by name rather than by line number, because
-the lines move.
+Every claim about the code below was checked against `origin/main` at **`ae3630c`** (2026-10-19),
+by reading the file and the symbol named. Symbols are cited by name rather than by line number,
+because the lines move; where a claim is a **snapshot of a branch point** that a sibling branch
+is about to change — §2's device node, and #601's `userClaim` conjunct and generation 3 — it is
+marked as one at the point it is made rather than left to age silently.
 
 **Related.** [reconciliation.md](../reconciliation.md) (D112, D113, D117, D118, D121,
 D126), [functional-spec-reconciliation.md](../functional-spec-reconciliation.md) (D165,
@@ -51,6 +53,35 @@ about **while away from the desk**:
 4. **a budget threshold was crossed** — a cap, a kill switch or a per-run ceiling the person
    set is now binding on a run.
 
+**Two of those four are not the owner's to receive, and the design must say so rather than
+list them.** The interrupt set the owner actually chose is **D160** (2026-10-17): the **kill
+switch**, **cap reached** and **consumer offline**, with **cap-near available but off by
+default**, and D127's switch able to narrow or widen it to **any prompt**. Categories 3 and 4
+above are that set — the prompt is the widening D127 already anticipates, and the budget
+category is D160's cap/kill pair. Categories 1 and 2 **are not**, and the reason is recorded
+in D160 itself: failed and halted runs were left out **because "the phone cannot see them"**.
+"Finished" is in the same position for the same reason — the phone cannot see it either.
+
+That is not a technicality. Under tension **(b1)** (resolved 2026-10-17; `reconciliation.md`
+§4) the phone may read exactly four families — `config/caps/**`, `spend/$day/**`,
+`config/kill/**` and its own mailbox (outbox and heartbeat) — and it has **no read of
+`agents/$slug/$run` and no `.read` on `outcomes/**`**. So there is no place in the
+authenticated mailbox for the app to resolve "a run finished" or "a run failed" against. The
+app's §3.9 rule — an id or category it cannot resolve is ignored — would silently drop them,
+which is worse than not offering them: a category that can never be confirmed is a lock-screen
+lie the app itself posts. And the sender could not fill that gap even if it wanted to: P6.3
+requires a **`mac`** on every outbox message, and the sender holds no per-pairing key (§3.6).
+
+**So the reconciled category set is D160's**: the **kill switch**, **cap reached** and
+**consumer offline**, with **cap-near off by default**, and the **prompt** category that
+D127's switch can widen to. "Finished" and "failed" are **not** in the default set. They stay
+in this document as the two the owner may **choose to add**, and they cannot be added without
+widening the phone's read grant — which is a change to tension (b1) and is the owner's, not
+this design's. **Q4 now asks that in those terms**, with the narrower alternative that needs no
+widening: the consumer writes a **derived, non-sensitive status** into the mailbox (a category
+and a boolean, MAC-signed like every other message, naming nothing), and the app resolves that
+instead of the run record it cannot read.
+
 Today the phone learns none of these by itself. The app's whole data path is a **foreground
 one**: it reads its own mailbox over the authenticated database connection (D112's user-claim
 read grant), and derives "the orchestrator is offline" from the heartbeat's staleness
@@ -67,13 +98,19 @@ answered.
 
 **Nothing that sends a notification exists.** In particular:
 
-- **No push library, no push service, no push token.** Nothing in the tree imports or
-  declares Firebase Cloud Messaging, APNs, Expo's push service, `firebase-admin/messaging` or
-  any messaging dependency; `go.mod` carries no FCM client, and `mobile/package.json`
-  declares **no runtime dependency at all** (the manifest is deliberately empty until the
-  Expo toolchain is pinned, and `mobile/src/skeleton/index.test.js` keeps it so). Every
-  occurrence of the phrase "push token" in the tree is the **git** credential
-  (`internal/runner/provision.go`'s `provisionGitToken`), and **D165's pairing mints two
+- **No push library, no push service, no push token.** No Go package under `internal/` or
+  `mobile/` imports FCM, APNs, Expo's push service or `firebase-admin/messaging`;
+  `go.mod` carries no FCM client, and `mobile/package.json` declares **no runtime dependency
+  at all** (the manifest is deliberately empty until the Expo toolchain is pinned, and
+  `mobile/src/skeleton/index.test.js` keeps it so). **The permission exists in a catalogue and
+  nowhere else**: `deploy/terraform/testdata/custom-role-permissions.txt` lists
+  `firebasecloudmessaging.messages.create` and its siblings among the permissions this
+  repository knows the names of, but that file is a **permission catalogue**, not a
+  dependency — **no code, no manifest and no Terraform resource uses any of them**, and no
+  role in `deploy/terraform/` grants one. On `origin/main` before this document, every occurrence of the phrase "push token" is the **git**
+  credential (comments in `internal/runner/provision.go` around `provisionGitToken`, and in
+  `provision_test.go`). **This document introduces a second sense, the FCM/APNs registration
+  token, and uses "push token" only for that sense.** **D165's pairing mints two
   Firebase custom tokens, neither of which is a push token**: the **pairing** token
   (`p~<random>`, `exp` ≤ 5 minutes) that the QR carries and that may write only its own
   pairing-request node, and the **device** token (`m~<random>`, `mu = uid`, never `r~`) that
@@ -101,10 +138,19 @@ answered.
 - **No device-token store.** The device node `config/admin/devices/$uid` is a **proposal**,
   not code: it is named in `internal/budget/rules/rules.go`'s `userClaim` doc comment as the
   node **`USER` will require** "(D166, plan P6.4)", and in `functional-spec-reconciliation.md`'s
-  D166 and G14. In the generated rules today, `internal/budget/rules/rules.json.tmpl` carries
-  `"admin": { ".read": false, ".write": false }` and **the `devices` subtree does not exist**;
-  the rules' `USER` macro (rules.go's `userClaim`) has no device conjunct. So there is nowhere
-  a push token is stored, and no grant that would admit one.
+  D166 and G14. **As of `origin/main` at `ae3630c` (2026-10-19)**, the generated rules
+  `internal/budget/rules/rules.json.tmpl` carry
+  `"admin": { ".read": false, ".write": false }`, **the `devices` subtree does not exist**, and
+  the rules' `USER` macro (`rules.go`'s `userClaim`) **has no device conjunct**;
+  `internal/projectpolicy/version.go`'s `RulesVersion` is **2**. **This is a statement about a
+  branch point, not a standing fact, and the sibling branch #601
+  (`fugaro/20261018-151654-3ddb`) changes all three**: it adds
+  `&& root.child('config/admin/devices').child(auth.uid).exists()` to `userClaim` and raises
+  the generation to **3** — the generation §3.4 stores its data under. **A reader on the day
+  #601 merges must read this bullet as "true before #601"**: what survives that merge is the
+  *shape* (`devices/$uid` is an admin-only node whose existence is the allowlist), not the
+  statement that it is absent. So there is nowhere a push token is stored, and no grant that
+  would admit one.
 
 **What does exist, and what this design builds on:**
 
@@ -194,130 +240,215 @@ Two consequences fall out of this and both are deliberate:
   and that residual is stated there rather than argued away. §5 turns the action half of this
   into the document's central rule.
 
-### 3.3 The channel: FCM, with APNs behind it
+### 3.3 The channel: FCM, with APNs behind it — and the multi-installation problem
 
-**Recommendation: Firebase Cloud Messaging**, delivering to both platforms — FCM's HTTP v1 API
-for Android, and FCM's APNs relay for iOS. The reasons are the project's own:
+**Candidate: Firebase Cloud Messaging**, delivering to both platforms — FCM's HTTP v1 API for
+Android, and FCM's APNs relay for iOS. The reasons are the project's own:
 
 - **The app is already on Firebase.** An installation *is* a Firebase project
   (`project-centric.md`; `mobile/src/accounts/account.js` carries `firebaseProjectId`,
   `authUid` and `fugaroProject` per account), the app signs in with Firebase Auth custom
-  tokens (D165), and it reads the Realtime Database directly (D112). FCM is the one push
-  channel that needs **no new third party**: Google is already the party holding the project's
-  data.
-- **One channel, two platforms.** FCM relays to APNs, so there is one sender, one credential,
-  one token type, one code path — rather than an FCM integration *and* an APNs integration and
-  the p8 key handling the latter drags in.
+  tokens (D165), and it reads the Realtime Database directly (D112). FCM needs **no new third
+  party**: Google is already the party holding the project's data.
+- **One channel, two platforms.** FCM relays to APNs, so there is one push API and one token
+  type rather than an FCM integration *and* a direct APNs one.
 - **It is already paid for.** A Firebase project exists per installation and FCM has no
-  per-message charge (§9).
+  per-message charge (§7).
 
-**What FCM sees.** The device's registration token, the payload, the delivery time, and the
-project it belongs to. **What APNs sees** on iOS: the same payload, relayed. **What the OS and
-the lock screen see**: the payload, in the clear. All three are the reason §3.1's payload —
-**the sender's payload**, and only that one (§3.9) — is content-free: the design does not
-attempt to hide what the legitimate sender writes from the provider, because it cannot; it
-makes what the legitimate sender writes not worth hiding.
+**The multi-installation problem, which reverses part of that.** *This section is the one the
+first draft of this document got wrong, and it is stated here as the correction.* **An
+installation is its own Firebase project, and the app is multi-account** (D114: an account
+*is* an installation, with real isolation between entries; `account.js` carries
+`firebaseProjectId` per account). Two consequences:
+
+- **FCM HTTP v1 addresses a project.** A message is sent as
+  `POST /v1/projects/<project-id>/messages:send`, and it is delivered only to registration
+  tokens issued **for that project** (a token minted for another project is rejected —
+  FCM's `SENDER_ID_MISMATCH`/`UNREGISTERED` class of error). So a per-installation sender
+  serves only that installation's devices, and **the app must hold one registration per
+  installation it is signed into** — not one registration for the app. That is a real change to
+  §3.4's store: the node is per (device, installation) even though the *device* is one.
+- **iOS needs an APNs key in every installation's project.** For FCM's relay to reach an iOS
+  device, that device's *Firebase project* must carry an APNs authentication key. An APNs
+  `.p8` key is **team-wide**: it can send to every app of the Apple Developer team that
+  issued it, not to one app. So for any installation the app's publisher does not own, direct
+  FCM means either **handing the publisher's team key to somebody else's Firebase project** —
+  giving that project's owners the ability to push to every app on the publisher's team — or
+  **having no iOS push for that installation at all**. The store build is the owner's (D120),
+  so the team is the owner's.
+
+**This is exactly the problem a central relay exists to solve** — Expo's push service, or a
+relay the publisher runs — and it may **reverse Q7's recommendation**. Under a relay, the
+publisher holds the APNs key once, in one place, and installations hold an Expo (or publisher)
+token instead; the price is a third party in the path, or a service the publisher must run.
+**Q7 now puts the multi-installation case to the owner as the deciding question**, not the
+convenience it was priced as before.
+
+**Two claims the first draft made are withdrawn as false:**
+
+- "FCM direct avoids the `.p8` key handling." **It does not.** The `.p8` is *required* to be
+  uploaded to Firebase for the APNs relay — §7 said so while §3.3 said the opposite — and the
+  multi-installation case above is precisely where the key's team-wide reach bites.
+- "One credential." **Not for a multi-installation app.** One FCM sender identity per
+  Firebase project, plus an APNs key per project that has iOS devices.
+
+**What FCM and APNs see, in full rather than in outline.** The first draft understated this.
+A provider in this path sees: the **payload**; the **registration token**, which is a stable
+per-app-installation address; the **project** (sender ID) it belongs to; the **app's bundle ID
+or package name**, which identifies the app as Fugaro; the **Firebase Installation ID** (FID)
+that FCM assigns; the **IP address** the device registered from and the network it sends over;
+**device and OS details** (platform, version, locale, and for APNs the device token and
+topic); and hence a **time series per device** — when the phone was reachable, and *from §3.1's
+category alone* when runs finish, fail, need answers or bind a budget. Stating it as "a
+provider learns a category and a device address" understates it by four fields and a timing
+series. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no runtime
+dependency at all), so Google does not additionally receive app-usage events from this build —
+which is true of the recommended shape and would stop being true if a later task links one.
 
 **The alternative: Expo's push service.** The app is an Expo app (`mobile/package.json`,
-`mobile/app.json`), and Expo's push service is the path of least resistance for an Expo build:
-`expo-notifications` obtains an Expo push token and posts to Expo's endpoint, and Expo relays
-to FCM and APNs. **What Expo sees is strictly more than FCM sees**: it sees the payload
-**and** the Expo push token **and** a mapping from the token to the underlying FCM/APNs token
-and the project — a party that is neither the owner nor Google/Apple, added to the message
-path. It also adds a second credential (an Expo access token) and a second vendor relationship
-to the owner's privacy surface. It buys convenience for an app that is not yet built, and this
-design does not recommend it; Q7 keeps it open for the owner, because the eventual Expo
-toolchain (D120, D125) may make the direct FCM path more work than this document assumes.
+`mobile/app.json`), and `expo-notifications` obtains an Expo push token and posts to Expo's
+endpoint, which relays to FCM and APNs. **What Expo sees**: the payload **and** the Expo push
+token **and** a mapping from the token to the underlying FCM/APNs token and the project — a
+party that is neither the owner nor Google/Apple. Against that: **one relay for every
+installation** (which is the multi-installation fix above), the APNs key held once by the
+publisher, and no per-project FCM registration for a device the owner does not own.
 
-**Recommendation: FCM direct, not Expo's relay.** The privacy cost of the relay is real and
-the convenience is speculative; if the owner later finds the direct path expensive in the Expo
-toolchain, Expo's relay is the fallback, priced here rather than discovered later.
+**Recommendation, revised: FCM direct only where the owner owns every installation's project;
+otherwise a relay.** The first draft recommended direct FCM on privacy grounds alone, and that
+reasoning is right for a single-installation app and wrong for this one. **Q7 carries the
+decision**, with the team-key consequence named. *(The platform claims above — HTTP v1's
+per-project token rule, its error classification, the `.p8` key's team scope — were checked
+against this repository's own account model, and against Google's and Apple's public pages as
+far as they could be read: **UNVERIFIED at the provider**, because both documentation sites
+render their content client-side and the sentences could not be extracted. The reviewer's own
+note says the same. They are marked here rather than presented as verified.)*
 
 ### 3.4 Where the push tokens live, and who can read them
 
-**Recommendation: under the device node of D166 — `config/admin/devices/$uid` — which is the
-node of rules generation 3.**
+**Recommendation: a SIBLING of the device node — `config/admin/push/$uid` — never a child of
+it. Both are nodes of rules generation 3.**
 
-The device node is the right store because it already exists as a decision. D166 (owner,
-2026-10-17) chose `config/admin/devices/$uid` as **the allowlist the rules' `USER` macro
-requires**, precisely so that **deleting the node revokes at once** — G14's finding was that a
-claim-only allowlist revokes slowly (a Firebase ID token lives an hour), while a node the
-rules consult does not. A push token stored in the same node **inherits that revocation**: see
-§3.5. The shape proposed is a child of the node, so that deleting the node is still the one
-revocation act:
+**Why not a child of `config/admin/devices/$uid`, which is what the first draft proposed.**
+The device node's **existence is the allowlist**: on PR #601,
+`internal/budget/rules/rules.go`'s `userClaim` is
+`(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())`,
+and the constant's own comment reads "*the child `config/admin/devices/<uid>` existing IS 'this
+account is paired to a phone that has not been revoked'*". Deleting that child is `fugaro pair
+revoke`'s whole act (D166, P6.6). **So any write that recreates the child re-pairs the
+device** — and the first draft put push data under it and named three writers besides
+`fugaro pair`: §3.5(b)'s re-registration principal, §3.8's prefs principal, and the sender
+"marking the device unregistered" (§6). A re-registration the phone sent *before* a revoke and
+the consumer processes *after* it is the everyday version of this: the write recreates
+`config/admin/devices/$uid/push/...`, the node exists again, every `USER` read works again, and
+**§3.5's "one act, one revocation" is quietly false**. That is a security regression, not a
+tidy-up: `devices/**` becomes a routinely written node when its only value is that nothing
+writes it but pairing.
+
+**The shape, corrected:**
 
 ```
-config/admin/devices/$uid/            # D166's node: the pairing, admin-written over IAM
-  ...                                 #   what D166/P6.6 already plan (mac key name, added at)
-  push/                               # THIS design's addition
-    token/<id>                        #   the provider registration token (opaque to the app)
-    platform                          #   "ios" | "android"
-    updated_at                        #   epoch ms, server-written
-    prefs/                            #   §3.8's per-category switches and quiet hours
+config/admin/devices/$uid/            # D166's node. WRITTEN AND DELETED ONLY by `fugaro pair`
+  ...                                 #   / `fugaro pair revoke` (P6.6): mac key name, added at.
+                                      #   Its existence IS the allowlist (userClaim, #601).
+config/admin/push/$uid/               # THIS design's node — a SIBLING, never a child
+  token/<installation>/               #   the provider registration token, per installation
+                                      #   (§3.3: FCM addresses one project per token)
+  platform                            #   "ios" | "android"
+  updated_at                          #   epoch ms, server-written
+  prefs/                              #   §3.8's per-category switches and quiet hours
 ```
 
-**Who can read them:**
+**The two rules that make it safe:**
 
-- **No client can.** `rules.json.tmpl` carries `"admin": { ".read": false, ".write": false }`,
-  and D166's design keeps `config/admin` client-denied — the app never reads its own push
-  token, and neither does any other phone. A push token is not a secret the app needs; the app
-  only ever *hands one over* at pairing time (§3.5).
-- **Over IAM, the same principals that can already read `config/admin`, and no new ones.** Per
-  `modules/firebase/iam.tf`, that is `roles/firebasedatabase.admin` to `admins` and
-  `budget_admins`, and `roles/firebasedatabase.viewer` to launchers and operators (the
-  `firebasedatabase.viewer` read **bypasses the rules** — the residual m9 §6.4 and G13 already
-  state, and this design adds nothing to it). The **sender** (§3.6) reads the node over IAM
-  with its own service-account identity, exactly as the history job reads the database it
-  sweeps.
+1. **No writer other than `fugaro pair` and `fugaro pair revoke` ever touches `devices/**`.**
+   Not re-registration, not the prefs toggle, not the sender, not the reaper, not the app.
+   A rules-level statement rather than a convention: `config/admin` stays `"admin": { ".read":
+   false, ".write": false }` in `rules.json.tmpl`, no client grant is added for `push/**`
+   either, and P6.4's deployed document should carry the same two client-denied locations for
+   `config/admin/push` that #601's template carries for `config/admin/devices`.
+2. **The sender sends only when BOTH nodes exist**: `devices/$uid` (the device is still paired)
+   **and** `push/$uid` (a registration exists). No device node means no send — revocation is
+   still one act, and it is still immediate, because the send-time check reads the node the
+   rules also read. A leftover `push/$uid` after a revoke **is inert**: nothing consults it,
+   the rules never read it, and it cannot re-admit anybody.
+
+**Reaping deletes; it never marks.** A stale token (`UNREGISTERED`) or an orphaned `push/$uid`
+whose `devices/$uid` is gone is **deleted** — the token child, or the whole push node. The
+first draft's "marks the device not registered" is withdrawn for the same reason as the child
+node: a marker write is a write to a node whose meaning is its existence. §6's row says the
+same thing now.
+
+**Who can read the push node:**
+
+- **No client can** — it is inside `config/admin`, which `rules.json.tmpl` denies to clients
+  (`.read: false`, `.write: false`). The app never reads its own push token, and neither does
+  any other phone; the app only ever *hands one over* (§3.5).
+- **Over IAM, the same principals that can already read `config/admin`, and no new ones**: per
+  `deploy/terraform/gcp/modules/firebase/iam.tf`, `roles/firebasedatabase.admin` to
+  `admins` and `budget_admins`, and `roles/firebasedatabase.viewer` to launchers and operators
+  (that read **bypasses the rules** — m9 §6.4 and G13's residual, unchanged by this design).
+  The **sender** (§3.6) reads the node over IAM with its own service-account identity.
 - **The honest sentence:** a push token is readable by every launcher and operator of the
   installation, and by the sender. **It is not a credential** — holding it lets a principal
-  send a notification to that device *only if it also holds the FCM send credential*, which is
-  a different and narrower grant (§3.6, §6). The token is a device address, not a key.
+  send to that device only if it also holds the FCM send credential (§3.6) — and §3.3's
+  multi-installation change makes the *node* per (device, installation) even though the device
+  is one.
 
-**The generation.** This design's node lands in **rules generation 3**. `internal/projectpolicy/version.go`
-carries `RulesVersion = 2` today — its doc comment states "Generation 2 is the mailbox (mobile
-plan task P2.1)" — and D166's device node is already planned to bump it (plan P6.4 names
-`internal/projectpolicy/version.go` among its files). **A push-token store does not need a
-generation of its own**: it is a leaf inside a node P6.4 already adds, so it rides P6.4's
-generation 3 rather than claiming a 4. If the owner ever builds push *before* P6.4 approves
-the device node, the store has no home and push waits — which is Q2.
+**The generation.** Both nodes land in **rules generation 3**. On `origin/main` at `82ba600`,
+`internal/projectpolicy/version.go` carried `RulesVersion = 2` ("Generation 2 is the mailbox
+(mobile plan task P2.1)"); **PR #601 (`fugaro/20261018-151654-3ddb`) is the branch that takes
+it to 3** by adding the device conjunct this section quotes, and P6.4 names the file among its
+own. **A push store does not need a generation of its own**: it is a sibling inside
+`config/admin`, whose rules P6.4 already rewrites. *(Cited by symbol and by branch, not by line
+or by PR state: #601 is open at the time of writing, and the sentence above is about the
+predicate it carries, not about whether it has merged.)*
 
 ### 3.5 Rotation and revocation
 
-**Revocation is the device node's deletion, and it is immediate.** Because the sender reads
-tokens from `config/admin/devices/$uid` at send time, **no node means no token means no
-send**; and because D166's `USER` requires the node, the same deletion also stops the app's
-reads at once (G14's property). One act, one revocation. This is the design's strongest
-property and the reason to prefer the device node over a separate token registry: a second
-store would need its own revocation act, and two acts can disagree.
+**Revocation is the device node's deletion, and it is immediate — and it is still the only
+revocation act.** Because the sender checks `config/admin/devices/$uid` at send time (and
+§3.4's rule 2 makes that check one of *two* it must pass), **no device node means no send**;
+and because D166's `USER` requires the node, the same deletion also stops the app's reads at
+once (G14's property). One act, one revocation. **§3.4 is what keeps that true rather than
+merely asserting it**: the token lives in a *sibling*, so no re-registration, prefs write or
+reap can recreate the node the rules consult — an orphaned `push/$uid` is inert and gets
+deleted, never resurrected into an admission. This is the design's strongest property, and it
+survives only in the sibling shape.
 
 **Rotation is the harder half, and it is an open question rather than a solved one (Q3).** Push
 tokens rotate: FCM and APNs issue new registration tokens on reinstall, on restore, on
 app-data clear, and occasionally otherwise, and FCM reports a stale token back as
 `UNREGISTERED`. Three shapes are available:
 
-- **(a) Register at pairing, and let the sender reap stale tokens.** The CLI writes the token
-  during D165/P6.6's pairing (an admin act, `roles/firebasedatabase.admin`), and the sender
-  drops a token FCM reports `UNREGISTERED` and marks the device "not registered" until the
-  next pairing. Simple, needs no new write grant — and **stale for exactly the case that
-  matters** (a user who reinstalls and never re-pairs gets no pushes).
+- **(a) Register at pairing, and let the sender reap stale tokens.** The CLI writes
+  `config/admin/push/$uid` during D165/P6.6's pairing (an admin act,
+  `roles/firebasedatabase.admin`), and the sender **deletes** a token FCM reports
+  `UNREGISTERED` — the token child, or the whole push node (§3.4: reaping never writes a
+  marker) — leaving the device unregistered until the next pairing. Simple, needs no new write
+  grant — and **stale for exactly the case that matters** (a user who reinstalls and never
+  re-pairs gets no pushes).
 - **(b) Re-registration over the authenticated mailbox.** The app, on next open, writes its
   current token as an ordinary mailbox message; a principal holding `roles/firebasedatabase.admin`
-  updates the device node from it. No new grant to the app, no new write path for the phone,
-  and it reuses the mailbox the design already trusts. **The premise is conditional and this
-  document states it as such rather than as a fact:** §3.4 records that, per
+  applies it to `config/admin/push/$uid`. No new grant to the app, no new write path for the
+  phone, and it reuses the mailbox the design already trusts. **The premise is conditional and
+  this document states it as such rather than as a fact:** §3.4 records that, per
   `deploy/terraform/gcp/modules/firebase/iam.tf`, `roles/firebasedatabase.admin` is held by
   **`admins` and `budget_admins` only** — the very reason reconciliation G13 and D166 call
   **pairing itself an admin act**. So where the operator holds that role, the consumer beside
-  the orchestrator writes the node directly; **where the operator does not, re-registration is
-  an admin act in the same sense pairing is** — it needs a principal with the role — and it is
-  not something this design can promise for free. (a)'s reaping is then the fallback, and Q3
-  asks the owner to choose between them, naming the role each depends on.
-- **(c) Let the app write its own push child.** A rules grant for the phone to write
-  `config/admin/devices/$uid/push/**` under the `MAILBOX` identity. Cheapest for the user and
-  **the one shape this design rejects**: it reopens `config/admin` to a client write, which
-  D166 deliberately closed, and it would make the device node partly client-writable — a node
-  whose whole point is that only an admin may change it.
+  the orchestrator applies it directly; **where the operator does not, re-registration is an
+  admin act in the same sense pairing is**, and it is not something this design can promise for
+  free. **And the write lands on the push node, never on `devices/**`** — which is what makes
+  (b) safe to run on a timer and after a revoke: a re-registration message the phone sent
+  before the revoke and the consumer processes after it writes `push/$uid`, which the rules do
+  not read and the sender does not send to while `devices/$uid` is gone. (a)'s reaping is the
+  fallback, and Q3 asks the owner to choose between them, naming the role each depends on.
+- **(c) Let the app write its own push node.** A rules grant for the phone to write
+  `config/admin/push/$uid/**` under the `MAILBOX` identity. Cheapest for the user and **the
+  one shape this design rejects**: it reopens `config/admin` to a client write, which D166
+  deliberately closed — and it would give a phone a write path into the family whose
+  client-denial is what makes the device node trustworthy. *(This is the shape the first draft
+  rejected as a child of `devices/$uid`; the sibling node makes it less fatal but no less
+  rejected.)*
 
 **Recommendation: (b), with (a)'s reaping as the safety net.** Q3 asks the owner.
 
@@ -342,9 +473,12 @@ The candidates, priced:
     run of the profile holds, and a compromised run could then notify the owner of a
     fabricated "needs your answer" — exactly the phishing surface §5 attacker 2 bounds and
     cannot close, and here it would be authored by the installation's *own* run rather than by
-    an outsider. **Reject
-    for the job account; the console's D33 already rejected the analogous widening for the
-    desktop.**
+    an outsider. **Reject for the job account.** *(The first draft said "the console's D33
+    already rejected the analogous widening for the desktop" — **D33 says no such thing**.
+    D33 rejected a **push service**: "a new service, a new credential and a notification that
+    leaves the machine", with the notification's *content* limited to "facts a document
+    carries, never a string from a hostile field". It is cited here for that content rule,
+    which §4 rule 1 copies, and not for a job-account argument it never made.)*
   - *The one place (A) is defensible*: the **gateway**'s threshold case, where the budget
     decision is made in-process — but the gateway shares the run's container and identity, so
     it inherits (A)'s cost. **Reject.**
@@ -358,11 +492,38 @@ The candidates, priced:
     database — `deploy/terraform/gcp/modules/firebase/iam.tf`'s `google_project_iam_member.history_database`,
     whose own comment is "only this account (and no job account) holds one on the FP". It
     reads the run registry (`internal/budget/registry.go`'s entries), the spend and kill
-    nodes, and the mailbox's outbox — the four categories' sources — and it gains exactly one
+    nodes, and the mailbox's outbox — the sources §1's reconciled category set has — and it gains
+exactly one
     thing: the FCM send permission, held by **one account**, not by every run. Keeping the
     sender off the run accounts is not a nicety: because a push has no sender signature
-    (§3.9), any account that can send can lie on the lock screen, and one account is the
-    smallest number of places that power can live.
+    (§3.9), any account that can send can lie on the lock screen.
+  - *What that account may hold, named exactly.* The permission is
+    **`firebasecloudmessaging.messages.create`**, granted through a **custom role** on the
+    Firebase project — not `roles/firebasecloudmessaging.admin`, which carries topic and
+    subscription management this sender never needs (`deploy/terraform/testdata/custom-role-permissions.txt`
+    is the permission catalogue the custom roles are read against, and it lists
+    `firebasecloudmessaging.messages.create` beside the `topicSubscriptions.*` set the design
+    does not want). The **FCM API must be enabled** on the project
+    (`firebasecloudmessaging.googleapis.com`), which is a change `apis.tf` does not carry
+    today. And the sender must take **nothing from its arguments or environment** — no
+    message text, no target, no token — because the **scheduler account holds `run.jobs.run`
+    *and* `run.jobs.runWithOverrides`** on the history job
+    (`deploy/terraform/gcp/modules/installation/history.tf`'s
+    `google_cloud_run_v2_job_iam_member.history_runner`, whose comment says "which also need
+    run.jobs.runWithOverrides, and roles/run.invoker lacks it"): whoever can override that
+    job's environment can steer anything the sender reads from it. The sender derives every
+    field from the database instead (§3.6(B)) — which is what "no producer write" buys, and
+    why an env- or arg-driven sender would be a different, weaker design. **Whoever can change
+    the history job's image controls the sender**, and that is the same trust as controlling
+    the sweeper today.
+  - *The "one account" claim, corrected.* "Exactly one account *gains* the permission" is
+    true. **"One account is the smallest number of places that power can live" was an
+    overclaim and is withdrawn:** project **owners and editors** hold FCM send through basic
+    roles, and an owner's application-default credential on a laptop can send. *(Not verified
+    against live IAM — the reviewer could not verify it either; it is stated as the likely
+    shape of the basic roles, not as a checked fact.)* The design's claim is the narrow one:
+    no **run** and no **operator's machine** gains anything, and the installation's send
+    permission is a custom role on one service account.
   - *Where the sender's own state lives*: a **dedupe and cap ledger**, written **by the
     sender's own admin identity** and read by it, under `config/admin` (`rules.json.tmpl`'s
     `"admin": { ".read": false, ".write": false }` — no client write, ever) or in Firestore
@@ -377,14 +538,31 @@ The candidates, priced:
     widening (A) is rejected for**, not a free refinement of (B). Q1 puts that trade to the
     owner as what it is: sweep-only (no widening) against on-demand (a run-account grant).
 - **(C) A new always-on service.** A Cloud Run service with a socket that a producer pokes.
-  **Reject**: it is a standing server this repository has never deployed, it is P5.1's
-  orchestrator's problem (unapproved, and behind D55–D78), and it buys no latency that (B)'s
-  sweep-only shape does not already give for free.
+  **Reject as this design's invention**: it is a standing server this repository has never
+  deployed, and it would be P5.1's orchestrator's problem, behind D55–D78.
+- **(D) The orchestrator of P5.1, when it lands — the natural low-latency sender.** *(Added
+  after the review, which is right that (C) was dismissed too fast: the service is not this
+  document's invention, it is a sibling design already written.)* **PR #632**
+  (`fugaro/20261019-001437-eb9c`, `docs/mobile/design/always-on-orchestrator.md`) proposes
+  exactly the component (C) waves away: **one Cloud Run service per installation, in the
+  installation's own GCP project, `min-instances = 0`, woken by a Cloud Scheduler tick every
+  minute**, with a dedicated service account holding the launcher's grants and no model
+  credential. If that lands, it **is** the sender this design wants, and better: it is the
+  prompt's own author (so "needs your answer" needs no re-derivation), it holds
+  `roles/firebasedatabase.admin`-class reach already, and a per-minute tick makes (B)'s 15-minute
+  sweep unnecessary. **The cost is the same shape (A) is rejected for** — a resident component
+  with send power — bounded by being **one** account per installation rather than every run's,
+  which is §3.6(B)'s own argument applied to a bigger process. **Q1 now carries (D) as the
+  option the owner should take if phase 2 is approved**, and (B) remains the recommendation
+  only for the case where phase 2 is not built.
 
-**Recommendation: (B), sweep-only.** One sender, one credential, ambient identity, no key on a
-laptop, **no producer write and therefore no run-account widening**; latency is bounded by the
-sender's schedule. The one account the design widens is the sender's, with the FCM send
-permission and nothing else. Q1 records the latency/grant trade.
+**Recommendation: (B), sweep-only, with (D) named for the case where P5.1 lands.** One sender,
+one credential, ambient identity, **no producer write and therefore no run-account widening**;
+latency is bounded by the sender's schedule. The one account the design widens is the sender's,
+with the FCM send permission (`firebasecloudmessaging.messages.create`) and nothing else.
+**"No key on a laptop" is not a claim this design makes** — the sender needs no downloaded
+key, but owners and editors can send with an ordinary application-default credential, as the
+paragraph above says. Q1 records the latency/grant trade and (D).
 
 ### 3.7 Rate limiting and dedupe
 
@@ -405,17 +583,28 @@ permission and nothing else. Q1 records the latency/grant trade.
 
 ### 3.8 User controls
 
-- **Per-category off switches**, one per §1 category, stored in the device node's `prefs`
-  child (§3.4). Off means the sender does not send that category to that device — the switch
-  is honoured **server-side**, because a client-side switch cannot stop a push from reaching
-  the OS and the provider.
-- **Quiet hours**, a window per device, also server-side and stored in `prefs`. This is the
-  design's one uncomfortable privacy surface and it should be named rather than buried:
-  honouring quiet hours server-side requires knowing the **device's timezone or an offset**,
-  which is a location-adjacent datum the app otherwise never sends. The alternatives are worse
-  — a client-side filter still buzzes and still reaches the provider — or the feature is not
-  offered. **Recommendation: store an explicit UTC offset and window, never a timezone name
-  and never a location; default off.** Q5 asks.
+- **Per-category off switches**, one per §1 category, stored in the **push node's** `prefs`
+  child (§3.4 — the sibling, never `devices/**`). Off means the sender does not send that
+  category to that device — the switch is honoured **server-side**, because a client-side
+  switch cannot stop a push from reaching the OS and the provider.
+- **Defaults, stated rather than left open.** **Push is opt-in per device and per
+  installation**: no registration exists until the phone registers one, so a device that never
+  does is never sent to, and §6's first row ("no token, no send") is the default state rather
+  than a failure. **Each category switch defaults on** for the categories D160 leaves
+  interrupting and **off** for the ones it keeps off by default — cap-near, the one D160
+  answers "available, off by default" — so the default set is D160's own answer and not a
+  new one (§1, Q4). **Quiet hours default off** (below).
+- **Quiet hours**, a window per device, server-side, stored in `prefs`. This is the design's
+  one uncomfortable privacy surface and it should be named rather than buried: honouring quiet
+  hours server-side requires knowing the device's **zone**, which is a location-adjacent datum
+  the app otherwise never sends. The alternatives are worse — a client-side filter still buzzes
+  and still reaches the provider — or the feature is not offered. **Recommendation: store the
+  IANA zone name and the window, default off.** *(The first draft proposed "an explicit UTC
+  offset … never a timezone name", and that is wrong in a way worth recording: a stored offset
+  is a **fixed** offset, so it silently shifts by an hour at every DST transition — the window
+  drifts onto the wrong hour twice a year, and the failure is invisible. A zone name is one
+  string, it is the datum the OS itself holds, and it is what makes the window mean what the
+  user set. Q5 asks, and now asks the right question.)*
 
 **How the controls are written** is Q3's rotation question in another guise: the app cannot
 write `config/admin` (§3.4), so the switch is written either by the CLI (an admin act, awkward
@@ -424,6 +613,8 @@ principal holding `roles/firebasedatabase.admin` (§3.5's (b), **conditional on 
 exactly as (b) is**). **Recommendation: (b) again** — the mailbox is the app's only write
 path, and this design does not add a second one; where the role is not held, the switch is an
 admin act like pairing, and this document does not pretend a toggle in the app is free of it.
+**Every one of these writes lands on `config/admin/push/$uid` and never on `devices/**`**
+(§3.4 rule 1).
 
 ### 3.9 The phone's side: what it does with a push it did not expect
 
@@ -443,15 +634,48 @@ channel does not give. Three facts bound what the phone can do:
   own authenticated mailbox and budget families under the claims it already holds (§3.2). A
   lure in a notification's title has no path into that screen: it is not stored, not rendered
   as state, and not quoted.
-- **The app composes its own alert text wherever the platform allows.** The recommended shape
-  is a **data-only** push — the payload is a category (and, under Q6 *(ii)*, an opaque id) with
-  no display text — and the app builds the user-visible notification **locally** from state it
-  resolved through the mailbox. An id the app cannot resolve is **ignored**: an unknown id
-  produces no alert at all, which is the only behaviour that makes the opaque id safe rather
-  than decorative. Where a platform requires the alert text to travel in the push (a visible
-  notification on a phone where the app may not run), the sender's own text is generic by
-  construction — §4 rule 1 — and the OS may display whatever any sender wrote, which is the
-  residual below, not a defect of the app's design.
+- **The app composes its own alert text — and that text obeys the same content rule as the
+  payload.** The recommended shape is a **data-only** push — the payload is a category (and,
+  under Q6 *(ii)*, an opaque id) with no display text — and the app builds the user-visible
+  notification **locally** from state it resolved through the mailbox. §4 rule 1 binds only the
+  *payload*, so the first draft left the app's own words unbound, and that is a hole rather
+  than a detail: nothing would have stopped the app writing "PR ready: owner/repo — fix auth
+  bypass" on a lock screen, which is the bystander leak rule 1 exists to prevent, moved from
+  the provider to the app. **§4 rule 1 now binds both**, and the app's text is **generic per
+  category** and built from **no free-text mailbox field** (§4 rule 10) — console v2's D33 is
+  the precedent, in its own words: a notification's content is "a fact from a document and
+  never a string from a hostile field". **And an id the app cannot resolve is ignored** — an
+  unknown id produces no alert at all. *(Under Q6's recommended option (i) the payload carries
+  no id, so "unknown id ignored" protects nothing by itself; the rule that does the work in
+  that shape is §4 rule 11: a local alert is posted only when the mailbox shows **a new,
+  MAC-verified change of that category since the last one the app saw**. Both shapes are
+  stated so that whichever the owner picks has a rule rather than an assumption.)*
+- **On iOS, "wherever the platform allows" is nearly nowhere, and this document says so.** A
+  **data-only** push on iOS cannot display text by itself; a silent `content-available` push is
+  **throttled by the system, is not delivered after the user force-quits the app**, and is
+  explicitly best-effort. App-composed *visible* text on iOS therefore needs a **Notification
+  Service Extension** (`mutable-content`), which runs **before** the app and must therefore be
+  able to read what it needs on its own. That extension authenticating means sharing the
+  **ID token and the per-pairing MAC key** with it through a **keychain access group** — which
+  **touches D111**: tension (b2) resolved that the phone holds exactly two items per account
+  "in these words and no wider ones", and a second process reading them is a widening of where
+  they may be reached, not just where they are stored. **Q6 now asks this**, with the
+  alternatives (a visible generic payload instead of local text; a publisher relay that renders
+  the notification server-side; or iOS notifications off, which is the honest baseline).
+  Android has no such constraint (a foreground service or the app's own notification builder
+  covers it), so a design that reads "data-only everywhere" is an iOS-only problem wearing a
+  cross-platform sentence.
+- **Nothing in the notification is a route or an input.** No notification **category** or
+  **action button** (`UNNotificationCategory` on iOS, Android notification actions) and **no
+  inline reply**: a forged push can name a category the app registered and put a real
+  "Approve" button on the lock screen, wired to app code — so the app registers **no**
+  actionable category, and §4 rule 3's "never an action" covers the button as much as the tap.
+  **No routing by payload** either: `click_action`, `fcm_options.link` and `data.url` are the
+  common deep-link patterns and every one of them lets a forged push choose where the app
+  lands, so the payload carries no URL, no deep link and no target. **And no background
+  handler writes anything on receipt** — no `acked`, no seen-marker, no token refresh, no
+  write of any kind: a handler that writes gives a forged push a write primitive on the
+  device's own mailbox. §4 rules 3, 8 and 12 state these as requirements.
 
 **What the user is told, and it is part of the design rather than a footnote:** *a push is
 only a doorbell — verify in the app.* The app says it where it can (the notification channel's
@@ -460,23 +684,49 @@ control that works against a forged push is the user's habit of opening the app 
 acting on the banner. This is also why §4 rule 3 is absolute: the moment a push could carry a
 confirmation, a forged push would carry one too.
 
-**Residual risk, stated plainly and not argued away:** an attacker who holds the
-installation's FCM send credential **can** buzz the owner's phone with a false, urgent-sounding
-message of their choosing, at a time of their choosing, and no part of this design prevents
-it; the app's screen shows the truth only *after* the owner taps. So the credential is the
-asset that matters: one account holds it (§3.6), ambient identity, no key on any laptop, and
-the high-value confirmations stay where they already are — in the app, MAC-verified, and never
-in a notification (D169, §4 rule 3). The fully-closed alternative is not to have push at all,
-which is what §10's A and B and Q9 already offer; the mitigation here bounds the **harm**, not
-the **lie**.
+**Residual risk, stated plainly and not argued away — and made larger by the review, not
+smaller.** An attacker who holds the installation's FCM send credential **can** buzz the owner's
+phone with a false, urgent-sounding message of their choosing, at a time of their choosing, and
+no part of this design prevents it; the app's screen shows the truth only *after* the owner
+taps. **The first draft then said the app's screen is "the truth". For part of the state it is
+not, and the correction is §5 attacker 2's:** every principal that holds or would hold the send
+permission in this design **also holds `roles/firebasedatabase.admin`** on the Firebase
+project — the history account (`iam.tf`'s `history_database`), admins and budget admins
+(`local.admins`), and project owners and editors — and **database admin bypasses the rules**.
+The rules check only the **`mac` field's format** (`rules.go`'s `MACOK` and `patternHex`:
+"*check the length and the lowercase-hex characters … never the value: verifying a tag needs
+the key, which the database never holds*"), never its value. So:
+
+- **For mailbox state, the only bound is the app verifying the MAC with the per-pairing key**,
+  and §4 rule 11 makes that a requirement: **no mailbox-derived state is shown, and no alert is
+  posted from it, before the app has verified the `mac` over the canonical bytes** (P6.3's
+  `canonicalBytes`, D169). A sender that is a minter can write anything it likes; the key is
+  what the phone can check and the database cannot.
+- **The budget families carry no MAC at all** (`config/kill/**`, `config/caps/**`,
+  `spend/**` are numbers and flags, not signed messages). A compromised sender can therefore
+  forge **both** the push and the in-app state the push points to, for the budget category.
+  **For that category the app's screen is not "the truth"**, and §5 attacker 2 says so.
+- **The realistic holder of attacker 2's capability is the sender account itself** — the most
+  likely way to get the credential is to compromise the component that holds it — so the
+  residual is not "some outsider with a stolen key" but "whoever controls the sender", which is
+  §3.6's whole reason for making the sender one narrow account and not a run.
+
+The fully-closed alternative is not to have push at all, which is what §10's A and B and Q9
+already offer; the mitigation here bounds the **harm**, not the **lie**.
 
 ## 4. What a push must never carry, and what it must never do
 
 This is the document's spine. Each line is a requirement, not a preference.
 
-1. **Never content.** No run title, repository name, owner/name, slug, branch, PR number,
-   error text, log line, code, file path, model name, spend figure, cap, amount or currency.
-   (§3.1.)
+1. **Never content — and this binds the app's own words too, not only the payload.** No run
+   title, repository name, owner/name, slug, branch, PR number, error text, log line, code,
+   file path, model name, spend figure, cap, amount or currency — **in the payload (§3.1), in
+   the sender's fallback title, and in the text the app composes locally (§3.9)**. The first
+   draft bound only the payload, which would have moved the bystander leak from the provider
+   to the app. The locally composed text is **generic per category**, and it is posted with
+   **private lock-screen visibility** — Android `VISIBILITY_PRIVATE` with a redacted public
+   version, iOS's hidden-preview placeholder — so that a visible notification is a category
+   and not a sentence about the owner's work.
 2. **Never a secret or a credential** — no token, no MAC key, no claim, no capability, nothing
    from `mobile/src/accounts/secret.js`'s set.
 3. **Never a confirmation, and never an action.** A push **cannot** carry an answer, a confirm
@@ -485,7 +735,11 @@ This is the document's spine. Each line is a requirement, not a preference.
    The D128 amendment's whole enforcement is a typed, MAC-verified action record that the
    consumer checks (D169, D171) — a push that could stand in for one would undo it. This is
    the rule the brief states as "a push must never carry or trigger a confirmation, only open
-   the app", and it is absolute.
+   the app", and it is absolute. **"An action" includes the notification's own affordances**:
+   the app registers **no notification category and no action button**
+   (`UNNotificationCategory`, Android notification actions) and **accepts no inline reply**, so
+   a forged push cannot name a registered category and put a working "Approve" on the lock
+   screen (§3.9).
 4. **Never the only delivery path.** The mailbox is authoritative; a push is best-effort.
    Nothing may be *lost* by a push's failure, because nothing is *carried* by it.
 5. **Never a write path to the operator's machine.** The sender runs in the cloud under an
@@ -500,13 +754,35 @@ This is the document's spine. Each line is a requirement, not a preference.
    doorbell" is what covers what an attacker writes.
 8. **Never trusted input.** The app reads the payload for a category (and, under Q6 *(ii)*, an
    opaque id) and **nothing else**: no field of it becomes state, becomes a link, or becomes
-   rendered text. An id it cannot resolve through the mailbox is ignored and produces no
-   alert, and the user-visible text is composed by the app from the mailbox rather than taken
-   from the push, wherever the platform allows (§3.9).
+   rendered text. **It is never a route**: no `click_action`, no `fcm_options.link`, no
+   `data.url`, no deep link, no target chosen by the payload — the app opens on its own screen
+   and nowhere a push names (§3.9). An id it cannot resolve through the mailbox is ignored and
+   produces no alert, and the user-visible text is composed by the app from the mailbox rather
+   than taken from the push, wherever the platform allows.
 9. **Never an authenticated surface.** The lock screen and the notification shade are not the
    app and cannot be made trustworthy by anything this design does (§3.9); the app's own
-   screen, behind sign-in, is the only place the truth is shown. Any user-facing text about
-   push says so — "a push is only a doorbell; verify in the app".
+   screen, behind sign-in, is the only place the truth is shown — **and, for the budget
+   families, that screen is not authenticated either** (§3.9's correction: they carry no
+   `mac`, so a sender that is also a database admin can forge them). Any user-facing text
+   about push says so — "a push is only a doorbell; verify in the app".
+10. **Never a sentence built from a hostile field.** The app's locally composed text (§3.9) is
+    drawn from a **closed enumeration of generic category phrases** and from **nothing else**
+    — never a prompt's text or its options, never an agent's or a repository's name, never a
+    free-text mailbox field, which are consumer- or agent-authored and hostile by D118's own
+    read-side ruling. Console v2's **D33** is the precedent and its words are the rule: a
+    notification's content is "a fact from a document and never a string from a hostile
+    field".
+11. **Never state, and never an alert, before the MAC is verified.** No mailbox-derived state
+    is shown and no local alert is posted from it until the app has verified the message's
+    **`mac`** over P6.3's `canonicalBytes` with the per-pairing key (D169, D171, P6.7) — the
+    bound the database cannot enforce (`rules.go`: the rules check the tag's length and hex
+    shape, "never the value"). In Q6's recommended shape, with no id in the payload, the alert
+    is posted **only when the mailbox shows a new, MAC-verified change of that category since
+    the last one the app saw** — that, and not "unknown id ignored", is what makes the
+    doorbell mean anything.
+12. **Never a write on receipt.** No background push handler writes anything — no `acked`, no
+    seen-marker, no token refresh, no mailbox write of any kind (§3.9). A handler that writes
+    hands a forged push a write primitive on the device's own mailbox.
 
 ## 5. The threat model, with the attacker's capabilities stated
 
@@ -528,20 +804,48 @@ payload, so "your run needs approval: tap to confirm" is fully available to them
 displays it in their words before any Fugaro code runs (§3.9). Anyone who reads §3.1 as a
 security property of push has read it wrong; this paragraph is the correction.
 
-*What it does not buy*: it cannot forge mailbox content (the rules' `mac` and the claims bind
-that, P6.3/D169); **it cannot make the app act** — tapping opens the app and nothing else, so
-there is no confirmation, cancel, merge or answer reachable from a notification (§4 rule 3);
-and it cannot make the app **show** the lie, because the app renders only what it reads from
-its own authenticated mailbox and **ignores an opaque id it cannot resolve** (§3.2, §3.9). So
-the lure buys one lock-screen glance and dies at the app's first screen — a real phishing
-window, and a bounded one.
+*What it does not buy* — **and the first draft overclaimed two of these three, so they are
+stated here at the strength they actually have**: **it cannot make the app act** — tapping
+opens the app and nothing else, there is no confirmation, cancel, merge or answer reachable
+from a notification, and the app registers no action button or inline reply for a forged push
+to borrow (§4 rule 3, §3.9); it **cannot choose where the app lands**, because the payload is
+no route (§4 rule 8); and it **cannot override the per-pairing MAC** for mailbox state, because
+the app verifies the tag with the key (§4 rule 11). But — the correction the review is right
+about — **"it cannot forge mailbox content" and "it cannot make the app show the lie" are
+overclaims as written**, because **every principal that holds or would hold the send
+permission in this design also holds `roles/firebasedatabase.admin` on the Firebase project**,
+and database admin **bypasses the rules**:
+
+- the history account (`deploy/terraform/gcp/modules/firebase/iam.tf`'s
+  `google_project_iam_member.history_database`, "only this account (and no job account) holds
+  one on the FP");
+- `admins` and `budget_admins` (`local.admins`);
+- project owners and editors, through basic roles *(the reviewer's finding, which this document
+  accepts as the likely shape of the basic roles and does not claim to have checked against
+  live IAM)*.
+
+**`rules.go` says the rules cannot verify a tag**: `MaxMacLength`'s comment is "*The rules
+check the length and the lowercase-hex characters (patternHex), never the value: verifying a
+tag needs the key, which the database never holds*", and `MACOK` expands to exactly that
+length-and-shape test. So a compromised sender — **which is the realistic way attacker 2 gets
+the credential, and should be named as the capability's holder rather than "an outsider"** —
+can write mailbox content with a well-shaped `mac` that the rules admit, and the **only** thing
+that catches it is the **app verifying the tag with the per-pairing key** (§4 rule 11,
+P6.3/D169). And **the budget families carry no MAC at all** (`config/kill/**`,
+`config/caps/**`, `spend/$day/**` are numbers and flags): for the budget category a compromised
+sender can forge **both** the push **and** the in-app state it points to, so **the app's own
+screen is not "the truth" for that category** — the truth there is what the database says, read
+under a claim the sender does not control, and that is all it is.
 
 *What the design does about it, stated as what it is rather than as a cure*: §4 rules (1), (3),
-(7), (8) and (9) — nothing actionable in our payload, no rendering of any payload as state, no
-claim that the shade is trustworthy; §3.9's app-side shaping (a **data-only** push whose alert
-text the app composes locally from resolved mailbox state, where the platform allows, and an
-ignored unknown id); the user-facing instruction that **a push is only a doorbell, verify in
-the app**; and the sender credential being one account's (§3.6) rather than every run's.
+(7), (8), (9), (10), (11) and (12) — nothing actionable in our payload, no rendering of any
+payload as state or as a route, no action affordances, no write on receipt, no alert before the
+MAC is verified, no sentence built from a hostile field, and no claim that the shade is
+trustworthy; §3.9's app-side shaping (a **data-only** push whose alert text the app composes
+locally, and an ignored unknown id); the user-facing instruction that **a push is only a
+doorbell, verify in the app**; and the sender credential being one narrow account's (§3.6)
+rather than every run's — which limits *who can become attacker 2*, and is the strongest thing
+this design has against them.
 
 **Residual risk, plainly: this design does not prevent a forged push from lying to the owner.**
 It prevents the lie from becoming an act, and it shortens the lie's life to the moment the app
@@ -556,13 +860,22 @@ app, MAC-verified (D169); and, if the owner judges even that window too wide, §
 Q9 are the alternative — the way to close it completely is not to have push.
 
 **Attacker 3 — the push provider, the OS, and whoever reads the lock screen.** *Capability*:
-Google (and Apple, for the relay), the OS, and any bystander see the payload. *What this design
-does*: makes the payload carry nothing (§3.1). The design does **not** claim end-to-end
-secrecy — it cannot, FCM and APNs see the payload by construction — and it does not pretend
-the payload is encrypted for the phone, because the phone has no key the push path would need.
-The mitigation is that **the sender's** payload is content-free (§3.1), and it is sufficient
-for *this* attacker — a provider learns a category and a device address, not a repository —
-precisely because §3.2 fetches the truth elsewhere. It is not a mitigation against attacker 2,
+Google (and Apple, for the relay), the OS, and any bystander see the payload — **and, in full
+rather than in outline, they also see**: the registration token and the project it belongs to;
+the **bundle ID / package name**, which identifies the app as Fugaro; the **Firebase
+Installation ID**; the **IP address** at registration and delivery; **device and OS details**;
+and through all of that a **per-device time series of category events** — when runs finish,
+fail, need answers or bind a budget (§3.3). The first draft's "a provider learns a category and
+a device address" **understated this by four fields and a timing series**, and is corrected
+here. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no runtime
+dependency at all), so this build sends Google no app-usage events beyond the push path itself.
+*What this design does*: makes the payload carry nothing (§3.1). The design does **not** claim
+end-to-end secrecy — it cannot, FCM and APNs see the payload by construction — and it does not
+pretend the payload is encrypted for the phone, because the phone has no key the push path
+would need. The mitigation is that **the sender's** payload is content-free (§3.1), and it is
+sufficient for *this* attacker's view of the *content* — a repository, a run, an amount are
+never in it — precisely because §3.2 fetches the truth elsewhere. It is not a mitigation
+against attacker 2,
 who writes their own payload.
 
 **Attacker 4 — a stolen or lost phone.** *Capability*: the device, its push token, and the
@@ -585,8 +898,8 @@ against.
 
 | failure | behaviour | what the user sees |
 | --- | --- | --- |
-| the device node is missing or has no push token | **no send**; the sender records nothing | nothing — the app still shows everything on open |
-| the token is stale (FCM `UNREGISTERED`) | the sender drops the token, marks the device unregistered, and does not retry | nothing until the app re-registers (§3.5 (b)) |
+| the device node is missing, or the push node is missing, or the push node holds no token | **no send**; the sender records nothing (§3.4) | nothing — the app still shows everything on open |
+| the token is stale (FCM `UNREGISTERED`) | the sender drops the token and **deletes the entry in `config/admin/push/$uid`** — it never writes a marker, and it never touches `config/admin/devices/$uid` (§3.4, §3.5). If that leaves the push node empty the sender **deletes the push node**, which is what makes revocation final; it does not retry | nothing until the app re-registers (§3.5 (b)) |
 | FCM or APNs is down, or the send fails | the intent **stays queued** and the sweep retries; after the retry window it is dropped, never escalated | a delayed or missing buzz; the mailbox is unaffected |
 | a duplicate event is derived | deduped on `(device, category, key)` (§3.7) | one buzz |
 | a storm (many runs fail at once) | the sender's cap suppresses beyond N/hour (§3.7) | one buzz, and the mailbox has the rest |
@@ -594,7 +907,7 @@ against.
 | quiet hours | suppressed at the sender before FCM is called | nothing during the window |
 | the payload would need the detail to make sense | it does not carry it — the app fetches (§3.2) | a generic buzz, then the truth on open |
 | the phone is offline when the push arrives | FCM queues or drops it per platform policy; the mailbox is unaffected | possibly nothing; the app catches up on open |
-| an attacker spams spoofed pushes (§5 attacker 2) | **nothing can be done at the sender** — it is not our sender, so no rule of §4 binds it. The design bounds the *harm*, not the nuisance **and not the lie**: a forged push is attacker-authored, so its title and body can say anything (§3.1, §3.9) and the OS shows them; what it cannot do is make the app act, or survive the app's own screen, which renders only the authenticated mailbox and ignores an unresolvable id (§4 rules 3, 8) | buzzes carrying the attacker's text; the app shows the truth on open; the owner may revoke and re-pair, which stops our sender, not the attacker |
+| an attacker spams spoofed pushes (§5 attacker 2) | **nothing can be done at the sender** — it is not our sender, so no rule of §4 binds it. The design bounds the *harm*, not the nuisance **and not the lie**: a forged push is attacker-authored, so its title and body can say anything (§3.1, §3.9) and the OS shows them; what it cannot do is make the app act, or make a **MAC-verified** mailbox message say something it did not say (§4 rules 3, 8, 11). **And the app's screen is not uniformly "the truth" either**: the budget families (`config/kill/**`, `config/caps/**`, `spend/**`) carry **no `mac` at all** (§5 attacker 2), so a sender that holds the push permission *and* database admin — which in this project is the same principals — can forge the budget state the app shows under this category as well | buzzes carrying the attacker's text; the app shows the truth on open **for the MAC-signed families**, and the owner may revoke and re-pair, which stops our sender, not the attacker |
 
 **The rule every row obeys: a push failing is never worse than no push.** No row ends in a
 false action, a lost message, or a blocked run.
@@ -616,7 +929,20 @@ false action, a lost message, or a blocked run.
   owner-run rule) with its annual fee, and an APNs key the owner generates. This is the only
   genuinely new money, it is annual and fixed, and it exists on **either** channel — FCM's
   relay and Expo's both require APNs underneath. It is not push's cost alone; it is the cost
-  of shipping to iOS at all (D120, D125).
+  of shipping to iOS at all (D120, D125). **Under §3.3's multi-installation problem it is not
+  only money**: an `.p8` key is Apple-team-wide, so serving iOS push to an installation the
+  owner does not own means either **uploading the publisher's team key into someone else's
+  Firebase project** (a standing grant of the power to push to *every* app on the publisher's
+  team) or **having no iOS push there**. That is a cost the direct-FCM comparison has to
+  carry, and §3.3 and Q7 now do.
+- **Retention — the question D121 says it has, asked here rather than left implicit.** D121's
+  own words are that the push store has "its own retention question"; this document does not
+  answer it, because the answer is the owner's, but it must at least **ask** it, and **Q10**
+  does. What is stored and for how long: the **registration token, the platform, the
+  preference flags and the dedupe ledger** in `config/admin/push/$uid`; what happens to them
+  on **revoke** (§3.4 deletes the push node — so the data's lifetime is bounded by the
+  pairing, not by a timer); and what **FCM itself keeps** on Google's side, which this project
+  cannot delete and which §5 attacker 3 enumerates. **Q10 names all three.**
 - **The engineering cost**, not counted in dollars: one sender, one permission, one node,
   one generation bump (riding P6.4's), and the app's registration path — all of it *after*
   this document is answered and a task is approved.
@@ -646,14 +972,17 @@ and it does not move the writing to a task that may never be scheduled. It is
 
 **What Check 88 would have to prove** (outline only; P4.2 owns the register text the owner
 runs):
-a real notification arrives on a real device for each of §1's four categories; **the payload
+a real notification arrives on a real device for each category of §1's reconciled set (D160's
+three plus the prompt); **the payload
 as the provider sees it carries a category and nothing else** (read the FCM/APNs record, not
 the lock screen); the app shows the detail only after the authenticated mailbox fetch; deleting
-the device node stops delivery at once (§3.5); a suppressed category and quiet hours suppress
+the device node stops delivery at once **and a later push write cannot bring it back** (§3.4,
+§3.5); a suppressed category and quiet hours suppress
 at the sender; the storm cap holds; a stale token is reaped; and — the step that matters most —
 **a hand-crafted push with a lure in the title causes the app to open and show the truth, never
-to act and never to render the lure as state or as a link** (a data-only push with an
-unresolvable id produces no alert at all) — §4 rules 3 and 8, §3.9, §5 attacker 2. A check is
+to act and never to render the lure as state or as a link** (under Q6 (i) the payload carries no
+id, so the alert is posted only on a new MAC-verified mailbox change) — §4 rules 3, 8 and 11,
+§3.9, §5 attacker 2. A check is
 never run before its text is in the register.
 
 ## 9. The privacy statement, and whether the website's privacy page is where it goes
@@ -691,7 +1020,11 @@ or amount** — only a category — and the detail is fetched by the app over an
 connection, so a notification is never the source of truth (a notification Fugaro did not send
 is not covered by this sentence, and the statement should say so rather than imply it — §3.9);
 the token is
-stored in the installation's own Firebase project and deletable by revoking the device; and no
+stored in the installation's own Firebase project and deletable by revoking the device; **the
+quiet-hours zone name is stored** where a user sets quiet hours (§3.8, Q5); **retention is
+stated as Q10 answers it** — the push data lives only as long as the pairing, the dedupe ledger
+is windowed, and **what Google and Apple keep on their side is not this project's to delete**,
+so the statement must not imply the provider forgets; and no
 third party beyond Google (and Apple) is in the path **on the recommended channel** — which is
 itself an argument for not choosing Expo's relay (§3.3).
 
@@ -701,7 +1034,7 @@ itself an argument for not choosing Expo's relay (§3.3).
 | --- | --- | --- | --- | --- |
 | **A. In-app polling only** | **nothing new** — the app already holds a live database connection (D112) and a mailbox stream | while the app is **open and foregrounded** | **best**: no provider, no token, no server, nothing leaves the device | zero |
 | **B. Local notifications while the app is open** | `expo-notifications` locally; **no server, no token, no provider** | while the app is **open** (the OS posts a banner from a change the app itself observed) | **best**: the notification never leaves the device | zero |
-| **C. Push (FCM + APNs)** | a sender (§3.6), a token store (§3.4), a generation bump, an Apple membership, an FCM credential | **whenever the phone is on**, app closed or backgrounded | **bounded, and not closed**: the payload **our sender** writes is content-free by construction, but Google/Apple/the OS see it, a **forged** push is attacker-authored and the OS cannot tell the two apart (§3.9), and the token is a new stored datum | §7 |
+| **C. Push (FCM + APNs)** | a sender (§3.6), a token store (§3.4), a generation bump, an Apple membership, an FCM credential — **and, per installation, a registration and (for iOS) the publisher's team-wide APNs key in that installation's Firebase project** (§3.3) | **whenever the phone is on**, app closed or backgrounded | **bounded, and not closed**: the payload **our sender** writes is content-free by construction, but Google/Apple/the OS see it *plus* the app id, installation id, IP and a per-device timing series (§3.3), a **forged** push is attacker-authored and the OS cannot tell the two apart (§3.9), the token is a new stored datum, and multi-installation either spreads the publisher's team key or gives up iOS push outside the owner's own projects | §7 |
 
 **Recommendation: A and B in v1; C only when the owner decides the foreground experience is
 insufficient — and then C exactly as §3 designs it.**
@@ -719,7 +1052,19 @@ bent are §4's rules (content-free, never-a-confirmation) and §3.6's choice of 
 ## 11. What this must never do, in one place
 
 - Never carry content, a secret, a confirmation or an action (§4).
-- Never let the app act on a payload, or on a tap beyond opening (§4 rule 3).
+- Never let the app act on a payload, or on a tap beyond opening — and never offer a
+  **notification category, action button or inline reply**, never **route** by payload
+  (`click_action`, `fcm_options.link`, `data.url`), and never **write** on receipt (§4 rules 3
+  and 12).
+- Never post an alert — or show, or act on, any state a push points to — **before the MAC is
+  verified** with the per-pairing key; for the families that carry no MAC at all, say plainly
+  that the screen is not authenticated rather than implying it is (§4 rule 11, §5 attacker 2).
+- Never let the app compose lock-screen text from a **free-text mailbox field**, or any text
+  that names a repository, a run or an amount — the local text is §4 rule 1's, not only the
+  payload (§3.9, §4 rules 1 and 10, console v2 D33).
+- Never let any writer other than `fugaro pair` and `fugaro pair revoke` touch
+  `config/admin/devices/**`; push data lives in the sibling `config/admin/push/$uid`, so a
+  routine write can never recreate a revoked device node (§3.4).
 - Never be the only delivery path, or a *signal* the phone must trust for liveness — the
   heartbeat is D117's and no push redefines "offline" (§2).
 - Never widen a run's job account with the ability to send (§3.6).
@@ -746,12 +1091,17 @@ D160–D179 are not this document's to take.
   argument. **Recommended against.**
 - *(B) one cloud sender — the history job — that derives the events itself and calls FCM*,
   with its own dedupe and cap ledger written under its own admin identity (`config/admin` or
-  Firestore): **recommended, sweep-only.** One account, one credential, ambient identity, no
-  key on a laptop, **and no producer write** — so no run account is widened and §4 rule 6
-  holds literally. The ledger's writer and its grant are the sender's own
+  Firestore): **recommended, sweep-only.** Exactly one account **gains** the permission, it
+  uses its ambient identity, and **no producer write** — so no run account is widened and §4
+  rule 6 holds literally. The ledger's writer and its grant are the sender's own
   (`roles/firebasedatabase.admin` on the installation's database, which
   `deploy/terraform/gcp/modules/firebase/iam.tf` grants to that account and, in its own words,
-  to no job account); **no run and no phone writes it.**
+  to no job account); **no run and no phone writes it.** **What it does not claim** (§3.6 B):
+  "one account" is not "one principal can send" — project owners and editors hold FCM send
+  through basic roles, and an owner's application-default credential on a laptop can send
+  (not verified against live IAM); and the account's *ambient* identity is only as narrow as
+  the permission actually granted, which is why §3.6 names
+  `firebasecloudmessaging.messages.create` rather than `roles/firebasecloudmessaging.admin`.
 - *(B′) (B) plus an on-demand poke*, so a run-side producer can ask the sender to run now
   rather than wait for the sweep: **not recommended as the default**, and priced honestly
   rather than as a free refinement — the poke needs the producer to hold `run.jobs.run` on
@@ -760,26 +1110,56 @@ D160–D179 are not this document's to take.
   its price; otherwise the sweep's up-to-15-minute delay is accepted.
 - *(C) a new always-on service*: rejected — a standing server this repository has never
   deployed, behind P5.1 and D55–D78.
-- ***Recommendation: (B), sweep-only.*** *Why:* it is the only shape that keeps §4 rule 6
-  ("never a widening beyond one sender") true, and the latency it pays is bounded and
-  owner-visible rather than bought with a run-account grant.
+- *(D) the P5.1 orchestrator, if it lands — the per-installation, scale-to-zero service of the
+  sibling design #632 (`always-on-orchestrator.md`)*: it is woken by a per-minute scheduler
+  tick, it already exists for the prompt latency P5.1 buys, and it is **the prompt's own
+  author** — so for "needs answer" it is the only sender that buys sub-15-minute latency
+  **without** widening a run's account (the price (B′) pays). It carries the launcher's grants
+  and no model credential, so the send permission would be a **further grant on that service's
+  account**, and it is reachable only if P5.1 is approved and lands. **Named, not recommended
+  now**: it depends on a task that is unapproved and behind D55–D78. If P5.1 lands, **(D)
+  replaces (B) for the prompt category** and (B) remains the sweep for the rest.
+- ***Recommendation: (B), sweep-only, with (D) named for the case where P5.1 lands.*** *Why:*
+  (B) is the only shape available today that keeps §4 rule 6 ("never a widening beyond one
+  sender") true, and the latency it pays is bounded and owner-visible rather than bought with
+  a run-account grant.
 
-**Q2. Is the push token stored under D166's device node, and does it wait for P6.4?**
-- *(i) Yes — a child of `config/admin/devices/$uid`, riding P6.4's rules generation 3.*
-  **Recommended:** one revocation act (delete the node stops delivery *and* reads), no new
-  client grant, and the generation is P6.4's rather than a new one.
-- *(ii) A separate registry* (its own node, or Cloud Storage): its own revocation act, and two
-  acts can disagree — which is the failure D166 was designed to avoid. **Recommended against.**
-- ***Recommendation: (i).*** *Why:* D166 already solved revocation; this design should inherit
-  it rather than build a parallel one. The consequence is that **push cannot ship before P6.4**
-  and the generation stays 3.
+**Q2. Where is the push token stored, and does it wait for P6.4?**
+- *(i) **A SIBLING of D166's device node — `config/admin/push/$uid`** — riding P6.4's rules
+  generation 3.* **Recommended.** The device node keeps exactly one meaning: *this account is
+  paired to a phone that has not been revoked*, written by `fugaro pair` and `fugaro pair
+  revoke` and by **nothing else**. Push data (token, platform, prefs, updated_at) lives beside
+  it, sent to only while **both** nodes exist. One revocation act still stops delivery *and*
+  reads, because §3.4's rule is "no device node, no send"; the generation is P6.4's rather than
+  a new one; and no client grant is added.
+  - **Why not a child — the reason this is (i) and the first draft's (i) is withdrawn.** On
+    #601, `userClaim` admits a phone if `config/admin/devices/<uid>` merely **exists**. A
+    child of that node makes **every routine push write** — re-registration (§3.5 (b)), a prefs
+    toggle (§3.8), a stale-token cleanup (§6) — a potential **re-pairing primitive**: a
+    re-registration message the phone sent before `fugaro pair revoke` and the consumer
+    processes after it would recreate `config/admin/devices/$uid/push/...`, so the node exists
+    again and every `USER` read works again. Revocation stops being final, which is exactly the
+    property §3.5 calls the design's strongest. A sibling has no such write.
+    **Stated as the rule it is:** only `fugaro pair` and `fugaro pair revoke` ever write
+    `config/admin/devices/**`; the sender sends only when `devices/$uid` **and** `push/$uid`
+    both exist, so an orphaned push node is inert; and reaping **deletes** the push node
+    rather than writing a marker into it.
+- *(ii) A separate registry elsewhere* (its own top-level node, or Cloud Storage): its own
+  revocation act, and two acts can disagree — which is the failure D166 was designed to avoid.
+  **Recommended against.** *(This is what the first draft rejected under the name "a separate
+  registry"; the sibling in (i) is not that: it is admin-only, keyed by the same uid, and
+  inert without the device node, so it adds no second revocation act.)*
+- ***Recommendation: (i), the sibling `config/admin/push/$uid`.*** *Why:* D166 already solved
+  revocation through the device node's **existence**, and that property is only safe if
+  nothing else ever writes under `devices/**`. The consequence is that **push cannot ship
+  before P6.4** and the generation stays 3.
 
 **Q3. How does the push token rotate and the user's switches get written, given the app cannot
 write `config/admin`?**
 - *(a) register at pairing; reap `UNREGISTERED`*: no new grant, but a reinstalled-and-not-
   re-paired device goes silent.
 - *(b) re-register over the authenticated mailbox, and a principal holding
-  `roles/firebasedatabase.admin` writes the node from it*: **recommended** — the mailbox is the
+  `roles/firebasedatabase.admin` writes **`config/admin/push/$uid`** from it*: **recommended** — the mailbox is the
   app's only write path, it reuses the MAC-authenticated channel (D169), and it puts the write
   on a principal that already exists. **State the dependency, do not assume it:** per §3.4 and
   `deploy/terraform/gcp/modules/firebase/iam.tf`, that role is held by **`admins` and
@@ -788,49 +1168,95 @@ write `config/admin`?**
   **where the operator does not, it is an admin act like pairing** — the same role, the same
   person, and no discount for the app's convenience. The design does not claim otherwise.
 - *(c) a rules grant letting the phone write its own push child*: **rejected** — it reopens
-  `config/admin` to a client write, which D166 deliberately closed.
+  `config/admin` to a client write, which D166 deliberately closed. (§3.5 (c) and §3.8 keep
+  the same shape: **every** write of push data goes through (b) onto the sibling
+  `config/admin/push/$uid`, and **none** touches `devices/**`.)
 - ***Recommendation: (b), with (a)'s reaping as a net.*** This also answers §3.8's switches:
   they are written the same way.
 
-**Q4. The categories and the storm cap.**
-- All four categories (finished, failed, needs-answer, budget), with a cap of **6 per device
-  per hour** and one per category per run per hour — **recommended**, because all four are
-  states the owner named and the mailbox holds the detail a suppressed buzz would have carried.
-- A subset (e.g. needs-answer and failed only) — cheaper on nuisance, and defensible if
-  "finished" is noise.
-- ***Recommendation: all four, cap 6.*** *Why:* the cap, not the category list, is the nuisance
-  control; a missing category is a missing fact.
+**Q4. The categories — D160's set, or D160's set plus the two the phone cannot see — and the
+storm cap.**
+- *(i) **D160's set, which is what the app can actually resolve**: the **kill switch**, **cap
+  reached** and **consumer offline** (cap-near off by default), plus the **prompt** category
+  D127's switch widens to*: **recommended.** Every category has a source in the four families
+  the phone may read under tension (b1), so §3.9's "ignore what you cannot resolve" never
+  fires and no alert the app posts is unsupported. Cap **6 per device per hour**, one per
+  category per run per hour.
+- *(ii) D160's set plus **finished** and **failed**, which needs the phone's read grant
+  widened*: **now labelled as what it is — a change to tension (b1), not a category tweak.**
+  It requires a `.read` the phone does not have (`agents/$slug/$run`, `outcomes/**`) and it
+  contradicts D160's own recorded reason for excluding failed runs ("the phone cannot see
+  them"). If the owner wants these two, the widening is the owner's to grant.
+- *(iii) D160's set plus a **derived, non-sensitive status written by the consumer***: the
+  consumer writes a category and a boolean into the mailbox — MAC-signed like every other
+  message (P6.3), naming no repository, run or amount — and the app resolves *that* instead of
+  the run record it cannot read. **The narrower alternative to (ii)**, and the one that adds
+  no read grant: it makes finished/failed reachable without reopening (b1). Its cost is a new
+  mailbox field and a writer, which is where the console v2 D33 content rule applies.
+- ***Recommendation: (i) today; (iii) if the owner wants finished/failed; (ii) only as an
+  explicit (b1) widening.*** *Why:* the cap, not the category list, is the nuisance control —
+  but a category the app cannot resolve against the authenticated mailbox is not a fact, it is
+  a lock-screen string, and offering one would break the doorbell model the rest of the design
+  rests on.
 
-**Q5. Quiet hours: server-side with a stored offset, or not offered?**
-- *(i) Server-side, storing an explicit UTC offset and window, default off*: **recommended** —
-  the only shape that actually suppresses before FCM is called, at the cost of storing an
-  offset (never a timezone name, never a location).
+**Q5. Quiet hours: server-side with a stored zone, or not offered?**
+- *(i) Server-side, storing an explicit window **and the IANA zone name** it is in
+  (`Europe/Berlin`), default off*: **recommended** — the only shape that actually suppresses
+  before FCM is called. **A bare UTC offset is not enough and the first draft's "never a
+  timezone name" was wrong**: a stored offset goes wrong across a DST change (a `+02:00` saved
+  in summer suppresses the wrong hour in winter), so the design stores the **zone identifier**,
+  which is a place-shaped datum — smaller than a location and larger than an offset, and
+  §5/§9's disclosures are written to include it. **Q10's retention covers how long it is kept.**
 - *(ii) Client-side*: rejected — the buzz and the provider still happen; it silences nothing
   real.
 - *(iii) Not offered*: acceptable, and the honest baseline.
 - ***Recommendation: (i), default off.*** *Why:* a control that does not stop the send is not a
-  control, and an offset is the least data that makes it work.
+  control, and a zone name is the least data that makes it work across DST.
 
-**Q6. Does the payload carry the opaque id at all, or only the category?**
+**Q6. Does the payload carry the opaque id at all, or only the category — and can the app
+really compose the lock-screen text?**
 - *(i) Category only*: the app fetches whatever changed from its own mailbox after opening;
   **recommended** — it is the strongest privacy and needs no server-side id mapping, and §3.2
   already establishes the app needs no pointer. This is also the shape §3.9 pairs with a
-  **data-only** push whose alert text the app composes locally, so that the words on the lock
-  screen are Fugaro's and not a payload's wherever the platform allows.
+  **data-only** push whose alert text the app itself posts, generic per category (§4 rules 1,
+  10).
+  - **Two things this option must not hide.** (1) Under (i) the payload has **no id**, so
+    "ignore an unknown id" **protects nothing** — the rule that does the work is §4 rule 11:
+    post a local alert only when mailbox resolution shows a new, **MAC-verified** change of
+    that category since the last one the app saw. (2) **On iOS, "the app composes the text"
+    effectively means a Notification Service Extension**: a data-only `content-available` push
+    cannot show text by itself, is throttled and is not delivered after a force-quit, and a
+    **visible** app-composed alert needs an NSE (`mutable-content`) — which has to authenticate,
+    which means sharing `idToken`/`macKey` through a **keychain access group**, which **touches
+    D111** ("exactly two secure-storage items per account"). **Q6 now asks the owner for that.**
+    Where the platform allows is "Android freely; iOS only with an NSE and a D111 amendment".
 - *(ii) Category plus a random opaque id*, mapped server-side to the detail: useful only if the
   app ever needs to know *which* thing changed before it can read (it does not), and it adds a
   stored mapping whose theft is a correlation surface.
 - ***Recommendation: (i).*** *Why:* the identifier is the only field that could ever correlate
-  a push to a run, and the app does not need it.
+  a push to a run, and the app does not need it — provided the owner accepts the iOS
+  consequence above (an NSE and a D111 amendment) or accepts no visible iOS push.
 
-**Q7. FCM direct, or Expo's push relay?**
-- *FCM direct*: **recommended** — no third party beyond Google/Apple; the project is already a
-  Firebase project; one sender, one credential.
-- *Expo's relay*: less work if the Expo toolchain makes the direct path awkward (D120, D125);
-  **costs a party in the message path that sees the payload and the token**, plus an Expo
-  access token. Acceptable only if the owner prefers the convenience.
-- ***Recommendation: FCM direct.*** *Why:* §10's privacy column is the deciding one, and the
-  convenience is speculative until the app exists.
+**Q7. FCM direct, or Expo's push relay — given that each installation is its own Firebase
+project?**
+- *FCM direct*: **recommended only where the owner owns every installation's Firebase project.**
+  No third party beyond Google/Apple; the project is already a Firebase project. **But FCM
+  HTTP v1 sends only to registration tokens issued for the sending project**, and an `.p8` key
+  is Apple-team-wide — so for an installation owned by someone else, direct FCM means either
+  **the publisher's team key uploaded into that installation's project** or **no iOS push**
+  (§3.3). **The first draft's "one credential" and "avoids p8 handling" were false and are
+  withdrawn.**
+- *A relay — Expo's push service, or a publisher-run one*: **what a central relay exists to
+  solve.** It holds the tokens centrally and sends with the publisher's own credentials, so
+  per-installation Firebase projects stop being a problem. **It costs a party in the message
+  path that sees the payload and the token**, plus an Expo access token (or a publisher-run
+  service that is itself a new always-on component).
+- ***Recommendation: FCM direct where the owner owns every installation's project; otherwise a
+  relay — and this may reverse the earlier direct-FCM recommendation.*** *Why:* §10's privacy
+  column is the deciding one, and it decides **for** direct FCM only when the key never has to
+  leave the owner's own projects. **(The provider-behaviour claims here — HTTP v1's
+  cross-project token rule, the team-wide `.p8` — are marked UNVERIFIED in §3.3: no cloud was
+  queried.)**
 
 **Q8. Where does the push privacy statement live?**
 - *(i) `SECURITY.md`* — **recommended**, because the trust model is where this installation's
@@ -853,12 +1279,34 @@ write `config/admin`?**
   nothing in this design argues with it — the design exists so the later yes, if it comes, has
   a shape rather than a blank page.
 
+**Q10. Retention: how long is the push data kept, in the store and at the provider?**
+- **What D121 already says**: the push store has "its own retention question" — and the design
+  did not ask it. It does now, with the three parts the reviewer named.
+- *(i) **Lifetime bounded by the pairing** — the token, platform, prefs, quiet-hours zone and
+  dedupe ledger live in `config/admin/push/$uid` and are **deleted with the push node on
+  revoke** (§3.4); a re-pair starts empty*: **recommended.** It needs no timer, no sweeper and
+  no second rule, and it is the property revocation already gives.
+- *(ii) A time bound too* (drop a dedupe entry after N hours, a token unused for N days):
+  **also needed for one part** — the **dedupe ledger** is per-event and has no reason to
+  outlive its window, so (i) plus a ledger window is the concrete answer.
+- *(iii) What FCM itself keeps*: **not this project's to delete.** Google retains the
+  registration token and delivery metadata on its side under its own policies (§5 attacker 3
+  enumerates what is visible); the app's **`deleteToken`** on revoke, and asking for the
+  provider's own deletion path, are the only levers, and they are named rather than promised.
+- ***Recommendation: (i) + (ii)'s ledger window, with (iii) written into §9's disclosure so the
+  statement does not imply the provider forgets.*** *Why:* a retention answer that stops at
+  "we delete our copy" is half an answer.
+
 ## What this document does not decide
 
 It does not decide D121's later question (that is the owner's, and Q9 recommends against
-building now), the device node's own shape (D166's, plan P6.4), the mailbox or its MAC (P6.3,
-D169), the pairing (D165, P6.6), the orchestrator (P5.1, unapproved and behind D55–D78), the
-Expo/store path (D120, D125), or whether `SECURITY.md`'s silence about the phone is closed
-(a gap this design names and hands to whoever writes that statement). **It decides what push
+building now), **the category set** (Q4 reconciles it with D160 and puts the two categories the
+phone cannot resolve — with the read widening they would need — to the owner rather than
+assuming them), **the retention answer** (Q10 asks the question D121 only named), **the
+notification data's shape or its node** (Q2 puts the sibling `config/admin/push/$uid` and the
+one-writer rule for `devices/**` to the owner), the device node's own shape (D166's, plan P6.4),
+the mailbox or its MAC (P6.3, D169), the pairing (D165, P6.6), the orchestrator (P5.1, unapproved
+and behind D55–D78), the Expo/store path (D120, D125), or whether `SECURITY.md`'s silence about
+the phone is closed (a gap this design names and hands to whoever writes that statement). **It decides what push
 should be if the owner wants it, and it says plainly that nothing is built until the owner
 says so — no service, no token store, no rules change, no app code.**
