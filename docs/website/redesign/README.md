@@ -282,6 +282,13 @@ here goes stale the way the byte budgets did before D192.
   stops it at the last step and the markup that places them, on the one page that renders a
   run — the page weight and the script stay where they were, the heaviest page being the docs
   hub, which renders no step.
+  **And the round after *that* is the caps-and-costs rework** (the owner's brief of
+  2026-10-19, the page's own item): the site figure alone moves, on that one page — the table of
+  what a job costs and its provenance note, rendered from `website/data/typical-costs.yaml`,
+  against the per-command scope sentences the page no longer carries and the disclosure the
+  commands sit behind — and then the review of that rework, the scroll box the table's nowrap
+  columns need on a phone and the page's own rule for its lead. The page weight and the script
+  stay where they were, the heaviest page being the docs hub.
   **And the round after it is the 2026-10-19 changelog brief** (its own section below), which moved the site figure alone:
   every release now renders its product summary and wraps the release file's own Highlights in
   a `<details>` block — a summary and a notes label per release onto `/changelog/` — while the
@@ -458,8 +465,9 @@ here goes stale the way the byte budgets did before D192.
   cannot place against the card are refused rather than guessed. Four cases plant their
   defects: the grid left in its own row-major order, which is the defect itself; a wrap arrow
   drawn on the far side of its step; an arrow centred over its own card; and a placement
-  written with a `span`. The whole-site budget moved 626 bytes with the fix, re-derived in the
-  same commit (D192). This round was a reading of the stylesheet and of the gate, not a look at
+  written with a `span`. The whole-site budget moved with the fix, re-derived in the same
+  commit (D192), which is where the figure is. This round was a reading of the stylesheet and of
+  the gate, not a look at
   the page — the same limit as the round above.
 - **The fifth round is the second visual review's, and it is the one that reordered the page.**
   The reviewer built the site and looked at it at three widths and found the homepage "not an
@@ -559,8 +567,9 @@ version. `website/public/images/fugaro-watch.txt` is a hand transcription of wha
 line per terminal line, for alt text and as a text fallback (column spacing is approximate).
 
 The only processing is a lossless-to-near-lossless size reduction: the PNG was quantised to 48 colours
-without dithering and stripped of metadata (ImageMagick), from 510,664 bytes to 130,533 bytes. The text
-stays sharp and the green and yellow words keep their colours. No row or text was cropped or edited.
+without dithering and stripped of metadata (ImageMagick), which is what took it down to the size
+the page ships. The text stays sharp and the green and yellow words keep their colours. No row or
+text was cropped or edited.
 
 Size: 130,533 bytes, inside the enforced byte budgets: the three ceilings and the rule each is
 derived by are written in `website/README.md`, and `website/test/budget.mjs` is the case that
@@ -638,10 +647,10 @@ goes stale the way the byte budgets did before D192.
   at `/console/` rather than at a release asset because the console page is where the
   downloads are *and* where the console is explained, and a reader who does not know what the
   console is needs the second thing first.
-- **What the two changes cost, and what they do not.** The menu's removal takes 278 bytes off
-  the base stylesheet every page inlines and 181 off `site.js` — so 459 off the page figure
-  and 3,239 off the site's — and those three figures are re-derived in the commit that ships
-  them (D192, above). **The console's link moves no byte figure and no word ceiling**: while
+- **What the two changes cost, and what they do not.** The menu's removal takes bytes off the
+  base stylesheet every page inlines and off `site.js`, so both the page figure and the site
+  figure moved with it, and each is re-derived in the commit that ships them (D192, above).
+  **The console's link moves no byte figure and no word ceiling**: while
   the flag is false it renders nothing, so the build the figures are derived from is the same
   build; and the flag-on state it produces is held by the budget gate run over that build
   (`console-option.mjs`'s `FUGARO_GATES_DIST` run), which is where the homepage's two extra

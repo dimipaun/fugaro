@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,026,750 bytes in a checkout with no tags** and to **1,026,750 bytes with the
+  commit builds to **1,028,085 bytes in a checkout with no tags** and to **1,028,085 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -217,33 +217,29 @@ added or removed without this sentence moving fails there:
     console option and the hero's link to the console into this build.
 
   Each half moved these figures in its own commits and re-derived them there — the script's
-  six corrections in `main`'s, the redesign's fix rounds in this branch's. The last three rounds
-  are where this build's three numbers come from, and both are measured over **two builds**
-  rather than argued:
+  six corrections in `main`'s, the redesign's fix rounds in this branch's. The last rounds are
+  where this build's three numbers come from, and each was measured over two builds rather than
+  argued; the arithmetic itself is the gate's, in `test/budget.mjs`:
 
   - **This branch's own fix rounds**, each re-derived in the commit that moved it: the round
     after the merge moved the chat above the diagram, drew its turns as alternating bubbles,
     took three of the four cyan edges off the flow's cards and shortened the footer's link
     label; the round after that took the install section's own top padding off, because the
-    flow above it already carries the gap between the two blocks — 54 bytes off the site
-    figure, with the page weight where it was, the heaviest page being the docs hub, which
-    renders neither block — and the round after *that* moved both figures up by the two
+    flow above it already carries the gap between the two blocks, which moved the site figure
+    alone, with the page weight where it was, the heaviest page being the docs hub, which
+    renders neither block; and the round after *that* moved both figures up by the two
     declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap: anywhere`)
-    moving onto `base.css`'s `.command-block > pre`, which every page inlines: 440 bytes onto
-    the site figure and 44 onto the page weight. That last round is also why **the page and
-    the site move with the script**: a script every page loads is a page's weight as well as
-    its JavaScript.
+    moving onto `base.css`'s `.command-block > pre`, which every page inlines. That last round
+    is also why **the page and the site move with the script**: a script every page loads is a
+    page's weight as well as its JavaScript.
   - **The `fugaro watch` screenshot landed on the homepage** (`main`'s #655) and moved the
     site figure alone. The owner's capture and its transcription
-    (`public/images/fugaro-watch.png`, 130,533 bytes, and `fugaro-watch.txt`, 3,363) are served
-    by `public/` and are in every build's `dist/`, and the derivation the figure named before
-    them predated the assets: those 134,195 bytes of build, plus the 299 bytes of homepage
-    markup that put the picture in its slot, are the whole of the move — tight 1,056,379 to
-    1,224,123 and stated 3,169,137 to 3,672,369. The page weight does not move with it, and
-    that is the check worth keeping: the picture lands on the homepage, and the homepage is not
-    the heaviest page — the docs hub is, at 267,095 bytes either side of that change — while
-    the homepage's own weight went from 94,007 to 224,839 bytes, the screenshot being 130,533
-    of it. The JavaScript is untouched.
+    (`public/images/fugaro-watch.png` and `fugaro-watch.txt`) are served by `public/` and are in
+    every build's `dist/`, and the derivation the figure named before them predated the assets:
+    those assets, plus the homepage markup that put the picture in its slot, are the whole of
+    the move. The page weight does not move with it, and that is the check worth keeping: the
+    picture lands on the homepage, and the homepage is not the heaviest page — the docs hub is.
+    The JavaScript is untouched.
   - **This branch's menu (item 1), and the review round after it**, measured against that
     build file by file. Taking the drawer out — the `Menu` toggle, the panel it opened and the
     sibling combinator that showed it — leaves each of the eleven pages **278 bytes lighter**,
@@ -303,8 +299,17 @@ added or removed without this sentence moving fails there:
     360, 768 and 1280, the connector's own extent and width, and every width or `nowrap` in the
     section against the phone's content box. The clone figure moved by the same bytes.
 
+  - **The caps-and-costs rework** (the owner's brief of 2026-10-19) moved the site figure
+    alone, 1,021,991 → **1,023,326**, by **1,335 bytes**, on one page: the table of what a job
+    costs and its provenance note, rendered from `website/data/typical-costs.yaml`, against the
+    per-command scope sentences the page no longer carries and the `<details>` the commands now
+    sit behind — and then the review of that rework, which added the scroll box the table's
+    nowrap columns need on a phone and the page's own rule for its lead. The page weight and the
+    script did not move: the heaviest page is the docs hub, and the caps page is not it. The
+    clone figure moved by the same bytes.
+
   - **The changelog's own round** (the owner's brief of 2026-10-19) moved the site figure
-    alone, 1,021,991 → **1,026,750**, by **4,759 bytes** net, and its causes are the page's own:
+    alone, 1,023,326 → **1,028,085**, by **4,759 bytes** net, and its causes are the page's own:
     each release now carries its product summary line and wraps the release file's own
     Highlights in a `<details>` block, so a summary and a notes label per release arrive, and
     the page no longer prints a "not yet released" label for every release in the checkout with
@@ -339,7 +344,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,850,314 bytes. Three times 1,283,438 (every file in `dist/`, 1,026,750
+  - **Whole site:** 3,855,321 bytes. Three times 1,285,107 (every file in `dist/`, 1,028,085
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -553,6 +558,16 @@ Three things about those commands are worth stating rather than leaving to the t
   `available` by the build itself, which refuses the two disagreeing (below).
   `console-screens.yaml` is the third, and it is the owner's own list rather than a fact
   another file states: it ships empty, and the build renders whatever rows it carries (below).
+- **`website/data/typical-costs.yaml` is the owner's own measurement, and the page renders
+  it or nothing.** It carries what a job costs on this project's own development runs — one
+  entry per kind of run, each with the sample behind it, over a window whose last day is the
+  day the figures were taken — and the caps-and-costs page leads with it (the owner's brief
+  of 2026-10-19). `src/content.ts` reads it, validates it (a version, a window of at least
+  `site.yaml`'s `min_runs` runs, an ascending middle half, no duplicate id) and refuses it by
+  name, and `test/caps-and-costs.mjs` holds the built page to it **in both directions**: every
+  field the file carries is rendered in its own column, and no figure on the page is one the
+  file does not carry. So a refresh is an edit to this file and never to a page, and a field
+  added to it with no column to land in fails the build rather than going unrendered.
 - **`website/data/console-sha256sums.txt` is the release's, copied rather than written.** It is
   the `console-sha256sums.txt` asset of the console's `console-vX.Y.Z` release, byte for byte —
   one `<64 hex>  <published name>` line per artifact, the shape `sha256sum` writes and
@@ -784,6 +799,7 @@ website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
   data/release-summaries.yaml      # each release's product summary, pinned by test/changelog-page.mjs
+  data/typical-costs.yaml          # the owner's own measurement of what a job costs, pinned by test/caps-and-costs.mjs
   data/console-screens.yaml        # the console page's slides: hand-written, ships empty
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)

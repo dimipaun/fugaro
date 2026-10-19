@@ -7,7 +7,11 @@
 //      ungenerated security page, an install section with no commands — because nothing
 //      in the artifact says the fact was missing. So the tests below remove a file, strip
 //      a file's generated header, break a data file, and publish a figure drawn from too
-//      few runs, and each time the build has to stop and name the file.
+//      few runs, and each time the build has to stop and name the file. The owner's own
+//      measurement (`data/typical-costs.yaml`, the figures the caps-and-costs page leads
+//      with) is held to the same rule in every shape its reader accepts: the cases below
+//      name the version, the minimum sample, the middle half, the ids and the cap, so the
+//      page cannot print a figure, a sample or a ceiling the file does not support.
 //   2. **The head's facts come from `site.yaml` and from nowhere else.** The canonical URL
 //      is a read of that file (change it and the built page follows), it appears in no
 //      source file as a literal, and the sitemap and font hints point only at files the
@@ -236,6 +240,11 @@ test('the build refuses a misspelled key in every nested map the loader reads', 
     ['install.yaml', '  arch: [amd64, arm64]\n', '  arch: [amd64, arm64]\n  archs: []\n', 'archs', 'build'],
     ['install.yaml', '    status: supported\n', '    status: supported\n    stauts: untested\n', 'stauts', 'platforms[]'],
     ['install.yaml', '    tap_repository: dimipaun/homebrew-tap\n', '    tap_repository: dimipaun/homebrew-tap\n    devonly: true\n', 'devonly', 'paths[]'],
+    // The owner's measurement, which the caps-and-costs page leads with: a key the reader
+    // does not read at each of its three depths (the document, the window, a row).
+    ['typical-costs.yaml', 'version: 1\n', 'version: 1\nrevision: 1\n', 'revision', 'the document'],
+    ['typical-costs.yaml', '  to: 2026-10-19\n', '  to: 2026-10-19\n  until: 2026-10-19\n', 'until', 'window'],
+    ['typical-costs.yaml', '    name: An independent review-only run\n', '    name: An independent review-only run\n    label: review\n', 'label', 'jobs[]'],
   ]
   for (const [name, from, to, key, map] of cases) {
     const built = buildWithData(t, name, from, to)
@@ -314,6 +323,48 @@ test('the build accepts published figures above the threshold', async (t) => {
   const built = buildWith(t, (copy) => writeFileSync(path.join(copy.site, 'content', 'costs.json'), figures))
 
   assert.equal(built.status, 0, `the build refused figures above the threshold:\n${built.output}`)
+})
+
+test('the build refuses every shape of the owner\'s measurement its reader does not accept', async (t) => {
+  // `website/data/typical-costs.yaml` is the only source of the figures the caps-and-costs
+  // page leads with, and the page prints each one as a fact about the owner's own runs. So a
+  // shape the reader does not accept is refused at the build rather than half-read: a version
+  // it does not know, a window or a row thinner than the site's minimum, a middle half that
+  // is not two ascending figures, two rows under one id, a cap of nothing, or a figure that is
+  // not a whole number of cents — each would put a figure, a sample or a ceiling on the page
+  // that nothing behind it supports, and the last would put a *rounded* one there, which is a
+  // figure neither the file nor the measurement behind it carries.
+  const cases = [
+    ['version: 1\n', 'version: 2\n', /version is not 1/, 'a version this reader does not know'],
+    ['  runs: 980\n', '  runs: 5\n', /window\.runs is 5/, "a window thinner than the site's own minimum"],
+    ['    runs: 53\n', '    runs: 5\n', /the row "review" carries 5 runs/, 'a row drawn from too few runs'],
+    ['middle_half_usd: [0.15, 0.68]\n', 'middle_half_usd: [0.15]\n', /carries 1 figures/, 'a middle half that is not two figures'],
+    ['middle_half_usd: [0.17, 0.59]\n', 'middle_half_usd: [0.59, 0.17]\n', /the lower bound is above the upper one/, 'a middle half that descends'],
+    ['  - id: review\n', '  - id: task\n', /two rows carry the id "task"/, 'two rows under one id'],
+    ['per_run_cap_usd: 10\n', 'per_run_cap_usd: 0\n', /per_run_cap_usd is 0/, 'a cap of nothing'],
+    ['    median_usd: 0.36\n', '    median_usd: 0.365\n', /median_usd is 0\.365, which is not a whole number of cents/, "a figure the page prints to the cent and would have to round"],
+    ['per_run_cap_usd: 10\n', 'per_run_cap_usd: 9.999\n', /per_run_cap_usd is 9\.999, which is not a whole number of cents/, 'a cap the page prints to the cent and would have to round'],
+  ]
+  for (const [from, to, expected, what] of cases) {
+    const built = buildWithData(t, 'typical-costs.yaml', from, to)
+    assert.notEqual(built.status, 0, `the build accepted ${what}:\n${built.output}`)
+    assert.match(built.output, /typical-costs\.yaml/, `the failure for ${what} does not name the data file it refused`)
+    assert.match(built.output, expected, `the failure for ${what} does not say what it refused`)
+  }
+
+  // The empty list is the one shape a single replacement cannot write, the `jobs` block being
+  // what the row it would replace lives in. The page leads with one row per kind of run, so a
+  // file with none is refused rather than rendered as a table with nothing in it.
+  const empty = buildWith(t, (copy) => {
+    const file = path.join(copy.site, 'data', 'typical-costs.yaml')
+    const before = readFileSync(file, 'utf8')
+    const after = before.replace(/jobs:\n(?:.*\n)*?\n/, 'jobs: []\n')
+    assert.match(after, /^jobs: \[\]$/m, 'the fixture did not empty the jobs list, so this test would pass on anything')
+    writeFileSync(file, after)
+  })
+  assert.notEqual(empty.status, 0, `the build accepted a measurement with no rows:\n${empty.output}`)
+  assert.match(empty.output, /typical-costs\.yaml/, 'the failure does not name the data file it refused')
+  assert.match(empty.output, /jobs is empty/, 'the failure does not say the row list is empty')
 })
 
 test('the canonical URL is a read of site.yaml and is written nowhere else', async (t) => {
