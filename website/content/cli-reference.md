@@ -870,10 +870,14 @@ List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
 is known about its published shared config, and the checkouts of its
 repositories this machine remembers.
 
-The checkouts are remembered by the commands that already run in one
-(fugaro init --repo, fugaro run, fugaro validate and every other command
-that resolves a checkout's project), in a machine-local state file beside
-the project configs. Every path is re-validated on this read: a path that
+The checkouts are remembered by the commands that run in one and are
+not reads the desktop console spawns (fugaro init --repo, fugaro run,
+fugaro validate, fugaro backends and the rest of them), in a machine-local
+state file beside the project configs. The commands the console's spawn
+allow-list covers never record: fugaro doctor and fugaro accounts ls
+resolve a checkout too, but a read writes nothing, whoever runs it — the
+command cannot tell who spawned it. Every path is re-validated on this
+read: a path that
 was moved or deleted, that is no longer a git checkout, or whose
 fugaro.yaml no longer names this project and this repository is reported
 with "valid": false and a reason, and is never silently dropped. The

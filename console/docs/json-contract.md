@@ -625,9 +625,17 @@ checkouts cannot disagree about which installation is which. The rows are
 bucket, never merged into the shared config, and never printed by any other
 command. They come from a machine-local state file
 (`$XDG_CONFIG_HOME/fugaro/checkouts.json`, beside the project configs and not
-among them), written best effort by the commands that already resolve a
-checkout's project (`fugaro validate`, `fugaro run`, `fugaro init --repo` and
-the rest), bounded to 20 repositories per project and 5 paths per repository.
+among them), written best effort by the commands that resolve a checkout's
+project and are **not** reads the console spawns — `fugaro validate`,
+`fugaro run`, `fugaro init --repo` and the rest — bounded to 20 repositories
+per project and 5 paths per repository. **The reads §5.1 allows never record,
+by the console's hand or the operator's**: `fugaro doctor` and
+`fugaro accounts ls` resolve a checkout too, but a read writes nothing, and
+the CLI cannot tell who spawned it, so the rule is by command path
+(`consoleReadPaths`, `internal/cli/project.go`). A checkout only ever used
+with `fugaro doctor` or `fugaro runs ls` is therefore never remembered, and
+the console's list is shorter than the machine's directories: it is what the
+write path has seen, not an inventory of the disk.
 
 **Every path is re-validated on this read, and the read never writes.** A path
 that has moved or been deleted, that is no longer a git checkout's own root,

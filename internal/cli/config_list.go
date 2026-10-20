@@ -160,10 +160,14 @@ func newConfigListCmd() *cobra.Command {
 			"~/.config/fugaro/projects), with the GCP project and region of each, what\n" +
 			"is known about its published shared config, and the checkouts of its\n" +
 			"repositories this machine remembers.\n\n" +
-			"The checkouts are remembered by the commands that already run in one\n" +
-			"(fugaro init --repo, fugaro run, fugaro validate and every other command\n" +
-			"that resolves a checkout's project), in a machine-local state file beside\n" +
-			"the project configs. Every path is re-validated on this read: a path that\n" +
+			"The checkouts are remembered by the commands that run in one and are\n" +
+			"not reads the desktop console spawns (fugaro init --repo, fugaro run,\n" +
+			"fugaro validate, fugaro backends and the rest of them), in a machine-local\n" +
+			"state file beside the project configs. The commands the console's spawn\n" +
+			"allow-list covers never record: fugaro doctor and fugaro accounts ls\n" +
+			"resolve a checkout too, but a read writes nothing, whoever runs it — the\n" +
+			"command cannot tell who spawned it. Every path is re-validated on this\n" +
+			"read: a path that\n" +
 			"was moved or deleted, that is no longer a git checkout, or whose\n" +
 			"fugaro.yaml no longer names this project and this repository is reported\n" +
 			"with \"valid\": false and a reason, and is never silently dropped. The\n" +

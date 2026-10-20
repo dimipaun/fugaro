@@ -187,6 +187,11 @@ func (r *secretsRig) removeConfig(t *testing.T) {
 func newSecretsRig(t *testing.T, origin string, in io.Reader, opts ...func(*initOptions)) *secretsRig {
 	t.Helper()
 	testutil.IsolateGit(t)
+	// The rig runs the init flow from a checkout that has an origin, so every
+	// command in it remembers that checkout (recordCheckout): under a config
+	// home of the test's own, never the developer's — which is what this
+	// override is for.
+	isolateProjects(t, t.TempDir())
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q", "-b", "main")
 	testutil.Git(t, dir, "remote", "add", "origin", origin)
