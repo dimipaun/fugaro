@@ -876,6 +876,52 @@ changes are cited as the feedback's own.
   two-column grid, the rule above each benefit and the prompt line's bubble are the parts of
   this round a gate can only say is present.
 
+## The 2026-10-19 benefits feedback: an icon each, and a step up the type scale
+
+A third comment the same day, on the design canvas rather than on a page: **"make them bigger,
+bolder, use an icon for each point"**, under the four Benefits. Every reading it does not spell
+out is recorded here, as the two sections above record theirs. It changes the section's
+presentation and **not one word of it**: the four names and the four lines are still
+`README.md`'s `## Why Fugaro` reasons, held to their own reason's paragraph by the component's
+build-time guard and by `website/test/home.mjs` from outside the build.
+
+- **One glyph per point, inline, and decorative.** Each benefit carries one `<svg>` written in
+  `src/components/Benefits.astro`: a shield for *Safe by construction*, arrows leaving a centre
+  for *Scale out, and walk away*, three people for *Team control in one place*, a spark for *The
+  newest tools and models, ready to use*. There is no icon font, no image file, no third-party
+  anything and no JavaScript: the four are shapes in the markup, so the page fetches nothing for
+  its own drawing and stays readable with the script off (Global Constraints 4 and 8). The glyph
+  is `aria-hidden="true"` with `focusable="false"` — the name beside it is the point, and a
+  screen reader handed the picture as well would read the point twice. It is drawn with
+  `stroke="currentColor"` under a rule that sets `color: var(--accent)`, and `--accent` on
+  `--ground` is a pair `a11y.mjs` already computes at 3:1 for all four palettes; its box is
+  `--space-xl` (48 px), a step of the spacing scale rather than a number of the component's own.
+- **Both the name and its line are larger, and the section's heading moved with them.** The
+  type scale has one step between the body size and the size above it, and the feedback asks for
+  the name *and* the line to be larger, so both are `--font-size-lg`; they are told apart by the
+  weight and the colour the block already used, which is also why "bolder" is the size step
+  rather than a weight — the scale stops at `--weight-semibold`, the weight the name already
+  carried. The section's own `h2` is one step above them (`--font-size-xl`), so the block reads
+  as a section with four points under it instead of as four headings and a label.
+- **The gate is the icons' own, and it reads the built page.** `website/test/home.mjs` reads
+  every `<svg>` under each benefit and refuses a point with none or with several, an icon that
+  draws nothing (`<svg>` with no shape in it, which is a picture nobody sees and the one defect
+  of this set no other gate can catch), an icon that is not marked as decoration or out of the
+  tab order (`aria-hidden="true"`, `focusable="false"` — the pair `a11y.mjs` already holds the
+  flow's arrows to), an icon that references anything (`<use href>`, an `<image>`, an `href` on
+  the `<svg>` itself, an inline `style`) and four points drawn with one picture between them.
+  Each refusal was proved by planting the defect in the component, rebuilding and watching the
+  built-page case fail — not only by its fixture. The glyphs live in the component as drawings
+  rather than as a template branch per name, so a name whose entry holds no shape stops the
+  build instead of shipping an empty box.
+- **The measurements, and the check that is still the owner's.** The figure re-derived in the
+  commit is the site's, from the gates' own build (`website/README.md`); the page weight, the
+  script and the word ceilings did not move, because the section is the homepage's and not one
+  word of it changed. Nothing was rendered: no browser was driven and no screenshot is committed, and
+  this run cannot see one. **Whether the four points now look right is the owner's check
+  (70a–70c, D190)** — a gate can say the icons are present, decorated, unreferenced and four
+  distinct drawings, and it cannot say the section looks good.
+
 ## The 2026-10-19 changelog brief: the released state, and the summaries
 
 The same day's owner feedback about `/changelog/`: *"Changelog: why do I see not yet released?
