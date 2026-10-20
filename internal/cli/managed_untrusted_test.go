@@ -322,6 +322,54 @@ func TestTheListingPrintsWholeLinesWholeAndCutsOnlyWhatItCannot(t *testing.T) {
 	}
 }
 
+// TestTheListingPromisesAPasteOnlyForTheHalfItWrote: printEntries offers its
+// lines as text the owner pastes back, and that is true of the identity half —
+// the command that recorded the entry escaped it (tf.RemovalIdentity.String
+// escapes every byte the printers rewrite), so safetext.FieldUncut's rewrites
+// are no-ops there and the line carries the identity back byte for byte. The
+// address half is the plan's own, neither escaped nor bounded (listingLineMax),
+// so an address holding a character the printers rewrite is printed as they
+// rewrite it: that line is not the entry, and pasting it back records an entry
+// about an address the plan does not have — the gate compares by exact
+// equality, so it approves nothing, loudly, at the apply. The listing says
+// which half it can promise this for; this pins the two halves apart.
+func TestTheListingPromisesAPasteOnlyForTheHalfItWrote(t *testing.T) {
+	written := tf.DeleteEntry{
+		Address: "module.managed.google_storage_bucket.fmgd_data",
+		Before:  `type=google_storage_bucket project=proj-1234 name=fmgd\x20data id=fmgd\x20data-bucket`,
+	}
+	var b strings.Builder
+	printEntries(&b, []tf.DeleteEntry{written})
+	line := strings.TrimSuffix(b.String(), "\n")
+	if want := written.Address + "=" + written.Before; line != want {
+		t.Fatalf("the listing printed %q, want the entry itself %q", line, want)
+	}
+	if e, err := approveArgument(line); err != nil || e != written {
+		t.Errorf("the listing's own line pasted back = %+v, %v; want the entry it printed (%+v)", e, err, written)
+	}
+
+	raw := tf.DeleteEntry{
+		Address: "google_storage_bucket.a\tb",
+		Before:  "type=google_storage_bucket id=data-bucket",
+	}
+	b.Reset()
+	printEntries(&b, []tf.DeleteEntry{raw})
+	got := strings.TrimSuffix(b.String(), "\n")
+	if want := safetext.FieldUncut(raw.Address) + "=" + raw.Before; got != want {
+		t.Fatalf("the listing printed %q, want the address as the printers leave it (%q)", got, want)
+	}
+	if got == raw.Address+"="+raw.Before {
+		t.Fatal("the listing printed the address as the entry holds it: this test is about an address a printer rewrites")
+	}
+	e, err := approveArgument(got)
+	if err != nil {
+		t.Fatalf("the line the listing printed was refused: %v", err)
+	}
+	if want := safetext.FieldUncut(raw.Address); e.Address != want || e.Address == raw.Address {
+		t.Errorf("the line the listing printed pasted back as the address %q, want the printed one %q (the entry's own is %q)", e.Address, want, raw.Address)
+	}
+}
+
 // TestAllowDeleteListingIsCappedEndToEnd: the command's own listing, through
 // the real command line: the header counts the whole list, the listing stops
 // at the cap, and the line after it says how many it did not print.

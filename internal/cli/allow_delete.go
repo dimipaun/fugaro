@@ -512,7 +512,26 @@ const listingLineMax = 2 * tf.RemovalIdentityPrintMax
 // printEntries is a listing of the entries an owner's object holds, one per
 // line, in the ADDRESS=IDENTITY form this command's arguments take — so a line
 // the owner reads is a line they can paste back, while it is one of the lines
-// this listing prints whole.
+// this listing prints whole. The half that promise holds for is the IDENTITY:
+// the command that recorded the entry escaped it (tf.RemovalIdentity.String
+// escapes every byte its printers would touch), so the rewrites FieldUncut
+// still makes are no-ops on it, and a line this command wrote carries its
+// identity back byte for byte however long the line is.
+//
+// The address half is not escaped — the address is the plan's own, and
+// listingLineMax says why it is not bounded either — so an address holding a
+// character the printers rewrite (a tab, a run of spaces, a byte outside
+// printable ASCII) is printed as they rewrite it, and a line whose address was
+// rewritten is not the entry it was written from. Pasting that line back
+// records an entry about an address the plan does not have, which is an
+// approval of nothing, refused (loudly and fail-closed) wherever the address is
+// matched byte for byte. Stating the cost is the honest end of it, because
+// paying it off here is not open to this listing: an address escaped the way an
+// identity is could not be read back into an entry at all (this command takes
+// its address half as written and never unescapes one), and no printed form of
+// such an address is one an owner can paste anyway — a refusal prints the
+// address through safetext.Field too. An address narrow enough to need one of
+// those characters is one an owner writes into the argument by hand.
 //
 // Each line is printed as the entry itself (safetext.FieldUncut at or under the
 // listing's own line bound, safetext.Field past it): Field is what keeps an
@@ -521,11 +540,7 @@ const listingLineMax = 2 * tf.RemovalIdentityPrintMax
 // escape sequence, a bidi control or a newline of its own, but it also cuts a
 // value at its own bound and rewrites the characters it does not expect, and a
 // line that is not the entry is a line that approves nothing when it is pasted
-// back. The entry's own characters are already escaped by the command that
-// wrote it (tf.RemovalIdentity.String escapes every byte its printers would
-// touch), so the rewrites FieldUncut still makes are no-ops on an entry this
-// command wrote, and a line it wrote reads exactly as it was written however
-// long it is.
+// back — which is the difference the halves above are about.
 //
 // Past the bound the line is Field's: cut at FieldMax, ended with Field's own
 // marker. An entry can be that long — listingLineMax says why the address half
