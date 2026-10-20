@@ -639,7 +639,9 @@ because this bullet is the one W2.1 sweeps:
 **Markdown — 111 files** outside this folder name the command
 (`git grep -l 'fugaro init' 82d366af -- '*.md' | grep -vc
 '^docs/setup-wizard/'`), and the split between what the rename touches and what
-it leaves alone is **26 live files against 85 in the nine dated roots**.
+it leaves alone is **26 live files against 85 in the dated roots** — 85 *at
+`82d366af`*, where the ninth root, this folder, does not exist yet (the work
+these documents describe adds it) and so contributes none of them.
 
 Live (renamed) — 26 files: `README.md` (16 mentions), `CONTRIBUTING.md`,
 `docs/gcp-setup.md` (113 — its title is `# GCP setup with \`fugaro init\``),
