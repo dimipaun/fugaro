@@ -425,6 +425,18 @@ test('the slider is the browser\'s own scrolling, with no script and no timer', 
 // the gate names. So the fixture build is repeated with one longhand written into the
 // component's own stylesheet, and the gate has to refuse it.
 test('the autoplay gate reads every spelling of the property, not just the shorthand', (t) => {
+  // The property as CSS spells it, in the gate's own terms: the shorthand and every longhand
+  // are an animation, and the layout's reduce rule — which every page carries, and which only
+  // takes motion away — is not.
+  assert.deepEqual(animationDeclarations('a { animation: spin 2s; }'), ['animation:'])
+  assert.deepEqual(animationDeclarations('a { animation-name: spin; animation-duration: 2s; }'), ['animation-name:'])
+  assert.deepEqual(animationDeclarations('a { animation-timeline: view(); animation-range: entry; }'), ['animation-timeline:', 'animation-range:'])
+  assert.deepEqual(
+    animationDeclarations('@media (prefers-reduced-motion: reduce) { * { animation-duration: 1ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; } }'),
+    [],
+    'the layout\'s reduced-motion rule reads as an animation, and every page carries it: a gate that counted it would fail every page rather than the slider',
+  )
+
   const component = 'src/components/ScreenshotSlider.astro'
   const source = readFileSync(path.join(SITE, component), 'utf8')
   const mutated = source.replace('.screens-track {', '.screens-track {\n    animation-name: slide-in;')
@@ -440,7 +452,7 @@ test('the autoplay gate reads every spelling of the property, not just the short
   const animations = animationDeclarations(stylesOf(consolePage(built)))
   assert.ok(
     animations.includes('animation-name:'),
-    `the built page declares no animation-name after ${component} was built with one: the gate in the case above reads the shorthand only, so a slider that animated itself through the longhands would pass it (read: ${animations.join(', ') || 'nothing'})`,
+    `the built page carries no animation-name after ${component} was built with one, so the gate reads fewer spellings of the property than the property has — and a carousel it cannot see is a carousel it lets through (read: ${animations.join(', ') || 'nothing'})`,
   )
   // And the layout's own reduced-motion rule is not what it read: the build above carries
   // it, and the only declaration the gate found is the one this case wrote.
