@@ -318,6 +318,31 @@ func TestVerifyRefusesOtherProject(t *testing.T) {
 	})
 }
 
+// The uid names the run and the claims must agree with it: a token for one
+// run may never be read as another's, and a token whose uid is not a run at
+// all is nobody's.
+func TestVerifyRefusesAnIdentityThatNamesTwoRuns(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"fr names another run": func(c map[string]any) { c["fr"] = "20261020-090000-ffff" },
+		"fs names another repo": func(c map[string]any) {
+			c["fs"] = "another-repo"
+		},
+		"a uid that is not a run": func(c map[string]any) {
+			c["sub"], c["user_id"] = "a-person-uid", "a-person-uid"
+		},
+		"two different uids": func(c map[string]any) { c["sub"] = "r~another-repo~20261020-090000-ffff" },
+		"no fx":              func(c map[string]any) { delete(c, "fx") },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.verify(f.runToken(mutate), f.jobToken(), f.job); !errors.Is(err, ErrUnverified) {
+				t.Fatalf("err = %v, want ErrUnverified", err)
+			}
+		})
+	}
+}
+
 // fx is the identity's own deadline: past it, the rules no longer honour the
 // identity either, and until an outcome is written it is the only bound.
 func TestVerifyRefusesExpiredFX(t *testing.T) {
@@ -504,6 +529,57 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 	}
 }
 
+// The real outcome reader reads the write-once path the writer wrote — the
+// rules' RUN && DAYOK && !data.exists() node — and nothing else. A reader
+// pointed at the wrong path is a liveness check that always says "live".
+func TestRTDBOutcomesReadsTheWriteOncePath(t *testing.T) {
+	day := budget.Day(testNow())
+	slug, run := "aurora-app", "20261020-090000-ab12"
+	fake := &fakeGetter{found: true}
+	exists, err := RTDBOutcomes{DB: fake}.OutcomeExists(context.Background(), day, slug, run)
+	if err != nil {
+		t.Fatalf("OutcomeExists: %v", err)
+	}
+	if !exists {
+		t.Error("exists = false, want the reader's found")
+	}
+	if want := budget.PathOutcome(day, slug, run); fake.path != want {
+		t.Errorf("path = %q, want %q", fake.path, want)
+	}
+	if !strings.HasPrefix(fake.path, "outcomes/") || strings.Contains(fake.path, "agents/") {
+		t.Errorf("path = %q, want the outcome node and never the registry entry", fake.path)
+	}
+
+	// A reader the database refuses is an error, not "no outcome": the caller
+	// must not read it as a live run.
+	fake.err = errors.New("the database is unreachable")
+	if _, err := (RTDBOutcomes{DB: fake}).OutcomeExists(context.Background(), day, slug, run); err == nil {
+		t.Error("a failed read was reported as an answer")
+	}
+	// A segment budget.PathOutcome would panic on is refused, not panicked on.
+	if _, err := (RTDBOutcomes{DB: fake}).OutcomeExists(context.Background(), day, "", run); err == nil {
+		t.Error("an empty slug was accepted as a path segment")
+	}
+}
+
+// fakeGetter is the one database call RTDBOutcomes makes.
+type fakeGetter struct {
+	path  string
+	found bool
+	err   error
+}
+
+func (g *fakeGetter) Get(_ context.Context, path string, out any) (bool, error) {
+	g.path = path
+	if g.err != nil {
+		return false, g.err
+	}
+	if raw, ok := out.(*json.RawMessage); ok && g.found {
+		*raw = json.RawMessage(`{"status":"done"}`)
+	}
+	return g.found, nil
+}
+
 // The real key source: Google's published certificates, fetched once and
 // cached, with a kid it does not hold answered as unknown rather than fetched
 // again.
@@ -513,7 +589,9 @@ func TestGoogleKeysAreCached(t *testing.T) {
 	var fetches atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		fetches.Add(1)
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		// Two hours: distinct from the source's own default life, so the test
+		// can tell "Google's max-age was honoured" from "the default was".
+		w.Header().Set("Cache-Control", "public, max-age=7200")
 		w.Header().Set("Content-Type", "application/json")
 		body, err := json.Marshal(map[string]string{testKid: string(pemBytes)})
 		if err != nil {
@@ -545,7 +623,16 @@ func TestGoogleKeysAreCached(t *testing.T) {
 	if n := fetches.Load(); n != 1 {
 		t.Errorf("fetches = %d, want 1: an unknown kid does not refetch", n)
 	}
-	// Past the cache's life the set is fetched again.
+	// An hour on, the set is still good: the published max-age is what the
+	// cache lives by, not the source's own default.
+	now = now.Add(time.Hour)
+	if _, err := keys.Key(context.Background(), testKid); err != nil {
+		t.Fatalf("Key (an hour on): %v", err)
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Errorf("fetches = %d, want 1: the published max-age was not honoured", n)
+	}
+	// Past the published life the set is fetched again.
 	now = now.Add(2 * time.Hour)
 	if _, err := keys.Key(context.Background(), testKid); err != nil {
 		t.Fatalf("Key (after expiry): %v", err)
