@@ -417,6 +417,42 @@ func TestValidateCascadeReadsNoPolicyOffline(t *testing.T) {
 	}
 }
 
+// TestValidateOfflineHelpNamesThePolicyRead: --offline's help promised the runs
+// bucket alone ("never read the runs bucket: resolve against the cached project
+// layer, if any") while the flag now keeps the published policy out of reach as
+// well — and for a cascade file that is the difference between O2's switch being
+// read and the file being refused unproven. The usage string is what `fugaro
+// validate --help` prints and what the generated CLI reference's row repeats
+// (website/content/cli-reference.md, internal/clidoc), so both are read here: a
+// reader who takes the old sentence for the whole flag reads --offline as a way
+// to skip the bucket and still get a verdict, not as the state that refuses
+// their cascade workflow.
+//
+// Mutation (run, restored): restore the old usage string — the flag's own arm
+// and the reference's row both fail, the second naming the row it read.
+func TestValidateOfflineHelpNamesThePolicyRead(t *testing.T) {
+	fl := newValidateCmd().Flags().Lookup("offline")
+	if fl == nil {
+		t.Fatal("validate carries no --offline flag: this scan no longer reads it")
+	}
+	if !strings.Contains(fl.Usage, "policy") {
+		t.Errorf("validate's --offline help does not name the published policy the flag also keeps out of reach: %q", fl.Usage)
+	}
+
+	ref := readDoc(t, "website/content/cli-reference.md")
+	section := between(ref, "## `fugaro validate`", "\n## `")
+	if section == ref || strings.TrimSpace(section) == "" {
+		t.Fatal("website/content/cli-reference.md carries no `fugaro validate` section: the reference moved and this scan no longer reads it")
+	}
+	row := between(section, "| `--offline` |", "\n")
+	if row == section {
+		t.Fatal("the reference's validate section carries no `--offline` row: the row moved and this scan no longer reads it")
+	}
+	if !strings.Contains(row, "policy") {
+		t.Errorf("the generated reference's --offline row does not name the published policy (regenerate with `go run ./internal/clidoc` after the flag's help changes): %q", row)
+	}
+}
+
 // TestValidateRefusesCascadeWithBudgetOff is the gateway rule at the surface
 // that reports it: a cascade run's calls are made by the gateway, so the mode
 // that reaches the run — the effective one, policy.Merge of the installation's

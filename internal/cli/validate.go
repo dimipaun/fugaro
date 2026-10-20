@@ -173,10 +173,15 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	// The switch, the routes and the reach: validate resolves a route ID the
 	// same way the run does, so a pin that names one is admitted here exactly
 	// when the run would route it (config.CheckAllowed's `allowed`), and which
-	// pins the run has is the switch's reach. The switch is the operator's own —
-	// the policy node is published from it, and this command reads no node
-	// (design §11: offline) — which is the same reading the rest of this
-	// function gives the providers. The routes are the run's own table, the
+	// pins the run has is the switch's reach. The switch read here is the
+	// file's, over the layer cache: the operator's own, since the policy node is
+	// published from it — this resolution reads no node (design §11: offline,
+	// and validate says "unresolved offline" where it cannot see one), which is
+	// the same reading the rest of this function gives the providers. The
+	// command does make one node read, and it is cascadeProblems': the published
+	// policy, for O2's switch alone, which is a refusal of its own where the node
+	// cannot be read (no database, none published, unreadable, or --offline) and
+	// which nothing here waits on. The routes are the run's own table, the
 	// operator's providers filtered by allow_data_to for this repository
 	// (runner.ProvidersFor), the same table routingProblems and providerProblems
 	// read.
@@ -593,9 +598,11 @@ func shortPath(path string) string {
 // halts it (the switch check below).
 //
 // The resolution is printed only when the switch is readable, and the switch is
-// the operator's own project config: validate reads no policy node (design §11:
-// offline), which is the same reading budgetProblems and providerProblems give
-// the providers. With no config for this file's project there is nothing to
+// the operator's own project config: this resolution reads no policy node
+// (design §11: offline), which is the same reading budgetProblems and
+// providerProblems give the providers. The command's one node read is
+// cascadeProblems', for O2's switch alone and never for a route, so nothing
+// here waits on it. With no config for this file's project there is nothing to
 // resolve from, and the line says "unresolved offline" — a resolution this
 // command did not resolve is never printed as if it had been (the resolver's
 // own contract, config.RoutingClaudeFor). A model the switch names and cannot
@@ -1620,7 +1627,7 @@ func newValidateCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	cmd.Flags().StringVar(&layerFile, "project-layer", "", "resolve against this project layer file instead of the published one (also checks the file; for CI without bucket access, and before fugaro config publish)")
-	cmd.Flags().BoolVar(&offline, "offline", false, "never read the runs bucket: resolve against the cached project layer, if any")
+	cmd.Flags().BoolVar(&offline, "offline", false, "never read the runs bucket or the project's published policy: resolve against the cached project layer, if any; a cascade file is refused, not admitted unproven")
 	return cmd
 }
 
