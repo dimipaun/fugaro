@@ -271,7 +271,11 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 		return Identity{}, fmt.Errorf("%w: the call names no usable Cloud Run job, so the run cannot be placed", ErrUnverified)
 	}
 	if a.cfg.SharedJob(req.Job) {
-		return Identity{}, fmt.Errorf("%w: the run is in the shared project job %s, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverified, req.Job)
+		// The job name is the caller's own header, so it is caller text like
+		// any other: the refusal says a shared job was named and does not
+		// repeat which one. An operator reads the name from the run's record,
+		// which is the service's own writing.
+		return Identity{}, fmt.Errorf("%w: the run is in a shared project job, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverified)
 	}
 	id, err := a.verifyRun(ctx, req.RunIDToken, now)
 	if err != nil {
@@ -676,12 +680,18 @@ func (g *GoogleKeys) fetch(ctx context.Context) error {
 // shortest life this code allows, which is the floor. So every directive is
 // taken at its word, and the clamp decides. A max-age this code cannot read
 // is the one thing ignored, because there is nothing to take at its word.
+//
+// The directives are read in the order the header spells them, so a max-age
+// later in the same header must not undo one that says the set may not be
+// kept: `no-store, max-age=3600` is still `no-store`, and the decision is
+// made once, after the whole header has been read.
 func cacheLife(cacheControl string) time.Duration {
 	life := keyCacheDefault
+	mayKeep := true
 	for _, part := range strings.Split(cacheControl, ",") {
 		part = strings.TrimSpace(part)
 		if part == "no-store" || part == "no-cache" {
-			life = 0
+			mayKeep = false
 			continue
 		}
 		value, ok := strings.CutPrefix(part, "max-age=")
@@ -693,6 +703,9 @@ func cacheLife(cacheControl string) time.Duration {
 			continue
 		}
 		life = time.Duration(secs) * time.Second
+	}
+	if !mayKeep {
+		life = 0
 	}
 	return min(max(life, keyCacheMin), keyCacheMax)
 }

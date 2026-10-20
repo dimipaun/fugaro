@@ -2,6 +2,7 @@ package credsvc
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -202,6 +203,28 @@ func TestSwitchHeaderRoundTrip(t *testing.T) {
 			}
 			if len(h) != 0 {
 				t.Errorf("a refused switch wrote %v", h)
+			}
+		})
+	}
+
+	// A switch this code *reads* is held to the rules one it writes is held
+	// to: the header reaches the run's record, so a record with a name that
+	// cannot be one, or without the why, is refused rather than logged.
+	malformed := map[string]string{
+		"a from that is not a name": `{"from":"acct one","to":"anthropic-key","reason":"exhausted"}`,
+		"a from with a newline":     `{"from":"acct-one\nX-Evil: 1","to":"anthropic-key","reason":"exhausted"}`,
+		"a to that is not a name":   `{"from":"acct-one","to":"anthropic key","reason":"exhausted"}`,
+		"no reason":                 `{"from":"acct-one","to":"anthropic-key"}`,
+		"an oversized from": fmt.Sprintf(`{"from":%q,"to":"anthropic-key","reason":"exhausted"}`,
+			strings.Repeat("A", maxCredentialNameBytes+1)),
+	}
+	for name, raw := range malformed {
+		t.Run(name, func(t *testing.T) {
+			h := http.Header{}
+			h.Set(HeaderSwitch, raw)
+			got, ok, err := SwitchHeader(h)
+			if ok || err == nil {
+				t.Fatalf("SwitchHeader(%s) = (%v, %v, %v), want a refusal", raw, got, ok, err)
 			}
 		})
 	}

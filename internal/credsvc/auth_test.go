@@ -514,6 +514,23 @@ func TestVerifyRefusesSharedJobRun(t *testing.T) {
 	if !strings.Contains(err.Error(), "shared") {
 		t.Errorf("err = %q, want it to say the job is shared", err)
 	}
+	if strings.Contains(err.Error(), shared) {
+		t.Errorf("err = %q repeats the job name the caller presented", err)
+	}
+	// The same, for a job name that is one clean header value but is the
+	// caller's text all the same: it is up to the header's bound, so the
+	// refusal must not carry it either.
+	long := "fugaro-shared-" + strings.Repeat("A", maxHeaderTokenBytes-32)
+	f.shared[long] = true
+	_, err = f.verify(f.runToken(), f.jobToken(), long)
+	if !errors.Is(err, ErrUnverified) {
+		t.Fatalf("err = %v, want ErrUnverified", err)
+	}
+	for _, fragment := range []string{long, "AAAA"} {
+		if strings.Contains(err.Error(), fragment) {
+			t.Fatalf("err = %q repeats the job name the caller presented", err)
+		}
+	}
 	// A run that names no job at all cannot be placed, so it is refused too —
 	// and so is a job name that is not one clean header value: it is looked
 	// up in the policy and written into an audit line.
@@ -942,8 +959,15 @@ func TestCacheLifeTakesEveryDirectiveAtItsWord(t *testing.T) {
 		"public, max-age=-5":                  keyCacheMin,
 		"no-store":                            keyCacheMin,
 		"no-cache":                            keyCacheMin,
-		"max-age=86400":                       keyCacheMax,
-		"max-age=999999999":                   keyCacheMax,
+		// A max-age later in the same header does not overrule a directive
+		// that says the set may not be kept: the order of the directives is
+		// Google's, not a licence to cache what it said not to.
+		"no-store, max-age=3600":          keyCacheMin,
+		"max-age=3600, no-store":          keyCacheMin,
+		"no-cache, max-age=7200":          keyCacheMin,
+		"public, no-store, max-age=86400": keyCacheMin,
+		"max-age=86400":                   keyCacheMax,
+		"max-age=999999999":               keyCacheMax,
 	}
 	for cacheControl, want := range cases {
 		if got := cacheLife(cacheControl); got != want {

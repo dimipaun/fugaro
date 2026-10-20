@@ -325,6 +325,12 @@ func SetSwitchHeader(h http.Header, s Switch) error {
 // SwitchHeader reads a switch back. ok is false when the answer carries none;
 // an error means the answer carries one this code cannot read, which the
 // run's record must not silently drop.
+//
+// A switch that is read is held to the same rules as one that is written, and
+// for the same reason: the record is logged, displayed and stored. From is
+// checked where SetSwitchHeader checks it (empty when the call started on the
+// credential that answered it), To likewise, and a record without the why is
+// not a record of a switch.
 func SwitchHeader(h http.Header) (Switch, bool, error) {
 	raw := h.Get(HeaderSwitch)
 	if raw == "" {
@@ -334,8 +340,14 @@ func SwitchHeader(h http.Header) (Switch, bool, error) {
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
 		return Switch{}, false, fmt.Errorf("credsvc: the switch header is not JSON: %w", err)
 	}
+	if s.From != "" && !ValidCredentialName(s.From) {
+		return Switch{}, false, fmt.Errorf("credsvc: the switch header names %q, which is not a credential name", s.From)
+	}
 	if !ValidCredentialName(s.To) {
 		return Switch{}, false, fmt.Errorf("credsvc: the switch header names %q, which is not a credential name", s.To)
+	}
+	if s.Reason == "" {
+		return Switch{}, false, errors.New("credsvc: the switch header carries no reason")
 	}
 	return s, true, nil
 }
