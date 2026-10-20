@@ -1080,9 +1080,10 @@ export function flowLayoutAt(css, width) {
  * cards with an arrow between each pair, and a card's content box is what its padding and
  * border leave. Every one of those numbers is read from the stylesheet rather than typed here,
  * so the check follows a token that moves. Where a shortcut could make the page's own gutter
- * smaller — the homepage's `main:has(> .hero)` drops `main`'s padding, and `.home-flow` puts it
- * back — the arithmetic takes the padding the rules declare and ignores the shortcut, so the
- * width it works from is a floor rather than the page's own.
+ * smaller — the homepage's `main:has(> .hero)` drops `main`'s padding, and each block on that
+ * page puts its own gutter back — the arithmetic takes the padding the rules
+ * declare and ignores the shortcut, so the width it works from is a floor rather than the
+ * page's own.
  */
 export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIST) {
   const out = []
