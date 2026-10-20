@@ -260,9 +260,10 @@ added or removed without this sentence moving fails there:
 
   - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 977,921 → **979,575**, by the **1,654 bytes** the rework costs: the install
-    section shows the quick path above the fold with the console option beside it, the page
-    carries a "Set up your installation" list of its own, and the other install paths and the
-    platform list moved into a Details section below them. The page weight does not move: the
+    section showed the quick path above the fold with the console option beside it (the card
+    round at the end of this list replaced that pair with a card per system), the page carries
+    a "Set up your installation" list of its own, and the other install paths and the platform
+    list moved into a Details section below them. The page weight does not move: the
     heaviest page is still the docs hub, which renders none of it, and the page that grew is
     Getting Started's, at 25,871 bytes.
 
@@ -470,7 +471,7 @@ added or removed without this sentence moving fails there:
     moved a level down to sit inside the macOS card. The page weight and the script did not
     move: the heaviest page is the docs hub, which renders no install section, and nothing
     outside Getting Started's own page and stylesheet changed. The page's own words fell with
-    the boxes they sat in, 250 → **247**, so the word ceiling did not move. The two rules the
+    the boxes they sat in, 248 → **247**, so the word ceiling did not move. The rules the
     cards are held to — no card for a system the file does not carry, one icon per card, and it
     draws something — are `test/os-cards.mjs`'s, and the count of gates in this README moved with
     it.
@@ -926,8 +927,9 @@ file therefore carries the release's *published names* rather than a URL: `relea
 that module is the one reader of the file, and each page renders what it returns.
 
 Three places offer the console from those facts: the console page's own Downloads section
-(W1.6), Getting Started's console option beside the CLI (the owner's changes spec of
-2026-10-18, item 6), and the homepage's call to action (the owner's brief of 2026-10-19, item
+(W1.6), Getting Started's console option inside the macOS install card (the owner's changes spec
+of 2026-10-18, item 6; the card placement is the owner's draft of 2026-10-19), and the
+homepage's call to action (the owner's brief of 2026-10-19, item
 6: the hero action row carries a `Desktop console` link to `/console/`, and nothing about the
 console at all, rendered from `features.console_downloads`). In all three, the unreleased state
 is **structural rather than editorial**: the download list is rendered from `available`'s
@@ -939,8 +941,8 @@ homepage's call to action to the flag-off half (the row is exactly the two links
 before, and mentions the console nowhere), and `website/test/console-option.mjs` holds Getting
 Started to it in **both** states: the shipped one, read off the built page, and the released
 one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
-(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started was at the
-ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
+(`FUGARO_GATES_DIST`), because rendering the console's block costs words and Getting Started
+was at the ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
 of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
 change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.

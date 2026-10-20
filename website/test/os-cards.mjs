@@ -329,10 +329,14 @@ test("the console's block is a section of a card, not a card of its own", () => 
 // ---- the refusals, kept -----------------------------------------------------------------
 
 /**
- * The fixture's own install facts: two supported systems with a path each, the second of them
- * offered a path with no command, and one untested system — the Windows shape D94 settles.
- * Small enough to hold in the head, and shaped like the real file: `paths` in the order a
- * reader runs them, `platforms` with the `goos` each path names.
+ * The fixture's own install facts: two supported systems, three paths in the order a reader
+ * runs them, and one untested system — the Windows shape D94 settles. Small enough to hold in
+ * the head, and shaped like the real file: `paths` in order, `platforms` with the `goos` each
+ * path names, so that macOS's first path is Homebrew, Linux's first is the archive, and there
+ * is a third path both systems are offered *after* their first one. That third one is what
+ * makes the "first path" refusal reachable: without it, every card a fixture can plant carries
+ * either the right path or one the file does not carry at all, and the rule the whole card
+ * shape rests on would be code no case fires.
  */
 const FIXTURE_INSTALL = {
   platforms: [
@@ -343,6 +347,7 @@ const FIXTURE_INSTALL = {
   paths: [
     { id: 'homebrew', platforms: ['darwin'] },
     { id: 'archive', platforms: ['darwin', 'linux'] },
+    { id: 'cosign', platforms: ['darwin', 'linux'] },
   ],
 }
 
@@ -447,11 +452,21 @@ test('a card carrying a path the file does not offer that system is refused', ()
     'a card carrying a path the file does not offer that system is not refused',
   )
 
-  const later = [GOOD_CARDS[0], { platform: 'linux', path: 'cosign', name: 'Linux' }]
+  const absent = [GOOD_CARDS[0], { platform: 'linux', path: 'snap', name: 'Linux' }]
+  assert.match(
+    osCardFailures(cardsOf(cardsPage(absent)), FIXTURE_INSTALL).join('\n'),
+    /carries the path "snap", which website\/data\/install\.yaml carries no path by/,
+    'a card carrying a path the file does not carry is not refused',
+  )
+
+  // The headline rule: the path is the FIRST one the file offers that system. The fixture's
+  // `archive` is offered on macOS but comes after Homebrew, so a macOS card carrying it is a
+  // path the membership check above waves through and only this refusal catches.
+  const later = [{ platform: 'macos', path: 'archive', name: 'macOS' }, GOOD_CARDS[1]]
   assert.match(
     osCardFailures(cardsOf(cardsPage(later)), FIXTURE_INSTALL).join('\n'),
-    /carries the path "cosign", which website\/data\/install\.yaml carries no path by/,
-    'a card carrying a path the file does not carry is not refused',
+    /carries "archive" where website\/data\/install\.yaml offers macOS "homebrew" first/,
+    'a card carrying a path the file offers that system later is not refused',
   )
 })
 

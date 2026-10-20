@@ -19,7 +19,9 @@
  *   1. **Above the fold: one card per system, each with its install command.** `#install`
  *      opens with a card for every platform `install.yaml` marks `supported` — macOS and
  *      Linux today — in the file's own order, and the card carries the path the file offers
- *      that system first, with that path's command and its copy control. The console's
+ *      that system first, with that path's command and its copy control where the file gives
+ *      the path a command (Linux's archive has none, so that card carries the note and the
+ *      release page instead). The console's
  *      downloads sit in the macOS card, because the console ships for macOS (the owner's
  *      draft: the console's button belongs with the system it is built for). Nothing else is
  *      up there: no sentence about the page, no paragraph about where its words come from
@@ -69,9 +71,12 @@
  *     init`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their own note,
  *     and the setup steps above them are where a reader meets the first two as steps
  *     (finding 22).
- *   - **The cosign verification is inline**, with the archive's own facts: the verification
- *     block is the release process' own text, and a reader who downloads an archive is one
- *     scroll from the commands that check it (finding 19).
+ *   - **The cosign verification is the archive's own facts, and it is a path in Details**
+ *     (finding 19): the verification block is the release process' own text, and it sits
+ *     with the paths no card carries. The archive is the Linux card's path — the macOS card
+ *     carries Homebrew — and its own note names macOS too, so the tarball is offered to both
+ *     systems; the commands that check it are the cosign path under "Other install paths",
+ *     which is where a reader who took the archive finds them.
  *   - **The two cards are the two systems the file supports**, and the systems it does not
  *     are not offered: the page says nothing about a system it has no artifact for.
  *
