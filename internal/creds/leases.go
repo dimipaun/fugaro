@@ -128,7 +128,9 @@ func Free(leases []Lease, credential string, now time.Time, run Run, limit int) 
 // It is not the earliest lapse among the other runs (which is what this returned
 // before review finding m10, and what a limit of 1 hides). Free asks for
 // strictly fewer than limit holders, so with a limit of 3 and five holders it
-// takes two lapses to make room for a sixth — and a caller told to wait for the
+// takes three lapses to make room for a sixth — two lapses leave three holders,
+// and three is not fewer than three, so the third is the one that frees the
+// slot — and a caller told to wait for the
 // first of the five would wake up to a credential that is still full and wait
 // again, once per lapse, on a path whose whole purpose is to answer when the run
 // should come back. The lapse that matters is therefore the (holders - limit +

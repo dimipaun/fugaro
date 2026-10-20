@@ -785,6 +785,24 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 	if at, ok := SlotFrees(leases, a1.Name, now, run, 2); !ok || !at.Equal(now.Add(5*time.Minute)) {
 		t.Fatalf("SlotFrees under a cap of two = %s, %v; want the earlier expiry", at, ok)
 	}
+	// Five holders under a cap of three, which is the case the limits above
+	// cannot reach: Free asks for strictly FEWER than three holders, so two
+	// lapses are not enough — three holders would be left — and the answer is
+	// the third expiry, the one after which two remain. A cap of one or two
+	// over two leases is the same answer as "the last lapse" and "the first
+	// lapse" respectively, so neither pins the formula; and the holds are
+	// given here in an order that is neither by time nor by name, so an answer
+	// that indexed the slice without sorting it lands on 20m.
+	five := []Lease{
+		{Slug: run.Slug, Run: "h4", Credential: a1.Name, Until: now.Add(20 * time.Minute)},
+		{Slug: run.Slug, Run: "h1", Credential: a1.Name, Until: now.Add(5 * time.Minute)},
+		{Slug: run.Slug, Run: "h5", Credential: a1.Name, Until: now.Add(25 * time.Minute)},
+		{Slug: run.Slug, Run: "h2", Credential: a1.Name, Until: now.Add(10 * time.Minute)},
+		{Slug: run.Slug, Run: "h3", Credential: a1.Name, Until: now.Add(15 * time.Minute)},
+	}
+	if at, ok := SlotFrees(five, a1.Name, now, run, 3); !ok || !at.Equal(now.Add(15*time.Minute)) {
+		t.Fatalf("SlotFrees for five holders under a cap of three = %s, %v; want the third expiry, 15m: two lapses leave three holders, and Free wants fewer than three", at, ok)
+	}
 	// A lapsed lease is nobody's hold, and one run's own expired hold is not a
 	// wait either.
 	lapsed := append(leases, Lease{Slug: run.Slug, Run: "gone", Credential: a1.Name, Until: now.Add(-time.Minute)})
