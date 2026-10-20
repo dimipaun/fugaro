@@ -973,7 +973,8 @@ budget_preview.go   config_publish.go   gitsecret.go
 `"fugaro init --repo . --retire"`. The last line is the second census pattern
 (reconciliation §4 names it): `budget_preview.go`, `config_publish.go` and
 `gitsecret.go` name `init --repo` with no `fugaro` in front, so the command
-above does not find them — and **`gitsecret.go:114` is live user-facing text**,
+above does not find them — and **`gitsecret.go`'s `driftError.Error()` is live
+user-facing text**,
 a refusal that ends "Run %s init --repo %s in its checkout first". They are in
 the list, in `pendingRename` (W0.2) and therefore owned; leaving them to the
 sweep is exactly how they came to sit in the census owned by nobody.
@@ -1052,8 +1053,9 @@ the two exclusions below, and without them it names `internal/initflow/loop.go`,
 this task's; if it names a package not listed above, this list is what is wrong.
 **Three files are this task's without being on that command's output**, because
 they name the command only as the bare `init --repo` (reconciliation §4's second
-pattern): `internal/backend/backend.go:89`,
-`internal/config/project_secrets.go:84` and `internal/runner/policy.go:170`, all
+pattern): `internal/backend/backend.go` (`LaunchSpec.Env`'s comment),
+`internal/config/project_secrets.go` (`PerRepositorySecret`'s doc comment) and
+`internal/runner/policy.go` (`envCeiling`'s doc comment), all
 three comments rather than strings — the same three that made W2.6's ownership
 sentence false. The five `_test.go` files beside them
 (`internal/infra/{statebucket,workdir}_test.go`,
