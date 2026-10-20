@@ -436,6 +436,105 @@ func TestDocsRigorModesEveryCitedTaskExists(t *testing.T) {
 	}
 }
 
+// rigorModesBlockRangeRE matches a document stating a whole block's range as
+// this folder writes one: the prefix, a 1, the dash, and the last number, with
+// the prefix repeated or not — "F1–F41" and "D1–D25". A range is a summary
+// claim, and it is the one number in these documents a reader takes without
+// counting, so a range left behind by an edit ("D1–D19" after D20 landed) is a
+// claim the folder no longer has.
+var rigorModesBlockRangeRE = regexp.MustCompile(`([FDOU])1 ?[–-] ?(?:[FDOU])?([0-9]+)`)
+
+// rigorModesAnyNumberRE matches one citation of a block's number anywhere it is
+// written ("F19", "D7", "U10", "O3"), which is how the documents point at each
+// other.
+var rigorModesAnyNumberRE = regexp.MustCompile(`([FDOU])([0-9]+)`)
+
+// rigorModesForeignNumber is a number above this folder's own blocks that a
+// document here may still cite, because it belongs to a register the document
+// names: the coordinator's allocation (D192) and its free range (D193), and the
+// two sibling folders' D-blocks (docs/windows-cli/'s D1–D16 and
+// docs/setup-wizard/'s D1–D12). Each is allowed only where the document names
+// its owner, because "D16" beside no name is a citation of a decision this
+// folder does not have.
+var rigorModesForeignNumber = []struct {
+	prefix, owner string
+	end           int
+}{
+	{"D", "owner's allocation", 192},
+	{"D", "free", 193},
+	{"D", "docs/windows-cli/", 16},
+	{"D", "docs/setup-wizard/", 12},
+	{"D", "docs/mobile/voice-session/", 219},
+}
+
+// TestDocsRigorModesEveryBlockRangeIsCurrent: every block range a document in
+// this folder states either ends where the block does (counted from the
+// reconciliation rather than trusted), or is explained: a *part* of a block cited
+// beside a section reference (§1.1's table cites "D1–D4" as the decisions behind
+// the score), or a range this folder quotes from somewhere else, whose owner the
+// document names. Everything else is a claim about how far a block reaches that
+// the block disagrees with — the shape an edit leaves behind, because a block is
+// extended by appending to it and the table that summarises it is elsewhere.
+//
+// It also holds that no document cites a number a block does not have: a citation
+// of "D26" is a pointer to a decision nobody wrote.
+func TestDocsRigorModesEveryBlockRangeIsCurrent(t *testing.T) {
+	recon := readDoc(t, rigorModesRecon)
+	counts := map[string]int{
+		"F": len(rigorModesNumbered(t, rigorModesRecon, recon, "findings", rigorModesFindingRE)),
+		"D": len(rigorModesNumbered(t, rigorModesRecon, recon, "decisions", rigorModesDecisionRE)),
+		"O": len(rigorModesNumbered(t, rigorModesRecon, recon, "items", rigorModesItemRE)),
+		"U": len(rigorModesNumbered(t, rigorModesRecon, recon, "UNVERIFIED rows", rigorModesUnverifRE)),
+	}
+	foreign := func(prefix string, n int, doc string) bool {
+		for _, f := range rigorModesForeignNumber {
+			if f.prefix == prefix && f.end == n && strings.Contains(doc, f.owner) {
+				return true
+			}
+		}
+		return false
+	}
+
+	ranges, cites := 0, 0
+	for _, path := range []string{rigorModesReadme, rigorModesRecon, rigorModesPlan} {
+		doc := readDoc(t, path)
+		for i, line := range strings.Split(doc, "\n") {
+			for _, loc := range rigorModesBlockRangeRE.FindAllStringSubmatchIndex(line, -1) {
+				m := rigorModesBlockRangeRE.FindStringSubmatch(line[loc[0]:loc[1]])
+				end, err := strconv.Atoi(m[2])
+				if err != nil {
+					t.Fatalf("%s: unreadable range end %q", path, m[2])
+				}
+				ranges++
+				// A *part* of a block is cited beside the section it belongs
+				// to ("§5, D1–D4"): the § has to come before the range, or a
+				// line that merely mentions a section somewhere would excuse
+				// any range on it.
+				if end == counts[m[1]] || foreign(m[1], end, doc) || strings.Contains(line[:loc[0]], "§") {
+					continue
+				}
+				t.Errorf("%s line %d states %s1–%s%d, and the %s block reaches %d: a range has to end where the block does, cite a part of it beside a section reference, or name whose register it quotes",
+					path, i+1, m[1], m[1], end, m[1], counts[m[1]])
+			}
+			for _, m := range rigorModesAnyNumberRE.FindAllStringSubmatch(line, -1) {
+				n, err := strconv.Atoi(m[2])
+				if err != nil {
+					t.Fatalf("%s: unreadable citation %q", path, m[2])
+				}
+				cites++
+				if n <= counts[m[1]] || foreign(m[1], n, doc) {
+					continue
+				}
+				t.Errorf("%s line %d cites %s%d, and the %s block reaches %d: a citation has to resolve to a number the block has",
+					path, i+1, m[1], n, m[1], counts[m[1]])
+			}
+		}
+	}
+	if ranges == 0 || cites == 0 {
+		t.Fatalf("no document states a block range or cites a block number: the guard's own subjects are missing")
+	}
+}
+
 // rigorModesRuleRE matches a markdown table's separator cell ("---", ":--", …).
 var rigorModesRuleRE = regexp.MustCompile(`^:?-+:?$`)
 

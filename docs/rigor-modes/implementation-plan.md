@@ -5,8 +5,11 @@
 Nine slices, ordered so that each one merges alone and leaves `main` green, and
 so that the first six change nothing a user can observe until the mode is
 configured. This plan is written from [reconciliation.md](reconciliation.md)'s
-findings **F1–F34**, decisions **D1–D19**, items **O1–O7** and the UNVERIFIED
-table **U1–U8**, and it cites them rather than restating them.
+findings **F1–F41**, decisions **D1–D25**, items **O1–O7** and the UNVERIFIED
+table **U1–U10**, and it cites them rather than restating them. Slice 1 is
+ordered by the owner's scope ruling of 2026-10-20 (the reconciliation's §1.2):
+the project-wide default lands first, the repository's override second, the area
+override last, and each of the three merges on its own.
 
 ## 0. What this does not do
 
@@ -27,8 +30,8 @@ table **U1–U8**, and it cites them rather than restating them.
   readiness rule, or a second configuration file.** F13, F9, F4 and D5: the
   existing ones are reused, and a task that proposes a new one is proposing a
   decision, not a task.
-- **It does not decide the open questions.** D1–D19 are recommendations, O1–O7
-  are items and U1–U8 are unverified claims. A task below that depends on one
+- **It does not decide the open questions.** D1–D25 are recommendations, O1–O7
+  are items and U1–U10 are unverified claims. A task below that depends on one
   says so in its **Depends on** line.
 
 ## 1. Builds on merged code
@@ -55,7 +58,7 @@ one of them is named so a reader can check the claim:
 | Slice | What it is | Observable change | Depends on |
 | --- | --- | --- | --- |
 | **0** | the folder, and the guard that owns it | none (documents and one test) | — |
-| **1** | the configuration surface, read by nothing | `fugaro run --mode` is accepted and recorded; behaviour unchanged | 0 |
+| **1** | the mode's three layers, and where they show | the resolved mode and the layer that won are recorded and printed; behaviour unchanged | 0 |
 | **2** | the score, acted on by nothing | findings carry scores in the transcript and the prompt asks for them | 1 |
 | **3** | the run loop applies the mode | a configured mode tolerates what it says it tolerates | 2 |
 | **4** | the backlog surface | the tolerated findings are readable in the PR and by `fugaro diagnose` | 3 |
@@ -93,7 +96,7 @@ into the gap: it keeps 119, which is free whichever way that collision falls. Th
 task that writes the check (T8.1) owns any renumbering and the register line in
 the same commit.
 
-**This plan takes no D-number.** Its decisions are **D1–D19**, folder-local and
+**This plan takes no D-number.** Its decisions are **D1–D25**, folder-local and
 distinct by folder, which is the register's second row's own situation
 (`docs/coordinator/README.md`: **D1–D192** is the owner's allocation, **D193
 onward** is free) — O7 states the choice and the recommendation.
@@ -165,9 +168,9 @@ listed in the order they must land, except where a task says otherwise in its
 | Level | Tasks |
 | --- | --- |
 | 0 | T0.1, T0.2 |
-| 1 | T1.1; T1.2 (needs T1.1's key to parse); T2.1 (no dependency on Slice 1 at all) |
-| 2 | T1.3, T1.4, T2.2, T2.3 |
-| 3 | T2.4, T3.1, T3.2 |
+| 1 | T1.1; T2.1 (no dependency on Slice 1 at all) |
+| 2 | T1.2, T1.3, T1.5, T1.6, T2.2, T2.3 |
+| 3 | T1.4 (needs T1.3's key), T1.7, T2.4, T3.1, T3.2 |
 | 4 | T3.3, T3.4, T5.1 |
 | 5 | T4.1, T4.2, T5.2, T5.3, T6.1 |
 | 6 | T5.4, T5.5, T6.2, T6.3, T3.5 |
@@ -179,13 +182,14 @@ conflict; two tasks in the same lane may not.
 
 | Lane | Files | Tasks |
 | --- | --- | --- |
-| A | `internal/rigor/**` (new package) | T1.2, T1.3, T2.3, T5.3 |
-| B | `internal/config/**`, `schemas/fugaro.schema.json` | T1.1, T6.1 |
-| C | `internal/runner/**` | T2.1, T2.2, T3.1, T3.2, T3.3, T5.4 |
-| D | `internal/runstore/**`, `schemas/result.schema.json`, `internal/task/**` | T1.4, T3.4, T5.1, T5.5 |
-| E | `internal/cli/**`, `website/content/cli-reference.md` | T1.4's flag, T4.1, T6.2, T6.3 |
-| F | `docs/**` (outside this folder) | T7.1, T7.2, T7.3, T8.1, T8.3 |
+| A | `internal/rigor/**` (new package) | T1.1, T1.4, T1.5, T2.3, T5.3 |
+| B | `internal/config/**`, `schemas/fugaro.schema.json` | T1.2, T1.3, T1.4, T6.1 |
+| C | `internal/runner/**` | T1.4, T1.6's PR line, T2.1, T2.2, T3.1, T3.2, T3.3, T5.4 |
+| D | `internal/runstore/**`, `schemas/result.schema.json`, `internal/task/**` | T1.2, T3.4, T5.1, T5.5 |
+| E | `internal/cli/**`, `website/content/cli-reference.md` | T1.6, T4.1, T6.2, T6.3 |
+| F | `docs/**` (outside this folder) | T1.2 and T1.4 (the project layer's table and its rule), T7.1, T7.2, T7.3, T8.1, T8.3 |
 | G | `docs/rigor-modes/**`, `internal/cli/docs_rigor_modes_test.go` | T0.1, T0.2 |
+| H | `internal/budget/**`, `internal/watch/**`, `console/docs/json-contract.md` | T1.6's console contract, T1.7 |
 
 **Critical path:** T0.2 → T1.1 → T1.2 → T2.1 → T2.3 → T3.1 → T3.3 → T3.4 → T4.1
 → T7.1 → T8.1. Everything else hangs off it.
@@ -195,13 +199,13 @@ conflict; two tasks in the same lane may not.
 - **`schemas/fugaro.schema.json` and `schemas/result.schema.json`.** Each is one
   file with one writer: two tasks editing one schema in parallel produce a
   conflict in a hand-written file, and the corpus tests fail on neither side
-  cleanly. T1.1, T1.4 and T6.1 touch the first; T1.4, T3.4 and T5.5 touch the
-  second.
+  cleanly. T1.2, T1.3, T1.4 and T6.1 touch the first; T1.2, T3.4 and T5.5
+  touch the second.
 - **`internal/runner/outcome.go`.** T3.1 is the only task that may change what
   `Decide` returns, and it lands before T3.2, T3.3 and T3.4 so they are written
   against the rule that will exist.
-- **`internal/cli/run.go`.** T1.4 defines the flag; T5.2 makes it raise-only on a
-  follow-up; T6.3 prints the mode. In that order.
+- **`internal/cli/run.go`.** T1.6 defines the flags (`--mode`, `--path`); T5.2
+  makes `--mode` raise-only on a follow-up; T6.3 prints the mode. In that order.
 - **The pin test in Slice 0** must land before any slice that a reader would want
   held, because a later slice that edits a document this folder's index names
   updates the pin in the same commit.
@@ -223,6 +227,12 @@ What a reviewer of these pull requests should look at, in order:
 5. **Does a new schema property land with its pin?** F20 and F7: the corpus tests
    and `TestResultSchemaAcceptsRunnerRecords` are the check.
 6. **Is anything security-sensitive being done by a run?** §5's last constraint.
+7. **Is the order stated in more than one place, or can a layer reach under a
+   floor?** The ruling asks for one resolver and one statement (D6, D20): §2 of
+   `docs/project-layer.md` and `internal/rigor`'s `Resolve` are the two places it
+   may live, and a third restatement in a comment, a doc or a test name is the
+   failure this question is looking for. A comparison that lets a repository
+   value, an area or a flag *lower* a floor is the other one (D18, D21).
 
 ## 8. The slices
 
@@ -252,8 +262,8 @@ product code.
 - **Files.** `internal/cli/docs_rigor_modes_test.go` (new).
 - **Tests.** `TestDocsRigorModesIsWritten` (the index exists, carries the status
   line word for word, names the other three files and the revision);
-  `TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered` (F1–F34, D1–D19,
-  O1–O7 and U1–U8 run from 1 with no gap, every finding carries one of the five
+  `TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered` (F1–F41, D1–D25,
+  O1–O7 and U1–U10 run from 1 with no gap, every finding carries one of the five
   class words, and the index's stated ranges are checked against the counts
   rather than trusted); `TestDocsRigorModesCensusStatesItsCommands` (every census
   row carries a command); `TestDocsRigorModesEveryTaskIsComplete` (every
@@ -284,90 +294,184 @@ product code.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `docs(rigor-modes): record this work's D-block in the register`
 
-### Slice 1 — the configuration surface, read by nothing
+### Slice 1 — the mode's three layers, and where they show
 
-Everything in this slice is inert until a later slice reads it, which is what
-lets it merge alone and leaves `main` green with no behaviour change at all.
+The slice is ordered by the owner's scope ruling (the reconciliation's §1.2): the
+**project default lands first** (T1.2), the **repository's override second**
+(T1.3), the **area override last** (T1.4), and each of the three merges on its
+own. T1.1 is the vocabulary and the resolver the three stand on; T1.5 is the
+security floor, which is not a layer; T1.6 and T1.7 are the surfaces — the run,
+the PR and `fugaro watch` — because the ruling asks for the mode *and the layer
+that won* to be visible and a value nobody can read is a value nobody can check.
 
-**T1.1 — the `rigor:` block in `fugaro.yaml`**
+Everything here is inert until a later slice acts on it: `Decide` still decides
+by today's rule at the end of this slice, so a repository that configures POC
+gets the behaviour of Critical — the stricter direction — plus a record that says
+what it asked for. That is what lets each task merge alone and leaves `main`
+green with no behaviour change at all.
+
+**T1.1 — the mode vocabulary, and the one resolver**
+- **Files.** `internal/rigor/mode.go` (new: `Mode`, its parse, `Rank`,
+  `Strictest`), `internal/rigor/resolve.go` (new: `Resolve`, implementing D6's
+  order — area, then repository, then project default, then Fugaro's own default,
+  with the task's request able to raise and never lower, and the floors outside
+  every layer, only tightening), and the path-rule matching that reuses
+  `github.com/bmatcuk/doublestar/v4` the way `internal/config/validate.go`
+  validates patterns.
+- **Tests.** `internal/rigor/resolve_test.go`: one table case per rank and per
+  pair of ranks (an area beats the repository's value, the repository's beats the
+  project's, the project's beats Fugaro's default, a task request raises and
+  cannot lower, a floor wins over all of them, a narrow layer that says nothing
+  changes nothing); an unknown mode name is refused; a pattern that
+  `doublestar.ValidatePattern` rejects is refused at load rather than at match;
+  `Strictest` over a set. Each case is mutation-proven by inverting the
+  comparison.
+- **Red step.** The package does not exist. The first test written is "a task
+  requesting POC over a Critical area resolves to Critical", which cannot compile.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor -run 'Resolve|Mode|Strictest' -count=1 -timeout 20m`
+- **Depends on.** T0.2.
+- **Reviewer.** senior (in-loop).
+- **Commit.** `rigor: one vocabulary, one resolver, one order`
+
+**T1.2 — the project default, and the run records which layer set the mode**
+- **Files.** `internal/config/layer.go` (the third member of the closed
+  `LayerDefaults`), `internal/config/scope.go` (its `InProject` rows),
+  `internal/config/resolve.go` (the merge into every repository of the project),
+  `docs/project-layer.md` (the printed scope table), `testdata/config/layered/`
+  (a new case), `internal/runstore/runstore.go` (the record's rigor block: the
+  mode, the layer that won, the areas that matched, and the moment), and
+  `schemas/result.schema.json` (its entry, `version` staying `1` per D9's note).
+- **Tests.** `internal/config`'s corpus and layer tests, `TestScopeTableMatchesDocs`
+  in `internal/config/docs_scope_test.go`, `schemas/schemas_test.go`'s
+  `TestResultSchemaAcceptsRunnerRecords` — which marshals a fully-populated record
+  and so goes red the moment the field lands without its schema entry — and a
+  resolution test that a project default reaches a repository whose `fugaro.yaml`
+  says nothing.
+- **Red step.** The layer case is written first and fails with the strict
+  decoder's "unknown field" (`KnownFields(true)`), which is exactly F36's point;
+  and the record test fails on its schema until the entry is added, which is F7's.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/config ./schemas ./internal/runstore -count=1 -timeout 20m`
+- **Depends on.** T1.1 (the vocabulary and the resolver).
+- **Reviewer.** senior (in-loop). This is a configuration value, not a credential:
+  D18 puts the security-sensitive work in T1.5.
+- **Commit.** `config(rigor): a project-wide default, and the record that names its layer`
+
+**T1.3 — the repository's own `rigor:` block in `fugaro.yaml`**
 - **Files.** `internal/config/config.go` (the struct), `internal/config/defaults.go`,
-  `internal/config/scope.go` (the `Scopes` table), `schemas/fugaro.schema.json`,
+  `internal/config/scope.go` (the `InRepo` rows), `schemas/fugaro.schema.json`,
   `testdata/config/valid/rigor.yaml` **(new)** — the corpus is at the repository
-  root, not under `internal/config/` — and `docs/project-layer.md` (the scope
-  table's prose).
+  root, not under `internal/config/` — `testdata/config/invalid/rigor.yaml`
+  **(new)**, whose near-miss (`default: "Poc"`) proves the vocabulary is closed,
+  and `docs/project-layer.md` (the scope table's rows).
 - **Tests.** `internal/config/corpus_test.go`'s `TestCorpus`, which globs
   `testdata/config/{valid,invalid}/*.yaml` from `internal/config` (so a new case
   file is the whole edit), the `ScopeOf` cases in
-  `internal/config/scope_test.go`, and `TestScopeTableMatchesDocs` in
-  `internal/config/docs_scope_test.go`, which holds `docs/project-layer.md` in
-  step with the scope table — `docs/project-layer.md` itself is read by
-  `internal/cli/docs_project_layer_test.go`. A `testdata/config/invalid/rigor.yaml`
-  **(new)** carrying the near-miss (`default: "Poc"`) proves the vocabulary is
-  closed.
+  `internal/config/scope_test.go`, and `TestScopeTableMatchesDocs`, which holds
+  `docs/project-layer.md` in step with the scope table — the doc itself is read by
+  `internal/cli/docs_project_layer_test.go`.
 - **Red step.** The corpus case is written first and fails with the strict
   decoder's "unknown field `rigor`" (`KnownFields(true)`), which is exactly F7's
-  point.
+  point: this is the same five edits, done in the repository's own file.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/config ./internal/cli -run 'Config|Scope|DocsProjectLayer' -count=1 -timeout 20m`
-- **Depends on.** T0.2.
-- **Reviewer.** senior (in-loop). The key is a config surface, not a credential:
-  D18 puts the security-sensitive *work* in T1.3.
-- **Commit.** `config(rigor): a rigor block, read by nothing yet`
-
-**T1.2 — the mode vocabulary and the resolution**
-- **Files.** `internal/rigor/mode.go` (new: `Mode`, its parse, `Rank`,
-  `Strictest`), `internal/rigor/resolve.go` (new: `Resolve` implementing D6's
-  `max(project default, path floors, task request)`), and the path-rule matching
-  that reuses `github.com/bmatcuk/doublestar/v4` the way
-  `internal/config/validate.go` validates patterns.
-- **Tests.** `internal/rigor/resolve_test.go`: the strictest floor wins across a
-  multi-path diff; a task raises and cannot lower; an unknown mode name is
-  refused; a pattern that `doublestar.ValidatePattern` rejects is refused at load
-  rather than at match; and a diff that matches no rule resolves to the project
-  default. Each is a table case, and each is mutation-proven by inverting the
-  comparison.
-- **Red step.** The package does not exist. The first test written is "a task
-  requesting POC against a Critical floor resolves to Critical", which cannot
-  compile.
-- **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor -run 'Resolve|Mode' -count=1 -timeout 20m`
-- **Depends on.** T1.1 (the key must parse).
+- **Depends on.** T1.1.
 - **Reviewer.** senior (in-loop).
-- **Commit.** `rigor: the mode vocabulary, and stricter of the three inputs wins`
+- **Commit.** `config(rigor): the repository's default, read by nothing yet`
 
-**T1.3 — the built-in sensitive-path floors**
+**T1.4 — the area layer: named globs, chosen from the files the run touches**
+- **Files.** `internal/rigor/areas.go` (new: `Area{Name, Match, Mode}` and its
+  load-time validation), `internal/rigor/select.go` (new: `Select`, D23's
+  strictest-of-matched, returning the names of every area that matched),
+  `internal/config/config.go`, `internal/config/defaults.go` and
+  `internal/config/scope.go` (`rigor.areas` in either layer), `schemas/fugaro.schema.json`,
+  `testdata/config/valid/areas.yaml` and `testdata/config/invalid/areas.yaml`
+  **(new**: a pattern `doublestar.ValidatePattern` rejects, a mode name outside
+  the vocabulary, an entry with no `name`), `docs/project-layer.md` (§2's one rule
+  gains the area rank — **the one place the order is stated**, D6, D20),
+  `internal/cli/run.go` (`--path`, repeatable), and `internal/runner/runner.go`
+  (D22's three moments: at bootstrap from the declared paths, after a round that
+  changed the tree, from the run's own diff
+  `r.repo.ChangedFiles(ctx, r.workBase())` that `internal/runner/changedfiles.go`
+  already calls, and in `finalize` against `runstore.Record.ChangedFiles`; monotone
+  across all three).
+- **Tests.** `internal/rigor/select_test.go`: a path matching two areas takes the
+  strictest and the result names both; a path matching none leaves the mode as it
+  was; a path cannot lower below a floor; a rule whose pattern or mode is bad is
+  refused at load. The config corpus for the two new cases. A runner test over the
+  three moments: the mode rises and never falls, the record names the area and the
+  moment, and a run with no declared paths starts at its repository's value. The
+  guard on §2's sentence stands beside `TestScopeTableMatchesDocs` (F37: the
+  table is pinned today and the sentence is not).
+- **Red step.** Written first: "a run whose declared path matches a Critical area
+  resolves to Critical while its repository says POC" fails, because there is no
+  area — and the doc guard fails, because §2's rule does not yet name the rank.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor ./internal/config ./internal/runner -run 'Select|Area|Config|Rigor' -count=1 -timeout 20m`
+- **Depends on.** T1.1, T1.3 (the block the areas live in).
+- **Reviewer.** senior (in-loop).
+- **Commit.** `rigor: areas — named globs, resolved from the files the run touches`
+
+**T1.5 — the built-in sensitive-path floors**
 - **Files.** `internal/rigor/floors.go` (new), and a comment-or-test link to
   `internal/runner/refused.go`'s `WorkflowDir` so the two lists are visibly one
   idea rather than two.
 - **Tests.** `internal/rigor/floors_test.go`: `.github/workflows/` resolves to
   Critical in every mode and for every input, including a task that asks for POC
   and a follow-up that asks for Hotfix; a credential or IAM path declared by the
-  repository cannot resolve below Critical; and the built-in set is a
-  `doublestar` pattern set like the declared one, so there is one matcher.
+  repository cannot resolve below Critical; an area rule that names a floored path
+  with a lower mode changes nothing (D21); and the built-in set is a `doublestar`
+  pattern set like the declared one, so there is one matcher.
 - **Red step.** Written first: "a task requesting POC for
   `.github/workflows/ci.yml` resolves to Critical" fails, because no such floor
   exists.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor -run 'Floor' -count=1 -timeout 20m`
-- **Depends on.** T1.2.
+- **Depends on.** T1.1, T1.2.
 - **Reviewer.** **operator.** This is the security floor, and §5's last
   constraint says security-sensitive work is not done by a run: it is done by a
-  person or a local session. A Fugaro run must not pick up T1.3.
+  person or a local session. A Fugaro run must not pick up T1.5.
 - **Commit.** `rigor: the paths no mode may run below`
 
-**T1.4 — `fugaro run --mode`, and the mode on the run record**
-- **Files.** `internal/cli/run.go` (the flag), `website/content/cli-reference.md`
-  (regenerated, never hand-edited), `internal/runstore/runstore.go` (the record
-  field), `schemas/result.schema.json` (its entry, `version` staying `1` per
-  D9's note).
+**T1.6 — `fugaro run --mode`, and the mode in the list, the diagnosis and the PR**
+- **Files.** `internal/cli/run.go` (`--mode`; `--path` is T1.4's flag and this
+  task only prints it beside `--mode`),
+  `website/content/cli-reference.md` (regenerated, never hand-edited),
+  `internal/runview/runview.go` (the row), `internal/cli/runs.go` and
+  `internal/cli/diagnose.go` (the column and the printed line),
+  `console/docs/json-contract.md` §6.1 (the console's contract),
+  `internal/runner/prflow.go` (`finalSection`: the mode, the layer and the area,
+  in the shape D9 already plans for the backlog).
 - **Tests.** `internal/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent`;
-  `schemas/schemas_test.go`'s `TestResultSchemaAcceptsRunnerRecords`, which
-  already marshals a fully-populated record and so goes red the moment the field
-  lands without its schema entry; and a CLI test that `--mode` refuses an unknown
-  value and defaults to Critical with the flag absent.
-- **Red step.** `--mode hotfix` is refused by cobra as an unknown flag; and the
-  regenerate-and-compare test fails until the reference is regenerated.
-- **Verification.** `go run ./internal/clidoc && GOFLAGS=-p=2 go test ./schemas ./internal/clidoc ./internal/runstore -count=1 -timeout 20m`
-- **Depends on.** T1.2 (the vocabulary), T1.1.
+  `internal/runview`'s row and `Join` tests; `internal/cli`'s diagnose test and
+  the console-contract test; `internal/runner`'s `prflow` test that the status
+  section names the mode and where it came from; and a CLI test that `--mode
+  hotfix` is accepted, that an unknown value is refused, and that the flag absent
+  means Critical (D19).
+- **Red step.** `--mode hotfix` is refused by cobra as an unknown flag; the
+  regenerate-and-compare test fails until the reference is regenerated; and the
+  PR test fails because the section has no such line.
+- **Verification.** `go run ./internal/clidoc && GOFLAGS=-p=2 go test ./internal/clidoc ./internal/runview ./internal/runner ./internal/cli -run 'CliRef|Row|Rigor|Diagnose' -count=1 -timeout 20m`
+- **Depends on.** T1.1 (the vocabulary), T1.2 (the record it prints).
 - **Reviewer.** senior (in-loop).
-- **Commit.** `cli(run): --mode, recorded on the run and inert`
+- **Commit.** `cli(run): --mode, and the mode on the run, in the list and in the PR`
+
+**T1.7 — the mode in `fugaro watch`, and the registry child it costs**
+- **Files.** `internal/budget/model.go` (`AgentEntry`), `internal/runner/budget_session.go`
+  (`registryEntry`, which fills it), `internal/budget/registry.go` (`Session.Start`'s
+  write and its drop-on-old-rules path — the `Recipe` precedent F40 records),
+  `internal/budget/rules/rules.json.tmpl` (the child) and
+  `internal/budget/rules/testdata/rules.golden.json` (regenerated),
+  `internal/watch/build.go` (`runRow`) and `internal/watch/json.go` (`JSONRun`).
+- **Tests.** The rules' golden test; `internal/budget`'s registry test that an
+  entry carrying the field against rules that refuse it is written *without* it,
+  once, with the warning, and remembered for the session; `internal/watch`'s
+  build and JSON tests (a live row carries the mode and its layer; a row whose
+  entry has none shows the same `-` every other absent value shows).
+- **Red step.** The watch test asserting a live row's mode fails, because neither
+  the row nor the entry has the field.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/budget ./internal/watch -count=1 -timeout 20m`
+- **Depends on.** T1.2.
+- **Reviewer.** senior (in-loop). **The rules deploy is the owner's**
+  (`fugaro init --firebase <firebase-project-id>`): a container cannot deploy
+  them, and §9's last check is the one that observes it.
+- **Commit.** `watch: a live run's mode, and the registry child it needs`
 
 ### Slice 2 — the score, acted on by nothing
 
@@ -420,7 +524,7 @@ before.
 - **Red step.** The table does not exist; the spec's two examples are the first
   test cases and both fail to compile.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor -run 'Table|Label|Threshold' -count=1 -timeout 20m`
-- **Depends on.** T2.1, T1.2.
+- **Depends on.** T2.1, T1.3.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `rigor: the per-mode thresholds, as data with the spec's examples as tests`
 
@@ -493,9 +597,9 @@ not change for anyone who has not configured a mode.
 - **Files.** `internal/runner/prflow.go` (`finalSection`, `reviewsPart`).
 - **Tests.** The PR-body golden tests the package already has, extended: a run
   with tolerated findings names each one with its label and its mode; a run with
-  none is unchanged; and the mode line appears in every PR a mode-aware run
-  opens, including a run with zero findings (D18's audit requirement does not
-  depend on there being something to tolerate).
+  none is unchanged; and the mode line T1.6 added still appears in every PR a
+  mode-aware run opens, including a run with zero findings (D18's audit
+  requirement does not depend on there being something to tolerate).
 - **Red step.** The golden does not contain the sentence, and the assertion that
   it does fails.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/runner -run 'PR|Body|Section' -count=1 -timeout 30m`
@@ -523,21 +627,25 @@ not change for anyone who has not configured a mode.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `runstore: keep the findings a mode tolerated, with the count`
 
-**T3.5 — the post-hoc floor check**
-- **Files.** `internal/runner/` (the check between the last round and `finalize`),
-  `internal/runstore/changedfiles.go` (read, not changed).
-- **Tests.** A run whose mode was resolved at Startup and whose diff touches a
-  floored path does not become ready: the mode is raised, the reason names the
-  path and the mode, and the PR body says so. A diff that matches no floor leaves
-  the mode alone. This is D6's part two, and it is the only place where the
-  asynchrony between "the mode is known first" and "the diff is known last" is
-  resolved.
-- **Red step.** The test fails: nothing re-resolves the mode after the work.
-- **Verification.** `GOFLAGS=-p=2 go test ./internal/runner -run 'Floor|ChangedFiles|Ready' -count=1 -timeout 30m`
-- **Depends on.** T3.1, T1.3.
-- **Reviewer.** senior (in-loop), with T1.3's operator having already ruled on the
-  floors themselves.
-- **Commit.** `runner: a diff that touches a floor raises the mode before ready`
+**T3.5 — the resolved mode decides readiness, and names itself in the reason**
+- **Files.** `internal/runner/outcome.go` (`Decide`'s readiness answer and its
+  reason, reading the mode T1.4 resolved), and the call site in
+  `internal/runner/runner.go`'s `finalize` that decides before the PR is opened.
+  The *resolution* is T1.4's; this task is what makes a raised mode act.
+- **Tests.** A run whose mode was raised after a round — by an area or by a floor
+  — and whose last verdict still carries what the raised mode does not tolerate
+  does not become ready, and the reason names the mode, the area or the path, and
+  the moment it was raised. A run whose mode never rose is unchanged (D19). A mode
+  raised at `finalize`, too late to buy rounds, leaves the PR a draft rather than
+  ready: D22's third moment with nothing acting on it is the failure mode this
+  task closes.
+- **Red step.** The test fails: `Decide` answers today's question and ignores the
+  mode, so a raised mode changes no answer.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/runner -run 'Floor|Ready|Decide|Area' -count=1 -timeout 30m`
+- **Depends on.** T3.1 (the policy), T1.4 (the resolution it reads).
+- **Reviewer.** senior (in-loop), with T1.5's operator having already ruled on
+  the floors themselves.
+- **Commit.** `runner: a raised mode decides readiness and says so in the reason`
 
 ### Slice 4 — the backlog surface
 
@@ -595,7 +703,7 @@ not change for anyone who has not configured a mode.
   `DisallowUnknownFields`, loudly — which is F22's point and the reason this is
   safe to add.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/task ./internal/cli -run 'Task|Skew|Since' -count=1 -timeout 30m`
-- **Depends on.** T1.2, T3.1.
+- **Depends on.** T1.3, T3.1.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `task: a task may raise its rigor, and an old image says so`
 
@@ -611,7 +719,7 @@ not change for anyone who has not configured a mode.
   to carry one).
 - **Red step.** The lowering test fails: the flag is accepted and lowers.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli ./internal/followup -run 'Followup|Mode' -count=1 -timeout 30m`
-- **Depends on.** T1.4, T5.1.
+- **Depends on.** T1.6, T5.1.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `runner: a follow-up may raise its mode and never lower it`
 
@@ -628,7 +736,7 @@ not change for anyone who has not configured a mode.
   point.
 - **Red step.** The refusal test fails: nothing inspects a Hotfix diff.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/rigor -run 'Hotfix' -count=1 -timeout 20m`
-- **Depends on.** T1.3, T3.5.
+- **Depends on.** T1.5, T3.5.
 - **Reviewer.** **operator** — it is the gate on the mode with no review, and §5
   puts it in the class a run must not do.
 - **Commit.** `rigor: a hotfix's gate is the diff, not the agent's confidence`
@@ -677,7 +785,7 @@ not change for anyone who has not configured a mode.
   this cap finishes the smoke check" using the existing stage-bound arithmetic.
 - **Red step.** No mode contributes a default.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/config ./internal/budget ./internal/runner -run 'Budget|Policy|Lease' -count=1 -timeout 30m`
-- **Depends on.** T1.1. **Depends on D16** if the owner wants a different
+- **Depends on.** T1.3. **Depends on D16** if the owner wants a different
   ordering.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `config(rigor): a mode lowers the ceiling and never raises it`
@@ -696,17 +804,20 @@ not change for anyone who has not configured a mode.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `cli(budget): preview a mode's ceiling, still not a forecast`
 
-**T6.3 — the mode in the runs listing, so `typical:` can become per mode**
-- **Files.** `internal/cli/runs.go` (or wherever the listing and its `--json`
-  live), the run record's mode (T1.4).
-- **Tests.** The listing carries the mode for a new run and omits the field for
-  an old one without failing the decoder; `runs ls --json` stays decodable by the
-  console's contract.
-- **Red step.** The listing has no mode column.
-- **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Runs' -count=1 -timeout 30m`
-- **Depends on.** T1.4.
+**T6.3 — `typical:` per mode, now that every run's row carries its mode**
+- **Files.** wherever the empirical `typical:` line is computed, and its `--json`
+  (`internal/cli/`). The mode reaches the row in T1.6; this task is the
+  statistic, not the field.
+- **Tests.** The line is computed per mode once that mode has enough finished
+  runs, and falls back to the all-modes figure when it does not; a run whose
+  record carries no mode (one written before T1.2) counts toward the all-modes
+  line and does not fail the decoder.
+- **Red step.** The line is one figure across every mode, whatever the records
+  say.
+- **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Typical|Budget|Runs' -count=1 -timeout 30m`
+- **Depends on.** T1.6 (the row), and D9's deferral of a real ledger.
 - **Reviewer.** senior (in-loop).
-- **Commit.** `cli(runs): show which mode a run took`
+- **Commit.** `cli(budget): the empirical typical: line, per mode`
 
 ### Slice 7 — the documentation and the practice
 
@@ -751,7 +862,7 @@ not change for anyone who has not configured a mode.
 - **Red step.** None: this is a configuration change by the owner, and it is
   listed here so it is not forgotten rather than so an agent does it.
 - **Verification.** `fugaro validate`
-- **Depends on.** T1.1, D19.
+- **Depends on.** T1.3, D19.
 - **Reviewer.** **operator** — the owner.
 - **Commit.** `fugaro.yaml: run this repository at <mode>`
 
@@ -806,8 +917,14 @@ a claim rather than a fact.
 | 3 | a Hotfix run touching a floored path — refused by the mode, not the guard | a repository configured with a floor |
 | 4 | `fugaro budget preview --mode` against a finished run's gateway figure | the gateway's price is not in the tree |
 | 5 | a merged Hotfix PR's post-merge CI | CI fires on the provider |
+| 6 | a project whose two repositories differ only in their own `rigor.default` | a published project layer and two repositories |
+| 7 | a run started with `--ref` at a branch whose `rigor:` disagrees with the base branch's | the answer D25 is waiting for: which revision the mode came from |
+| 8 | a run whose diff matches two areas, and a run whose second round reaches a new one | a real diff in both areas, and a live multi-round agent |
+| 9 | `fugaro watch` on a live run after `fugaro init --firebase` redeploys the rules | a deployed database, and the old-rules path F40 records |
 
-Checks 1–5 are **Check 119**, written by T8.1 and run by T8.2.
+Checks 1–9 are **Check 119**, written by T8.1 and run by T8.2. Checks 6–9 are the
+scope ruling's own (the reconciliation's §1.2 and §7), and check 9 is the only one
+that needs a deploy before it can be run at all.
 
 ## 10. Risks
 
@@ -815,11 +932,14 @@ Checks 1–5 are **Check 119**, written by T8.1 and run by T8.2.
 | --- | --- | --- |
 | a bad PR becomes ready because a threshold is loose | this feature's entire point | D4's fail-closed rule; T3.1's Critical-is-byte-identical table; the OWNER APPROVAL GATE's human gate on T3.1 |
 | the reviewer scores unreliably, so the thresholds are noise | **U1**, unverified | T2.4 measures before the thresholds are trusted; D4 keeps the failure safe |
-| a credential path is missed by the floors | D18's declared-plus-built-in split | T1.3's built-in set and its operator review; the floors can only be raised |
+| a credential path is missed by the floors | D18's declared-plus-built-in split | T1.5's built-in set and its operator review; the floors can only be raised |
 | schema drift between the record and `result.schema.json` | F20 | the existing `TestResultSchemaAcceptsRunnerRecords`, which is the red step of T3.4 |
 | a mode becomes a second readiness rule | F4 | §5's first constraint; §7's second review question |
 | the config key collides with `task.Spec.Mode` | F22 | the key is `rigor` (T5.1), and the collision is a parse error rather than a misreading |
 | the check number collides with an open claim | §3 | the register's own renumber-second rule, owned by T8.1 |
+| a branch sets its own rigor, and the run obeys it | F35, D25 | the built-in floors (T1.5) hold whatever the revision says; the owner's ruling on D25 is the real answer |
+| the project default is read as a floor by a reader | D21's line between a default and a floor | D5's part three and D18: a floor is policy, and `docs/project-layer.md` §2 says "only tightens" of exactly that kind of value |
+| a live `watch` deploy breaks an installation whose rules are older | F40 | the drop-and-warn path T1.7 takes from `Recipe`, tested; the marker-and-halt path is the alternative if the owner prefers it |
 | cost: the modes make runs cheaper in theory and not in fact | **U2**, unverified | T6.3's per-mode reporting and D17's refusal to forecast |
 | a Hotfix ships a wrong fix with the record agreeing it was confident | D14's weak point | the gate is the diff, not the agent's number (T5.3), and the follow-up task exists (T5.5) |
 
@@ -827,7 +947,7 @@ Checks 1–5 are **Check 119**, written by T8.1 and run by T8.2.
 
 **This gate is not passed, and nothing below is approved.**
 
-1. **The decisions are open.** D1–D19 are recommendations; the owner answers them
+1. **The decisions are open.** D1–D25 are recommendations; the owner answers them
    (or does not) before Slice 1 starts. The tasks that depend on one say so in
    their **Depends on** line, and a task whose dependency is unanswered does not
    start.
@@ -838,7 +958,7 @@ Checks 1–5 are **Check 119**, written by T8.1 and run by T8.2.
 3. **T3.1 gets a human eye.** It is the one change that can make a pull request
    ready that would not have been ready before. The plan asks for it to be
    reviewed by the owner, not only by the in-loop reviewer.
-4. **T1.3, T5.3 and T7.3, and the live checks, are not run by a Fugaro run.**
+4. **T1.5, T5.3 and T7.3, and the live checks, are not run by a Fugaro run.**
    They are the security floor, the gate on the mode with no review, the owner's
    own configuration and the live checks — §5's last constraint. A run that picks
    one up has found a bug in this plan.

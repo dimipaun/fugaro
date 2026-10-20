@@ -26,19 +26,41 @@ Nothing was changed in this repository to write these documents: no code, no
 config, no schema, no workflow. The several files this reconciliation says must
 change are the *plan's* files, not this commit's.
 
-### 1.1 The eight things the documents settle, and where
+### 1.1 The ten things the documents settle, and where
 
 | The spec's question | Settled in |
 | --- | --- |
 | The score model and the per-mode thresholds | §5, D1–D4, plan T2.1–T2.4 |
-| Where mode config lives, and precedence | §5, D5, D6, D8, plan T1.1–T1.4 |
+| Where mode config lives, and precedence | §5, D5, D6, D8, D20, D21, D25, plan T1.1–T1.6 |
 | What each mode changes in the run loop | D7, D10, D11, plan T3.1–T3.5, T5.4 |
 | The backlog, and where a tolerated finding goes | D9, plan T3.3, T3.4, T4.1–T4.2 |
 | Hotfix | §5, D12–D15, plan T5.1–T5.5 |
 | Cost accounting | D16, D17, plan T6.1–T6.3 |
-| Security | §6, D18, plan T1.2, T1.3, T3.5, T5.3 |
+| Security | §6, D18, plan T1.5, T3.5, T5.3 |
 | Tests and the live checks the owner runs | §7, plan T8.1–T8.3 |
-| Migration and the CLI/doc surface | D19, plan T1.4, T7.1–T7.3, T8.3 |
+| Migration and the CLI/doc surface | D19, plan T1.6, T7.1–T7.3, T8.3 |
+| The scope ruling of 2026-10-20: project, repo, area | §1.2, F35–F41, D20–D25, plan T1.1–T1.7 |
+
+### 1.2 The scope ruling of 2026-10-20, and where each of its five parts lands
+
+The owner ruled that the rigor mode "has a default per PROJECT, overridable per
+REPO, and then overridable DYNAMICALLY per AREA". This is §1.1's tenth row: the
+ruling changes where the mode's value comes from, and nothing else in this folder
+— the score, the run loop, the backlog, Hotfix and cost are untouched by it. The
+five parts, and the finding or decision that carries each:
+
+| The ruling's part | Where it lands |
+| --- | --- |
+| Precedence `area > repo > project`, one resolver, one place that states it | D6, D20; the statement is `docs/project-layer.md` §2's own rule, one rank longer (F37), and the resolver is `internal/rigor`'s (plan T1.1) |
+| Where each layer lives, and what an area is | D20, D21; the project layer's closed `defaults:` (F36), the repository's `rigor:` block, and `rigor.areas` as `{name, match, mode}` `doublestar` rules (F9) |
+| What "dynamically" means | D22: chosen per run from the files it touches — declared at bootstrap where the caller knows them, measured from `runstore.Record.ChangedFiles` as they become known, monotone within the run (F38, F39) |
+| The resolved mode, and which layer won, in the run, PR and watch output | D24: the record (`runview.Row`, `fugaro runs ls`, `fugaro diagnose`), the PR body's status section (`internal/runner/prflow.go`'s `finalSection`), and `fugaro watch`'s live row, which costs a registry child (F40) |
+| A rule for a run that touches several areas | D23: the strictest matched area wins, and it is an **open decision** — the owner's own proposal, recommended here with its alternatives and their costs |
+| (The re-cut the ruling asks for, which is a plan matter and not a design one) | §2 of the [plan](implementation-plan.md): Slice 1's T1.2, T1.3 and T1.4, in that order |
+
+Two things the ruling does not change, and this amendment does not touch: the
+spec stays verbatim (its own commit, `37ea0d9d`), and every decision below stays
+**open** — D20–D25 are recommendations with alternatives, exactly like D1–D25.
 
 ## 2. Corrections to the premises this task was given
 
@@ -191,7 +213,7 @@ by globbing the directory — so the corpus file and nothing else is enough to a
 a case.
 Consequence: the config slice is one commit with all five, with its own red step;
 a schema-only or struct-only change is not mergeable and would go red in the
-corpus tests rather than in review (plan T1.1).
+corpus tests rather than in review (plan T1.3).
 
 **F8 — Configuration is layered, and the layering is a named function.** Class:
 **Exists**.
@@ -463,6 +485,118 @@ the gateway's prices make POC cheaper in fact (U2). Six of those eight are the
 UNVERIFIED table's, which is the point: an unverifiable claim is an item, not a
 finding.
 
+**F35 — A first run reads its configuration from the ref it checks out, not
+from the base branch.** Class: **Wrong** — of D6's own premise.
+`internal/runner/runner.go`'s bootstrap reads `fugaro.yaml` from the working
+tree, after `CheckoutNewBranch(ctx, spec.Ref, branch)` has put that ref's tree
+there; the base branch is read by `internal/runner/followup.go`'s
+`readBaseConfig` alone, which fetches `origin/<ref>` and calls `repo.ShowFile`
+for `fugaro.yaml`, `agent.instructions` and `agent.review`, and which a
+follow-up run and a review run call and a first run does not.
+`internal/runner/project.go` says why that read exists: a review never trusts a
+pull request's own `fugaro.yaml`. Consequence: `fugaro run --ref feature-x`
+resolves its mode from `feature-x`'s own `rigor:` block unless the design says
+otherwise, so a branch can set the rigor of the run that is about to review it.
+The ruling makes this load-bearing rather than incidental — the mode now comes
+from configuration in three layers — and D25 is the decision it raises, with the
+floors (D18) as the backstop either way.
+
+**F36 — The project layer cannot carry a mode today.** Class: **Gap**.
+`internal/config/layer.go`'s `LayerDefaults` is a closed struct with exactly two
+members, `Git` and `Agent`, documented as "the project-wide values of the
+repository keys the project layer may set (scope project)"; `Resolve` merges
+`defaults:` into the repository's tree with `KnownFields(true)`, so an unknown
+member is a load error rather than an ignored key. Consequence: "a default per
+PROJECT" is a new member of `LayerDefaults`, a new `InProject` row in
+`internal/config/scope.go`'s `Scopes`, a new line in `docs/project-layer.md`'s
+printed table (pinned by `TestScopeTableMatchesDocs`), and a case in
+`testdata/config/layered/` — five edits, the same "adding a top-level key is
+five edits" shape F7 records for the repository's own file. The published
+project *policy* is the wrong carrier for it: a new key inside the policy node is
+a `projectpolicy.Version` bump, and a bump drops every policy an installation has
+published until its rules are redeployed with `fugaro init --firebase`
+(`internal/budget/rules/marker.go`) — a mode default is not worth that.
+
+**F37 — The precedence regime exists, is stated once, and has no area rank.**
+Class: **Exists**, with a gap inside it.
+`docs/project-layer.md` §2's one rule is the statement: "the narrowest layer that
+sets it wins: per-task flag, then repository, then the workflow's profile, then
+project defaults, then Fugaro default".
+`internal/config/resolve.go`'s `Resolve` is the implementation,
+`internal/config/scope.go`'s `Scopes`/`ScopeRow`/`ScopeOf` is the enumeration of
+which key may be set in which layer, and `TestScopeTableMatchesDocs` holds the
+table and the doc in step. Two gaps: the four `Scope` bits
+(`InProject|InProfile|InRepo|InOverride`) have no rank an area could be, and
+`ScopeRow.Key` is a `fugaro.yaml` path in which `"*"` stands for a workflow name,
+so an area is not expressible as a scope row at all — an area is a *value shape*
+under one key, like `workflows`, not a layer. And §2's *sentence* is prose: only
+the table is pinned, so a sentence the design leans on now would be an untested
+claim. Consequence: the mode's precedence is the existing rule, one rank longer
+and one layer of `only tightens` on top (the shape §2 already gives the budget
+ceiling), stated in §2 and pinned by a test rather than restated here (D6, D20).
+
+**F38 — Nothing tells a run which paths it will touch, before it touches them.**
+Class: **Gap**. `task.Spec` has no path field and `task.Spec.Overrides` has
+exactly four, none of them a path; `recipe.Step` has five members, none of them a
+path; and `internal/plan/footprint.go`'s `Footprint` is what a planner
+*predicts*, read only by `fugaro plan graph` (`internal/cli/plan.go`) and by no
+runner code at all — the file says as much, calling it advisory. Consequence: at
+bootstrap the files touched are the one input an area rule needs and the tree
+does not have. Either the caller declares them (a new `fugaro run --path`, and a
+`paths:` field in the task file later, which is F23's image-skew gate again) or
+the area can only bind once the work exists. D22 takes both halves and names the
+moment each one applies.
+
+**F39 — The measured paths exist and are read at exactly one point, late.**
+Class: **Exists**. `internal/runner/changedfiles.go`'s `recordChangedFiles` calls
+`r.repo.ChangedFiles(ctx, r.workBase())` and writes
+`runstore.Record.ChangedFiles` (`runstore.NewChangedFiles`, capped at
+`MaxChangedFiles` paths of `MaxChangedPathBytes` each); it is called only from
+`internal/runner/runner.go`'s `finalize`, twice. Consequence: the pre-ready
+re-resolution has its input exactly where the ready-or-draft decision is made,
+which is why D6's second resolution is cheap; a *mid-run* re-resolution has no
+call site today, and the machinery for one already exists next door —
+`internal/runner/checkpoint.go`'s `startCheckpoints` runs during a stage and
+`checkpointTip` already reasons about the run's own base. D22 puts the two
+moments in that order and says what each can still buy.
+
+**F40 — A live run's mode has nowhere to travel: `fugaro watch` reads the
+database, not the record.** Class: **Gap**. A live row is built by
+`internal/watch/build.go`'s `runRow` from a `budget.AgentEntry` — the RTDB node
+`/agents/<slug>/<run>` — and every child of that node is validated by the
+generated rules in `internal/budget/rules/rules.json.tmpl`, whose entry ends with
+`"$other": { ".validate": false }`, so an unknown child refuses the whole entry
+rather than being ignored. `internal/budget/model.go`'s `AgentEntry` has no mode
+field. The tree records two ways of adding one: `Recipe`'s, where
+`internal/budget/registry.go`'s `Session.Start` drops the field on
+`ErrPermissionDenied`, warns that the database's rules predate it and tells the
+operator to run `fugaro init --firebase`, and remembers for the session
+(`noRecipe`); and the creds family's, where `internal/budget/rules/marker.go`
+records a marker and the run halts on a downgrade
+(`HaltCredsRulesDenied`). Consequence: showing the mode in `fugaro watch` costs a
+rules regeneration (and its golden file), a deploy the owner runs, and one of
+those two paths. The other surfaces are free by comparison: `fugaro runs ls`,
+`fugaro diagnose` and the console read the record through `internal/runview`'s
+`Row`/`Join`, and the finished half of watch reads `result.json`
+(`watch.JSONFinished`), so a run's mode is visible in watch *after* it ends
+without any of this.
+
+**F41 — Seven claims the 2026-10-20 amendment considered and rejected.** Class:
+**Rule** — the rule being that what did not survive is recorded so a reader does
+not re-derive it. Rejected: that the project-wide mode could live in the
+published policy without a version bump (F36's reason); that `plan.Footprint` is
+a usable pre-work input for an area (F38: nothing a run executes reads it); that
+a live mode in `fugaro watch` is free because the record is already there (F40:
+the live rows are not built from the record); that an area rule should be able to
+*lower* a built-in or declared floor (D18's rule, and §6); that a follow-up run
+should re-resolve its areas from the follow-up's own diff (F14: it keeps its PR's
+recorded mode); that the widest matching area should win (D23's alternative, kept
+as an alternative); and that "dynamically" could mean a static per-directory
+config file such as `.fugaro-rigor.yaml` in the tree (a second configuration
+surface with its own schema and its own trust question, and the branch that writes
+it is the branch under review — the same objection F35 raises, with no base-branch
+read to answer it).
+
 ## 4. The census, and what it is scoped to
 
 Every count below is stated with the command that produces it, because a count
@@ -478,6 +612,10 @@ folders' plus `internal/cli/docs_rigor_modes_test.go`.
 | Top-level `fugaro.yaml` keys | 9 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
 | Config scope rows | 68 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
+| Blocks the project layer's `defaults:` may set | 2 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
+| Fields of `task.Spec.Overrides` | 4 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
+| Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 11 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
@@ -502,6 +640,14 @@ The **three** files are `verdict.go` (the schema string, the field, the
 fallback), `prompts.go` (the label) and `reviewmode.go` (the label again) — that
 is the entire surface a scoring change touches inside the runner, which is why D3
 is as small as it is.
+
+The four rows the 2026-10-20 amendment added are the layering ones: **4** layers
+a key may be set in (F37), **2** blocks the project layer's closed `defaults:`
+may set (F36), **4** fields of `task.Spec.Overrides` and **0** fields of
+`task.Spec` or `recipe.Step` whose name is a path (F38). The last row counts
+*declared fields*, which is why its command matches a field name at the start of
+a line rather than any mention: the `Spec` struct's prose mentions a path, and a
+count of prose is not a count of inputs.
 
 The **48** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
@@ -584,20 +730,48 @@ drift is invisible in the run record — the mode would report itself as Critica
 while behaving otherwise. The failure mode is a bad patch merged with a green
 audit trail, which is worse than a loud red one.
 
-### D5 — Mode config lives in `fugaro.yaml`, under a new top-level `rigor:` block
+### D5 — Mode config lives in `fugaro.yaml` and in the project layer; the published policy is not a carrier
 
-**Recommended: a top-level `rigor:` block in `fugaro.yaml` for the default mode
-and the path rules, and the published project policy for the project-wide
-floors — the same pair the repository already uses for configuration and policy
-(`internal/config/resolve.go`'s `Resolve`, `config.LayerKey`,
-`config/policy/shared`).** Reason: the spec asks whether mode config lives in the
-project's Git repository alongside recipes, and the answer the tree gives is
-"yes, and there are already two layers of it" (F8): the repository's
-`fugaro.yaml` is where a mode is set for this repository, the project policy is
-where it is set for every repository in the project, and `Resolve` already
-defines what happens when both speak. Adding a separate `rigor.yaml` would need
-its own schema, its own corpus tests, its own layer entry and its own pin, for no
-capability the existing file lacks.
+**Amended 2026-10-20.** The ruling adds a project-wide default, and the first
+recommendation below was written before it existed.
+
+**Recommended: the mode is configured where every other key is — the project
+layer's `defaults.rigor.default` for the project-wide default, and a top-level
+`rigor:` block in the repository's `fugaro.yaml` for that repository's default
+and its areas.** The project layer is where a per-project value belongs
+(`config.LayerKey`, `internal/config/resolve.go`'s `Resolve`), and it is a
+*closed* struct of two members today, so this is a new member of
+`LayerDefaults` with its own scope row, doc-table line, corpus case and layer
+corpus case (F36) — the five-edit shape F7 records, done at the layer rather
+than in the file. The published project policy is deliberately **not** a carrier
+for it: a policy key is a `projectpolicy.Version` bump, a bump drops every policy
+an installation has already published until its rules are redeployed with
+`fugaro init --firebase`, and a mode default is not worth that (`marker.go`'s
+warning is the reason the rule exists).
+
+**Recommended, part three: a *floor* the project's repositories cannot edit
+belongs in the published project policy, not in the project layer.** The two are
+not the same thing and the tree already distinguishes them: `docs/project-layer.md`
+§2's "the budget ceiling is the owner's, outside every layer, and only tightens"
+is the published policy's sentence, and the project layer is a *file in the
+project's Git repository*, which a repository admitted to the project can change
+by merging a pull request. So the project-wide **default** is a layer value
+(part one) and a project-wide **floor** is policy — with the version bump F36
+describes as its price. Which of the two the owner wants for the security tier is
+D18's question, not this decision's, and the first cut ships with the built-in
+set alone (T1.5) so the answer can land later without a migration.
+
+**Recommended, part two (unchanged): the repository's own `rigor:` block carries
+the mode for this repository and the area rules.** Reason: the spec asks whether
+mode config lives in the project's Git repository alongside recipes, and the
+answer the tree gives is "yes, and there are already two layers of it" (F8): the
+repository's `fugaro.yaml` is where a mode is set for this repository, the
+project layer is where it is set for every repository in the project, and
+`Resolve` already defines what happens when both speak. Adding a separate
+`rigor.yaml` would need its own schema, its own corpus tests, its own layer entry
+and its own pin, for no capability the existing file lacks — and an area file *in
+the tree* has the further problem F35 raises: the branch under review could be
+the one that writes it.
 
 **Alternative: a `rigor.yaml` beside recipes.** Cost: a second configuration file
 in the same directory with a second schema and a second validation path, and the
@@ -606,29 +780,49 @@ that did not need to exist. The one thing it buys — a file whose owner is the
 mode system alone — is a real argument, and this is the decision where the owner
 weighs it.
 
-### D6 — Precedence: task request ∩ path floors, project default beneath
+### D6 — Precedence: area > repo > project, one resolver, one statement
 
-**Recommended: resolve the mode as `max(project default, path floors for the
-declared paths, task request)`, where a task may only *raise* the mode, and the
-strictest floor wins when the diff touches several paths.** The path rule's floor
-can be raised by a task; it can only be lowered by changing the configuration on
-the base branch (that is, by a merged pull request), never at run time. Patterns
-are `doublestar` globs validated by `internal/config/validate.go`'s
-`doublestar.ValidatePattern`, and the same matcher used everywhere else (F9).
+**Amended 2026-10-20.** The ruling names three layers and asks for one place that
+states their order. What follows replaces this decision's earlier `max(...)`
+formulation; the floors keep their role and lose their place as the only rule.
 
-**Recommended, part two: the resolution happens twice.** At bootstrap, from the
-task's declared paths and the base branch's configuration; and again before the
-PR is marked ready, against `runstore.Record.ChangedFiles`. A path that turns out
-to be floored raises the mode, the run says so in the PR body, and the extra fix
-rounds the higher mode wants become the reason the run is a draft rather than a
-silent merge of tolerated findings (F11). Reason: the mode has to be known before
-the work, and the diff is only known after it; doing both is the only way to have
-a floor mean anything and still fail closed.
+**Recommended: the mode is a configuration key like any other, so it follows
+`docs/project-layer.md` §2's existing rule — the narrowest layer that sets it
+wins — one rank longer: area, then repository, then project default, then
+Fugaro's own default (Critical, D19). On top of that sits the only-tightens
+layer the same section already gives the budget ceiling: the built-in and
+declared floors are outside every layer and nothing lowers them (D8, §6). The
+task's own request may only *raise* (F14's recorded behaviour for a follow-up,
+kept for every run because it is the fail-closed direction).** Patterns are
+`doublestar` globs validated by `internal/config/validate.go`'s
+`doublestar.ValidatePattern`, matched by the one matcher the repository uses
+everywhere (F9).
+
+**Recommended, part two: it is stated once, and the statement is §2's.** The
+sentence is amended there (plan T1.4) rather than written here, because §2 is
+already the one place this repository states configuration precedence and a
+second statement is the failure mode the ruling is guarding against. The
+implementation states it once too — `internal/rigor`'s `Resolve` is the only
+resolver, and no other package may order modes (§1.2 is the index of who cites
+it). It is pinned on both sides: the resolver's table test holds the order, and
+the doc's sentence is covered by a guard beside `TestScopeTableMatchesDocs`,
+which is what F37 says is missing today.
+
+**Recommended, part three: the resolution happens more than once, and is
+monotone within a run.** D22 has the moments; the property is that a mode a run
+has reached never falls for that run.
 
 **Alternative: resolve the mode from the finished diff only.** Cost: the entire
 run was done at the wrong rigor; by the time the floor is noticed the fix rounds
 are spent and the choice is between discarding the run and shipping the wrong
 rigor. Cheaper to code, and it makes a locked payments path a suggestion.
+
+**Alternative: resolve once, at bootstrap, and never again.** Cost: a floor on a
+path nobody declared is discovered after the work and does nothing — the mode is
+recorded, the PR is ready, and the floor is a comment in a record. It is
+attractive because bootstrap is the easy moment (the configuration is in hand and
+no diff exists), and it is the reason D22 keeps bootstrap as one of its moments
+rather than the only one.
 
 ### D7 — What each mode changes in the run loop
 
@@ -673,6 +867,15 @@ resolved live and read from the base branch, so a fork cannot reach it. Wiring
 that list to a *config edit* rather than to a runtime comment keeps the lowering
 inside the surface where the owner is looking: a pull request that changes
 `rigor:` is reviewed by a person, and its own diff is the audit trail.
+
+**Amended 2026-10-20: the ruling adds ranks below the trusted list's reach, and
+they may lower a *default* but never a floor.** A repository may run its own
+paths below the project's default — a default is not a floor, and the reason to
+have one is so that a repository can be cheaper without asking anyone. What no
+rank may do is reach under a floor: not a repository's `rigor:`, not an area
+rule, not a task request, not a follow-up comment. A project-wide floor the
+project's own repositories cannot edit is not a layer value at all; D5's part
+three has it, and D18 decides whether the first cut needs one.
 
 **Alternative: a trusted comment may lower a floor for the PR it is written on.**
 Cost: it makes an untrusted-input path the way the security tier's protection
@@ -870,8 +1073,8 @@ the `typical:` line stays empirical (≥5 real-cost runs, 30 days).** Reason:
 `internal/cli/budget_preview.go` computes a bound and says so in as many words
 (F17); a mode is a real input to that bound. What a mode is *not* is a
 prediction of what the run will spend, and the CLI already refuses to pretend
-otherwise. The plan's T6.2 is the flag itself, and T6.3 adds the mode to the run
-record's own reporting so the empirical line can eventually be per mode — that is
+otherwise. The plan's T6.2 is the flag itself, and T6.3 makes
+the empirical line per mode now that T1.6 puts the mode on every run's row so the empirical line can eventually be per mode — that is
 the honest path to a per-mode number.
 
 **Alternative: make the preview forecast per-mode cost.** Cost: it would be a
@@ -929,6 +1132,194 @@ that does not change anything means the feature helps nobody until they opt in �
 which is true, and is the reason the plan's T0.1 and T7.1 put the owner's own
 `fugaro.yaml` in front of them as the first thing to set.
 
+### D20 — Where each layer's key lives, and how an area is named and matched
+
+**Recommended: three keys, in the three places the tree already reads, with an
+area as a named `doublestar` rule.**
+(a) The **project default** is `defaults.rigor.default` in the project layer
+(`config.LayerKey`), a new member of `LayerDefaults` because that struct is
+closed (F36), scope `InProject`, merged by `Resolve` into every repository of the
+project like `defaults.git` and `defaults.agent`.
+(b) The **repository's** own value is a top-level `rigor:` block in
+`fugaro.yaml`: `rigor.default` for this repository's mode and `rigor.areas` for
+its areas, scope `InRepo` — five edits (F7), the schema entry included.
+(c) An **area** is one entry of `rigor.areas`, a list of
+`{name: <short label>, match: <doublestar glob>, mode: <name>}`. The `name` is
+not decoration: it is what the run, the PR and `fugaro watch` print when they say
+which rule decided (D24), and a rule that cannot be named cannot be explained to
+the person reading the PR. `match` is a path glob, matched with the same
+`doublestar` matcher as everywhere else (F9) and validated at load by
+`internal/config/validate.go`'s `doublestar.ValidatePattern`, so a bad pattern is
+a configuration error rather than a rule that silently never fires; a relative
+path is relative to the repository root, which is what `runstore.Record.ChangedFiles`
+holds. The areas may be set in either layer — `InProject | InRepo` for the same
+key — because the two lists merge without an ordering rule: D23's strictest-wins
+rule makes a project area and a repository area that both match resolve to one
+answer whatever order they were read in.
+(d) The **task's** request is `fugaro run --mode` (T1.6) and, later, the task
+file's own key (T5.1, with F23's image-skew gate); scope `InOverride`, raise-only
+(D6).
+
+**Alternative: `rigor.areas` as a map keyed by glob** (`"internal/payments/**":
+Critical`). Cost: no name to print, so D24's readout becomes the glob text as
+written — which is fine until two globs are near-identical in a PR body — and a
+YAML map cannot carry the one comment that explains why a rule exists beside the
+rule.
+
+**Alternative: areas as a directory tree, one config file per area.** Cost: a
+second configuration surface with its own schema, its own trust question and its
+own load order, for a shape the repository does not use anywhere; and an area
+file inside the tree is a file the branch under review can write (F35, F41).
+
+### D21 — Whether a narrower layer may lower
+
+**Recommended: yes for calls about the *default*, no for calls about a *floor*.
+A repository's `rigor.default` and its areas may set a mode lower than the
+project's default — that is what a default is for, and a project that wants a
+floor says so with a floor (D5's part three, D18), not with a default.** Reason:
+the alternative makes the project default a floor in disguise, and then the
+project has no way to say "usually Critical here, but this repository may run its
+own POC paths" — which is the ruling's whole shape. The line is not "narrower
+wins" or "stricter wins"; it is that a default is a value a narrower layer may
+replace and a floor is a constraint no layer may replace.
+
+**Alternative: monotone across layers too — the mode may only rise from the
+project default, so the project default is effectively a floor.** Cost: a
+project that wants one strict default for most repositories and a cheap mode for
+one of them cannot say it; the workaround is a second project. It buys a stronger
+guarantee, and it is the right answer for an owner who wants a project-wide
+minimum but not a policy entry: it is one comparison in `Resolve`, and the plan's
+T1.1 test table is where it would land.
+
+### D22 — What "dynamically, per area" means, and when the resolution runs
+
+**Recommended: the area is chosen from the files the run touches, at three
+moments, and the mode never falls within a run.** (a) **At bootstrap**, from the
+paths the caller declares — `fugaro run --path` (repeatable), because the tree has
+no path input at all today (F38); a run that declares none starts at its
+repository's or project's value. (b) **After each review round that changed the
+tree**, from the run's own diff against `workBase`
+(`internal/runner/changedfiles.go`'s `r.repo.ChangedFiles(ctx, r.workBase())`,
+which `recordChangedFiles` already calls), so the round ceiling the higher mode
+wants can still be spent on the rounds that remain. (c) **Before the PR is marked
+ready**, from `runstore.Record.ChangedFiles`, which is F39's existing measurement
+and sits exactly at the decision point. The resolved value is monotone: once a
+run has reached a mode, nothing lowers it for that run, and the record names the
+moment and the area that raised it.
+
+**Reason:** "dynamically" cannot mean "before the run", because the input does not
+exist then (F38), and it cannot mean "after the run", because a raised mode that
+arrives after the last round has spent nothing and can only refuse readiness. The
+three moments are the three places the run legitimately knows its paths, and the
+monotone rule is what makes them composable — the same only-tightens property the
+floors have.
+
+**Alternative: two moments only — bootstrap and finalize.** Cost: a diff that
+first matches a Critical area in round 2 of 3 buys nothing, and the run's extra
+rounds are gone; the PR turns into a draft nobody asked for, with the reason
+being a mode that arrived too late to be used. It is one call site fewer, and it
+is what the plan's T1.4 would build if the owner prefers it.
+
+**Alternative: resolve from `plan.Footprint` — the planner's prediction — at
+bootstrap, and skip the declared paths.** Cost: nothing a run executes reads that
+file today (`internal/plan/footprint.go` says it is advisory and `fugaro plan
+graph` is its only reader), so a run would gain a dependency on a plan artifact
+that may not exist, may be stale, and covers the files a *plan* files changed
+rather than the files a run will.
+
+### D23 — A run that touches several areas: strictest wins (an open decision)
+
+**Recommended: the strictest mode among the areas the run's paths match, and the
+record lists every area that matched.** This is the owner's own proposal, taken
+as written. Reason: it is the same only-tightens rule the floors already have, so
+there is one idea in the system rather than two; it needs no order between a
+project area rule and a repository area rule that both match, which is what makes
+D20's "the areas may be set in either layer" true; and it fails closed, so a run
+cannot escape a rule by touching one more file under another area.
+
+**Alternative: the area with the most changed files wins.** Cost: it is not
+monotone — a run whose strict-area change is one file and whose cheap-area change
+is ten resolves cheap — and it can be diluted deliberately by touching more files.
+It is defensible as "where the work is", and dishonest as a control.
+
+**Alternative: the first matching rule in configuration order wins.** Cost: the
+answer depends on the order of a list in a file, so moving one entry changes which
+rule governs a path, and the resolution can no longer be explained from the path
+alone.
+
+**Alternative: the narrowest glob wins** ("more specific beats less specific").
+Cost: undefined for overlapping globs of equal or incomparable specificity
+(`a/**` and `**/b.go`), and the tie-break that would define it is a rule nobody
+will remember. Patterns have no natural order; modes do, and that is why
+strictest-by-mode is the recommendation.
+
+### D24 — What each surface shows, and which value it shows
+
+**Recommended: one resolved value with three parts — the mode, the layer that
+won, and the areas that matched — shown in three places.** The value is computed
+once per resolution (D22) and carried, not recomputed per surface, from the same
+source as the record's `Mode` (F18's one-value rule, §6's item 5).
+
+- **The run.** `runstore.Record` gains the rigor block (mode, `from`, areas with
+  the moment each was applied), so `fugaro runs ls --json`, `fugaro diagnose` and
+  the console read it through `internal/runview`'s `Row`/`Join`, and the console's
+  contract (`console/docs/json-contract.md` §6.1) says what the new fields are.
+  This is the cheapest surface: the record is one struct plus its JSON schema.
+- **The PR.** The body's existing status section (`internal/runner/prflow.go`'s
+  `finalSection`) gains one line — the mode, and where it came from, in the shape
+  D9 already plans for the backlog: `rigor: Pro (repository, area
+  internal/payments/**), raised from Startup at round 2`. Reason: the PR is the
+  artifact the owner reviews, and the mode is the thing that decided what the
+  review was for.
+- **`fugaro watch`.** This one costs, and the cost should be stated rather than
+  discovered: a live row is built from the RTDB registry entry
+  (`internal/watch/build.go`'s `runRow` over `budget.AgentEntry`), the entry's
+  rules refuse an unknown child (`"$other": { ".validate": false }`), so a live
+  mode needs a new registry child, a rules regeneration with its golden file, and
+  a deploy the owner runs. The recorded precedent is `Recipe`'s drop-on-old-rules
+  path in `internal/budget/registry.go`'s `Session.Start` (warn once, remember for
+  the session) — F40 has both precedents and their cost.
+
+**Alternative: no registry child — `fugaro watch` shows the mode only once the
+run has finished** (its row then comes from `result.json`'s record, which is
+free). Cost: the mode of a run in flight is invisible, which is exactly the run
+whose mode someone would want to argue with; the price of the alternative is
+zero and the price of the recommendation is a rules deploy, so this is the
+decision where the owner weighs a deploy against seeing a live run's rigor.
+
+**Alternative: watch reads the mode from the machine that launched the run.**
+Cost: does not work — a run executes on a Cloud Run job and watch reads the
+database for runs on any machine, which is why the registry exists at all.
+
+### D25 — Which revision of the configuration the mode is read from
+
+**Recommended: the base branch, for every run kind, including a first run.** That
+means a new read beside `internal/runner/followup.go`'s `readBaseConfig` (which
+already fetches `origin/<ref>` and reads `fugaro.yaml` with `repo.ShowFile`) for
+the mode's configuration, rather than the working tree's copy that
+`internal/runner/runner.go`'s bootstrap reads today (F35). Reason: the mode
+decides how much review the PR gets, and a value that decides that must not come
+from the artifact under review — which is precisely why `readBaseConfig` exists
+for a review run and a follow-up, as `internal/runner/project.go` states. A
+branch that could set its own mode could set it to POC in the same pull request it
+wants merged, and the built-in floors (D18) would be the only thing left holding
+the line.
+
+**Cost, stated: one extra read at bootstrap, and one divergence to keep
+explained.** A first run would read its *other* keys from the checked-out ref and
+the mode from the base branch, so `fugaro run --ref feature-x` can run on
+`feature-x`'s recipes and under `main`'s rigor. That is a "two answers" hazard of
+exactly the kind F35 is, and the honest mitigation is that the run's record says
+which revision each came from (D24) rather than that the divergence does not
+exist.
+
+**Alternative: the checked-out ref, for a first run only.** Cost: free (the file
+is already read), consistent with every other key a first run uses, and it means a
+branch merges together with the rigor it was developed under — which is a genuine
+argument. What it accepts: a branch sets its own mode until the floors stop it,
+and the floor set is the only backstop. This is the alternative to weigh against
+the recommendation, and neither is taken here.
+
 ## 6. The security section, stated once
 
 The brief asks for this explicitly, and it is the part of the design that must
@@ -941,10 +1332,12 @@ not be reconstructed by a reader from the decisions:
 2. **A mode never bypasses an independent-review requirement.** SECURITY-SENSITIVE
    → opus plus mandatory independent review is `docs/credentials-service/implementation-plan.md`
    Global Constraint 10 (F31); the modes cite it and cannot waive it.
-3. **Floors win.** The mode is `max(project default, path floors, task request)`
-   (D6). A task may raise a floor and never lower it; a follow-up keeps its PR's
-   recorded mode and `--mode` may only raise it (D6, F14); a comment never
-   participates in the resolution (D8, D12).
+3. **Floors win.** The mode resolves as `area > repo > project` (D6, D20), with
+   the task's request able to raise and never lower, and the built-in and declared
+   floors outside every layer, only tightening — no repository value, no area
+   rule, no task flag and no comment reaches under one (D8, D21). A follow-up
+   keeps its PR's recorded mode and `--mode` may only raise it (D6, F14); a
+   comment never participates in the resolution (D8, D12).
 4. **Critical is the default for the security-sensitive tier**, with a built-in
    set (`.github/workflows/`, credential and IAM paths) plus the repository's
    declared globs (D18).
@@ -952,6 +1345,16 @@ not be reconstructed by a reader from the decisions:
    one value, so a mismatch is a bug rather than a documentation drift.
 6. **Fail closed.** An unscored finding, an unparseable verdict, or a policy that
    cannot decide blocks in every mode (D4, F3).
+7. **The mode's configuration comes from the base branch, not from the branch
+   under review** (D25, F35), for a first run as much as for a review run and a
+   follow-up: the value decides how much review the changes get, and no run reads
+   that value out of the artifact it is about to review. The floors are the
+   backstop if the owner rules otherwise, and the run's record says which revision
+   it read either way (D24).
+8. **A raised mode is monotone within the run** (D22): once a run has reached a
+   mode, no later resolution lowers it, so a path that turns out to be sensitive
+   cannot be made cheap by touching more of it. This is the same property the
+   floors have, and it is what makes the three resolution moments compose.
 
 ## 7. What the owner would run, and what would go red
 
@@ -965,6 +1368,11 @@ The live checks below are the ones a person runs, because a container cannot:
 | A Hotfix run touching a floored path | it is refused, and the refusal is the mode's, not the guard's | needs a real repository configured with a floor |
 | `fugaro budget preview --mode` against the gateway's own figures for a finished run | the ceiling the mode claims is a ceiling the run respected | the gateway's price is not in the tree |
 | The post-merge CI run on a merged Hotfix PR | the "full suite after deploy" claim is CI, and it fires | CI runs on the provider |
+| A project with one repository carrying a `rigor.default` and one without | the project default reaches the repositories that say nothing, and the repository's own value wins where it speaks | needs a published project layer and two repositories |
+| A run started with `--ref` at a branch whose own `rigor:` disagrees with the base branch's | which revision the mode was read from (D25) — the answer the owner's ruling on that decision makes | needs two branches and a real run on the branch |
+| A run whose diff matches two areas, one Critical and one POC | the mixed-area rule is the strictest of the matched, and the record names both (D23) | needs a real diff that lands in both |
+| A run whose first round stays in one area and whose second round reaches another | the raised mode bought the rounds that remained, and never fell back (D22) | needs a live agent and a multi-round run |
+| `fugaro watch` on a live run after the rules are redeployed | the mode and its layer reach a live row, and an installation with old rules drops the field and warns instead of failing the entry (F40) | needs a deployed database and `fugaro init --firebase` |
 
 ## 8. Items for the owner — not decisions this folder takes
 
@@ -1013,12 +1421,12 @@ to say so out loud.** `docs/coordinator/README.md` §"The numbers this work hold
 is the one table in this repository that allocates D-numbers: **D1–D192 is the
 owner's allocation, block by block**, the highest number written anywhere in
 `docs/` is **D192**, and **D193 onward is free**. This folder numbers its
-decisions **D1–D19** anyway, which collides numerically with
+decisions **D1–D25** anyway, which collides numerically with
 `docs/setup-wizard/`'s D1–D12 and `docs/windows-cli/`'s D1–D16 —
 the same choice the newer of those two made and recorded in its own index
 ("**Recommendation: keep D1–D16 local and distinct by folder, or move this work
 to D193 onward; renumbering is mechanical and changes nothing but the numbers**").
-The recommendation here is the same: keep D1–D19 **folder-local**, distinct by
+The recommendation here is the same: keep D1–D25 **folder-local**, distinct by
 folder, or move this work to **D193 onward** if the owner prefers one sequence.
 Either way the register line should be updated in the same commit that settles
 it, because a reader who greps for `D7` gets this folder's D7 and
@@ -1040,3 +1448,5 @@ the plan says so where it touches one.
 | U6 | the Go-side `runner.VerdictSchema` string and the prompt's instructions to the model agree on the item's shape | a live review whose structured output is validated against the schema |
 | U7 | the console tolerates a richer finding row without a contract change | the console's renderer run against a `fugaro diagnose --json` payload with scores |
 | U8 | a narrower `check` gate for POC fits inside `fugaro.yaml`'s verify timeout on a real repository | a timed run of each mode's gate |
+| U9 | an area rule matches the paths a real run actually touches at a moment when the run can still act on it (D22's moments are the tree's, not a measurement) | a live multi-round run whose diff crosses an area boundary, read from the record's own resolution note |
+| U10 | adding a child to the registry entry is accepted by a deployed database after `fugaro init --firebase`, and refused readably before it (F40) | the rules deployed to a real project, then one run live in `fugaro watch` |
