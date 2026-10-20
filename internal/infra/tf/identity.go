@@ -54,6 +54,20 @@ import (
 // nothing and is refused rather than approved for its name alone (Identifies,
 // Approves): a type whose name is known not to be enough has no weaker answer
 // the rule may fall back to.
+//
+// One more thing the identity is, and the reason the escaping below does more
+// than separate parts: it is the text a refusal PRINTS for the owner to copy
+// into `fugaro allow-delete`. The loop the delete list works by — the apply
+// refuses and names the object, the owner records it, the next plan passes —
+// closes only when what the refusal printed is byte for byte what the gate
+// compares, and a sentence this program writes puts the values it carries
+// through safetext.Field or safetext.MultiLine, both of which rewrite what
+// they do not expect (Field additionally cuts it at its own bound). So every
+// byte a value of an identity holds that those transforms would touch is
+// escaped as well (identityPart), and an identity too long to print whole is
+// refused rather than printed in part (RemovalIdentityPrintMax), which is the
+// same fail-closed direction as the rest of the rule: a printed identity that
+// is a prefix of the real one would be an approval of nothing.
 
 // removalInstanceAttributes is the attribute of each resource type whose
 // before view carries a value the provider mints per INSTANCE of the object
@@ -163,8 +177,10 @@ type RemovalIdentity struct {
 // String is the identity as one string: every part this view carries, in a
 // fixed order, as "type=… project=… name=… id=… instance=…". It is both what
 // the owner's object holds and what the gate compares, and the comparison is
-// exact string equality — so a part is written as the plan wrote it, and a
-// part the view does not carry is left out rather than written empty. An
+// exact string equality — so a part is written as the plan wrote it, or
+// escaped where the plan's own bytes are ones no printer of this program
+// leaves alone (identityPart), and a part the view does not carry is left out
+// rather than written empty. An
 // absent attribute and an empty one therefore encode identically; both
 // identify nothing (Identifies), and no before view of a type the managed
 // allowlist admits carries an empty one, so nothing has to be told apart
@@ -179,10 +195,15 @@ type RemovalIdentity struct {
 // value as it was collided exactly there, and
 // TestRemovalIdentityStringIsInjective fails on it.
 //
-// The string is for comparing and for one person to read, and a refusal prints
-// it for the owner to paste into fugaro allow-delete. Nothing parses it back
-// into parts: the identity is a string the command compares whole, and the
-// escaping is what makes that safe rather than ambiguous.
+// The same escaping is what lets the string be PRINTED and pasted: a refusal
+// prints it for the owner to copy into fugaro allow-delete, the command
+// compares what it is given byte for byte, so the text printed has to be the
+// text compared — and every byte a value holds that a printer of this program
+// would rewrite, drop or cut is escaped too (identityPart), which leaves the
+// identity one line of printable ASCII that safetext.Field and
+// safetext.MultiLine carry unchanged. Nothing parses it back into parts: the
+// identity is a string the command compares whole, and the escaping is what
+// makes that safe rather than ambiguous.
 func (i RemovalIdentity) String() string {
 	parts := make([]string, 0, 5)
 	for _, p := range []struct{ k, v string }{
@@ -195,26 +216,95 @@ func (i RemovalIdentity) String() string {
 	return strings.Join(parts, " ")
 }
 
-// identityPart is one part of an identity as "key=value", with the two
-// characters that could make two different identities write one string
-// escaped: a backslash (the escape itself, escaped first) and a space (which
-// separates the parts). Every other character is written as it is, so the
-// ordinary identity — a type, a project, a DNS-shaped name, a provider id —
-// reads exactly as it always did, and only a value that actually holds one of
-// the two reads differently.
+// identityPart is one part of an identity as "key=value", with the value
+// escaped so that no value can be mistaken for another and no printer of this
+// program can change it.
 //
-// Distinct values escape to distinct text (unescaping is its inverse), and an
-// escaped space cannot end a part, so the whole encoding is injective, which
-// is what String's own doc records. Quoting is deliberately not used: the
-// identity is printed for the owner to paste into fugaro allow-delete as
-// ADDRESS=IDENTITY, and the command compares it byte for byte.
+// Two of the escapes are the encoding's own: a backslash (the escape itself,
+// escaped first) and a space (which separates the parts), and escaping exactly
+// those two is what makes the whole encoding injective — distinct values
+// escape to distinct text, unescaping is its inverse, and an escaped space
+// cannot end a part (String's own doc records it, and
+// TestRemovalIdentityStringIsInjective fails without it). Quoting is
+// deliberately not used: the identity is printed for the owner to paste into
+// fugaro allow-delete as ADDRESS=IDENTITY, and the command compares it byte
+// for byte.
+//
+// The rest of the escaping is for the PRINTING: a refusal prints this identity
+// for its reader to copy back, and every sentence this program writes puts the
+// values it carries through safetext.Field (one bounded line) or
+// safetext.MultiLine (the command's top-level error line) — both of which
+// rewrite, drop or cut what they do not expect, so an identity holding a
+// zero-width character, a bidi override, a non-breaking space, a tab or any
+// byte of its own outside printable ASCII would be printed as a DIFFERENT text
+// than the one an entry holds, and the loop refusal → copy → allow-delete
+// could never close. So every byte a value holds that those transforms would
+// not leave alone is escaped as well: a byte outside printable ASCII becomes
+// \xHH. An ordinary identity — a type, a project, a DNS-shaped name, a
+// provider id — holds none of them and reads exactly as it always did.
 func identityPart(k, v string) string {
-	if strings.ContainsAny(v, " \\") {
-		v = strings.ReplaceAll(v, `\`, `\\`)
-		v = strings.ReplaceAll(v, " ", `\ `)
-	}
-	return k + "=" + v
+	return k + "=" + identityValue(v)
 }
+
+// identityValue is a value as an identity writes it: itself, when every byte
+// of it is one the printers leave alone, and otherwise with a backslash, a
+// space and every byte outside printable ASCII escaped (\xHH, two lowercase
+// hex digits, one escape per byte of a multi-byte character).
+//
+// The result is one line of printable ASCII with no byte safetext.Field,
+// safetext.MultiLine or a terminal has anything to say about, so what is
+// printed is what an entry holds — and the escaping stays injective: a
+// backslash in the value is doubled, an escaped space cannot end a part, and a
+// literal "\x41" in a value writes "\\x41", so no two values escape to one
+// text.
+func identityValue(v string) string {
+	if !strings.ContainsFunc(v, func(r rune) bool {
+		return r == '\\' || r < 0x21 || r > 0x7e
+	}) {
+		return v
+	}
+	const hex = "0123456789abcdef"
+	var b strings.Builder
+	b.Grow(len(v) + 8)
+	for i := 0; i < len(v); i++ {
+		switch c := v[i]; {
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c == ' ':
+			b.WriteString(`\ `)
+		case c < 0x21 || c > 0x7e:
+			b.WriteString(`\x`)
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&0xf])
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// RemovalIdentityPrintMax is the longest identity this program prints, and
+// therefore the longest one an owner's delete list can hold and an entry can
+// be matched against.
+//
+// The bound exists because the sentence that prints an identity cannot print
+// an unbounded one, and a printed identity that is a prefix of the real one is
+// worse than no identity at all: its reader would record what the refusal
+// showed, the entry would match nothing, and every later apply would refuse
+// the same removal with the same sentence — a loop that cannot close. So a
+// removal whose identity is longer than this is refused rather than printed in
+// part (Identifies, notIdentified), which is the fail-closed direction the
+// rest of this gate takes: nothing is approved on a weaker identity than the
+// rule needs, and the refusal says the length rather than showing a text that
+// looks pasteable.
+//
+// The number is chosen to be beyond anything a provider writes. The longest
+// part of an identity is a resource's id, and the longest id a managed type
+// has is a GCS object's (its bucket and its object name, and GCS's own limit
+// on an object name is 1024 bytes); a byte with no printable form is written
+// as four characters, so the longest id is under 8 KiB with the other parts
+// and the keys — and the ordinary identity is a tenth of that.
+const RemovalIdentityPrintMax = 8192
 
 // Identifies reports whether the identity names an object rather than only its
 // type: one of id, name and project must be there, and, for a type whose
@@ -224,11 +314,18 @@ func identityPart(k, v string) string {
 // the name of a type the provider gives a per-instance value to, which is a
 // name two instances can share: a removal whose before view shows no such
 // value is never approved (Approves).
+//
+// And it must be an identity this program can PRINT whole
+// (RemovalIdentityPrintMax): the printed text is the text an entry has to
+// hold, so a longer one is refused rather than cut.
 func (i RemovalIdentity) Identifies() bool {
 	if attr := removalInstanceAttributes[i.Type]; attr != "" && i.Instance == "" {
 		return false
 	}
-	return i.ID != "" || i.Name != "" || i.Project != ""
+	if i.ID == "" && i.Name == "" && i.Project == "" {
+		return false
+	}
+	return len(i.String()) <= RemovalIdentityPrintMax
 }
 
 // RemovedIdentity is the identity of the object rc removes: the change's
@@ -328,13 +425,20 @@ func Approves(entries []DeleteEntry, rc ResourceChange) (bool, string) {
 	}
 	// The identity of the entry back, so the two objects the refusal is about
 	// are both in it: what the owner approved, and what the plan removes.
+	//
+	// The listing is bounded twice over, the way every other listing this
+	// program prints is (safetext.FieldListLine): each entry is one Field, so
+	// no entry can add a line or a screenful of its own, and the number shown
+	// is capped with the rest counted, because a list is as long as whoever
+	// wrote the object made it — the read accepts 64 KiB of entries, and a
+	// sentence that grew with them would push its own words off the screen.
 	var bound []string
 	for _, e := range entries {
 		if e.Address == rc.Address {
-			bound = append(bound, safetext.Field(e.Before))
+			bound = append(bound, e.Before)
 		}
 	}
-	held := strings.Join(bound, ", ")
+	held := safetext.FieldListLine(bound)
 	if held == "" {
 		held = "no identity at all"
 	}
@@ -342,22 +446,44 @@ func Approves(entries []DeleteEntry, rc ResourceChange) (bool, string) {
 }
 
 // notIdentified is what a before view that identifies nothing is missing: the
-// per-instance attribute, for a type whose identity turns on one, and the
-// three name-derived attributes otherwise. It is the parenthetical the two
-// sentences about an unidentified removal carry (Approves, identityText), so
-// the reason a refusal gives is the reason this rule actually applied.
+// per-instance attribute, for a type whose identity turns on one; the three
+// name-derived attributes when it carries none of them; and, when it carries
+// those but the identity they write is too long to print
+// (RemovalIdentityPrintMax), the length and the bound — because that removal
+// is refused for what could be printed of it and not for what its view holds.
+// It is the parenthetical the two sentences about an unidentified removal
+// carry (Approves, identityText), so the reason a refusal gives is the reason
+// this rule actually applied.
+//
+// The type is escaped as the identity escapes it (identityValue), so the
+// parenthetical reads its type exactly as the identity beside it does, and
+// nothing the plan wrote reaches the line raw.
 func (i RemovalIdentity) notIdentified() string {
 	if attr := removalInstanceAttributes[i.Type]; attr != "" && i.Instance == "" {
-		return "the before view of a " + safetext.Field(i.Type) + " carries no " + attr + ", the value that tells one instance of the name from the next"
+		return "the before view of a " + identityValue(i.Type) + " carries no " + attr + ", the value that tells one instance of the name from the next"
 	}
-	return "no id, name or project in its before view"
+	if i.ID == "" && i.Name == "" && i.Project == "" {
+		return "no id, name or project in its before view"
+	}
+	return "its identity is " + strconv.Itoa(len(i.String())) + " characters long, past the " +
+		strconv.Itoa(RemovalIdentityPrintMax) + " this program prints whole, so no entry copied out of a refusal could hold it"
 }
 
 // identityText is a RemovalIdentity as a sentence names it: the identity
-// itself, or, for a view that identifies nothing, the reason it does not.
+// itself, or, for a view that identifies nothing — including one whose
+// identity is too long to print (RemovalIdentityPrintMax) — the reason it does
+// not.
+//
+// It prints the identity through safetext.FieldUncut and not Field: the
+// identity is already one plain line of printable ASCII (identityValue escapes
+// every byte Field would rewrite), so the only thing Field could still do to
+// it is cut it, and a cut identity is exactly the text an entry cannot hold.
+// What bounds the line instead is the rule: an identity longer than
+// RemovalIdentityPrintMax does not identify anything, so it never reaches
+// here, and the sentence says why instead (notIdentified).
 func identityText(id RemovalIdentity) string {
-	if s := safetext.Field(id.String()); s != "" && id.Identifies() {
-		return s
+	if id.Identifies() {
+		return safetext.FieldUncut(id.String())
 	}
 	return "an object the plan does not identify (" + id.notIdentified() + ")"
 }
@@ -372,6 +498,12 @@ func identityText(id RemovalIdentity) string {
 // surrounding pair of quotes would be characters the identity does not have
 // (the command strips one matched pair if a caller pastes them anyway, so the
 // two agree about what is printed here). A value the identity holds that
-// carries a space is printed escaped, exactly as the entry holds it
-// (identityPart), so the text a refusal prints is the text an entry compares.
+// carries a space, a backslash or any byte with no printable form is printed
+// escaped, exactly as the entry holds it (identityPart), and the whole
+// identity is printed through safetext.FieldUncut rather than Field — one
+// line of printable ASCII, uncut — so the text a refusal prints is the text an
+// entry compares. An identity longer than RemovalIdentityPrintMax is not
+// printed in part: the sentence says its length and that no entry could hold
+// it (notIdentified), which is the one answer that does not send its reader
+// around a loop that cannot close.
 func RemoveIdentityText(rc ResourceChange) string { return identityText(RemovedIdentity(rc)) }

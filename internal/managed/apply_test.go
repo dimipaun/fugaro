@@ -12,10 +12,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The tests of the apply path: the gate's verdict is the whole of the
@@ -1351,20 +1353,60 @@ func bounded(t *testing.T, what, s string, lines int) {
 	}
 }
 
+// boundedWhy is bounded for a line that may carry a removal rule's own sentence
+// (refusalWhy): the same controls and the same line count, and a length bound
+// of refusalWhyMax plus the bounded fields (safetext.Field) that may sit beside
+// it on the line, which the caller counts.
+//
+// The bound is bigger than Field's because the value cannot be cut: a removal
+// rule prints the identity of the object the plan removes for its reader to
+// copy into fugaro allow-delete, and an identity cut to a prefix is an approval
+// of nothing. It is still a bound, and the difference is the reason it is
+// stated here rather than left to FieldMax.
+func boundedWhy(t *testing.T, what, s string, lines, fields int) {
+	t.Helper()
+	for _, r := range s {
+		if (r >= 0x80 && r <= 0x9f) || r == 0x202e || (r < 0x20 && r != '\n') {
+			t.Errorf("%s carries %U:\n%q", what, r, s)
+		}
+	}
+	if n := strings.Count(s, "\n") + 1; n > lines {
+		t.Errorf("%s is %d lines, want at most %d:\n%q", what, n, lines, s)
+	}
+	if max := refusalWhyMax + fields*(safetext.FieldMax+2); utf8.RuneCountInString(s) > max {
+		t.Errorf("%s is %d runes, want at most %d (a removal rule's why beside %d bounded field(s)):\n%q",
+			what, utf8.RuneCountInString(s), max, fields, s)
+	}
+}
+
 // Every site in this package that prints an untrusted value bounds it: the
 // refusal's address, why and gate as rendered, the verdict's refusals as
 // parsed from a gate's own list, the unjudged-delete line, the creation
 // fact's reason, and the whole refusal Apply returns for a hostile plan.
+//
+// The why is held to refusalWhyMax and not to FieldMax, and the difference is
+// deliberate rather than a relaxation of the rule: a why may be a removal
+// rule's own sentence, which prints the identity of the object the plan removes
+// for its reader to copy into fugaro allow-delete (refusalWhy) — and a value
+// its reader has to get back whole cannot be cut to FieldMax. The address, the
+// gate and every other site are still one Field.
 func TestEveryManagedRefusalSiteBoundsUntrustedText(t *testing.T) {
 	for name, v := range hostileValues() {
 		e := &RefusedError{Verdict: Verdict{Refusals: []Refusal{
 			{Gate: v, Address: v, Why: v},
 		}}}
-		bounded(t, name+" in RefusedError", e.Error(), 2)
+		// The address is bounded here and the why by the removal rules' own
+		// bound, so the line is checked for both rather than by bounded's
+		// FieldMax expectation.
+		if msg := e.Error(); !strings.Contains(msg, safetext.Field(v)) {
+			t.Errorf("%s in RefusedError: the address is not the one Field writes:\n%q", name, msg)
+		} else {
+			boundedWhy(t, name+" in RefusedError", msg, 2, 2)
+		}
 
 		for _, ref := range refusals(coverGate, []string{v + " (" + v + ")", v}) {
 			bounded(t, name+" in refusals' address", ref.Address, 1)
-			bounded(t, name+" in refusals' why", ref.Why, 1)
+			boundedWhy(t, name+" in refusals' why", ref.Why, 1, 0)
 		}
 
 		s := Spec{AllowDelete: []tf.DeleteEntry{{Address: v, Before: v}}}

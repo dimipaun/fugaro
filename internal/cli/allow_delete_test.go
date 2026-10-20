@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,7 +20,9 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // allowDeleteRig is the installation's own runs bucket, seeded as the read
@@ -853,5 +856,70 @@ func TestAllowDeleteWriteErrSanitisesTheCause(t *testing.T) {
 		if strings.ContainsAny(got, "\u009b‮\n") || len([]rune(got)) > 1500 {
 			t.Errorf("%s: the refusal carries the raw cause: %q", name, got[:300])
 		}
+	}
+}
+
+// TestAllowDeleteCommandListsALongIdentityWhole: the listing is the second
+// place the owner pastes a line from, and the line has to be the entry. An
+// identity is longer than safetext.Field's own bound as soon as an object's
+// name is (a bucket object's id is its bucket and its name, and a path-shaped
+// name of a few hundred characters is ordinary), and a line cut at that bound
+// would look like an entry and approve nothing — so the listing prints the
+// line itself, and the count bound is the only bound it keeps.
+func TestAllowDeleteCommandListsALongIdentityWhole(t *testing.T) {
+	r := allowDeleteRig(t)
+	name := strings.Repeat("x", 600)
+	identity := "type=google_storage_bucket project=proj-1234 name=" + name + " id=" + name + " instance=2026-01-02T03:04:05.678Z"
+	if len(identity) <= safetext.FieldMax {
+		t.Fatalf("the fixture identity is %d characters, too short to be cut by safetext.Field (%d)", len(identity), safetext.FieldMax)
+	}
+	arg := dataApproval.address + "=" + identity
+	if _, _, err := execute(t, "allow-delete", arg); err != nil {
+		t.Fatalf("a long identity was refused: %v", err)
+	}
+	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatal("nothing was written")
+	}
+	if !strings.Contains(got, identity) {
+		t.Errorf("the object does not hold the identity as it was given:\n%s", got)
+	}
+	out, _, err := execute(t, "allow-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, arg) {
+		t.Errorf("the listing does not print the line it can be pasted from:\n%s", out)
+	}
+	if strings.Contains(out, "…") {
+		t.Errorf("the listing cut a line, so a paste from it would approve nothing:\n%s", out)
+	}
+}
+
+// TestAllowDeleteCommandRefusesAnIdentityTooLongToMatch: this command cannot
+// tell which removals a plan shows, but it can tell when an identity is one no
+// removal is ever identified by — a refusal prints an identity of at most
+// tf.RemovalIdentityPrintMax characters, and the gate refuses a longer one
+// rather than matching it — so recording it would write an entry the owner
+// reads as an approval and that clears nothing.
+func TestAllowDeleteCommandRefusesAnIdentityTooLongToMatch(t *testing.T) {
+	r := allowDeleteRig(t)
+	identity := "type=google_storage_bucket_object project=proj-1234 name=" + strings.Repeat("x", tf.RemovalIdentityPrintMax)
+	if len(identity) <= tf.RemovalIdentityPrintMax {
+		t.Fatalf("the fixture identity is %d characters, not past the bound (%d)", len(identity), tf.RemovalIdentityPrintMax)
+	}
+	arg := dataApproval.address + "=" + identity
+	out, _, err := execute(t, "allow-delete", arg)
+	if err == nil {
+		t.Fatalf("an identity no removal is identified by was accepted:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(len(identity))) || !strings.Contains(err.Error(), strconv.Itoa(tf.RemovalIdentityPrintMax)) {
+		t.Errorf("the refusal does not say how long the identity is and what the bound is: %v", err)
+	}
+	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 	}
 }

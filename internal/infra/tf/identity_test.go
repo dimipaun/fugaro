@@ -2,8 +2,11 @@ package tf
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The identity of the object a removal takes away (design §6 item 5, plan Task
@@ -464,5 +467,188 @@ func TestTheAPIKeyIdentityBindsItsUIDAndNotItsNameDerivedID(t *testing.T) {
 	}
 	if ok, _ := Approves([]DeleteEntry{ApprovalFor(key("6b1c5e2a-9d3f-4a7b-8c1d-2e3f4a5b6c7d"))}, key("0a9b8c7d-6e5f-4a3b-2c1d-0e9f8a7b6c5d")); ok {
 		t.Error("an entry approved a re-created API key whose uid differs")
+	}
+}
+
+// TestThePrintedIdentityIsTheIdentityAnEntryHolds: the loop a refusal starts —
+// refusal → the owner copies the identity → fugaro allow-delete → the next
+// plan passes — closes only when the text a sentence prints is BYTE FOR BYTE
+// the text the gate compares, and the sentences this program writes do not
+// print a value raw: safetext.Field bounds and rewrites one, safetext.MultiLine
+// (what cli.ErrorText prints a refusal through) rewrites one, and either would
+// turn an identity holding a zero-width character, a bidi override, a
+// non-breaking space, a tab or an invalid byte into a different text. So the
+// identity is escaped by its own encoder until every one of those transforms is
+// a no-op on it, and every one of them is checked here: what a refusal prints
+// for such an object is what an entry holds, and an entry holding the printed
+// text approves the removal.
+func TestThePrintedIdentityIsTheIdentityAnEntryHolds(t *testing.T) {
+	zwsp, rlo, nbsp, line := string(rune(0x200b)), string(rune(0x202e)), string(rune(0x00a0)), string(rune(0x2028))
+	for _, tc := range []struct{ what, name string }{
+		{"a zero-width space", "fmgd-" + zwsp + "data"},
+		{"a bidi override", "fmgd-" + rlo + "data"},
+		{"a non-breaking space", "fmgd" + nbsp + "data"},
+		{"a tab", "fmgd\tdata"},
+		{"a line separator", "fmgd" + line + "data"},
+		{"a carriage return", "fmgd\rdata"},
+		{"an invalid byte", "fmgd\xffdata"},
+		{"an escape sequence", "fmgd\x1b[2Jdata"},
+		{"a long name", "fmgd-" + strings.Repeat("x", 300)},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			rc := removal("google_storage_bucket", bucketBefore(tc.name, "2026-01-02T03:04:05Z"))
+			id := RemovedIdentity(rc)
+			if !id.Identifies() {
+				t.Fatalf("a bucket named %q identifies nothing: %s", tc.name, id.notIdentified())
+			}
+			text := id.String()
+			// The transforms this program prints a value through, and the
+			// identity survives each one unchanged. MultiLine is what the
+			// command's own top-level error line applies to a refusal, and it
+			// neither rewrites nor cuts; Field is the bound every refusal item
+			// and every listing line goes through, and it leaves the identity
+			// alone entirely — rewrites as well as length — for every identity
+			// up to its own bound; past that its CUT is the one thing it must
+			// not be allowed to do, and the identity is printed through
+			// FieldUncut instead (identityText), which rewrites nothing either.
+			if got := safetext.MultiLine(text); got != text {
+				t.Errorf("safetext.MultiLine rewrites the printed identity:\n got %q\nwant %q", got, text)
+			}
+			printer := safetext.Field
+			if len([]rune(text)) > safetext.FieldMax {
+				printer = safetext.FieldUncut
+			}
+			if got := printer(text); got != text {
+				t.Errorf("the printer of a refusal rewrites the printed identity:\n got %q\nwant %q", got, text)
+			}
+			for _, printed := range []string{RemoveIdentityText(rc), identityText(id)} {
+				if printed != text {
+					t.Errorf("the sentence prints %q, want the identity itself (%q)", printed, text)
+				}
+			}
+			// And the paste the loop describes: the entry an owner records from
+			// what the refusal printed approves the removal the refusal was
+			// about.
+			pasted := DeleteEntry{Address: rc.Address, Before: RemoveIdentityText(rc)}
+			if ok, why := Approves([]DeleteEntry{pasted}, rc); !ok {
+				t.Errorf("an entry holding the identity the refusal printed does not approve the removal: %s", why)
+			}
+		})
+	}
+}
+
+// printedIdentity is the identity a mismatch refusal ends by naming, as its
+// reader would copy it out of the sentence — the loop, taken literally rather
+// than reconstructed from the fixture.
+func printedIdentity(t *testing.T, why string) string {
+	t.Helper()
+	const mark = "and the plan removes "
+	i := strings.LastIndex(why, mark)
+	if i < 0 {
+		t.Fatalf("the refusal does not name the object the plan removes: %q", why)
+	}
+	return strings.TrimSuffix(why[i+len(mark):], ")")
+}
+
+// TestTheMismatchRefusalNamesAnIdentityAnEntryCanHold: the same contract for
+// the other sentence that prints an identity — the one an entry at the address
+// bound to another object draws (Approves) — and the copy loop run on it: what
+// its reader takes off the end of that sentence is an identity fugaro
+// allow-delete can record and the gate then approves.
+func TestTheMismatchRefusalNamesAnIdentityAnEntryCanHold(t *testing.T) {
+	plan := removal("google_storage_bucket", bucketBefore("fmgd-data", "2026-01-02T03:04:05Z"))
+	other := removal("google_storage_bucket", bucketBefore("fgmd"+string(rune(0x200b))+"data", "2026-06-07T08:09:10Z"))
+	ok, why := Approves([]DeleteEntry{ApprovalFor(other)}, plan)
+	if ok {
+		t.Fatal("an entry for another object approved the removal")
+	}
+	printed := printedIdentity(t, why)
+	if want := RemovedIdentity(plan).String(); printed != want {
+		t.Errorf("the sentence names %q, want the identity %q", printed, want)
+	}
+	if ok, why := Approves([]DeleteEntry{{Address: plan.Address, Before: printed}}, plan); !ok {
+		t.Errorf("the identity copied out of the refusal does not approve the removal: %s", why)
+	}
+}
+
+// TestAnIdentityTooLongToPrintIsRefused: the escaping makes the identity safe
+// to print, and it cannot make it short. A refusal's own lines are bounded, so
+// an identity longer than the bound cannot be printed whole — and a printed
+// identity that is a PREFIX of the real one is worse than none at all: the
+// owner would record it, the entry would match nothing, and every later apply
+// would refuse the same removal with the same sentence. So the rule refuses
+// such a removal rather than printing part of its identity, which is the same
+// fail-closed direction as the rest of this gate, and the two sides of the
+// bound are pinned here.
+func TestAnIdentityTooLongToPrintIsRefused(t *testing.T) {
+	// "type=t name=" is the whole identity of the empty name, so the name that
+	// fills the bound exactly is this long.
+	const prefix = "type=t name="
+	at := RemovalIdentity{Type: "t", Name: strings.Repeat("x", RemovalIdentityPrintMax-len(prefix))}
+	if n := len(at.String()); n != RemovalIdentityPrintMax {
+		t.Fatalf("the fixture identity is %d characters, want the bound (%d)", n, RemovalIdentityPrintMax)
+	}
+	if !at.Identifies() {
+		t.Error("an identity of exactly the bound does not identify an object")
+	}
+	straddling := RemovalIdentity{Type: "t", Name: strings.Repeat("x", RemovalIdentityPrintMax-len(prefix)+1)}
+	if straddling.Identifies() {
+		t.Errorf("an identity of %d characters identifies an object, though the program prints at most %d of them",
+			len(straddling.String()), RemovalIdentityPrintMax)
+	}
+	rc := removal("google_storage_bucket_object", map[string]any{
+		"id": "fmgd-bucket/" + strings.Repeat("x", RemovalIdentityPrintMax), "name": strings.Repeat("x", RemovalIdentityPrintMax),
+		"project": "proj-1", "generation": float64(1758000000000000)})
+	id := RemovedIdentity(rc)
+	if id.Identifies() {
+		t.Fatalf("a %d-character identity identifies an object, want it refused", len(id.String()))
+	}
+	// The refusal says the length, and it prints no part of the identity: a
+	// cut identity is one nothing can ever be matched against.
+	ok, why := Approves([]DeleteEntry{{Address: rc.Address, Before: id.String()}}, rc)
+	if ok {
+		t.Error("an entry holding an identity over the bound approved the removal")
+	}
+	if !strings.Contains(why, strconv.Itoa(len(id.String()))) || !strings.Contains(why, strconv.Itoa(RemovalIdentityPrintMax)) {
+		t.Errorf("the refusal does not say how long the identity is and what the bound is: %q", why)
+	}
+	if strings.Contains(why, strings.Repeat("x", 64)) {
+		t.Errorf("the refusal prints the identity it cannot print whole: %q", why)
+	}
+	if printed := RemoveIdentityText(rc); strings.Contains(printed, strings.Repeat("x", 64)) {
+		t.Errorf("the sentence for an address the list does not name prints the identity it cannot print whole: %q", printed)
+	}
+	// And the address is not offered as one to approve: no entry can clear it.
+	if got := ListableEntries(&Plan{ResourceChanges: []ResourceChange{rc}}, nil); len(got) != 0 {
+		t.Errorf("ListableEntries offers %v, an address no entry can clear", got)
+	}
+}
+
+// TestTheMismatchRefusalNamesABoundedNumberOfEntries: a list is as long as
+// whoever wrote it made it, and the object it is read from is bounded at 64
+// KiB — so the sentence that names the entries at one address has to bound
+// them itself, the way every other listing in this program does
+// (safetext.FieldList): a bounded number of them, and an honest count of the
+// rest. Without the count bound one refusal line grows with the list.
+func TestTheMismatchRefusalNamesABoundedNumberOfEntries(t *testing.T) {
+	plan := removal("google_storage_bucket", bucketBefore("fmgd-data", "2026-01-02T03:04:05Z"))
+	entries := make([]DeleteEntry, 0, safetext.FieldListMax+10)
+	for i := 0; i < safetext.FieldListMax+10; i++ {
+		entries = append(entries, DeleteEntry{Address: plan.Address,
+			Before: "type=google_storage_bucket id=other-" + strconv.Itoa(i)})
+	}
+	ok, why := Approves(entries, plan)
+	if ok {
+		t.Fatal("a list of entries for other objects approved the removal")
+	}
+	if note := safetext.FieldListNote(10); !strings.Contains(why, note) {
+		t.Errorf("the refusal does not count the entries it left out (%q): %q", note, why)
+	}
+	last := entries[len(entries)-1].Before
+	if strings.Contains(why, last) {
+		t.Errorf("the refusal names the last entry (%q) although the listing is bounded: %q", last, why)
+	}
+	if n := len(why); n > 4096 {
+		t.Errorf("the refusal is %d characters long for %d entries, want it bounded", n, len(entries))
 	}
 }

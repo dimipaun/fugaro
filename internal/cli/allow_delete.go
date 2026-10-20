@@ -90,7 +90,13 @@ the one the plan's before view shows, so copy it from the refusal rather than
 retyping it; it is printed there bare, and one matched pair of double quotes
 around it is stripped if you paste it quoted anyway, because a shell or a
 message may have added them (a quote at one end only is a character of the
-identity, and is kept).
+identity, and is kept). The two ends agree byte for byte because the identity
+is written in an escaped form — a space in a value as \ , a backslash as \\,
+and any other byte with no printable form as \xHH — so that what a refusal
+prints is exactly what a plan shows. An identity longer than 8192 characters is
+refused here and by the plan: no refusal prints one, and the plan refuses the
+removal rather than matching a printed part of it, so recording it would be an
+approval that deletes nothing.
 
 What the identity tells apart, and what it does not, said here rather than left
 to be discovered. For the seven managed types whose state carries a value the
@@ -334,6 +340,13 @@ func approveArgument(arg string) (tf.DeleteEntry, error) {
 		return tf.DeleteEntry{}, userErr("an argument is an address and the identity of the object approved there, written ADDRESS=IDENTITY, as in 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket instance=2026-01-02T03:04:05.678Z': the identity is the one a refused apply printed for the object the address removes, and nothing was written")
 	case !strings.HasPrefix(before, "type="):
 		return tf.DeleteEntry{}, userErr("an identity begins with the resource type the plan showed, as in 'type=google_storage_bucket project=… name=… id=…', and the text after the first '=' in this argument does not: the argument is cut at its first '=', so an address whose own text holds an '=' cannot be approved this way (nothing was written; approve it from a plan whose address has none, or rename the resource)")
+	case len(before) > tf.RemovalIdentityPrintMax:
+		// The one thing this command can tell about an identity without the
+		// plan: a longer one is refused by the gate whatever the plan shows
+		// (tf.RemovalIdentityPrintMax, which is also why no refusal prints
+		// one), so recording it would write an approval that clears nothing
+		// and read as an approval all the same.
+		return tf.DeleteEntry{}, userErr("an identity of %d characters is longer than the %d a plan can print and match (tf.RemovalIdentityPrintMax): no removal is identified by one, so approving it would record an entry that deletes nothing, and nothing was written", len(before), tf.RemovalIdentityPrintMax)
 	}
 	return tf.DeleteEntry{Address: address, Before: before}, nil
 }
@@ -350,29 +363,53 @@ func trimOneQuotedPair(s string) string {
 	return s
 }
 
+// listingLineMax is the longest entry line this listing prints whole: an
+// address and the identity the delete rule admits. The rule bounds the
+// identity (tf.RemovalIdentityPrintMax, and a removal whose identity is longer
+// than that is refused rather than printed), and the address is the plan's
+// own, so a line past this bound is text no rule produced — the object's
+// writer put it there by hand — and it is printed through safetext.Field,
+// which cuts it and says with its own marker that it did.
+const listingLineMax = 2 * tf.RemovalIdentityPrintMax
+
 // printEntries is a listing of the entries an owner's object holds, one per
 // line, in the ADDRESS=IDENTITY form this command's arguments take — so a line
 // the owner reads is a line they can paste back.
 //
-// Each line is one safetext.Field: these go to stdout and not through
-// ErrorText, and an entry read from the bucket is whatever its writer put there
-// (parseDeleteList refuses only blank halves), so an escape sequence, a bidi
-// control or a newline in one must not reach the terminal as itself. And the
-// listing stops at safetext.FieldListMax entries with the rest counted
-// (FieldListNote): the object holds as many entries as it was written with, and
-// the sentence above the listing is this command's own — the count is stated
-// there, in full, and what is cut is the listing and never the fact that
-// something was cut.
+// Each line is printed as the entry itself (safetext.FieldUncut above the
+// listing's own line bound, safetext.Field past it): Field is what keeps an
+// entry read from the bucket — whatever its writer put there, since
+// parseDeleteList refuses only blank halves — from reaching the terminal as an
+// escape sequence, a bidi control or a newline of its own, but it also cuts a
+// value at its own bound and rewrites the characters it does not expect, and a
+// line that is not the entry is a line that approves nothing when it is pasted
+// back. The entry's own characters are already escaped by the command that
+// wrote it (tf.RemovalIdentity.String escapes every byte its printers would
+// touch), so the rewrites FieldUncut still makes are no-ops on an entry this
+// command wrote, and a line it wrote reads exactly as it was written however
+// long it is.
+//
+// And the listing stops at safetext.FieldListMax entries with the rest counted
+// (FieldListNote): the object holds as many entries as it was written with,
+// and the sentence above the listing is this command's own — the count is
+// stated there, in full, and what is cut is the listing and never the fact
+// that something was cut.
 func printEntries(w io.Writer, entries []tf.DeleteEntry) {
-	lines := make([]string, 0, len(entries))
+	shown := 0
 	for _, e := range entries {
-		lines = append(lines, e.Address+"="+e.Before)
+		if shown == safetext.FieldListMax {
+			break
+		}
+		shown++
+		line := e.Address + "=" + e.Before
+		if len(line) > listingLineMax {
+			line = safetext.Field(line)
+		} else {
+			line = safetext.FieldUncut(line)
+		}
+		fmt.Fprintln(w, line)
 	}
-	shown, omitted := safetext.FieldList(lines)
-	for _, l := range shown {
-		fmt.Fprintln(w, l)
-	}
-	if note := safetext.FieldListNote(omitted); note != "" {
+	if note := safetext.FieldListNote(len(entries) - shown); note != "" {
 		fmt.Fprintf(w, "(%s)\n", note)
 	}
 }

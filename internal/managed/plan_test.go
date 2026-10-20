@@ -13,8 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 const (
@@ -614,6 +616,99 @@ func TestGateRefusesARemovalTheRuleCannotIdentify(t *testing.T) {
 	}
 	if slices.Contains(v.Listable, addr) {
 		t.Errorf("Listable %v names %s, which no entry can be matched against", v.Listable, addr)
+	}
+}
+
+// The identity a refusal prints is the identity an entry has to hold, however
+// long it is. The removal rules print it for the owner to copy into fugaro
+// allow-delete, the entry they record is matched against the plan's own
+// identity byte for byte (tf.DeleteEntry, tf.Approves) — and a why rendered
+// through safetext.Field is cut at FieldMax, which for this sentence falls in
+// the middle of the identity: the entries rule names every entry the list holds
+// at the address BEFORE the object the plan removes (tf.Approves), so the
+// identity sits at the sentence's end and past rune 512. What the owner would
+// copy then is a prefix, the entry would match nothing, and every later apply
+// would refuse the same removal with the same sentence: a loop that cannot
+// close. The bound is refusalWhyMax instead, which is the parts' bound and not
+// a bound on the identity, and this test walks the whole way the owner does —
+// the verdict's refusal, the text the apply returns, and the identity read back
+// out of it into an entry that approves.
+func TestTheIdentityARefusalPrintsIsOneAnEntryCanHold(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	long := strings.Repeat("n", 300)
+	r := newRig(t)
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{
+		"name": long, "id": long, "project": gcpProject, "time_created": bucketCreated}))
+	// The entry names the address for another object, which is the refusal that
+	// prints what the plan removes beside what the list holds.
+	stale := entry(addr, "type=google_storage_bucket project="+gcpProject+" name=fmgd-gone id=fmgd-gone")
+	v := gate(t, r, spec(t, r, managedCover(), stale))
+	if v.OK {
+		t.Fatal("a removal the owner's entry is not about was admitted")
+	}
+	var rc tf.ResourceChange
+	for _, c := range r.plan(t).ResourceChanges {
+		if c.Address == addr {
+			rc = c
+		}
+	}
+	if rc.Address == "" {
+		t.Fatalf("the rig's plan carries no change at %s", addr)
+	}
+	want := tf.RemovedIdentity(rc).String()
+	// The fixture has to be an identity Field would change, or the test proves
+	// nothing about the renderers below: one Field leaves alone reads the same
+	// either way.
+	if safetext.Field(want) == want {
+		t.Fatalf("the fixture's identity of %d runes is one safetext.Field leaves alone", utf8.RuneCountInString(want))
+	}
+	for _, gate := range []string{guardGate, coverGate} {
+		ref, ok := findRefusal(v.Refusals, gate, addr)
+		if !ok {
+			t.Fatalf("the %s refused %s with no refusal at its address: %+v", gate, addr, v.Refusals)
+		}
+		if !strings.Contains(ref.Why, want) {
+			t.Errorf("the %s refusal for %s does not carry the identity whole:\n%q\nwant it to hold\n%q", gate, addr, ref.Why, want)
+		}
+		if strings.Contains(ref.Why, "…") {
+			t.Errorf("the %s refusal for %s is cut: %q", gate, addr, ref.Why)
+		}
+	}
+	// What the apply returns is the text a person reads, and the identity it
+	// carries is the one the owner pastes back.
+	msg := (&RefusedError{Verdict: v}).Error()
+	if !strings.Contains(msg, want) {
+		t.Errorf("the refusal the apply returns does not carry the identity whole:\n%s\nwant it to hold\n%s", msg, want)
+	}
+	i := strings.LastIndex(msg, "and the plan removes ")
+	if i < 0 {
+		t.Fatalf("the refusal names no object:\n%s", msg)
+	}
+	printed := strings.TrimSuffix(msg[i+len("and the plan removes "):], ")")
+	if printed != want {
+		t.Errorf("the refusal prints\n%q\nand the plan's identity is\n%q", printed, want)
+	}
+	if ok, why := tf.Approves([]tf.DeleteEntry{{Address: addr, Before: printed}}, rc); !ok {
+		t.Errorf("the identity a refusal printed approves nothing (%s), so the loop the delete list works by cannot close", why)
+	}
+}
+
+// A why past refusalWhyMax is not one of the removal rules' sentences, whose
+// every part is bounded where the rule built it (refusalWhy): it is cut, with
+// safetext.Field's own marker, rather than printed unbounded — the looser bound
+// is for the identity the owner has to be able to paste, not a licence for a
+// plan or a cover to write a screenful.
+func TestARefusalWhyPastItsBoundIsCut(t *testing.T) {
+	item := "module.managed.google_storage_bucket.x (an address the rule refused " + strings.Repeat("a", refusalWhyMax) + ")"
+	got := refusals(coverGate, []string{item})
+	if len(got) != 1 {
+		t.Fatalf("refusals %+v, want one refusal", got)
+	}
+	if n := utf8.RuneCountInString(got[0].Why); n > refusalWhyMax {
+		t.Errorf("the why is %d runes, past the %d a verdict carries", n, refusalWhyMax)
+	}
+	if !strings.HasSuffix(got[0].Why, "…") {
+		t.Errorf("the why %d runes long is not marked as cut: %q", utf8.RuneCountInString(got[0].Why), got[0].Why)
 	}
 }
 

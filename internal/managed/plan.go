@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -347,9 +348,13 @@ func guardLines(text string) []string {
 // a refusal.
 //
 // Each item is one refusal however many lines it holds, and each part of it is
-// one bounded field (safetext.Field): an address and a rule's own words are read
-// out of a plan and out of objects other people wrote, and neither may add a
-// line, a control or a bidi override to the refusal a person reads.
+// bounded: an address and the actions beside it are read out of a plan, and
+// each is one safetext.Field, so neither may add a line, a control or a bidi
+// override to the refusal a person reads; a rule's own words are carried by
+// refusalWhy, which keeps them whole up to refusalWhyMax — because the sentence
+// a removal is refused in PRINTS the identity of the object the plan removes
+// for its reader to approve (tf.Approves), and a why cut at safetext.FieldMax
+// falls in the middle of that identity.
 func refusals(gate string, items []string) []Refusal {
 	var out []Refusal
 	for _, item := range items {
@@ -371,15 +376,51 @@ func refusals(gate string, items []string) []Refusal {
 			// off with them. The suffix is still what a cover's item is, and
 			// the fallback below keeps carrying it as its content.
 			if j := strings.Index(item[i:], "): "); j >= 0 && tf.ActionsText(item[i+2:i+j]) {
-				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2:i+j] + ": " + item[i+j+3:])})
+				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2:i+j]) + ": " + refusalWhy(item[i+j+3:])})
 				continue
 			}
 			if strings.HasSuffix(item, ")") {
-				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2 : len(item)-1])})
+				out = append(out, Refusal{Gate: gate, Address: addr, Why: refusalWhy(item[i+2 : len(item)-1])})
 				continue
 			}
 		}
-		out = append(out, Refusal{Gate: gate, Why: safetext.Field(item)})
+		out = append(out, Refusal{Gate: gate, Why: refusalWhy(item)})
 	}
 	return out
+}
+
+// refusalWhyMax is the most of one gate's Why a verdict carries: what one
+// removal rule prints — the identity of the object the plan removes
+// (tf.RemovalIdentityPrintMax) and the listing of the entries at the address
+// (safetext.FieldListMax entries of safetext.FieldMax) — with room for the
+// rule's own words around them.
+const refusalWhyMax = tf.RemovalIdentityPrintMax + safetext.FieldListMax*safetext.FieldMax + 4096
+
+// refusalWhy is one rule's own words as the verdict carries them: whole, when
+// they fit refusalWhyMax, and safetext.Field's bounded line — cut, with its
+// own marker — when they do not.
+//
+// Whole and not cut, because a removal rule PRINTS the identity of the object
+// the plan removes for the person who can approve it: the owner copies it into
+// fugaro allow-delete, and the entry they record has to be byte for byte what
+// the refusal showed (tf.DeleteEntry). safetext.Field would cut the sentence at
+// its own FieldMax, and the sentence a removal is refused in is longer than
+// that before the identity is reached — the entries rule names every entry at
+// the address first (tf.Approves) — so the cut falls in the middle of the
+// identity, which is the one part of the sentence its reader has to have: an
+// identity printed to a prefix is an approval of nothing, and every later apply
+// would refuse the same removal with the same sentence (a loop that cannot
+// close).
+//
+// The bound is not given up, it is placed where the parts are: each identity is
+// bounded by the rule that prints it (tf.RemovalIdentityPrintMax, and a longer
+// one is refused rather than printed) and a listing is bounded twice over
+// (safetext.FieldListLine), so a why of these rules fits refusalWhyMax, and one
+// that does not is not one of their sentences and is cut, with Field's marker,
+// rather than printed unbounded.
+func refusalWhy(why string) string {
+	if w := safetext.FieldUncut(why); utf8.RuneCountInString(w) <= refusalWhyMax {
+		return w
+	}
+	return safetext.Field(why)
 }

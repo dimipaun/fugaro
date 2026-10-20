@@ -135,7 +135,13 @@ the one the plan's before view shows, so copy it from the refusal rather than
 retyping it; it is printed there bare, and one matched pair of double quotes
 around it is stripped if you paste it quoted anyway, because a shell or a
 message may have added them (a quote at one end only is a character of the
-identity, and is kept).
+identity, and is kept). The two ends agree byte for byte because the identity
+is written in an escaped form — a space in a value as \ , a backslash as \\,
+and any other byte with no printable form as \xHH — so that what a refusal
+prints is exactly what a plan shows. An identity longer than 8192 characters is
+refused here and by the plan: no refusal prints one, and the plan refuses the
+removal rather than matching a printed part of it, so recording it would be an
+approval that deletes nothing.
 
 What the identity tells apart, and what it does not, said here rather than left
 to be discovered. For the seven managed types whose state carries a value the

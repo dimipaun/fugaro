@@ -256,12 +256,16 @@ type RefusedError struct {
 // first line is every refusal, listed or not.
 //
 // Every part of it that can come from somewhere else is one bounded field
-// first (safetext.Field): an address and a rule's own words are read out of a
-// plan and out of objects other people wrote, and a newline, a C1 control or a
-// bidi override carried through them would be this program printing text of
-// someone else's choosing — in text the session that reads it acts on — and a
-// value of any length would push the rest out of sight. The advice is this
-// program's own and is rendered as it is.
+// first (safetext.Field): an address is read out of a plan and out of objects
+// other people wrote, and a newline, a C1 control or a bidi override carried
+// through it would be this program printing text of someone else's choosing —
+// in text the session that reads it acts on — and a value of any length would
+// push the rest out of sight. A rule's own words are rendered by refusalWhy and
+// not by Field: they are bounded already where the rule built them
+// (refusalWhyMax), and Field's own cut would fall inside the identity a removal
+// rule prints for its reader to approve, which is the one part of the line that
+// has to reach the terminal whole. The advice is this program's own and is
+// rendered as it is.
 func (e *RefusedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, so nothing is applied (%d refusal(s))", ErrRefused, len(e.Verdict.Refusals))
@@ -280,7 +284,7 @@ func (e *RefusedError) Error() string {
 			b.WriteString(safetext.Field(r.Address))
 			b.WriteString(": ")
 		}
-		b.WriteString(safetext.Field(r.Why))
+		b.WriteString(refusalWhy(r.Why))
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
