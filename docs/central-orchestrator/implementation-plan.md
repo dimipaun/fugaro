@@ -59,10 +59,15 @@ and what was not).
 
 ### P0 — Pin this folder, and pin the citations
 
-**Scope.** Every other plan folder in this tree pins itself with a guard
-(`internal/cli/docs_coordinator_test.go`, `internal/cli/docs_rigor_modes_test.go`,
-`internal/cli/docs_windows_cli_test.go`). This folder has none, because the pull request that
-wrote it was docs-only (reconciliation C1). P0 is that guard.
+**Scope.** Every other plan folder in this tree pins itself with a guard — 49 of them live in
+`internal/cli/` at `2f8b4dca`, from `internal/cli/docs_artifact_runs_test.go` to
+`internal/cli/docs_windows_cli_test.go`. This folder has none, because the pull request that
+wrote it was docs-only (reconciliation C1). P0 is that guard. **Note for whoever writes it:**
+the rigor modes work's guard (`internal/cli/docs_rigor_modes_test.go`) is *not* in this tree
+to copy — that work is in open PR #773, as the folder's own documents say (README, and C6 of
+the reconciliation) — so the models to follow are
+`internal/cli/docs_coordinator_test.go` and `internal/cli/docs_windows_cli_test.go`, both on
+`main`.
 
 **Files.** New `internal/cli/docs_central_orchestrator_test.go`, whose tests hold: (a)
 `docs/central-orchestrator/spec.md` byte-for-byte against the owner's text, the way the
@@ -144,8 +149,8 @@ orchestrator block), `internal/cli/` (a new `orchestrator.go` with `newOrchestra
 its registration in `internal/cli/root.go`), `schemas/fugaro.schema.json` (the policy's
 orchestrator fields), `deploy/terraform/gcp/modules/firebase/` (nothing new: the access record
 lives in the database the module already creates), and the RTDB rules
-(`internal/budget/rules/rules.go` and its `rules.json.tmpl` template, with a `RulesVersion`
-bump).
+(`internal/budget/rules/rules.go` and its `rules.json.tmpl` template, with the
+`RulesVersion` bump `internal/projectpolicy/version.go` carries).
 
 **Red step.** First: a rules test that reads `config/admin/devices/<uid>` with an email field
 absent and asserts the **documented** refusal; then a CLI test that `fugaro orchestrator add`
@@ -184,7 +189,8 @@ through the same compare-and-set.
 interface fed by `internal/rtdb`'s `ServerNow`), `internal/rtdb/client.go` (no new method
 expected beyond what `GetETag`/`PutIfMatch`/`Patch` give), `internal/watch/source.go` and
 `internal/watch/build.go` (the lease in the existing stream), `internal/cli/watch.go` (its
-rendering), the rules template and `RulesVersion`, and the CLI's `fugaro run` path where a
+rendering), the rules template and `internal/projectpolicy/version.go`'s `RulesVersion`, and
+the CLI's `fugaro run` path where a
 launch takes the lease (`internal/cli/run.go`'s `launchRun`, beside the existing
 `takeClaim`).
 
@@ -504,7 +510,8 @@ reviewed and what was not.
 3. **No secret-shaped literal, ever** — in a test, a fixture, a golden or a document. The
    rules' own tests use shapes (`internal/budget/rules/rules.go`'s `MACOK` *"checks a tag's
    shape, never its value"*).
-4. **The rules are generated, not hand-edited**: `rules.json.tmpl` plus a `RulesVersion` bump,
+4. **The rules are generated, not hand-edited**: `rules.json.tmpl` plus a
+   `internal/projectpolicy/version.go` `RulesVersion` bump,
    with the goldens regenerated.
 5. **Nothing under `.github/workflows/`** — if a part needs one, it goes to
    `docs/pending-workflows/` for the owner to copy.
@@ -532,8 +539,10 @@ for. The decisions that **block** parts outright, and the part each blocks:
 
 ## 7. The owner-run live checks, proposed by name and not numbered
 
-The register's own instruction is that *"the phase that ships the check writes them"*
-(`docs/gcp-live-checklist.md`), so this plan proposes the checks **by name** and takes **no
+The convention is that *"the phase that ships the check writes them"* — a sentence of
+`docs/design/voice.md` §5.3, quoted by `docs/mobile/voice-session/` and
+`docs/mobile/design/voice-evaluation-switch.md`, and **not** in the register itself — so this
+plan proposes the checks **by name** and takes **no
 number** (D24). The reasoning, with the register read name by name, is reconciliation §7: the
 numbers around where this work would sit are claimed twice (**110**), written by two other
 works (**111**, **112**), taken by two more (**113–118**, **119**), so the next free number

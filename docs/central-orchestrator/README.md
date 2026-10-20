@@ -41,7 +41,7 @@ type is not only absent but **refused**: `internal/infra/tf/cover.go`'s `allowed
 only `google_cloud_run_v2_job` and `google_cloud_run_v2_job_iam_member`, and
 `Cover.NotCovered` makes any other type a typed confirmation at `fugaro init` (#1). There is
 no WebSocket in either direction (#3), no lease record of any kind (#6), no merge path that a
-service could use (#22), no public sign-in provider — `internal/infra/identityplatform.go`'s
+service could use (#22), no public sign-in provider — `internal/cli/init_firebase.go`'s
 `refusePublicSignUp` refuses every one of them (#32) — no notification sender (#34), no alert
 ingest (#41) and no Firestore TTL (#49). Its *"credentials … from the security service"* names
 a plan document, not a service (C3, #21), and its *"one Cloud Run service"* collides with the
@@ -62,8 +62,11 @@ have to become.
 | **D1–D26** | **this work's decisions**, folder-local and distinct by folder, as `docs/windows-cli/` (its D1–D16) and `docs/rigor-modes/` (its D1–D19) each chose and each recorded. Every one is **open**: the owner has answered none, and the reconciliation's §6 tables them with the recommendation first. Answering a decision is not approving a task | **open.** The register is [docs/coordinator/README.md](../coordinator/README.md) §"The numbers this work holds": **D1–D192 are taken** (the highest written anywhere in `docs/` is **D192**), **D79–D89 is deliberately unused** — *"an unused number is not a free number"* — and **D193 onward is free**, which is the block this work would take if the owner prefers one sequence. **Recommendation: keep D1–D26 local and distinct by folder** (D23) |
 | **No check number** | this work proposes **none** | **not claimed and not written.** The register's own state is unsettled where this work would sit: **Check 110** is claimed **twice** — by `docs/mobile/design/voice-evaluation-switch.md` (P5.3) and by the always-on orchestrator design in **PR #632** (§7) — and written by neither, so the register's rule *"whichever of two open claims merges second renumbers itself"* applies; **111** is written by [docs/setup-wizard/](../setup-wizard/); **112** is proposed by [docs/windows-cli/](../windows-cli/); **113–118** are taken by [docs/mobile/voice-session/](../mobile/voice-session/); **119** is taken by `docs/rigor-modes/` in open PR #773. The owner-run checks this work needs are therefore **named and not numbered** (implementation-plan §7), and the part that writes one takes the next free number at merge time (D24) |
 
-D-numbering and check numbers are allocated, never reused, and never renumbered once taken —
-the register's own rule, from its own paragraph (`docs/gcp-live-checklist.md`).
+Check numbers are allocated, never reused and never renumbered once taken — the live
+checklist's own numbering ruling (`docs/gcp-live-checklist.md`). **Decision numbers follow the
+same rule and state it in their own document**: *"a decision number, once allocated, is never
+reused or renumbered either"*, with the allocation made by the owner in advance to a line of
+work rather than to whoever answers first (`docs/design/desktop-console-v2.md`).
 
 ## Related
 

@@ -24,7 +24,7 @@ sentence turns on, for the reason `docs/coordinator/README.md` gives for its own
   `docs/central-orchestrator/` and nothing else. In particular it writes **no guard test**:
   the folder-per-work convention in this tree is a guard package beside the CLI —
   `ls internal/cli/docs_*_test.go | wc -l` is **49** at `2f8b4dca`, from
-  `internal/cli/docs_coordinator_test.go` to `internal/cli/docs_windows_cli_test.go` — and
+  `internal/cli/docs_artifact_runs_test.go` to `internal/cli/docs_windows_cli_test.go` — and
   this folder's own guard is listed as **P0** in the implementation plan instead, to be added
   by a later code-bearing pull request. Nothing else needs registering: there is no
   docs-folder registry (`internal/clidoc/` holds the CLI reference generator and
@@ -32,7 +32,8 @@ sentence turns on, for the reason `docs/coordinator/README.md` gives for its own
   and none fails for its absence.
 - **C2 — "Firebase" is two stores in this tree, and the spec's word covers both.** The
   budget database is the **Realtime Database**, read through `internal/rtdb/`
-  (`internal/rtdb/client.go` `Get`, `GetETag`, `PutIfMatch`, `Patch`, `Stream`, `ServerNow`).
+  (`internal/rtdb/client.go`'s `Get`, `GetETag`, `PutIfMatch`, `Patch`, `ServerNow`, and
+  `internal/rtdb/stream.go`'s `Stream` / `Event`).
   Firestore is a separate, hand-written REST client (`internal/firestore/client.go` `Get`,
   `Patch`, `Query`, `Delete`) used for the budget's daily rollover
   (`internal/budget/rollover.go` `Roller`) and nothing else. The spec's lease is in "Firebase"
@@ -83,7 +84,7 @@ sentence turns on, for the reason `docs/coordinator/README.md` gives for its own
 | The spec says | What the tree has, at `2f8b4dca` | Verdict |
 | --- | --- | --- |
 | "one Cloud Run service per central orchestrator" | Every Cloud Run workload in `deploy/terraform/gcp/modules/` is `google_cloud_run_v2_job`; `internal/infra/tf/cover.go`'s `allowedTypes` lists `google_cloud_run_v2_job` and `google_cloud_run_v2_job_iam_member` and **not** `google_cloud_run_v2_service` | **Wrong today; a decision the code enforces** (#1, D19) |
-| "Clients connect directly over WebSocket" | No WebSocket client or server anywhere in the tree; the CLI's only HTTP server is the loopback gateway (`internal/gateway/gateway.go` `Server.Start`, `127.0.0.1:0`) | **Gap** (#3, D5) |
+| "Clients connect directly over WebSocket" | No WebSocket client or server anywhere in the tree; the CLI's only HTTP server is the loopback gateway (`internal/gateway/gateway.go`'s `Start`, `127.0.0.1:0`) | **Gap** (#3, D5) |
 | "the orchestrator holds a lease in Firebase and renews it on a heartbeat" | No lease record; a launch claim (`internal/runstore/launch.go` `Claim`), a branch lock (`internal/lock/lock.go` `Holder`) and a per-run budget heartbeat (`internal/budget/registry.go` `Session.heartbeat`) | **Wrong as written / buildable** (#6–#14, D1–D3) |
 | "all shepherding state must live in Firebase" (open item) | Runs bucket objects carry the shepherding record; RTDB carries the budget heartbeat and the counters; Firestore carries the daily rollover | **Answered in §2** |
 | "Every job has an owner, which determines the spending cap" | Caps are keyed to the repository slug and the project-global node (`internal/budget/model.go` `Caps`, `RepoCaps`, `GlobalCaps`, `Caps.PerRun`); no cap is keyed to a person or a service identity | **Wrong** (#18, D18) |
@@ -91,13 +92,13 @@ sentence turns on, for the reason `docs/coordinator/README.md` gives for its own
 | "carries PRs through to merge" | `docs/design/v1.md` §2, non-goals: *"Auto-merge. Fugaro never merges."* `internal/gitprov/gitprov.go`'s `Provider` has `EnsurePR`, `ApplyReady`, `PullRequest`, `Comments` and no merge | **Wrong** (#22, D18) |
 | "approving a merge" as a locked action | The only merge path is the paired-device one: `shared/confirm/index.js` `DESTRUCTIVE_VERBS`, the rules' `action` node, `internal/mailbox/message.go` `Action`; its executor is plan task P6.7 and is not built | **Exists as schema only** (#23, D7) |
 | "checks the verified email against the project allowlist" | The allowlist is the **device node** `config/admin/devices/$uid` (`internal/budget/rules/rules.go` `userClaim`; mobile D166); keyed to a Firebase uid, not an email | **Wrong** (#31, D6) |
-| "Google SSO and Microsoft SSO are supported, and email and password …" | No public sign-in provider exists: `internal/infra/identityplatform.go` `PublicSignUp`, `refusePublicSignUp`; the web key is restricted to `identitytoolkit`/`securetoken` (`deploy/terraform/gcp/modules/firebase/firebase.tf`) | **Wrong** (#32, D6) |
+| "Google SSO and Microsoft SSO are supported, and email and password …" | No public sign-in provider exists: `internal/cli/init_firebase.go`'s `refusePublicSignUp` refuses the configuration, and `internal/infra/identityplatform.go`'s `PublicSignUp` is what reads it; the web key is restricted to `identitytoolkit`/`securetoken` (`deploy/terraform/gcp/modules/firebase/firebase.tf`) | **Wrong** (#32, D6) |
 | "phone app push and desktop notifications" | Push is deferred (mobile D121, *"no push in v1"*); `docs/mobile/design/push-notifications.md` is design-only and its sender would be the history job | **Gap** (#34, D21) |
 | "one shared session … saved to Firestore after every turn" | The conversation is per **run**, in the runs bucket (`internal/runstore/session.go` `SessionMeta`, `PutSession`, `ReadSession`); Firestore holds `meta` and `spendDaily` only (`internal/infra/firestore.go`) | **Gap** (#52, D11) |
 | "a Firestore TTL policy" | The Firestore client has no TTL API (`internal/firestore/client.go`) and no Terraform resource in `deploy/terraform/` sets `ttl_config` | **Gap** (#53, D11) |
 | "raw history is periodically archived to the project's Git repo" | Fugaro writes to Git only through PRs and the job's git credential; there is no committer that is not a run | **Gap** (#54, D25) |
-| "an agent … reads the logs, analyses the problem, proposes a fix" | A run is headless with every permission prompt off (`internal/agent/agent.go` `Args`' `--dangerously-skip-permissions`; `internal/runner/prompts.go` `SystemPrompt`) | **Exists** (#37/#49, D4) |
-| "Every orchestrator … reports to the coordinator" | No coordinator code, store or endpoint exists | **Gap** (#59, D14) |
+| "an agent … reads the logs, analyses the problem, proposes a fix" | A run is headless with every permission prompt off (`internal/agent/agent.go` `Args`' `--dangerously-skip-permissions`; `internal/runner/prompts.go` `SystemPrompt`) | **Exists** (#35, D4) |
+| "Every orchestrator … reports to the coordinator" | No coordinator code, store or endpoint exists | **Gap** (#51, D14) |
 | "Off by default … scale-to-zero" | The budget backend is off by default too, and the managed-plan cost gate already reads a service's `min_instance_count` (`internal/infra/tf/managed_cost.go`) | **Exists in shape** (#4, D13) |
 
 ## 2. The spec's own open item, answered from the code
@@ -187,22 +188,27 @@ account mapping (`internal/managed/stateaccounts.go`). The deciding symbol is
 `google_cloud_run_v2_job_iam_member`, and a plan holding any other type is refused by
 `Cover.NotCovered` with *"a resource type outside the installation's modules"*, which makes
 `internal/cli/init_review.go`'s `notCovered` ask for a typed confirmation. `managedTypes` in
-`internal/infra/tf/managed_cover.go` is the same list for managed projects.
+`internal/infra/tf/managed_cover.go` is the narrower list for managed projects — **14 entries
+to `allowedTypes`' 29**, every one of them also an entry there, as that file's own comment
+says (*"Every entry is also an entry of allowedTypes"*, held by its
+`TestManagedAllowedTypesIsDecided`) — so a service type has to be admitted to **both**.
 *Consequence:* the spec's one Cloud Run service per central orchestrator is, in this tree, a
 change to a list that exists precisely to make such additions deliberate. It is **D19**, and
 the reconciliation treats it as a prerequisite rather than a detail. The coordinator's own
-reconciliation reached the same fact as its finding #1.
+reconciliation reached the same fact as its finding **#2** (its #1 is the
+project-and-installation finding).
 
 **#2 — The CLI's only HTTP surface is a loopback listener inside a job. — Exists.**
-`internal/gateway/gateway.go`'s `Server.Start` listens on `127.0.0.1:0`
-(`lc.Listen(ctx, "tcp", "127.0.0.1:0")`) and `Server.URL` returns that loopback URL. There is
+`internal/gateway/gateway.go`'s `Start` (a package-level function, not a method) listens on
+`127.0.0.1:0` (`lc.Listen(ctx, "tcp", "127.0.0.1:0")`) and the returned `*Server`'s `URL`
+returns that loopback URL. There is
 no ingress, no public endpoint and no service account that serves requests in this tree.
 
 **#3 — There is no WebSocket anywhere, in either direction. — Gap.**
 No WebSocket client or server exists in the tree; the only `websocket` strings are test fences
 (`mobile/src/demo/safety.test.js`, `console/test/unit/spawnlog.test.ts`). The RTDB client's
-realtime transport is outbound SSE (`internal/rtdb/client.go` `Stream`, `internal/rtdb/stream.go`
-`Event`), and the console's renderer cannot open a socket at all (#30).
+realtime transport is outbound SSE (`internal/rtdb/stream.go`'s `Stream` and `Event`), and the
+console's renderer cannot open a socket at all (#30).
 
 **#4 — The cost gate already understands a service's scale shape. — Exists.**
 `internal/infra/tf/managed_cost.go`'s tables read `google_cloud_run_v2_service` with its
@@ -294,6 +300,36 @@ fire-and-forget (D15).
 the raw material for "state in Firebase, not in the local agent's context" is a session file,
 not a conversation store — the shared session is new work (D11).
 
+**#15 — Nothing records who took a job over, and the one attribution the tree carries is display text. — Gap.**
+`internal/runview/runview.go`'s `Row.LaunchedBy` is what `fugaro ls` and the console show, and
+`internal/cli/launch_budget.go`'s `mintBudgetToken` says what it is: the token's `RB` claim is
+*"the launcher's own, self-asserted name … attribution only, nothing in the rules trusts it"*.
+There is no record of a hand-off and no place to write one, which is the spec's *"an audit
+trail"* half of Multi-user access. *Consequence:* the lease's holder must be an identity the
+**service** authenticated (D5) and not a name copied out of a token, and the audit trail is a
+store this work has to build (D7).
+
+**#16 — A lease's staleness signal is weaker than the branch lock's, and that is a property of the two mechanisms rather than an oversight. — Rule.**
+`internal/lock/lock.go`'s `Stale` needs more than a timer: `holder.Execution != ""` **and**
+`executionTerminal`, a fact the backend confirms — `internal/runner/lockcache.go`'s
+`errOwnerUnknown` is the case where it cannot be confirmed, and the lock refuses to take over
+without it. A lease has no such oracle: the only signal is that heartbeats stopped
+(`internal/budget/registry.go`'s `Session.heartbeat`, `internal/budget/sweep.go`'s
+`DefaultStaleAfter`). *Consequence:* D2's grace period is judged on the heartbeat alone and a
+takeover cannot ask *"has the run actually ended"*; that is why the recommendation is a
+generation compare-and-set and not a terminality check, and why the branch lock should stay
+where it is rather than be generalised into the lease.
+
+**#17 — A run's lifecycle is the run's to write, so an orchestrator's authority over a live job is a request, not a state. — Exists.**
+`result.json` is written by the run: `internal/runstore/runstore.go`'s `Store.CreateRecord` /
+`Record`, guarded for the owner by `internal/runstore/replace.go`'s `ReplaceRecordIf` and
+`internal/backend/codec.go`'s `SameExecution` (`internal/runner/runner.go`'s `claimRecord`).
+The one lever from outside is the cancel marker — `internal/runstore/runstore.go`'s
+`RequestCancel` / `CancelRequested` — which is **a request the run acts on**, not a state the
+requester sets. *Consequence:* the spec's *"take the job back"* and *"carrying PRs through"*
+both assume a component that drives a job; today the only components that can are the run and
+its backend, so an orchestrator can launch, request a cancel and read (D7, D15).
+
 ### C. Ownership, caps and credentials
 
 **#18 — No cap is keyed to a person or a service identity. — Wrong.**
@@ -365,7 +401,7 @@ means (D6).
 `internal/followup/trust.go`'s `Trust` / `Allows` / `isSelf` (who may steer a follow-up —
 *"an author listed in the base branch's followup.trusted who is also a collaborator … and
 never the pull request's author"*), backed by `internal/config/config.go`'s `Followup.Trusted`;
-`internal/config/config.go`'s `Ready.Reviewers` (GitHub review requests, applied by
+`internal/config/config.go`'s `PRSettings.Reviewers` (GitHub review requests, applied by
 `internal/gitprov/github/github.go`'s `ApplyReady`); `internal/config/config.go`'s
 `RoleReviewer` (an LLM stage). The rigor modes work's D8 makes the trusted list the answer to
 *who* may lower a floor and a merged config change the only mechanism (PR #773).
@@ -384,7 +420,7 @@ part.
 someone who already has access to the project (CLI or console) can generate a pairing code"*
 — an authorisation claim inside the discovery section — and §4.2 *"Authentication and
 authorisation"* carries *"Because anyone can authenticate with Firebase"*, which the mobile
-reconciliation's G12 corrects: `internal/infra/identityplatform.go`'s `refusePublicSignUp`
+reconciliation's G12 corrects: `internal/cli/init_firebase.go`'s `refusePublicSignUp`
 refuses email, anonymous, phone and every default IdP, so *"no public sign-in provider;
 custom tokens only"* (T5). D165 (two tokens bound to a phone-held key), D166 (the allowlist is
 the device nodes) and G15/G16 (the pairing flow) are the rulings. **§4 lists the exact edits
@@ -397,8 +433,9 @@ directory, and there must not be"*; `mobile/src/feed/reader.js`'s `FeedReader` t
 injected subscribe port, and `mobile/src/feed/paths.js`'s `FAMILIES` are
 `config/caps`, `config/kill`, `spend`, `mailbox` with `agents`, `outcomes`, `runs` and
 `fugaro` in `DENIED_FAMILIES`; `mobile/src/mailbox/client.js`'s `createMailboxClient` is the
-app's only writer; `mobile/src/demo/safety.test.js` fences `fetch(`, `WebSocket`,
-`XMLHttpRequest`, `EventSource` and any `https?://`. *Consequence:* *"the phone app … uses
+app's only writer; `mobile/src/demo/safety.test.js`'s `RULES` fence the network outright —
+`fetch(`, `XMLHttpRequest`, `WebSocket`, `sendBeacon`, `axios`, and any `https?://` in a
+non-test file. *Consequence:* *"the phone app … uses
 the same protocol"* means adding a network client to an app built to have none, and the app
 cannot see jobs today at all (D5, D12).
 
@@ -434,7 +471,8 @@ is a different authorisation model from the one the phone already uses, and the 
 two match (D6).
 
 **#32 — No public sign-in provider exists, and the platform refuses to enable one. — Wrong.**
-`internal/infra/identityplatform.go`'s `PublicSignUp` / `refusePublicSignUp`;
+`internal/cli/init_firebase.go`'s `refusePublicSignUp` — the CLI's own refusal, reading the
+configuration through `internal/infra/identityplatform.go`'s `PublicSignUp`;
 `deploy/terraform/gcp/modules/firebase/firebase.tf`'s `google_apikeys_key.web` restricted to
 `identitytoolkit.googleapis.com` and `securetoken.googleapis.com`; `docs/mobile/functional-spec-reconciliation.md`'s
 G12 and T5. *Consequence:* Google SSO, Microsoft SSO and email+password are a reversal of a
@@ -494,7 +532,9 @@ See C6. The rigor modes work defines findings handling per mode and a determinis
 gate (its D12, D14, D16), refuses to build a scheduler (D15), and never mentions an
 escalation timeout. `internal/localcfg/localcfg.go`'s `BurnAlertUSDPerHour` is a **display**
 threshold passed to `internal/watch/build.go`'s `BurnAlertPerHour`, and a cap-proximity
-threshold is explicitly recorded as absent (`docs/design/desktop-console-v2.md` D35).
+threshold is explicitly recorded as absent — `docs/design/desktop-console-v2.md`'s **F29**,
+*"cap alerts have data and no threshold"*, which **D35** then answers by putting the
+threshold in the app rather than in the project record.
 *Consequence:* *"Escalation timeouts depend on rigor mode"* is a proposal to the rigor modes
 work as much as to this one (D8).
 
@@ -507,7 +547,13 @@ automatic follow-up task for a Hotfix, printed rather than scheduled.
 ### F. Alerts
 
 **#41 — No alert ingest exists: no webhook, no fingerprint, no de-duplication, no rate limit, no circuit breaker. — Gap.**
-There is no Sentry string anywhere in the tree, and no inbound endpoint (#37). The nearest
+There is no Sentry **integration** anywhere in the tree — the only two Sentry strings are
+both in tests and neither is code that could receive an alert: `SENTRY_DSN` is one of the
+ordinary secret names `internal/config/reservedenv_test.go` asserts the reserved-environment
+check must **allow** (it is not a name Fugaro reads), and `@sentry/react-native` is one of the
+`COLLECTING_SDKS` `website/test/privacy.mjs` carries — *"the SDKs whose presence would make
+the page's disclosure false"* — which is a privacy assertion about the app's dependency list,
+not a client. There is also no inbound endpoint (#37). The nearest
 once-only primitives are the rules' create-if-absent outcome
 (`internal/budget/rules/rules.json.tmpl`, `!data.exists()`; `internal/budget/sweep.go`'s
 `Sweeper.remove` — *"create only, so a recorded outcome is kept"*) and
@@ -582,7 +628,7 @@ a TTL policy deletes on time, not on a condition (D11).
 
 **#50 — "Archive to the project's Git repo" has no committer that is not a run. — Gap.**
 Fugaro reaches Git through a job's git credential and the GitHub App
-(`internal/gitprov/`, `docs/design/git-providers.md`), and a run ends in a PR that a human
+(`internal/gitprov/`, `docs/git-providers.md`), and a run ends in a PR that a human
 merges (#22). There is no service-side commit path, and a service that pushed an archive
 branch would be the first Fugaro component to write a branch outside a run (D25).
 
@@ -591,7 +637,8 @@ branch would be the first Fugaro component to write a branch outside a run (D25)
 **#51 — The coordinator is advisory and unbuilt, and this spec gives it a job it has no way to do. — Gap.**
 `docs/coordinator/README.md` (*"reconciliation only; nothing is implemented and no plan is
 approved"*), `docs/coordinator/spec.md` (*"Advisory, not authoritative … It never blocks or
-reorders merges"*), and its reconciliation's finding #1 (there is no Cloud Run service). Its
+reorders merges"*), and its reconciliation's finding **#2** (there is no Cloud Run service;
+its #1 is the project-and-installation one). Its
 Q10 was answered **(A): one resident service per installation, with the coordinator as a role
 it plays**, and its Q4 (A) leaves the model credential out of v1. *Consequence:*
 *"Every orchestrator … reports to the coordinator in the same way"* needs a reporting contract
@@ -672,7 +719,7 @@ pull request that owns them (D22) — **none is made here**:
    in §4.1 it re-imports the conflation the spec is trying to remove.
 3. **§4.2 "Authentication and authorisation", the sentence** *"Because anyone can authenticate
    with Firebase, each project keeps an allowlist of approved users."* — replace the premise:
-   no public sign-in provider is enabled (`internal/infra/identityplatform.go`
+   no public sign-in provider is enabled (`internal/cli/init_firebase.go`
    `refusePublicSignUp`; G12, T5), and the allowlist is the **device nodes**
    `config/admin/devices/$uid` (D166), not a list of users.
 4. **§4.2, the sentence** *"Firebase security rules deny access to anyone not on the
@@ -772,7 +819,8 @@ to it as a field the *administrator* writes, rather than making the allowlist an
 treat "verified email" as a property checked at pairing/administration time, not at every
 connection. Then answer three sub-questions explicitly: (a) whether a project may accept
 Google or Microsoft SSO at all — the tree's rule is custom tokens only
-(`refusePublicSignUp`), and lifting it is a change to Identity Platform rather than a policy
+(`internal/cli/init_firebase.go`'s `refusePublicSignUp`), and lifting it is a change to the
+configuration that fires the refusal rather than a policy
 flag (#32); (b) whether an email-domain restriction is enforced at sign-in or at allowlist
 administration (recommendation: **at administration**, which needs no change to the sign-in
 platform); (c) whether an unverified email is refused at pairing (recommendation: **yes**,
@@ -969,8 +1017,10 @@ sequence.
 ### D24 — The live-check number
 **Recommendation: this work claims **no** check number now, and states its owner-run checks
 by name; the number is taken by whichever task writes the check** (the convention
-`docs/gcp-live-checklist.md` states: *"the phase that ships the check writes them"*), because
-the register's claims are unsettled (#57 and §7). **Alternative:** claim "the next free
+`docs/design/voice.md` §5.3 states, quoted by `docs/mobile/voice-session/`: *"the phase that
+ships the check writes them"* — **it is not in the register itself**, which states the
+numbering *rule* and not who writes a section), because
+the register's claims are unsettled (§7). **Alternative:** claim "the next free
 number" now — cost: exactly the collision the register's second rule exists for (*"whichever
 of two open claims merges second renumbers itself"*).
 
@@ -1110,7 +1160,7 @@ this work's to make.
 | U1 | That a Cloud Run **service** can be admitted to the installation's Terraform without breaking `fugaro setup`'s confirmation model | `internal/infra/tf/cover.go`'s `allowedTypes` is a code constant; no service exists to try | adding the type behind its own typed confirmation, and an owner-run plan |
 | U2 | WebSocket support through the Cloud Run front end (upgrade headers, idle timeout, maximum connection duration) | the credentials service's plan records the same class as unverified for streaming (`docs/credentials-service/reconciliation.md` U5, its Check 91) | an owner-run live check on a deployed service |
 | U3 | RTDB `If-Match`/ETag behaviour under concurrent writers at the rate a lease implies (one heartbeat a minute per job, plus takeovers) | `internal/rtdb/client.go`'s `PutIfMatch` is used for admin writes (*"ETags work on one location: this is for single-node admin writes"*), not for a hot path | an emulator test plus a live check |
-| U4 | Whether the RTDB rules can express the lease's generation check without a `RulesVersion` bump colliding with another work's | the rules template is generated and versioned (`internal/budget/rules/rules.go`, `RulesVersion`) | writing the rule and regenerating the golden |
+| U4 | Whether the RTDB rules can express the lease's generation check without a `RulesVersion` bump colliding with another work's | the rules template is generated and versioned (`internal/budget/rules/rules.go`'s template, `internal/projectpolicy/version.go`'s `RulesVersion`) | writing the rule and regenerating the golden |
 | U5 | That a Firestore TTL policy's deletion is late enough to coexist with an archive step | the client has no TTL API and the repo has no `ttl_config`; a TTL policy is asynchronous on the platform's side | a live experiment on a throwaway project |
 | U6 | The real error shape of a Firebase Auth ID token that is valid but whose uid has no device node, over a WebSocket connect | the rules path is proven for RTDB reads (Check 81) and not for a socket handshake | a live check |
 | U7 | Whether the console can reach the orchestrator without weakening `connect-src 'none'` in a way the design accepts | the CSP is byte-identical in two places and asserted by `console/test/unit/window.test.ts` | a design decision and a console test |
