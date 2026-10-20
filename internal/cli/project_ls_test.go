@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -571,10 +573,35 @@ func TestACommandInACheckoutRecordsIt(t *testing.T) {
 	}
 }
 
+// captureStderr runs f with the process's own stderr redirected and returns
+// what f wrote there. The commands' own output goes to the command's writer
+// (execute's buffer), so what lands here is what a side effect printed behind
+// the command's back.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	f()
+	os.Stderr = old
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 // TestAFailedRecordNeverFailsTheCommand: remembering a checkout is best
 // effort. A state file that cannot be written (here: a directory where the
-// file goes) leaves the command exactly as it was — same output, same exit
-// code, nothing printed about it.
+// file goes) leaves the resolver — and so the command that called it —
+// exactly as it was: the checkout is returned, the error is nil, nothing is
+// printed about it and the command exits 0.
 func TestAFailedRecordNeverFailsTheCommand(t *testing.T) {
 	dir := projectLsFixture(t)
 	co := projectLsCheckout(t, filepath.Join(dir, "src", "app"), projectLsYAML, "https://github.com/acme/app.git")
@@ -585,12 +612,24 @@ func TestAFailedRecordNeverFailsTheCommand(t *testing.T) {
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// The resolver the commands share, called where the write it makes at
+	// the end cannot succeed: the checkout is still the answer.
+	var got *localcfg.Checkout
+	printed := captureStderr(t, func() { got, err = checkoutProject(context.Background(), co) })
+	if err != nil || got == nil || got.Project != "aurora" {
+		t.Fatalf("checkoutProject = %+v, %v, want the checkout and no error", got, err)
+	}
 	t.Chdir(co)
-	stdout, stderr, err := execute(t, "validate", "--offline")
+	var stdout, stderr string
+	printed += captureStderr(t, func() { stdout, stderr, err = execute(t, "validate", "--offline") })
 	if err != nil {
 		t.Fatalf("fugaro validate failed because it could not remember a checkout: %v\n%s", err, stdout)
 	}
-	if strings.Contains(stderr, "checkout") {
-		t.Errorf("the failure to remember the checkout was printed: %q", stderr)
+	// Nothing was said about it anywhere: not on the command's stderr, not
+	// on the process's, and the path is not in either.
+	for _, out := range []string{stderr, printed} {
+		if strings.Contains(out, "checkout") || strings.Contains(out, dir) {
+			t.Errorf("the failure to remember the checkout was printed: %q", out)
+		}
 	}
 }
