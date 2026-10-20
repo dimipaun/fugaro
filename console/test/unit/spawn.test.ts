@@ -1119,6 +1119,37 @@ describe('binary resolution', () => {
     expect(resolution.ok && resolution.path).toBe(stub.binary)
   })
 
+  it('takes the home directory from the process environment when the caller passes none', async () => {
+    // **The e2e suite's hermetic override, in the fast suite.** `test/support/
+    // cliStub.ts` chooses the CLI a launch reads the only way rule 4 allows: it
+    // writes the stub into a scratch home's `~/.local/bin` and points the
+    // launch's `HOME` at that home. That only works because the app's handshake
+    // (`resolveHandshakeBinary`) passes **no** `home` -- so `binDirectories`
+    // falls back to `homedir()`, which is the process's `HOME`, which for the
+    // app is the environment `electron.launch` was handed. A resolver that read
+    // the *runner's* home instead would search the operator's real `~/.local/bin`
+    // and the specs would be asserting a fact about the machine.
+    const home = freshDirectory('fugaro-hermetic-home-')
+    const stub = installStub(join(home, '.local', 'bin'), { commands: { version: { stdout: '1.0.0\n' } } })
+    // A decoy where the app's `PATH` points: rule 4 does not search it, so the
+    // helper's `PATH` is a decoy on purpose and a resolver that read it would
+    // find this one instead.
+    const onPath = join(freshDirectory('fugaro-hermetic-path-'), 'bin')
+    const decoy = installStub(onPath, { commands: { version: { stdout: '9.9.9\n' } } })
+    vi.stubEnv('HOME', home)
+    const resolution = await resolveBinary({
+      appEnv: { HOME: home, PATH: onPath },
+      directory: home,
+      target: { project: PROJECT },
+      // The well-known list is injected for the reason the test above gives --
+      // this machine may have a `fugaro` in an earlier prefix -- because what is
+      // under test is which home the tilde is joined to, not the list's order.
+      prefixes: ['~/.local/bin'],
+    })
+    expect(resolution.ok && resolution.path).toBe(stub.binary)
+    expect(decoy.calls(), 'the resolution searched the app’s PATH').toBe(0)
+  })
+
   it('refuses a candidate whose version cannot be read, rather than skipping it', async () => {
     const base = freshDirectory()
     const first = join(base, 'prefix-a', 'bin')

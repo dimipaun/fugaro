@@ -47,9 +47,25 @@
 // scratch `--user-data-dir` seeded with one **active installation naming the
 // stub**, so the startup handshake reads that binary and no other
 // (`resolveHandshakeBinary`) -- whatever `fugaro` the machine has in
-// `/usr/local/bin` or `/opt/homebrew/bin`. No case here skips for the machine
-// it runs on. The one first-run case uses an unseeded profile of its own, and
-// asserts nothing that depends on which `fugaro` the machine resolves.
+// `/usr/local/bin` or `/opt/homebrew/bin`. Two cases are the exception, on
+// purpose: the two that assert which binary a run with **no usable stored path**
+// drives seed a record whose path has gone, or one with no path at all, so rule
+// 4 walks the well-known prefixes and the machine decides. Those two ask the
+// console's own resolver first (`resolveConsoleBinary`) and skip when this
+// machine's answer is not one the console can drive -- a skip that says which
+// `fugaro` answered rather than failing on a fact about the machine. The one
+// first-run case uses an unseeded profile of its own and asserts nothing about
+// which `fugaro` the machine resolves.
+//
+// **Drawn, never raw.** The header's line is `src/renderer/entry.ts`'s `textOf`,
+// which is `sanitizeRefusal`: the path the console draws is the sanitized one,
+// while the same value arrives raw over IPC. A scratch stub directory's random
+// suffix reads as a token and is redacted, so `/tmp/fugaro-cli-stub-Ab3xY9/...`
+// is drawn as `[redacted-token]...`. The two cases above therefore compare the
+// header against `sanitizeRefusal(drove, ...).text` and keep the raw `drove` for
+// the spawn log and the IPC-level assertions -- comparing the drawn line to the
+// raw path passes only where the resolved binary happens to live outside a
+// scratch directory.
 //
 // Nothing here reaches the network and nothing here starts a child that the
 // console's own read would not have started: the stub answers `version`, and
@@ -859,6 +875,16 @@ test.describe('the renderer entry, in the real window', () => {
       const mode = winner.ok ? classifyCliVersion(winner.version).mode : 'refused'
       test.skip(mode !== 'ok', `no fugaro this console drives was resolved (${winner.ok ? winner.version : 'none found'})`)
       const drove = winner.ok ? winner.path : ''
+      // The line the header draws is the path as the console's sanitizer *draws*
+      // it, never the raw string: `src/renderer/entry.ts`'s `textOf` is
+      // `sanitizeRefusal`, and a scratch directory's random suffix reads as a
+      // token, so `/tmp/fugaro-cli-stub-Ab3xY9/home/.local/bin/fugaro` is drawn
+      // as `[redacted-token].local/bin/fugaro`. On a machine with a real
+      // `fugaro` in `/usr/local/bin` the two strings coincide, which is why this
+      // spec passed there and failed on CI, where the scratch stub is what the
+      // walk finds (the same idiom as the reduced-mode case above).
+      const drawnDrove = sanitizeRefusal(drove, 'the installation’s binary')
+      expect(drawnDrove.ok, 'this run resolved a binary the sanitizer refuses').toBe(true)
       const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
       const spawnLog = join(scratch, 'spawn.jsonl')
       const app = await launchConsole({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
@@ -871,8 +897,14 @@ test.describe('the renderer entry, in the real window', () => {
         // the binary **this run resolved** -- not the path the record still holds.
         const section = page.locator('section.console-installation')
         await expect(section.locator('p.installation-project')).toHaveText('gone')
-        await expect(section.locator('p.installation-binary')).toHaveText(drove)
-        expect(await section.locator('p.installation-binary').textContent()).not.toBe(missing)
+        await expect(section.locator('p.installation-binary')).toHaveText(drawnDrove.ok ? drawnDrove.text : '')
+        // And the same file at the IPC level, where the reply is raw: the state
+        // names the binary this run resolved, not the gone path the record still
+        // holds. This is the half the drawn line cannot say, because the
+        // sanitizer rewrites both strings.
+        const state = await installationOf(page)
+        expect((state['data'] as Record<string, unknown>)['binary']).toBe(drove)
+        expect((state['data'] as Record<string, unknown>)['binary']).not.toBe(missing)
         // And the file the header names is the file that ran: every record in the
         // log has it first, including the handshake's own `version`.
         await expect
@@ -927,6 +959,12 @@ test.describe('the renderer entry, in the real window', () => {
       const mode = winner.ok ? classifyCliVersion(winner.version).mode : 'refused'
       test.skip(mode !== 'ok', `no fugaro this console drives was resolved (${winner.ok ? winner.version : 'none found'})`)
       const drove = winner.ok ? winner.path : ''
+      // Drawn, not raw: see the B1 case above -- `textOf` sanitizes the path, so
+      // a resolution that landed in a scratch directory is drawn with its random
+      // suffix redacted, and comparing the raw string to it would fail on a
+      // machine whose scratch stub won the walk.
+      const drawnDrove = sanitizeRefusal(drove, 'the installation’s binary')
+      expect(drawnDrove.ok, 'this run resolved a binary the sanitizer refuses').toBe(true)
       const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
       const spawnLog = join(scratch, 'spawn.jsonl')
       const app = await launchConsole({ args: bare.launchArgs(consoleDir), env: { ...bare.env, [SPAWN_LOG_ENV]: spawnLog } })
@@ -938,7 +976,7 @@ test.describe('the renderer entry, in the real window', () => {
         await expect(section.locator('p.installation-project')).toHaveText('bare')
         // The line the defect drew nothing on: the store has no path to give, so
         // it can only be right if the header reads this run's resolution.
-        await expect(section.locator('p.installation-binary')).toHaveText(drove)
+        await expect(section.locator('p.installation-binary')).toHaveText(drawnDrove.ok ? drawnDrove.text : '')
         await expect(section.locator('p.installation-version')).toContainText(winner.ok ? winner.version : '')
         await expect
           .poll(() => readSpawnLog(spawnLog).filter((record) => record.argv[0] !== drove).length, {
