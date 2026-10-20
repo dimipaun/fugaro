@@ -52,6 +52,11 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"sandbox project only",
 		"Check 67",
 		"managed_deployer_scoped = true",
+		// The operator count the check expects, counted as the repository
+		// counts it (`&&` and `||` alike: the 0.8.6 expression is recorded as
+		// 17). A row that says "one operator at the most" states a number no
+		// test produces and no IAM refusal is about.
+		"three logical operators at the most",
 	} {
 		if !strings.Contains(row, want) {
 			t.Errorf("the `| 68 |` row does not carry %q", want)
@@ -81,9 +86,27 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"the documented semantics settle it",
 		"empty string",
 		"extractSegment",
+		// C1's expected number, in the repository's own counting: the C1 step
+		// has to expect what TestDeployerOperatorCountsAreTheDocumentedNumbers
+		// counts (three for Cloud Storage, one for each of the other six), or
+		// the check measures an expression the tree does not write.
+		"at most **three** logical operators",
+		"TestDeployerOperatorCountsAreTheDocumentedNumbers",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not say %q", want)
+		}
+	}
+	// The count as it was first written, which is what the redesign's own tests
+	// contradict: a condition's clause joins its type term with an `&&`, and
+	// counting that as "no operator" makes the number the check expects one IAM
+	// would never refuse on.
+	for _, wrong := range []string{
+		"one logical operator at the most",
+		"one logical operator at most",
+	} {
+		if strings.Contains(section, wrong) {
+			t.Errorf("Check 68 states the operator count as %q, which is not how this repository counts operators (`&&` and `||` alike)", wrong)
 		}
 	}
 
@@ -129,6 +152,30 @@ func TestChecklistHasCheck68(t *testing.T) {
 	}
 	if strings.Contains(guardCmds, "fugaro doctor") {
 		t.Error("Check 68's guard reads a doctor line out of the checkout: that says which installation the checkout is, and proves nothing about $P")
+	}
+	// The guard's citation for BELONG, which is what lets the operator check the
+	// hard stop rather than take it on trust: it has to name a section the
+	// checklist actually carries, and that section is the one holding the
+	// project.json read. "Check 27 above" is not it — Check 27's section
+	// contains no project.json line.
+	const belongEvidence = "Results of the fifth live run (M9a)"
+	// The guard's prose with its comment markers and line wrapping removed: a
+	// citation that wraps across two comment lines still names the section.
+	guardProse := strings.Join(strings.Fields(strings.ReplaceAll(guard, "#", " ")), " ")
+	if !strings.Contains(guardProse, belongEvidence) {
+		t.Errorf("Check 68's belong stop does not cite %q, where belong's project.json read is recorded", belongEvidence)
+	}
+	if strings.Contains(guardProse, "Check 27") {
+		t.Error("Check 68's belong stop cites Check 27 for belong's project id, and Check 27's section carries no project.json read")
+	}
+	// The evidence itself, so the citation is to something: the M9a results are
+	// where `{"gcp_project":"edge-devel-dimi","name":"belong",...}` is recorded.
+	if strings.Contains(doc, "## "+belongEvidence) {
+		if m9a := docSection(t, path, doc, "## "+belongEvidence); !strings.Contains(m9a, `"gcp_project":"edge-devel-dimi"`) {
+			t.Errorf("the section Check 68 cites for belong's project id (%q) does not carry the project.json read", belongEvidence)
+		}
+	} else {
+		t.Errorf("Check 68 cites %q, and the checklist has no such section", belongEvidence)
 	}
 	// The workdir and its backend, which is where the gate variable lives and
 	// where the plan is made. The checkout's root has neither a tfvars file nor a

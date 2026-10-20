@@ -863,6 +863,13 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 			if strings.Contains(c, "storage.googleapis.com/") && !strings.Contains(c, "projects/_/buckets/"+tf.ManagedPrefix) {
 				t.Errorf("storage clause %q does not name the reserved prefix %q", c, tf.ManagedPrefix)
 			}
+			// An extract template is the documented form — literal text around
+			// ONE placeholder — and the multi-placeholder form is what the first
+			// cut wrote and what IAM refuses. TestDeployerFenceClausesAreTheModules
+			// pins this copy to the module's own text; this reads the copy.
+			if strings.Contains(c, "extract(") && strings.Count(c, "{") != 1 {
+				t.Errorf("clause %q carries %d placeholders, and the documented extract form carries one", c, strings.Count(c, "{"))
+			}
 		}
 	}
 	// Each of the three condition variables is the one the Go side builds
@@ -2496,7 +2503,8 @@ func (s *iamScan) checkProjectGrant(r tfResource, roles map[string][]string, loc
 // role ID -> its clauses, as installation/deployer.tf writes them (the
 // local.deployer_condition_<service> the binding names) and as
 // internal/infra/tf builds them (DeployerConditionClauses, which cover_test.go
-// pins against the module). It is pinned here too, so a widening of any one
+// pins against the module). It is pinned here too — against the module's own
+// text, by TestDeployerFenceClausesAreTheModules — so a widening of any one
 // fence is a diff in this file and not only in the package that builds it.
 //
 // The split into one role per service is what makes this checkable at all: the
@@ -2504,33 +2512,104 @@ func (s *iamScan) checkProjectGrant(r tfResource, roles map[string][]string, loc
 // grants, so a storage role bound under, say, the API key's fence is a finding
 // rather than a grant read against another role's clauses. Each entry names
 // the resource type(s) its role reaches and the reserved managed prefix
-// (tf.ManagedPrefix, fmgd-); the five extract forms take the prefix as the
-// resource's own last segment, because the segment before it carries a value
-// no plan knows (a project number, a location). The account clause is the
-// module's text, interpolation and all.
+// (tf.ManagedPrefix, fmgd-); the five extract forms carry the DOCUMENTED
+// template — literal text around ONE placeholder, anchored at the collection
+// segment the resource's own name follows — because the segment before that
+// name carries a value no plan knows (a project number, a location). The
+// multi-placeholder form ("projects/{project}/secrets/{secret}") is not that
+// form: it is what the first cut wrote, IAM would refuse the expression and
+// stop the owner-run apply, and TestDeployerExtractTemplatesAreTheDocumentedForm
+// (internal/infra/tf) is what refuses it. The account clause is the module's
+// text, interpolation and all.
 var deployerFenceClauses = map[string][]string{
 	"fugaroDeployerStorage": {
 		`(resource.type == "storage.googleapis.com/Bucket" && resource.name.startsWith("projects/_/buckets/fmgd-"))`,
 		`(resource.type == "storage.googleapis.com/Object" && resource.name.startsWith("projects/_/buckets/fmgd-"))`,
 	},
 	"fugaroDeployerSecret": {
-		`(resource.type == "secretmanager.googleapis.com/Secret" && resource.name.extract("projects/{project}/secrets/{secret}").startsWith("fmgd-"))`,
+		`(resource.type == "secretmanager.googleapis.com/Secret" && resource.name.extract("/secrets/{secret}").startsWith("fmgd-"))`,
 	},
 	"fugaroDeployerAccount": {
 		`(resource.type == "iam.googleapis.com/ServiceAccount" && resource.name.startsWith("projects/${var.project}/serviceAccounts/fmgd-"))`,
 	},
 	"fugaroDeployerApiKey": {
-		`(resource.type == "apikeys.googleapis.com/Key" && resource.name.extract("projects/{project}/locations/{location}/keys/{key}").startsWith("fmgd-"))`,
+		`(resource.type == "apikeys.googleapis.com/Key" && resource.name.extract("/keys/{key}").startsWith("fmgd-"))`,
 	},
 	"fugaroDeployerRepository": {
-		`(resource.type == "artifactregistry.googleapis.com/Repository" && resource.name.extract("projects/{project}/locations/{location}/repositories/{repository}").startsWith("fmgd-"))`,
+		`(resource.type == "artifactregistry.googleapis.com/Repository" && resource.name.extract("/repositories/{repository}").startsWith("fmgd-"))`,
 	},
 	"fugaroDeployerRunJob": {
-		`(resource.type == "run.googleapis.com/Job" && resource.name.extract("projects/{project}/locations/{location}/jobs/{job}").startsWith("fmgd-"))`,
+		`(resource.type == "run.googleapis.com/Job" && resource.name.extract("/jobs/{job}").startsWith("fmgd-"))`,
 	},
 	"fugaroDeployerSchedulerJob": {
-		`(resource.type == "cloudscheduler.googleapis.com/Job" && resource.name.extract("projects/{project}/locations/{location}/jobs/{job}").startsWith("fmgd-"))`,
+		`(resource.type == "cloudscheduler.googleapis.com/Job" && resource.name.extract("/jobs/{job}").startsWith("fmgd-"))`,
 	},
+}
+
+// TestDeployerFenceClausesAreTheModules is the pin deployerFenceClauses claims,
+// and it reads the module's own text rather than internal/infra/tf's copy of
+// it: every one of the seven entries is the fence
+// deploy/terraform/gcp/modules/installation/deployer.tf writes for that role,
+// clause for clause and in order, and the map holds no role the module does not
+// condition.
+//
+// Without it six of the seven entries are data nothing compares: only
+// fugaroDeployerStorage holds a storage write, so only its entry is ever reached
+// by managedPrefixFence (the other six are not project-level write grants this
+// scan counts at all), and a fence recorded here that the module does not write
+// — the rejected multi-placeholder extract form, say — would read as a guard
+// while admitting nothing.
+func TestDeployerFenceClausesAreTheModules(t *testing.T) {
+	src, ok := moduleFiles(t)["modules/installation/deployer.tf"]
+	if !ok {
+		t.Fatal("deploy/terraform/gcp/modules/installation/deployer.tf is not among the module files")
+	}
+	// The module's locals: deployer_condition_<suffix> = join(" || ", [ ... ]),
+	// each clause an HCL string literal whose own quotes the file escapes.
+	joinRE := regexp.MustCompile(`(?s)deployer_condition_([a-z0-9_]+)\s*=\s*join\(" \|\| ", \[(.*?)\]\)`)
+	clauseRE := regexp.MustCompile(`"((?:[^"\\]|\\.)*resource\.type(?:[^"\\]|\\.)*)"`)
+	locals := map[string][]string{}
+	for _, jm := range joinRE.FindAllStringSubmatch(src, -1) {
+		var clauses []string
+		for _, c := range clauseRE.FindAllStringSubmatch(jm[2], -1) {
+			clause, err := strconv.Unquote(`"` + c[1] + `"`)
+			if err != nil {
+				t.Fatalf("unquoting the clause %q: %v", c[1], err)
+			}
+			clauses = append(clauses, clause)
+		}
+		if len(clauses) == 0 {
+			t.Errorf("deployer.tf's local deployer_condition_%s is not a join of clause literals", jm[1])
+		}
+		if _, dup := locals["deployer_condition_"+jm[1]]; dup {
+			t.Errorf("deployer.tf declares deployer_condition_%s twice", jm[1])
+		}
+		locals["deployer_condition_"+jm[1]] = clauses
+	}
+	roles := tf.DeployerServiceRoles()
+	if len(deployerFenceClauses) != len(roles) {
+		t.Errorf("this test records %d fences and the module conditions %d roles, want one fence per role", len(deployerFenceClauses), len(roles))
+	}
+	for role := range deployerFenceClauses {
+		if !slices.Contains(roles, role) {
+			t.Errorf("this test records a fence for %s, which is not one of the deployer's conditioned roles", role)
+		}
+	}
+	for _, role := range roles {
+		name := "deployer_condition_" + strings.ToLower(strings.TrimPrefix(role, "fugaroDeployer"))
+		got, ok := locals[name]
+		if !ok {
+			t.Errorf("deployer.tf has no local.%s, and this test records the fence of %s", name, role)
+			continue
+		}
+		delete(locals, name)
+		if want := deployerFenceClauses[role]; !slices.Equal(got, want) {
+			t.Errorf("deployer.tf's %s fence is\n%v\nand the fence this test records for %s is\n%v", name, got, role, want)
+		}
+	}
+	for name := range locals {
+		t.Errorf("deployer.tf declares %s, which is no conditioned deployer role's fence", name)
+	}
 }
 
 // managedPrefixFence is why a project-level grant of a write role is admitted,

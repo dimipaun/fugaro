@@ -1040,6 +1040,51 @@ func TestDeployerOperatorCountMatchesTheRecordedDefect(t *testing.T) {
 	}
 }
 
+// TestDeployerOperatorCountsAreTheDocumentedNumbers pins what each of the seven
+// redesigned conditions counts as, under the same convention as the 17 above
+// (&& and || alike): one operator for each single-clause condition — the && its
+// clause joins the type term to the name test with — and three for Cloud
+// Storage, whose two clauses carry two && and the || between them.
+//
+// This is the number Check 68's C1 step expects and the number
+// docs/design/managed-projects.md states, and they are the same number or the
+// live check measures a different expression from the one the tree writes. A
+// reader who counts the operator only when it joins two clauses reads these
+// conditions as 0 and 1, which is not the count IAM refuses on and not the count
+// deployerOperators makes.
+func TestDeployerOperatorCountsAreTheDocumentedNumbers(t *testing.T) {
+	want := map[string]int{DeployerStorageRole: 3}
+	for _, role := range DeployerServiceRoles() {
+		if _, ok := want[role]; !ok {
+			want[role] = 1
+		}
+	}
+	svcs := deployerServices(testDeployerProject)
+	if len(svcs) != len(want) {
+		t.Fatalf("the deployer has %d conditioned roles, and this test pins %d counts", len(svcs), len(want))
+	}
+	multi := 0
+	for _, s := range svcs {
+		n, ok := want[s.Role]
+		if !ok {
+			t.Errorf("%s: no operator count is pinned for this role", s.Role)
+			continue
+		}
+		if got := deployerOperators(s.Expression()); got != n {
+			t.Errorf("%s: %d logical operators in %q, want %d", s.Role, got, s.Expression(), n)
+		}
+		if len(s.Clauses) > 1 {
+			multi++
+			if s.Role != DeployerStorageRole || n != 3 {
+				t.Errorf("%s: the only condition with more than one clause is Cloud Storage's, and this test pins %d operators for %s", s.Role, n, s.Role)
+			}
+		}
+	}
+	if multi != 1 {
+		t.Errorf("%d conditions carry more than one clause, and this test expects Cloud Storage's alone: the pinned counts are for one two-clause condition and six single-clause ones", multi)
+	}
+}
+
 // deployerNameFunctions are the resource.name functions IAM supports.
 // resource.name.contains() is not one of them, and neither is any other call.
 var deployerNameFunctions = []string{"startsWith", "endsWith", "extract"}
