@@ -94,7 +94,7 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
 | Credential hygiene: `Options.Redact`, `loop.redact`/`redactAll`/`redactedCause`, `held`, `maxHeldSecrets` | `internal/initflow/loop.go`, `internal/cli/initsecrets.go` | W4.3, W0.1 |
 | `restore` invoking init as a child: `restoreInitCmd = newInitCmdWith`, and `TestRestoreSeamsAreProductionsFunctions` pinning the pointer | `internal/cli/restore.go`, `restore_test.go` | W1.2 |
 | The three goldens and the tests that own them | `TestPrintedCommandsGolden` (`internal/cli/init_output_test.go`, `-update`), `TestReviewScreenGolden` (`init_review_test.go`, `-update-review`), `TestInitRepoRetireTranscriptGolden` (`init_retire_test.go`, `-update-retire`) | W1.2, W2.1 |
-| The docs pins | `internal/cli/docs_*_test.go` (≈40), `internal/clidoc/cliref_test.go`, `internal/cli/docs_website_*_test.go`, `plugin/{readme,setup_skill,skills_lint}_test.go` | W2.3, W2.4, W2.6 |
+| The docs pins | `internal/cli/docs_*_test.go` (44 files at `82d366af`, of which **12** name the command — the glob covers `docs_website_*_test.go` too, none of whose six names it), `internal/clidoc/cliref_test.go`, `plugin/{readme,setup_skill,skills_lint}_test.go` | W2.3, W2.4, W2.6 |
 | The generated reference and its generator | `internal/clidoc/cliref.go`, `website/content/cli-reference.md` | W2.4 |
 | The dated-record precedent for a retirement | `plugin/readme_test.go`'s `TestReadmeNamesNoRetiredSkill` `skip` regex | W0.2, W2.6 |
 | The live-check register and its numbering rule | `docs/gcp-live-checklist.md` | W0.3, W6.1, W6.2 |
@@ -395,8 +395,7 @@ where each answer is built, not what is still owed.
 | `internal/cli/billing_prompt.go`, `billing_prompt_test.go` (**new** at W4.3) | W4.3 (L9), W4.4 (L10) |
 | `internal/cli/setup_refusals_test.go` (**new** at W0.1) | W0.1 (L0), W5.1 (L7) |
 | `internal/cli/docs_live_init_census_test.go` (**new** at W0.2) | W0.2 (L0), W2.6 (L5) |
-| `internal/cli/docs_*_test.go` (≈40, the docs pins) | W2.1 (L2), W2.3 (L3) |
-| `internal/cli/docs_website_*_test.go` (3) | W2.1 (L2), W2.4 (L4) |
+| `internal/cli/docs_*_test.go` (44 at `82d366af`, **12** of them naming the command) | W2.1 (L2), W2.3 (L3) |
 | `internal/initflow/stage.go` | W1.1 (L0) — D12 is a call-site answer, so nothing else writes this file |
 | `internal/e2e/init_test.go` → `update_test.go` | W2.2 (L2), W5.2 (L8) |
 | `internal/preflight/google.go` | W2.2 (L2), W4.4 (L10) |
@@ -409,7 +408,13 @@ The single-writer files are **not** in this table and are listed by their own
 task instead (`### Created` above and each task's **Files** line): the W2.3
 document sweep (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`, the live `docs/`
 guides, the skills), the W2.4 website and generated content, the W2.5 Terraform
-and schema corpus, and `internal/initflow/loop.go`/`loop_test.go` (W1.1).
+and schema corpus, and `internal/initflow/loop.go`/`loop_test.go` (W1.1). The
+six `internal/cli/docs_website_*_test.go` files sit with W2.4 for the same
+reason: **none of them names the command** (`git grep -l 'fugaro init'
+82d366af -- 'internal/cli/docs_website_*_test.go'` prints nothing), so W2.1 has
+nothing to change in them, and the three W2.4 updates are its own pins
+(`docs_website_install_test.go`, `docs_website_cliref_test.go`,
+`docs_website_security_test.go`; the other three are untouched).
 
 This table and **`### The file lanes`** are two statements of one list: a path
 in one and not the other, or a different writer set for the same path, is a
@@ -503,8 +508,7 @@ internal/cli/init_repo_target.go      W2.1 (L2) → W3.4 (L5)
 internal/cli/billing_prompt.go        W4.3 (L9) → W4.4 (L10)
 internal/cli/billing_prompt_test.go   W4.3 (L9) → W4.4 (L10)
 internal/cli/init_inputs_test.go      W3.1 (L4) → W3.2 (L5)
-internal/cli/docs_*_test.go           W2.1 (L2) → W2.3 (L3)
-internal/cli/docs_website_*_test.go   W2.1 (L2) → W2.4 (L4)
+internal/cli/docs_*_test.go           W2.1 (L2) → W2.3 (L3)   (44 files at 82d366af; the 12 naming the command)
 internal/cli/setup_refusals_test.go   W0.1 (L0) → W5.1 (L7)
 internal/cli/docs_live_init_census_test.go  W0.2 (L0) → W2.6 (L5)
 internal/initflow/stage.go            W1.1 (L0)
@@ -565,9 +569,14 @@ here, with its writers in level order, and no chain goes backwards* — and
 must agree file for file and writer for writer.** They disagreed before this
 revision: the table dropped W3.5 from `init_stages.go` and `setup.go`'s chains
 (it kept the lumped W1.2/W2.1/W5.1 row), and neither list carried
-`internal/e2e/init_test.go` (W2.2 → W5.2), `internal/cli/docs_*_test.go`
-(W2.1 → W2.3) or `internal/cli/docs_website_*_test.go` (W2.1 → W2.4), which made
-the "every file" claim false. Three consequences a reviewer should spot:
+`internal/e2e/init_test.go` (W2.2 → W5.2) or `internal/cli/docs_*_test.go`
+(W2.1 → W2.3), which made the "every file" claim false. The same revision went
+wrong in the other direction on the neighbouring glob: it listed
+`internal/cli/docs_website_*_test.go` (W2.1 → W2.4), but the six files that glob
+matches name the command **nowhere**, so W2.1 never opens them and the row is
+struck — they are W2.4's alone. A shared-file row for a file no census names is
+the same defect as a missing row, read the other way. Three consequences a
+reviewer should spot:
 **W3.2 is at L5 because W3.1 writes `init_inputs.go` at L4**, not because of an
 edge (its only edge is `← W1.3`); **W3.4 is at L5** for the same reason via
 `setup.go`; and **W2.7 has a level to itself at L11**, after the last writer of
@@ -1110,10 +1119,15 @@ not among that 42, since by construction they do not match that pattern. Every
 one included above is updated
 in this commit — **except the two sets that belong to later tasks**, and this is
 the only place the split is written down. Inside `internal/cli`, the
-`docs_*_test.go` files are W2.1's strings and W2.3's sentences (W2.4's for the
-`docs_website_*` three), so they chain `W2.1 (L2) → W2.3 (L3)` and are updated
-there; and **`internal/e2e/init_test.go`**, whose 26 `TestInitRepo*` tests are
-the closest thing to a whole-run test this repository has, is updated here for
+`docs_*_test.go` files are W2.1's strings and W2.3's sentences, so they chain
+`W2.1 (L2) → W2.3 (L3)` and are updated there — but only the **12** of the 44
+that name the command (`git grep -l -E 'fugaro init|init --repo' 82d366af --
+'internal/cli/docs_*_test.go'`); the other 32 name it nowhere and this task
+leaves them alone, the six `docs_website_*_test.go` among them (the three
+website pins that do move, `docs_website_{install,cliref,security}_test.go`, are
+W2.4's and are listed there). And **`internal/e2e/init_test.go`**, whose 26
+`TestInitRepo*` tests are the closest thing to a whole-run test this repository
+has, is updated here for
 its strings and then **renamed** by W5.2 — the lane
 `internal/e2e/init_test.go W2.2 (L2) → W5.2 (L8)` is that file's and is why
 W5.2's diff is a rename rather than a rewrite. `internal/e2e/live_budget_test.go`
@@ -1145,8 +1159,9 @@ it are `docs/releases/v*`, which the ten roots exempt),
 `plugin/skills_lint_test.go`'s `userRunsAllowed` list and its `--yes` rule,
 `internal/cli/docs_project_wide_git_test.go` (the literal "Init's prompts (step
 9) have no `--repo` to pass"), `internal/cli/docs_upgrade_test.go`,
-`internal/cli/docs_base_test.go`, and the ≈40 `docs_*_test.go` files whose
-sentences move.
+`internal/cli/docs_base_test.go`, and the **12** `docs_*_test.go` files whose
+sentences move — of the 44 that glob matches, the ones that name the command
+(`git grep -l -E 'fugaro init|init --repo' 82d366af -- 'internal/cli/docs_*_test.go'`).
 **What changes beyond the word (F17, D8).** The README's two steps stay two
 steps, with step 1 now `` `fugaro setup` ``; `docs/gcp-setup.md`'s title and
 short path follow; the skill keeps its name and its order (it runs **after** the

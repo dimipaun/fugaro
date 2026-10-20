@@ -471,7 +471,7 @@ the checklist:
 | `internal/cli/docs_website_install_test.go` | `website/data/install.yaml` read as bytes and held to the file each entry's `source:` names: every command appears verbatim in it — **containment, not a byte comparison** |
 | `internal/clidoc/cliref_test.go` — `TestCliReferenceIsCurrent`, … | `website/content/cli-reference.md` is `go run ./internal/clidoc`'s output |
 | `internal/cli/docs_website_cliref_test.go` — `TestCliReferenceNamesEveryCommandAndFlag`, `TestCliReferenceInventsNothing` | the reference matches the cobra tree in **both** directions |
-| `internal/cli/docs_*_test.go` (≈40 files) | each holds sentences and check numbers in `docs/gcp-setup.md`, `docs/gcp-live-checklist.md`, the design docs |
+| `internal/cli/docs_*_test.go` (**44** files at `82d366af` — `git ls-tree --name-only 82d366af internal/cli/ \| grep -cE 'docs_.*_test\.go$'` — of which **12** name the command, `git grep -l -E 'fugaro init\|init --repo' 82d366af -- 'internal/cli/docs_*_test.go'`) | each holds sentences and check numbers in `docs/gcp-setup.md`, `docs/gcp-live-checklist.md`, the design docs; the glob also covers the six `docs_website_*_test.go` files, and **none** of those names the command, so the 12 — not the 44 — are the rename's to move |
 | `internal/config/example.go`'s `exampleProjectLines` | `internal/config/example.yaml`, validated by `validate_test.go` and `docs_project_layer_test.go` |
 | `schemas/fugaro.schema.json` | a `description` naming `fugaro init`, "never guessed from the project name" |
 | 29 `deploy/terraform/**/*.tf` files (of 58 in the tree) | 15 `description` lines naming the command, shown in `terraform plan`; 8 `error_message`s; the rest comments |
