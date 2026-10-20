@@ -62,7 +62,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findAll, parse, textOf, walk } from './lib/html.mjs'
+import { findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -1464,6 +1464,54 @@ test('the watch screenshot is in the slot the "See it" panel marks, named, sized
     pictures,
     ['/logo.png', '/images/fugaro-watch.png'],
     `the homepage renders the pictures ${JSON.stringify(pictures)}, and it renders two: the wordmark beside the site's name, and the owner's \`fugaro watch\` screenshot (owner spec 2026-10-18, item 5)`,
+  )
+})
+
+test('the design record quotes the caption the site ships', () => {
+  // The record tells a reader what the "See it" panel's caption says, and it quotes the
+  // sentence to do it. A quote rots the moment the caption is rewritten, and this one has
+  // outlived a caption already: it quoted the chat's, and the owner's approved draft of
+  // 2026-10-19 ("Home, draft 2 (slider)") moved the picture and its caption into the slider's
+  // third panel and deleted the component the record still pointed at. The record is a
+  // description of this branch's artifact (P9, D102), so what it quotes of the artifact is
+  // held to the artifact here, in the file that already holds the caption to its shape.
+  const page = builtPage('')
+  const caption = classText(page, 'watch-note')
+  assert.ok(caption, 'the "See it" panel carries no caption under its command, so there is nothing for the design record to quote (the owner\'s approved draft of 2026-10-19)')
+  const record = repoFile('docs/website/redesign/README.md')
+  assert.ok(
+    normalize(record).includes(normalize(caption)),
+    `docs/website/redesign/README.md does not quote the caption the built page ships. The page says ${JSON.stringify(caption)}; the record's account of the caption quotes a sentence that is not on the site. The record describes the site this branch builds, so the sentence it quotes moves with the caption (P9, D102; Global Constraint 6)`,
+  )
+
+  // And where the record says the picture is, which is a pointer at the tree and rots the same
+  // way a quote does: the record's section on the capture named
+  // `website/src/components/AgentChat.astro` while that component rendered the slot, and the
+  // draft of 2026-10-19 moved the slot into the slider's third panel and deleted the file. So
+  // every component path the section points at has to be a component this tree has, and the one
+  // that renders the slot has to be among them — read from the tree rather than from the record.
+  const renders = filesUnder(path.join(SITE, 'src/components'))
+    .filter((file) => readFileSync(path.join(SITE, 'src/components', file), 'utf8').includes('data-slot="watch-screenshot"'))
+  assert.deepEqual(
+    renders,
+    ['HomeSlider.astro'],
+    `the watch screenshot's slot is rendered by ${JSON.stringify(renders)}, and the record's account of where the picture is is read against that component (P9; the owner's approved draft of 2026-10-19)`,
+  )
+  const where = section('docs/website/redesign/README.md', 'The fugaro watch screenshot (owner spec of 2026-10-18, item 5)')
+  const pointers = [...new Set([...where.matchAll(/website\/src\/components\/([\w.-]+\.astro)/g)].map((m) => m[1]))]
+  assert.ok(
+    pointers.length > 0,
+    `docs/website/redesign/README.md's section on the capture names no component of website/src/components, and the record has to say where the picture is: the picture is in the slot ${renders[0]} renders (P9; the owner's approved draft of 2026-10-19)`,
+  )
+  for (const component of pointers) {
+    assert.ok(
+      existsSync(path.join(SITE, 'src/components', component)),
+      `docs/website/redesign/README.md's section on the capture points at website/src/components/${component}, and this tree has no such component: the record describes the site this branch builds, so its pointers move with the tree (P9; the owner's approved draft of 2026-10-19)`,
+    )
+  }
+  assert.ok(
+    pointers.includes(renders[0]),
+    `docs/website/redesign/README.md's section on the capture names ${JSON.stringify(pointers)} and not ${renders[0]}, the component that renders the watch screenshot's slot: the record's account of where the picture is is a pointer at the tree (P9; the owner's approved draft of 2026-10-19)`,
   )
 })
 
