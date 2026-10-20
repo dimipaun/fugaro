@@ -3646,6 +3646,16 @@ func TestModelSecretEnvsMatchTheCredentialsService(t *testing.T) {
 		t.Errorf("%s: model_secret_env_prefix = %v, config.ProviderKeyEnvPrefix = %q", path, p, config.ProviderKeyEnvPrefix)
 	}
 
+	// And the drop itself, clause by clause: an env is a model credential
+	// exactly when it is one of the names OR it carries the provider-key
+	// prefix. Pinning the whole expression is the point — the two halves are
+	// what the review's mutation m1 removed, and with the prefix clause gone
+	// every FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is the
+	// one thing the opt-in exists to take away.
+	if !strings.Contains(squash(code), "env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix)") {
+		t.Errorf("%s: is_model_secret_env must be `contains(model_secret_env_names, env) || startswith(env, model_secret_env_prefix)`; either clause alone leaves a model credential's accessor with the job (review m1):\n%s", path, code)
+	}
+
 	// The drop is gated on the opt-in, in the same expression that reads the
 	// names: with credentials_service null the set is the workflow's own
 	// secret_env and nothing changes (D147).

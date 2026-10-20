@@ -1506,6 +1506,71 @@ run "credentials_service_on_job" {
   }
 }
 
+# The same opt-in with the OTHER model credentials mounted: the Anthropic API
+# key and a provider key (independent security review of the implementation,
+# m1). The run above mounts only the OAuth token, so the drop's second clause —
+# the FUGARO_PROVIDER_KEY_* prefix — was exercised by nothing: deleting it from
+# is_model_secret_env left every Go test and every terraform test green, and a
+# provider key would have kept the job's accessor on an installation that opted
+# in precisely to take it away. Here the workflow mounts both, and the
+# assertion is that neither survives while the workflow's own secret does.
+run "credentials_service_on_provider_keys" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    name           = "web"
+    repo_label     = var.bitbucket.repo.label
+    workflow = merge(var.bitbucket.repo.workflows.web, {
+      secret_env = merge(var.bitbucket.repo.workflows.web.secret_env, {
+        ANTHROPIC_API_KEY          = "anthropic-api-key"
+        FUGARO_PROVIDER_KEY_OPENAI = "openai-api-key"
+      })
+    })
+    secrets = merge(var.bitbucket.repo.secrets, {
+      anthropic-api-key = "fugaro-acme-sandbox-anthropic-api-key-3c1f0a9e6b7d2458"
+      openai-api-key    = "fugaro-acme-sandbox-openai-api-key-7d4b2e8c5a1f9036"
+    })
+    runs_bucket         = var.bitbucket.installation.runs_bucket
+    job_runner_role     = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      bitbucket-token = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe   = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "the ANTHROPIC_API_KEY mount and the FUGARO_PROVIDER_KEY_* mount are both model credentials, so with the service on the job account holds no accessor on either — only the workflow's own non-model secrets survive"
+  }
+  assert {
+    condition = alltrue([for k, m in google_secret_manager_secret_iam_member.job :
+      m.secret_id != "fugaro-acme-sandbox-anthropic-api-key-3c1f0a9e6b7d2458" &&
+    m.secret_id != "fugaro-acme-sandbox-openai-api-key-7d4b2e8c5a1f9036"])
+    error_message = "neither the api key's container nor the provider key's is in the job's accessor set, whatever key the map is indexed by: the drop is per mount and never per name"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
+    error_message = "the job account still gains its one invoker grant on the service in this shape too"
+  }
+}
+
 # The same workflow with the opt-in OFF, which is every installation until
 # C1.20 lands: the job account keeps accessor on every secret it mounts — the
 # model credential included — and no service exists to invoke (D147).
