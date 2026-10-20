@@ -9,22 +9,23 @@ import (
 // (config.AuthCascade, plan Task C1.1), and the sweep that updated the code's
 // copies of the list left prose copies behind — the credentials bundle's own
 // reconciliation, whose §1.2 declared the list "three values, not four"; the
-// README's fugaro.yaml example; the setup skill's decisions; and the CLI's own
-// printed template (internal/config/example.yaml). Each is a place a reader
-// meets the list, and each contradicted the validator after this branch: a
-// reader following them would not know the value exists at all, or would read
-// the document that wins over spec.md and believe a cascade file is refused.
+// README's fugaro.yaml example; the setup skill's decisions and its reference's
+// §2 table; and the CLI's own printed template (internal/config/example.yaml).
+// Each is a place a reader meets the list, and each contradicted the validator
+// after this branch: a reader following them would not know the value exists at
+// all, or would read the document that wins over spec.md and believe a cascade
+// file is refused.
 //
 // The list is read from config.AgentAuths (internal/config/defaults.go) — the
 // one list the validator, the layer's own defaults.agent.auth key and the
 // launcher's check of a run's spec all read — rather than spelled out here, so
-// a fifth value fails this test in all four documents at once rather than
+// a fifth value fails this test in all five documents at once rather than
 // leaving them to be found by eye.
 //
 // Mutation (run, restored): drop "cascade" from README.md's auth comment, from
-// the setup skill's decision line, from internal/config/example.yaml's comment,
-// or restore §1.2's "has three values, not four" heading — each fails, naming
-// the document it reads.
+// the setup skill's decision line, from the reference's §2 table, from
+// internal/config/example.yaml's comment, or restore §1.2's "has three values,
+// not four" heading — each fails, naming the document it reads.
 func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 	auths := quoted(sourceValues(t, "internal/config/defaults.go", readDoc(t, "internal/config/defaults.go"),
 		`AgentAuths = \[\]string\{([^}]*)\}`)[0])
@@ -102,6 +103,42 @@ func TestDocsCredentialsAuthListNamesCascade(t *testing.T) {
 		t.Fatal("internal/config/example.yaml carries no `auth: vertex` comment line: the template moved and this scan no longer reads it")
 	}
 	namesEveryAuth(t, "internal/config/example.yaml's agent.auth comment", templateLine, auths)
+
+	// 5. The setup skill's reference on the decision — §2's own table, which is
+	// the one place the per-value facts (which secret exists, whether a gateway
+	// and its caps apply) are stated, and the place SKILL.md's decision line
+	// sends the agent to ("this reference" for each topic's options and what to
+	// recommend). A value missing from the table is a value the agent has no
+	// facts for, and the one it would silently drop when the user's evidence
+	// points at cascade.
+	reference := readDoc(t, "plugin/skills/setup/reference/decisions.md")
+	var table []string
+	inTable := false
+	for _, line := range strings.Split(reference, "\n") {
+		if strings.HasPrefix(line, "## 2. `agent.auth`") {
+			inTable = true
+			continue
+		}
+		if !inTable {
+			continue
+		}
+		if !strings.HasPrefix(line, "|") {
+			if len(table) > 0 {
+				break
+			}
+			continue
+		}
+		table = append(table, line)
+	}
+	if len(table) == 0 {
+		t.Fatal("plugin/skills/setup/reference/decisions.md carries no table under §2: the table moved and this scan no longer reads it")
+	}
+	rows := strings.Join(table, "\n")
+	for _, auth := range auths {
+		if !strings.Contains(rows, "| `"+auth+"` |") {
+			t.Errorf("plugin/skills/setup/reference/decisions.md's §2 table has no row for %q (config.AgentAuths): a value the skill offers without its facts", auth)
+		}
+	}
 }
 
 // namesEveryAuth requires text to carry every value of the auth list. It is a
