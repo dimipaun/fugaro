@@ -17,13 +17,15 @@
 | Block | State |
 |---|---|
 | **D1–D12** | this work's decisions, all written and **all open** |
-| **Check 27** | rewritten in place: same number, same **NOT RUN**; the command lines and flags are renamed and the wizard's sequence goes in front, while every probe the check already carries — the four Claude Code spikes, the mirror against the real registries, `doctor`/`update-skills`, the teammate's adopt run, `/fugaro:setup`, the hostile-clone gate and the prompt-injection probe — is **kept**, because no other check in the register names any of them |
+| **Check 27** | rewritten in place: same number; the command lines and flags are renamed and the wizard's sequence goes in front, while every probe the check already carries — the four Claude Code spikes, the mirror against the real registries, `doctor`/`update-skills`, the teammate's adopt run, `/fugaro:setup`, the hostile-clone gate and the prompt-injection probe — is **kept**, because no other check in the register names any of them. Its status is the register's own contradiction (F22): the section says **NOT RUN** *and* carries the seventh live run's PASS/VERIFIED results, so the rewrite keeps that run as the record of what the old commands proved and re-runs the renamed steps |
 | **Check 111** | new: the billing picker's five failure modes (API disabled, no permission, no TTY, `--json`, an agent session) |
 | **110** | claimed by an open pull request; the register's rule is that whichever of two open claims merges second renumbers itself, so this plan takes **111** |
 
 A reserved number is never reused and never renumbered. Check 27 keeps its
-number because its subject moved rather than disappeared, and it stays **NOT
-RUN** until the owner runs it.
+number because its subject moved rather than disappeared. Its **rewritten**
+steps are unrun until the owner runs them — the run recorded under the section
+was against the commands this work renames (F22) — and W0.3, which rewrites the
+section, is where that and the section's "NOT RUN" line are made to agree.
 
 ## Related
 

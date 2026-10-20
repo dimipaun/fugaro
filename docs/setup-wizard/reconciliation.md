@@ -88,8 +88,8 @@ docs/gcp-live-checklist.md`) and 113 in `docs/gcp-setup.md` (`grep -c`). Plus 29
 Terraform files that name the command (see §4 for what kind of line each
 mention is), and
 `website/content/cli-reference.md` (generated) and `website/data/install.yaml`
-(pinned byte-for-byte). See F20 for where the line between "rename" and "leave
-alone" has to be drawn.
+(held to its `source:` files by a docs pin). See F20 for where the line between
+"rename" and "leave alone" has to be drawn.
 
 ---
 
@@ -385,8 +385,11 @@ name collision — `fugaro setup` (CLI) and `/fugaro:setup` (skill) — and see 
 ### F18 — The website prints the old sequence · **Gap**
 
 `website/data/install.yaml`'s `plugin` path lists three commands — `fugaro
-init`, `/fugaro:setup`, `fugaro upgrade --local` — and is pinned byte-for-byte
-by `internal/cli/docs_website_install_test.go`. `website/src/pages/getting-
+init`, `/fugaro:setup`, `fugaro upgrade --local` — and
+`internal/cli/docs_website_install_test.go` holds it to the repository: the test
+reads the file **as bytes** but asserts **containment**, not a byte comparison —
+every command in it must appear verbatim in the file its `source:` names (plus
+`build`/archive/Homebrew/platform checks). `website/src/pages/getting-
 started.astro` is hand-kept, not generated: its `#setup` block is a seven-step
 `<ol>`, it reads `const [initCommand, setupCommand] = pluginPath.commands`, and
 its anchor fragment `the-short-path-fugaro-init-then-fugarosetup` appears twice
@@ -442,7 +445,7 @@ the checklist:
 | `plugin/skills_lint_test.go` — nine tests | `userRunsAllowed` (contains `"fugaro init"`), `--yes` never near init, owner commands however written |
 | `internal/cli/docs_project_wide_git_test.go` | the literal "Init's prompts (step 9) have no `--repo` to pass" in the skill and its `reference/decisions.md` |
 | `internal/cli/docs_upgrade_test.go` | `fugaro upgrade` and its flags named in README, `docs/gcp-setup.md`, `docs/release.md`, `.claude/skills/new-release/SKILL.md`, `docs/design/v1.md`; the literal sentence "`/fugaro:upgrade` does the local half and hands you the rest"; `brew upgrade dimipaun/tap/fugaro && fugaro upgrade` in three files |
-| `internal/cli/docs_website_install_test.go` | `website/data/install.yaml` byte-for-byte |
+| `internal/cli/docs_website_install_test.go` | `website/data/install.yaml` read as bytes and held to the file each entry's `source:` names: every command appears verbatim in it — **containment, not a byte comparison** |
 | `internal/clidoc/cliref_test.go` — `TestCliReferenceIsCurrent`, … | `website/content/cli-reference.md` is `go run ./internal/clidoc`'s output |
 | `internal/cli/docs_website_cliref_test.go` — `TestCliReferenceNamesEveryCommandAndFlag`, `TestCliReferenceInventsNothing` | the reference matches the cobra tree in **both** directions |
 | `internal/cli/docs_*_test.go` (≈40 files) | each holds sentences and check numbers in `docs/gcp-setup.md`, `docs/gcp-live-checklist.md`, the design docs |
@@ -480,17 +483,32 @@ resolving.
 ### F22 — Check 27 is written for the path this work moves · **Gap**
 
 `docs/gcp-live-checklist.md`'s **Check 27** is M11's simple setup on a throwaway
-project, marked NOT RUN, and it covers the never-exercised `--create-project` /
-`--link-billing` path. The register's written sections run to **89** (81, 82 and
+project, and it covers the `--create-project` / `--link-billing` path. **The
+register states its status twice and the two statements disagree.** Its row, its
+heading and its prose say **NOT RUN** ("No step below has been run; nothing here
+is a claim that it works"), while the same section carries "### Results of the
+seventh live run (M11, check 27)" — run 2026-10-04 and 2026-10-05 by the
+maintainer with the `0.2.0` release binary and Claude Code 2.1.289, on the
+throwaway project `fugaro-live-20261005` — which records PASS or VERIFIED for
+the typed `--create-project` / `--link-billing` confirmations, the clean converge
+and its `No changes` rerun, the mirror from ghcr.io to Artifact Registry, the
+hidden secret prompts, the hostile-clone gate, `doctor`, the teammate's adopt
+run, `/fugaro:setup` and the prompt-injection probe. The row itself calls the
+four Claude Code spikes "all verified live 2026-10-04". This work does not try to
+settle which statement the owner means; it records both, and it stops asserting
+the stronger one. The register's written sections run to **89** (81, 82 and
 89 are written; 80–89 are the mobile block), and 110 is claimed by an open pull
 request — the register's rule is that whichever of two open claims merges second
 renumbers itself. **111 is therefore the next free number.**
 
 **Consequence.** Check 27 must be rewritten for `fugaro setup` (its steps name
-flags that are about to change under it), and the billing picker needs live
-coverage of its own — the one part of this work that cannot be proven with
-fakes, because its whole subject is what the Cloud Billing API answers for a
-real user. See D10.
+flags that are about to change under it), and the rewrite must carry forward what
+the recorded run proved rather than promising coverage afresh: the steps that
+name `fugaro setup` and `fugaro update` are the ones **no one has run**, and the
+run under the section was against the commands this work renames. The billing
+picker also needs live coverage of its own — the one part of this work that
+cannot be proven with fakes, because its whole subject is what the Cloud Billing
+API answers for a real user. See D10.
 
 ### F23 — `--json` and the docs test resolve flags by name · **Rule**
 
@@ -792,10 +810,13 @@ a diff nobody can review.
 ### D10 — Check 27, and the number for the picker
 
 **Recommend: rewrite Check 27 in place for `fugaro setup`, and take 111 for the
-billing picker.** Check 27 is NOT RUN and was written for a path (`fugaro init
+billing picker.** Check 27 was written for a path (`fugaro init
 --create-project --link-billing`) that this work renames and re-fronts, so its
-steps are stale text rather than a test anyone has performed; keeping the number
-avoids churning the register. Its rewritten form must cover: the wizard from an
+command lines are stale text; keeping the number avoids churning the register.
+Its status is the register's own contradiction (F22): the section says NOT RUN
+and carries a PASS/VERIFIED run of that very path, so the honest reason to re-run
+it is that **the rewritten steps** are the ones no one has performed, not that
+nobody ever walked the path. Its rewritten form must cover: the wizard from an
 empty shell, the default id `fugaro-<name>` accepted by Enter, the typed project
 creation, the **billing picker against a real account** (does the Cloud Billing
 API answer, does gcloud fall back correctly, does an account with no permission
@@ -821,7 +842,11 @@ something stays.
 **Check 111** covers the picker's failure modes only: API disabled on the quota
 project, a user with no `billing.accounts.list`, no TTY, `--json`, and an agent
 session — each asserting the guided fallback and that nothing was enabled.
-Both are owner-run, sandbox only, and stay NOT RUN until the owner runs them.
+Both are owner-run and sandbox only. Check 111 is new, so nothing in it has been
+run. Check 27's **rewritten** steps are unrun — and so is its current text's, in
+the sense that matters: the run recorded under the section was against the
+commands this work renames (F22). W0.3 is where the section's two status
+statements are reconciled, because it is the task that rewrites the section.
 
 *Alternative:* one new check and retire 27. Cost: a register with a hole in it.
 
