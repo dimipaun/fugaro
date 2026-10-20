@@ -99,7 +99,7 @@ It keeps a little state in $FAKE_GCLOUD_STATE -- whether the service and the
 repository exist -- so the guard, the baseline, the deploy and the Restore see
 a project that changes the way a real one would. It never talks to anything.
 """
-import os, sys
+import os, sys, time
 
 STATE = os.environ["FAKE_GCLOUD_STATE"]
 LOG = os.environ["FAKE_LOG_DIR"]
@@ -153,8 +153,15 @@ def listfails(kind):
 LIST_FAILED = "ERROR: There was a problem refreshing your current auth tokens: the fake gcloud was told to fail this list\n"
 
 
+# FAKE_GCLOUD_HANG_ON names one call that touches its state and THEN hangs, the
+# way a real create/deploy does: the resource is there while the command is
+# still running. It is what lets the test look at the ownership records on disk
+# while a create is in flight -- the one moment that says whether a record is
+# written BEFORE the thing it records.
+HANG_ON = os.environ.get("FAKE_GCLOUD_HANG_ON", "")
+HANG_SECONDS = 8
+
 if mode == "hang":
-    import time
     time.sleep(600)
 
 if args[:2] == ["run", "services"] and args[2:3] == ["describe"]:
@@ -185,15 +192,25 @@ if args[:2] == ["run", "services"] and args[2:3] == ["update"]:
     sys.exit(0)
 
 if args[:2] == ["run", "deploy"]:
+    if os.environ.get("FAKE_GCLOUD_DEPLOY_FAILS") == "yes":
+        sys.stderr.write("ERROR: (gcloud.run.deploy) the fake gcloud was told to fail this deploy\n")
+        sys.exit(1)
     touch("service")
     print("Deploying container to Cloud Run service [fugaro-chk91]... done.")
+    if HANG_ON == "deploy":
+        time.sleep(HANG_SECONDS)
     sys.exit(0)
 
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["describe"]:
     sys.exit(0 if (state("repo") or os.environ.get("FAKE_GCLOUD_REPO_EXISTS") == "yes") else 1)
 
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["create"]:
+    if os.environ.get("FAKE_GCLOUD_CREATE_FAILS") == "yes":
+        sys.stderr.write("ERROR: (gcloud.artifacts.repositories.create) the fake gcloud was told to fail this create\n")
+        sys.exit(1)
     touch("repo")
+    if HANG_ON == "repo-create":
+        time.sleep(HANG_SECONDS)
     sys.exit(0)
 
 if args[:2] == ["artifacts", "repositories"] and args[2:3] == ["delete"]:
@@ -229,8 +246,37 @@ if args[:2] == ["artifacts", "docker"] and args[2:3] == ["images"]:
 
 if args[:1] == ["builds"]:
     touch("image")
+    # The build uploads the source as a tar into the staging bucket before it
+    # runs, so an object is there from that moment on: that is what the
+    # Restore's staged-source removal has to clean up.
+    touch("staged")
     print("BUILD SUCCESS")
     sys.exit(0)
+
+if args[:1] == ["storage"]:
+    op = args[1] if len(args) > 1 else ""
+    target = args[-1]
+    if op == "ls" and target.rstrip("/") == "gs://fugaro-dev_cloudbuild":
+        # The installation's own staging bucket, which this check never creates:
+        # the probe decides whether the build can be given a prefix of its own.
+        if os.environ.get("FAKE_GCLOUD_NO_STAGING_BUCKET") == "yes":
+            sys.stderr.write("ERROR: One or more URLs matched no objects.\n")
+            sys.exit(1)
+        print("gs://fugaro-dev_cloudbuild/source/")
+        sys.exit(0)
+    if op == "ls":
+        if state("staged"):
+            print(target + "chk91-source.tar.gz")
+            sys.exit(0)
+        # What the real CLI does for a prefix with nothing under it: a non-zero
+        # exit and this line on stderr. The script reads the MESSAGE, not the
+        # status, to tell "gone" from "could not be read".
+        sys.stderr.write("ERROR: One or more URLs matched no objects.\n")
+        sys.exit(1)
+    if op == "rm":
+        rm("staged")
+        sys.exit(0)
+    sys.exit(1)
 
 if args[:2] == ["auth", "print-identity-token"]:
     print("FAKE-IDENTITY-TOKEN-FOR-TESTS-NOT-A-CREDENTIAL")
@@ -300,7 +346,23 @@ def has(name):
 out = flag("-o")
 fmt = flag("-w")
 headers = [args[i + 1] for i, a in enumerate(args) if a == "-H"]
-authed = any(h.lower().startswith("authorization:") for h in headers)
+# The credential arrives in an 0600 curl config file, named with --config: a
+# token on a command line is visible in `ps` to every user on the machine for
+# as long as the process lives, and the hour-long stream would hold it there
+# for an hour. The mode is written into the log so the test can assert the file
+# really is 0600 as well as out of argv.
+conf = flag("--config")
+conf_text = ""
+if conf:
+    try:
+        conf_text = open(conf).read()
+        with open(os.path.join(LOG, "curl.calls"), "a") as fh:
+            fh.write("curl config %s mode=%04o\n" % (conf, os.stat(conf).st_mode & 0o777))
+    except OSError as exc:
+        with open(os.path.join(LOG, "curl.calls"), "a") as fh:
+            fh.write("curl config %s unreadable: %s\n" % (conf, exc))
+authed = any(h.lower().startswith("authorization:") for h in headers) \
+    or "authorization:" in conf_text.lower()
 url = [a for a in args if not a.startswith("-")][-1]
 method = flag("-X", "GET")
 data = flag("--data-binary", "")
@@ -378,10 +440,12 @@ if path.startswith("/sse"):
     body = "".join(streamed)
     if fmt:
         emit()
-    # `timeout` mode ends the way a real curl does: 28 when its own --max-time
-    # cut the probe, 18 when the front end cut the stream mid-body.
+    # `timeout` mode ends the way a real curl does: the probe is cut by this
+    # check's own --max-time (28), the long stream is cut by the FRONT END (18)
+    # however long the cap above it is. The two are told apart by the -w format
+    # only the long stream carries.
     if mode == "timeout":
-        sys.exit(28 if "--max-time" in args else 18)
+        sys.exit(18 if fmt else 28)
     sys.exit(0)
 
 # GET / -- liveness, and the started= value that makes a cold start checkable.
@@ -425,6 +489,38 @@ run91() { # dir extra-env...
   out=$(cat "$dir/out")
   err=$(cat "$dir/err")
   scratch=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+}
+
+# start91: the same run as run91, but in the BACKGROUND, for the two tests that
+# have to look at a run while it is in the middle of something (the ownership
+# record and the interrupt). start_pid is the script's own pid.
+start91() { # dir extra-env...
+  local dir=$1
+  shift
+  mkdir -p "$dir/state" "$dir/logs"
+  : >"$dir/logs/gcloud.calls"
+  : >"$dir/logs/fugaro.calls"
+  : >"$dir/logs/curl.calls"
+  env \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" FAKE_CURL_STATE="$dir/state" \
+    CHECK91_IDLE_SECONDS=0 CHECK91_PROBE_SECONDS=3 \
+    CHECK91_BODY_SIZES="1048576 2097152" \
+    ${1+"$@"} \
+    bash "$script" >"$dir/out" 2>"$dir/err" &
+  start_pid=$!
+}
+
+# wait_for FILE PATTERN TRIES: up to TRIES fifths of a second for PATTERN to
+# appear in FILE.
+wait_for() {
+  local tries=0
+  while [ "$tries" -lt "$3" ]; do
+    grep -q "$2" "$1" 2>/dev/null && return 0
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+  return 1
 }
 
 prepare() { # dir
@@ -630,13 +726,195 @@ test_liveness_probe_failure_is_recorded() {
   expect_contains "$out" "END (exit 1)" "liveness refusal: the block still comes back"
 }
 
+# The HTTP/2 capability is settled FIRST, before anything is created or spent:
+# the body table's second row is meaningless without it, and finding that out
+# after the 35-minute cold-start wait and the hour-long stream would waste both.
 test_no_http2_curl() {
   local dir=$work/nohttp2
   prepare "$dir"
   run91 "$dir" FAKE_CURL_MODE=no-http2
   expect_status "$status" 1 "no HTTP/2 curl"
   expect_contains "$err" "this curl has no HTTP/2 support" "no HTTP/2 curl: the stop"
-  expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk91" "no HTTP/2 curl: still restored"
+  expect_contains "$out" "FACT curl-http2: FAIL" "no HTTP/2 curl: the fact"
+  # ... and it is decided before anything was made: no repository, no build, no
+  # deploy, so there is nothing for the Restore to delete and nothing spent.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "repositories create" "no HTTP/2 curl: no repository created"
+  expect_absent "$calls" "builds submit" "no HTTP/2 curl: nothing built"
+  expect_absent "$calls" "run deploy" "no HTTP/2 curl: nothing deployed"
+  expect_contains "$out" "FACT restore: PASS — nothing of this check's was created" \
+    "no HTTP/2 curl: there was nothing to delete"
+  if [ -d "$scratch" ]; then fail "no HTTP/2 curl: the scratch directory survived"; fi
+}
+
+# The staged source is this check's litter in the installation's bucket, and the
+# Restore removes it: the build uploads the scratch directory as a tar before it
+# runs, and a check that left that tar behind would be leaving something of its
+# own in a bucket it does not own.
+test_staged_source_is_removed() {
+  local dir=$work/staged
+  prepare "$dir"
+  run91 "$dir"
+  expect_status "$status" 0 "staged source: the run"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "builds submit --project=fugaro-dev --tag=us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk91/fugaro-chk91:chk91 --gcs-source-staging-dir=gs://fugaro-dev_cloudbuild/chk91-source/" \
+    "staged source: the build is given a per-run staging prefix"
+  expect_contains "$calls" "storage rm -r gs://fugaro-dev_cloudbuild/chk91-source/" \
+    "staged source: the prefix is removed by the Restore"
+  expect_contains "$out" "FACT restore-staged-source: PASS" "staged source: the fact"
+  if [ -f "$dir/state/staged" ]; then fail "staged source: the fake bucket still holds this run's source"; fi
+}
+
+# The installation's staging bucket may not be readable here (it is not this
+# check's, and it is not created by it). Then the build uses gcloud's default
+# staging directory, the fact says so out loud, and the Restore does not try to
+# delete a prefix that was never used.
+test_unreadable_staging_bucket_falls_back_and_says_so() {
+  local dir=$work/nobucket
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_NO_STAGING_BUCKET=yes
+  expect_status "$status" 0 "unreadable staging bucket: the run"
+  expect_contains "$out" "FACT build-staging: INFO" "unreadable staging bucket: the fallback is recorded"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "--gcs-source-staging-dir" \
+    "unreadable staging bucket: no staging prefix is passed"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage rm" "unreadable staging bucket: nothing is deleted from a bucket this run did not write to"
+  expect_contains "$out" "FACT restore-staged-source: INFO" "unreadable staging bucket: the Restore says there is no prefix of its own"
+}
+
+# A token on a command line is a token in `ps`: every user on the machine sees
+# a process's argv for as long as it lives, and the hour-long stream would hold
+# one there for an hour. The requests carry it in an 0600 curl config file
+# instead, and this is the assertion that keeps it that way -- the fake gcloud
+# and the fake curl both log the argv they were handed.
+test_identity_token_is_never_on_a_command_line() {
+  local dir=$work/token
+  prepare "$dir"
+  run91 "$dir"
+  expect_status "$status" 0 "identity token: the run"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls" "$dir/logs/curl.calls" "$dir/logs/fugaro.calls")
+  expect_absent "$calls" "FAKE-IDENTITY-TOKEN" "identity token: it appears in no command line at all"
+  expect_absent "$(cat "$dir/out" "$dir/err")" "FAKE-IDENTITY-TOKEN" "identity token: it is printed nowhere"
+  expect_contains "$(cat "$dir/logs/curl.calls")" "--config " "identity token: the request names a config file"
+  expect_contains "$(cat "$dir/logs/curl.calls")" "mode=0600" "identity token: the file it is in is 0600"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "Bearer" "identity token: no -H header carries it"
+}
+
+# The ownership records are written BEFORE the create they record, so a run that
+# dies in between -- Ctrl-C, a kill, a dropped connection -- still leaves the
+# Restore something that says the resource is this check's. The fake gcloud
+# touches its state and THEN hangs, so the test can look at the scratch
+# directory while the create is still in flight: with the record written after
+# the create, a run killed at this moment would leave a repository or a service
+# behind with nothing claiming it.
+test_ownership_record_precedes_the_create() {
+  local spec dir hang logpat record
+  for spec in "repo-create:repositories create:repo-mine" "deploy:run deploy:service-mine"; do
+    hang=${spec%%:*}
+    logpat=${spec#*:}
+    record=${logpat#*:}
+    logpat=${logpat%%:*}
+    dir=$work/order-$hang
+    prepare "$dir"
+    start91 "$dir" FAKE_GCLOUD_HANG_ON="$hang"
+    local pid=$start_pid
+    if ! wait_for "$dir/logs/gcloud.calls" "$logpat" 150; then
+      fail "record order ($hang): the run never reached '$logpat'"
+      wait "$pid" || true
+      continue
+    fi
+    local sc
+    sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+    if [ -z "$sc" ]; then
+      fail "record order ($hang): the run never announced its scratch directory"
+    elif [ -f "$sc/$record" ]; then
+      : # the record is on disk while the command that creates the thing is still running
+    else
+      fail "record order ($hang): $record is not on disk while '$logpat' is still running, so a run killed at this moment would leave the resource to be billed with nothing saying it is this check's"
+    fi
+    wait "$pid" || true
+    case "$sc" in "" | /) ;; *) rm -rf "$sc" 2>/dev/null || true ;; esac
+  done
+}
+
+# The other half of the same rule: a create that FAILED and really made nothing
+# takes its record back, so the Restore does not name -- and certainly does not
+# delete -- a resource that is not there.
+test_failed_create_takes_its_record_back() {
+  local dir=$work/createfail
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_CREATE_FAILS=yes
+  expect_status "$status" 1 "failed create: the verdict"
+  expect_contains "$err" "the repository create failed and fugaro-chk91 is not there" "failed create: the stop"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "repositories delete" \
+    "failed create: the Restore does not delete a repository this run never made"
+  expect_contains "$out" "FACT restore: PASS — nothing of this check's was created" \
+    "failed create: there was nothing to restore"
+  if [ -d "$scratch" ]; then fail "failed create: the scratch directory survived"; fi
+}
+
+# A deploy that reported failure but left the service there is the dangerous
+# half: the record must STAY, because the service is this check's and is being
+# billed, and the Restore has to delete it.
+test_failed_deploy_keeps_the_record_it_made() {
+  local dir=$work/deployfail
+  prepare "$dir"
+  run91 "$dir" FAKE_GCLOUD_DEPLOY_FAILS=yes
+  expect_status "$status" 1 "failed deploy: the verdict"
+  expect_contains "$err" "the deploy failed and fugaro-chk91 is not there" "failed deploy: the stop"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run services delete" \
+    "failed deploy: a service that is not there is never named"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "repositories delete fugaro-chk91" \
+    "failed deploy: the repository this run made is still deleted"
+  expect_contains "$out" "FACT restore: PASS" "failed deploy: the Restore ran"
+}
+
+# A signal during the cold-start wait has to end the run AT ONCE, and take the
+# wait with it: bash runs a signal's trap only when the foreground command is
+# done, so a foreground `sleep 2100` would hold the Restore behind half an hour
+# of waiting. The run waits 45s here and must be gone well before that.
+test_interrupt_during_the_idle_wait_is_prompt() {
+  local dir=$work/interrupt
+  prepare "$dir"
+  local started ended
+  started=$(date +%s)
+  start91 "$dir" CHECK91_IDLE_SECONDS=45
+  local pid=$start_pid
+  if ! wait_for "$dir/err" "waiting 45s" 150; then
+    fail "interrupt: the run never reached the 45s idle wait"
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+  local status=0
+  wait "$pid" || status=$?
+  ended=$(date +%s)
+  expect_status "$status" 130 "interrupt during the idle wait"
+  local elapsed=$((ended - started))
+  if [ "$elapsed" -ge 40 ]; then
+    fail "interrupt: the run took ${elapsed}s to end after SIGTERM while it was waiting 45s — the trap did not end the wait, so the Restore was held behind it"
+  fi
+  expect_contains "$(cat "$dir/err")" "interrupted" "interrupt: the message"
+  expect_contains "$(cat "$dir/out")" "CHECK 91 RESULT" "interrupt: the block still comes back"
+  local sc
+  sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+  if [ -n "$sc" ] && [ -d "$sc" ]; then fail "interrupt: the scratch directory $sc survived"; fi
+}
+
+# The long stream is the one request that could outlive the run it belongs to: a
+# curl with no cap of its own runs for as long as the relay keeps the socket
+# open, so a Ctrl-C has nothing to end and the Restore waits behind it.
+test_long_stream_request_carries_its_own_cap() {
+  local dir=$work/longcap
+  prepare "$dir"
+  run91 "$dir" CHECK91_LONG_SECONDS=7
+  local line
+  line=$(grep -m1 -- '--max-time 7' "$dir/logs/curl.calls" || true)
+  if [ -z "$line" ]; then
+    fail "the long-stream curl carries no cap of this check's own (CHECK91_LONG_SECONDS=7 was set and no curl call carried --max-time 7), so that request outlives the run"
+  fi
+  expect_contains "$out" "FACT stream-longest: PASS" "long stream cap: the step still records where the stream ended"
+  expect_status "$status" 0 "long stream cap: the run"
 }
 
 test_restore_leftover() {
@@ -799,6 +1077,14 @@ test_warm_cold_start
 test_burst_stream
 test_liveness_probe_failure_is_recorded
 test_no_http2_curl
+test_staged_source_is_removed
+test_unreadable_staging_bucket_falls_back_and_says_so
+test_identity_token_is_never_on_a_command_line
+test_ownership_record_precedes_the_create
+test_failed_create_takes_its_record_back
+test_failed_deploy_keeps_the_record_it_made
+test_interrupt_during_the_idle_wait_is_prompt
+test_long_stream_request_carries_its_own_cap
 test_restore_leftover
 test_restore_count_query_failure_is_not_zero
 test_restore_count_query_failure_is_not_papered_over

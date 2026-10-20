@@ -44,12 +44,31 @@
 #             to copy back to the coordinator. Exit 0 when every fact passed,
 #             1 when one did not (or a hard stop ended the run).
 #
-# CHECK91_IDLE_SECONDS, CHECK91_BODY_SIZES, CHECK91_PROBE_SECONDS and
-# CHECK91_DRY_RUN exist for this script's own test: they shorten waits and
-# sizes, and none of them can point the check at another project, another
-# region or another service. (The long stream has no variable of its own: its
-# length is the relay's own SSE_MINUTES, which the check sets to 59 with the
-# service update it runs for that step.)
+# CHECK91_IDLE_SECONDS, CHECK91_BODY_SIZES, CHECK91_PROBE_SECONDS,
+# CHECK91_LONG_SECONDS and CHECK91_DRY_RUN exist for this script's own test:
+# they shorten waits and sizes, and none of them can point the check at another
+# project, another region or another service. (The long stream's LENGTH is the
+# relay's own SSE_MINUTES, which the check sets to 59 with the service update
+# it runs for that step; CHECK91_LONG_SECONDS is only the curl-side cap that
+# keeps that one request from outliving the run — --timeout is 3600.)
+#
+# The identity token is never on a command line: it is minted fresh for each
+# request and written into an 0600 curl config file inside the scratch
+# directory, which the request names with --config. `ps` shows every process's
+# argv — to every user on the machine, for as long as the process lives — and
+# the hour-long stream would hold a token there for an hour. The file is
+# removed with the scratch directory.
+#
+# The build's own litter: `gcloud builds submit` uploads the source as a tar
+# into a staging bucket and leaves it there. This run gives that upload a
+# PREFIX OF ITS OWN inside the installation's staging bucket and the Restore
+# deletes exactly that prefix, so what this check put in the owner's bucket is
+# removed by the check rather than left to a bucket lifecycle rule.
+#
+# The HTTP/2 capability of this machine's curl is checked BEFORE anything is
+# created or spent: the body table's second row is meaningless without it, and
+# finding that out after the cold-start wait and the hour-long stream would
+# waste them.
 set -euo pipefail
 
 # The owner's own stdout and stderr, kept on 3 and 4: a trap runs with whatever
@@ -111,6 +130,17 @@ URL=""
 SCRATCH_REMOVED=no
 SCRATCH_KEPT=""
 PRINTED=""
+# The 0600 curl config file each request's credential is written into, the two
+# background jobs an interrupt has to end, and the prefix this run gave the
+# build's staged source (see step_build_deploy and the Restore).
+AUTH_CONF=""
+WAIT_PID=""
+# The per-run prefix this run staged the build's source under, the flag that
+# says a build was attempted at all (the Restore removes the staged source only
+# then), and what the build's command line was told to stage the source into.
+STAGING_PREFIX=""
+STAGING_ARG=""
+BUILD_ATTEMPTED=no
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk91.XXXXXXXX") || die "Check 91 cannot make a scratch directory"
@@ -121,6 +151,10 @@ scratch_up() {
   REPO_EXISTED="$SCRATCH/repo-existed"
   REPO_MINE="$SCRATCH/repo-mine"
   SERVICE_MINE="$SCRATCH/service-mine"
+  AUTH_CONF="$SCRATCH/idt.conf"
+  # Nameable by this run alone: the scratch directory's own name is unique and
+  # is deleted with it, so two runs of this check never share a staging prefix.
+  STAGING_PREFIX="gs://${P}_cloudbuild/chk91-source/${SCRATCH##*/}/"
   if (cd "$SCRATCH" && git rev-parse --show-toplevel >/dev/null 2>&1); then
     die "Check 91 stopped: $SCRATCH is inside a git work tree, so what it writes could be committed by accident — set TMPDIR outside every repository and run again"
   fi
@@ -176,6 +210,30 @@ restore_run() {
     gcloud artifacts repositories delete "${SVC:?}" --project="${P:?}" --location="${L:?}" --quiet >&2 || true
   fi
 
+  # The staged source (m11): the build uploaded the scratch directory as a tar
+  # under this run's own prefix, and that tar is this check's litter in the
+  # installation's bucket. Removed only when a build was attempted and only
+  # under the prefix this run chose — never a bucket-wide delete.
+  if [ "$BUILD_ATTEMPTED" = yes ] && [ -n "$STAGING_ARG" ]; then
+    gcloud storage rm -r "$STAGING_PREFIX" >&2 || true
+    # `gcloud storage ls` on a prefix with nothing under it exits non-zero and
+    # says so on stderr ("matched no objects"), so the status alone does not
+    # separate "gone" from "could not be read": the message does. Anything else
+    # — a permission error, an expired session — is reported as unread, not as
+    # a 0, exactly like the three counts below.
+    local staged st_rc=0
+    staged=$(gcloud storage ls "$STAGING_PREFIX" 2>"$SCRATCH/staged.err" | wc -l | tr -d ' ') || st_rc=$?
+    if [ "$staged" != 0 ]; then
+      fact "restore-staged-source" FAIL "the source tarball this run staged at ${STAGING_PREFIX} is still there (${staged} object(s)); the scratch directory does not help here, so remove it by hand: gcloud storage rm -r ${STAGING_PREFIX}"
+    elif [ "$st_rc" = 0 ] || grep -q 'matched no objects' "$SCRATCH/staged.err"; then
+      fact "restore-staged-source" PASS "the source tarball this run staged at ${STAGING_PREFIX} is gone (the prefix is empty and no bucket-wide delete was attempted)"
+    else
+      fact "restore-staged-source" FAIL "whether the staged source at ${STAGING_PREFIX} is still there cannot be read (the list exited ${st_rc} for a reason other than an empty prefix), so nothing is claimed about it: check it by hand with gcloud storage ls ${STAGING_PREFIX} and remove it with gcloud storage rm -r ${STAGING_PREFIX} if it is there"
+    fi
+  elif [ "$BUILD_ATTEMPTED" = yes ]; then
+    fact "restore-staged-source" INFO "no build was staged under a prefix of this run's own (see the build-staging fact), so there is no prefix for the Restore to delete; the tarball is in gcloud's default staging directory and the bucket's own lifecycle rule removes it"
+  fi
+
   # Each count is guarded: a count query is how this run REPORTS, and one that exits
   # non-zero must not end the run. The image list is the one that does it in the ordinary
   # case — the repository was just deleted above, and the real CLI answers a list against a
@@ -224,6 +282,11 @@ restore_run() {
 
 cleanup() {
   restore_run
+  # The credential file goes with the run's own token file, before the scratch
+  # directory: it holds a minted identity token, and it is this check's business
+  # to leave nothing of the sort behind — not even inside a directory that is
+  # KEPT because a count was not 0.
+  rm -f "$AUTH_CONF" || true
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   if [ -n "$SCRATCH_KEPT" ]; then
     say "the scratch directory is kept: $SCRATCH"
@@ -306,8 +369,20 @@ guard_service() {
 # The identity token every request carries, minted FRESH FOR EACH REQUEST: one
 # minted here expires within the hour, and this check waits longer than that
 # before it is done — and every 401 that would cause reads exactly like the
-# size limit the body table is measuring. The value is never printed.
-idt() { gcloud auth print-identity-token; }
+# size limit the body table is measuring. The value is never printed, and it is
+# never on a command line either: it is written into the 0600 config file and
+# the request names that file with --config. `ps` shows a process's argv to
+# every user on the machine for as long as the process lives, and the
+# hour-long stream would hold the token there for an hour.
+# Non-zero when no token can be minted here.
+mint_idt() {
+  local tok
+  tok=$(gcloud auth print-identity-token) || return 1
+  (umask 077 && printf 'header = "Authorization: Bearer %s"\n' "$tok" >"$AUTH_CONF") || return 1
+  chmod 600 "$AUTH_CONF" || return 1
+  unset tok
+  return 0
+}
 
 baseline() {
   # The ownership record: a repository of this name that is already in the
@@ -453,24 +528,70 @@ step_build_deploy() {
     [ -f "$REPO_MINE" ] \
       || stop "a repository named ${SVC} is in ${P}/${L} and it is not this check's — this check creates its own and never adopts one, so it does not push the image tag into it or delete it. Nothing was written"
   else
-    gcloud artifacts repositories create "${SVC:?}" --project="${P:?}" --location="${L:?}" \
-      --repository-format=docker \
-      --description="throwaway: Check 91's image repository (fugaro-chk91), deleted by its own Restore" --quiet >&2
+    # The ownership record is written BEFORE the create, not after it: a run
+    # that dies between the two — a Ctrl-C, a dropped connection, a kill — has
+    # still made a repository, and the record is what tells the Restore it is
+    # this check's to delete (the review's m6). The guards above have already
+    # established that no repository of this name was there and that none is
+    # adopted: a create that FAILS removes the record again, because then
+    # nothing was created and a record claiming otherwise would be a claim to
+    # delete something this run never made.
     : >"$REPO_MINE"
+    if ! gcloud artifacts repositories create "${SVC:?}" --project="${P:?}" --location="${L:?}" \
+      --repository-format=docker \
+      --description="throwaway: Check 91's image repository (fugaro-chk91), deleted by its own Restore" --quiet >&2; then
+      # A create that reported failure may still have made the repository — that
+      # is exactly what the record before it is for — so the project is asked
+      # which of the two happened. The record is taken back only when the
+      # repository really is not there; a repository that IS there keeps its
+      # record and the Restore deletes it.
+      if gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1; then
+        stop "the repository create reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it. Nothing else ran"
+      fi
+      rm -f "$REPO_MINE" || true
+      stop "the repository create failed and ${SVC} is not there, so this run made no repository: the record of it is removed again"
+    fi
   fi
   gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null \
     || stop "no registry repository ${SVC} in ${P}/${L} for the image tag ${IMG} to build into"
   say "building ${IMG} (gcloud builds submit). If it offers to CREATE anything — the staging bucket, an API, a grant — say NO, stop, and report it: those are the installation's and are not this check's to accept"
-  gcloud builds submit --project="${P:?}" --tag="${IMG:?}" "$SCRATCH" >&2 \
-    || stop "the build failed, so nothing was deployed; nothing this check created was left behind (the scratch directory goes with the run)"
-  gcloud run deploy "${SVC:?}" --project="${P:?}" --region="${L:?}" --image="${IMG:?}" \
-    --no-allow-unauthenticated --timeout=3600 --min-instances=0 --max-instances=1 \
-    --set-env-vars SSE_MINUTES=20 --quiet >&2 \
-    || stop "the deploy failed; the repository and the image are deleted by this run's Restore"
+  # Give the source upload a prefix of this run's own, so the Restore can name
+  # and remove exactly what this check put in the installation's staging bucket
+  # (m11). It is used only if that bucket is really there and readable: a
+  # staging directory gcloud cannot write to would fail the build for no
+  # measurement, so an unreadable bucket falls back to the default staging
+  # directory — said out loud in a fact, because then the tarball cannot be
+  # named afterwards and stays for the bucket's own lifecycle rule to remove.
+  if gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>&1; then
+    STAGING_ARG="--gcs-source-staging-dir=${STAGING_PREFIX}"
+    fact "build-staging" PASS "this run stages the build's source under ${STAGING_PREFIX}, inside the installation's own staging bucket, and its Restore deletes that prefix again"
+  else
+    STAGING_ARG=""
+    fact "build-staging" INFO "gs://${P}_cloudbuild/ could not be listed, so the build uses gcloud's default staging directory and the source tarball this run uploads cannot be named afterwards: it stays in that bucket until the bucket's own lifecycle rule removes it. Nothing was created by this check to make it list"
+  fi
+  BUILD_ATTEMPTED=yes
+  # Unquoted on purpose: STAGING_ARG is one word or nothing, and an empty
+  # argument must not reach gcloud as an empty string.
+  # shellcheck disable=SC2086
+  gcloud builds submit --project="${P:?}" --tag="${IMG:?}" $STAGING_ARG "$SCRATCH" >&2 \
+    || stop "the build failed, so nothing was deployed; the repository, the image and the staged source are deleted by this run's Restore"
+  # Same rule as the repository's record above: a deploy that is interrupted is
+  # the ordinary way to be left with a service that bills, so the record that
+  # says the service is this check's is on disk BEFORE the deploy starts, and a
+  # deploy that FAILED takes it back (m6).
   : >"$SERVICE_MINE"
+  if ! gcloud run deploy "${SVC:?}" --project="${P:?}" --region="${L:?}" --image="${IMG:?}" \
+    --no-allow-unauthenticated --timeout=3600 --min-instances=0 --max-instances=1 \
+    --set-env-vars SSE_MINUTES=20 --quiet >&2; then
+    if gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1; then
+      stop "the deploy reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it, and the image and the repository go with it"
+    fi
+    rm -f "$SERVICE_MINE" || true
+    stop "the deploy failed and ${SVC} is not there, so nothing of this check's is running: the record is removed again, and the repository and the image it created are deleted by this run's Restore"
+  fi
   URL=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" --format='value(status.url)')
   [ -n "$URL" ] || stop "the service has no URL"
-  idt >/dev/null || stop "no identity token can be minted here"
+  mint_idt || stop "no identity token can be minted here, so no request can be authorised"
   local cfg
   cfg=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" \
     --format='value(spec.template.spec.containers[0].image,spec.template.spec.timeoutSeconds,spec.template.metadata.annotations)' 2>/dev/null | tr '\n' ' ')
@@ -490,14 +611,23 @@ step_build_deploy() {
 step_cold_start() {
   local idle_seconds=${CHECK91_IDLE_SECONDS:-2100}
   local before cold warm
-  before=$(curl -sS -H "Authorization: Bearer $(idt)" "${URL}/" | sed -n 's/^started=//p')
+  mint_idt || stop "no identity token can be minted here, so the relay cannot be asked anything"
+  before=$(curl -sS --config "$AUTH_CONF" "${URL}/" | sed -n 's/^started=//p')
   [ -n "$before" ] || stop "the relay's / body carries no started= line, so this is not this check's image"
   say "instance now: started=${before}; waiting ${idle_seconds}s for it to be released"
-  sleep "$idle_seconds"
+  # Backgrounded and waited on, not slept in the foreground: bash runs a
+  # signal's trap only after the current foreground command finishes, so a
+  # Ctrl-C during a 35-minute sleep would not be acted on until the sleep
+  # ended. `wait` is interruptible, and the trap kills this job.
+  sleep "$idle_seconds" &
+  WAIT_PID=$!
+  wait "$WAIT_PID" || true
+  WAIT_PID=""
   local cold_rc=0 warm_rc=0
   : >"$SCRATCH/cold.out"
-  cold=$(curl -sS -o "$SCRATCH/cold.out" -w '%{time_starttransfer}|%{time_total}' -H "Authorization: Bearer $(idt)" "${URL}/" 2>/dev/null) || cold_rc=$?
-  warm=$(curl -sS -o /dev/null -w '%{time_starttransfer}|%{time_total}' -H "Authorization: Bearer $(idt)" "${URL}/" 2>/dev/null) || warm_rc=$?
+  mint_idt || stop "no identity token can be minted here, so the cold-start probes cannot be made"
+  cold=$(curl -sS -o "$SCRATCH/cold.out" -w '%{time_starttransfer}|%{time_total}' --config "$AUTH_CONF" "${URL}/" 2>/dev/null) || cold_rc=$?
+  warm=$(curl -sS -o /dev/null -w '%{time_starttransfer}|%{time_total}' --config "$AUTH_CONF" "${URL}/" 2>/dev/null) || warm_rc=$?
   local after
   after=$(sed -n 's/^started=//p' "$SCRATCH/cold.out")
   local detail="waited ${idle_seconds}s; cold: first byte ${cold%%|*}s, total ${cold##*|}s; warm: first byte ${warm%%|*}s, total ${warm##*|}s; started= before=${before} after=${after}; --min-instances=0 --max-instances=1"
@@ -521,9 +651,10 @@ step_stream() {
   # the last three of U5's numbers, which would otherwise be lost after the
   # cold-start wait. The headers curl has already printed its headers by the
   # time its own --max-time cuts it, and those are what this line is after.
-  headers=$(curl -sS -N -D - -o /dev/null --max-time "$probe" -H "Authorization: Bearer $(idt)" "${URL}/sse" 2>/dev/null |
+  mint_idt || stop "no identity token can be minted here, so the stream probes cannot be made"
+  headers=$(curl -sS -N -D - -o /dev/null --max-time "$probe" --config "$AUTH_CONF" "${URL}/sse" 2>/dev/null |
     sed -n 's/^[Xx]-[Rr]elay: */x-relay: /p' | head -n 1) || true
-  curl -sS -N --max-time "$probe" -H "Authorization: Bearer $(idt)" "${URL}/sse" 2>/dev/null |
+  curl -sS -N --max-time "$probe" --config "$AUTH_CONF" "${URL}/sse" 2>/dev/null |
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       printf '%s %s %s\n' "$(date -u +%s)" "$(date -u +%H:%M:%S)" "$line" >>"$SCRATCH/stream.times"
@@ -547,17 +678,29 @@ step_long_stream() {
   gcloud run services update "${SVC:?}" --project="${P:?}" --region="${L:?}" --set-env-vars SSE_MINUTES=59 --quiet >&2 \
     || stop "the service update to SSE_MINUTES=59 failed"
   local out rc=0
-  # This one has no --max-time: the point is where the stream ENDS. curl still
-  # exits non-zero when the front end cuts the connection mid-stream (18, 56,
-  # 52), and that is the measurement, not a reason to stop the run.
-  out=$(curl -sS -N -o /dev/null -w '%{http_code} after %{time_total}s' -H "Authorization: Bearer $(idt)" "${URL}/sse" 2>/dev/null) || rc=$?
-  fact "stream-longest" PASS "SSE_MINUTES=59: ${out}; curl exit ${rc} (0 = the stream ended by itself; 18/56 = the front end cut it; 52 = empty reply) — --timeout=3600; mint a fresh identity token for every probe after this one"
+  mint_idt || stop "no identity token can be minted here, so the long stream cannot be started"
+  # The point of this one is where the stream ENDS, so its cap is not the SSE
+  # length but that length plus slack for the front end to cut it: without a
+  # --max-time of its own the request outlives this run, and a
+  # Ctrl-C has nothing to end. curl still exits non-zero when the front end
+  # cuts the connection mid-stream (18, 56, 52), and that is the measurement,
+  # not a reason to stop the run.
+  #
+  # It runs as a BACKGROUND job with this shell waiting on it, for the reason
+  # the cold-start wait does: bash runs a signal's trap only once the current
+  # foreground command is done, and either of these two can take an hour.
+  : >"$SCRATCH/long.out"
+  curl -sS -N -o /dev/null -w '%{http_code} after %{time_total}s' \
+    --max-time "$LONG_SECONDS" --config "$AUTH_CONF" "${URL}/sse" >"$SCRATCH/long.out" 2>/dev/null &
+  WAIT_PID=$!
+  wait "$WAIT_PID" || rc=$?
+  WAIT_PID=""
+  out=$(cat "$SCRATCH/long.out" 2>/dev/null || true)
+  fact "stream-longest" PASS "SSE_MINUTES=59: ${out}; curl exit ${rc} (0 = the stream ended by itself; 18/56 = the front end cut it; 52 = empty reply; 28 = this check's own ${LONG_SECONDS}s cap) — --timeout=3600; mint a fresh identity token for every probe after this one"
 }
 
 # ----------------------------------------------------- step 6 the body table
 step_body_limit() {
-  curl -V 2>/dev/null | grep -q 'HTTP2' \
-    || stop "this curl has no HTTP/2 support, so --http2 would silently send HTTP/1.1 and the second row would duplicate the first — use a curl built with HTTP/2"
   local sizes=${CHECK91_BODY_SIZES:-"1048576 16777216 33554432 67108864 134217728"}
   local n h1 h2 h1_big="" h2_big=""
   local h1rc h2rc
@@ -570,12 +713,12 @@ step_body_limit() {
     : >"$SCRATCH/echo.out"
     h1rc=0
     h1=$(curl -sS --http1.1 -o "$SCRATCH/echo.out" -w '%{http_code} %{size_upload} over HTTP/%{http_version}' \
-      -H "Authorization: Bearer $(idt)" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h1rc=$?
+      --config "$AUTH_CONF" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h1rc=$?
     h1="${h1} (curl exit ${h1rc}), relay said: $(tr -d '\n' <"$SCRATCH/echo.out")"
     : >"$SCRATCH/echo.out"
     h2rc=0
     h2=$(curl -sS --http2 -o "$SCRATCH/echo.out" -w '%{http_code} %{size_upload} over HTTP/%{http_version}' \
-      -H "Authorization: Bearer $(idt)" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h2rc=$?
+      --config "$AUTH_CONF" -X POST --data-binary @"$SCRATCH/body.bin" "${URL}/echo" 2>/dev/null) || h2rc=$?
     h2="${h2} (curl exit ${h2rc}), relay said: $(tr -d '\n' <"$SCRATCH/echo.out")"
     table="${table}${n}: HTTP/1.1 ${h1} | HTTP/2-to-front-end ${h2}"$'\n'
     case "$h1" in 200*) h1_big="$n: $h1" ;; esac
@@ -592,9 +735,35 @@ step_body_limit() {
 }
 
 # ----------------------------------------------------------------------- main
+# guard_http2: this machine's curl must speak HTTP/2, and that is asked FIRST —
+# before the guards that spend a gcloud call, and long before the build, the
+# deploy, the 35-minute wait and the hour-long stream. Without HTTP/2 the body
+# table's second row silently repeats the first (`--http2` falls back to
+# HTTP/1.1), which is a wrong measurement rather than a missing one, and
+# discovering it after the long stream would throw that hour away.
+#
+# `curl -V` is CAPTURED, not piped into grep: `grep -q` closes the pipe on its
+# match while curl is still printing the rest of its version line, and with
+# `set -o pipefail` curl's death on the broken pipe (141) would be reported as
+# this stop — the right message for the wrong reason.
+guard_http2() {
+  local v
+  v=$(curl -V 2>/dev/null || true)
+  case "$v" in
+  *HTTP2*)
+    fact "curl-http2" PASS "$(printf '%s\n' "$v" | head -n 1) — the body table's two rows really are two protocols"
+    ;;
+  *)
+    fact "curl-http2" FAIL "this curl has no HTTP/2 support (curl -V printed ${v:+no HTTP2 capability}); --http2 would silently send HTTP/1.1 and the second row of the body table would duplicate the first. Nothing was created, built or deployed: this is decided before any of that"
+    stop "this curl has no HTTP/2 support, so --http2 would silently send HTTP/1.1 and the second row would duplicate the first — use a curl built with HTTP/2"
+    ;;
+  esac
+}
+
 main() {
   need_tools
   scratch_up
+  guard_http2
   guard_project
   write_relay
   guard_service
@@ -606,6 +775,7 @@ main() {
     return 0
   fi
 
+  LONG_SECONDS=${CHECK91_LONG_SECONDS:-$((59 * 60 + 300))}
   step_build_deploy
   step_cold_start
   step_stream
@@ -646,6 +816,22 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   printf 'CHECK 91 RESULT END (exit %s)\n' "$status" >&3
 }
 
+# interrupted: end the two long jobs FIRST, then leave. Both are background
+# jobs this shell is waiting on (the cold-start sleep and the hour-long
+# stream), and the trap runs as soon as the signal arrives because `wait` is
+# interruptible — killing them here is what keeps the Restore from being held
+# behind a sleep that has 30 minutes left. The rest is the same path as before:
+# exit 130, and the EXIT trap runs the Restore and prints the block.
+interrupted() {
+  local pid
+  for pid in ${WAIT_PID:-}; do
+    kill "$pid" 2>/dev/null || true
+  done
+  WAIT_PID=""
+  owner "interrupted"
+  exit 130
+}
+
 trap finish EXIT
-trap 'owner "interrupted"; exit 130' INT TERM
+trap interrupted INT TERM
 main "$@"
