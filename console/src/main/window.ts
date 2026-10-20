@@ -297,22 +297,31 @@ export function denyPageTitleUpdate(event: NavigationEvent): void {
 
 /**
  * ALLOWED_EXTERNAL_HOSTS is the whole of the allow-list for opening a URL in
- * the user's own browser, and it is exactly the three hosts rule 2 names: the
- * two providers' web hosts (`github.com`, `bitbucket.org` -- "both providers'
- * web hosts on the `openExternal` allow-list") and the Cloud console the
- * `logs RUN --url` link points into. Rule 2 also names "the docs", and no
- * document on this tree names a docs host, so none is on this list: a fourth
- * entry is a deliberate edit here and in the unit test that holds this list
- * exactly. Hosts are compared whole and lower-cased, so `github.com.evil.test`
- * and `evil-github.com` are not on it.
+ * the user's own browser, and it is exactly four hosts: the two providers' web
+ * hosts (`github.com`, `bitbucket.org` -- "both providers' web hosts on the
+ * `openExternal` allow-list"), the Cloud console the `logs RUN --url` link
+ * points into, and the website the console's own onboarding screens link to.
+ * Rule 2 also names "the docs", and no document on this tree names a docs host,
+ * so none is on this list: an entry is a deliberate edit here and in the unit
+ * test that holds this list exactly. Hosts are compared whole and lower-cased,
+ * so `github.com.evil.test` and `evil-github.com` are not on it.
  *
- * Task 2.3 is the first caller that will display such a link; until then the
- * path exists and is tested, and rule 2's "no link is built" stands: there is
- * no caller that builds one.
+ * `fugaro.dev` is the fourth, and it is the console's own link rather than a
+ * document's: the two onboarding screens (owner's ruling of 2026-10-20) offer a
+ * link button to the website's getting-started page, whose URL is
+ * `GETTING_STARTED_URL` in `src/main/onboarding.ts`. That constant lives in the
+ * main process and never crosses the IPC boundary -- the picker's `openExternal`
+ * operation takes **no arguments** -- so the check below is the second gate for
+ * a link this process built, and no renderer can name one.
+ *
+ * Task 2.3 is the first caller that will display a document's link; until then
+ * the path exists and is tested, and rule 2's "no link is built" stands for the
+ * dashboard's documents: there is no caller that builds one.
  */
 export const ALLOWED_EXTERNAL_HOSTS: readonly string[] = [
   'bitbucket.org',
   'console.cloud.google.com',
+  'fugaro.dev',
   'github.com',
 ]
 

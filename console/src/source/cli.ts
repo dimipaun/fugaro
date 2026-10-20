@@ -528,16 +528,21 @@ interface ResolvedSource {
  * the source layer: it knows an installation's four fields and nothing about the
  * file they are kept in.
  *
- * `binaryPath` is the installation's **own** binary and it is passed to the
- * resolver as the configured path (rule 4's first place), so a source bound to
- * an installation reads that binary or refuses -- never another `fugaro` the
- * machine happens to have. That is the same rule the startup handshake follows
- * (`resolveHandshakeBinary`, review B1).
+ * `binaryPath` is the installation's **optional** binary override, and it is
+ * passed to the resolver as the configured path (rule 4's first place) only when
+ * a record carries one. **Absent is the ordinary case** (owner's ruling of
+ * 2026-10-20): the console never asks the operator for a binary and never stores
+ * the path it resolved, so a bound source resolves the installed `fugaro` itself
+ * -- `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and
+ * never the app's inherited `PATH` -- exactly as the startup handshake does
+ * (`resolveHandshakeBinary`). An override that is there is tried first and
+ * falls through to those same locations when it has gone, so an old store entry
+ * keeps working.
  */
 export interface BoundInstallation {
   readonly id: string
   readonly project: string
-  readonly binaryPath: string
+  readonly binaryPath?: string | undefined
   /** the config path, when this installation is not the ambient one (rule 3). */
   readonly configPath?: string | undefined
   /** the checkout, which is also the child's working directory (rule 5). */
@@ -572,7 +577,13 @@ export function sourceFor(
       project: installation.project,
       ...(installation.configPath === undefined ? {} : { configPath: installation.configPath }),
     }),
-    configuredBinaryPath: installation.binaryPath,
+    // The store's override, when the record carries one. Absent means rule 4
+    // resolves the installed `fugaro`, which is what the console does by
+    // default -- and passing `undefined` as a configured path would be a second
+    // spelling of "no override", so it is left out.
+    ...(installation.binaryPath === undefined || installation.binaryPath === ''
+      ? {}
+      : { configuredBinaryPath: installation.binaryPath }),
     ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
   })
 }
@@ -723,12 +734,16 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   }
 
   const installationRef = (installation: BoundInstallation): InstallationRef => ({
-    binaryPath: installation.binaryPath,
+    binaryPath: installation.binaryPath ?? '',
     version: installation.version ?? '',
     project: installation.project,
-    // The binary came from the installation the operator chose, which is rule
-    // 4's first place -- there is no second spelling of this vocabulary here.
-    source: 'configured',
+    // Which rule 4 place this installation's binary comes from: the store's own
+    // override when the record carries one, and the well-known install locations
+    // otherwise -- which is the ordinary case, because the console never stores
+    // the path it resolved (owner's ruling of 2026-10-20). Before a source is
+    // built there is nothing resolved to name, so `binaryPath` is empty in the
+    // second case and this field is what says so.
+    source: installation.binaryPath === undefined || installation.binaryPath === '' ? 'well-known' : 'configured',
     ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
   })
 

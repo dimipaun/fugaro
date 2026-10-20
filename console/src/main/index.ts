@@ -33,13 +33,12 @@
 
 import { join } from 'node:path'
 
-import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, session, shell } from 'electron'
-import type { OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'electron'
 
 import { handleAppRequests, registerAppScheme } from './protocol'
 import { consoleIconPath, installDevDockIcon } from './icon'
 import { installInstallationPicker } from './picker'
-import type { DialogLike, InstallationPicker } from './picker'
+import type { InstallationPicker } from './picker'
 import {
   createConsoleLifecycle,
   installWebContentsSecurity,
@@ -250,15 +249,34 @@ function storedCompatibility(): CliCompatibility {
 function activeBinding(): BoundInstallation | null {
   const chosen = picker?.installation()
   if (chosen === undefined || !chosen.chosen) return null
+  const resolved = resolvedBinaries.get(chosen.project)
+  const binaryPath = chosen.binary ?? resolved
   return {
     id: chosen.id,
     project: chosen.project,
-    binaryPath: chosen.binary,
+    // The store's optional override first -- and, when the record has none, the
+    // binary rule 4 resolved for this installation **in this run** (see
+    // `resolvedBinaries`). Passing the resolved path on is what keeps the
+    // dashboard's header naming the binary the console is actually driving.
+    ...(binaryPath === undefined || binaryPath === '' ? {} : { binaryPath }),
     ...(chosen.config === undefined ? {} : { configPath: chosen.config }),
     ...(chosen.checkout === undefined ? {} : { checkout: chosen.checkout }),
     ...(chosen.cliVersion === null ? {} : { version: chosen.cliVersion }),
   }
 }
+
+/**
+ * resolvedBinaries is where a choose's resolved binary is remembered **for this
+ * run**, keyed by project name, and it is deliberately not the store: the store
+ * holds the operator's choices, and the path rule 4 resolved is a fact of a run
+ * (owner's ruling of 2026-10-20). Storing it would pin the console to a binary
+ * the operator never named -- and an upgrade that moves `fugaro` would leave the
+ * store pointing at nothing.
+ *
+ * The picker hands the path to `onChosen` after the handshake, which is where
+ * it is a fact and not a guess.
+ */
+const resolvedBinaries = new Map<string, string>()
 
 /**
  * boundSource is the `FugaroSource` the whole surface is built over: the real
@@ -396,24 +414,6 @@ const lifecycle = createConsoleLifecycle({
 let picker: InstallationPicker | null = null
 
 /**
- * pickerDialog is Electron's `dialog` narrowed to the picker's `DialogLike`: a
- * parentless dialog when the picker has no window, and the options copied into
- * Electron's own (mutable) shapes rather than cast.
- */
-const pickerDialog: DialogLike = {
-  showOpenDialog: (window, options) => {
-    const electronOptions: OpenDialogOptions = {
-      title: options.title,
-      properties: [...options.properties] as OpenDialogOptions['properties'],
-      ...(options.filters === undefined
-        ? {}
-        : { filters: options.filters.map((filter) => ({ name: filter.name, extensions: [...filter.extensions] })) }),
-    }
-    return window === null ? dialog.showOpenDialog(electronOptions) : dialog.showOpenDialog(window, electronOptions)
-  },
-}
-
-/**
  * main is what `whenReady` resolves into: serve the bundle once, then run the
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
@@ -432,11 +432,18 @@ async function main(): Promise<void> {
   })
   serveBundle()
   picker = installInstallationPicker({
-    electron: { BrowserWindow, session: session.defaultSession, ipcMain, dialog: pickerDialog, Menu, app },
+    // `shell` and not `dialog`: the picker has no file dialog any more (owner's
+    // ruling of 2026-10-20) and its one external link goes through
+    // `openExternalValidated(shell, ...)`, which `installInstallationPicker`
+    // closes over.
+    electron: { BrowserWindow, session: session.defaultSession, ipcMain, Menu, shell, app },
     appEnv: process.env,
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
-    onChosen: (chosen) => lifecycle.choose(chosen.compatibility).catch(reportAndQuit),
+    onChosen: (chosen) => {
+      resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
+      return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
+    },
     // A removal that took the active installation drops the bound source (Task
     // 3.4c; the seam 3.4b left for it). Without this the surface would keep
     // answering from a source built for a binary the store no longer names --

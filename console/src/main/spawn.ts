@@ -306,12 +306,39 @@ export interface SpawnArgument {
 }
 
 /**
+ * PickerOperationName is the one spawn that belongs to the **installation
+ * picker** rather than to the dashboard: the local read that lists the
+ * installations this machine has (`fugaro config list --json`,
+ * `internal/cli/config_list.go`; `console/docs/json-contract.md` §6.8).
+ *
+ * It is not a `CONSOLE_OPERATIONS` entry and deliberately so: that table is the
+ * *dashboard's* IPC surface, mirrored one-for-one in `src/preload/index.ts` and
+ * pinned exactly by `test/unit/ipc.test.ts`, and the picker has its own surface
+ * on its own document (`src/preload/installations.ts`). Widening the dashboard's
+ * surface to carry a read only the picker makes would put a command in a
+ * renderer that has no business spawning it.
+ */
+export type PickerOperationName = 'installation.list'
+
+/** PICKER_OPERATION_NAMES is that vocabulary as a value, so the table check and
+ * a test can both read the closed set rather than restating it. */
+export const PICKER_OPERATION_NAMES: readonly PickerOperationName[] = Object.freeze(['installation.list'])
+
+/** INSTALLATION_LIST_COMMAND is the command the one picker row drives, spelled
+ * as the two words `words` starts with. It is here rather than inline so the
+ * check below and the row cannot disagree about which read the picker makes. */
+export const INSTALLATION_LIST_COMMAND = 'config list'
+
+/** SpawnOperationName is every operation this module will build an argv for. */
+export type SpawnOperationName = OperationName | PickerOperationName
+
+/**
  * SpawnCommand is one row of the table: the operation it serves, the argv words
  * the CLI's own command path needs, whether the command accepts `--project`,
  * and its declared arguments in the order they are emitted.
  */
 export interface SpawnCommand {
-  readonly operation: OperationName
+  readonly operation: SpawnOperationName
   readonly words: readonly string[]
   readonly takesProject: boolean
   readonly args: readonly SpawnArgument[]
@@ -433,6 +460,27 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
 ] as const satisfies readonly SpawnCommand[])
 
 /**
+ * PICKER_COMMANDS is the installation picker's own table, and it has exactly one
+ * row: the local read that enumerates the installations on this machine. It is a
+ * separate table rather than a row of `SPAWN_COMMANDS` because that table is
+ * held one-for-one to the dashboard's operation table (`assertSpawnSurface`),
+ * and this read is not one of the dashboard's operations.
+ *
+ * `fugaro config list` is cobra's `NoArgs` with one flag of its own (`--json`);
+ * it takes no `--project`, no `--config` and no `--dir`, and it opens no bucket,
+ * so the row carries the three false columns the check below holds it to.
+ */
+export const PICKER_COMMANDS: readonly SpawnCommand[] = Object.freeze([
+  {
+    operation: 'installation.list',
+    words: ['config', 'list', '--json'],
+    takesProject: false,
+    args: [],
+    dirFlag: false,
+  },
+] as const satisfies readonly SpawnCommand[])
+
+/**
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
  * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
@@ -484,7 +532,9 @@ function refused(message: string): never {
  * all -- gets an exception here, before any process exists.
  */
 export function spawnCommandFor(operation: string): SpawnCommand {
-  const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+  const row =
+    SPAWN_COMMANDS.find((candidate) => candidate.operation === operation) ??
+    PICKER_COMMANDS.find((candidate) => candidate.operation === operation)
   if (row === undefined) {
     return refused(
       `${operation} is not a console operation this process may spawn: the surface is src/main/ipc.ts's table`,
@@ -511,7 +561,7 @@ export function spawnCommandFor(operation: string): SpawnCommand {
  * no row, argument or later edit can emit a flag the console must never reach.
  */
 export function argvFor(
-  operation: OperationName,
+  operation: SpawnOperationName,
   args: ValidatedArguments,
   context: { readonly target: SpawnTarget; readonly directory: string },
 ): readonly string[] {
@@ -614,7 +664,7 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
  * `assertSpawnSurface` holds every row's `takesProject` and `dirFlag` to these,
  * so the columns `argvFor` keys off cannot drift from the rule.
  */
-export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version'])
+export const COMMANDS_WITHOUT_PROJECT: readonly string[] = Object.freeze(['version', 'config list'])
 export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
 
 /**
@@ -629,7 +679,10 @@ export const COMMANDS_TAKING_DIR: readonly string[] = Object.freeze(['doctor'])
  * it resolves a binary, so a console that cannot be built with a widened table
  * cannot be talked into spawning one later.
  */
-export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
+export function assertSpawnSurface(
+  rows: readonly SpawnCommand[],
+  pickerRows: readonly SpawnCommand[] = PICKER_COMMANDS,
+): void {
   const seen = new Set<string>()
   for (const row of rows) {
     if (seen.has(row.operation)) refused(`${row.operation} has two rows in the spawn table`)
@@ -687,6 +740,36 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
     if (!seen.has(operation.name)) {
       refused(`${operation.name} has no row in the spawn table: the console would spawn nothing for it`)
     }
+  }
+
+  // The picker's table, held to the same two rules that matter and to the
+  // vocabulary of the picker surface: a row here serves an operation the
+  // picker's own preload exposes (`PICKER_COMMANDS`' names are the whole set
+  // this function admits, and one outside it is refused), it carries no
+  // `--project` and no `--dir`, and it declares no arguments -- because every
+  // value this read takes is one the CLI itself printed.
+  for (const row of pickerRows) {
+    if (seen.has(row.operation)) refused(`${row.operation} has rows in both spawn tables`)
+    seen.add(row.operation)
+    if (!PICKER_OPERATION_NAMES.includes(row.operation as PickerOperationName)) {
+      refused(`${row.operation} is not an operation the installation picker may spawn`)
+    }
+    const command = row.words.filter((word) => !word.startsWith('--')).join(' ')
+    if (command !== INSTALLATION_LIST_COMMAND) {
+      refused(`${row.operation} drives ${command}, which is not the read the picker makes`)
+    }
+    if (row.takesProject !== !COMMANDS_WITHOUT_PROJECT.includes(command)) {
+      refused(
+        `${row.operation} ${COMMANDS_WITHOUT_PROJECT.includes(command) ? 'must not carry' : 'must carry'} ${PROJECT_FLAG}: the read takes no project`,
+      )
+    }
+    if (row.dirFlag !== COMMANDS_TAKING_DIR.includes(command)) {
+      refused(`${row.operation} must not carry ${DIR_FLAG}: it reads no checkout`)
+    }
+    if (row.args.length !== 0) {
+      refused(`${row.operation} declares an argument, and the read takes none`)
+    }
+    assertArgvFlags(row.operation, row.words)
   }
 }
 
@@ -988,7 +1071,7 @@ export const nodeSpawner: ChildSpawner = (command, args, options) =>
  * log, and the restart schedule. Nothing in it is read from a document.
  */
 export interface SpawnPlan {
-  readonly operation: OperationName
+  readonly operation: SpawnOperationName
   readonly argv: readonly string[]
   readonly cwd: string
   readonly env: Readonly<Record<string, string>>
@@ -999,7 +1082,7 @@ export interface SpawnPlan {
 /** planFor assembles a plan from an operation, its validated arguments and
  * main-process state. It is the only producer of a `SpawnPlan`. */
 export function planFor(
-  operation: OperationName,
+  operation: SpawnOperationName,
   args: ValidatedArguments,
   context: {
     readonly target: SpawnTarget
