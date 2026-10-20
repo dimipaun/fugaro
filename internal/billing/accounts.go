@@ -87,8 +87,9 @@ type Credentials struct {
 	// default one.
 	HTTPClient *http.Client
 	// NoAuth makes the calls carry no credentials at all. Only a test sets it,
-	// and only with Endpoint, so that no call can leave for Google
-	// unauthenticated.
+	// and only with Endpoint: the pair is what keeps a credential-less call
+	// from leaving for Google, and newService refuses the combination without
+	// one.
 	NoAuth bool
 }
 
@@ -154,6 +155,12 @@ func List(ctx context.Context, creds Credentials) ([]Account, error) {
 // Default Credentials are — including their own quota project, which the Cloud
 // Billing API needs and which is never the project being set up.
 func newService(ctx context.Context, creds Credentials) (*cloudbilling.APIService, error) {
+	if creds.NoAuth && creds.Endpoint == "" {
+		// Without this, NoAuth with no endpoint is a call to Google with no
+		// credentials — refused, but a call all the same. The sibling
+		// constructors refuse the same combination for the same reason.
+		return nil, errors.New("credentials: no_auth is set but the endpoint is not")
+	}
 	opts := []option.ClientOption{option.WithLogger(discardLogger)}
 	if creds.Endpoint != "" {
 		opts = append(opts, option.WithEndpoint(creds.Endpoint))

@@ -192,6 +192,20 @@ func TestListFollowsEveryPage(t *testing.T) {
 	}
 }
 
+// TestListRefusesNoAuthWithoutAnEndpoint pins the one combination that would
+// put a credential-less call on the wire: NoAuth with nothing to point it at
+// is refused before any client is built, so no test can reach Google's own
+// endpoint by leaving Endpoint out.
+func TestListRefusesNoAuthWithoutAnEndpoint(t *testing.T) {
+	got, err := List(context.Background(), Credentials{NoAuth: true})
+	if err == nil {
+		t.Fatalf("no_auth with no endpoint: %v, want an error", got)
+	}
+	if !strings.Contains(err.Error(), "no_auth") {
+		t.Errorf("the error does not name what is wrong: %v", err)
+	}
+}
+
 // TestListLeavesOtherFailuresUntyped pins that the two typed errors are the
 // only two: a bad request, and credentials that are missing or expired, are
 // neither a disabled API nor a missing permission, and they come back as the
