@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // now is the instant every selection test states, so nothing depends on the
@@ -28,6 +30,10 @@ type fakeStore struct {
 	rr      int64
 
 	updates int // how many times UpdateMark called its function
+
+	// placeErr is the failure SetPlacement answers with, so a test can state
+	// what a selection does when the decision it made cannot be recorded.
+	placeErr error
 }
 
 func newFakeStore() *fakeStore {
@@ -123,6 +129,11 @@ func (f *fakeStore) Leases(context.Context, time.Time) ([]Lease, error) {
 func (f *fakeStore) SetPlacement(_ context.Context, r Run, name string, l Lease) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.placeErr != nil {
+		// Nothing is written: a placement the database refused is not half of
+		// one, which is the whole point of writing the two halves as one.
+		return f.placeErr
+	}
 	l.Slug, l.Run = r.Slug, r.ID
 	f.leases[key(r)] = l
 	f.current[key(r)] = name
@@ -1080,6 +1091,182 @@ func TestARacingUsageLimitKeepsTheResetInTheAnswer(t *testing.T) {
 	_, _, err = s.Select(ctx, run, []Credential{b1})
 	if !errors.As(err, &eu) || eu.Wait != 4*time.Hour {
 		t.Fatalf("the answer after the racing 429 = %v; want the reset's four hours", err)
+	}
+}
+
+// A second exhaustion opens a fresh window, through the API the service uses:
+// exhaust a shared token with no reset header, come back after the window it
+// opened, exhaust it again with no reset header, and the hold the answer carries
+// is the new window and not the remains of the old one.
+//
+// Review finding N1 at the selection level: `Exhaust`'s `m.Since = now` is what
+// makes the second exhaustion's date move, and with it gone the mark stayed
+// dated from the first exhaustion — whose window had closed — so the token was
+// worth a fifteen-minute backoff and nothing else, and D142's control (one
+// exhaustion costs the token the rest of its window) was silently gone.
+func TestASecondExhaustionHoldsTheTokenForAFreshWindow(t *testing.T) {
+	st := newFakeStore()
+	const window = 5 * time.Hour // DefaultBackoffCap, and so the default window
+
+	s := selector(st, Settings{})
+	if _, err := s.Exhausted(ctx, a1.Name, TierA, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	first := st.mark(a1.Name)
+	if !first.Since.Equal(now) || first.State != StateBackedOff {
+		t.Fatalf("the first exhaustion left %+v; want a backoff dated %s", first, now)
+	}
+
+	// The window passes and the token is exhausted a second time, with no reset
+	// header either time.
+	at := now.Add(window + time.Hour)
+	later := &Selector{Store: st, Settings: Settings{}, Now: func() time.Time { return at }}
+	if _, err := later.Exhausted(ctx, a1.Name, TierA, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if second := st.mark(a1.Name); !second.Since.Equal(at) {
+		t.Fatalf("the second exhaustion is dated %s; want %s: the window is measured from the exhaustion that opened it", second.Since, at)
+	}
+
+	// And the answer a selection gives is that window, not the backoff.
+	_, wait, err := later.Select(ctx, run, []Credential{a1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("the selection after the second exhaustion = %v; want an ExhaustedUntil answer", err)
+	}
+	if wait != window || !eu.At.Equal(at.Add(window)) {
+		t.Fatalf("the answer = %s until %s; want the %s window the second exhaustion opened, until %s", wait, eu.At, window, at.Add(window))
+	}
+	// The backoff the second exhaustion also carries is not due for a probe yet
+	// — its wait is a doubling away — and it is not the hold either: the answer
+	// is the window, and the probe comes due when the wait lapses (C1.12).
+	if eu.Probe {
+		t.Fatal("a probe is reported due on a fresh backoff whose wait has not passed")
+	}
+}
+
+// A decision the store could not record is a failed selection, not a call: the
+// credential's placement (D154's stickiness and D142's slot, written as one) is
+// what the service answers a call from, and a selection that returned a
+// credential it could not place would send real work to a run whose state says
+// it is somewhere else — or nowhere.
+//
+// Review finding N2: both `take` call sites returned the error, and no test ever
+// made one fail, so either could be turned into "return the credential anyway"
+// without a red test.
+func TestAnUnrecordedPlacementFailsTheSelection(t *testing.T) {
+	refused := errors.New("the database refused the write")
+
+	// The cascade path: a new run, nothing placeable.
+	fresh := newFakeStore()
+	fresh.placeErr = refused
+	c, _, err := selector(fresh, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, refused) {
+		t.Fatalf("a selection whose placement was refused = %q, %v; want the store's error", c.Name, err)
+	}
+	if len(fresh.leases) != 0 || len(fresh.current) != 0 {
+		t.Fatalf("a refused placement wrote %d leases and %d placements", len(fresh.leases), len(fresh.current))
+	}
+
+	// The sticky path: a run already placed on the credential it keeps, whose
+	// refresh of its own lease is refused. It is a failed selection too — the
+	// run's hold has lapsed on paper and the call would go out on a slot it has
+	// lost (TestTheStickyPathRefreshesTheLease is the same path with the write
+	// landing).
+	stuck := newFakeStore()
+	stuck.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(time.Minute)})
+	stuck.placeErr = refused
+	c, _, err = selector(stuck, noWindow()).Select(ctx, run, []Credential{a1})
+	if !errors.Is(err, refused) {
+		t.Fatalf("a sticky selection whose lease refresh was refused = %q, %v; want the store's error", c.Name, err)
+	}
+	if l, _ := stuck.lease(run); !l.Until.Equal(now.Add(time.Minute)) {
+		t.Fatalf("a refused sticky placement left the lease %+v; want the one that was there", l)
+	}
+}
+
+// The probe handoff is a decision the MARK makes, and only a backed-off mark
+// whose wait has passed owes one (C1.12). An exhausted credential is answered
+// with a time, never with "probe it": a probe's success would otherwise be the
+// way around D142's window, and a caller that probes an exhausted token has
+// spent a call on the one credential the window exists to keep out of rotation.
+//
+// Review finding N2: needs was never asserted false for anything, so the flag
+// could be turned on for an exhausted mark with no red test.
+func TestAnExhaustedMarkIsNeverAskedForAProbe(t *testing.T) {
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateExhausted, Since: now.Add(-time.Minute), Until: now.Add(30 * time.Minute)})
+
+	// The control off, so the wait is the reset and nothing else: what is
+	// asserted here is the flag, not the time.
+	_, wait, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("a selection against an exhausted token = %v; want an ExhaustedUntil answer", err)
+	}
+	if eu.Probe {
+		t.Fatal("an exhausted mark was handed off for a probe: its reset is a time, not a question (C1.12)")
+	}
+	if wait != 30*time.Minute {
+		t.Fatalf("the wait = %s; want the 30m reset", wait)
+	}
+
+	// The same under the default settings, where the window is what holds it:
+	// still a wait and not a probe.
+	_, _, err = selector(st, Settings{}).Select(ctx, run, []Credential{a1})
+	if !errors.As(err, &eu) || eu.Probe {
+		t.Fatalf("an exhausted mark under the window control answered probe=%v; want false", eu.Probe)
+	}
+
+	// A credential that is fine but held by another run waits for the lease,
+	// and that is not a probe either: the mark holds nothing at all.
+	held := newFakeStore()
+	held.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a2.Name, Until: now.Add(10 * time.Minute)})
+	_, wait, err = selector(held, Settings{}).Select(ctx, Run{Slug: run.Slug, ID: "r9"}, []Credential{a2})
+	if !errors.As(err, &eu) {
+		t.Fatalf("a selection against a credential held by another run = %v; want an ExhaustedUntil answer", err)
+	}
+	if eu.Probe {
+		t.Fatal("a credential whose mark holds nothing was handed off for a probe: only a backed-off wait is probed")
+	}
+	if wait != 10*time.Minute {
+		t.Fatalf("the wait = %s; want the lease's 10m", wait)
+	}
+}
+
+// The threshold a Settings never filled in is the policy's own 15 minutes, not
+// zero: with a zero threshold every wait is over it, so a run would fail over to
+// the paid key — or, under oauth-only, be told to wait — for a reset a minute
+// away, and the "wait for a credential that resets soon" rule would be dead in
+// the configuration every caller that forgets the member has.
+//
+// Review finding N2: withDefaults' `<= 0` was untested, so it could be a `< 0`
+// and no test went red.
+func TestAnUnsetThresholdIsThePolicyDefault(t *testing.T) {
+	if got := (Settings{}).withDefaults().WaitThreshold; got != projectpolicy.DefaultWaitThreshold {
+		t.Fatalf("an unset threshold defaulted to %s; want the policy's %s", got, projectpolicy.DefaultWaitThreshold)
+	}
+
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateExhausted, Since: now, Until: now.Add(time.Minute)})
+
+	// The member left at zero, which is every caller that does not fill it in,
+	// and the paid key on offer. The window is off, so the wait in play is the
+	// reset the response named: a minute, well inside any threshold, and the
+	// question is only whether an unset member counts as zero.
+	set := noWindow()
+	set.Fallback = Auto
+	_, wait, err := selector(st, set).Select(ctx, run, []Credential{a1, b1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("a one-minute wait under a threshold nobody set = %v; want the run to wait", err)
+	}
+	if wait != time.Minute {
+		t.Fatalf("the wait = %s; want the minute's reset", wait)
+	}
+	// Nothing was spent: the run idles rather than moving to the paid key.
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a one-minute wait under an unset threshold took the paid key: %d leases, %d placements", len(st.leases), len(st.current))
 	}
 }
 
