@@ -215,7 +215,15 @@ func TestLiveCredsRules(t *testing.T) {
 		facts.fact("this machine's day is %d and the database's is %d: the check works in the database's day, as DAYOK does", budget.Day(now), day)
 	}
 	n := crNewNames(now, day)
-	users := &crAuthUsers{}
+	// Every Firebase Auth user this check's exchanges can create, registered
+	// before the first exchange is made: an Exchange can create the account and
+	// then fail (a refused adopt, a claim the ID token does not carry), and a
+	// uid learned from a session that came back would be learned too late —
+	// crAuthUsers.run looks for the uids it knows, so the survivor would not
+	// even be reported. crAuthUIDs derives them from the names alone; the
+	// users.add calls below stay, and are no-ops, because a session whose uid
+	// is not in this set would mean the derivation is wrong.
+	users := &crAuthUsers{uids: crAuthUIDs(n)}
 
 	// The cleanups are registered before the first write and are idempotent: a
 	// failure anywhere below still leaves the installation as it was found,
@@ -841,11 +849,14 @@ func (c *crCleanup) run(t *testing.T, target crTarget, facts *crFacts) {
 
 // crAuthUsers is the Firebase Auth users the check's exchanges create: a run's
 // identity is one (r~<slug>~<run>, made at the first sign-in), and so is each
-// of the five other identities. They are deleted as the owner with the API the
-// history job's sweeper uses (budget.AuthAdmin: accounts:batchDelete), and the
-// project's user list is read back: a database the check left as it found it,
-// with the users it created still in the project, is a cleanup that only looks
-// finished.
+// of the five other identities. The list starts as crAuthUIDs(n) — every uid
+// the exchanges *can* create, derived from the names before the first of them
+// is made, so that an Exchange which creates the account and then fails still
+// leaves a uid the cleanup knows. They are deleted as the owner with the API
+// the history job's sweeper uses (budget.AuthAdmin: accounts:batchDelete), and
+// the project's user list is read back: a database the check left as it found
+// it, with the users it created still in the project, is a cleanup that only
+// looks finished.
 //
 // The scratch run ids are what they are (live92-<hex>-run) for the same
 // reason: if this ever fails, what is left is unmistakably the check's.

@@ -1,11 +1,17 @@
 // Package agentenv names the environment variables a coding agent's session
 // sets. It is the one list: `fugaro init`'s and `fugaro image refresh`'s gates
 // refuse to apply anything with one of them present, and the owner-run live
-// helpers in internal/e2e refuse to run at all, because a check that writes to
-// a real installation is the owner's, at the owner's terminal, and not the
-// agent's that wrote it (credentials-service plan F33 and D146: "every live
-// step is owner-run, on installation `fugaro` and a sandbox repository only,
-// never `belong`"; `agentMarker` refuses live applies inside a coding agent).
+// credentials-rules check (internal/e2e, TestLiveCredsRules) refuses to run at
+// all, because a check that writes to a real installation is the owner's, at
+// the owner's terminal, and not the agent's that wrote it (credentials-service
+// plan F33 and D146: "every live step is owner-run, on installation `fugaro`
+// and a sandbox repository only, never `belong`"; `agentMarker` refuses live
+// applies inside a coding agent).
+//
+// That check is the only helper in internal/e2e that reads this list. The
+// others (the spend helper of check 21, the gateway helper of check 20 and the
+// gcp ones) gate on their own explicit opt-in variable and do not look at the
+// markers, so this package's name is not a claim about them.
 //
 // It is a mitigation, not a barrier: an agent that unsets its own variables is
 // not stopped, and the real controls are the typed confirmations and the

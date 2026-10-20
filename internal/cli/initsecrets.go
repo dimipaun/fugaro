@@ -131,9 +131,9 @@ func (e *initEngine) hold(value []byte) (release func(), err error) {
 // JetBrains, so a person's own IDE terminal can be refused: only for that
 // marker the refusal tells the person (not the agent) what to do about it.
 //
-// The list lives in internal/agentenv because the owner-run live helpers in
-// internal/e2e refuse on it too (credentials-service plan F33), and one list
-// cannot drift from the other.
+// The list lives in internal/agentenv because the owner-run live
+// credentials-rules check in internal/e2e refuses on it too
+// (credentials-service plan F33), and one list cannot drift from the other.
 var agentMarkers = agentenv.Markers
 
 // agentMarker is the first marker getenv shows set, or "" with none: a coding

@@ -24,12 +24,14 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -356,6 +358,35 @@ func crWritten(n crNames) []string {
 	}, crCredsPaths(n).cleanup()...)
 }
 
+// crStructuralSegments are the deployed document's own parent words: the
+// segments every one of crWritten's paths is spelled through. They name
+// nobody's data — the data is always the child under them — so a path made of
+// these, the scratch names and a day is the check's own and nothing else's.
+// A path that needs a word not in this list is a path to add to it only if the
+// word is one of the document's parents: anything else is somebody's data, and
+// the cleanup deletes as the owner, with the rules bypassed.
+var crStructuralSegments = []string{
+	"agents",
+	"spend", "repos", "runs",
+	"creds", "marks", "leases", "current", "roundrobin",
+	"config", "admin", "devices",
+}
+
+// crScratchSegments are the names crNewNames built, as path segments: what
+// makes a node the check's own. Every node the check writes or deletes carries
+// one, and every other segment it names is one of crStructuralSegments or a
+// day — that is the whole of the property crWritten's comment states, and
+// TestCredsRulesCleanupDeletesOnlyTheChecksOwnNodes holds it to it.
+func crScratchSegments(n crNames) []string {
+	key := budget.Key
+	return []string{
+		key(n.slug), key(n.otherSlug),
+		key(n.run), key(n.otherRun),
+		key(n.n1), key(n.n2), key(n.n3),
+		key(crPhoneUID(n)),
+	}
+}
+
 // crCase is one write the run's own identity attempts.
 type crCase struct {
 	name  string
@@ -621,6 +652,38 @@ func crIdentities(n crNames) []crIdentity {
 		// there, and it is spelled with the root path the document has.
 		{name: "the pairing session", uid: pairing, claims: map[string]any{"pu": pairing}, reach: "pairing/" + budget.Key(pairing) + "/delivery"},
 	}
+}
+
+// crIdentityUID is the Firebase Auth uid the identity's custom token names:
+// for a run token r~<slug>~<run>, the launcher's own shape (token.UID), for a
+// claim token the uid itself.
+func crIdentityUID(id crIdentity) string {
+	if id.uid != "" {
+		return id.uid
+	}
+	return token.UID(budget.Key(id.slug), budget.Key(id.run))
+}
+
+// crAuthUIDs is every Firebase Auth user the check's exchanges can create in
+// the sandbox project, known from the names alone, before the first of them is
+// made: the run's own identity, and the five the identity walk mints. (The
+// other launcher's own run is the walk's second family — the other *run* of
+// this repository — so it is the same uid, and the walk's second token is this
+// run's uid again.)
+//
+// It is computed up front, and the cleanup takes it before the first exchange,
+// because an Exchange can create the account and *then* fail: a refused adopt,
+// a claim the ID token does not carry (crIdentitySession's read of it), an
+// answer the session constructor rejects. A uid registered only after the
+// session came back would be a uid nobody deletes — crAuthUsers.run looks for
+// the uids it knows, so the survivor would not even be reported, while the
+// FACT line claims the project's user list was read back as proof.
+func crAuthUIDs(n crNames) []string {
+	uids := []string{token.UID(budget.Key(n.slug), budget.Key(n.run))}
+	for _, id := range crIdentities(n) {
+		uids = append(uids, crIdentityUID(id))
+	}
+	return slices.Compact(slices.Sorted(slices.Values(uids)))
 }
 
 // expected are the claims the identity's ID token must carry, beyond the uid:

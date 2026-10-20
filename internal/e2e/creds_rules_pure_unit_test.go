@@ -18,6 +18,7 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // crNoNetwork runs f with http.DefaultTransport replaced by one that fails the
@@ -705,6 +707,125 @@ func crIsUnder(path, parent string) bool {
 	return strings.HasPrefix(path, parent+"/")
 }
 
+// TestCredsRulesCleanupDeletesOnlyTheChecksOwnNodes is the destructive half of
+// the cleanup, and the half a mistake is not survivable in: crCleanup deletes
+// as the owner, with the rules bypassed, so an entry in crWritten that is not
+// one of the check's own nodes deletes somebody else's node for real — and the
+// check then reads it back absent and reports a successful cleanup. The
+// coverage test above asks whether the list is complete; this asks whether it
+// is *safe*, which is the property crWritten's own comment states ("the
+// cleanup deletes exactly these, and nothing else") and which nothing else
+// pins.
+func TestCredsRulesCleanupDeletesOnlyTheChecksOwnNodes(t *testing.T) {
+	now := time.Now()
+	n := crNewNames(now, budget.Day(now))
+	scratch := crScratchSegments(n)
+	days := []string{budget.DayKey(n.day), budget.DayKey(n.oldDay)}
+	written := crWritten(n)
+
+	if len(written) == 0 {
+		t.Fatal("crWritten names nothing")
+	}
+
+	// Every segment of every entry is one of the check's scratch names, one of
+	// the document's own parents, or a day. There is no fourth kind: a segment
+	// that is none of them is somebody's data (a real repository's slug, a real
+	// run's id, a real credential's name, a real user's uid), and it is what a
+	// wrong entry here looks like.
+	for _, p := range written {
+		for _, seg := range strings.Split(p, "/") {
+			if slices.Contains(scratch, seg) || slices.Contains(crStructuralSegments, seg) || slices.Contains(days, seg) {
+				continue
+			}
+			t.Errorf("crWritten names /%s, whose segment %q is not one of the check's scratch names %v, not one of the document's own parents %v and not one of the check's days %v: the cleanup deletes as the owner with the rules bypassed, so a live run would delete somebody else's node there and read it back absent as a successful cleanup",
+				p, seg, scratch, crStructuralSegments, days)
+		}
+	}
+
+	// The deploy's own nodes are the one place the segment rule above is not
+	// enough on its own: a marker path is spelled entirely out of structural
+	// words, so it would pass unless the words themselves are pinned. These two
+	// are what no cleanup may delete — crUndo is what puts them back if a live
+	// document accepts an attempt on them — and the device node under config/ is
+	// the only thing under config/ the check may ever delete.
+	for _, p := range written {
+		if strings.HasPrefix(p, "config/") && !strings.HasPrefix(p, rules.PathDevices+"/") {
+			t.Errorf("crWritten names /%s: nothing under config/ is the check's to delete — the generation markers are crUndo's, and the deploy's", p)
+		}
+	}
+	for _, marker := range []string{rules.PathCredsRulesMarker(), projectpolicy.PathRulesMarker()} {
+		if slices.Contains(written, marker) {
+			t.Errorf("crWritten names the generation marker /%s: it is what no cleanup may delete, and a live run would delete it and read it back absent as a successful cleanup", marker)
+		}
+	}
+
+	// The positive control, so that the loop above cannot be satisfied by
+	// listing nothing: every name crNewNames built is a node the cleanup names.
+	// A name that is in no entry is a node the check writes and never deletes.
+	for _, s := range scratch {
+		if !slices.ContainsFunc(written, func(p string) bool { return slices.Contains(strings.Split(p, "/"), s) }) {
+			t.Errorf("crWritten names no node carrying the scratch name %q: the check writes it, and the cleanup would leave it behind", s)
+		}
+	}
+	if len(scratch) == 0 {
+		t.Fatal("crScratchSegments is empty: every path would fail the loop above")
+	}
+}
+
+// TestCredsRulesAuthUIDsCoverEveryIdentityTheCheckMints: the check's exchanges
+// create Firebase Auth users in the sandbox project, and the cleanup deletes
+// them. An Exchange can create the account and *then* fail, so a uid learned
+// from a session that came back is a uid learned too late; crAuthUIDs is the
+// set computed from the names alone, before the first exchange. This pins both
+// halves of it: every identity the check mints is in it (or the survivor is
+// never deleted) and nothing else is (or the cleanup deletes a real user).
+func TestCredsRulesAuthUIDsCoverEveryIdentityTheCheckMints(t *testing.T) {
+	now := time.Now()
+	n := crNewNames(now, budget.Day(now))
+	uids := crAuthUIDs(n)
+
+	// Derived here from the plan's own shape — a run's uid is r~<slug>~<run>
+	// (token.UID) and the three claim identities' uids are the check's own
+	// names — rather than from crAuthUIDs itself, so that a change to the
+	// builder is not also a change to what it is checked against.
+	slug, otherSlug := budget.Key(n.slug), budget.Key(n.otherSlug)
+	run, otherRun := budget.Key(n.run), budget.Key(n.otherRun)
+	want := []string{
+		"r~" + slug + "~" + run,      // the run's own identity
+		"r~" + otherSlug + "~" + run, // another repository's run
+		"r~" + slug + "~" + otherRun, // another run of this repository, and the other launcher's own run
+		crPhoneUID(n), crConsumerUID(n), crPairingUID(n),
+	}
+	for _, u := range want {
+		if !slices.Contains(uids, u) {
+			t.Errorf("crAuthUIDs does not name %s: the check's exchange creates that account, and a cleanup that does not know the uid cannot delete it — it would survive unseen, since crAuthUsers.run only looks for the uids it knows", u)
+		}
+	}
+	for _, u := range uids {
+		if !slices.Contains(want, u) {
+			t.Errorf("crAuthUIDs names %s, which is not an identity the check mints: the cleanup would delete a user of somebody else's", u)
+		}
+	}
+
+	// The delete list is a set: a uid named twice would be sent twice in the
+	// same batch.
+	if len(uids) != len(slices.Compact(slices.Sorted(slices.Values(uids)))) {
+		t.Errorf("crAuthUIDs = %v: it names a uid twice, and the delete list is a set", uids)
+	}
+	// Every uid it names is made of scratch names, so a real user's uid cannot
+	// be in the delete list however the derivation above is wrong. A run's uid
+	// is r~<slug>~<run>, a pairing session's is p~<name> (the prefix PAIRING
+	// reads), and the phone's and the consumer's are their own name.
+	for _, u := range uids {
+		rest := strings.TrimPrefix(strings.TrimPrefix(u, "r~"), "p~")
+		for _, seg := range strings.Split(rest, "~") {
+			if !strings.HasPrefix(seg, crRepoBase) {
+				t.Errorf("crAuthUIDs names %s, whose part %q does not carry the scratch prefix %q: an account left behind by a failed cleanup would not be recognisably the check's", u, seg, crRepoBase)
+			}
+		}
+	}
+}
+
 // TestCredsRulesSecretsAreScrubbed: the FACT recorder's own guard. A secret
 // that reached a FACT line would be printed into the checklist the owner
 // pastes, and the check's last act is to look for exactly that.
@@ -762,6 +883,60 @@ func TestCredsRulesIDTokenClaims(t *testing.T) {
 			t.Errorf("crIDTokenClaims(%q) = nil error, want a refusal", bad)
 		}
 	}
+}
+
+// TestCredsRulesLiveCleanupKnowsTheUIDsBeforeTheFirstExchange pins the ordering
+// that keeps a Firebase Auth user from surviving unseen: the live driver builds
+// the cleanup's user list from the names, before the first exchange, and not
+// from the sessions that come back. An Exchange can create the account and then
+// fail — a refused adopt, a claim the ID token does not carry — and
+// crAuthUsers.run looks for the uids it knows, so a uid learned from a session
+// is a uid learned too late: the account survives, nothing reports it, and the
+// FACT line claims the project's user list was read back as proof.
+//
+// The driver is behind the `live` tag and no test may run it, so the
+// machine-checkable form of that claim is its source — the shape
+// internal/cli's TestManagedEveryAgentSiteInInitHasACase uses for its marker
+// sites. crAuthUIDs is what makes the uids knowable up front (see
+// TestCredsRulesAuthUIDsCoverEveryIdentityTheCheckMints); this is what makes
+// the driver ask before it exchanges anything.
+func TestCredsRulesLiveCleanupKnowsTheUIDsBeforeTheFirstExchange(t *testing.T) {
+	body := crLiveTestBody(t, "TestLiveCredsRules")
+	reg := strings.Index(body, "uids: crAuthUIDs(n)")
+	if reg < 0 {
+		t.Fatalf("TestLiveCredsRules does not build its Firebase Auth user list from crAuthUIDs(n): the uids are knowable from the names before anything is exchanged, and an exchange that creates the account and then fails leaves a survivor that a list built from the sessions cannot name")
+	}
+	first := strings.Index(body, "crExchange(")
+	if first < 0 {
+		t.Fatalf("TestLiveCredsRules makes no exchange: the source this test read is not the check's")
+	}
+	if reg > first {
+		t.Errorf("TestLiveCredsRules registers the Firebase Auth uids at offset %d, after its first exchange at %d: the uids have to be known before the first exchange is made, or an exchange that creates the account and then fails leaves a survivor nothing deletes and nothing reports", reg, first)
+	}
+}
+
+// crLiveTestBody is the source of one top-level test function of the live
+// driver, so that a property of it can be checked on a machine that may not run
+// it. The driver's file name is the test's, in the same directory.
+func crLiveTestBody(t *testing.T, name string) string {
+	t.Helper()
+	src, err := os.ReadFile("live_creds_rules_test.go")
+	if err != nil {
+		t.Fatalf("reading the live driver: %v", err)
+	}
+	s := string(src)
+	start := strings.Index(s, "\nfunc "+name+"(t *testing.T)")
+	if start < 0 {
+		t.Fatalf("live_creds_rules_test.go has no func %s: the file this test reads is not the check's", name)
+	}
+	body := s[start+1:]
+	if end := strings.Index(body, "\nfunc "); end >= 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, "t.Fatal") {
+		t.Fatalf("the body read for %s is %d bytes and does not look like the check", name, len(body))
+	}
+	return body
 }
 
 // TestCredsRulesSameJSON: the database stores numbers one way and reorders
