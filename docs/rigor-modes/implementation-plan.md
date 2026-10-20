@@ -41,11 +41,14 @@ one of them is named so a reader can check the claim:
 
 | Existing | Used for | Finding |
 | --- | --- | --- |
-| `internal/config/resolve.go` `Resolve`, `config.LayerKey`, `config/policy/shared` | the project default and the floors, in the layering that already exists | F8 |
+| `internal/config/resolve.go` `Resolve`, `config.LayerKey` | the mode's three layers, in the layering that already exists — the project default is a new member of the closed `defaults:` | F8, F36 |
 | `internal/config/scope.go` `Scopes`, pinned by `TestScopeTableMatchesDocs` | which layer may set `rigor.*` | F7 |
 | `github.com/bmatcuk/doublestar/v4` | path rules, validated by `internal/config/validate.go` | F9 |
 | `internal/runstore/changedfiles.go`, `Record.ChangedFiles` | the post-hoc floor check | F11 |
-| `internal/followup/trust.go` `Trust`, `Allows` | who may invoke Hotfix | F13 |
+| `internal/followup/trust.go` `Trust`, `Allows` | who may invoke Hotfix, and the only route by which a floor is ever lowered | F13 |
+| `internal/runner/followup.go` `readBaseConfig` | the revision the mode's configuration is read from, as it already is for a review run and a follow-up | F35 |
+| `internal/watch/build.go` `runRow`, `budget.AgentEntry` | the live row a mode has to reach, and why it costs a registry child | F40 |
+| `internal/runner/changedfiles.go` `recordChangedFiles` | the measured paths the area layer resolves against in `finalize` | F39 |
 | `internal/runner/gate.go` | the mode's `check` gate | F26 |
 | `internal/runner/outcome.go` `Decide`, `Plural` | where the mode's policy is applied | F4, F5 |
 | `internal/runner/prflow.go` `finalSection`, `reviewsPart`, `applyReady`, and `internal/runner/runner.go` `finalize` (which builds `PRSpec{Draft: !ready}` and calls `settlePR`) | "left open by policy", and the ready PR | F28, F29 |
@@ -269,10 +272,15 @@ product code.
   row carries a command); `TestDocsRigorModesEveryTaskIsComplete` (every
   `**T<n>.<m> —` task in this document carries all seven labels — Files, Tests,
   Red step, Verification, Depends on, Reviewer, Commit — and every slice is a
-  `## Slice` heading); `TestDocsRigorModesSpecIsTheOwners` (the spec's own
-  sentences survive, and no document in the folder puts a decision in the owner's
-  mouth).
-- **Red step.** The test file does not exist; written first, each of the five
+  `## Slice` heading); `TestDocsRigorModesEveryCitedTaskExists` (every `T<n>.<m>`
+  a document cites resolves to a task in this document);
+  `TestDocsRigorModesEveryBlockRangeIsCurrent` (every block range a document
+  states ends where the block does — counted from the reconciliation — or is a
+  part of one cited beside its section, or a register this folder quotes by name;
+  and no document cites a number the block does not have); and
+  `TestDocsRigorModesSpecIsTheOwners` (the spec's own sentences survive, and no
+  document in the folder puts a decision in the owner's mouth).
+- **Red step.** The test file does not exist; written first, each of the seven
   fails on a folder that is missing the sentence it names. The task is not done
   until each is red once and green after, and what each one names becomes T0.1's fix.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsRigorModes' -count=1 -timeout 40m`

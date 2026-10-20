@@ -47,7 +47,8 @@ The owner ruled that the rigor mode "has a default per PROJECT, overridable per
 REPO, and then overridable DYNAMICALLY per AREA". This is §1.1's tenth row: the
 ruling changes where the mode's value comes from, and nothing else in this folder
 — the score, the run loop, the backlog, Hotfix and cost are untouched by it. The
-five parts, and the finding or decision that carries each:
+five parts, and where each lands — with the plan re-cut the launcher asked for
+last, since that one is a plan matter rather than a design one:
 
 | The ruling's part | Where it lands |
 | --- | --- |
@@ -1163,8 +1164,8 @@ file's own key (T5.1, with F23's image-skew gate); scope `InOverride`, raise-onl
 **Alternative: `rigor.areas` as a map keyed by glob** (`"internal/payments/**":
 Critical`). Cost: no name to print, so D24's readout becomes the glob text as
 written — which is fine until two globs are near-identical in a PR body — and a
-YAML map cannot carry the one comment that explains why a rule exists beside the
-rule.
+map key has no room for the one thing a rule needs beside its pattern, which is
+what to call it in a sentence.
 
 **Alternative: areas as a directory tree, one config file per area.** Cost: a
 second configuration surface with its own schema, its own trust question and its
