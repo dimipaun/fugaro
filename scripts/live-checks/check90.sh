@@ -163,6 +163,7 @@ SCRATCH_MARKER=".chk90-mine"
 PROXY_PID=""
 TOKEN_FILE=""
 SCRATCH_REMOVED=no
+TOKEN_REMOVED=no
 PRINTED=""
 
 scratch_up() {
@@ -184,7 +185,16 @@ scratch_up() {
 cleanup() {
   stop_call
   stop_proxy
-  rm -f "$TOKEN_FILE"
+  # Guarded, and its outcome RECORDED rather than assumed: this runs from the
+  # exit trap, where a `rm` that fails (a read-only parent, a file this user
+  # cannot unlink) would end the shell under `set -e` before `print_block` --
+  # the run would emit NO `CHECK 90 RESULT` block at all and exit 1, which reads
+  # as "tier A is not viable" for a run that may have measured nothing. A token
+  # file that is still there is a FACT, and the `restore` row names it: it holds
+  # the setup-token value, so "the token file is removed" must never be printed
+  # over one that survived.
+  rm -f "$TOKEN_FILE" 2>/dev/null || true
+  if [ ! -e "$TOKEN_FILE" ]; then TOKEN_REMOVED=yes; fi
   keep_logs
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   remove_scratch
@@ -227,7 +237,11 @@ remove_scratch() {
     say "refusing to remove $SCRATCH: it carries no marker from this check"
     return 0
   fi
-  rm -rf "$SCRATCH"
+  # Guarded for the reason cleanup's token removal is: this runs from the exit
+  # trap, where a failing `rm` under `set -e` would end the shell before
+  # `print_block`, losing the whole block. A directory that is still there is a
+  # FACT, and the `restore` row says so — it is not a reason to lose the block.
+  rm -rf "$SCRATCH" 2>/dev/null || true
   if [ ! -e "$SCRATCH" ]; then SCRATCH_REMOVED=yes; fi
 }
 
@@ -249,9 +263,18 @@ finish() {
     # rather than in a "not reached" line that reads like a step nobody ran.
     facts="${facts}"$'\n'"tier-a|INFO|INCONCLUSIVE — the run reached the calls and could not judge the swap; read the FAILed fact above"
   fi
+  # The two removals are reported as they happened, never as they were meant to:
+  # a token file or a directory that is still there is a FAILed row, with what
+  # to remove and where. The exit status is NOT changed by this row: this
+  # check's contract is 0 = tier A viable, 1 = it is not, 2 = the run could not
+  # tell, and a cleanup failure is none of those (a FAILed `claude-version` row
+  # can sit beside exit 0 for the same reason). What the guard above buys is
+  # that the block is always printed at all.
   local restore=PASS
-  [ "$SCRATCH_REMOVED" = yes ] || restore=FAIL
-  facts="${facts}"$'\n'"restore|$restore|the proxy is stopped, the token file is removed, and the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is still there")"
+  [ "$SCRATCH_REMOVED" = yes ] && [ "$TOKEN_REMOVED" = yes ] || restore=FAIL
+  local token_note="the token file is removed"
+  [ "$TOKEN_REMOVED" = yes ] || token_note="the TOKEN FILE IS STILL THERE at $TOKEN_FILE (mode 600, holding the setup-token value) — remove it yourself"
+  facts="${facts}"$'\n'"restore|$restore|the proxy is stopped, ${token_note}, and the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
   if [ -z "$PRINTED" ]; then
     PRINTED=1
     print_block "$facts" "$status"
