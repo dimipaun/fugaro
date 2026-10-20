@@ -27,8 +27,10 @@
 // id and a `boot` are drawn from `[A-Za-z0-9._:-]`, so they may begin with `-`
 // and may be `.` or `..`; a key (`id`, `reply_to`, `action.id`,
 // `action.confirmation.id`) may begin with `-`, may be a single space, and may
-// carry `*`, `?`, `\`, quotes and format characters — it refuses only
-// `% . $ # [ ] /`, C0, DEL and U+2028/U+2029; and a display string (`sender`,
+// carry `*`, `?`, `\`, quotes and format characters — the characters it
+// refuses are `% . $ # [ ] /`, the C0 range, DEL, U+2028, U+2029 and a lone
+// surrogate, and being non-empty and at most IDMax code units is a separate
+// question that the same field asks; and a display string (`sender`,
 // `text`, an option, an agent's spoken name) may carry bidi overrides and other
 // format characters, exactly as the merged module's does. The ledger must
 // therefore not use an id as a file name without encoding it, and no identity

@@ -1383,8 +1383,13 @@ func TestTwoUnknownFieldsAreNamedInByteOrder(t *testing.T) {
 	// And the code, not the field, is what the two ends share: the module's own
 	// ordering is unreachable from Go — a map has no insertion order — so the
 	// one Go-side property that can be asserted is that no unknown field is
-	// ever accepted, whatever order the two arrive in.
-	for _, order := range [][]string{{"aa", "bb"}, {"bb", "aa"}, {"aa", "aa"}} {
+	// ever accepted, whatever order the two arrive in. Each row names a
+	// different number of unknown fields, because "the first in byte order" is
+	// only interesting when there is more than one of them; a Record cannot
+	// hold one key twice, so the repeated key this loop used to name was never
+	// the second unknown field it looked like — the decoder refuses that
+	// document instead (TestDecodeRefusesAmbiguousDocuments).
+	for _, order := range [][]string{{"aa", "bb"}, {"bb", "aa"}, {"zz_extra", "0landed_at"}, {"aa", "bb", "cc"}} {
 		candidate := Record{"id": "m-0001", "mac": strings.Repeat("a", MACMax)}
 		for _, key := range order {
 			candidate[key] = int64(1)
