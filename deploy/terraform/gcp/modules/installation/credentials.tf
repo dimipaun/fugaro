@@ -104,7 +104,11 @@ resource "google_secret_manager_secret_iam_member" "credentials_bundle" {
 # because the caller is a Cloud Run *job* of this project, which reaches the
 # service over its public run.app URL (a job is not on a VPC network); the
 # fence is the IAM check, not the network — the only member is each job
-# account's own invoker grant (modules/workflow/sa.tf).
+# account's own invoker grant (modules/workflow/sa.tf). INGRESS_TRAFFIC_INTERNAL_ONLY
+# would refuse every caller there is today (independent security review of this
+# file, n3, which agreed with ALL): revisit it the day a job reaches the
+# service over Direct VPC egress instead, because then the network is a fence
+# that costs nothing.
 #
 # The image is a variable (C1.20's init stage fills it with the released
 # image's reference, as it fills var.history.image) and it is pinned BY DIGEST:
