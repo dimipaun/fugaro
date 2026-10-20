@@ -60,8 +60,8 @@ no defaults for two of the three inputs, and no billing list.
 Two findings dominate the cost of this work, and they are not the wizard:
 **the billing list reverses a written rule** (§3 F5) and **the rename touches
 ~790 Go lines, 26 live markdown files and 29 Terraform files** (§3 F20, §4 — the
-111 markdown files that name the command include the 85 in the dated roots that
-are left alone).
+111 markdown files that name the command include the 85 that sit, at that commit,
+in eight of the ten dated roots the rename leaves alone).
 
 ---
 
@@ -480,26 +480,44 @@ the checklist:
 are judgement: (a) **live user-facing text is renamed** — everything a user or
 an agent reads today, including skill files, Terraform descriptions and the
 generated CLI reference; (b) **dated records are not rewritten**. The dated
-roots are **nine**, and eight of them are one of two kinds: a **dated record of
+roots are **ten**, and nine of them are one of two kinds: a **dated record of
 this tree's own past** — `docs/plans/**`, `docs/releases/v*`, `docs/design/**`
 describing a shipped state — or **another artifact's documents**, which are a
 record of a different work and not this rename's to rewrite:
 `docs/credentials-service/**`, `docs/website/**`, `docs/coordinator/**`,
-`docs/in-job-review/**`, `docs/mobile/**`. The ninth is **`docs/setup-wizard/**`
-itself**: its spec.md is the owner's words, and its reconciliation and plan
+`docs/in-job-review/**`, `docs/mobile/**`, `docs/windows-cli/**`. The tenth is
+**`docs/setup-wizard/**` itself**: its spec.md is the owner's words, and its
+reconciliation and plan
 cannot describe a rename without naming what is renamed.
 
-The three artifact folders added here — `docs/coordinator/`,
-`docs/in-job-review/`, `docs/mobile/` — are the correction this section needed:
-they hold another artifact's `reconciliation.md` (and, for the mobile work, an
-`implementation-plan.md` too), exactly like `docs/credentials-service/` and
+The artifact folders added here — `docs/coordinator/`,
+`docs/in-job-review/`, `docs/mobile/` and, on the review's finding,
+`docs/windows-cli/` — are the corrections this section needed:
+they hold another artifact's `reconciliation.md` (and, for the mobile and the
+Windows work, an `implementation-plan.md` too), exactly like
+`docs/credentials-service/` and
 `docs/website/`, which were already exempt; treating them as live text was
-inconsistent with the rule that exempted their twins. A root earns its place by
+inconsistent with the rule that exempted their twins. The rule is D9's, and the
+list is its application: a root earns its place by
 naming the command (`docs/mobile/` 4 files and 11 mentions, `docs/coordinator/`
-2 and 8, `docs/in-job-review/` 1 and 4), so `docs/voice-module/**` and
-`docs/windows-cli/**`, which are also artifact folders but name it **zero**
-times, are **not** on the list — an exemption for a root with no occurrences is
+2 and 8, `docs/in-job-review/` 1 and 4, `docs/windows-cli/` 1 and 1), so
+`docs/voice-module/**`, which is also an artifact folder but names it **zero**
+times, is **not** on the list — an exemption for a root with no occurrences is
 the "wrong in one direction" case W0.2's guard forbids.
+**`docs/windows-cli/**` is the tenth root, and it was read wrong first**, which
+is why the counts above sit with it. It does not exist at `82d366af` — the
+commit every figure in this section is read at — so an earlier revision of this
+paragraph called it an artifact folder that names the command **zero** times,
+which was true of an absent folder and false of the tree: it exists on `main`
+today (`spec.md`, `reconciliation.md`, `implementation-plan.md` and a
+`README.md`, exactly the `docs/mobile/` shape, its own header saying "plan only;
+nothing is implemented; decisions open"), and its `reconciliation.md` names
+`fugaro init` **once**, in F37's cross-reference to this document's own count.
+By the rule above it is another artifact's dated plan record and belongs on the
+list — the same correction the three folders before it needed, and the same
+"wrong in one direction" that a folder absent at the base commit invites. Its
+figure is read with the command rather than at `82d366af`:
+`git grep -c 'fugaro init' -- docs/windows-cli`.
 
 This follows the tree's own precedent: `plugin/readme_test.go`'s
 `TestReadmeNamesNoRetiredSkill` carries a `skip` regex over
@@ -679,8 +697,9 @@ false — which it was, in the first draft of this section.
 (`git grep -l 'fugaro init' 82d366af -- '*.md' | grep -vc
 '^docs/setup-wizard/'`), and the split between what the rename touches and what
 it leaves alone is **26 live files against 85 in the dated roots** — 85 *at
-`82d366af`*, where the ninth root, this folder, does not exist yet (the work
-these documents describe adds it) and so contributes none of them.
+`82d366af`*, where two of the ten roots do not exist yet (this folder and
+`docs/windows-cli/**`, whose plan records postdate it) and so contribute none of
+them.
 
 Live (renamed) — 26 files: `README.md` (16 mentions), `CONTRIBUTING.md`,
 `docs/gcp-setup.md` (113 — its title is `# GCP setup with \`fugaro init\``),
@@ -699,19 +718,24 @@ dropped; the count of 26 is right and the enumeration was 25), and the two
 **generated** files `website/content/cli-reference.md` and
 `website/content/security.md`.
 
-Dated (left alone) — 85 files in **nine roots**, each root D9's own rule (F20):
+Dated (left alone) — 85 files in the **ten roots**, each root D9's own rule
+(F20), and eight of the ten contribute files *at `82d366af`*:
 the dated records of this tree's past — `docs/plans/**` (32), `docs/releases/v*`
-(12), `docs/design/**` (30) — and the five folders that hold **another
+(12), `docs/design/**` (30) — and the six folders that hold **another
 artifact's** documents — `docs/credentials-service/**` (2, 11 mentions),
 `docs/website/**` (2, 3 mentions, all in its own `implementation-plan.md` and
 `reconciliation.md`; `docs/website/redesign/**` names the command zero times) —
-plus the three this section was corrected to exempt, because they are the same
+plus the four this section was corrected to exempt, because they are the same
 kind of record as the two beside them: `docs/coordinator/**` (2 files, 8
 mentions), `docs/in-job-review/**` (1, 4) and `docs/mobile/**` (4, 11, including
-its `implementation-plan.md` and its `functional-spec-reconciliation.md`) — and,
-ninth, `docs/setup-wizard/**` itself, whose four documents name the command
+its `implementation-plan.md` and its `functional-spec-reconciliation.md`), and
+`docs/windows-cli/**` (1 file, 1 mention — it postdates `82d366af`, so it
+contributes none of the 85 and its figure comes from
+`git grep -c 'fugaro init' -- docs/windows-cli`; D9's paragraph above says why
+it is a root) — and,
+tenth, `docs/setup-wizard/**` itself, whose four documents name the command
 throughout (`git grep -o -c 'fugaro init' -- docs/setup-wizard`) and whose prose
-is *about* the retirement. `docs/voice-module/**`, `docs/windows-cli/**` and
+is *about* the retirement. `docs/voice-module/**` and
 `docs/pending-workflows/**` name the command zero times and are not on the list.
 
 **Terraform — 29 of the tree's 58 `.tf` files**
@@ -973,7 +997,7 @@ unrelated words for the same moment.
 
 **Recommend: rename live text, never rewrite dated records.** Renamed:
 user-facing strings, skill files, README, the live `docs/` guides, generated
-website content, Terraform descriptions. Left alone — **nine roots**, and the
+website content, Terraform descriptions. Left alone — **ten roots**, and the
 list was corrected when this decision was answered, because three of them were
 inconsistent with the rule that exempted their twins: `docs/plans/**`,
 `docs/releases/v*`, `docs/design/**` describing shipped state,
@@ -981,18 +1005,31 @@ inconsistent with the rule that exempted their twins: `docs/plans/**`,
 **`docs/coordinator/**`, `docs/in-job-review/**` and `docs/mobile/**`** — each of
 which holds another artifact's `reconciliation.md` (and, for the mobile work, an
 `implementation-plan.md`), exactly like the credentials-service and website
-folders already on the list — and **this whole folder** as the ninth: its
+folders already on the list — and **this whole folder** itself: its
 spec.md is the owner's words, and its reconciliation and plan cannot describe a
-rename without naming what is renamed. The nine roots are the plan's one
+rename without naming what is renamed. The ten roots are the plan's one
 `datedRecords` constant, written in W0.2. This is the tree's own precedent, in
 `TestReadmeNamesNoRetiredSkill`'s `skip` regex, and it is the only way a
 ~790-line rename stays reviewable. The plan adds one **new** guard test that
 asserts the split explicitly, so the line is enforced and not merely intended.
 Exempting a root that names the command nowhere is the case the guard forbids —
-so `docs/voice-module/**`, `docs/windows-cli/**` and `docs/pending-workflows/**`
+so `docs/voice-module/**` and `docs/pending-workflows/**`
 are **not** on the list, and `docs/website/redesign/**` is not a root of its own.
+**The tenth root was added after this answer, and it is the answer applied once
+more rather than changed.** `docs/windows-cli/**` does not exist at `82d366af`,
+so the first draft read it the way it read `docs/voice-module/**` — an artifact
+folder naming the command zero times — and that was true of an absent folder and
+false of the tree: it holds another artifact's four plan documents (`spec.md`,
+`reconciliation.md`, `implementation-plan.md`, `README.md`, the `docs/mobile/`
+shape) and its own reconciliation names `fugaro init` once, in a cross-reference
+to this document's count. By the rule that made the other artifact folders
+roots, it is one; the count is read with the command
+(`git grep -c 'fugaro init' -- docs/windows-cli`) rather than at a commit where
+the folder is missing.
 
-**Answered 2026-10-20: as recommended, with the nine roots above.** W0.2 writes
+**Answered 2026-10-20: as recommended, with the nine-root list above — ten now
+that `docs/windows-cli/**` is read against the tree rather than against
+`82d366af`.** W0.2 writes
 the constant and W2.6's flip is what enforces it.
 
 *Alternative:* rename everything including history. Cost: ~30 dated design and
@@ -1197,5 +1234,5 @@ applies.
 | That the Cloud Billing API's `billing.accounts.list` permission is granted to a typical owner in the owner's two installations | Not called. `internal/infra/projectcreate.go` already carries an UNVERIFIED list against the real services; the picker adds one more row to it. |
 | That every one of the ~50 `re-run fugaro init --firebase` strings means "converge the Firebase stage" | Read, not executed; each was judged by its surrounding symbol. Any exception should be found by the task that rewrites them, and its test should name the string. |
 | That no Terraform `description` is byte-compared by a test | Not exhaustively grepped. If one is, the Terraform rename task's first red step will say so. |
-| The exact count of places naming `fugaro init` | Counted by grep on `main` at `82d366af`: 410 non-test Go lines across 107 files, 378 test lines across 106 files, 111 markdown files outside `docs/setup-wizard/` (26 live and 85 in the nine dated roots), 29 Terraform files naming the command out of 58. Each figure's command is stated next to it in §4 and C3, so a different grep is a different number by construction; the plan does not depend on the counts, only on the categories — except in the one place where a list *is* the work, which is W2.1's `internal/cli` files, and those are named one by one. |
+| The exact count of places naming `fugaro init` | Counted by grep on `main` at `82d366af`: 410 non-test Go lines across 107 files, 378 test lines across 106 files, 111 markdown files outside `docs/setup-wizard/` (26 live and 85 in the ten dated roots, eight of which hold them at that commit), 29 Terraform files naming the command out of 58. Each figure's command is stated next to it in §4 and C3, so a different grep is a different number by construction; the plan does not depend on the counts, only on the categories — except in the one place where a list *is* the work, which is W2.1's `internal/cli` files, and those are named one by one. |
 | That the wizard does not break `internal/cli/docs_checkout_test.go`'s command resolution | Not run. It resolves `` `fugaro …` `` against `NewRootCmd()`; it is expected to **fail** until the docs are renamed in the same commit, which is the point. |

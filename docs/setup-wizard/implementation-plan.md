@@ -50,14 +50,16 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
 - **No bucket renaming.** D4 accepts `fugaro-runs-fugaro-<name>` when the id
   default is used. Nothing about `fugaro-runs-<gcp-project>`,
   `fugaro-tfstate-<gcp-project>` or the managed fact's path moves.
-- **No historical rewrite.** The **nine** dated roots —
+- **No historical rewrite.** The **ten** dated roots —
   `docs/plans/**`, `docs/releases/v*`, `docs/design/**`,
   `docs/credentials-service/**`, `docs/website/**`, `docs/coordinator/**`,
-  `docs/in-job-review/**`, `docs/mobile/**` and **`docs/setup-wizard/**`
+  `docs/in-job-review/**`, `docs/mobile/**`, **`docs/windows-cli/**`** and
+  **`docs/setup-wizard/**`
   itself** — keep the old name (D9, F20). `docs/plans/**`, `docs/releases/v*`
   and `docs/design/**` are this tree's own record of what shipped on a date;
-  the other five — `docs/website/`, `docs/credentials-service/`,
-  `docs/coordinator/`, `docs/in-job-review/` and `docs/mobile/` — each hold
+  the other six — `docs/website/`, `docs/credentials-service/`,
+  `docs/coordinator/`, `docs/in-job-review/`, `docs/mobile/` and
+  `docs/windows-cli/` — each hold
   another artifact's own `reconciliation.md` (the mobile folder its
   `implementation-plan.md` too), describing work as it was planned on its own
   date, so rewriting the command inside them would be editing a record rather
@@ -218,16 +220,16 @@ above is the list it must not lose.
    `fugaro verify test` on the final commit.
 10. **One file, one writer per level.** The levels below are disjoint by file;
     `internal/cli` is one lane, which is why the table looks thin.
-11. **The dated records are read-only** (D9): the **nine** roots —
+11. **The dated records are read-only** (D9): the **ten** roots —
     `docs/plans/**`, `docs/releases/v*`, `docs/design/**`,
     `docs/credentials-service/**`, `docs/website/**`, `docs/coordinator/**`,
-    `docs/in-job-review/**`, `docs/mobile/**` and **this whole folder,
-    `docs/setup-wizard/**`** — are never edited by a rename task. These nine are
-    exactly W0.2's `datedRecords` constant. Five of them (`docs/website/`,
-    `docs/credentials-service/`, `docs/coordinator/`, `docs/in-job-review/`,
-    `docs/mobile/`) are another artifact's plan record, while
-    `docs/setup-wizard/`'s prose is *about* the retirement and cannot stop
-    naming the retired command.
+    `docs/in-job-review/**`, `docs/mobile/**`, `docs/windows-cli/**` and **this
+    whole folder, `docs/setup-wizard/**`** — are never edited by a rename task.
+    These ten are exactly W0.2's `datedRecords` constant. Six of them
+    (`docs/website/`, `docs/credentials-service/`, `docs/coordinator/`,
+    `docs/in-job-review/`, `docs/mobile/`, `docs/windows-cli/`) are another
+    artifact's plan record, while `docs/setup-wizard/`'s prose is *about* the
+    retirement and cannot stop naming the retired command.
 
 ---
 
@@ -283,7 +285,7 @@ above is the list it must not lose.
    must not shadow it (F21); `TestDocsCheckoutCommandsExist` resolves both.
 7. **The dated records keep the old name** (Convention 11), and W2.6's guard
    test fails if the exemption list is wrong in either direction: `datedRecords`
-   is **one** constant, written in W0.2 with D9's **nine** roots and referenced —
+   is **one** constant, written in W0.2 with D9's **ten** roots and referenced —
    never restated — by every other task, because two copies of the list are two
    lists that drift.
 8. **The billing picker runs only where `canType()` says yes.** Under `--json`,
@@ -304,10 +306,13 @@ A reviewer of **this pull request** (docs only) should check:
   **D12 is the one answer that moved a task's text**.
 - That the rename's line is enforceable (W2.6's guard test fails in both
   directions), that `datedRecords` is stated in exactly **one** place (W0.2),
-  and that the **nine** roots it names match D9's answer — in particular that
-  `docs/website/`, `docs/coordinator/`, `docs/in-job-review/` and `docs/mobile/`
-  are on the list and `docs/website/redesign/**`, which names the command zero
-  times, is not.
+  and that the **ten** roots it names match D9's rule — in particular that
+  `docs/website/`, `docs/coordinator/`, `docs/in-job-review/`, `docs/mobile/`
+  and `docs/windows-cli/` (added on the review's finding: it postdates
+  `82d366af` but holds another artifact's plan documents and names the command
+  once) are on the list, and that `docs/website/redesign/**`,
+  `docs/voice-module/**` and `docs/pending-workflows/**`, which name the command
+  zero times, are not.
 - That Check 27's rewrite and Check 111 are the owner's to run, are sandbox
   only, never touch `belong`, and follow the register's form.
 - That the levels contain no two writers of one file — check it against **`### The
@@ -717,11 +722,11 @@ shrank). `SECURITY.md` is a root **file**, not a directory, and it is on the wal
 because it names the command **seven** times (`grep -c 'fugaro init'
 SECURITY.md`) and W2.3 renames it; every other root file and every top-level
 directory that names it zero times is left off, so the walk and the rename's
-task list cover the same set. The `datedRecords` list is **the nine dated roots,
+task list cover the same set. The `datedRecords` list is **the ten dated roots,
 and it is stated once, here**:
 `docs/plans/`, `docs/releases/v`, `docs/design/`, `docs/credentials-service/`,
-`docs/website/`, `docs/coordinator/`, `docs/in-job-review/`, `docs/mobile/` and
-**`docs/setup-wizard/` itself** — matching
+`docs/website/`, `docs/coordinator/`, `docs/in-job-review/`, `docs/mobile/`,
+`docs/windows-cli/` and **`docs/setup-wizard/` itself** — matching
 `plugin/readme_test.go`'s `TestReadmeNamesNoRetiredSkill` `skip` regex in
 spirit. Every other task that mentions the exemption list repeats this one
 verbatim rather than paraphrasing it, because a second copy is a second list
@@ -735,11 +740,15 @@ folder its `implementation-plan.md` too — exactly like the credentials-service
 folder already on the list. Three of these nine were added by **D9's answer of
 2026-10-20**, because leaving them out was the list contradicting its own rule:
 they are the same kind of record as `docs/website/`, and a rename task editing
-them would be rewriting another plan's history. Exempting a root that names the
-command **zero** times stays forbidden in both directions, which is why
-`docs/website/redesign/**` is not a root of its own and `docs/voice-module/**`,
-`docs/windows-cli/**` and `docs/pending-workflows/**` are not on the list: they
-name it nowhere.
+them would be rewriting another plan's history. The tenth,
+**`docs/windows-cli/`**, is the same rule applied to a folder that did not
+exist at `82d366af`: the census below is read there, so it cannot see the
+folder, but the base holds it and it names the command **once**, in another
+artifact's dated plan record (`docs/windows-cli/reconciliation.md`, F37).
+Exempting a root that names the command
+**zero** times stays forbidden in both directions, which is why
+`docs/website/redesign/**` is not a root of its own and `docs/voice-module/**`
+and `docs/pending-workflows/**` are not on the list: they name it nowhere.
 The handful of *generated* files (`website/content/cli-reference.md`,
 `website/content/security.md`) are asserted to be in `pendingRename` and are
 removed from it by W2.4, which regenerates them rather than editing them.
@@ -1125,7 +1134,7 @@ including its title
 `docs/release.md`, `SECURITY.md`, `docs/checkout.md`, `docs/backends.md`,
 `docs/base-image.md`, `docs/base-image-migration.md`, `docs/recipes.md`,
 `docs/releases/README.md` (the releases index — live; the dated records beside
-it are `docs/releases/v*`, which the nine roots exempt),
+it are `docs/releases/v*`, which the ten roots exempt),
 `plugin/skills/setup/SKILL.md` and
 `plugin/skills/setup/reference/**`, `plugin/skills/working/reference/status.md`,
 `.claude/skills/new-release/SKILL.md`; and the pins updated in the same commit:
@@ -1250,7 +1259,7 @@ plus `docs/gcp-live-checklist.md`
 — its remaining prose beyond Checks 27 and 111, which W0.3 wrote and which
 already name the new commands.
 **The leftover set is closed, and this is the whole of it.** Once W2.1–W2.5 have
-landed, the only files outside the nine exempt roots and the three
+landed, the only files outside the ten exempt roots and the three
 `retirementText` files that still name the command are `docs/gcp-live-checklist.md`
 and — if W2.5 has not landed yet — `schemas/fugaro.schema.json`,
 `internal/config/example.{go,yaml}` and `images/verify-public.sh`. **Every live
@@ -1265,13 +1274,15 @@ which is exactly the gap that made this sentence false before — see
 `### The file lanes` for the
 files with more than one writer; anything else the red step prints is a file a
 rename task missed and belongs to that task, not to this one.
-The exempt roots are **exactly W0.2's nine, no more and no fewer** —
+The exempt roots are **exactly W0.2's ten, no more and no fewer** —
 `docs/plans/`, `docs/releases/v`, `docs/design/`, `docs/credentials-service/`,
-`docs/website/`, `docs/coordinator/`, `docs/in-job-review/`, `docs/mobile/` and
-`docs/setup-wizard/` — and this task does not restate them
-from memory: the guard's `datedRecords` is one constant, and W0.2 is where it is
-written. Five of the nine are another artifact's plan record
-(`docs/website/` and the three D9 added, plus `docs/credentials-service/`), and
+`docs/website/`, `docs/coordinator/`, `docs/in-job-review/`, `docs/mobile/`,
+`docs/windows-cli/` and `docs/setup-wizard/` — and this task does not restate
+them from memory: the guard's `datedRecords` is one constant, and W0.2 is where
+it is written. Six of the ten are another artifact's plan record
+(`docs/website/`, the three D9 added, `docs/credentials-service/` and the
+`docs/windows-cli/` folder the review's finding added — it postdates
+`82d366af`, so a census read there cannot see it), and
 if the flip prints a file inside one of them, the constant is wrong — not the
 file. `docs/setup-wizard/` is among them because it is where the retirement
 is described (four documents, every one of them; the count is volatile, so the
