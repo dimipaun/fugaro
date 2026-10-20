@@ -478,6 +478,11 @@ test_sigint_cleans_up() {
   return 0
 }
 
+# The script wipes the token file explicitly and then removes the whole 0700
+# scratch directory, so "the token file was left behind" is only observable
+# together with "the scratch directory survived" -- and that pair is what the
+# tests below catch: the token file lives inside the scratch directory, and
+# every scenario asserts the scratch directory is gone.
 assert_no_sentinel() { # dir what — no file under dir, and nothing printed, carries the token
   local dir=$1 what=$2
   expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null)" "$SENTINEL" "$what: the output"
