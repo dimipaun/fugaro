@@ -34,6 +34,12 @@ package cli
 // not a failure, because the rename has to touch that file either way; what
 // the list freezes is which files the rename reaches.
 //
+// A third list is not an exemption but a boundary: `censusOutputDirs` is the
+// ignored build outputs and dependency trees both walks step over, because a
+// built page renders a source file that IS on the list -- website/dist/ holds
+// the rendered cli-reference page, whose source markdown is on
+// `pendingRename` -- and a rendered copy is regenerated, not renamed.
+//
 // Mentions are matched over flattened text -- line-comment markers dropped,
 // whitespace collapsed, the normalisation docs_base_test.go's flattenDoc
 // already uses -- so a mention wrapped across a line break or across a `//`
@@ -50,6 +56,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -485,6 +492,75 @@ func censusExempt(rel string) bool {
 	return slices.Contains(retirementText, rel)
 }
 
+// censusOutputDirs is the third thing the census steps over, and it is not an
+// exemption: these are the build outputs and dependency trees this repository's
+// own .gitignore files declare, so they are not source text and no rename
+// reaches them. They matter because they are *rendered* copies: `npm run build`
+// writes website/dist/ from website/src/ and website/content/, so a built
+// cli-reference page carries the `fugaro init` its source markdown carries --
+// and both of those sources are on `pendingRename`. A census that read the
+// build output would fail a developer who ran the build the README documents,
+// with a remedy nobody can carry out: a rendered page is regenerated, not
+// renamed, and node_modules/ is not this repository's text at all.
+//
+// websiteBuildDir ("website/dist", docs_website_boundary_test.go) is the
+// constant this package already keeps for the first of them, and the reason is
+// that file's own: a built copy is a copy the build makes, not a second source
+// of the fact. This list is that rule widened to every ignored output the two
+// walks can reach, including the root's own (dist/, secrets/ and .firebase/,
+// which .gitignore keeps for the owner's local state). Each entry is written
+// the way its .gitignore writes it.
+//
+// The binaries a build leaves at the root -- /fugaro, /clidoc -- are
+// deliberately not here. They are files rather than directories, and
+// censusNamesInit's binary sniff is what steps over them, which keeps the rule
+// in one place: this list is about what a build *renders*, that sniff is about
+// what a compiler *links*.
+var censusOutputDirs = []string{
+	// website/.gitignore
+	"website/node_modules",
+	"website/dist",
+	"website/.astro",
+	// The console's own .gitignore, spelled through consoleDirName rather than
+	// as one literal: the boundary's mention rule (docs_console_boundary_test.go)
+	// counts that directory's name followed by a slash anywhere in a Go file,
+	// comments included, and this file names the directory to step over it
+	// rather than to reach into it. consoleDirName is the package's one
+	// spelling of it, which is the rule that file states for itself.
+	consoleDirName + "/node_modules",
+	consoleDirName + "/dist",
+	consoleDirName + "/release",
+	consoleDirName + "/test-results",
+	consoleDirName + "/playwright-report",
+	consoleDirName + "/.record-fixture",
+	consoleDirName + "/.bundle-renderer",
+	// mobile/.gitignore
+	"mobile/node_modules",
+	"mobile/dist",
+	"mobile/web-build",
+	"mobile/.expo",
+	// .gitignore
+	"dist",
+	".firebase",
+	"secrets",
+}
+
+// censusOutput reports whether a repository-relative path is one of the ignored
+// outputs above: the directory itself, or anything under it.
+func censusOutput(rel string) bool {
+	for _, dir := range censusOutputDirs {
+		if rel == dir || strings.HasPrefix(rel, dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// censusBinarySniff is how much of a file censusNamesInit reads before it
+// decides whether the file is text. Eight KiB is enough for the two Windows
+// binaries at this repository's root, whose NUL bytes start at byte 4.
+const censusBinarySniff = 8192
+
 // censusNamesInit reports whether the file at path names the command. The
 // bytes are flattened before they are matched -- line-comment markers dropped,
 // whitespace collapsed -- because prose and Go comments wrap, and a census
@@ -500,25 +576,39 @@ func censusExempt(rel string) bool {
 //
 // A file whose first 8 KiB hold a NUL byte is binary and is skipped: the tree
 // carries two Windows binaries at its root, and a byte pattern inside a
-// compiled artifact is not a string anybody renames.
+// compiled artifact is not a string anybody renames. The head is read first
+// and the rest only when the head says the file is text, because the walk also
+// reaches the binaries a build leaves in the root -- .gitignore's own note puts
+// `clidoc` at 74 MB -- and reading one of those whole to learn what its first
+// eight kilobytes already say is the memory the sniff exists to save. A NUL
+// past the sniff is not consulted, so a file is text or binary by its head
+// alone, exactly as it was before.
 func censusNamesInit(t *testing.T, path string) bool {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
 	}
-	head := data
-	if len(head) > 8192 {
-		head = head[:8192]
+	defer f.Close()
+	head := make([]byte, censusBinarySniff)
+	n, err := io.ReadFull(f, head)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		t.Fatalf("reading %s: %v", path, err)
 	}
+	head = head[:n]
 	if bytes.IndexByte(head, 0) >= 0 {
 		return false
 	}
-	return initNameRE.MatchString(flattenDoc(string(data)))
+	rest, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return initNameRE.MatchString(flattenDoc(string(append(head, rest...))))
 }
 
-// liveInitCensus walks liveRoots and returns, sorted, every non-exempt file
-// that names the command. A root that is not there is fatal rather than
+// liveInitCensus walks liveRoots and returns, sorted, every file that names
+// the command, minus the two exemption classes (censusExempt) and the ignored
+// build outputs (censusOutput). A root that is not there is fatal rather than
 // skipped, and so is a read error: a census that shortened itself would pass
 // the assertions below by finding less.
 func liveInitCensus(t *testing.T, root string) []string {
@@ -540,15 +630,21 @@ func liveInitCensus(t *testing.T, root string) []string {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() {
-				return nil
-			}
 			rel, err := filepath.Rel(root, path)
 			if err != nil {
 				return err
 			}
 			rel = filepath.ToSlash(rel)
-			if censusExempt(rel) {
+			// A build output is not descended into at all: the point of the
+			// rule is that nothing under it is repository text, and stepping
+			// over the tree is also what keeps the walk cheap when one is there.
+			if censusOutput(rel) {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() || censusExempt(rel) {
 				return nil
 			}
 			if censusNamesInit(t, path) {
@@ -562,6 +658,50 @@ func liveInitCensus(t *testing.T, root string) []string {
 	}
 	slices.Sort(found)
 	return found
+}
+
+// TestCensusNamesInitReadsPastTheHead pins both halves of censusNamesInit's
+// read, on files it writes itself, so the sniff's two rules are held where they
+// are written rather than only through the tree:
+//
+//   - a file whose head is text is read to its end, so a mention past the sniff
+//     is still a mention (the walk must not stop looking at 8 KiB), and
+//   - a file whose head holds a NUL is binary and the rest is not read at all
+//     (the sniff's whole purpose: the walk reaches the binaries a build leaves
+//     in the root, and `clidoc` is 74 MB).
+//
+// The third case is the boundary itself: a NUL past the sniff does not make a
+// file binary, because a file is text or binary by its head alone.
+//
+// Mutation (run, restore): drop the `io.ReadAll` and match the head alone --
+// the past-the-head case fails; move the NUL check after a whole-file read --
+// the third case fails.
+func TestCensusNamesInitReadsPastTheHead(t *testing.T) {
+	pad := strings.Repeat("a ", censusBinarySniff/2)
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"mention in the head", "rerun: fugaro init\n", true},
+		{"mention past the head", pad + "\nrerun: fugaro init\n", true},
+		{"wrapped mention past the head", pad + "\n// rerun: fugaro\n// init\n", true},
+		{"mention past the head, init --repo", pad + "\ninit --repo .\n", true},
+		{"nothing to find, past the head", pad + "\nnothing here\n", false},
+		{"binary head", "MZ\x00\x00fugaro init\n", false},
+		{"NUL past the head", pad + "\x00fugaro init\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "candidate.txt")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := censusNamesInit(t, path); got != tc.want {
+				t.Errorf("censusNamesInit(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
 }
 
 // duplicatePaths returns the entries that appear in paths more than once.
@@ -646,6 +786,16 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 // claim the plan makes for them: every top-level entry that names the command
 // is walked, and every entry that is not walked names it zero times.
 //
+// This walk asks the same two questions the first one does before it objects,
+// and for the same reason: a file that is exempt or under a build output is
+// not this test's business either. Without the exemption check the two
+// remedies it offers would both be impossible for such a file -- adding it to
+// liveRoots would make the first test demand it in `pendingRename`, which is
+// to demand renaming a dated record. No dated root or retirement path sits
+// outside docs/ or internal/cli/ today, so the hole is latent; it is closed
+// because it is the one place where the file's own rule was applied to one
+// half of the line and not the other.
+//
 // Mutation (run, restore): add a line naming the command to a file under a
 // directory that is not a root -- mobile/README.md is one -- and this fails.
 func TestLiveInitCensusRootsAreTheOnlyOnesThatNameIt(t *testing.T) {
@@ -656,7 +806,7 @@ func TestLiveInitCensusRootsAreTheOnlyOnesThatNameIt(t *testing.T) {
 	read := 0
 	for _, e := range entries {
 		name := e.Name()
-		if name == ".git" || slices.Contains(liveRoots, name) {
+		if name == ".git" || slices.Contains(liveRoots, name) || censusOutput(name) {
 			continue
 		}
 		p := filepath.Join(censusRoot, name)
@@ -671,18 +821,24 @@ func TestLiveInitCensusRootsAreTheOnlyOnesThatNameIt(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() {
-				return nil
-			}
-			read++
-			if !censusNamesInit(t, path) {
-				return nil
-			}
 			rel, err := filepath.Rel(censusRoot, path)
 			if err != nil {
 				return err
 			}
-			t.Errorf("%s names `fugaro init`, but %s/ is not a live root: add it to liveRoots, or rename the mention -- the walk and the rename's task list have to cover the same set", filepath.ToSlash(rel), name)
+			rel = filepath.ToSlash(rel)
+			if censusOutput(rel) {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() || censusExempt(rel) {
+				return nil
+			}
+			read++
+			if censusNamesInit(t, path) {
+				t.Errorf("%s names `fugaro init`, but %s/ is not a live root: add it to liveRoots, or rename the mention -- the walk and the rename's task list have to cover the same set", rel, name)
+			}
 			return nil
 		})
 		if err != nil {
