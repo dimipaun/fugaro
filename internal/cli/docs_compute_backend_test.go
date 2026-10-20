@@ -671,8 +671,8 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 // says the plan answers none of them, or the reversal — a section that looks
 // answered while the gate still refuses to let a task start. Both fail here.
 //
-// Both paragraphs also name the tasks that have landed — Task 14, Task 8's
-// first half and Task 9 — so a plan whose tasks are built while its prose still reads as
+// Both paragraphs also name the tasks that have landed — Task 14, Task 8 and
+// Task 9 — so a plan whose tasks are built while its prose still reads as
 // a proposal fails here too.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
@@ -714,9 +714,10 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 		// Task 12 is the owner's alone, and the gate has to say so.
 		"**Task 12 is OWNER-RUN**",
 		// The gate and the Status line agree on what the approval has built:
-		// Task 14 and Task 8's first half, and nothing else.
+		// Task 14 and Task 8, whose second half this branch's commits are, and
+		// Task 9 -- and nothing else.
 		"Three tasks have been built since: Task 14",
-		"**Task 14 is built, and so are Task 8's first half and Task 9, and nothing else here is**",
+		"**Task 14 is built, and so are Task 8 and Task 9, and nothing else here is**",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
@@ -772,10 +773,13 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"the owner APPROVED this plan on 2026-10-19",
 		// What the branch carries beyond the plan and its pin test.
 		"Task 8 is the one begun",
-		// And what that half does not include, which is the honest half of
-		// the account: a reader who reads only the Status knows the task is
-		// incomplete before opening its pull request.
-		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written",
+		// And what that half does not include and this branch's own commits
+		// do, which is the honest half of the account: a reader who reads only
+		// the Status knows which commits carry which steps, and which parts of
+		// step 4 are recorded rather than written.
+		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written by that half",
+		"**and written on this branch by its own commits, which is the rest of the task**",
+		"**The two parts of step 4 this tree has no surface for**",
 	} {
 		if !strings.Contains(status, want) {
 			t.Errorf("%s: the Status line no longer says %q", computeBackendPlan, want)
@@ -789,6 +793,10 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"no task's commit exists",
 		"this pull request builds none of it",
 		"no line of the work below has been written or run",
+		// The sentence this branch's own step-4/5 commits falsified: it said
+		// both steps were unwritten, full stop, and a reader who found it
+		// again would be told the task's second half does not exist.
+		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written, which that task's own pull request lists with the reason",
 	} {
 		if strings.Contains(doc, gone) {
 			t.Errorf("%s still says %q, and Task 8's first half is committed on this branch: the account a reader checks the diff against says nothing was built", computeBackendPlan, gone)
@@ -803,6 +811,10 @@ func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
 		"internal/cli/cloud.go":         {"cloudOpeners", "batchOptions", "batchTimeouts"},
 		"internal/cli/backends.go":      {"newBackendsCmd", "selectableBackends", "backendsLs", "backendsListDoc"},
 		"internal/localcfg/localcfg.go": {"validateBatch", "BatchTaskTimeout"},
+		// The two halves of this branch's own commits, named by the Status
+		// line the same way: step 4's offline checks and step 5's live ones.
+		"internal/cli/validate_batch.go": {"batchValidateProblems", "artifactOnBatchMessage"},
+		"internal/cli/doctor_batch.go":   {"doctorBatchChecks"},
 	} {
 		data, err := os.ReadFile("../../" + file)
 		if err != nil {
