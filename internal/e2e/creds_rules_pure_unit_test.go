@@ -885,6 +885,48 @@ func TestCredsRulesIDTokenClaims(t *testing.T) {
 	}
 }
 
+// TestCredsRulesAuthSurvivors: the check's report of what it left in the
+// project rests on the user list, and on nothing else. A per-user answer from
+// accounts:batchDelete is not evidence — the uid whose exchange failed before
+// the sign-in has nothing to delete — so the verdict has to be the read-back,
+// and it has to name exactly the check's uids that are still there: not the
+// project's other users, and not the ones that are gone.
+func TestCredsRulesAuthSurvivors(t *testing.T) {
+	uids := []string{"r~live92-a~run", "live92-a-phone", "p~live92-a-pairing"}
+	left := []budget.AuthUser{
+		{UID: "someone-else@example.com"}, // a real user of the project: not the check's to report
+		{UID: "live92-a-phone"},
+		{UID: "r~live92-other~run"},
+	}
+	got := crAuthSurvivors(uids, left)
+	if !slices.Equal(got, []string{"live92-a-phone"}) {
+		t.Errorf("crAuthSurvivors = %v, want [live92-a-phone]: the verdict is the check's own uids that are still in the user list", got)
+	}
+	if got := crAuthSurvivors(uids, nil); len(got) != 0 {
+		t.Errorf("crAuthSurvivors with an empty user list = %v, want nothing: the check would report a survivor it never saw", got)
+	}
+	if got := crAuthSurvivors(nil, left); len(got) != 0 {
+		t.Errorf("crAuthSurvivors with no uids = %v, want nothing", got)
+	}
+	if got := crAuthSurvivors(uids, left); slices.Contains(got, "someone-else@example.com") {
+		t.Errorf("crAuthSurvivors reports a user that is not the check's: %v", got)
+	}
+}
+
+// TestCredsRulesDeleteAnswers: the per-user answers of accounts:batchDelete are
+// reported as context when the read-back cannot say, and they never hide a uid.
+func TestCredsRulesDeleteAnswers(t *testing.T) {
+	if got := crDeleteAnswers(nil); got == "" || strings.Contains(got, ":") {
+		t.Errorf("crDeleteAnswers(nil) = %q, want a plain statement that there were none", got)
+	}
+	got := crDeleteAnswers([]budget.UserFailure{{UID: "r~live92-a~run", Message: "USER_NOT_FOUND"}, {UID: "b", Message: "boom"}})
+	for _, want := range []string{"r~live92-a~run", "USER_NOT_FOUND", "b", "boom"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("crDeleteAnswers drops %q: %q", want, got)
+		}
+	}
+}
+
 // TestCredsRulesLiveCleanupKnowsTheUIDsBeforeTheFirstExchange pins the ordering
 // that keeps a Firebase Auth user from surviving unseen: the live driver builds
 // the cleanup's user list from the names, before the first exchange, and not

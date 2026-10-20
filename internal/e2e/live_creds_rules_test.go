@@ -856,7 +856,9 @@ func (c *crCleanup) run(t *testing.T, target crTarget, facts *crFacts) {
 // the history job's sweeper uses (budget.AuthAdmin: accounts:batchDelete), and
 // the project's user list is read back: a database the check left as it found
 // it, with the users it created still in the project, is a cleanup that only
-// looks finished.
+// looks finished. The read-back is the verdict — crAuthSurvivors — and the
+// delete call's per-user answers are context for a read-back that failed, not
+// evidence of a survivor.
 //
 // The scratch run ids are what they are (live92-<hex>-run) for the same
 // reason: if this ever fails, what is left is unmistakably the check's.
@@ -890,33 +892,25 @@ func (u *crAuthUsers) run(t *testing.T, facts *crFacts) {
 		return
 	}
 	admin := &budget.AuthAdmin{Endpoint: "https://identitytoolkit.googleapis.com", Project: crSandboxProject, HTTP: oauth2.NewClient(ctx, ts)}
+	// Every uid the check can name is deleted, including the uids of exchanges
+	// that failed before they made the account: deleting an account that is not
+	// there is nothing to delete. Where the API answers per-user that it could
+	// not delete one of them, that answer is not the check's evidence of a
+	// survivor — a uid whose exchange never signed in has nothing to delete —
+	// and it is reported only as context for a read-back that could not say.
+	// What proves the accounts are gone is the user list, below.
 	failed, err := admin.DeleteUsers(ctx, u.uids)
 	if err != nil {
-		t.Errorf("the %d Firebase Auth users this check's exchanges created are still in project %s (%s): deleting them as the owner: %s (the account needs firebaseauth.users.delete, which the project's owner role holds)", len(u.uids), crSandboxProject, strings.Join(u.uids, ", "), facts.errText(err))
-		return
-	}
-	if len(failed) > 0 {
-		var msgs []string
-		for _, f := range failed {
-			msgs = append(msgs, f.UID+": "+f.Message)
-		}
-		t.Errorf("the Identity Toolkit refused to delete %d of the check's Firebase Auth users: %s", len(failed), strings.Join(msgs, "; "))
+		t.Errorf("the check's Firebase Auth users could not be deleted as the owner: %s (the account needs firebaseauth.users.delete, which the project's owner role holds)", facts.errText(err))
 	}
 	left, err := admin.ListUsers(ctx)
 	if err != nil {
-		t.Errorf("the check's Firebase Auth users were deleted but project %s's user list could not be read back: %s", crSandboxProject, facts.errText(err))
+		t.Errorf("the check's Firebase Auth users may still be in project %s, and its user list could not be read back to say: %s (accounts:batchDelete answered: %s)", crSandboxProject, facts.errText(err), crDeleteAnswers(failed))
 		return
 	}
-	var survivors []string
-	for _, l := range left {
-		for _, uid := range u.uids {
-			if l.UID == uid {
-				survivors = append(survivors, uid)
-			}
-		}
-	}
-	if len(survivors) > 0 {
+	if survivors := crAuthSurvivors(u.uids, left); len(survivors) > 0 {
 		t.Errorf("these Firebase Auth users survived the cleanup and are still in project %s: %s", crSandboxProject, strings.Join(survivors, ", "))
+		return
 	}
-	facts.fact("the %d Firebase Auth users the check's exchanges created were deleted as the owner with accounts:batchDelete and are absent from project %s's user list: %s", len(u.uids), crSandboxProject, strings.Join(u.uids, ", "))
+	facts.fact("the %d Firebase Auth uids the check's exchanges can create (%s) were deleted as the owner with accounts:batchDelete and are absent from project %s's user list", len(u.uids), strings.Join(u.uids, ", "), crSandboxProject)
 }

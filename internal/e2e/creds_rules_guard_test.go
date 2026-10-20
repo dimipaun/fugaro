@@ -686,6 +686,41 @@ func crAuthUIDs(n crNames) []string {
 	return slices.Compact(slices.Sorted(slices.Values(uids)))
 }
 
+// crAuthSurvivors are the uids of uids that are still in the project's user
+// list: the check's Firebase Auth users that outlived the cleanup. This is the
+// verdict the check's report rests on — not the delete call's per-user answers,
+// which say nothing about a uid whose exchange failed before it made the
+// account (there is nothing to delete, and the API may answer per-user about
+// it) — and it is a pure function of the two lists so that an ordinary test can
+// hold it to that.
+func crAuthSurvivors(uids []string, left []budget.AuthUser) []string {
+	var out []string
+	for _, uid := range uids {
+		for _, l := range left {
+			if l.UID == uid {
+				out = append(out, uid)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// crDeleteAnswers renders the per-user answers of accounts:batchDelete: what
+// the API said about the uids it did not delete. It is context for a read-back
+// that could not say whether the accounts are gone, and it is never a verdict
+// of its own: the user list is.
+func crDeleteAnswers(failed []budget.UserFailure) string {
+	if len(failed) == 0 {
+		return "no per-user failures"
+	}
+	var msgs []string
+	for _, f := range failed {
+		msgs = append(msgs, f.UID+": "+f.Message)
+	}
+	return strings.Join(msgs, "; ")
+}
+
 // expected are the claims the identity's ID token must carry, beyond the uid:
 // for a run token the fs/fr pair every rule in this tree reads, for a claim
 // token the claim itself. The check asserts them, because an identity the
