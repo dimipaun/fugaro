@@ -260,9 +260,10 @@ added or removed without this sentence moving fails there:
 
   - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 977,921 → **979,575**, by the **1,654 bytes** the rework costs: the install
-    section shows the quick path above the fold with the console option beside it, the page
-    carries a "Set up your installation" list of its own, and the other install paths and the
-    platform list moved into a Details section below them. The page weight does not move: the
+    section showed the quick path above the fold with the console option beside it (the card
+    round at the end of this list replaced that pair with a card per system), the page carries
+    a "Set up your installation" list of its own, and the other install paths and the platform
+    list moved into a Details section below them. The page weight does not move: the
     heaviest page is still the docs hub, which renders none of it, and the page that grew is
     Getting Started's, at 25,871 bytes.
 
@@ -604,6 +605,21 @@ added or removed without this sentence moving fails there:
     move: the heaviest page is the docs hub, which renders none of this, and the site ships the
     same one script. The word ceiling is `privacy`'s own page, which the draft did not touch; the
     homepage's own words are well under it. The clone figure moved by the same bytes.
+  - **Getting Started's install options became one card per system** (the owner's draft of
+    2026-10-19, "Getting started, draft 2 (OS icons)"), and moved the site figure alone,
+    975,034 → **975,713**, by **679 bytes** net: two `<article class="install-card">` blocks,
+    each carrying its system's name, the note and the command the install file offers it, and
+    one inline `<svg>` glyph of the page's own — a laptop for macOS, a terminal for Linux — with
+    the rules that lay the cards out in a grid, box them and size the glyph, all of it inlined
+    into the one page that renders the section; and against that, the two `data-option` wrappers
+    and the option box's own rules, which the cards replace, and the console's heading, which
+    moved a level down to sit inside the macOS card. The page weight and the script did not
+    move: the heaviest page is the docs hub, which renders no install section, and nothing
+    outside Getting Started's own page and stylesheet changed. The page's own words fell with
+    the boxes they sat in, 248 → **247**, so the word ceiling did not move. The rules the
+    cards are held to — no card for a system the file does not carry, one icon per card, and it
+    draws something — are `test/os-cards.mjs`'s, and the count of gates in this README moved with
+    it.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -738,6 +754,22 @@ added or removed without this sentence moving fails there:
   under the owner's 44 px target, a tab row that cannot wrap, a rule that takes the focus ring
   off the tabs, a panel wider than a 360 px phone's content box, and a step whose line is not the
   repository's own sentence about it in the order its document writes them.
+- `test/os-cards.mjs` — the install cards on Getting Started (the owner's draft of
+  2026-10-19, "Getting Started, draft 2 (OS icons)"). Two rules about the shape no other gate
+  can see: **no card names a system `data/install.yaml` does not carry** — the card's
+  `data-platform` is held to the file's platform list, its heading to the file's own name for
+  that system, and its path to the path the file offers that system *first*, so a card under a
+  system the file has never heard of, or under the Windows entry it marks `untested` (D94), or
+  carrying a route the file does not offer that system, is refused — and **every card is drawn
+  with exactly one icon**, `aria-hidden`, out of the tab order, drawing a shape, referencing
+  nothing, and distinct from every other card's. The empty drawing is the refusal no other gate
+  can make: an `<svg>` with no shape in it is an element that is present, named, decorated and
+  clean, and it renders as an empty box. The file the cards are held to is the site's own
+  reader of it (`content.ts`'s `loadInstallFacts()`), not a second parser in the gate. Its
+  refusals are kept with fixtures that plant one defect each beside a fixture page that keeps
+  every rule, and with two builds of a copy of the repository for the states the page's own
+  frontmatter refuses: a supported system with no path under it, and one this page has no glyph
+  for.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other
@@ -1082,8 +1114,9 @@ file therefore carries the release's *published names* rather than a URL: `relea
 that module is the one reader of the file, and each page renders what it returns.
 
 Three places offer the console from those facts: the console page's own Downloads section
-(W1.6), Getting Started's console option beside the CLI (the owner's changes spec of
-2026-10-18, item 6), and the homepage's call to action (the owner's brief of 2026-10-19, item
+(W1.6), Getting Started's console option inside the macOS install card (the owner's changes spec
+of 2026-10-18, item 6; the card placement is the owner's draft of 2026-10-19), and the
+homepage's call to action (the owner's brief of 2026-10-19, item
 6: the hero action row carries a `Desktop console` link to `/console/`, and nothing about the
 console at all, rendered from `features.console_downloads`). In all three, the unreleased state
 is **structural rather than editorial**: the download list is rendered from `available`'s
@@ -1095,8 +1128,8 @@ homepage's call to action to the flag-off half (the row is exactly the two links
 before, and mentions the console nowhere), and `website/test/console-option.mjs` holds Getting
 Started to it in **both** states: the shipped one, read off the built page, and the released
 one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
-(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started was at the
-ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
+(`FUGARO_GATES_DIST`), because rendering the console's block costs words and Getting Started
+was at the ceiling D188 set when the console shipped — 250 words then, 300 since the owner's feedback
 of 2026-10-19 moved it (above) — and the owner's flip has to be the whole change and may not be the
 change that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
