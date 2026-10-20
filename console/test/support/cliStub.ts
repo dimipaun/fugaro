@@ -12,8 +12,10 @@
 // change. So a spec chooses the CLI the only way the resolution allows: it puts
 // a binary where the resolution looks. `src/main/spawn.ts`'s `binDirectories`
 // walks the configured path (nothing here -- no config file is read at startup),
-// then `WELL_KNOWN_BINARY_PREFIXES`, then every absolute entry of the app's own
-// `PATH`. This module therefore does two things:
+// then the platform's well-known directories (`src/main/spawn.ts`'s
+// `locationsFor`, and which ones those are depends on `process.platform`), then
+// every absolute entry of the app's own `PATH`. This module therefore does two
+// things:
 //
 //   - copies `test/fixtures/bin/fugaro` into a scratch directory and returns the
 //     environment that makes it the winner -- `PATH` is that directory and
