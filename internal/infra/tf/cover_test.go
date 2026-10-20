@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -1286,6 +1287,51 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 	mod := strings.Join(strings.Fields(string(modBytes)), " ")
 	if !strings.Contains(mod, "UNVERIFIED") {
 		t.Error("deployer.tf's header states the extract rule without recording that the design holds it UNVERIFIED: this file is what the owner reads before the apply that creates the fence, and the rule it states is a reading, not a citation")
+	}
+}
+
+// TestDeployerDesignNamesTheModelFields holds §6's description of the Go model
+// to the model itself.
+//
+// The sentence read "models this as a `DeployerService` per row — role, title,
+// clauses", and there is no title in the struct: the condition title is one
+// shared constant, `DeployerConditionTitle`, for every binding — as the
+// paragraph directly above the sentence says, because an operator reading the
+// project's IAM policy should see one fence and not seven names. A design that
+// names a field the struct does not have sends a reader looking for a
+// per-service title the module deliberately does not write. The field list is
+// read off the type rather than written out here, so a field added to the
+// struct and not to the sentence fails here too.
+//
+// Mutation (verified, run and restored): put "title" back into the sentence —
+// this fails naming both lists.
+func TestDeployerDesignNamesTheModelFields(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := strings.Join(strings.Fields(string(b)), " ")
+	const lead = "models this as a `DeployerService` per row — "
+	i := strings.Index(doc, lead)
+	if i < 0 {
+		t.Fatalf("the design does not describe the model as %q: this test reads the field list from there", strings.TrimSpace(lead))
+	}
+	rest := doc[i+len(lead):]
+	j := strings.Index(rest, " —")
+	if j < 0 {
+		t.Fatalf("the design's description of DeployerService does not close its field list: %q", rest)
+	}
+	listed := strings.Split(rest[:j], ", ")
+	var fields []string
+	typ := reflect.TypeOf(DeployerService{})
+	for k := 0; k < typ.NumField(); k++ {
+		fields = append(fields, strings.ToLower(typ.Field(k).Name))
+	}
+	if !slices.Equal(listed, fields) {
+		t.Errorf("the design lists the DeployerService fields as %v, and the struct's are %v: the condition title is the one shared constant DeployerConditionTitle and not a field, so the sentence has to describe the type that exists", listed, fields)
+	}
+	if !strings.Contains(doc, "DeployerConditionTitle") {
+		t.Error("the design does not name DeployerConditionTitle: with no title field in the struct, the shared constant is the only place the title is written, and a reader has to be told which it is")
 	}
 }
 

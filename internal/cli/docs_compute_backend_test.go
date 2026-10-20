@@ -532,7 +532,7 @@ func TestDocsComputeBackendNamesItsBase(t *testing.T) {
 	for _, want := range []string{
 		"**The base is named as that branch and the commit it was cut from rather than as a remote-tracking ref, because a default clone does not carry the ref**",
 		"git fetch origin integration-0.9.5",
-		"the owner moved this work, and the managed redesign with it, out of 0.9.0",
+		"the owner moved this work out of 0.9.0, and moved the managed redesign out of it too — but **to a different release, and this plan does not carry it**",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer says %q: the first is the shape the base is named in, the second is how a clone that does not carry the ref resolves it, and the third is why the base is the 0.9.5 line and not 0.9.0", computeBackendPlan, want)
@@ -1919,5 +1919,46 @@ func TestDocsSharedConfigStatesTheImageChecksExactly(t *testing.T) {
 	// restores the phrasing restores the overclaim with it.
 	if strings.Contains(readDoc(t, doc), "What the check leaves is an image in one of this installation's own repositories") {
 		t.Errorf("%s §5 claims the fugaro-ghcr refusal leaves an image in one of this installation's own repositories, which the reader does not enforce: it refuses one repository ID and passes the project's others", doc)
+	}
+}
+
+// TestComputeBackendPlanPlacesTheManagedRedesignRight: the plan's Fact 1 said the
+// owner moved this work "and the managed redesign with it" out of 0.9.0, which
+// reads as one placement for the two. They are not the same: this work is 0.9.5,
+// and the redesign is placed elsewhere — the number `internal/cli/recipes_skew.go`'s
+// `managedDeployerShipped` comment names, and the one `docs_managed_label_test.go`
+// and `shipped_gates_test.go` pin in the managed documents. A plan that gives a
+// second answer for the redesign's release is read by whoever schedules the
+// fence's flip, so the number here is taken from the constant's own comment
+// rather than written into this test.
+//
+// Mutations (verified, run and restored): put "and the managed redesign with it"
+// back into Fact 1 — the first check fails naming it; change the release the plan
+// states to another number — the second check fails naming both.
+func TestComputeBackendPlanPlacesTheManagedRedesignRight(t *testing.T) {
+	gate, err := os.ReadFile("recipes_skew.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := regexp.MustCompile(`(?s)managedDeployerShipped is false until the release[^.]*?(\d+\.\d+\.\d+)`).FindStringSubmatch(string(gate))
+	if decl == nil {
+		t.Fatal("recipes_skew.go's managedDeployerShipped comment no longer names the release the redesign ships in: this test reads the tree's own answer from there")
+	}
+	release := decl[1]
+	doc := readDoc(t, computeBackendPlan)
+	// The reading that made the two look like one placement: this work's release
+	// is 0.9.5 and the redesign's is not, so a sentence that moves them together
+	// is the defect this test exists for.
+	if strings.Contains(doc, "managed redesign with it") {
+		t.Errorf("%s says the owner moved this work \"and the managed redesign with it\" out of 0.9.0: the redesign is placed in %s (recipes_skew.go's managedDeployerShipped comment), not in this work's release, so the sentence gives a reader two answers for one release", computeBackendPlan, release)
+	}
+	// The placement itself, as a number rather than as a phrase this test would
+	// otherwise be pinning: the plan says where the redesign lands, and that
+	// number is the tree's.
+	placed := regexp.MustCompile(`redesign is placed in \*\*(\d+\.\d+\.\d+)\*\*`).FindStringSubmatch(doc)
+	if placed == nil {
+		t.Errorf("%s does not state the managed redesign's own placement: it mentions the redesign without saying which release it lands in, and the tree's answer is recipes_skew.go's managedDeployerShipped comment", computeBackendPlan)
+	} else if placed[1] != release {
+		t.Errorf("%s places the managed redesign in %s, and recipes_skew.go's managedDeployerShipped comment places it in %s: one release, one answer", computeBackendPlan, placed[1], release)
 	}
 }

@@ -454,8 +454,8 @@ The condition **title** stays `fugaro-managed-prefix` (`tf.DeployerConditionTitl
 for every binding: it names the *fence*, and an operator reading the project's
 IAM policy should see one fence, not seven names. The **role** is what differs.
 
-`internal/infra/tf` models this as a `DeployerService` per row — role, title,
-clauses — with `DeployerClause` gaining the `extract` form
+`internal/infra/tf` models this as a `DeployerService` per row — role, clauses —
+with `DeployerClause` gaining the `extract` form
 (`resource.name.extract("T").startsWith("V")`) alongside `startsWith`. The cover
 gate (`deployerGrant`) looks a binding's role up in the set and checks that
 binding's member, project and condition on their own: a role outside the set, a
