@@ -4013,9 +4013,21 @@ senior reviewer before merge, not just the normal one.
    deadlines, the decision table over every `JobStatus.State`, the client-side
    label checks, the refusals and the dry-run, held to by tests against the
    Batch and Compute fakes. The account itself is Task 6's (the five
-   permissions §3.7 lists are what it must carry), and
-   `backend: cloud-batch` stays refused everywhere, so nothing here is
-   reachable in an installation.
+   permissions §3.7 lists are what it must carry). **Task 11 is what runs it,
+   and the sentence this note could not carry until then is the schedule**:
+   `fugaro reaper` (`internal/cli/reaper.go`) runs one pass and prints the
+   report — refusing to run at all where the project has no Batch
+   configuration — and
+   `deploy/terraform/gcp/modules/compute/reaper.tf` creates the Cloud Run job
+   that runs it **as the reaper account**, plus a `google_cloud_scheduler_job`
+   that starts that job **every fifteen minutes**, which is `ReapMargin`: a run
+   that should have ended is swept at most one margin after it should have, so
+   the residual window this safety net exists for is bounded by the margin
+   rather than by a schedule's own period. The report reaches Cloud Logging
+   under the job's own `fugaro_role=reaper` labels (57b-11 measures it), and
+   `backend: cloud-batch` stays refused everywhere until the enable task
+   (Task 10), so the invocation is scheduled while no installation selects the
+   backend it sweeps.
 6. **The Batch provisioning stage in `fugaro init`** (owner-run live step):
    **the Compute and Batch APIs both enabled** (both are OFF by default, and
    enabling Compute creates the default network and the default Compute Engine
