@@ -66,8 +66,10 @@ F, D, O and U series numbered from 1 with no gap, and the ranges the index
 states, checked against the documents' own counts),
 `TestDocsWindowsCLISupportTableNamesRealCommands` (§1's Commands column against
 the command tree), `TestDocsWindowsCLICensusStatesItsCommands` (§4's rows, each
-with its command) and `TestDocsWindowsCLIEveryDocTaskNamesItsGuard` (this
-paragraph). T0.2's document lives outside this folder, so its guard is a pin of
+with its command), `TestDocsWindowsCLIEveryDocTaskNamesItsGuard` (this
+paragraph) and `TestDocsWindowsCLICitesNoProseLineNumbers` (the
+reconciliation's own rule that a path is read in place and never cited by
+line). T0.2's document lives outside this folder, so its guard is a pin of
 its own. A red step for a documentation task is the pin that fails before the
 edit and passes after — which is what makes a document a deliverable rather
 than a draft.
@@ -311,7 +313,7 @@ task should take the cheap one first: (a) make the quoting platform-aware
 (correct, and it means `Quote`'s callers must pass the platform down: a
 signature change at 15 call sites in 6 files, or the same effect for the 51
 that go through it by changing the one-line `quoteWord` alias at
-`internal/cli/init_repo_target.go:102`, which is the cheap shape of this
+the one-line `quoteWord` alias in `internal/cli/init_repo_target.go`, which is the cheap shape of this
 option); or (b) keep POSIX quoting and reword the
 *prose* Fix strings that are not commands — "unset K" becomes "remove the
 variable K from this shell's environment" — which touches no signature and is

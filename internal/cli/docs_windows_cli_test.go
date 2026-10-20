@@ -539,6 +539,38 @@ func TestDocsWindowsCLIEveryDocTaskNamesItsGuard(t *testing.T) {
 	}
 }
 
+// proseLineRefRE matches a prose citation of a source file by line, the form
+// the reconciliation's header rules out ("every path and Go symbol below was
+// located with git grep, go list or a build and then read in place; line
+// numbers are never cited").
+var proseLineRefRE = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(go|ya?ml|md|json|toml|sh):[0-9]`)
+
+// TestDocsWindowsCLICitesNoProseLineNumbers: the rule the reconciliation's
+// header states for itself holds in prose. Fenced blocks are the exception and
+// are exempt on purpose: they are quoted output — a compiler's own message, a
+// command's own lines — and the line numbers there are part of what was
+// printed, not a citation a reader has to follow into a file that has since
+// moved. A citation in prose is the kind that rots, which is why the header
+// forbids it and why this test exists.
+func TestDocsWindowsCLICitesNoProseLineNumbers(t *testing.T) {
+	for _, path := range []string{windowsCLIRecon, windowsCLIPlan, windowsCLIReadme} {
+		doc := readDoc(t, path)
+		fenced := false
+		for i, line := range strings.Split(doc, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "```") {
+				fenced = !fenced
+				continue
+			}
+			if fenced {
+				continue
+			}
+			if ref := proseLineRefRE.FindString(line); ref != "" {
+				t.Errorf("%s:%d cites %q by line: this document's rule is that a path is named and read in place, never cited by line number", path, i+1, ref)
+			}
+		}
+	}
+}
+
 // definedGuards returns the TestDocsWindowsCLI* functions this file defines, in
 // source order, so the plan's mentions and this file's definitions are checked
 // against each other rather than against a list either side could drift from.

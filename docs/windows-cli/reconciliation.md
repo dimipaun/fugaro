@@ -154,7 +154,7 @@ finding that answers it.
 | `os.Rename` atomicity | `os.Rename` on Windows is `MoveFileEx(…, MOVEFILE_REPLACE_EXISTING)`, so the pattern holds — with two real limits | F3 |
 | file locking | **No file locking anywhere in the CLI.** `internal/lock` is a name, not a lock | F4 |
 | signals | One `signal.NotifyContext` at the entry point; `SIGTERM` and `SIGHUP` exist as constants on Windows and never arrive | F15 |
-| process groups, `exec` of `sh`/`git`/`gcloud`/… | `internal/procgroup` is Unix-only and is on the path of `verify`, `watch` and every git operation; `gcloud` is **never exec'd** | F2, F3, F19, F28 |
+| process groups, `exec` of `sh`/`git`/`gcloud`/… | `internal/procgroup` is Unix-only and is on the path of `verify`, `watch`, the agent and the in-job runner; **`git` does not go through it** — `internal/gitops` spawns git directly; `gcloud` is **never exec'd** | F2, F3, F19, F28 |
 | PATH lookup, `.exe`, `.cmd` shims | `exec.LookPath` is the right call and finds `gcloud.cmd`; what it does *not* find is a test's fake named `terraform` | F13 |
 | shell quoting | `internal/shellword.Quote` emits POSIX single-quoting for commands printed to be pasted | F6 |
 | `/dev/tty`, raw mode, hidden prompts | `golang.org/x/term` only, which is cross-platform; no `/dev/tty` anywhere | F14 |
@@ -211,9 +211,18 @@ tree of processes it leaves behind can be killed, and it is on the path of:
 | Caller | What it runs |
 |---|---|
 | `internal/verify/verify.go` (`procgroup.Run` with `Name: "sh"`) | the repository's `commands.build`, `commands.test`, `commands.lint` |
-| `internal/gitops/gitops.go` | every `git` the CLI runs, including `git worktree add` |
 | `internal/watch/prstate.go` | the `gh` whose answers the watch TUI shows |
-| `internal/agent` (through the runner) | the agent process inside a job |
+| `internal/agent/agent.go` | the agent process inside a job |
+| `internal/runner/artifact.go` (two sites), `internal/runner/gate.go`, `internal/runner/provision.go` (two sites) | the in-job commands the runner stages: artifact probes and proof, the gate's commands, provisioning |
+
+The callers are exactly what
+`grep -rn --include='*.go' 'procgroup\.Run(' internal/ cmd/ | grep -v '_test.go'`
+returns: eight sites in six files, those six. **`internal/gitops/gitops.go` is
+not one of them**, which an earlier draft of this finding got wrong: gitops
+spawns git with `exec.CommandContext` bounded by its own `gitWaitDelay`, and
+its only mention of `procgroup` is a comment saying that `procgroup` "guards
+the same way for agent invocations". So a Windows `git` is not a `procgroup`
+problem — it is F3's and F19's.
 
 Cost: a `unix`/`other` split in `procgroup` too, with what the non-Unix half
 loses stated in the comment — on Windows a job object is the equivalent of a
@@ -308,11 +317,14 @@ document the syntax.
 Class: **Exists**. Go's `os.Rename` on Windows is
 `internal/syscall/windows.Rename`, which calls
 `MoveFileEx(from, to, MOVEFILE_REPLACE_EXISTING)` — so the atomic-write
-pattern the CLI uses at eight non-test sites (`internal/agent/settings.go`,
+pattern the CLI uses at seven non-test sites (`internal/agent/settings.go`,
 `internal/blobx/blobx.go`'s `PutFile`, `internal/cli/init.go`'s
 `writeFileAtomic`, `internal/localcfg/checkcache.go`,
 `internal/pluginwire/fsx.go`'s `replaceFile`,
-`internal/updatecheck/updatecheck.go`, `internal/watch/acks.go`) *does*
+`internal/updatecheck/updatecheck.go`, `internal/watch/acks.go` — the seven
+call sites
+`grep -rn --include='*.go' 'os\.Rename' $PKGS | grep -v '_test.go'` returns,
+less the one hit that is a source comment in `internal/blobx/blobx.go`) *does*
 replace, on the same volume, and Go applies its long-path fixup first. Two
 limits are real and are not visible in the source: (a) `MoveFileEx` fails with
 a sharing violation where the POSIX call succeeds if **any** process holds the
@@ -628,9 +640,13 @@ sees.** Class: **Gap**.
 | `claude` | the plugin's skills, `fugaro upgrade --plugin` | `internal/cli/upgrade_plugin.go`'s `claudeLookPath` |
 
 Cost: `fugaro doctor` is the command that exists to answer "is this machine
-ready", and on Windows it would answer for three of the six tools and stay
-silent about the two the user is most likely to be missing (`git` and
-`gcloud`). The plan's Slice 1 gives it the missing checks, and F6 gives the
+ready", and on Windows it would answer for **two** of the six tools —
+`terraform` through `internal/preflight/preflight.go`'s `Terraform` and
+`cosign` through `internal/cli/doctor.go`'s `doctorCosign` — because
+`doctor.go` deliberately does not call `preflight.Docker` ("only meaningful
+when a local build is asked for", as the table's own docker row says). It
+would stay silent about the three the user is most likely to be missing
+(`git`, `gcloud` and, until a local build is asked for, `docker`). The plan's Slice 1 gives it the missing checks, and F6 gives the
 Fix strings a platform.
 
 **F27 — `fugaro doctor`'s Fix strings are POSIX commands.** Class: **Gap**,
@@ -644,17 +660,36 @@ through `shellword.Quote`. (An earlier draft of this finding put the first two
 in `internal/cli/doctor.go`; the string is not there.)
 
 **F28 — `gcloud` is never executed; it is only read and only named.** Class:
-**Exists**, and it is the answer to a question the brief asks directly. Seven
-non-test mentions, all of them either an instruction the *user* runs or a
-path the CLI reads:
+**Exists**, and it is the answer to a question the brief asks directly. Two
+counts, each with its command, because the size of this one is what makes the
+answer to the brief surprising:
 
-- printed Fix text: `internal/infra/forget.go`, `internal/infra/hardening.go`,
-  `internal/infra/projectcreate.go` (two), `internal/preflight/google.go`,
-  `internal/cli/doctor_signers.go` (two), `internal/cli/doctor.go`,
-  `internal/cli/init_project.go`, `internal/cli/init_retire.go`;
-- a credential path: `internal/cache/key.go`'s `credentialPaths` (F30);
-- an allowlist entry the *agent* may use inside a job:
-  `internal/agent/relay.go`'s `"gcloud"` tool set.
+```sh
+grep -rn --include='*.go' '\bgcloud\b' internal/ cmd/ | grep -v '_test.go' | wc -l   # 128 occurrences, 51 files
+grep -rn --include='*.go' '"gcloud"'     internal/ cmd/ | grep -v '_test.go'          # 7 sites, listed below
+```
+
+**Not one of those 128 executes it.** F19's census of every `exec.Command`
+and `exec.CommandContext` site over the CLI's packages contains no argv[0]
+naming gcloud, and a direct search agrees:
+`grep -rn --include='*.go' 'exec.Command[A-Za-z]*([^)]*"gcloud"' $PKGS | grep -v '_test.go'`
+returns nothing. Every occurrence is one of three things:
+
+- **an instruction the user runs** — printed Fix and help text, whose files
+  are
+  `grep -rln --include='*.go' 'gcloud auth application-default login' internal/ cmd/ | grep -v '_test.go'`
+  (eleven of them, `internal/cli/managed_apply.go` and `internal/mirror/mirror.go`
+  among them), plus the prose Fix strings of `internal/preflight/google.go`
+  and the doctor checks of `internal/cli/doctor.go` and
+  `internal/cli/doctor_signers.go`;
+- **a credential path**, built from the literal `"gcloud"` at the seven sites
+  above: `internal/cache/key.go`'s `credentialPaths` (F30), the ADC builders
+  of `internal/cli/init_inputs.go`, `internal/cli/init_project.go` (two) and
+  `internal/cli/managed_apply.go` (two) (F29);
+- **the agent's own tool list** — `internal/agent/relay.go`'s
+  `"gcloud": set("auth", "builds", "compute", "config", "iam", "projects",
+  "run", "services", "storage")`, which is what the agent inside a job may
+  call, not what the CLI calls itself.
 
 The CLI talks to Google through the Go client libraries with ADC, so a
 Windows user's `gcloud` matters for **one** thing the CLI does not do for
@@ -754,15 +789,17 @@ and the reputation SmartScreen needs immediately rather than accumulating);
 then the certificate or its cloud key must reach the release job as a secret,
 and the release job must be a separate, protected file for the same reason the
 console's is. The console states the separation twice, once from each file and
-each in its own words: `docs/pending-workflows/console-tests.yml:29-30` says
-the tests hold "no secret of any kind" and that the signing job is "a separate
-file, because a job that runs on every pull request must not sit next to the
-Apple signing material", and `docs/pending-workflows/console-release.yml:44-46`
-gives the boundary from the signing side — its job "carries **no pull-request
-trigger of any kind**, and that is a security boundary rather than tidiness:
-this job reads the Apple signing certificate and the App Store Connect key, and
-a branch of this repository can open a pull request." (An earlier draft quoted
-the first sentence as though it were console-release.yml's own comment.) Cheaper alternatives that are not code signing:
+each in its own words: **`console-tests.yml`** says the tests hold "no secret
+of any kind, and it never will", and that the signing job "is Task 4.2's
+`console-release.yml`, a separate file, because a job that runs on every pull
+request must not sit next to the Apple signing material"; **`console-release.yml`**
+gives the same boundary from the signing side — its release job "carries **no
+pull-request trigger of any kind**, and that is a security boundary rather
+than tidiness: this job reads the Apple signing certificate and the App Store
+Connect key, and a branch of this repository can open a pull request." (An
+earlier draft quoted the first of those sentences as though it were
+`console-release.yml`'s own comment, and both citations carried line numbers,
+which this document's header rules out.) Cheaper alternatives that are not code signing:
 publishing the archive's SHA-256 (already done — `checksums.txt`) and telling
 the reader to unblock the file, and Scoop's `checkver`/`hash` flow, which
 records the hash in the manifest the user installs from. See D4.
@@ -840,8 +877,9 @@ in the repository is `console-tests.yml`'s `jobs.<name>.strategy.matrix.os`,
 and it does not
 include Windows. A `windows-latest` job would run on GitHub-hosted Windows
 Server, billed at twice the Linux rate, with the same 6-hour ceiling. The
-ruling is recorded in `ci.yml`'s **`on:` block** (`ci.yml:5-8`), not in a job's
-own comment: "Pull requests are not merge-gated by CI (owner's ruling
+ruling is recorded in `.github/workflows/ci.yml` as a comment on its **`on:`**
+block — the block that declares the `push` and `workflow_dispatch` triggers —
+and not in any job's own comment: "Pull requests are not merge-gated by CI (owner's ruling
 2026-10-16: the in-run loop already runs the tests)", with `workflow_dispatch`
 the trigger a branch is run against on demand. So a Windows job is
 advisory on pull requests and runs on `main` by the same mechanism as the
@@ -907,6 +945,13 @@ The whole set, for the record: `cmd/fugaro`, `deploy/terraform`, `images`,
 `internal/runner` is in the binary because of the hidden `fugaro exec` (F41)
 and is excluded from every count below.
 
+The figures are what the command in the row's Command column returns: raw
+grep hits, so a line where the construct is only named in a source comment
+counts. Where a row's own annotations say a hit is a comment rather than a
+call, that is the author having read the hit and subtracted it — the commands
+are the durable part, not the numbers (F37), and here as everywhere in this
+document a figure without its command is an unreproducible claim.
+
 | Construct | Non-test sites | Including tests | Command |
 |---|---|---|---|
 | `syscall.` | 30 | 75 | `grep -rn --include='*.go' 'syscall\.' $PKGS` |
@@ -914,7 +959,7 @@ and is excluded from every count below.
 | `os.Chmod` | 4 | 41 | as above |
 | `EvalSymlinks` | 10 | 18 | as above |
 | `os.Symlink` | 0 | 55 | as above |
-| `os.Rename` | 8 | 14 | as above |
+| `os.Rename` | 7 | 12 | as above; two further hits are source comments, not calls |
 | `signal.Notify` | 1 | 2 | as above |
 | `SysProcAttr` | 2 | 4 | as above |
 | `exec.LookPath` | 11 | 40 | as above |
