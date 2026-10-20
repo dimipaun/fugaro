@@ -660,3 +660,101 @@ run "a_group_launcher_is_accepted" {
     launchers = ["group:launchers@example.com"]
   }
 }
+
+# The reaper's invocation (design compute-backend §8.1 Task 11): the Cloud Run
+# job that runs `fugaro reaper`, the invoker grant it is started with, and the
+# Scheduler job that starts it every ReapMargin.
+#
+# Two of these are the pins that make the invocation work at all, and they are
+# asserted against the resources rather than against the file's text:
+#
+#   - the job's service_account is the REAPER account, and NOT the default
+#     Compute Engine account. A job that leaves service_account unset runs as
+#     that default account, which holds the project's editor role by default --
+#     an account with far more than the five permissions iam.tf narrowed for
+#     this job, and one the module refuses for a run's VM
+#     (internal/infra/compute.go's checkServiceAccount). This is the red step
+#     the task was written against.
+#   - the Scheduler job's target is the reaper job's own `:run` URI, in this
+#     project and region, called as the reaper account -- and its cadence is
+#     `*/15`, which is internal/backend/batch's ReapMargin: a run that should
+#     have ended is swept at most one margin late, and a slower schedule would
+#     leave a stuck job's VM alive for its own period PLUS the margin.
+run "TestTheReaperRunsAsTheReaperAccountOnASchedule" {
+  command = plan
+
+  module {
+    source = "../../modules/compute"
+  }
+
+  # The module's own account, given the values the module would have produced:
+  # the job's service_account and the Scheduler job's OAuth token are both read
+  # from it, and a mock provider's invented value is not an email at all.
+  override_resource {
+    target          = google_service_account.reaper
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.template[0].template[0].service_account == "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    error_message = "the reaper's Cloud Run job must run as the reaper account iam.tf creates. Unset, it runs as the default Compute Engine account, whose editor role is far wider than the five permissions this job is meant to hold."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.template[0].template[0].service_account != "123456789012-compute@developer.gserviceaccount.com"
+    error_message = "the reaper's Cloud Run job must never run as the default Compute Engine account"
+  }
+  # command and args are collections, read the way installation.tftest.hcl
+  # reads the history job's: one(one(one(…).template).template).containers.
+  assert {
+    condition     = one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).args == tolist(["reaper"]) && one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).command == tolist(["/usr/local/bin/fugaro"])
+    error_message = "the job's args are the command: `fugaro reaper`, the one pass of internal/backend/batch's Reaper that has no other caller"
+  }
+  assert {
+    condition = toset([for e in one(one(one(google_cloud_run_v2_job.reaper.template).template).containers).env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_GCP_PROJECT=proj-1234",
+      "FUGARO_REGION=us-east5",
+    ])
+    error_message = "the job's whole configuration is the project and the region: a Cloud Run job has no project config file and no checkout, and the timeouts it judges by are a run's own ceiling (the environment carries none)"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.labels["fugaro_role"] == "reaper" && google_cloud_run_v2_job.reaper.template[0].labels["fugaro_role"] == "reaper"
+    error_message = "the job and its template carry the reaper role label: what the report it prints is found by in Cloud Logging, and what the log sink and its exclusion select on"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.reaper.deletion_protection == true
+    error_message = "the janitor must not be deletable by a hand edit of the tfvars: a plan that destroyed this job would leave leaked VMs with nothing to sweep them"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job_iam_member.reaper_runner.role == "roles/run.invoker" && google_cloud_run_v2_job_iam_member.reaper_runner.member == "serviceAccount:fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    error_message = "roles/run.invoker (run.jobs.run) is granted on this job only, and to the account the schedule mints its token from"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job_iam_member.reaper_runner.name == "fugaroreap"
+    error_message = "the invoker grant is on the reaper's own job and no other"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.schedule == "*/15 * * * *" && google_cloud_scheduler_job.reaper_sweep.time_zone == "Etc/UTC"
+    error_message = "the sweep is every fifteen minutes, which is ReapMargin: a slower schedule would leave a stuck job's VM alive for its own period plus the margin"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.http_target[0].http_method == "POST" && google_cloud_scheduler_job.reaper_sweep.http_target[0].uri == "https://run.googleapis.com/v2/projects/proj-1234/locations/us-east5/jobs/fugaroreap:run"
+    error_message = "the schedule starts the reaper's own job, in this project and region, on run.googleapis.com"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.reaper_sweep.http_target[0].oauth_token[0].service_account_email == "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+    error_message = "the schedule calls the job as the reaper account, which is the account the invoker grant above names"
+  }
+  assert {
+    condition     = google_service_account_iam_member.reaper_scheduler_agent.member == "serviceAccount:service-123456789012@gcp-sa-cloudscheduler.iam.gserviceaccount.com" && google_service_account_iam_member.reaper_scheduler_agent.role == "roles/iam.serviceAccountUser"
+    error_message = "Cloud Scheduler's own agent holds actAs on the reaper account, which is what minting the job's OAuth token needs"
+  }
+  assert {
+    condition     = keys(google_service_account_iam_member.reaper_operator) == ["user:operator@example.com"]
+    error_message = "the installation's operators hold actAs on the reaper account: applying this root creates the Scheduler job whose token is minted from it"
+  }
+}

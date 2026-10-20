@@ -41,6 +41,23 @@ output "preload_scheduler_job" {
   value = google_cloud_scheduler_job.preload_rebuild.name
 }
 
+# The reaper's invocation, by name: the Cloud Run job that runs `fugaro
+# reaper`, and the Scheduler job that starts it every ReapMargin (reaper.tf).
+# Neither name starts with `fugaro-`, so neither is a workflow's, and a reader
+# that only wanted to sweep an installation by hand
+# (`gcloud run jobs execute <this>`), or to check that the schedule exists,
+# would otherwise have to read the module to learn them. They are the module's
+# own locals and not inputs, because nothing outside the module creates them --
+# unlike the names in `var.names`, which fugaro init computes because two
+# sides write them.
+output "reaper_job" {
+  value = google_cloud_run_v2_job.reaper.name
+}
+
+output "reaper_scheduler_job" {
+  value = google_cloud_scheduler_job.reaper_sweep.name
+}
+
 output "router" {
   value = google_compute_router.this.name
 }
