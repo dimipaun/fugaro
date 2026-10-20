@@ -36,10 +36,10 @@
 //      out of the spec's own item 4 and of the section of a document of this repository the
 //      step cites, in that section's order — three of the four captions are lines of the
 //      README, so a source alone would let them be shuffled among the steps. `ArchitectureDiagram.astro` supersedes D185's
-//      step names; the detail D185's two annotations held (the caches, the trust boundary) is
-//      under `RunDetail.astro` on How It Works, whose five steps and note are held to
-//      README.md's `## How it works` and to `docs/design/v1.md` the same way, and whose
-//      absence from the homepage is a case of its own (changes spec item 4).
+//      step names; the run's own detail — the stages, the caps, the trust boundary — is on How
+//      It Works under `RunDiagram.astro`, whose labels are held to the documents they cite by
+//      `test/how-it-works.mjs`, and whose absence from the homepage is a case of its own
+//      (changes spec item 4).
 //   5. **Neither page names a claim the product cannot back**: no console download, no
 //      Windows/WSL support, no "~2 h", no ballpark ranges (F50, D102, W1.4 step 4). The
 //      video slot is checked against `site.yaml`'s own flag rather than against today's

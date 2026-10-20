@@ -177,6 +177,53 @@ function labelText(group) {
 }
 
 /**
+ * What a run of text takes at a size, and above what it takes in any font the page can be read
+ * in. The drawing's labels are set in the reader's own sans (`--font-sans`), whose stack lands
+ * on a wide face on more systems than not — DejaVu Sans on most Linux desktops is the widest
+ * of them, and about a tenth wider per character than Arial or Inter. The component lays the
+ * drawing out with the same estimate and refuses an over-wide line at build time; this is the
+ * same measurement taken again over the built page, where the box a line was drawn in is the
+ * `data-pad` the card declares rather than a number from the component's own source.
+ */
+const CHAR = 0.62
+const textWidth = (text, size) => [...text].length * CHAR * size
+
+/**
+ * The box a `<path>` is drawn in, from its own `d`: the points of the polyline the diagram
+ * draws with (`M`, `H`, `V` and `L`), which is all the loop and its head are made of. A
+ * command this does not know is a path whose extent this check cannot read, and the caller
+ * refuses that rather than passing it.
+ */
+function pathBox(d) {
+  const points = []
+  let x = 0
+  let y = 0
+  let known = true
+  for (const [, command, rest] of d.matchAll(/([A-Za-z])([^A-Za-z]*)/g)) {
+    const numbers = (rest.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number)
+    if (command === 'M' || command === 'L') [x, y] = [numbers[0], numbers[1]]
+    else if (command === 'H') x = numbers[0]
+    else if (command === 'V') y = numbers[0]
+    else if (command !== 'Z') known = false
+    if (command !== 'Z') points.push([x, y])
+  }
+  if (!known || points.length === 0) return null
+  const xs = points.map((point) => point[0])
+  const ys = points.map((point) => point[1])
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }
+}
+
+/** The box a text node is drawn in: its own size, and the baseline it sits on. */
+function textBox(text) {
+  const size = Number(text.size)
+  const width = textWidth(text.text, size)
+  const x0 = text.anchor === 'middle' ? text.x - width / 2 : text.anchor === 'end' ? text.x - width : text.x
+  return { x0, x1: x0 + width, y0: text.y - size * 0.8, y1: text.y + size * 0.25, width }
+}
+
+const overlaps = (a, b) => a.x0 < b.x1 - 0.5 && a.x1 > b.x0 + 0.5 && a.y0 < b.y1 - 0.5 && a.y1 > b.y0 + 0.5
+
+/**
  * A page's run diagram, as the elements it renders: the drawings, each drawing's labelled
  * groups and stage names, the picture's name, and the words under it. `figure` is 0 or 1.
  */
@@ -211,6 +258,41 @@ export function runDiagramOf(html) {
           .filter((el) => el.name === 'text')
           .map((el) => Number(el.attrs.get('font-size')))
           .filter((size) => Number.isFinite(size)),
+        // Every box of the drawing — the four cards and the band — as the geometry a line is
+        // drawn in: the card's own width, the inset its contents are drawn at, the text nodes
+        // inside it, the stage pills, and the loop's own paths.
+        boxes: [...findAll(svg, (el) => has(el, 'run-box') || has(el, 'run-band-box'))].map((box) => {
+          const rect = [...walk(box)].find((el) => el.name === 'rect' && (has(el, 'run-card') || has(el, 'run-band')))
+          const body = [...walk(box)].find((el) => el.name === 'g' && (has(el, 'run-box-body') || has(el, 'run-band-body')))
+          if (!rect || !body) return { name: box.attrs.get('data-box') ?? 'the band', broken: true }
+          return {
+            name: box.attrs.get('data-box') ? `box ${box.attrs.get('data-box')}` : 'the band',
+            broken: false,
+            width: Number(rect.attrs.get('width')),
+            pad: Number(rect.attrs.get('data-pad')),
+            texts: [...walk(body)]
+              .filter((el) => el.name === 'text')
+              .map((el) => ({
+                klass: classes(el),
+                text: textOf(el).trim(),
+                x: Number(el.attrs.get('x')),
+                y: Number(el.attrs.get('y')),
+                size: Number(el.attrs.get('font-size')),
+                anchor: el.attrs.get('text-anchor') ?? 'start',
+              })),
+            pills: [...walk(body)]
+              .filter((el) => el.name === 'rect' && has(el, 'run-stage-pill'))
+              .map((el) => ({
+                x0: Number(el.attrs.get('x')),
+                x1: Number(el.attrs.get('x')) + Number(el.attrs.get('width')),
+                y0: Number(el.attrs.get('y')),
+                y1: Number(el.attrs.get('y')) + Number(el.attrs.get('height')),
+              })),
+            loop: [...walk(body)]
+              .filter((el) => el.name === 'path' && classes(el).some((name) => name.startsWith('run-loop')))
+              .map((el) => pathBox(el.attrs.get('d') ?? '')),
+          }
+        }),
       })
     }
   }
@@ -403,6 +485,67 @@ export function runDiagramFailures(html, css, docs = sources()) {
     }
   }
 
+  // Every line of the drawing, measured against the box it is drawn in, and the loop's arrow
+  // against the pills it passes: the drawing is laid out for a font wider than the one the
+  // component writes it in, and a line that outgrows its card is a line over the card's border
+  // and into the gap beside it — a browser's own reading of a label the draft has no room for.
+  // The box is the card's own geometry: its width, and the inset `data-pad` its contents are
+  // drawn at, both read off the built page.
+  for (const drawing of diagram.drawings) {
+    const where = `the ${drawing.wide ? 'wide' : 'tall'} drawing`
+    for (const box of drawing.boxes) {
+      if (box.broken) {
+        out.push(`${where}'s ${box.name} is drawn without the card its contents sit on and the inset they are drawn at, and a line of the picture is held to the box it is drawn in (the owner's draft of 2026-10-19)`)
+        continue
+      }
+      const left = box.pad
+      const right = box.width - box.pad
+      for (const text of box.texts) {
+        if (![text.x, text.y, text.size].every(Number.isFinite)) {
+          out.push(`${where}'s ${box.name} draws ${JSON.stringify(text.text)} without the position or the size it is drawn at, and a line this check cannot measure is a line nothing holds inside its box (the owner's draft of 2026-10-19)`)
+          continue
+        }
+        const drawn = textBox(text)
+        if (drawn.x0 < left - 0.5 || drawn.x1 > right + 0.5) {
+          out.push(`${where}'s ${box.name} draws ${JSON.stringify(text.text)} from ${drawn.x0.toFixed(1)} to ${drawn.x1.toFixed(1)} units, and the box's content runs ${left} to ${right}: the drawing is laid out for a font the page's stack resolves to on a reader's system (DejaVu Sans and the other wide sans faces are wider per character than Arial or Inter), and a line that fits neither is a line over the card's border (the owner's draft of 2026-10-19)`)
+        }
+        // A stage's own label belongs to its pill: the pill is the stage, and a word drawn
+        // wider than it is a word sitting on two pills at once.
+        if (text.klass.includes('run-stage')) {
+          // The sides and the line's own cap height: a descender dipping a hair under the
+          // pill's edge is how the type sits in every pill of the drawing, and what is read
+          // here is whether the word is drawn across the pill rather than in it.
+          const inside = box.pills.some(
+            (pill) => drawn.x0 >= pill.x0 - 0.5 && drawn.x1 <= pill.x1 + 0.5 && text.y - text.size * 0.8 >= pill.y0 - 1 && text.y <= pill.y1 + 0.5,
+          )
+          if (!inside) {
+            out.push(`${where}'s ${box.name} draws the stage ${JSON.stringify(text.text)} from ${drawn.x0.toFixed(1)} to ${drawn.x1.toFixed(1)} units, and no pill of the drawing holds it: a stage is its pill, and a word wider than the pill it sits in is a word over the pill beside it (the owner's draft of 2026-10-19)`)
+          }
+          continue
+        }
+        for (const pill of box.pills) {
+          if (overlaps(drawn, pill)) {
+            out.push(`${where}'s ${box.name} draws ${JSON.stringify(text.text)} over the stage pill at ${pill.x0.toFixed(1)} to ${pill.x1.toFixed(1)} units: the labels of a box are drawn in its content box and the stages have their own, so a word over a pill is a word the stage's own label is read with (the owner's draft of 2026-10-19)`)
+          }
+        }
+      }
+      // The loop the draft draws: an arrow that leaves `review`, runs up beside the stages and
+      // lands back on `implement`. Drawn through the pills it is a line struck through the two
+      // stages the round trip is between.
+      for (const path of box.loop) {
+        if (!path) {
+          out.push(`${where}'s ${box.name} draws the loop with a path this check cannot read, and an arrow nothing can measure is an arrow nothing holds beside the pills (the owner's draft of 2026-10-19)`)
+          continue
+        }
+        for (const pill of box.pills) {
+          if (overlaps(path, pill)) {
+            out.push(`${where}'s ${box.name} draws the loop's arrow across ${path.x0.toFixed(1)} to ${path.x1.toFixed(1)} units and the stage pill at ${pill.x0.toFixed(1)} to ${pill.x1.toFixed(1)} is drawn over it: the loop is drawn beside the stages it sends the run back through, and an arrow through a pill reads as a line through that stage rather than the round trip (the owner's draft of 2026-10-19)`)
+          }
+        }
+      }
+    }
+  }
+
   // The second viewBox is a second scale, at a phone's own width, with labels a reader can
   // read once the column has scaled it: the smallest label of the tall drawing, at the width
   // the drawing is shown at, is at least a readable 12 px.
@@ -510,6 +653,15 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     return html.replace(first[0], '\u0000').replace(second[0], first[0]).replace('\u0000', second[0])
   }
 
+  // A stage pill copied: as the drawing draws it, at the next stage's own place and size,
+  // renamed — a stage that was not there before and is drawn exactly as the others are.
+  const cloneStage = (html, from, to) => {
+    const pill = new RegExp(`<text class="run-stage" data-stage="${from}"[^>]*>${from}</text>`).exec(html)
+    assert.ok(pill, `the built page draws no \`${from}\` stage pill, and this fixture copies it`)
+    const copy = pill[0].replace(`data-stage="${from}"`, `data-stage="${to}"`).replace(`>${from}<`, `>${to}<`)
+    return html.replace(pill[0], pill[0] + copy)
+  }
+
   const cases = [
     ['a page with no diagram', page.replace(/<figure class="run-diagram"[\s\S]*?<\/figure>/, ''), /renders 0 run diagrams/],
     [
@@ -519,11 +671,11 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     ],
     [
       'a drawing with no name',
-      page.replace(/class="run-svg run-wide" viewBox="[^"]*" role="img" aria-label="[^"]*"/, 'class="run-svg run-wide" viewBox="0 0 1200 617" role="img" aria-label=""'),
+      page.replace(/(class="run-svg run-wide" viewBox="[^"]*" role="img" aria-label=")[^"]*"/, '$1"'),
       /carries no `aria-label`|different accessible names/,
     ],
     ['a drawing that is not a picture', page.replace(/class="run-svg run-wide" viewBox="([^"]*)" role="img"/, 'class="run-svg run-wide" viewBox="$1" role="presentation"'), /is `role="presentation"`/],
-    ['a drawing with no viewBox', page.replace(/class="run-svg run-wide" viewBox="0 0 1200 617"/, 'class="run-svg run-wide"'), /picture that scales carries the four numbers/],
+    ['a drawing with no viewBox', page.replace(/class="run-svg run-wide" viewBox="[^"]*"/, 'class="run-svg run-wide"'), /picture that scales carries the four numbers/],
     // The stages: a stage dropped from the drawing, one added, two swapped, and one the
     // repository does not name.
     [
@@ -533,7 +685,9 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     ],
     [
       'a stage added to the drawing',
-      page.replace(/<text class="run-stage" data-stage="writeback"/, '<text class="run-stage" data-stage="deploy" font-size="17" text-anchor="middle">deploy</text><text class="run-stage" data-stage="writeback"'),
+      // A sixth stage drawn where a real one is, so the one thing this fixture breaks is the
+      // list of stages rather than the geometry they are drawn with.
+      cloneStage(page, 'implement', 'deploy'),
       /draws the stages .*and the run's stages are|names it as a stage of a run/,
     ],
     [
@@ -545,6 +699,27 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       /draws the stages .*and the run's stages are/,
     ],
     ['a loop labelled something else', page.replace('class="run-text run-loop"', 'class="run-text run-loop-x"'), /loop is labelled \[\]/],
+    // The geometry a browser shows rather than a preference: a line set larger than the box it
+    // was laid out in — which is what a wider system font does to a drawing laid out for a
+    // narrower one — and the loop drawn through the pills it is supposed to pass beside.
+    [
+      'a name drawn wider than its card',
+      page.replace(/(class="run-name"[^>]*font-size=")[\d.]+"/, '$160"'),
+      /draws "Your agent" from .* and the box's content runs/,
+    ],
+    [
+      'a stage label wider than its pill',
+      page.replace(/(class="run-stage" data-stage="verify"[^>]*font-size=")[\d.]+"/, '$160"'),
+      /no pill of the drawing holds it|and the box's content runs/,
+    ],
+    [
+      'a loop drawn through the stage pills',
+      // The arrow left where it is drawn and moved back over the pills: the width the pills
+      // took before the loop had a lane of its own, which is the defect a reader sees as a
+      // line struck through `implement` and `review`.
+      page.replace(/(class="run-loop-line" d=")([^"]*)"/, (match, head, d) => `${head}${d.replace(/([MH]) (-?[\d.]+)/g, (one, command, x) => `${command} ${(Number(x) - 40).toFixed(1)}`)}"`),
+      /draws the loop's arrow across .* and the stage pill/,
+    ],
     // A label written for the page rather than quoted: the sentence a reader reads has to be
     // the document's own.
     [

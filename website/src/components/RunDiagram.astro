@@ -43,6 +43,15 @@
  * scrolls sideways, and the text list under the figure carries the same facts for a reader
  * who skips the picture.
  *
+ * **Every line is drawn in the box it was laid out for.** The drawing is set in the reader's
+ * own sans, and that stack is wider per character on some systems than on others (DejaVu Sans
+ * on most Linux desktops is the widest of them), so each line is measured at a conservative
+ * `CHAR` and broken to the room it has: a long box name or band title wraps rather than
+ * running over the card's border, the loop's arrow is drawn in a lane the stage pills leave
+ * rather than across them, and a line that outgrows its room anyway stops the build naming
+ * itself. `website/test/how-it-works.mjs` measures the built drawing the same way, against the
+ * inset each card declares with `data-pad`.
+ *
  * **No font, no colour and no motion is load-bearing.** The text is SVG `<text>` in the
  * body's own font stack, painted from the palette's tokens, and nothing here animates.
  */
@@ -215,16 +224,42 @@ interface Font {
 const WIDE: Font = { name: 26, small: 16, body: 19, stage: 17 }
 const TALL: Font = { name: 21, small: 14, body: 16, stage: 15 }
 
-/** Roughly what one character takes at a size: the labels are short and the boxes have room,
- * so a break that is a shade early is a break, not an overflow. */
-const CHAR = 0.54
+/**
+ * Roughly what one character of this diagram's own alphabet takes at a size, and above what
+ * it takes in any font the page can be read in: the labels are set in the reader's own sans
+ * (`--font-sans`), and that stack lands on a wide face on more systems than not — DejaVu Sans
+ * on most Linux desktops is the widest of them, and it is about a tenth wider per character
+ * than Arial or Inter. A line broken to fit this measurement fits in all of them, and a line
+ * drawn to fit its room under it is checked at build time and again on the built page
+ * (`website/test/how-it-works.mjs`).
+ */
+const CHAR = 0.62
 
-/** A label's lines: the text broken at word boundaries to fit `room` units. */
+/** What a run of text takes at a size, at the estimate above. */
+function textWidth(text: string, size: number): number {
+  return text.length * CHAR * size
+}
+
+/**
+ * A label's lines: the text broken at word boundaries to fit `room` units, and a single word
+ * wider than the room broken inside itself — a name the repository words in one long word
+ * breaks rather than running out of the box, the guard `ArchitectureDiagram.astro`'s
+ * `overflow-wrap: anywhere` is for its step names.
+ */
 function wrap(text: string, room: number, size: number): string[] {
-  const chars = Math.max(8, Math.floor(room / (CHAR * size)))
+  const chars = Math.max(3, Math.floor(room / (CHAR * size)))
   const out: string[] = []
   let line = ''
-  for (const word of text.split(' ')) {
+  const push = (word: string) => {
+    while (word.length > chars) {
+      if (line) {
+        out.push(line)
+        line = ''
+      }
+      out.push(word.slice(0, chars))
+      word = word.slice(chars)
+    }
+    if (!word) return
     if (line && line.length + 1 + word.length > chars) {
       out.push(line)
       line = word
@@ -232,8 +267,23 @@ function wrap(text: string, room: number, size: number): string[] {
       line = line ? `${line} ${word}` : word
     }
   }
+  for (const word of text.split(' ')) push(word)
   if (line) out.push(line)
   return out
+}
+
+/**
+ * A line refused at build time when it is drawn wider than the room it was given. The
+ * estimate above is what the drawing is laid out with, so a label that outgrows its box fails
+ * the build naming itself rather than running over the card's edge on a reader's screen.
+ */
+function fits(what: string, row: string, size: number, room: number): void {
+  const width = textWidth(row, size)
+  if (width > room) {
+    throw new Error(
+      `website/src/components/RunDiagram.astro: ${what} is drawn as ${JSON.stringify(row)}, which takes about ${Math.round(width)} units at ${size} and the room it has is ${Math.round(room)}. A label wider than its box runs over the drawing's edge, where a card's border is: shorten the label, or give the box more room (the owner's draft of 2026-10-19).`,
+    )
+  }
 }
 
 /** The escape SVG text needs, and no label of this file carries one of the three. */
@@ -244,6 +294,7 @@ function esc(text: string): string {
 /** A `<g>` of text lines, marked with the document the text is a line of. */
 function lines(label: Label, x: number, y: number, size: number, room: number, klass: string): { markup: string; height: number } {
   const rows = wrap(label.text, room, size)
+  for (const row of rows) fits(`the label ${JSON.stringify(label.text.slice(0, 40))}`, row, size, room)
   const step = size * 1.35
   const markup = [
     `<g class="run-label ${klass}" data-source="${esc(label.source)}">`,
@@ -272,10 +323,20 @@ function boxContents(b: { name: string; labels: Label[]; stages?: boolean }, ind
   const parts: string[] = []
   let cy = pad + f.name * 0.8
   parts.push(`<text class="run-number" x="${pad.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${(f.name * 0.8).toFixed(1)}">${index + 1}</text>`)
-  parts.push(
-    `<text class="run-name" x="${(pad + f.name * 1.1).toFixed(1)}" y="${cy.toFixed(1)}" font-size="${f.name}">${esc(b.name)}</text>`,
-  )
-  cy += f.name * 0.5
+
+  // The name, in the room the number leaves rather than at whatever width it takes: a name is
+  // a heading and the widest word of this diagram's own is wider than its card in a system
+  // font, so it is broken like a label instead of running over the card's edge.
+  const nameX = pad + f.name * 1.1
+  const nameRoom = w - pad - nameX
+  const nameRows = wrap(b.name, nameRoom, f.name)
+  for (const row of nameRows) fits(`the box named ${JSON.stringify(b.name)}`, row, f.name, nameRoom)
+  nameRows.forEach((row, rowIndex) => {
+    parts.push(
+      `<text class="run-name" x="${nameX.toFixed(1)}" y="${(cy + rowIndex * f.name * 1.15).toFixed(1)}" font-size="${f.name}">${esc(row)}</text>`,
+    )
+  })
+  cy += f.name * 0.5 + (nameRows.length - 1) * f.name * 1.15
 
   const labels = b.labels
   const smalls = labels.slice(0, labels.length - 1)
@@ -293,25 +354,37 @@ function boxContents(b: { name: string; labels: Label[]; stages?: boolean }, ind
 
   if (b.stages) {
     cy += f.stage * 0.8
-    const pillW = inner
+    // The loop's own lane down the right of the pills: the arrow leaves `review`, runs up
+    // beside the pills and comes back in at `implement`, and the word `fix` is written in the
+    // lane beside the rail. The pills give the lane up rather than the arrow crossing them,
+    // which is what a reader would otherwise see — a line struck through the two stages the
+    // round trip is between.
+    const lane = textWidth(LOOP, f.stage) + 26
+    const pillW = inner - lane
+    const pillRight = pad + pillW
     for (const [row, stage] of STAGES.entries()) {
       const rowY = cy + row * stageRow
       parts.push(`<rect class="run-stage-pill" x="${pad}" y="${rowY.toFixed(1)}" width="${pillW}" height="${(stageRow - 6).toFixed(1)}" rx="8" />`)
       parts.push(
         `<text class="run-stage" data-stage="${stage}" x="${(pad + pillW / 2).toFixed(1)}" y="${(rowY + stageRow / 2 + f.stage * 0.35).toFixed(1)}" font-size="${f.stage}" text-anchor="middle">${stage}</text>`,
       )
-      // Review is where a fix sends the run back round: the arrow leaves it, runs along the
-      // box's right edge and lands on implement — the loop the draft draws, and the arrow
-      // `docs/design/v1.md` §4 writes as `[fix ─► review(2)] …`.
+      // Review is where a fix sends the run back round: the arrow leaves the pill's right
+      // edge, runs up the lane beside the pills and lands back on implement's — the loop the
+      // draft draws, and the arrow `docs/design/v1.md` §4 writes as `[fix ─► review(2)] …`.
+      // Nothing of it is drawn over a pill: the whole loop, its head and its word are in the
+      // lane the pills leave, inside the same content box as the labels above them.
       if (stage === 'review') {
         const from = rowY + stageRow / 2
         const to = cy + STAGES.indexOf('implement') * stageRow + stageRow / 2
-        const rail = pad + pillW - 12
-        const head = rail - 8
-        parts.push(`<path class="run-loop-line" d="M ${(pad + pillW - 28).toFixed(1)} ${from.toFixed(1)} H ${rail.toFixed(1)} V ${to.toFixed(1)} H ${head.toFixed(1)}" />`)
-        parts.push(`<path class="run-loop-head" d="M ${head.toFixed(1)} ${(to - 6).toFixed(1)} L ${(head - 9).toFixed(1)} ${to.toFixed(1)} L ${head.toFixed(1)} ${(to + 6).toFixed(1)} Z" />`)
+        const tip = pillRight + 2
+        const head = tip + 9
+        const rail = head + 7
+        const labelX = rail + 4
+        fits(`the loop's word ${JSON.stringify(LOOP)}`, LOOP, f.stage, pillRight + lane - labelX)
+        parts.push(`<path class="run-loop-line" d="M ${pillRight.toFixed(1)} ${from.toFixed(1)} H ${rail.toFixed(1)} V ${to.toFixed(1)} H ${head.toFixed(1)}" />`)
+        parts.push(`<path class="run-loop-head" d="M ${tip.toFixed(1)} ${(to - 6).toFixed(1)} L ${head.toFixed(1)} ${to.toFixed(1)} L ${tip.toFixed(1)} ${(to + 6).toFixed(1)} Z" />`)
         parts.push(
-          `<text class="run-text run-loop" x="${(rail + 6).toFixed(1)}" y="${((from + to) / 2).toFixed(1)}" font-size="${f.stage}">${LOOP}</text>`,
+          `<text class="run-text run-loop" x="${labelX.toFixed(1)}" y="${((from + to) / 2 + f.stage * 0.35).toFixed(1)}" font-size="${f.stage}">${LOOP}</text>`,
         )
       }
     }
@@ -321,11 +394,16 @@ function boxContents(b: { name: string; labels: Label[]; stages?: boolean }, ind
   return { markup: parts.join(''), height: cy + pad }
 }
 
-/** The card a box is drawn on, at the height the row settled on. */
-function card(x: number, y: number, w: number, height: number, box: number, contents: string): string {
+/**
+ * The card a box is drawn on, at the height the row settled on. The card carries the inset
+ * its contents are drawn at (`data-pad`), which is the content box every line of the box is
+ * held to — by `fits` above at build time, and by `website/test/how-it-works.mjs` on the
+ * built page, which measures each drawn line against the box this attribute declares.
+ */
+function card(x: number, y: number, w: number, height: number, box: number, contents: string, pad: number): string {
   return [
     `<g class="run-box" data-box="${box}">`,
-    `<rect class="run-card" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${height.toFixed(1)}" rx="18" />`,
+    `<rect class="run-card" data-pad="${pad}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${height.toFixed(1)}" rx="18" />`,
     `<g class="run-box-body" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">${contents}</g>`,
     '</g>',
   ].join('')
@@ -337,8 +415,15 @@ function band(x: number, y: number, w: number, f: Font): { markup: string; heigh
   const pad = 16
   const parts: string[] = []
   let cy = pad + (f.body + 3) * 0.85
-  parts.push(`<text class="run-band-title" x="${pad.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${f.body + 3}">${esc(BAND_NAME)}</text>`)
-  cy += (f.body + 3) * 0.5
+  // The band's own name, wrapped to the band's width like any other line: on the tall drawing
+  // it is wider than the band it heads, which is the same overflow the box names carry.
+  const titleRoom = w - pad * 2
+  const titleRows = wrap(BAND_NAME, titleRoom, f.body + 3)
+  for (const row of titleRows) fits(`the band named ${JSON.stringify(BAND_NAME)}`, row, f.body + 3, titleRoom)
+  titleRows.forEach((row, rowIndex) => {
+    parts.push(`<text class="run-band-title" x="${pad.toFixed(1)}" y="${(cy + rowIndex * (f.body + 3) * 1.15).toFixed(1)}" font-size="${f.body + 3}">${esc(row)}</text>`)
+  })
+  cy += (f.body + 3) * 0.5 + (titleRows.length - 1) * (f.body + 3) * 1.15
   for (const label of BAND) {
     cy += f.small * 0.45
     const drawn = lines(label, pad, cy + f.small, f.small, w - pad * 2, 'run-cap')
@@ -349,7 +434,7 @@ function band(x: number, y: number, w: number, f: Font): { markup: string; heigh
   return {
     markup: [
       `<g class="run-band-box">`,
-      `<rect class="run-band" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${height.toFixed(1)}" rx="18" />`,
+      `<rect class="run-band" data-pad="${pad}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${height.toFixed(1)}" rx="18" />`,
       `<g class="run-band-body" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">${parts.join('')}</g>`,
       '</g>',
     ].join(''),
@@ -384,7 +469,7 @@ function drawWide(): { viewBox: string; markup: string } {
   const markup: string[] = []
   BOXES.forEach((b, index) => {
     const x = pad + index * (w + gap)
-    markup.push(card(x, top, w, height, index + 1, contents[index].markup))
+    markup.push(card(x, top, w, height, index + 1, contents[index].markup, geo.pad))
     if (index < BOXES.length - 1) markup.push(arrowWide(x + w, x + w + gap, top + height * 0.42))
   })
   const bandY = top + height + 40
@@ -404,7 +489,7 @@ function drawTall(): { viewBox: string; markup: string } {
   BOXES.forEach((b, index) => {
     const one = boxContents(b, index, geo)
     const h = one.height
-    markup.push(card(pad, y, w, h, index + 1, one.markup))
+    markup.push(card(pad, y, w, h, index + 1, one.markup, geo.pad))
     y += h
     if (index < BOXES.length - 1) {
       markup.push(arrowTall(360 / 2, y + 8, y + gap))

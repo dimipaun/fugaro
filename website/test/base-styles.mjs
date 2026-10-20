@@ -28,14 +28,17 @@
 // counts elements: `home.mjs` counts the flow's three arrows and `copy.mjs` clicks the
 // control, and neither of them says which way the one points or where the other is drawn.
 //
-// **And the run under the picture is one vertical timeline** (the owner's feedback of
+// **And the run under the picture was one vertical timeline** (the owner's feedback of
 // 2026-10-19: "The run, step by step section does not look good"). Five steps laid out as a
 // `repeat(auto-fit, minmax(18rem, 1fr))` grid read three beside two with a hole in the last
 // row on a desktop and two-by-two on a tablet, with nothing joining one step to the next — a
-// list of facts rather than a run. `runTimelineFailures` reads the shape the timeline claims:
+// list of facts rather than a run. `runTimelineFailures` read the shape that timeline claimed:
 // one column in force at 360, 768 and 1280 px, a connector on the steps that have one below
 // them and none on the last, and no width or `nowrap` in the section wider than the phone's
-// content box, which is the overflow a browser would show at 360 px.
+// content box, which is the overflow a browser would show at 360 px. The owner's approved
+// draft of 2026-10-19 replaced the timeline with the diagram, and its shape — every line of
+// the drawing measured against the box it is drawn in — is held by `test/how-it-works.mjs`'s
+// `runDiagramFailures`; what is left of the run's layout here is the room its blocks take.
 //
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file.
 // No browser, no network: the checks are over the HTML and CSS a browser would receive.
