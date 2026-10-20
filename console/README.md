@@ -3687,6 +3687,7 @@ moment a row offers one (rule 7's pairing).
 | `src/main/spawn.ts` | `config list` joins `COMMANDS_WITHOUT_PROJECT` and the spawn table; `PICKER_COMMANDS` is the picker's own one read |
 | `src/main/window.ts`, `src/source/cli.ts` | the external-link path is the one `shell.openExternal` door (`validateExternalUrl`, `ALLOWED_EXTERNAL_HOSTS`), and the install command the source module already carried is re-exported rather than spelled twice |
 | `src/renderer/installations.html`, `src/renderer/installations.ts` | the form's ids are gone with the form; the view draws `#picker-list`, `#picker-warnings` and `#picker-onboarding`, and the link is a **button**, so the document holds no `href` and no URL at all |
+| `src/renderer/theme/screens.css` | the removed form's id-scoped rules leave, and the picker's real hooks are styled: `#picker-warnings li`, the onboarding screen's `h2`/`code`/link button, and one `--border-strong` boundary rule over every control the view draws (`#picker-list button`, `#picker-onboarding button`) — no new token and no new colour |
 | `test/unit/installlist.test.ts`, `test/unit/onboarding.test.ts` | **new**, and the pins described below |
 | `test/unit/installations-ipc.test.ts`, `installations-store.test.ts`, `installations-view.test.ts`, `spawn.test.ts`, `stub.test.ts`, `stub.ts`, `configread.test.ts`, `window.test.ts` | rewritten or amended to the surface that exists |
 | `test/e2e/installations.spec.ts`, `test/e2e/degraded.spec.ts` | the picker spec drives the list, the warning row, the refused 0.5.0 and the unlisted directory; the degraded spec's `resolveBinary` gained its `appEnv` |
@@ -3776,13 +3777,14 @@ the failure is the red step, and each test goes red **by name**.
 | one character of `FUGARO_INSTALL_COMMAND` changed | `onboarding.test.ts`, the install-command cases — and by name |
 | one character of `FUGARO_SETUP_COMMAND` changed | `onboarding.test.ts`, the setup-command and two-states cases |
 | `GETTING_STARTED_URL` pointed at another path or host | `onboarding.test.ts`, the link case |
+| a form rule put back in `screens.css` (`#picker-add { … }`) | `installations-view.test.ts`, "styles the containers this document declares, and no id it does not" |
 
 ### The verification, and what it did not cover
 
-`npx vitest run --dir test/unit` under Node 22 is green (the console's own suite; the
-verify container runs this repository's Go build and test, so the console's tests are
-run locally and the pull request says so), and `npx tsc --noEmit` is clean — which
-typechecks the Playwright specs too.
+`npx vitest run --dir test/unit` under Node 22 is green — **55 files, 2011 passed, 1
+skipped** (the console's own suite; the verify container runs this repository's Go
+build and test, so the console's tests are run locally and the pull request says so)
+— and `npx tsc --noEmit` is clean, which typechecks the Playwright specs too.
 
 **The e2e suite was rewritten and was not run in the container this work was done
 in**: Playwright's Electron launch needs a display and a GTK/NSS/glib stack the image

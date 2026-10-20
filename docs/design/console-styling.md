@@ -228,18 +228,28 @@ row button.
 | Region | Hook (id) | What it holds |
 |---|---|---|
 | Heading | (no id — `h1`) | "Installations" |
-| Status line | `#picker-status` | one of five states, below |
-| List | `#picker-list` → `li` rows | `li` with the row text and up to two `button`s ("Choose"/"Chosen", "Remove") |
-| Add form | `#picker-add` | `label[for=picker-project]`, `#picker-project` (text input), three pick buttons, `#picker-add-submit` |
-| Pick buttons | `#picker-pick-binary`, `#picker-pick-config`, `#picker-pick-checkout` | "Choose binary…" / "Binary chosen" (and the config/checkout pair) |
+| Status line | `#picker-status` | one of the states below |
+| Onboarding screen | `#picker-onboarding` | `h2`, one `p`, the one command as a `code`, and one link `button`; empty when there is nothing to onboard |
+| List | `#picker-list` → `li` rows | `li` with the row text and up to five `button`s ("Choose"/"Chosen", one per `checkouts` directory the CLI listed, "Stop using this checkout", "Remove") |
+| Warnings | `#picker-warnings` → `li` lines | the CLI's own `warnings` lines, one each |
 
-States, all in the status line: **error/refusal** (`reply.reason`), **file unreadable**
-(`"<path> could not be read: <refusal>"`), **empty** ("No installations yet. Add one
-below."), **ready/none chosen** ("No installation is chosen. Choose one below."),
-**ready/chosen** ("`<project>` is the installation this console is showing (`<mode>`).").
+**The add form is gone** (the owner's ruling of 2026-10-20, `desktop-console.md`
+D13): there is no `#picker-add`, no `#picker-project`, no pick button and no
+submit, because the console asks the operator for no binary, no config and no
+project. The list is what `fugaro config list --json` printed, and the two
+onboarding screens are one of them; the form's id-scoped rules left
+`screens.css` with the markup.
+
+States, all in the status line: **error/refusal** (`reply.reason`, which is the
+CLI's sentence when the CLI would not list), **file unreadable** (`"<path> could
+not be read: <refusal>"`), **empty** ("No installations yet."), **ready/chosen**
+("`<project>` is the installation this console is showing (`<mode>`)."), and
+**blank** while an onboarding screen is drawn — the screen is the whole of what
+the window has to say, and a second sentence over it would be a second voice.
 `console/test/unit/installations-view.test.ts` builds its fake document **from the ids the file really
 declares** and asserts each id exists, so the ids are a pinned hook set — this design
-styles them by id rather than adding classes.
+styles them by id rather than adding classes. The row whose config the CLI could
+not read is drawn **with the CLI's warning line underneath it**, never hidden.
 
 ### 2.3 Live — `console/src/renderer/screens/live.ts`
 
@@ -1221,10 +1231,13 @@ aside.console-rail                        the rail — the grid's first column
   hint is hidden, and the rail's width is the **56 px** the width bullet above states — a
   second literal beside the 216 px one and not a second token.
 - **The foot row is an entrance to the flow the console already has.** "+ Add installation"
-  opens the **existing** add-installation flow — the installation picker window of §2.2,
-  built by the main process's picker module (ruling C9), whose add form is the one place an
-  installation is created. The rail adds **no inline form, no second add path, no new store
-  operation and no new file**, and it is not a second way to remove or edit anything.
+  opens the **existing** flow — the installation picker window of §2.2, built by the main
+  process's picker module (ruling C9), which lists the installations the CLI finds and, with
+  no `fugaro` at all, sends the operator to the getting-started page. (Until the owner's
+  ruling of 2026-10-20 this said "add form"; the form is gone, and the flow it named is the
+  picker window, which is what "Add installation" still opens.) The rail adds **no inline
+  form, no second add path, no new store operation and no new file**, and it is not a second
+  way to remove or edit anything.
 - **What the rail draws, and the read the console does not have.** The rail draws **one row
   per installation the dashboard can read**, and today that is **one row: the installation
   the operator chose**, with its name, its project, its state and its spend. **A row carries
@@ -1370,9 +1383,11 @@ which §6.1 rule 1 forbids more strongly than any layout does.
 - **A skipped-by-default DOM stays skipped**: the console has no skip link and does not
   need one (there is no repeated block of links before the content), and it must not gain
   a link that would need the allow-list's `openExternal` to do nothing.
-- The picker's form is ordinary HTML (`label[for]`, a text input, `button`s), so it is
-  keyboard-operable already; it needs only the ring and a visible disabled state, which
-  `installations.ts` sets with `disabled` while a request is in flight.
+- The picker is ordinary HTML (a list of rows, each with `button`s, and the onboarding
+  screen's one link `button`), so it is keyboard-operable already; it needs only the ring
+  and a visible disabled state, which `installations.ts` sets with `disabled` on every
+  control while a request is in flight. There is no `label[for]` and no text input in this
+  document any more (the ruling of 2026-10-20).
 
 ### 4.4 Forced colors and high contrast
 

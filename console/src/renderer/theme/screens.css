@@ -1081,39 +1081,45 @@ main p {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
-#picker-add {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-xs);
-  padding: var(--space-sm);
-  background: var(--surface);
-  border: var(--rule-width) solid var(--border);
-  border-radius: var(--radius-md);
+/* The CLI's own warning lines, under the list: one line each, in the muted
+ * colour, because they are the CLI's sentence about an installation it could
+ * not read rather than something this console claims (design section 2.2). */
+#picker-warnings {
+  margin-bottom: var(--space-md);
 }
 
-#picker-add label {
+#picker-warnings li {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
 }
 
-#picker-project {
+/* The onboarding screen (owner's ruling of 2026-10-20): a heading, one
+ * sentence, the one command and the one link button. It is a screen and not a
+ * panel -- no surface, no border -- because it replaces the list rather than
+ * sitting beside it, and it is the whole of what the window has to say. */
+#picker-onboarding h2 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+#picker-onboarding code {
+  display: inline-block;
+  margin-bottom: var(--space-md);
   padding: var(--space-2xs) var(--space-xs);
-  font: inherit;
   color: var(--text);
   background: var(--surface-alt);
-  border: var(--border-width) solid var(--border-strong);
   border-radius: var(--radius-sm);
 }
 
-/* Every control of the picker is a button, and a button's boundary is
- * `--border-strong`: `--border` is a decorative hairline and may never mark a
- * control's extent (design section 3.2's role table, and the
+/* Every control of the picker is a button -- a row's Choose, Chosen, Use …
+ * and Remove, and the onboarding screen's one link -- and a button's boundary
+ * is `--border-strong`: `--border` is a decorative hairline and may never mark
+ * a control's extent (design section 3.2's role table, and the
  * `--border`-is-decorative case in `test/unit/theme-tokens.test.ts`). */
-#picker-pick-binary,
-#picker-pick-config,
-#picker-pick-checkout,
-#picker-add-submit {
+#picker-list button,
+#picker-onboarding button {
   padding: var(--space-2xs) var(--space-xs);
   color: var(--text);
   border: var(--border-width) solid var(--border-strong);
@@ -1121,26 +1127,17 @@ main p {
   transition: color var(--duration-fast) var(--ease-out);
 }
 
-#picker-add-submit {
-  color: var(--ink-on-fill);
-  background: var(--accent);
-}
-
-#picker-pick-binary:hover,
-#picker-pick-config:hover,
-#picker-pick-checkout:hover,
-#picker-add-submit:hover {
+#picker-list button:hover,
+#picker-onboarding button:hover {
   color: var(--accent-ink);
 }
 
-#picker-add-submit:hover {
-  color: var(--ink-on-fill);
-}
-
 /* A control waiting on a request is `disabled` (design section 4.3): the
- * system's own grey, and it keeps its ring and its label. */
-#picker-add button:disabled,
-#picker-add input:disabled {
+ * system's own grey, and it keeps its ring and its label. Every control this
+ * view draws is disabled together while a request is in flight, so this is one
+ * rule over both sets rather than a rule per button. */
+#picker-list button:disabled,
+#picker-onboarding button:disabled {
   color: var(--text-muted);
   border-style: dashed;
 }
@@ -1238,7 +1235,8 @@ main p {
   li.run-stage,
   li.run-log-line,
   div.unavailable-body,
-  #picker-add,
+  #picker-warnings li,
+  #picker-onboarding,
   #picker-list li {
     background: Canvas;
     color: CanvasText;
@@ -1439,17 +1437,17 @@ main p {
   div.spend-cap-limit[data-limit='max_reserve'],
   section.console-unavailable[data-kind='refused'],
   #picker-list li,
-  #picker-project,
-  #picker-pick-binary,
-  #picker-pick-config,
-  #picker-pick-checkout,
-  #picker-add-submit {
+  #picker-list button,
+  #picker-onboarding button,
+  #picker-onboarding code {
     border-color: CanvasText;
   }
 
-  #picker-add-submit {
-    background: Highlight;
-    color: HighlightText;
-    forced-color-adjust: none;
+  /* The onboarding screen's one command is a code sample rather than a
+   * control, so it keeps the system's own grey boundary and is not painted as
+   * a fill: a fill is this file's word for the two marks that were a fill
+   * (design section 4.4), and a command is neither of them. */
+  #picker-onboarding code {
+    border: var(--border-width) solid GrayText;
   }
 }

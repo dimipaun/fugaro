@@ -30,7 +30,10 @@
 //   - a view that wrote its own sentence over a refusal fails "shows the main
 //     process's sentence verbatim";
 //   - a view that acted on a row without re-reading fails "re-reads the list
-//     after every action".
+//     after every action";
+//   - a **stylesheet rule for an id this document does not declare** fails
+//     "styles the containers this document declares, and no id it does not",
+//     which is the case the removed form's `#picker-add` rules were caught by.
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -133,6 +136,12 @@ class FakeDocument implements PickerDocument {
 
 const documentPath = fileURLToPath(new URL('../../src/renderer/installations.html', import.meta.url))
 const html = readFileSync(documentPath, 'utf8')
+
+/** THEME is the stylesheet directory, and `screens.css` is the one file the
+ * picker's rules live in (design section 5.4: every document of the bundle links
+ * the one served stylesheet, and the screens' share of it is this file). */
+const screensPath = fileURLToPath(new URL('../../src/renderer/theme/screens.css', import.meta.url))
+const screens = readFileSync(screensPath, 'utf8')
 
 /** fakeDocument builds the document's elements from the ids the file declares. */
 function fakeDocument(): FakeDocument {
@@ -300,6 +309,36 @@ describe('the picker’s document and its view', () => {
       expect(`<form id="${control}">`).toContain(control)
     }
     expect('<input id="x" />').toContain('<input')
+  })
+
+  it('styles the containers this document declares, and no id it does not', () => {
+    // The two onboarding screens are screens in the approved visual language
+    // (the owner's ruling of 2026-10-20), which means the stylesheet has to know
+    // their hooks — and the removed form's id-scoped rules had to leave with the
+    // form. Both halves are one scan, because both are the same drift:
+    //
+    //   - a rule selecting an id this document does not declare is a rule for a
+    //     page that is not served (the form's `#picker-add`, `#picker-project`,
+    //     `#picker-pick-*` and `#picker-add-submit` sat in `screens.css` after
+    //     the markup was gone, styling nothing);
+    //   - a container the view looks up with no rule at all is an unstyled
+    //     screen — which is what the onboarding screen would have been, drawn in
+    //     the browser's own defaults.
+    //
+    // Comments come out first: the stylesheet discusses these ids in its prose,
+    // and a scan satisfied by a comment would be no scan at all.
+    const code = screens.replace(/\/\*[\s\S]*?\*\//g, '')
+    const declared = new Set([...html.matchAll(/id="([^"]+)"/g)].map((match) => match[1] ?? ''))
+    const selected = new Set([...code.matchAll(/#([a-zA-Z][a-zA-Z0-9_-]*)/g)].map((match) => match[1] ?? ''))
+    // Non-vacuity: the scan sees the hooks that are there, so the empty result
+    // below is not a scan reading nothing.
+    expect(selected.size).toBeGreaterThan(3)
+    expect([...selected].filter((id) => !declared.has(id))).toEqual([])
+    for (const id of IDS) expect(selected.has(id), `screens.css must style #${id}`).toBe(true)
+    // And the mutation is real: the form's own rules fail the first half.
+    const planted = '#picker-add { background: var(--surface); }'
+    const plantedIds = [...planted.matchAll(/#([a-zA-Z][a-zA-Z0-9_-]*)/g)].map((match) => match[1] ?? '')
+    expect(plantedIds.filter((id) => !declared.has(id))).toEqual(['picker-add'])
   })
 
   it('draws the status the main process answered with', async () => {
