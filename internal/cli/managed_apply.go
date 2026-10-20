@@ -585,28 +585,6 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 	return out, remove, nil
 }
 
-// adcFile is the file Application Default Credentials come from: what
-// GOOGLE_APPLICATION_CREDENTIALS names, else gcloud's well-known one.
-// (init_project.go's adcInfo reads the same file for its type; this is the
-// path, which that one does not return.)
-func adcFile() (string, error) {
-	if p := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); p != "" {
-		return p, nil
-	}
-	dir := os.Getenv("CLOUDSDK_CONFIG")
-	if dir == "" {
-		if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
-			dir = filepath.Join(x, "gcloud")
-		} else if h, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(h, ".config", "gcloud")
-		}
-	}
-	if dir == "" {
-		return "", userErr("no Application Default Credentials: GOOGLE_APPLICATION_CREDENTIALS is unset and there is no home directory to look in (run gcloud auth application-default login)")
-	}
-	return filepath.Join(dir, "application_default_credentials.json"), nil
-}
-
 // replaceEnv is parent with key set to value: the last one wins, as in exec,
 // and every other entry is kept.
 func replaceEnv(parent []string, key, value string) []string {
