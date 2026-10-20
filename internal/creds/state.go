@@ -411,6 +411,17 @@ type RTDBStore struct {
 // and usable credential. That is the exact fail-open this method's contract
 // forbids, and DisallowUnknownFields is what refuses it. projectpolicy decodes
 // its own documents the same way, for the same reason.
+//
+// A key that is not the canonical spelling of the name it unescapes is refused
+// for the same reason and by the same argument. Key writes uppercase escapes
+// (%02X) and Unkey reads either case, so "a%2Fb" and "a%2fb" both unescape to
+// a/b — and two members of one JSON object assigning one map key is decided by
+// Go's map iteration order, so which mark a selection saw would flap between
+// runs. Nothing in this package writes a lowercase escape, so such a node is
+// one this release did not write, and reading it as a name is the fail-open
+// direction. Requiring the key to be Key(name) again is what refuses it, and it
+// refuses the collision with it: Key is injective onto its own output, so two
+// distinct names cannot produce one key.
 func (s *RTDBStore) Marks(ctx context.Context) (map[string]Mark, error) {
 	raw := json.RawMessage{}
 	if _, _, err := s.db().GetETag(ctx, pathMarks, &raw); err != nil {
@@ -434,6 +445,18 @@ func (s *RTDBStore) Marks(ctx context.Context) (map[string]Mark, error) {
 			// credential: this package's paths panic on one (seg), so a node keyed
 			// "" must stop the read rather than travel onward as a name.
 			return nil, fmt.Errorf("creds: a mark node is keyed %q, which unescapes to no name at all", k)
+		}
+		if budget.Key(name) != k {
+			// A key that unescapes to a name but is not that name's key: "a%2fb"
+			// for a/b, which Key spells "a%2Fb". It is refused rather than read
+			// because a subtree carrying both spellings — a hand-edit, or a
+			// second writer that escapes differently — otherwise has its two
+			// marks assigned to one map key in whatever order the range over
+			// `read` happens to take, and a broken mark reads as an available
+			// one on a random subset of selections. The canonical-key test
+			// closes the lone odd key and the collision together, because Key is
+			// injective.
+			return nil, fmt.Errorf("creds: a mark node is keyed %q, which is not how this release escapes %q (want %q)", k, name, budget.Key(name))
 		}
 		out[name] = m
 	}

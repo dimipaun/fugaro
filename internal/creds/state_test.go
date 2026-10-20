@@ -449,6 +449,47 @@ func TestStoreRefusesAMarkItCannotRead(t *testing.T) {
 	}
 }
 
+// A node keyed twice for one name is a subtree this release did not write, and
+// the read refuses it rather than merging the two.
+//
+// Key writes uppercase escapes and Unkey reads either case, so "a%2Fb" and
+// "a%2fb" both unkey to a/b: with the read assigning out[name] for each of them
+// in turn, which mark a selection saw was Go's map iteration order. A credential
+// the operator marked broken read as available on a random subset of
+// selections — the fail-open decodeStrict exists to prevent, and worse than a
+// fixed wrong answer because it flaps. Nothing in this package writes a
+// lowercase escape, so the trigger is a hand-written key, and a key that is not
+// the canonical spelling of its own name is one this release did not write.
+func TestStoreRefusesTwoKeysForOneName(t *testing.T) {
+	// The pair the reviewer measured: one broken, one available, one name.
+	db := newFakeDB()
+	db.nodes[pathMarks] = json.RawMessage(`{"a%2Fb":{"state":"broken","since":"2026-10-20T12:00:00Z"},"a%2fb":{"state":"available"}}`)
+	if marks, err := (&RTDBStore{DB: db}).Marks(ctx); err == nil {
+		t.Fatalf("a node keyed twice for one name read as %+v; want the read refused", marks)
+	}
+
+	// A lone non-canonical key is refused too, and this is the case that says
+	// which rule is in force: it collides with nothing, so only the key's own
+	// spelling can refuse it. It is still a key this package did not write.
+	db2 := newFakeDB()
+	db2.nodes[pathMarks] = json.RawMessage(`{"a%2fb":{"state":"broken","since":"2026-10-20T12:00:00Z"}}`)
+	if marks, err := (&RTDBStore{DB: db2}).Marks(ctx); err == nil {
+		t.Fatalf("a mark node keyed %q, which is not the canonical spelling of its own name, read as %+v", "a%2fb", marks)
+	}
+
+	// And the refusal is about the spelling, not about a % in the key: the
+	// canonical key of a name that needs escaping is read whole.
+	db3 := newFakeDB()
+	db3.put(PathMark("a/b"), Mark{State: StateBroken, Since: now})
+	marks, err := (&RTDBStore{DB: db3}).Marks(ctx)
+	if err != nil {
+		t.Fatalf("a mark of a name that needs escaping did not read back: %v", err)
+	}
+	if m := marks["a/b"]; !m.Broken() {
+		t.Fatalf("the mark of a/b read back as %+v", m)
+	}
+}
+
 // A node carrying a member this release does not model stops the read. The
 // alternative is the worst failure this package has: encoding/json drops a key
 // it does not know, so {"status":"broken"} — a mark a newer release wrote, or a
