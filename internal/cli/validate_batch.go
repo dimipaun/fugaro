@@ -110,6 +110,16 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 	if msg, ok := artifactOnBatchRefusal(lc.Backend(), rcp); ok {
 		ps = append(ps, config.Problem{Path: "backend", Message: msg})
 	}
+	// And the same boundary fails closed on a recipe this checkout cannot
+	// resolve, exactly as the launch's gate does on cloud-batch: a nil recipe
+	// reads as "not an artifact run" to the check above, while the runs of this
+	// installation may be resolving a mode: artifact one at their base (an
+	// agent.recipe this checkout cannot read, a file it cannot parse, a name
+	// that is in neither the repository nor the catalog). Nothing here can tell
+	// the two apart, so the installation is refused rather than passed.
+	if rcp == nil {
+		ps = append(ps, config.Problem{Path: "backend", Message: artifactUnreadOfflineRefusal})
+	}
 
 	// The timeouts (design §4.4 item 4). The job's maxRunDuration is the run's
 	// total plus the slack every backend adds, and Batch fails a task after
@@ -160,6 +170,16 @@ func artifactOnBatchRefusal(backendName string, rcp *recipe.Recipe) (string, boo
 // boundary is waiting for, because the next reader of it is the plan that
 // removes it.
 const artifactOnBatchMessage = "an artifact-producing run is never launched on cloud-batch: this repository's recipe is mode: artifact, so its runs deliver into the runs bucket rather than opening a pull request, and a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11). What this waits for is a per-run prefix condition or a per-run account; until one of them exists, an artifact-producing run stays on backend: cloud-run, and nothing in this build removes the refusal"
+
+// artifactUnreadOfflineRefusal is the offline arm's fail-closed shape of the
+// same boundary: an installation on cloud-batch whose recipe this checkout
+// cannot resolve. The offline check reads the checkout's own layer
+// (localRecipe), so a recipe it cannot read or parse, or one that is in neither
+// the repository nor the catalog, leaves it with nothing to judge -- and a
+// boundary that passes what it cannot read is not a boundary. The launch's gate
+// refuses the same shape for the same reason (artifactUnreadOnBatchRefusal,
+// artifactShadowedOnBatchRefusal).
+const artifactUnreadOfflineRefusal = "this installation is on cloud-batch and the recipe its runs use could not be resolved from this checkout (agent.recipe in fugaro.yaml, else .fugaro/recipes/default.yaml, else the catalog), so nothing here can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Name a recipe this checkout can read and parse, and it is judged on its own mode"
 
 // artifactUnreadOnBatchRefusal is the launch's other shape of the same
 // boundary (Global Constraint 13): on cloud-batch a launch whose recipe the

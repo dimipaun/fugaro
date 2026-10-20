@@ -121,9 +121,36 @@ func TestValidateAcceptsANonArtifactRecipeOnCloudBatch(t *testing.T) {
 			t.Errorf("a mode: %s recipe is refused on cloud-batch: %v", mode, ps)
 		}
 	}
-	// And a recipe the checkout does not carry (nil) is not an artifact one.
-	if ps := batchValidateProblems(lc, cfg, nil); len(ps) != 0 {
-		t.Errorf("an unresolved recipe is refused: %v", ps)
+}
+
+// TestValidateRefusesAnUnreadableRecipeOnCloudBatch is the same boundary
+// failing closed offline: the check reads the checkout's own recipe
+// (localRecipe), and a recipe it cannot resolve at all is not one it may pass.
+// nil reads as "not an artifact run" to the mode check, while the runs of this
+// installation may be resolving a mode: artifact recipe at their base, so the
+// installation is refused instead -- the launch's gate refuses the same shape
+// (artifactUnreadOnBatchRefusal, artifactShadowedOnBatchRefusal).
+//
+// Mutation (drop the nil arm): this fails, and the boundary passes whatever it
+// could not read.
+func TestValidateRefusesAnUnreadableRecipeOnCloudBatch(t *testing.T) {
+	cfg := batchValidateConfig(t, batchValidateYAML)
+	ps := batchValidateProblems(batchValidateRig(t, "e2-standard-4", backend.CloudBatch), cfg, nil)
+	if len(ps) != 1 || ps[0].Message != artifactUnreadOfflineRefusal {
+		t.Fatalf("an unresolved recipe on cloud-batch = %v, want the one fail-closed refusal", ps)
+	}
+	if ps[0].Path != "backend" {
+		t.Errorf("the refusal is at %q, want backend, where the boundary's other refusal is", ps[0].Path)
+	}
+	for _, want := range []string{"docs/design/artifact-runs.md", "§8.5", "D11"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the refusal does not name %q: %s", want, ps[0].Message)
+		}
+	}
+	// Cloud Run: the boundary is not this backend's, and an unresolved recipe
+	// is not refused there (the run resolves it itself).
+	if ps := batchValidateProblems(batchValidateRig(t, "", backend.CloudRun), cfg, nil); len(ps) != 0 {
+		t.Errorf("an unresolved recipe on cloud-run is refused by the Batch check: %v", ps)
 	}
 }
 
@@ -159,7 +186,11 @@ func TestValidateArtifactRefusalIsCloudBatchOnly(t *testing.T) {
 // case fails, or the case that a long workflow is accepted fires.
 func TestValidateRefusesATaskTimeoutPastTheRunningCeiling(t *testing.T) {
 	lc := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 360h\n")
-	ps := batchValidateProblems(lc, batchValidateConfig(t, batchValidateYAML), nil)
+	// An implementing recipe, so these cases are about the timeout field and
+	// not about the boundary's fail-closed arm (an unresolved recipe is its own
+	// case, TestValidateRefusesAnUnreadableRecipeOnCloudBatch).
+	impl := &recipe.Recipe{Name: "impl", Mode: recipe.ModeImplement}
+	ps := batchValidateProblems(lc, batchValidateConfig(t, batchValidateYAML), impl)
 	if len(ps) != 1 || ps[0].Path != "batch.task_timeout" {
 		t.Fatalf("batch.task_timeout: 360h on cloud-batch = %v, want one problem at batch.task_timeout", ps)
 	}
@@ -170,13 +201,13 @@ func TestValidateRefusesATaskTimeoutPastTheRunningCeiling(t *testing.T) {
 	}
 	// The same installation on Cloud Run is not this check's business.
 	cr := batchValidateRigWith(t, "", backend.CloudRun, "  task_timeout: 360h\n")
-	if ps := batchValidateProblems(cr, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
+	if ps := batchValidateProblems(cr, batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 0 {
 		t.Errorf("a 360h task timeout on cloud-run is refused by the Batch check: %v", ps)
 	}
 	// A block that names no task timeout is backend.MaxRunTime, which is inside
 	// the ceiling, and so is the longest value the field can carry under it.
 	inside := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h\n")
-	if ps := batchValidateProblems(inside, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
+	if ps := batchValidateProblems(inside, batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 0 {
 		t.Errorf("a 335h task timeout on cloud-batch = %v, want none", ps)
 	}
 	// The slack is real and the bound is the field's, not the ceiling's: the
@@ -186,14 +217,14 @@ func TestValidateRefusesATaskTimeoutPastTheRunningCeiling(t *testing.T) {
 	// the field against batch.MaxRunDuration itself would let 335h59m through
 	// (mutation: drop the subtraction).
 	over := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h59m\n")
-	if ps := batchValidateProblems(over, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 1 || ps[0].Path != "batch.task_timeout" {
+	if ps := batchValidateProblems(over, batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 1 || ps[0].Path != "batch.task_timeout" {
 		t.Errorf("a 335h59m task timeout on cloud-batch = %v, want one problem at batch.task_timeout (the slack puts its maxRunDuration past 14 days)", ps)
 	}
 	edge := batchValidateRigWith(t, "e2-standard-4", backend.CloudBatch, "  task_timeout: 335h58m\n")
-	if ps := batchValidateProblems(edge, batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
+	if ps := batchValidateProblems(edge, batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 0 {
 		t.Errorf("a 335h58m task timeout on cloud-batch = %v, want none (its maxRunDuration is exactly 14 days)", ps)
 	}
-	if ps := batchValidateProblems(batchValidateRig(t, "e2-standard-4", backend.CloudBatch), batchValidateConfig(t, batchValidateYAML), nil); len(ps) != 0 {
+	if ps := batchValidateProblems(batchValidateRig(t, "e2-standard-4", backend.CloudBatch), batchValidateConfig(t, batchValidateYAML), impl); len(ps) != 0 {
 		t.Errorf("the block's own default (backend.MaxRunTime) = %v, want none", ps)
 	}
 	// And a workflow's own clock is not what reaches the field in this build:
@@ -209,7 +240,7 @@ workflows:
     resources: { cpu: 2, memory: 4Gi }
     timeouts: { total: 360h }
 `)
-	if ps := batchValidateProblems(batchValidateRig(t, "e2-standard-4", backend.CloudBatch), long, nil); len(ps) != 0 {
+	if ps := batchValidateProblems(batchValidateRig(t, "e2-standard-4", backend.CloudBatch), long, impl); len(ps) != 0 {
 		t.Errorf("a 360h workflow clock is refused by the Batch timeout check, which bounds batch.task_timeout instead: %v", ps)
 	}
 }
@@ -224,7 +255,7 @@ workflows:
 func TestValidateRefusesAMachineTypeThisBuildCannotPrice(t *testing.T) {
 	cfg := batchValidateConfig(t, batchValidateYAML)
 	lc := batchValidateRig(t, "e2-micro", backend.CloudBatch)
-	ps := batchValidateProblems(lc, cfg, nil)
+	ps := batchValidateProblems(lc, cfg, &recipe.Recipe{Name: "impl", Mode: recipe.ModeImplement})
 	if len(ps) != 1 || ps[0].Path != "batch.machine_type" {
 		t.Fatalf("an unpriceable machine type = %v, want one problem at batch.machine_type", ps)
 	}
@@ -233,7 +264,7 @@ func TestValidateRefusesAMachineTypeThisBuildCannotPrice(t *testing.T) {
 	}
 	// A config that names no type at all is the backend's own default, which
 	// the table carries.
-	if ps := batchValidateProblems(batchValidateRig(t, "", backend.CloudBatch), cfg, nil); len(ps) != 0 {
+	if ps := batchValidateProblems(batchValidateRig(t, "", backend.CloudBatch), cfg, &recipe.Recipe{Name: "impl", Mode: recipe.ModeImplement}); len(ps) != 0 {
 		t.Errorf("a batch block with no machine type = %v, want none (the backend defaults it)", ps)
 	}
 }
