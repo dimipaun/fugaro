@@ -15,9 +15,20 @@
 // suite uses (`test/support/launch.ts`). What it is *not* is a console pointed at
 // an installation: every read it makes is answered by the fake child in this
 // run's scratch tree, from `test/fixtures/screenshots/`, and §1 and §2 of
-// `isolation.ts` are the two checks that make that a fact rather than an
-// intention. Nothing here writes to a real console profile, reads the operator's
-// `~/.config`, or runs a real `fugaro`.
+// `isolation.ts` are the checks that make that a fact rather than an intention.
+// Nothing here writes to a real console profile or reads the operator's
+// `~/.config`, and **the only `fugaro` this run's console executes is the
+// fake**: every launch seeds a chosen installation that names the fake's
+// absolute path, so the handshake reads one path and never walks the machine's
+// own prefixes, and `assertLaunchIsFixture` refuses a launch whose store could
+// send it anywhere else.
+//
+// **It launches one console and captures four screens from it.** The picker is
+// opened from the console's own menu (`Installations…`, the one door C9 leaves
+// to it) rather than by a second launch with nothing chosen: a console with no
+// chosen installation *walks* rule 4's list at startup, which on the owner's
+// Mac is their own `fugaro` in `/opt/homebrew/bin` or `/usr/local/bin` being
+// executed by a run whose whole purpose is not to.
 //
 // **It needs a display.** Electron opens a real window, so this is a run on a
 // Mac (or any machine with a desktop session) and never a run in CI: with no
@@ -36,18 +47,18 @@ import { dirname, join, resolve } from 'node:path'
 
 import type { ElectronApplication, Page } from '@playwright/test'
 
-import { resolveConsoleBinary } from '../../test/support/cliStub'
+import { INSTALLATIONS_MENU_LABEL } from '../../src/main/picker'
+import { APP_ENTRY_URL, PICKER_ENTRY_URL } from '../../src/main/protocol'
 import { launchConsole } from '../../test/support/launch'
 import { installScreenshotFixture, FIXTURES_RELATIVE } from './fixture'
 import type { ScreenshotFixture } from './fixture'
-import { assertFixtureBinary, assertIsolated, launchEnvironment, newIsolation, realPaths } from './isolation'
+import { assertIsolated, assertLaunchIsFixture, launchEnvironment, newIsolation, realPaths } from './isolation'
 import type { Isolation } from './isolation'
 import { CAPTURE_WINDOW, MANIFEST_FILE_NAME, buildManifest, serializeManifest, sha256Of } from './manifest'
 import type { ScreenshotEntry } from './manifest'
 import { assertUsableCapture } from './png'
 import { CAPTURE_PIXELS, LIVE_SCREEN, OMISSIONS, PICKER_SCREEN, RUN_ID, RUN_SCREEN, SPEND_SCREEN } from './screens'
 import type { OneScreen } from './screens'
-import { APP_ENTRY_URL, PICKER_ENTRY_URL } from '../../src/main/protocol'
 
 /** OUTPUT_DIRECTORY is where the captures and the manifest land, from the
  * console's root: `console/screenshots/`, git-ignored, and never committed -- a
@@ -92,8 +103,8 @@ interface Launched {
 }
 
 /** launchFixtureConsole starts the built console against the fake, with one
- * fresh profile seeded with the fixture's installations, and answers the window
- * the run captures from.
+ * fresh profile seeded with the fixture's installations and **one of them
+ * chosen**, and answers the window the run captures from.
  *
  * The launch is the e2e suite's own path (`launchConsole`, which resolves the
  * Electron runtime and retries ETXTBSY) with the e2e suite's own arguments plus
@@ -101,28 +112,73 @@ interface Launched {
  * directory under this run's scratch tree, which is where the seeded
  * `installations.json` goes: the console's real profile is never opened, and
  * `assertIsolated` is what holds that to be true rather than intended.
+ *
+ * `active` is an id and never null, and that is a rule rather than a
+ * convenience: a console with nothing chosen resolves its binary by walking the
+ * machine's prefixes, and `assertLaunchIsFixture` refuses such a launch before
+ * this function reaches `launchConsole`. The rule is written down in the type
+ * so a later edit cannot quietly reintroduce the walk.
  */
 async function launchFixtureConsole(options: {
   readonly consoleDir: string
   readonly fixture: ScreenshotFixture
   readonly isolation: Isolation
   readonly env: Readonly<Record<string, string>>
-  readonly active: string | null
-  readonly expect: string
+  readonly active: string
 }): Promise<Launched> {
-  const { consoleDir, fixture, isolation, env, active, expect } = options
+  const { consoleDir, fixture, isolation, env, active } = options
   const profile = fixture.newProfile()
   fixture.seedInstallations(profile, active)
   assertIsolated({ env, isolation, userDataDir: profile, real: realPaths() })
+  await assertLaunchIsFixture({
+    profile,
+    expected: fixture.binary,
+    env,
+    isolation,
+  })
   const args = [
     consoleDir,
     `--user-data-dir=${profile}`,
     `--force-device-scale-factor=${String(CAPTURE_WINDOW.deviceScaleFactor)}`,
   ]
   const app = await launchConsole({ args, env })
-  const page = await waitForWindow(app, expect)
-  await resizeWindows(app, expect)
+  const page = await waitForWindow(app, APP_ENTRY_URL)
+  await resizeWindows(app, APP_ENTRY_URL)
   return { app, page }
+}
+
+/** openPickerFromMenu opens the installation picker the way the console opens
+ * it: by clicking `Installations…` in the application menu, which is the only
+ * door to it (C9). It is `test/e2e/installations.spec.ts`'s own helper, for the
+ * same reason -- the picker's page is a second window, and the menu item is
+ * what this console offers a person who wants it.
+ *
+ * The alternative this replaces was a second launch with no installation
+ * chosen, which D13 opens the picker over by itself. It is deliberately not
+ * used: the startup handshake of a console with nothing chosen *walks* rule 4's
+ * list, and on the owner's Mac that walk reaches their own `fugaro`. Here the
+ * console is the one already running against the fixture, and the menu is a
+ * main-process action with no spawn behind it.
+ */
+async function openPickerFromMenu(app: ElectronApplication): Promise<Page> {
+  const opened = app.waitForEvent('window')
+  const clicked = await app.evaluate(({ Menu }, label) => {
+    for (const top of Menu.getApplicationMenu()?.items ?? []) {
+      for (const item of top.submenu?.items ?? []) {
+        if (item.label === label) {
+          item.click()
+          return true
+        }
+      }
+    }
+    return false
+  }, INSTALLATIONS_MENU_LABEL)
+  if (!clicked) {
+    throw new Error(`the console's application menu has no ${INSTALLATIONS_MENU_LABEL} item, so this run cannot open the installation picker`)
+  }
+  const picker = await opened
+  await picker.waitForLoadState('load')
+  return picker
 }
 
 /** waitForWindow answers the window whose document is `url`, waiting for it if
@@ -206,53 +262,32 @@ export async function runCapture(options: {
   const env = launchEnvironment(ambient, isolation)
   const real = realPaths(ambient)
 
-  // The two checks the run cannot make from inside a window: the environment it
-  // is about to launch with, and the binary the console's own resolver will
-  // find. They are made before the first launch, so a machine with a real
-  // `fugaro` in a well-known prefix stops the run instead of being photographed.
+  // The check the run cannot make from inside a window: the environment it is
+  // about to launch with. The binary the console will read is checked per
+  // launch, against the store that launch seeds (`launchFixtureConsole`), so
+  // that check asks about the path the handshake will read rather than about
+  // what the machine's resolver would find.
   assertIsolated({ env, isolation, userDataDir: null, real })
-  const resolved = await resolveConsoleBinary(env)
-  assertFixtureBinary(resolved.ok ? resolved.path : null, fixture.binary, 'the console’s startup handshake')
 
   mkdirSync(outDir, { recursive: true })
   const screens: ScreenshotEntry[] = []
   const active = fixture.installations[0]
   if (active === undefined) throw new Error(`${FIXTURES_RELATIVE.join('/')} names no installation to point the dashboard at`)
 
-  const dashboard = await launchFixtureConsole({
-    consoleDir,
-    fixture,
-    isolation,
-    env,
-    active: active.id,
-    expect: APP_ENTRY_URL,
-  })
+  const dashboard = await launchFixtureConsole({ consoleDir, fixture, isolation, env, active: active.id })
   try {
     screens.push(await capture(dashboard.page, LIVE_SCREEN, outDir))
     await openRun(dashboard.page)
     screens.push(await capture(dashboard.page, RUN_SCREEN, outDir))
     await openSpend(dashboard.page)
     screens.push(await capture(dashboard.page, SPEND_SCREEN, outDir))
+    // The picker, from the console's own menu, on the console that is already
+    // running against the fixture -- the four captures come from one launch.
+    const picker = await openPickerFromMenu(dashboard.app)
+    await resizeWindows(dashboard.app, PICKER_ENTRY_URL)
+    screens.push(await capture(picker, PICKER_SCREEN, outDir))
   } finally {
     await dashboard.app.close()
-  }
-
-  // The picker's own launch: the same three installations, none of them chosen,
-  // which is D13's first run -- the one state in which the console opens the
-  // picker by itself, with no menu click and no bridge call this tool would have
-  // to invent.
-  const firstRun = await launchFixtureConsole({
-    consoleDir,
-    fixture,
-    isolation,
-    env,
-    active: null,
-    expect: PICKER_ENTRY_URL,
-  })
-  try {
-    screens.push(await capture(firstRun.page, PICKER_SCREEN, outDir))
-  } finally {
-    await firstRun.app.close()
   }
 
   const manifest = buildManifest({ screens, omitted: OMISSIONS })

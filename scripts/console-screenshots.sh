@@ -16,13 +16,20 @@
 #
 # **What it takes pictures of is a fake.** Every read the console makes is
 # answered by a fake `fugaro` the run installs in its own scratch tree, from the
-# invented documents in `console/test/fixtures/screenshots/`. The run refuses to
-# start unless the console's own resolver finds that fake (never a real
-# installation), sets `HOME`, `XDG_CONFIG_HOME` and the window's
-# `--user-data-dir` to fresh directories under one temporary tree, and passes
-# the app an allow-list environment -- so it cannot read your `~/.config`, your
-# console profile, or any credential. It never runs a real `fugaro`, and it
-# makes no network request of its own.
+# invented documents in `console/test/fixtures/screenshots/`. The run seeds the
+# console's own store with an installation that names that fake as its chosen
+# binary, and -- before the window exists -- reads that store back with the
+# console's own reader and resolves the chosen path with the console's own
+# one-path resolution, refusing the launch if it is not the fake. So the
+# handshake reads one path: it never walks `/opt/homebrew/bin`, `/usr/local/bin`,
+# `~/.local/bin` and `/usr/bin`, where *your* `fugaro` lives, and the only
+# `fugaro` this run ever executes is the fake.
+#
+# `HOME`, `XDG_CONFIG_HOME`, `TMPDIR` and the window's `--user-data-dir` are
+# fresh directories under one temporary tree (removed when the run finishes),
+# and the app is passed an allow-list environment -- so it cannot read your
+# `~/.config`, your console profile, or any credential, and it writes nothing
+# outside that tree. It makes no network request of its own.
 #
 # Where the pictures land: `console/screenshots/` -- git-ignored, never
 # committed. The `MANIFEST.json` beside them lists each capture with its pixel
@@ -37,23 +44,33 @@ set -euo pipefail
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 console_dir="${here}/../console"
 
-# The console's toolchain is pinned to Node 22 (`console/package.json`'s
-# `engines`), and the Electron build it runs is what the e2e suite runs. One
-# line, naming both, rather than a stack trace from `npm ci` or a TypeScript
-# error about a syntax node the older Node cannot parse.
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-  echo "console-screenshots: node and npm are needed (Node 22, the version console/package.json pins), and one of them is not on PATH" >&2
-  exit 1
-fi
-
-node_major=$(node -p 'process.versions.node.split(".")[0]')
-if [ "${node_major}" != "22" ]; then
-  echo "console-screenshots: console/package.json pins Node 22, and this shell has $(node -v); install Node 22 (nvm, mise, asdf or homebrew) and run this again" >&2
+  echo "console-screenshots: node and npm are needed (Node as console/package.json's engines pins it), and one of them is not on PATH" >&2
   exit 1
 fi
 
 if [ ! -d "${console_dir}" ]; then
   echo "console-screenshots: ${console_dir} is not there -- run this from a checkout of this repository" >&2
+  exit 1
+fi
+
+# The console's toolchain is pinned **exactly** (`console/package.json`'s
+# `engines.node` is one version, and `console/.npmrc` sets
+# `engine-strict=true`), and the Electron build it runs is what the e2e suite
+# runs. The version is read from that file rather than written here, and it is
+# compared exactly rather than by major: the guard exists to turn the `npm ci`
+# EBADENGINE failure into one line, and a major-only check would let Node 22.11
+# through to exactly that failure -- with a message that said the version was
+# fine.
+wanted=$(node -p -e 'require(process.argv[1]).engines.node' "${console_dir}/package.json" 2>/dev/null || true)
+if [ -z "${wanted}" ]; then
+  echo "console-screenshots: ${console_dir}/package.json does not name an engines.node, so this script cannot check the version it needs" >&2
+  exit 1
+fi
+
+current=$(node -p 'process.versions.node')
+if [ "${current}" != "${wanted}" ]; then
+  echo "console-screenshots: console/package.json pins Node ${wanted} (engines.node, with engine-strict in console/.npmrc), and this shell has $(node -v); install Node ${wanted} (nvm, mise, asdf or homebrew) and run this again" >&2
   exit 1
 fi
 

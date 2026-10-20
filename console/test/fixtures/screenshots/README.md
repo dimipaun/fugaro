@@ -16,7 +16,7 @@ run against anything but this CLI.
 
 | File | What it is | Where its shape comes from |
 |---|---|---|
-| `live.json` | the `fugaro watch --json` feed: **six frames** under `frames`, one compact document each, 30 seconds apart — four run states and two repositories, with a burn rate that moves so the sparkline is a curve and not one bar | `internal/watch/json.go`, read back by `console/src/shared/schema.ts` |
+| `live.json` | the `fugaro watch --json` feed: **six frames** under `frames`, one compact document each, 30 seconds apart — three runs in flight and two just finished across two repositories, with a burn rate that moves so the sparkline is a curve and not one bar. The Live screen draws `runs`, `repos` and `total`; `finished[]` is decoded and not drawn, so the picture's alt text does not count it | `internal/watch/json.go`, read back by `console/src/shared/schema.ts` |
 | `budget.json` | one `fugaro budget show --json` document: the caps panel and the rail's spend | `internal/cli/budget.go`'s `show` |
 | `report.json` | one `fugaro report --json` document: 30 days by day, with a believable curve | `internal/cli/report.go`, `console/docs/json-contract.md` §4 |
 | `diagnose.json` | one `fugaro diagnose RUN --json` document: the row, its stages, its findings, its splits | `internal/runview/runview.go` plus the diagnosis document |
@@ -27,8 +27,9 @@ run against anything but this CLI.
 The feed's shape is the **e2e suite's** own (`../synthetic.ndjson`,
 `../normal.ndjson` are the same seven keys), and the tool reuses that suite's
 code rather than a copy of it: `console/test/support/launch.ts` is how the
-window is opened and `console/test/support/cliStub.ts` is how the resolver is
-asked what it found. What this directory adds is only the *pictures*: the
+window is opened, and the store the console reads is the console's own
+(`console/src/main/installations.ts`). What this directory adds is only the
+*pictures*: the
 recordings beside it are redacted, and a redacted document draws `<project>`
 where the picture wants a name.
 

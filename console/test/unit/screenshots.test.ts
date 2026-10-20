@@ -28,7 +28,7 @@
 // owner's own run (`scripts/console-screenshots.sh`) is where they are
 // exercised -- see `console/README.md`.
 
-import { cpSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,14 +36,14 @@ import { deflateSync } from 'node:zlib'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { readInstallationFile } from '../../src/main/installations'
+import { INSTALLATION_FILE_VERSION, readInstallationFile, serializeInstallationFile } from '../../src/main/installations'
 import { decodeDocument, decodeSnapshot } from '../../src/shared/schema'
 import { buildRunModel, parseLogWindow } from '../../src/renderer/screens/run'
 import { SPEND_ACCOUNTS, buildSpendModel } from '../../src/renderer/screens/spend'
 import { parseLogEntries } from '../../src/source/cli'
 import type { JSONDoc } from '../../src/source/source'
 import { FIXTURE_COMMANDS, installScreenshotFixture, FIXTURES_RELATIVE, SEED_FILE_NAME } from '../../tools/screenshots/fixture'
-import { assertFixtureBinary, assertIsolated, launchEnvironment, newIsolation } from '../../tools/screenshots/isolation'
+import { assertFixtureBinary, assertIsolated, assertLaunchIsFixture, launchEnvironment, newIsolation } from '../../tools/screenshots/isolation'
 import type { Isolation } from '../../tools/screenshots/isolation'
 import { BLANK_STDDEV_FLOOR, assertUsableCapture, decodePng, pixelStdDev } from '../../tools/screenshots/png'
 import { CAPTURE_WINDOW, buildManifest, serializeManifest, sha256Of } from '../../tools/screenshots/manifest'
@@ -73,11 +73,13 @@ describe('the run refuses to start against anything but its own fixture', () => 
     xdgConfigHome: join(scratch, 'home', '.config'),
     userData: join(scratch, 'user-data'),
     bin: join(scratch, 'bin'),
+    tmp: join(scratch, 'tmp'),
   })
   const cleanEnv: Readonly<Record<string, string>> = Object.freeze({
     PATH: isolation.bin,
     HOME: isolation.home,
     XDG_CONFIG_HOME: isolation.xdgConfigHome,
+    TMPDIR: isolation.tmp,
   })
 
   it('answers nothing but the fixture binary from the resolver', () => {
@@ -130,6 +132,21 @@ describe('the run refuses to start against anything but its own fixture', () => 
     }).toThrow(/XDG_CONFIG_HOME is the operator's XDG_CONFIG_HOME/)
   })
 
+  it('refuses a TMPDIR outside the scratch tree', () => {
+    // The console builds the private working directory its children run in as
+    // `$TMPDIR/fugaro-console-<uid>/cwd` (`src/main/spawn.ts`). An ambient
+    // `TMPDIR` is therefore a directory the console *writes* outside this run's
+    // tree -- and a run that removes everything it made cannot leave one out.
+    expect(() => {
+      assertIsolated({
+        env: { ...cleanEnv, TMPDIR: '/var/folders/xx' },
+        isolation,
+        userDataDir: null,
+        real: { home: '/Users/somebody', xdgConfigHome: null },
+      })
+    }).toThrow(/TMPDIR is \/var\/folders\/xx, which is outside/)
+  })
+
   it('refuses a profile outside the scratch tree', () => {
     expect(() => {
       assertIsolated({
@@ -141,7 +158,7 @@ describe('the run refuses to start against anything but its own fixture', () => 
     }).toThrow(/--user-data-dir is \/Users\/somebody\/Library\/Application Support\/Fugaro Console, which is outside/)
   })
 
-  it('refuses an environment with no HOME or no XDG_CONFIG_HOME at all', () => {
+  it('refuses an environment with no HOME, no XDG_CONFIG_HOME or no TMPDIR at all', () => {
     const { HOME: _home, ...noHome } = cleanEnv
     expect(() => {
       assertIsolated({ env: noHome, isolation, userDataDir: null, real: { home: '', xdgConfigHome: null } })
@@ -150,6 +167,10 @@ describe('the run refuses to start against anything but its own fixture', () => 
     expect(() => {
       assertIsolated({ env: noXdg, isolation, userDataDir: null, real: { home: '', xdgConfigHome: null } })
     }).toThrow(/sets no XDG_CONFIG_HOME/)
+    const { TMPDIR: _tmp, ...noTmp } = cleanEnv
+    expect(() => {
+      assertIsolated({ env: noTmp, isolation, userDataDir: null, real: { home: '', xdgConfigHome: null } })
+    }).toThrow(/sets no TMPDIR/)
   })
 
   it('accepts the launch this run actually makes', () => {
@@ -191,7 +212,11 @@ describe('the environment a launch gets is an allow-list', () => {
     )
     expect(env['DISPLAY']).toBe(':0')
     expect(env['LANG']).toBe('en_GB.UTF-8')
-    expect(env['TMPDIR']).toBe('/var/folders/xx')
+    // The ambient `TMPDIR` does not reach the child: the run's own is written
+    // over it, so the private working directory the console makes for its
+    // children is inside the scratch tree this run removes.
+    expect(env['TMPDIR']).toBe(isolation.tmp)
+    expect(env['TMPDIR']).not.toBe('/var/folders/xx')
     for (const key of [
       'GOOGLE_APPLICATION_CREDENTIALS',
       'FUGARO_CONFIG',
@@ -207,19 +232,26 @@ describe('the environment a launch gets is an allow-list', () => {
     expect(env['PATH']).toBe(isolation.bin)
   })
 
-  it('carries no key whose value is undefined', () => {
-    const env = launchEnvironment({ HOME: undefined, DISPLAY: ':0' }, isolation)
-    for (const [key, value] of Object.entries(env)) {
-      expect(typeof value, `${key} is present with a non-string value`).toBe('string')
-    }
-    expect(Object.prototype.hasOwnProperty.call(env, 'HOME')).toBe(true)
+  it('drops an ambient key that is empty rather than carrying an empty string', () => {
+    // The allow-list copies a value only when it is a non-empty string, and the
+    // difference matters: an empty `DISPLAY` is not a display, and a child that
+    // receives `DISPLAY=''` fails to open a window rather than falling back to
+    // anything. An empty ambient value is therefore an *absent* one.
+    const env = launchEnvironment({ DISPLAY: '', LANG: 'en_GB.UTF-8', TERM: '' }, isolation)
+    expect(Object.prototype.hasOwnProperty.call(env, 'DISPLAY')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(env, 'TERM')).toBe(false)
+    expect(env['LANG']).toBe('en_GB.UTF-8')
+    // The run's own keys are there anyway: an empty ambient value is dropped,
+    // and the paths `launchEnvironment` writes are not ambient at all.
+    expect(env['HOME']).toBe(isolation.home)
   })
 
-  it('puts the three directories under one scratch tree it created', () => {
+  it('puts the five directories under one scratch tree it created', () => {
     expect(isolation.home.startsWith(isolation.scratch)).toBe(true)
     expect(isolation.xdgConfigHome.startsWith(isolation.home)).toBe(true)
     expect(isolation.userData.startsWith(isolation.scratch)).toBe(true)
     expect(isolation.bin.startsWith(isolation.scratch)).toBe(true)
+    expect(isolation.tmp.startsWith(isolation.scratch)).toBe(true)
   })
 })
 
@@ -233,6 +265,12 @@ function frames(): readonly unknown[] {
   const parsed = JSON.parse(fixture(FIXTURE_COMMANDS.watch)) as { frames: readonly unknown[] }
   return parsed.frames
 }
+
+/** COUNT_WORDS spells a small count the way a sentence does. The alt texts are
+ * prose written for a person who cannot see the picture, and "3 runs" reads
+ * like a log line; the test still has to hold the prose to the fixture, so the
+ * number is spelled here the same way the sentence spells it. */
+const COUNT_WORDS: readonly string[] = ['none', 'one', 'two', 'three', 'four', 'five', 'six']
 
 describe('the fixtures are documents the console accepts', () => {
   it('decodes every live frame through the schema the feed uses', () => {
@@ -337,16 +375,25 @@ describe('the fixtures are documents the console accepts', () => {
   it('names the same project in every document the dashboard draws', () => {
     // A picture whose header says one project and whose document says another
     // is a picture of a console reading the wrong installation. The fake answers
-    // whatever it is asked, so nothing but this assertion holds the three
-    // documents to one project name.
+    // whatever it is asked, so nothing but this assertion holds the documents to
+    // one project name.
+    //
+    // Every document the dashboard draws is in the list, and `diagnose` is in it
+    // because it was the one that got left out: the diagnosis document carries
+    // the same top-level `project` as `report` and `budget show`
+    // (`internal/cli/diagnose.go`'s `Diagnosis.project`, written with no
+    // `omitempty` -- `console/docs/json-contract.md` §6.1), and the fixture was
+    // missing the key entirely, so a screen that drew it would have drawn
+    // whatever it draws for an absent one. A loop over a list is only as good as
+    // the list.
     const seed = JSON.parse(fixture(SEED_FILE_NAME)) as { installations: readonly { project: string }[] }
     const active = seed.installations[0]?.project
     expect(active).toBeDefined()
     for (const frame of frames()) {
       expect((frame as { project: string }).project).toBe(active)
     }
-    for (const name of [FIXTURE_COMMANDS['budget show'], FIXTURE_COMMANDS.report]) {
-      expect((JSON.parse(fixture(name)) as { project: string }).project).toBe(active)
+    for (const name of [FIXTURE_COMMANDS['budget show'], FIXTURE_COMMANDS.report, FIXTURE_COMMANDS.diagnose]) {
+      expect((JSON.parse(fixture(name)) as { project?: string }).project, `${name} names no project`).toBe(active)
     }
   })
 
@@ -443,6 +490,134 @@ describe('the fixture CLI and the installation store it seeds', () => {
       // lands inside the supported range and the Spend screen is offered.
       expect((scenario.commands['version'] as { stdout: string }).stdout.trim()).toBe('0.8.1')
       expect(installed.binary.length).toBeGreaterThan(0)
+    } finally {
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3a. The launch's own store, which is the only thing the handshake may read.
+// ---------------------------------------------------------------------------
+
+describe('a launch is checked against the store it seeds', () => {
+  /**
+   * The check under test is the run's first refusal, and it is the fix for the
+   * one failure that made this run impossible on the owner's Mac: asking the
+   * *machine's* resolver what it would find walks `/opt/homebrew/bin`,
+   * `/usr/local/bin`, `~/.local/bin` and `/usr/bin`, and probes the winner by
+   * **executing** it -- so the question itself ran the operator's own `fugaro`
+   * and then refused the run. The question a launch asks is about the one path
+   * its chosen installation names, so these tests drive that: the store is read
+   * with the console's own reader, and the path is resolved with the console's
+   * own one-path resolution.
+   *
+   * The fake is really installed here (and really spawned), because the check
+   * spawns: `test/unit/stub.ts`'s child is a Node process running the scenario,
+   * and its report is how the tests below see the child's own `cwd`.
+   */
+  function installed(): { isolation: Isolation; fixture: ReturnType<typeof installScreenshotFixture>; env: Readonly<Record<string, string>> } {
+    const isolation = newIsolation()
+    const fixture = installScreenshotFixture({ fixtureDirectory: FIXTURES, isolation })
+    return { isolation, fixture, env: launchEnvironment({}, isolation) }
+  }
+
+  it('accepts the store this run seeds, and probes from inside the scratch tree', async () => {
+    const { isolation, fixture, env } = installed()
+    try {
+      const profile = fixture.newProfile()
+      const active = fixture.installations[0]
+      expect(active).toBeDefined()
+      fixture.seedInstallations(profile, active?.id ?? null)
+      await expect(
+        assertLaunchIsFixture({ profile, expected: fixture.binary, env, isolation }),
+      ).resolves.toBeUndefined()
+      // The check spawns the fake to ask its version, and that child runs in
+      // the directory this run gave it -- inside the scratch tree, which is
+      // what makes "the run touches nothing it did not make" a fact about the
+      // check itself and not only about the launch.
+      const reports = fixture.reports()
+      expect(reports.length).toBeGreaterThan(0)
+      for (const report of reports) expect(report.cwd).toBe(isolation.userData)
+    } finally {
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a launch whose store chooses no installation, naming the prefixes the handshake would walk', async () => {
+    // D13's first run is the state the second launch used to have, and it is
+    // the state that must never reach `launchConsole`: with nothing chosen the
+    // handshake is `resolveBinary` over rule 4's list, and on the owner's Mac
+    // the first entry of that list is their own CLI.
+    const { isolation, fixture, env } = installed()
+    try {
+      const profile = fixture.newProfile()
+      fixture.seedInstallations(profile, null)
+      await expect(
+        assertLaunchIsFixture({ profile, expected: fixture.binary, env, isolation }),
+      ).rejects.toThrow(/chooses no installation.*\/opt\/homebrew\/bin, \/usr\/local\/bin, ~\/\.local\/bin, \/usr\/bin/)
+    } finally {
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a store that names another binary, naming the path it resolved', async () => {
+    // A store the run did not write: every row names another executable, which
+    // is what a store pointing at a real installation looks like from here. The
+    // check has to refuse it, and the sentence has to name the path, because
+    // that path is the only thing that tells the operator what went wrong.
+    //
+    // The other binary is a **copy of the fake**, deliberately: naming a real
+    // prefix here (`/opt/homebrew/bin/fugaro`) would make this unit test
+    // *execute the operator's own CLI* on the machines where it exists -- the
+    // exact leak this check exists to prevent, in the one place it would be
+    // least expected -- and it would pass on this container, where the path
+    // does not exist, for the wrong reason. A copy is somewhere else and is
+    // still the fake, so the probe is safe and the refusal is the resolver's
+    // answer rather than a missing file.
+    const { isolation, fixture, env } = installed()
+    try {
+      const elsewhere = join(isolation.scratch, 'elsewhere')
+      mkdirSync(elsewhere, { recursive: true })
+      const other = join(elsewhere, 'fugaro')
+      cpSync(fixture.binary, other)
+
+      const profile = fixture.newProfile()
+      const active = fixture.installations[0]
+      expect(active).toBeDefined()
+      writeFileSync(
+        join(profile, 'installations.json'),
+        serializeInstallationFile({
+          version: INSTALLATION_FILE_VERSION,
+          active: active?.id ?? null,
+          installations: fixture.installations.map((row) => ({
+            id: row.id,
+            project: row.project,
+            binaryPath: other,
+          })),
+        }),
+      )
+      await expect(
+        assertLaunchIsFixture({ profile, expected: fixture.binary, env, isolation }),
+      ).rejects.toThrow(new RegExp(`resolves ${other}, not the fixture CLI at ${fixture.binary}`))
+    } finally {
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a profile with no store, and one the console will not read', async () => {
+    const { isolation, fixture, env } = installed()
+    try {
+      const empty = fixture.newProfile()
+      await expect(
+        assertLaunchIsFixture({ profile: empty, expected: fixture.binary, env, isolation }),
+      ).rejects.toThrow(/holds no installations\.json/)
+
+      const broken = fixture.newProfile()
+      writeFileSync(join(broken, 'installations.json'), '{"version":1}')
+      await expect(
+        assertLaunchIsFixture({ profile: broken, expected: fixture.binary, env, isolation }),
+      ).rejects.toThrow(/is not one the console will read/)
     } finally {
       rmSync(isolation.scratch, { recursive: true, force: true })
     }
@@ -624,20 +799,43 @@ describe('the manifest', () => {
     // The alt text is *of the fixture*, so the figures in it are held to the
     // fixture: a fixture edited for a better picture and an alt text left behind
     // would describe a screen nobody took a picture of.
+    //
+    // It is held to what the screen **draws**, and that is the second half of
+    // this test. The Live screen draws `runs`, `repos` and `total`
+    // (`src/renderer/screens/live.ts`); the frame's `finished[]` list is decoded
+    // by the schema and drawn nowhere. An alt that counted it -- the first
+    // version of this one said "five runs ... one that opened pull request
+    // acme/platform-core#412 and one that failed" -- would put a fact on the
+    // website that is in no picture, and it shipped in `MANIFEST.json`. The
+    // three assertions below are therefore *absences*: the finished rows' own
+    // facts must not appear.
     const last = frames()[frames().length - 1] as {
       total: { percent: number; daily_cap_usd: number }
+      runs: readonly unknown[]
+      repos: readonly unknown[]
       finished: readonly { pr_url: string | null; pr_number: number | null }[]
     }
     const live = SCREENS[0]?.alt ?? ''
     expect(live).toContain(String(last.total.percent))
     expect(live).toContain(String(last.total.daily_cap_usd))
+    expect(live).toContain(COUNT_WORDS[last.runs.length] ?? '')
+    expect(live).toContain(COUNT_WORDS[last.repos.length] ?? '')
+    // The fixture *does* hold a finished run with a pull request: the absences
+    // below are about the alt, not about the fixture.
     const pull = last.finished.find((row) => row.pr_number !== null)
-    expect(pull?.pr_url).not.toBeNull()
-    expect(live).toContain(`#${String(pull?.pr_number)}`)
-    expect(live).toContain('acme/platform-core')
+    expect(pull?.pr_number).toBe(412)
+    expect(live).not.toContain(`#${String(pull?.pr_number)}`)
+    expect(live).not.toContain('pull request')
+    expect(live).not.toContain('failed')
     expect(PICKER_SCREEN.alt).toContain('acme-platform')
     expect(PICKER_SCREEN.alt).toContain('acme-web')
     expect(PICKER_SCREEN.alt).toContain('acme-data')
+    // The picker's own sentence is `viewOf`'s and `rowText`'s
+    // (`src/renderer/installations.ts`), and the run seeds a *chosen*
+    // installation: a sentence saying nothing is chosen would describe the
+    // first-run state this run no longer launches.
+    expect(PICKER_SCREEN.alt).toContain('is the one this console is showing')
+    expect(PICKER_SCREEN.alt).not.toContain('none of them chosen')
     // The omission is a fact the manifest carries: a reader who expected the
     // owner's fifth picture finds the reason rather than a silence.
     expect(OMISSIONS.map((omission) => omission.file)).toEqual(['console-first-run.png'])
@@ -840,13 +1038,13 @@ describe('the blank-image check', () => {
 })
 
 describe('the one scratch tree a run owns', () => {
-  it('is fresh per run, under a temporary directory, and holds the four directories', () => {
+  it('is fresh per run, under a temporary directory, and holds the five directories', () => {
     const first = newIsolation()
     const second = newIsolation()
     try {
       expect(first.scratch).not.toBe(second.scratch)
       expect(first.scratch.startsWith(tmpdir())).toBe(true)
-      for (const directory of [first.home, first.xdgConfigHome, first.userData, first.bin]) {
+      for (const directory of [first.home, first.xdgConfigHome, first.userData, first.bin, first.tmp]) {
         expect(statSync(directory).isDirectory(), `${directory} was not created`).toBe(true)
         // 0700: the store the run writes lives in one of these, and the
         // operator's own directories are the shape it is kept to.
