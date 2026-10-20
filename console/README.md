@@ -3734,6 +3734,20 @@ The fifth row is the omission, and it is a row because that is where the four ar
 carries it as a fact (`omissions[]`), and a reader who expected the owner's fifth picture finds
 the reason beside the pictures that exist rather than after two paragraphs about alt text.
 
+**One picture carries a machine-specific path, and that is a decision.** The picker's rows draw
+each installation's stored binary path, and the path in these rows is the fake the run installed
+in its own scratch tree — `/var/folders/…/fugaro-console-screenshots-XXXXXX/bin/fugaro` on macOS,
+a different path on every run, and a directory that is gone when the run finishes. The
+alternative was to hide it, and hiding it was rejected: the console draws the stored path
+verbatim (`rowText`/`viewOf`), so a picture with a path-shaped hole in it would be a picture of
+something the console does not draw, and the point of this capture is that a real store is being
+drawn. What the path does *not* name: no home directory, no checkout, no real `fugaro`, and no
+project or repository that exists — the projects are invented. The alt text that travels with
+the picture therefore describes the path rather than quoting it (asserted in
+`test/unit/screenshots.test.ts`). **If the owner would rather not publish a path at all,
+`console-installations.png` is the one to leave out of `website/`**: it is the only capture whose
+subject is a path, and the other three carry none.
+
 Every alt text says only what its screen **draws**: the Live screen draws `runs`, `repos` and
 `total`, and the frame's `finished[]` list is decoded and drawn nowhere — an earlier version of
 that sentence counted it ("five runs … one that opened pull request acme/platform-core#412 and
@@ -3747,11 +3761,16 @@ not exactly the size the manifest declares. It reads PNGs rather than adding an 
 because every specifier in `package.json` is an exact pin (`test/unit/pinning.test.ts`), and
 reading its own bytes is forty lines of `node:zlib`. `tools/screenshots/manifest.ts` writes
 `screenshots/MANIFEST.json`: one entry per picture with its pixel size, its sha256 and a
-one-sentence alt text drafted from the fixture, plus what was omitted.
+one-sentence alt text drafted from the fixture, plus what was omitted. And
+`tools/screenshots/failure.ts` is the run's failure path: the one sentence a failed run ends
+with, and the handler that prints it for the rejections `main()` never awaits — Playwright
+reports a failed launch on promises nobody holds, and Node 22's default
+`--unhandled-rejections=throw` would otherwise end the process on a playwright-core stack
+before the run's own words were printed (review of 2026-10-20, high finding).
 
 ### The tests, and the mutations each one was run against
 
-`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 48
+`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 58
 tests, and every rule below was seen red against a planted change before it was committed:
 
 | Claim | Mutation it was run against |
@@ -3784,6 +3803,15 @@ tests, and every rule below was seen red against a planted change before it was 
 | a capture of the wrong size is refused | (driven directly: the test plants a 64x64 file against a 128x128 expectation) |
 | a Sub-filtered scanline is reversed | `case 1: value = raw + left` → `value = raw` — red |
 | an RGB file's channels are read apart | the green and blue bytes read from the red byte — red, two tests |
+| the entry point handles the rejection nobody awaits | `installFailureHandler(process)` not installed — red; the event name changed to `uncaughtException` — red; `String(reason)` instead of the `Error`'s message — red |
+| a run that printed a failure line does not report success | `target.exitCode = 1` dropped from the handler — red; `exitCodeFor` returning the work's own code — red |
+| the documented `screenshots` script builds the app it launches | `npm run build &&` removed from the script — red; the build moved after the capture — red; the README's sentence about it withdrawn — red |
+| the picture table is one table | the omission row moved back after the prose — red; the row dropped — red |
+| the shell script's header says what it reaches | the old "nothing here talks to GitHub, the cloud, or the network" restored — red; the registry read left unnamed — red |
+| the frames carry the e2e suite's ten keys | a key added to a frame — red; a key added to the recording the claim names — red |
+| the capture size is a number, not its own definition | the device scale factor set to 1 — red; the window set to 1440x800 — red |
+| the selectors are the renderers' own class names | `drawnBy` naming the wrong renderer — red; a selector renamed — red; a renderer renaming its class — red; the picker's list losing its id — red |
+| the picker's alt describes its path rather than quoting one | a path put into the sentence — red; the description removed — red |
 
 The blank check is driven by a PNG **encoder** written in the test file (`node:zlib`'s
 `deflateSync`, a CRC per chunk, filters 0 and 1 really applied), because the only way to drive

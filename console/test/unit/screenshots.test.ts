@@ -882,6 +882,17 @@ describe('the manifest', () => {
     // first-run state this run no longer launches.
     expect(PICKER_SCREEN.alt).toContain('is the one this console is showing')
     expect(PICKER_SCREEN.alt).not.toContain('none of them chosen')
+    // **The picker's rows carry a machine-specific path, and the alt text does
+    // not quote it.** The rows draw the fake's path inside this run's scratch
+    // tree (`rowText`/`viewOf`, `src/renderer/installations.ts`), which is a
+    // different path on every run and a platform's temporary one -- on macOS
+    // under `/var/folders/...`. The picture is the owner's to publish or not
+    // (`console/README.md` says so and says why); the sentence that travels with
+    // it *describes* the path, because one naming
+    // `/var/folders/.../fugaro-console-screenshots-XXXXXX/bin/fugaro` would be
+    // stale the moment it was written (review of 2026-10-20, low finding).
+    expect(PICKER_SCREEN.alt).not.toContain('/')
+    expect(PICKER_SCREEN.alt).toContain('its own temporary directory')
     // The omission is a fact the manifest carries: a reader who expected the
     // owner's fifth picture finds the reason rather than a silence.
     expect(OMISSIONS.map((omission) => omission.file)).toEqual(['console-first-run.png'])
