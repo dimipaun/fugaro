@@ -172,7 +172,9 @@ func newService(ctx context.Context, creds Credentials) (*cloudbilling.APIServic
 }
 
 // listErr types the two refusals the wizard has an answer for, and leaves
-// every other failure as it came.
+// every other failure as it came — a 401 among them: credentials that are
+// missing or expired are not a missing permission, and the API's own message
+// says which.
 func listErr(err error) error {
 	if quota, ok := quotaProjectIfDisabled(err); ok {
 		return &ErrDisabled{
@@ -181,7 +183,7 @@ func listErr(err error) error {
 		}
 	}
 	var ge *googleapi.Error
-	if errors.As(err, &ge) && (ge.Code == http.StatusUnauthorized || ge.Code == http.StatusForbidden) {
+	if errors.As(err, &ge) && ge.Code == http.StatusForbidden {
 		return &ErrNoPermission{}
 	}
 	return fmt.Errorf("listing billing accounts: %w", err)

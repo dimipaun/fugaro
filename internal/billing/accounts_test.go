@@ -192,21 +192,36 @@ func TestListFollowsEveryPage(t *testing.T) {
 	}
 }
 
+// TestListLeavesOtherFailuresUntyped pins that the two typed errors are the
+// only two: a bad request, and credentials that are missing or expired, are
+// neither a disabled API nor a missing permission, and they come back as the
+// API's own answer.
 func TestListLeavesOtherFailuresUntyped(t *testing.T) {
-	f := gcpfake.NewBilling(t)
-	f.RefusePath("/v1/billingAccounts", http.StatusBadRequest, "INVALID_ARGUMENT", "", "bad request")
+	for _, c := range []struct {
+		name   string
+		code   int
+		status string
+	}{
+		{"a bad request", http.StatusBadRequest, "INVALID_ARGUMENT"},
+		{"credentials the API rejected", http.StatusUnauthorized, "UNAUTHENTICATED"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := gcpfake.NewBilling(t)
+			f.RefusePath("/v1/billingAccounts", c.code, c.status, "", c.status)
 
-	_, err := List(context.Background(), fakeCreds(f))
-	if err == nil {
-		t.Fatal("a refused list returned no error")
-	}
-	var d *ErrDisabled
-	var p *ErrNoPermission
-	if errors.As(err, &d) || errors.As(err, &p) {
-		t.Errorf("a 400 is neither a disabled API nor a missing permission: %v", err)
-	}
-	if !strings.Contains(err.Error(), "listing billing accounts") {
-		t.Errorf("the error does not say what failed: %v", err)
+			_, err := List(context.Background(), fakeCreds(f))
+			if err == nil {
+				t.Fatal("a refused list returned no error")
+			}
+			var d *ErrDisabled
+			var p *ErrNoPermission
+			if errors.As(err, &d) || errors.As(err, &p) {
+				t.Errorf("%s (%d) is neither a disabled API nor a missing permission: %v", c.name, c.code, err)
+			}
+			if !strings.Contains(err.Error(), "listing billing accounts") {
+				t.Errorf("the error does not say what failed: %v", err)
+			}
+		})
 	}
 }
 
