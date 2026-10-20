@@ -1179,10 +1179,11 @@ describe('the line a failed run ends with', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 7. What the README promises about the run, held to the tree.
+// 7. What the README and the shell script promise about the run, held to the
+//    tree.
 // ---------------------------------------------------------------------------
 
-describe('what the README promises about the run', () => {
+describe('what the run’s own documents promise about it', () => {
   /** readmeLines is `console/README.md` line by line: the claims below are about
    * what that document says and about how it renders. */
   function readmeLines(): readonly string[] {
@@ -1244,6 +1245,20 @@ describe('what the README promises about the run', () => {
     for (const line of lines.slice(first, last + 1)) {
       expect(line.startsWith('|'), `${line} breaks the picture table in two`).toBe(true)
     }
+  })
+
+  it('says what the shell script reaches, because it is not nothing', () => {
+    // The finding this holds: the script's header claimed "Nothing here writes
+    // to the repository except `console/screenshots/`, and nothing here talks to
+    // GitHub, the cloud, or the network" -- while the script runs `npm ci`
+    // (which writes `console/node_modules/` and reads the npm registry) and the
+    // launch fetches Electron's runtime on the first `require('electron')`.
+    // A header that says the run touches nothing is a header a reader stops
+    // checking.
+    const script = readFileSync(join(CONSOLE_ROOT, '..', 'scripts', 'console-screenshots.sh'), 'utf8')
+    expect(script).toContain('npm ci')
+    expect(script).toContain('registry')
+    expect(script).not.toContain('nothing here talks to GitHub')
   })
 })
 

@@ -32,15 +32,20 @@
 # fresh directories under one temporary tree (removed when the run finishes),
 # and the app is passed an allow-list environment -- so it cannot read your
 # `~/.config`, your console profile, or any credential, and it writes nothing
-# outside that tree. It makes no network request of its own.
+# outside that tree. The console it launches makes no network request of its own.
 #
 # Where the pictures land: `console/screenshots/` -- git-ignored, never
 # committed. The `MANIFEST.json` beside them lists each capture with its pixel
 # size, its sha256 and a sentence of alt text; that manifest is what a later
 # reader (or the website) needs, and it is safe to copy into `website/`.
 #
-# Nothing here writes to the repository except `console/screenshots/`, and
-# nothing here talks to GitHub, the cloud, or the network.
+# Where it writes, and what it reaches. Neither is nothing: `npm ci` writes
+# `console/node_modules/` and reads the npm registry, the console's build writes
+# `console/dist/`, `console/.screenshots/` and `console/.bundle-renderer/`, and
+# the launch fetches Electron's runtime on the first `require('electron')`.
+# Every one of those paths is git-ignored. What it does *not* do is talk to
+# GitHub or to any cloud API, read a credential, or ask the network for anything
+# on the run's own behalf.
 
 set -euo pipefail
 
