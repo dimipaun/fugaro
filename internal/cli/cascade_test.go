@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -314,7 +315,7 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
 
 	older := "ghcr.io/dimipaun/fugaro-base:" + below
-	err := r.gateCascadeAuth(r.o, "acme/app", lc(older), cascade)
+	err := r.gateCascadeAuth(r.o, "acme/app", lc(older), cascade, config.SourceRepo)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want refused", err)
 	}
@@ -323,6 +324,10 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 		older + ", release " + below,
 		"fugaro init --base base",
 		"agent.auth: cascade",
+		// The subject names where this row's value came from (SourceRepo):
+		// the same gate under a layer's default says so instead (see
+		// TestCascadeSkewNamesTheLayerTheValueCameFrom).
+		"fugaro.yaml's agent.auth: cascade",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
@@ -336,13 +341,13 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	// release image only warns.
 	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + cascadeSince, "ghcr.io/dimipaun/fugaro-base:" + above} {
 		var warn bytes.Buffer
-		if err := refuseCascadeSkew("acme/app", config.AuthCascade, ref, &warn); err != nil || warn.Len() != 0 {
+		if err := refuseCascadeSkew("acme/app", config.AuthCascade, config.SourceRepo, ref, &warn); err != nil || warn.Len() != 0 {
 			t.Errorf("%s: err = %v, warn = %q, want neither", ref, err, warn.String())
 		}
 	}
 	for _, ref := range []string{"", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"} {
 		var warn bytes.Buffer
-		if err := refuseCascadeSkew("acme/app", config.AuthCascade, ref, &warn); err != nil {
+		if err := refuseCascadeSkew("acme/app", config.AuthCascade, config.SourceRepo, ref, &warn); err != nil {
 			t.Errorf("%q: err = %v, want none", ref, err)
 		}
 		if ref != "" && (!strings.Contains(warn.String(), "not a release base image") || !strings.Contains(warn.String(), "is not checked")) {
@@ -354,7 +359,7 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	// image has to read, and a vertex file is read by every release.
 	for _, auth := range []string{"vertex", "api-key", "oauth"} {
 		var warn bytes.Buffer
-		err := refuseCascadeSkew("acme/app", auth, older, &warn)
+		err := refuseCascadeSkew("acme/app", auth, config.SourceRepo, older, &warn)
 		if err != nil || warn.Len() != 0 {
 			t.Errorf("auth %q: err = %v, warn = %q, want neither", auth, err, warn.String())
 		}
@@ -366,21 +371,75 @@ func TestInitRepoRefusesCascadeOnOlderBaseImage(t *testing.T) {
 	// like a deploy would be — the values it prints are the ones a deploy
 	// would use — and nothing of it lands on stdout.
 	old := lc(older)
-	if err := r.gateCascadeAuth(r.o, "acme/app", old, cascade); err == nil {
+	if err := r.gateCascadeAuth(r.o, "acme/app", old, cascade, config.SourceRepo); err == nil {
 		t.Fatal("a plain deploy was not refused")
 	}
 	for _, o := range []*initOptions{{planOnly: true}, {forget: true}} {
-		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateCascadeAuth(o, "acme/app", old, cascade); err != nil {
+		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateCascadeAuth(o, "acme/app", old, cascade, config.SourceRepo); err != nil {
 			t.Errorf("%+v: err = %v, want none", o, err)
 		}
 	}
 	out.Reset()
 	pv := &initOptions{printVars: true}
-	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateCascadeAuth(pv, "acme/app", old, cascade); err == nil {
+	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateCascadeAuth(pv, "acme/app", old, cascade, config.SourceRepo); err == nil {
 		t.Fatal("--print-vars: want refused")
 	}
 	if out.Len() != 0 {
 		t.Errorf("--print-vars wrote to stdout: %q", out.String())
+	}
+}
+
+// TestCascadeSkewNamesTheLayerTheValueCameFrom: the subject of both messages
+// names the thing that put the cascade in effect, and a resolved value is not
+// proof that the repository's own file asked for it. agent.auth resolves like
+// every other key — the repository's value, else the workflow's profile's,
+// else the project layer's defaults (config.Resolve) — so an installation
+// whose layer defaults agent.auth to cascade runs every repository it covers
+// through the cascade with no fugaro.yaml saying so, and a subject that
+// always said "fugaro.yaml's" would send that operator to a line their file
+// does not have (the misattribution annotate() avoids on a problem, and
+// doctor's oauth-token-allowed check avoids in its message).
+//
+// src is config.Resolution.SourceOf("agent.auth"), which is what repoEngine
+// passes; a source this cannot name is named rather than guessed at, so a
+// value that reaches the config some new way is still not attributed to a
+// file. The pair of messages is checked through refuseCascadeSkew, not just
+// cascadeSubject: the warning is the other place the subject is printed.
+//
+// Mutation (run, restored): make cascadeSubject ignore src and always return
+// the fugaro.yaml wording — the layer rows fail, and the refusal tells the
+// operator of a layered installation to edit a line their file does not
+// have. Mutation (pass config.SourceRepo where repoEngine has
+// rf.Res.SourceOf("agent.auth")): TestRepoEngineNamesTheProjectLayerThatAsksForTheCascade
+// fails, which is the call site this test cannot see.
+func TestCascadeSkewNamesTheLayerTheValueCameFrom(t *testing.T) {
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, cascadeSince, -1)
+	for _, c := range []struct{ src, subject string }{
+		{config.SourceRepo, "fugaro.yaml's agent.auth: " + config.AuthCascade + " of acme/app"},
+		{config.SourceProject, "the project layer's defaults.agent.auth: " + config.AuthCascade + " of acme/app"},
+	} {
+		if got := cascadeSubject("acme/app", c.src); got != c.subject {
+			t.Errorf("cascadeSubject(%q) = %q, want %q", c.src, got, c.subject)
+		}
+		err := refuseCascadeSkew("acme/app", config.AuthCascade, c.src, older, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), c.subject) {
+			t.Errorf("src %q: the refusal does not name %q: %v", c.src, c.subject, err)
+		}
+		var warn bytes.Buffer
+		if err := refuseCascadeSkew("acme/app", config.AuthCascade, c.src, "not-a-release-ref", &warn); err != nil || !strings.Contains(warn.String(), c.subject) {
+			t.Errorf("src %q: the warning does not name %q (err = %v, warn = %q)", c.src, c.subject, err, warn.String())
+		}
+	}
+	// The value the layer set is never blamed on the repository's file, and a
+	// source this cannot name says so instead of picking one.
+	for _, src := range []string{config.SourceProject, config.SourceProfile("shared"), config.SourceDefault} {
+		got := cascadeSubject("acme/app", src)
+		if strings.Contains(got, "fugaro.yaml") {
+			t.Errorf("cascadeSubject(%q) = %q: a value this source set is attributed to the repository's own file", src, got)
+		}
+	}
+	if got := cascadeSubject("acme/app", config.SourceProfile("shared")); !strings.Contains(got, "shared") {
+		t.Errorf("cascadeSubject(SourceProfile) = %q: an unnamed source is not named at all", got)
 	}
 }
 
@@ -467,10 +526,64 @@ func TestRepoEngineRefusesCascadeOnAnOlderBaseImage(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit = %d, err = %v: want the cascade refused on this installation's base image", ExitCode(err), err)
 	}
-	for _, want := range []string{cascadeSince, below, "fugaro init --base base", "agent.auth: cascade"} {
+	for _, want := range []string{cascadeSince, below, "fugaro init --base base", "agent.auth: cascade", "fugaro.yaml's agent.auth: cascade"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
 		}
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 0 {
+		t.Errorf("the refusal applied anyway: %v", applies)
+	}
+}
+
+// TestRepoEngineNamesTheProjectLayerThatAsksForTheCascade is the subject's
+// call site: the repository's fugaro.yaml here sets no agent.auth at all, and
+// the project layer it resolves over defaults it to cascade, so the cascade
+// is in effect without the file asking for it. repoEngine has to hand the
+// gate the source of the value it read (rf.Res.SourceOf), not the fact that
+// the value exists: a gate told "the file" would send this operator to edit a
+// line their fugaro.yaml does not have, when the fix is in the layer or in
+// an agent.auth line they would add to their own file.
+//
+// The layer is the one findLayer reads (the local config's own bucket_url,
+// written as a file:// bucket with config.LayerKey in it), the same seam
+// doctor's layer tests use, so the resolution really runs over it.
+//
+// Mutation (run, restored): pass config.SourceRepo instead of
+// rf.Res.SourceOf("agent.auth") in repoEngine — this test fails on the
+// refusal naming fugaro.yaml for a value the file does not carry, and
+// cascadeSubject's own test cannot see it (it calls the function directly).
+func TestRepoEngineNamesTheProjectLayerThatAsksForTheCascade(t *testing.T) {
+	below := shiftRelease(t, cascadeSince, -1)
+	r := newInitRig(t)
+	isolateCache(t)
+	runs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(runs, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	layer := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  agent: { auth: cascade }\n"
+	if err := os.WriteFile(filepath.Join(runs, config.LayerKey), []byte(layer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+below+"}\nbucket_url: file://"+runs+"\n")
+	r.save(t)
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
+	t.Chdir(dir)
+	e := rigEngine(t, r, &initOptions{})
+	err := e.r.repoEngine(t.Context(), ".", "", true)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit = %d, err = %v: want the layer's cascade refused on this installation's base image", ExitCode(err), err)
+	}
+	got := err.Error()
+	for _, want := range []string{cascadeSince, "fugaro init --base base", "agent.auth: cascade", "the project layer's defaults.agent.auth: cascade"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if strings.Contains(got, "fugaro.yaml's agent.auth") {
+		t.Errorf("the refusal blames the repository's file for a value the layer set: %v", err)
 	}
 	if applies := r.ran(t, "apply"); len(applies) != 0 {
 		t.Errorf("the refusal applied anyway: %v", applies)

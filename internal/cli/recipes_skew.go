@@ -578,22 +578,24 @@ func switchProviders(providers map[string]config.ModelProvider, repo string) []s
 }
 
 // refuseCascadeSkew refuses fugaro init --repo, before any cloud effect, when
-// the repository's fugaro.yaml asks for the cascade and the installation's
-// base image predates the release whose config reader accepts the value: the
-// job would be deployed, then die at bootstrap on a file the image refuses.
+// the cascade is in effect and the installation's base image predates the
+// release whose config reader accepts the value: the job would be deployed,
+// then die at bootstrap on a file the image refuses.
 //
-// auth is the file's agent.auth and ref is the installation's base image
+// auth is the resolved agent.auth, src the layer it came from
+// (config.Resolution.SourceOf("agent.auth"), which is what the subject names:
+// see cascadeSubject), and ref is the installation's base image
 // (lc.BaseImage(config.BaseKind)); anything but cascade passes — this is the
 // one auth the value is new for, and every other one is read by every release.
 // A ref that is not a release base image is only warned about (nothing can
 // tell what such a runner knows), and no base image at all passes, since the
 // job is then built from this release's own image, which reads it — both the
 // reading checkCloneImageSince gives the same states.
-func refuseCascadeSkew(repo, auth, ref string, warn io.Writer) error {
+func refuseCascadeSkew(repo, auth, src, ref string, warn io.Writer) error {
 	if auth != config.AuthCascade {
 		return nil
 	}
-	subject := "fugaro.yaml's agent.auth: " + config.AuthCascade + " of " + repo
+	subject := cascadeSubject(repo, src)
 	switch rel, ok := releaseOf(ref); {
 	case ref == "":
 		return nil
@@ -605,6 +607,31 @@ func refuseCascadeSkew(repo, auth, ref string, warn io.Writer) error {
 			subject, cascadeSince, pluginwire.Printable(ref), rel, config.AuthCascade)
 	}
 	return nil
+}
+
+// cascadeSubject names, for the two messages above, what put the cascade in
+// effect: the repository's own fugaro.yaml, or the project layer's defaults.
+// The resolved value is not proof that the file asked for it — agent.auth
+// resolves like every other key, the repository's value else the workflow's
+// profile's else the layer's defaults (config.Resolve) — so a subject that
+// always said "fugaro.yaml's" would tell the operator of a layered
+// installation to edit a line their file does not have, and the fix differs:
+// the layer's default is what has to change, or an agent.auth line the
+// repository adds, which wins over it. The same care annotate() takes with a
+// problem's path and doctor's oauth-token-allowed check takes with the auth
+// it names.
+//
+// src is Resolution.SourceOf("agent.auth"). A source this cannot name is
+// named rather than guessed at, so a value that reaches the config some new
+// way is still never attributed to a file that does not carry it.
+func cascadeSubject(repo, src string) string {
+	switch src {
+	case config.SourceRepo:
+		return "fugaro.yaml's agent.auth: " + config.AuthCascade + " of " + repo
+	case config.SourceProject:
+		return "the project layer's defaults.agent.auth: " + config.AuthCascade + " of " + repo
+	}
+	return repo + "'s agent.auth: " + config.AuthCascade + " (set by " + pluginwire.Printable(src) + ")"
 }
 
 // refuseCatalogSwitches refuses fugaro init --repo, before any cloud effect,
