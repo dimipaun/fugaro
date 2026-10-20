@@ -42,10 +42,23 @@ expect_status() { # status want what
 # token, and a test asserts this string never survives the run.
 SENTINEL='FAKE-TOKEN-FOR-CHECK-90-TESTS-NOT-A-CREDENTIAL-0123456789'
 
+# Every variable the script's environment guard refuses, unset before each run:
+# this machine may have one of them set (a runner usually has NO_PROXY), and a
+# run that stopped at the guard would measure the guard instead of the check.
+# The list is the script's own -- a test below sets each one in turn and expects
+# the refusal, so the two cannot drift apart silently.
+GUARD_VARS=(ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+  ANTHROPIC_VERTEX_BASE_URL ANTHROPIC_BEDROCK_BASE_URL CLAUDE_CODE_SKIP_VERTEX_AUTH
+  CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_FOUNDRY
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY)
+GUARD_UNSET=()
+for v in "${GUARD_VARS[@]}"; do GUARD_UNSET+=(-u "$v"); done
+
 # The real tools the fakes below hand over to, resolved before any test puts a
 # directory of fakes at the front of PATH.
 REAL_ENV=$(command -v env || true)
 REAL_PS=$(command -v ps || true)
+REAL_CHMOD=$(command -v chmod || true)
 
 # --------------------------------------------------------------------- fakes
 write_fake_claude() { # dir
@@ -64,6 +77,13 @@ import http.client, json, os, subprocess, sys, time
 mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 args = sys.argv[1:]
 if "--version" in args:              # the version probe is not a call
+    # The probe is recorded so a test can say it was made ONCE, and it can be
+    # made to hang so a test can say the probe is capped.
+    if os.environ.get("FAKE_CLAUDE_VERSION_LOG"):
+        with open(os.environ["FAKE_CLAUDE_VERSION_LOG"], "a") as fh:
+            fh.write("version\n")
+    if os.environ.get("FAKE_CLAUDE_VERSION_HANG"):
+        time.sleep(float(os.environ.get("FAKE_CLAUDE_HANG", "30")))
     print("fake-claude 1.0 (check90_test.sh)")
     sys.exit(0)
 prompt = ""
@@ -90,6 +110,22 @@ if os.environ.get("FAKE_CLAUDE_PS"):
     with open(os.environ["FAKE_CLAUDE_PS"], "ab") as fh:
         fh.write(snap.stdout)
 
+# What this child was started WITH: its working directory, its argv, and the
+# names -- never the values -- of the environment variables it can see. That is
+# what a test needs to say the credential child runs in the scratch directory,
+# with hooks off and MCP servers refused, and with no routing variable in its
+# environment (the review's M1).
+if os.environ.get("FAKE_CLAUDE_CONTEXT"):
+    watched = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+               "ANTHROPIC_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL",
+               "ANTHROPIC_BEDROCK_BASE_URL", "CLAUDE_CODE_USE_VERTEX",
+               "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY", "HTTP_PROXY",
+               "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "CHK90_CRED_SOURCE", "CHK90_CWD")
+    seen = ",".join(sorted(k for k in os.environ if k in watched))
+    with open(os.environ["FAKE_CLAUDE_CONTEXT"], "a") as fh:
+        fh.write("cwd=%s kind=%s env=%s argv=%s\n"
+                 % (os.getcwd(), kind, seen, " ".join(args)))
+
 # A client that stalls on ONE prompt and answers every other: the streaming
 # call is the only one this test can make the cap cut off without losing the
 # steps before it.
@@ -110,11 +146,26 @@ if not base.startswith("http://127.0.0.1:"):
     print("ok")                     # the control: no proxy, and no network
     sys.exit(0)
 
+# A client that answers WITHOUT ever contacting the proxy, and still exits 0:
+# the swap call "succeeds" while the proxy saw no request at all. Nothing was
+# swapped, so there is no swap to judge -- and this is the shape the review's M3
+# was about, where the run called it VIABLE.
+if mode == "no-proxy" and kind == "placeholder":
+    print("ok")
+    sys.exit(0)
+
 host, _, port = base[len("http://"):].partition(":")
 body = json.dumps({"model": "fake", "messages": [{"role": "user", "content": prompt}]})
+# A credential that is not this run's placeholder, sent on a swapped call: the
+# shape of a request from something else on this machine (a page the browser
+# loaded). The proxy must refuse it rather than attach the real token to it
+# (the review's m1).
+auth = "Bearer " + cred
+if mode == "foreign" and kind == "placeholder":
+    auth = "Bearer foreign-not-this-run"
 conn = http.client.HTTPConnection(host, int(port), timeout=120)
 conn.request("POST", "/v1/messages", body, {
-    "Authorization": "Bearer " + cred,
+    "Authorization": auth,
     "anthropic-beta": "fake-beta-2026-01-01",
     "user-agent": "fake-claude/1.0",
     "x-fake-credential-kind": kind,
@@ -163,6 +214,22 @@ write_fake_ps() { # dir
 "$REAL_PS" -A -ww -o pid,ppid,args 2>/dev/null | grep -Ei "\$1" || true
 PS_EOF
   chmod +x "$1/bin/ps"
+}
+
+# write_fake_chmod DIR — a `chmod` that fails on the token file and hands every
+# other call to the real one. It plants ONE internal error, on the token path,
+# to say what such a failure has to look like: an ABORTED fact and "could not
+# tell", never a verdict on the swap (the review's M3).
+write_fake_chmod() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/chmod" <<CHMOD_EOF
+#!/bin/sh
+case "\$*" in
+*token*) echo "fake chmod: failing on purpose" >&2; exit 1 ;;
+esac
+exec "$REAL_CHMOD" "\$@"
+CHMOD_EOF
+  chmod +x "$1/bin/chmod"
 }
 
 write_fake_upstream() { # dir
@@ -266,9 +333,10 @@ run90() {
   start_upstream "$dir" "$mode" "$require" || return 1
   : >"$dir/claude.calls"
   status=0
-  printf '%s\n' "$SENTINEL" | env \
-    -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
-    -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
+  # RUN90_STDIN is what the run reads from its input; a test that wants to see
+  # what happens to a SECOND line on that input sets it (the review's B1).
+  printf '%s\n' "${RUN90_STDIN:-$SENTINEL}" | env \
+    ${GUARD_UNSET[@]} \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
     CHECK90_UPSTREAM="$FAKE_UPSTREAM_ADDR" \
@@ -348,18 +416,19 @@ test_block_format() {
   done
 }
 
+# Every name in GUARD_VARS is set in turn, and the run must refuse each one:
+# the guard has to cover the variables a settings file's keys route (the
+# review's m2) exactly as it covers CLAUDE_CODE_USE_VERTEX.
 test_env_guards() {
   local v
-  for v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
-    CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_BEDROCK; do
+  for v in "${GUARD_VARS[@]}"; do
     local dir=$work/env-$v
     mkdir -p "$dir/home" "$dir/tmp" "$dir/managed"
     write_fake_claude "$dir"
     : >"$dir/claude.calls"
     local st=0
     printf '%s\n' "$SENTINEL" | env \
-      -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
-      -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
+      ${GUARD_UNSET[@]} \
       PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
       CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
       "$v=some-value-that-must-not-be-printed" \
@@ -387,8 +456,7 @@ test_settings_guard() {
     printf '%s' "$body" >"$dir/cwd/.claude/settings.json"
     local st=0
     (cd "$dir/cwd" && printf '%s\n' "$SENTINEL" | env \
-      -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
-      -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
+      ${GUARD_UNSET[@]} \
       PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
       CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
       FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
@@ -416,8 +484,7 @@ CASES
   printf '%s' '{"env":{"ANTHROPIC_BASE_URL":"https://example.invalid"}}' >"$dir/managed/managed-settings.json"
   local st=0
   (cd "$dir/cwd" && printf '%s\n' "$SENTINEL" | env \
-    -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
-    -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
+    ${GUARD_UNSET[@]} \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
     FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
@@ -472,8 +539,7 @@ test_dry_run_makes_no_call() {
   : >"$dir/claude.calls"
   local st=0
   printf '%s\n' "$SENTINEL" | env \
-    -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
-    -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
+    ${GUARD_UNSET[@]} \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" CHECK90_DRY_RUN=1 \
     CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
     FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
@@ -497,8 +563,7 @@ test_sigint_cleans_up() {
   # without this, the script would never see the Ctrl-C this test sends.
   set -m
   env \
-    -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
-    -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
+    ${GUARD_UNSET[@]} \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
     CHECK90_UPSTREAM="$FAKE_UPSTREAM_ADDR" \
@@ -607,6 +672,204 @@ assert_no_sentinel() { # dir what — no file under dir, and nothing printed, ca
   [ -z "$hits" ] || fail "$what: the token is in $hits"
 }
 
+# B1: the check asks for the token and NOTHING else. A second line on the same
+# input -- what pasting `claude setup-token`'s whole output leaves behind -- must
+# never be read, printed or stored. That line sits next to the token, so a prompt
+# for it is a prompt that carries the token into the RESULT block, into the
+# terminal's history and into whatever the block is pasted to.
+CANARY='CANARY-SETUP-TOKEN-LINE-VALID-FOR-ONE-YEAR-0123456789'
+test_no_second_paste() {
+  RUN90_STDIN="$SENTINEL
+$CANARY"
+  run90 nopaste ok ""
+  RUN90_STDIN=""
+  expect_status "$status" 0 "no second paste: the run"
+  expect_contains "$out" "CHECK 90 RESULT END (exit 0)" "no second paste: the run reached the block"
+  expect_contains "$out" "FACT token-validity: PASS" \
+    "no second paste: validity is derived from the control call, not asked for"
+  expect_absent "$out$err" "$CANARY" "no second paste: the text that was left on the input"
+  local hits
+  hits=$(grep -rl -- "$CANARY" "$work/nopaste" 2>/dev/null || true)
+  [ -z "$hits" ] || fail "no second paste: the text left on the input is in $hits"
+  assert_no_sentinel "$work/nopaste" "no second paste"
+  return 0
+}
+
+# M2: `bash -x` prints every command as it runs, and the commands around the
+# token carry its value -- that was the review's proof. The check refuses to run
+# in a tracing shell rather than trusting a `set +x` to hold for its children
+# too, and the trace that IS there (before the refusal) must carry no token.
+test_xtrace_is_refused() {
+  local dir=$work/xtrace
+  mkdir -p "$dir/home" "$dir/tmp" "$dir/managed"
+  write_fake_claude "$dir"
+  : >"$dir/claude.calls"
+  local st=0
+  printf '%s\n' "$SENTINEL" | env \
+    ${GUARD_UNSET[@]} \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
+    FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
+    bash -x "$script" >"$dir/out" 2>"$dir/err" || st=$?
+  expect_status "$st" 1 "xtrace"
+  expect_contains "$(cat "$dir/err")" "+ " "xtrace: the trace really was on"
+  expect_contains "$(cat "$dir/err")" "tracing" "xtrace: the message names it"
+  expect_contains "$(cat "$dir/out")" "FACT xtrace: FAIL" "xtrace: the fact"
+  expect_absent "$(cat "$dir/out")" "CHECK 90 RESULT END (exit 0)" "xtrace: the run did not continue"
+  if [ -s "$dir/claude.calls" ]; then fail "xtrace: claude was run anyway"; fi
+  assert_no_sentinel "$dir" "xtrace"
+  local sc
+  sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+  if [ -d "$sc" ]; then fail "xtrace: the scratch directory survived the stop"; fi
+  return 0
+}
+
+# M1: every settings source Claude Code loads is discovered from its working
+# directory, and every hook, plugin hook and MCP server it starts inherits its
+# environment -- the CLAUDE_CODE_OAUTH_TOKEN in this one included. So the
+# credential child has to run in the scratch directory with hooks off and MCP
+# servers refused, and it must be the only child that sees the token.
+test_child_is_confined() {
+  run90 confined ok "" FAKE_CLAUDE_CONTEXT="$work/confined/context"
+  expect_status "$status" 0 "confined: the run"
+  local ctx=$work/confined/context
+  [ -s "$ctx" ] || {
+    fail "confined: no child recorded its context, so this test proves nothing"
+    return 0
+  }
+  [ -n "$scratch" ] || fail "confined: the run never said where its scratch directory is"
+  local line n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    expect_contains "$line" "cwd=$scratch " "confined: the child's working directory (line $n)"
+    expect_contains "$line" '--strict-mcp-config' "confined: no MCP server is started (line $n)"
+    expect_contains "$line" '--settings {"disableAllHooks":true}' "confined: no hook is started (line $n)"
+    expect_contains "$line" "CLAUDE_CODE_OAUTH_TOKEN" \
+      "confined: the token does reach the child (line $n) — without this the rest proves nothing"
+    local bad
+    for bad in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_VERTEX \
+      CLAUDE_CODE_USE_BEDROCK HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY \
+      CHK90_CWD CHK90_CRED_SOURCE; do
+      expect_absent "$line" "$bad" "confined: $bad in the child's environment (line $n)"
+    done
+  done <"$ctx"
+  [ "$n" -ge 3 ] || fail "confined: only $n child(ren) recorded a context, the run changed shape"
+  assert_no_sentinel "$work/confined" "confined"
+  return 0
+}
+
+# M3: the swap's PASS needs the proxy to have SEEN the swap. A client that
+# answers without ever contacting the proxy leaves its log empty, and an empty
+# log is not a swap: the run must say it could not tell, never "NOT VIABLE".
+test_swap_the_proxy_never_saw() {
+  run90 unswapped ok "" FAKE_CLAUDE_MODE=no-proxy
+  expect_status "$status" 2 "unswapped: could not tell"
+  expect_contains "$out" "FACT swap: INFO" "unswapped: no verdict on the swap"
+  expect_absent "$out" "FACT swap: PASS" "unswapped: nothing was swapped, so nothing passed"
+  expect_absent "$out" "NOT VIABLE" "unswapped: no verdict either way"
+  expect_contains "$out" "FACT tier-a: INFO — INCONCLUSIVE" "unswapped: tier A is not judged"
+  expect_contains "$out" "FACT aborted: FAIL" "unswapped: the abort is a fact of the run"
+  expect_contains "$out" "CHECK 90 RESULT END (exit 2)" "unswapped: the end line"
+  expect_absent "$(cat "$work/unswapped/logs/proxy-swap.log" 2>/dev/null)" "FACT request " \
+    "unswapped: the proxy saw no request"
+  [ -d "$(sed -n 's/^check90: scratch directory: \([^ ]*\) .*/\1/p' "$work/unswapped/err" | head -n 1)" ] \
+    && fail "unswapped: the scratch directory survived"
+  return 0
+}
+
+# m1: the proxy takes requests from its own run only. A request that carries
+# some other credential -- the shape of a page the browser loaded posting to
+# loopback -- is refused, so the real token is never attached to it.
+test_foreign_request_is_refused() {
+  run90 foreign ok "" FAKE_CLAUDE_MODE=foreign
+  expect_status "$status" 1 "foreign: the swap call fails"
+  expect_contains "$out" "FACT swap: FAIL" "foreign: the fact"
+  local log=$work/foreign/logs/proxy-swap.log
+  [ -s "$log" ] || {
+    fail "foreign: the swap phase left no proxy log, so this test proves nothing"
+    return 0
+  }
+  expect_contains "$(cat "$log")" "refused not-this-run" "foreign: the refusal is recorded"
+  expect_absent "$(cat "$log")" "FACT request " "foreign: nothing was forwarded to the upstream"
+  assert_no_sentinel "$work/foreign" "foreign"
+  return 0
+}
+
+# m3: the total budget is read at every step, not once before the last three, so
+# a step that is slow for reasons of its own stops the run where the budget ran
+# out. Here the streaming call is cut off at its own 5s cap, which puts the run
+# past its 5s budget: the header drops and the delayed proxy must not run.
+test_budget_is_read_at_every_step() {
+  run90 budget ok "" CHECK90_TOTAL_SECONDS=5 CHECK90_CALL_TIMEOUT=5 \
+    FAKE_CLAUDE_HANG_PROMPT="Write the numbers" FAKE_CLAUDE_HANG=60
+  expect_status "$status" 0 "budget: the swap's verdict still stands"
+  expect_contains "$out" "FACT tier-a: PASS — VIABLE" "budget: tier A"
+  expect_contains "$out" "FACT budget: FAIL" "budget: the fact"
+  expect_contains "$out" "before step_drops" "budget: the step that did not run is named"
+  expect_contains "$out" "FACT headers-required: FAIL — not reached" "budget: the drops did not run"
+  expect_contains "$out" "FACT timeout-retry: FAIL — not reached" "budget: the delayed proxy did not run"
+  return 0
+}
+
+# m4: the version probe is ONE call, and it is capped: a client that hangs on
+# `claude --version` must not hold the run that is measuring it.
+test_version_probe_is_capped_and_once() {
+  run90 version ok "" FAKE_CLAUDE_VERSION_LOG="$work/version/versions" \
+    CHECK90_VERSION_TIMEOUT=20
+  expect_status "$status" 0 "version: the run"
+  local n
+  n=$(wc -l <"$work/version/versions" | tr -d ' ')
+  [ "$n" = 1 ] || fail "version: 'claude --version' was run $n time(s), expected exactly one"
+  expect_contains "$out" "FACT claude-version: PASS — fake-claude 1.0" "version: the version is recorded"
+  run90 version-hang ok "" FAKE_CLAUDE_VERSION_HANG=1 CHECK90_VERSION_TIMEOUT=2
+  expect_status "$status" 0 "version hang: the run finishes anyway"
+  expect_contains "$out" "FACT claude-version: FAIL — claude --version did not answer within 2s" \
+    "version hang: the cap is named"
+  expect_contains "$out" "CHECK 90 RESULT END (exit 0)" "version hang: the run reached the block"
+  return 0
+}
+
+# M3: an INTERNAL error -- a command that fails where nothing is being judged --
+# must be a fact of the run and "could not tell", never "NOT VIABLE". Before the
+# ERR trap, `set -e` ended such a run with no fact at all and exit 1, which the
+# block printed as a swap that was not viable.
+test_internal_error_is_aborted_not_viable() {
+  local dir=$work/internal
+  mkdir -p "$dir/home" "$dir/tmp" "$dir/managed"
+  write_fake_claude "$dir"
+  write_fake_chmod "$dir"
+  : >"$dir/claude.calls"
+  local st=0
+  printf '%s\n' "$SENTINEL" | env \
+    ${GUARD_UNSET[@]} \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    CHECK90_MANAGED_SETTINGS_DIR="$dir/managed" \
+    FAKE_CLAUDE_SENTINEL="$SENTINEL" FAKE_CLAUDE_CALLS="$dir/claude.calls" \
+    bash "$script" >"$dir/out" 2>"$dir/err" || st=$?
+  expect_status "$st" 2 "internal error: could not tell"
+  expect_contains "$(cat "$dir/out")" "FACT aborted: FAIL — an internal error" "internal error: the abort is a fact"
+  expect_contains "$(cat "$dir/out")" "FACT tier-a: INFO — INCONCLUSIVE" "internal error: tier A is not judged"
+  expect_absent "$(cat "$dir/out")" "NOT VIABLE" "internal error: no verdict either way"
+  expect_contains "$(cat "$dir/out")" "FACT swap: FAIL — not reached" "internal error: the swap was not reached"
+  expect_contains "$(cat "$dir/out")" "CHECK 90 RESULT END (exit 2)" "internal error: the end line"
+  if [ -s "$dir/claude.calls" ]; then fail "internal error: a call was made anyway"; fi
+  assert_no_sentinel "$dir" "internal error"
+  local sc
+  sc=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+  if [ -d "$sc" ]; then fail "internal error: the scratch directory survived the stop"; fi
+  return 0
+}
+
+# m5: the length of the token is a hint about the value, so it is not printed.
+test_token_length_is_not_printed() {
+  run90 length ok ""
+  expect_contains "$out" "FACT token-file: PASS" "length: the fact"
+  local line
+  line=$(printf '%s\n' "$out" | grep -m1 '^FACT token-file: ' || true)
+  expect_absent "$line" "${#SENTINEL}" "length: the token's length, in the fact about the token file"
+  return 0
+}
+
 test_happy_path
 test_block_format
 test_env_guards
@@ -618,6 +881,15 @@ test_dry_run_makes_no_call
 test_token_is_never_on_a_command_line
 test_streaming_call_is_capped
 test_sigint_cleans_up
+test_no_second_paste
+test_xtrace_is_refused
+test_child_is_confined
+test_swap_the_proxy_never_saw
+test_foreign_request_is_refused
+test_budget_is_read_at_every_step
+test_version_probe_is_capped_and_once
+test_internal_error_is_aborted_not_viable
+test_token_length_is_not_printed
 
 if [ "$failures" -ne 0 ]; then
   echo "check90_test.sh: $failures failure(s)" >&2

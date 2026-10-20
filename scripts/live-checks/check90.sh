@@ -20,13 +20,20 @@
 #             90s, CHECK90_DELAY).
 # Duration:   about two minutes, more if the client waits longer than the
 #             delayed proxy does.
-# You type:   the value `claude setup-token` printed, once, at a hidden prompt.
-#             NO AGENT EVER SEES IT: the script is run by you, the prompt does
-#             not echo, the value is never on a command line, and it reaches
-#             nothing but the 0600 file the proxy reads and the one `claude`
-#             child that needs it. Nothing the script prints — the RESULT
-#             block above all — can carry a token or a header value: it prints
-#             header NAMES and statuses only, and a test enforces that.
+# You type:   the value `claude setup-token` printed, ONCE, at a hidden prompt —
+#             the token and nothing else. This check never asks you to paste any
+#             other line of that command's output: that text sits next to the
+#             token, so a prompt for it would invite a paste that puts the token
+#             in the RESULT block and in your shell history (the independent
+#             review's B1). NO AGENT EVER SEES THE TOKEN: the script is run by
+#             you, the prompt does not echo, the value is never on a command
+#             line, and it reaches nothing but the 0600 file the proxy reads and
+#             the one `claude` child that needs it. That child is started in the
+#             scratch directory with hooks disabled and MCP servers off, so no
+#             hook, plugin hook or MCP server is started to inherit it — see the
+#             note on CRED_CHILD for what still can. Nothing the script prints —
+#             the RESULT block above all — can carry a token or a header value:
+#             it prints header NAMES and statuses only, and a test enforces that.
 # Cleanup:    always, including on failure and on Ctrl-C: the proxy is killed,
 #             the token file is removed, the scratch directory goes. The trap
 #             re-checks its own marker file before rm -rf, as the section's
@@ -42,7 +49,32 @@
 # upstream), so no environment can send the token anywhere but Anthropic's
 # endpoint, and CHECK90_MANAGED_SETTINGS_DIR names a directory the guard still
 # READS, never one it skips.
-set -euo pipefail
+# -E (errtrace) is what makes the ERR trap below fire for a failure INSIDE a
+# function or a command substitution too, which is where an internal error is
+# most likely to happen; without it the trap only sees top-level failures.
+set -Eeuo pipefail
+
+# No xtrace, whatever the shell it was started from had. `bash -x check90.sh`
+# (or SHELLOPTS=xtrace exported) prints every command to stderr as it runs, and
+# this script's commands carry the token: `[ -n "$token" ]` and the printf that
+# writes the token file would both be traced in full, and `bash -x` is exactly
+# what someone reaches for when a run failed and they want a log to paste.
+#
+# Three things, because one is not enough. The trace is turned OFF here, and
+# again around the token itself in ask_token, so a trace switched on later
+# cannot catch the read either. BASH_XTRACEFD is unset, so a trace redirected to
+# a file this script knows nothing about cannot be reopened. And guard_xtrace
+# REFUSES the run when this shell arrived with tracing on -- that is the case
+# where the flag sits in SHELLOPTS/BASHOPTS in the environment, and every child
+# shell, the credential child included, would start tracing on its own.
+XTRACE_AT_START=no
+# Each source on its own: BASHOPTS carries names like extquote, and a single
+# pattern over the three concatenated would match that 'x' and refuse every run.
+case "${-:-}" in *x*) XTRACE_AT_START=yes ;; esac
+case "${SHELLOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
+case "${BASHOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
+{ set +x; } 2>/dev/null
+unset BASH_XTRACEFD 2>/dev/null || true
 
 # The owner's own stdout and stderr, kept on 3 and 4. A trap runs with whatever
 # redirection is in effect at the moment the signal arrives -- and this script
@@ -77,6 +109,38 @@ FACTS_FILE=""
 fact() {                       # fact KEY PASS|FAIL|INFO "detail"
   [ -n "$FACTS_FILE" ] || return 0
   printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$FACTS_FILE"
+}
+
+# The run's own total budget. It is read before EVERY step and before every
+# header-drop call, not once before the last three (the review's m3): one slow
+# step (a drop on a client that retries, the delayed proxy) would otherwise run
+# past the limit the script advertises and keep the owner waiting, or spend
+# prompts after the budget is gone.
+DEADLINE=0
+past_deadline() { [ "$DEADLINE" -gt 0 ] && [ "$(date +%s)" -ge "$DEADLINE" ]; }
+budget_exceeded() { # budget_exceeded WHAT — one fact, however often it is asked
+  case "$(grep -c '^budget|' "$FACTS_FILE" 2>/dev/null || true)" in
+  0) fact "budget" FAIL "the run used its whole ${TOTAL_SECONDS}s budget before $1, so $1 did not run (raise CHECK90_TOTAL_SECONDS for a slower client)" ;;
+  esac
+  say "$1 skipped: the run used its whole ${TOTAL_SECONDS}s budget"
+}
+
+# on_error: an INTERNAL error is a fact, never a verdict (the review's M3).
+# Under `set -e` the first command that fails outside a guard ended the run with
+# no fact at all, and the block then read as a swap that was not viable --
+# exit 1 and "NOT VIABLE" for what is really "this run could not tell". The ERR
+# trap records which line it happened on (a line number carries no value) and
+# exits 2, which is the block's INCONCLUSIVE route.
+on_error() {
+  trap - ERR
+  local line=${BASH_LINENO[0]:-?}
+  # Once: with -E the trap also runs in a subshell, and the failure that ends
+  # the run then reaches this function twice (once there, once at the top).
+  case "$(grep -c '^aborted|' "$FACTS_FILE" 2>/dev/null || true)" in
+  0) fact "aborted" FAIL "an internal error ended the run at line $line of the script; nothing is concluded about the swap (no value is printed here)" ;;
+  esac
+  owner "stopped: an internal error ended the run (line $line); this says nothing about the swap"
+  exit 2
 }
 
 DRY_RUN=${CHECK90_DRY_RUN:-}
@@ -177,7 +241,7 @@ stop_proxy() {
 
 finish() {
   local status=$?
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM ERR
   cleanup
   local facts=$FACTS_CAPTURED
   if ! printf '%s' "$facts" | grep -q '^tier-a|' && [ "$status" = 2 ]; then
@@ -196,20 +260,53 @@ finish() {
 }
 
 # --------------------------------------------------------------- the guards
+# Every routing variable the settings guard reads for, plus every
+# CLAUDE_CODE_USE_* switch: a variable that would route the call or its
+# credential elsewhere stops the run from the ENVIRONMENT exactly as it stops it
+# from a settings file. This list and settingskeys.py's WANT are the same set --
+# one of them covering less than the other was the review's m2.
 GUARD_VARS=(ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-  CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_BEDROCK)
+  ANTHROPIC_VERTEX_BASE_URL ANTHROPIC_BEDROCK_BASE_URL CLAUDE_CODE_SKIP_VERTEX_AUTH
+  CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_FOUNDRY
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY)
 
 guard_env() {
   local set_vars=() v
   for v in "${GUARD_VARS[@]}"; do
     if printenv "$v" >/dev/null 2>&1; then set_vars+=("$v"); fi
   done
+  # Any other switch of the same family, so a name this list does not know (a
+  # newer CLAUDE_CODE_USE_...) is still refused rather than silently kept.
+  while IFS= read -r v; do
+    case "$v" in "") continue ;; esac
+    case " ${set_vars[*]-} " in *" $v "*) continue ;; esac
+    set_vars+=("$v")
+  done < <(printenv | sed -n 's/^\(CLAUDE_CODE_USE_[A-Za-z0-9_]*\)=.*/\1/p' || true)
   if [ ${#set_vars[@]} -gt 0 ]; then
     fact "env-cleared" FAIL "set in your shell: ${set_vars[*]} — unset them and run again"
     stop "these are set in your shell: ${set_vars[*]} (their values are not printed, and none is read). Each one makes 'claude' answer with something other than the setup-token, so the control would measure the wrong credential. Run: unset ${set_vars[*]}"
   fi
   fact "env-cleared" PASS "none of ${GUARD_VARS[*]} is set in this shell"
 }
+
+# guard_xtrace: refuse to run when this shell arrived with tracing on. The trace
+# itself is off from the first line (see the top of this file), but with -x the
+# flag is also in SHELLOPTS/BASHOPTS in the environment, and a child shell
+# inherits those: the credential child would start tracing its own commands, and
+# its output is captured into a file this check reads. Refusing is the only
+# answer that holds for the children too.
+guard_xtrace() {
+  if [ "$XTRACE_AT_START" = yes ]; then
+    fact "xtrace" FAIL "this shell was started with tracing on (-x, or xtrace in SHELLOPTS/BASHOPTS), which would print the commands this check runs — and the token's own commands among them — into the log you would then paste"
+    stop "this shell is tracing (bash -x). Run it without -x: bash scripts/live-checks/check90.sh — the check prints its own RESULT block, so a trace is not needed to report a failure"
+  fi
+  fact "xtrace" PASS "this shell is not tracing, so no trace of this run can carry the token"
+}
+
+# The same names, removed from the child's environment: a variable the guard
+# refused in this shell must not be able to reach the call either.
+ENV_UNSET=()
+for v in "${GUARD_VARS[@]}"; do ENV_UNSET+=(-u "$v"); done
 
 # settings_keys FILE: the routing key NAMES a settings file sets, nothing else.
 # Non-zero when the file is not settings JSON this check can read.
@@ -254,26 +351,44 @@ guard_settings() {
 }
 
 # ------------------------------------------------------------------ the token
+# drain_input: throw away anything still queued on the terminal. A paste can
+# carry more than the one line this check asks for (setup-token prints a banner
+# line and the token, and a terminal in bracketed-paste mode hands over both),
+# and whatever is left in the tty's input queue is read as a COMMAND by the
+# owner's own shell the moment this script exits — and saved to its history.
+# Only a terminal is drained: with stdin a pipe or a file there is no owner
+# sitting at it, and a read would block on the end of the input instead.
+drain_input() {
+  [ -t 0 ] || return 0
+  local line n=0
+  while [ "$n" -lt 100 ] && IFS= read -r -t 1 line 2>/dev/null; do n=$((n + 1)); done
+  return 0
+}
+
 ask_token() {
   say ""
-  say "Paste the value from 'claude setup-token' below. It is not echoed, not put on a"
-  say "command line and not exported to anything but the one 'claude' child that needs it."
+  say "Paste the value from 'claude setup-token' below — the TOKEN and nothing else."
+  say "It is not echoed, not put on a command line and not exported to anything but"
+  say "the one 'claude' child that needs it. This check asks for no other line of"
+  say "that command's output: the line beside the token is the token, and a prompt"
+  say "for it would put the token in the RESULT block and in your history."
   printf '%s: token (hidden, then Enter): ' "$PROG" >&2
   local token=""
+  # Around the token itself, the trace is off whatever happened earlier: the
+  # lines below are the ones a trace would print in full (the review's M2).
+  { set +x; } 2>/dev/null
   IFS= read -rs token || true
   printf '\n' >&2
+  drain_input
   [ -n "$token" ] || stop "no token was typed, so there is nothing to swap in"
   (umask 077 && printf '%s' "$token" >"$TOKEN_FILE")
   chmod 600 "$TOKEN_FILE"
   unset token
   local mode
   mode=$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$TOKEN_FILE")
-  fact "token-file" PASS "0600 written to the scratch directory; ${mode}; $(( $(wc -c <"$TOKEN_FILE") )) bytes"
-  printf '%s: what did claude setup-token say about how long the token lasts? (paste it, or Enter to skip): ' "$PROG" >&2
-  local validity=""
-  IFS= read -r validity || true
-  [ -n "$validity" ] || validity="(not recorded — paste it from claude setup-token yourself)"
-  fact "token-validity" PASS "$validity"
+  # The length of the token is a hint about the value, so it is not printed: the
+  # mode and the path are what this fact is for (the review's m5).
+  fact "token-file" PASS "written to the scratch directory as the only file that holds it; mode ${mode}; the value and its length are not printed anywhere"
 }
 
 # ------------------------------------------------------------------ the proxy
@@ -288,8 +403,15 @@ given, in which case it changes no header and attaches nothing, so the
 credential the client sent is the one the API sees (that is the observed
 control). Everything else is forwarded as it arrived, the response is streamed
 back as it arrives, and the only things printed are header NAMES, statuses and
-timings. A request whose Host is not this listener is refused with 403 and
-never forwarded: loopback is reachable from any page a browser loads.
+timings.
+
+Two requests are refused with 403 and never forwarded, because loopback is
+reachable from any page a browser loads. One whose Host is not this listener.
+And, when --require-credential is given (every swapped phase): one whose
+Authorization is not the per-run placeholder the check generated, so a request
+this run did not make can never have the real token attached to it -- a
+cross-origin "simple" POST carries no such header. --no-swap is exempt: there
+the client's own credential, the real one, is exactly what has to pass through.
 """
 import argparse, http.client, http.server, json, time
 
@@ -374,6 +496,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             fact("refused", "host-not-loopback", "the request was not forwarded")
             self.send_error(403, "chk90proxy: Host must be this loopback address and port")
             return
+        if not self.path.startswith("/"):
+            fact("refused", "path-not-absolute", "the request was not forwarded")
+            self.send_error(403, "chk90proxy: the request target must be a path")
+            return
+        if ARGS.require_credential and not ARGS.no_swap:
+            sent = self.headers.get("Authorization") or ""
+            if sent != "Bearer " + ARGS.require_credential:
+                fact("refused", "not-this-run", "the request was not forwarded")
+                self.send_error(403, "chk90proxy: this listener takes requests from its own run only")
+                return
         body = self.read_body()
         fact("credential-header",
              ",".join(credential_headers(self.headers)) or "(neither)")
@@ -439,6 +571,8 @@ def main():
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--token-file", help="the token attached in place of the client's own")
     ap.add_argument("--no-swap", action="store_true")
+    ap.add_argument("--require-credential", default="",
+                    help="refuse a request whose Authorization is not this placeholder")
     ap.add_argument("--upstream", default="api.anthropic.com")
     ap.add_argument("--upstream-scheme", default="https", choices=("https", "http"))
     ap.add_argument("--delay", type=float, default=0.0)
@@ -491,8 +625,10 @@ start_proxy() { # start_proxy LOGFILE [extra args...]
   local log=$1
   shift
   stop_proxy
+  # --require-credential is passed on EVERY phase; the proxy ignores it under
+  # --no-swap, where the client's own (real) credential is what must pass.
   python3 "$SCRATCH/proxy.py" --port "$PORT" --upstream "$UPSTREAM" \
-    --upstream-scheme "$UPSTREAM_SCHEME" "$@" >"$log" 2>&1 &
+    --upstream-scheme "$UPSTREAM_SCHEME" --require-credential "$PLACEHOLDER" "$@" >"$log" 2>&1 &
   PROXY_PID=$!
   local i=0
   while [ "$i" -lt 50 ]; do
@@ -538,13 +674,26 @@ with_timeout() { # with_timeout SECONDS cmd...
   return "$status"
 }
 
-# The credential the client is given. The control and the observed control run
-# on the real token -- they are what says the token works and that the client
-# sends it -- while the swap, the streaming prompt, the dropped headers and the
-# delayed proxy all run on a PLACEHOLDER that is not a credential, because
-# there the proxy is what attaches the real one, and a call that carried it
-# anyway would prove nothing.
-PLACEHOLDER="placeholder-not-a-credential"
+# The credential the client is given on the swapped calls. The control and the
+# observed control run on the real token -- they are what says the token works
+# and that the client sends it -- while the swap, the streaming prompt, the
+# dropped headers and the delayed proxy all run on a PLACEHOLDER that is not a
+# credential, because there the proxy is what attaches the real one, and a call
+# that carried it anyway would prove nothing.
+#
+# The placeholder is RANDOM, one per run, and the proxy requires it on the
+# incoming request before it attaches the real token. Two things follow. The
+# swap's PASS now rests on the proxy having SEEN the request and performed the
+# swap (the review's M3): a client that answered without going through the proxy
+# leaves the proxy's log empty, and that is not a swap. And the real token
+# cannot be attached to a request this check did not make: loopback is reachable
+# from any page a browser loads, and a cross-origin "simple" POST from such a
+# page carries no Authorization header this run's secret could match (the
+# review's m1). It is generated here rather than written down, so no fixed string
+# can be replayed at the listener.
+random_placeholder() {
+  python3 -c 'import secrets; print("placeholder-" + secrets.token_hex(16))'
+}
 
 # Where a call is told its credential is — a SOURCE, never the value:
 #   file:PATH     the 0600 token file, the one the proxy reads too
@@ -553,6 +702,21 @@ PLACEHOLDER="placeholder-not-a-credential"
 # keeps the token off every command line: `env CLAUDE_CODE_OAUTH_TOKEN=value`
 # would put the value in `env`'s own argv, which /proc/<pid>/cmdline shows to
 # every process on the machine for as long as it lives.
+#
+# Two things about the child, both of them the review's M1: it runs in the
+# SCRATCH DIRECTORY, not in whatever directory the owner launched the check
+# from, and Claude Code is told to start no hook and no MCP server. Every
+# settings source Claude Code loads is discovered from its working directory
+# (the project's .claude/ above all), and every hook, plugin hook and MCP server
+# it starts is a CHILD of `claude` that inherits its environment — the
+# CLAUDE_CODE_OAUTH_TOKEN in this one included. The token is in the environment
+# of this child by necessity (that is how the client is given its credential at
+# all), so the check has to make sure nothing else is started to inherit it:
+# --settings '{"disableAllHooks":true}' turns the hooks off and
+# --strict-mcp-config refuses every MCP server the machine's configs name.
+# --bare is not the answer: it refuses OAuth, which is the credential under
+# test. What still can inherit it is a process `claude` itself decides to start
+# (a tool call, an agent), and that is named in the register rather than hidden.
 # shellcheck disable=SC2016 # the child's own text: nothing here expands in this shell
 CRED_CHILD='
 case "$CHK90_CRED_SOURCE" in
@@ -562,7 +726,9 @@ literal:*) CLAUDE_CODE_OAUTH_TOKEN=${CHK90_CRED_SOURCE#literal:} ;;
 esac
 export CLAUDE_CODE_OAUTH_TOKEN
 unset CHK90_CRED_SOURCE
-exec claude "$@"'
+cd "$CHK90_CWD" || exit 1
+unset CHK90_CWD
+exec claude --settings "{\"disableAllHooks\":true}" --strict-mcp-config "$@"'
 
 # claude_call BASE_URL CRED_SOURCE OUT CALL_TIMEOUT "$@" — runs claude with
 # nothing in its environment but the credential and the base URL this check
@@ -572,15 +738,16 @@ exec claude "$@"'
 claude_call() {
   local base=$1 src=$2 out=$3 secs=$4
   shift 4
-  set +e
+  # `|| status=$?` and not `set +e`: the ERR trap below is armed for internal
+  # errors, and a function returning non-zero triggers it even where errexit is
+  # off (checked, not assumed). A call that fails is the MEASUREMENT, so its
+  # status is taken in a `||` list, where the trap is not run.
+  local status=0
   with_timeout "$secs" env \
-    -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-    -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
+    ${ENV_UNSET[@]+"${ENV_UNSET[@]}"} \
     ANTHROPIC_BASE_URL="$base" \
-    CHK90_CRED_SOURCE="$src" \
-    bash -c "$CRED_CHILD" check90-claude "$@" >"$out" 2>&1
-  local status=$?
-  set -e
+    CHK90_CRED_SOURCE="$src" CHK90_CWD="$SCRATCH" \
+    bash -c "$CRED_CHILD" check90-claude "$@" >"$out" 2>&1 || status=$?
   return "$status"
 }
 
@@ -597,10 +764,14 @@ attempts_in() { # attempts_in LOGFILE
   printf '%s' "${n:-0}"
 }
 header_names_of() { # header_names_of LOGFILE — the names the swap call forwarded
+  # `|| true` at the end of the pipeline: an empty log (the proxy saw no
+  # request) leaves grep with nothing to match, grep exits 1, and `set -e` under
+  # `pipefail` would end the run with no fact recorded -- an abort that reads as
+  # "tier A is not viable" in the block (the review's M3).
   sed -n 's/^FACT request .* headers: //p' "$1" 2>/dev/null | tail -n 1 |
     tr ',' '\n' | sed '/^$/d' |
     grep -v -x -e host -e content-length -e authorization -e x-api-key \
-      -e connection -e expect -e accept-encoding -e transfer-encoding | tr '\n' ' '
+      -e connection -e expect -e accept-encoding -e transfer-encoding | tr '\n' ' ' || true
 }
 
 # ------------------------------------------------------------------- the steps
@@ -608,7 +779,16 @@ step_control() {
   say "step 1/7: the control (no proxy, your token in the environment)"
   if claude_call "https://api.anthropic.com" "file:$TOKEN_FILE" "$SCRATCH/control.out" "$CALL_TIMEOUT" -p "say ok"; then
     fact "control" PASS "the call succeeded with the setup-token and no proxy in its path"
+    # token-validity is DERIVED from this call, never from a paste: the only
+    # thing this check can honestly say about the token's validity is that it
+    # was accepted, now. The prompt that asked for the line setup-token printed
+    # ("valid for 1 year") was removed — that line sits next to the token, so
+    # asking for it invited a paste that carried the token into this block, into
+    # the owner's history and into whatever the paste was sent to. U2's expiry
+    # stays Anthropic's own answer, in `claude setup-token`.
+    fact "token-validity" PASS "not read from the setup-token output and never asked for (see the token-file fact): the token was ACCEPTED by a live call at $(date -u +%Y-%m-%dT%H:%M:%SZ), which is what this run measured. When it expires is Anthropic's answer, printed by 'claude setup-token' itself"
   else
+    fact "token-validity" FAIL "the control call was refused at $(date -u +%Y-%m-%dT%H:%M:%SZ), so this run measured nothing about the token's validity — and this check does not ask you to paste setup-token's line about it"
     fact "control" FAIL "the call failed ($(head -c 300 "$SCRATCH/control.out" | tr '\n' ' '))"
     stop2 "the control call failed, so nothing about the swap can be learned: the token itself is what is in question. A token that fails here says nothing about the header swap"
   fi
@@ -643,10 +823,28 @@ step_swap() {
   started=$(date +%s)
   if claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/swap.out" "$CALL_TIMEOUT" -p "say ok"; then
     ended=$(date +%s)
-    local h
+    local h attempts ok
     h=$(header_of "$log")
-    fact "swap" PASS "the call succeeded with the proxy's own credential attached ($((ended - started))s)"
-    fact "swap-credential-header" PASS "credential-header: ${h:-missing}"
+    attempts=$(attempts_in "$log")
+    ok=$(sed -n 's/^FACT response \([0-9]*\) .*/\1/p' "$log" 2>/dev/null | grep -E '^2' | head -n 1 || true)
+    if [ "$attempts" -lt 1 ]; then
+      # The client exited 0 without the proxy having seen a request: nothing was
+      # swapped, and nothing about the swap was measured. That is "could not
+      # tell", never "not viable" — and never a PASS (the review's M3).
+      fact "swap" INFO "the call exited 0, but the proxy saw no request: there was no swap to judge"
+      fact "swap-credential-header" INFO "credential-header: ${h:-missing} (the proxy saw ${attempts} request(s))"
+      stop2 "the swap call exited 0 without the proxy having seen a single request (${attempts}), so no credential was swapped and this run measured nothing. Nothing is concluded about tier A"
+    fi
+    if [ -z "$ok" ] || [ "$h" != authorization ]; then
+      fact "swap" FAIL "the proxy performed the swap and the call still failed: upstream answer '${ok:-none}', credential-header '${h:-missing}', after $((ended - started))s. That is a measurement, not a missing one"
+      fact "swap-credential-header" FAIL "credential-header: ${h:-missing}"
+      fact "headers-required" FAIL "not recorded: the swapped call did not complete successfully"
+      fact "tier-a" FAIL "NOT VIABLE — subscription traffic did not survive the header swap (Global Constraint 4: the TIER A tasks are dropped and the service ships the B-only cascade)"
+      save_usage_limit "$log"
+      return 0
+    fi
+    fact "swap" PASS "the call succeeded with the proxy's own credential attached ($((ended - started))s; the proxy saw ${attempts} request(s) and answered ${ok})"
+    fact "swap-credential-header" PASS "credential-header: ${h}"
   else
     fact "swap" FAIL "the call failed through the proxy while the control succeeded ($(head -c 300 "$SCRATCH/swap.out" | tr '\n' ' '))"
     fact "swap-credential-header" INFO "credential-header: $(header_of "$log")"
@@ -698,13 +896,12 @@ step_streaming() {
   times="$SCRATCH/stream.times"
   : >"$times"
   start_proxy "$log" --token-file "$TOKEN_FILE"
+  # The status is taken in a `||` list for the reason claude_call's comment
+  # gives: a cap that fires is the answer, not an internal error.
   local status=0
-  set +e
   # Under the same cap as every other call. It is a pipeline, so the cap has to
   # reach the group, not one process: with_timeout and stop_call do that.
-  with_timeout "$CALL_TIMEOUT" stream_call "$times"
-  status=$?
-  set -e
+  with_timeout "$CALL_TIMEOUT" stream_call "$times" || status=$?
   local lines first last spread
   lines=$(wc -l <"$times" | tr -d ' ')
   first=$(head -n 1 "$times" 2>/dev/null || true)
@@ -730,10 +927,9 @@ step_streaming() {
 
 stream_call() { # stream_call TIMESFILE — one prompt, its arrival times recorded
   local times=$1
-  env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-    -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_BEDROCK \
+  env ${ENV_UNSET[@]+"${ENV_UNSET[@]}"} \
     ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" \
-    CHK90_CRED_SOURCE="literal:$PLACEHOLDER" \
+    CHK90_CRED_SOURCE="literal:$PLACEHOLDER" CHK90_CWD="$SCRATCH" \
     bash -c "$CRED_CHILD" check90-claude \
     -p "Write the numbers from 1 to 20, one per line." |
     while IFS= read -r _line; do date +%s >>"$times"; done
@@ -747,6 +943,10 @@ step_drops() {
     n=$((n + 1))
     if [ "$n" -gt "$MAX_DROPS" ]; then
       fact "header-drop-skipped" PASS "more than $MAX_DROPS optional headers were seen; the rest were not dropped (CHECK90_MAX_DROPS)"
+      break
+    fi
+    if past_deadline; then
+      budget_exceeded "the rest of the header drops"
       break
     fi
     log=$(phase_log "drop-$name")
@@ -765,14 +965,12 @@ step_drops() {
 
 step_timeout() {
   say "step 6/7: the client's timeout and retries (a proxy that answers $DELAY s late)"
-  local log started ended status attempts
+  local log started ended attempts
+  local status=0
   log=$(phase_log delay)
   start_proxy "$log" --token-file "$TOKEN_FILE" --delay "$DELAY"
   started=$(date +%s)
-  set +e
-  claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/delay.out" "$CALL_TIMEOUT" -p "say ok"
-  status=$?
-  set -e
+  claude_call "http://127.0.0.1:$PORT" "literal:$PLACEHOLDER" "$SCRATCH/delay.out" "$CALL_TIMEOUT" -p "say ok" || status=$?
   ended=$(date +%s)
   attempts=$(attempts_in "$log")
   if [ "$status" -eq 124 ]; then
@@ -855,6 +1053,7 @@ main() {
   CALL_TIMEOUT=${CHECK90_CALL_TIMEOUT:-240}
   TOTAL_SECONDS=${CHECK90_TOTAL_SECONDS:-1800}
   MAX_DROPS=${CHECK90_MAX_DROPS:-8}
+  VERSION_TIMEOUT=${CHECK90_VERSION_TIMEOUT:-30}
   UPSTREAM=${CHECK90_UPSTREAM:-api.anthropic.com}
   UPSTREAM_SCHEME=https
   case "$UPSTREAM" in
@@ -866,13 +1065,35 @@ main() {
     ;;
   esac
 
+  # The per-run placeholder the proxy requires on every request it swaps. It is
+  # generated here, before the first proxy starts, and is never written to a
+  # file: a fixed string could be replayed at the listener by anything else on
+  # this machine, and a per-run secret cannot (the review's m1).
+  PLACEHOLDER=$(random_placeholder) || stop "cannot generate this run's placeholder"
+  [ -n "$PLACEHOLDER" ] || stop "cannot generate this run's placeholder"
+
   need_tools
   scratch_up
   write_files
-  case "$(claude --version 2>/dev/null || true)" in
-  "") fact "claude-version" FAIL "claude --version printed nothing" ;;
-  *) fact "claude-version" PASS "$(claude --version 2>/dev/null | head -n 1)" ;;
+  # ONE `claude --version`, and under a cap of its own (the review's m4): a
+  # client that hangs on startup must not hold the whole run, and the version is
+  # printed once rather than probed twice.
+  local vout="$SCRATCH/claude-version.out" vstatus=0
+  with_timeout "$VERSION_TIMEOUT" claude --version >"$vout" 2>/dev/null || vstatus=$?
+  case "$vstatus" in
+  0)
+    local vtext
+    vtext=$(head -n 1 "$vout" 2>/dev/null || true)
+    if [ -n "$vtext" ]; then
+      fact "claude-version" PASS "$vtext"
+    else
+      fact "claude-version" FAIL "claude --version printed nothing"
+    fi
+    ;;
+  124) fact "claude-version" FAIL "claude --version did not answer within ${VERSION_TIMEOUT}s, so the client is not usable here (the probe is capped: CHECK90_VERSION_TIMEOUT)" ;;
+  *) fact "claude-version" FAIL "claude --version failed (status $vstatus)" ;;
   esac
+  guard_xtrace
   guard_env
   guard_settings
   ask_token
@@ -880,6 +1101,7 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     say "dry run: guards and prompts done, no calls made"
     fact "dry-run" PASS "guards and token prompt only"
+    fact "token-validity" INFO "a dry run made no call, so nothing about the token was measured — and this check never asks you to paste setup-token's line about its validity"
     return 0
   fi
 
@@ -891,14 +1113,26 @@ main() {
     # The swap call failed: tier A is decided, and the remaining prompts would
     # cost the owner more subscription traffic to learn nothing new.
     say "the swap call failed, so the remaining steps are skipped (they would spend prompts for nothing)"
-  elif [ "$(date +%s)" -lt "$DEADLINE" ]; then
-    step_streaming
-    step_drops
-    step_timeout
   else
-    fact "budget" FAIL "the run reached its ${TOTAL_SECONDS}s budget; the last three steps did not run"
+    # Each step is checked against the budget as it is reached, so the run
+    # stops where the budget ran out rather than a step later.
+    local step
+    for step in step_streaming step_drops step_timeout; do
+      if past_deadline; then
+        budget_exceeded "$step"
+        continue
+      fi
+      "$step"
+    done
   fi
 
+  # The verdict is a RETURN VALUE, not an error: from here on the ERR trap is
+  # off, so `tier_a` answering 1 (tier A not viable) is not rewritten as an
+  # internal error. (Guarding the whole call instead -- `main "$@" || rc=$?` --
+  # would be worse than useless: bash turns errexit OFF inside a function called
+  # from an && or || list, so that form silently disables `set -e`, and this
+  # trap with it, for the entire run.)
+  trap - ERR
   local rc=0
   tier_a || rc=$?
   return "$rc"
@@ -906,4 +1140,7 @@ main() {
 
 trap finish EXIT
 trap 'owner "interrupted"; exit 130' INT TERM
+trap on_error ERR
+# No `|| ...` around this call, for the reason spelled out where main turns the
+# trap off before its verdict: an || list would switch errexit off inside main.
 main "$@"
