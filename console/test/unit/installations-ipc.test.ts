@@ -843,6 +843,33 @@ describe('the picker’s checkout', () => {
       expect(data.rows.find((row) => row.project === 'sandbox')?.checkout).toBeUndefined()
     }
   })
+
+  it('writes nothing when a listed project this console holds no record for is cleared', async () => {
+    // The other half of the case above, and the one the console got wrong: a
+    // project the CLI lists and this console never chose has **no record at
+    // all**, so there is no checkout to clear. The reply is still the ordinary
+    // list -- the request was satisfiable, it had nothing to do -- but a clear
+    // that reached `registry.setCheckout` would *create* a record for it
+    // (`recordOf(project)`), writing `installations.json` for an installation the
+    // operator never chose: from then on the row is `saved`, the console calls
+    // its mode `reduced` for it, and the row can be removed -- every one of them
+    // a claim about an installation this console does not hold.
+    const { directory } = withCheckouts()
+    const { picker, ipcMain } = pickerOver({ prefixes: [directory] })
+    await answer(ipcMain, 'list')
+    // The store the picker names for itself, and the state it is in first: a
+    // launch that has chosen nothing has no file at all, which is what makes the
+    // assertion below about this clear rather than about some earlier write.
+    const file = picker.storePath
+    expect(existsSync(file), 'the store wrote a file before anything was chosen').toBe(false)
+    const cleared = await answer(ipcMain, 'checkout', { project: 'sandbox' })
+    expect(cleared.ok).toBe(true)
+    if (cleared.ok) {
+      const data = cleared.data as { rows: readonly { project: string; saved: boolean }[] }
+      expect(data.rows.map((row) => [row.project, row.saved])).toEqual([['sandbox', false]])
+    }
+    expect(existsSync(file), 'a clear wrote a record for a project the console holds nothing about').toBe(false)
+  })
 })
 
 describe('the picker’s remove', () => {

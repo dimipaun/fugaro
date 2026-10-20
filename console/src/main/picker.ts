@@ -664,7 +664,16 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       return { ok: false, reason: `no installation is named ${JSON.stringify(project)}` }
     }
     if (checkout === undefined) {
-      registry.setCheckout(project, undefined)
+      // **A clear is a write only when there is something to clear.** A project
+      // the CLI listed and this console holds no record for has no checkout, and
+      // `registry.setCheckout` creates a record for a project it holds none
+      // (`recordOf`), so reaching it here would answer a no-op by writing
+      // `installations.json` for an installation the operator never chose -- and
+      // the row would come back `saved`, with the console's own mode for it and a
+      // removal offer. The reply is the ordinary list either way: the request was
+      // satisfiable, it just had nothing to do. `held` is the same read the guard
+      // above used, so this is one lookup and not two.
+      if (held !== null) registry.setCheckout(project, undefined)
       return { ok: true, data: await listReply() }
     }
     // Membership of the list the CLI printed, and not a shape check: a path that
