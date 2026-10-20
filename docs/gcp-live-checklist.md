@@ -1048,7 +1048,7 @@ Run by the maintainer with temporary Token Creator grants (removed by the script
 
 **NOT RUN, and this section now says one thing about that (F22).** The register used to state the section's status twice, and the two statements disagreed: the row, this heading and the prose said *not run* while the same section carried *"Results of the seventh live run (M11, check 27)"*. Both facts are true, about **different text**, and the rewrite separates them:
 
-- **The run recorded below — 2026-10-04 and 2026-10-05, the `0.2.0` release, the throwaway project `fugaro-live-20261005` — is the record of what the OLD command lines proved**: `fugaro init`, `init --create-project`, `init --link-billing` and `init --firebase`, the lines this rewrite renames to `fugaro setup`, `fugaro update` and `--firebase-project`. It stays exactly as it was written, because it is the **only** evidence the probes this section keeps have (the four Claude Code spikes, the mirror, the hidden secret prompts, the hostile-clone gate, `doctor`, `update-skills`, the teammate's adopt run, `/fugaro:setup` and the prompt-injection probe — `grep -n 'injection\|hostile' docs/gcp-live-checklist.md` names this section and nothing else, so a rewrite that dropped them would delete a record already paid for).
+- **The run recorded below — 2026-10-04 and 2026-10-05, the `0.2.0` release, the throwaway project `fugaro-live-20261005` — is the record of what the OLD command lines proved**: `fugaro init`, `init --create-project`, `init --link-billing` and `init --firebase`, the lines this rewrite renames to `fugaro setup`, `fugaro update` and `--firebase-project`. It stays exactly as it was written, because it is the **only** evidence the probes this section keeps have (the four Claude Code spikes, the mirror, the hidden secret prompts, the hostile-clone gate, `doctor`, `update-skills`, the teammate's adopt run, `/fugaro:setup` and the prompt-injection probe — `grep -n 'injection\|hostile' docs/gcp-live-checklist.md` returns Check 27's register row and its section and nothing else in the whole register, so a rewrite that dropped them would delete a record already paid for).
 - **The steps below have not been run at all.** The wizard's question order is new (W3.5), the billing picker is new (W4.3), `--firebase` is renamed, and every command line the owner types has changed.
 
 So the row above, this heading, this prose and the results table all say the same thing: **the probes are proven by the 2026-10-04/05 run; the rewritten text is not run.**
@@ -1170,9 +1170,10 @@ echo "buckets left: $(gcloud storage buckets list --project="${P:?}" --format='v
 #     the installation's and the repository's secret CONTAINERS in P by design
 #     (deploy/terraform/gcp/modules/installation/secrets.tf, modules/repo/
 #     secrets.tf — with prevent_destroy, since dropping a key is a hard failure),
-#     and fugaro init's secrets stage stored the App key and claude-oauth-token
-#     into them. So they are the installation's own, they die with the project,
-#     and a "must read 0" line here could never pass. List them instead, as
+#     and the secrets stage this check's `fugaro setup`/`fugaro update` runs
+#     stored the App key and claude-oauth-token into them. So they are the
+#     installation's own, they die with the project, and a "must read 0" line
+#     here could never pass. List them instead, as
 #     EVIDENCE that the install left exactly what it should — names only, never
 #     a value — and record the count:
 gcloud secrets list --project="${P:?}" --format='value(name)'
@@ -5858,7 +5859,10 @@ need_s_enabled() {   # the state mode 2's premise requires, asserted BEFORE the 
   local got           # with the API off on S the mode would take the disabled-API
                       # path mode 1 already covers, and would prove nothing
   got=$(gcloud services list --enabled --project="${S:?}" --filter='config.name:cloudbilling.googleapis.com' --format='value(config.name)' | wc -l)
-  [ "$got" = 1 ] || { echo "Check 111 stopped: mode $1 needs cloudbilling.googleapis.com ENABLED on S=$S (it reads $got) — enable it and re-run this block" >&2; return 1; }
+  # -ge, not =: this check is written for macOS too, where wc pads its count
+  # ("       1"), and a string test would stop mode 2 on the very state it
+  # requires. ${got:-0} keeps an empty read from being a syntax error.
+  [ "${got:-0}" -ge 1 ] || { echo "Check 111 stopped: mode $1 needs cloudbilling.googleapis.com ENABLED on S=$S (it reads $got) — enable it and re-run this block" >&2; return 1; }
 }
 
 # The fallback, maimed BY HAND where a mode needs neither source to answer: a
@@ -5940,7 +5944,7 @@ plain() {
     assert_mode 2a may-list
     ```
 
-   The API call is refused (403) and the picker must **fall back to `gcloud billing accounts list`**, **say which source answered**, and list what it returns. **FACT:** which account ADC was logged in as, which source answered, the exact message that says so, and whether the fallback listed anything the API's own answer would not have — the two sources can disagree, and that is what this run is for. **A list here is not a leak**: it is the designed fallback, so only the account *ids* are asserted.
+   The API call is refused (403) and the picker must **fall back to `gcloud billing accounts list`**, **say which source answered**, and list what it returns. **FACT:** which account ADC was logged in as, which source answered, the exact message that says so, and whether the fallback listed anything the API's own answer would not have — the two sources can disagree, and that is what this run is for. **A list here is not a leak**: it is the designed fallback, and D6's picker shows each account's display name **and** id, so this is the **one** run whose capture `assert_mode` exempts from the leak greps — record what it listed rather than failing it.
    **(b) Neither answers.** `maim_fallback` first — the API refuses *and* the fallback is maimed — then `capture 2b …` as above and `assert_mode 2b`. The picker must print the guided line: what it must **not** do is crash, print a raw API error as its only output, or claim an account exists. If you took the route that removes the billing role from your own account, ADC stays your usual account here; either way the API refuses and the fallback is maimed. **FACT:** the exact message, **which source answered** (neither), and the assertions.
 3. **No TTY.** No pty here — a pty is exactly what this mode must not have, so **do not use `capture`**:
 
@@ -6004,13 +6008,20 @@ assert_mode() {
     2a|2b)
       echo "   S cloudbilling: $(gcloud services list --enabled --project="${S:?}" --filter='config.name:cloudbilling.googleapis.com' --format='value(config.name)' | wc -l)  # must read 1: mode 2's premise is an API that IS enabled, and nothing may disable it either";;
   esac
-  # (3) no account identifier: the API's resource form, and any id you wrote down
-  local ids
-  ids=$(grep -ohE 'billingAccounts/[A-Za-z0-9_-]+' $files | sort -u)
-  [ -z "$ids" ] || { echo "   FAIL: an account resource id is in the capture: $ids" >&2; return 1; }
-  if [ -s "$CHK111/account-ids.txt" ]; then
-    ids=$(grep -ohFf "$CHK111/account-ids.txt" $files | sort -u)
-    [ -z "$ids" ] || { echo "   FAIL: one of YOUR account ids (account-ids.txt) is in the capture: $ids" >&2; return 1; }
+  # (3) no account identifier: the API's resource form, and any id you wrote
+  #     down. Mode 2(a) is exempt, and has to be: D6's picker shows each
+  #     account's display name AND id, so the fallback's own answer carries the
+  #     ids, and a FAIL here would be a FAIL on the mode working as designed.
+  if [ "$may" = may-list ]; then
+    echo "   mode 2(a): the ids are in the list on purpose — record them, do not fail them"
+  else
+    local ids
+    ids=$(grep -ohE 'billingAccounts/[A-Za-z0-9_-]+' $files | sort -u)
+    [ -z "$ids" ] || { echo "   FAIL: an account resource id is in the capture: $ids" >&2; return 1; }
+    if [ -s "$CHK111/account-ids.txt" ]; then
+      ids=$(grep -ohFf "$CHK111/account-ids.txt" $files | sort -u)
+      [ -z "$ids" ] || { echo "   FAIL: one of YOUR account ids (account-ids.txt) is in the capture: $ids" >&2; return 1; }
+    fi
   fi
   # (4) no list of accounts: no display name of yours, no numbered list.
   #     The words "billing accounts" are NOT a leak: the guided line's hint names
@@ -6028,7 +6039,7 @@ assert_mode() {
 }
 ```
 
-**`account-ids.txt` is optional and `account-names.txt` is not.** Write your billing accounts' display names to `$CHK111/account-names.txt`, one per line, before mode 1 — they are the strings a leak would print. Their **ids** go in `$CHK111/account-ids.txt` only if you want them asserted too (the check never needs them and never asks you to paste them): with that file present, every mode's capture is also grepped for the ids themselves. A count above `0` from the numbered-list grep is a numbered line, not necessarily an account list — look at the line: the picker's own list reads `<n>. <display name>` or `<n>) …`, and the display-name grep above is what settles it. If the run's **own** step numbering trips it, say so in the `FACT` line and paste the matching lines.
+**`account-ids.txt` is optional and `account-names.txt` is not.** Write your billing accounts' display names to `$CHK111/account-names.txt`, one per line, before mode 1 — they are the strings a leak would print. Their **ids** go in `$CHK111/account-ids.txt` only if you want them asserted too (the check never needs them and never asks you to paste them): with that file present, every mode's capture **except mode 2(a)'s** is also grepped for the ids themselves — mode 2(a) is the run that lists the accounts, ids and all, by design. A count above `0` from the numbered-list grep is a numbered line, not necessarily an account list — look at the line: the picker's own list reads `<n>. <display name>` or `<n>) …`, and the display-name grep above is what settles it. If the run's **own** step numbering trips it, say so in the `FACT` line and paste the matching lines.
 
 **Passes when:** **each of the seven runs** (1a, 1b, 2a, 2b, 3, 4, 5) has its own capture under `$CHK111` and `assert_mode` read it without a `FAIL`; each ends in the guided `gcloud billing projects link` line; no API was enabled in `P` by any mode, `Q`'s is still off in mode 1(b), and `S`'s is **still on** in mode 2 (mode 1(a)'s typed offer was declined, and it is the **only** mode in which an offer may appear at all — mode 1(b) must refuse instead, and mode 2 never reaches the disabled-API path at all); no numbered account list, display name or account id appears on stdout, on stderr or in `--json`'s document — **except mode 2(a)**, the one run where the `gcloud` fallback is expected to list, and it must say which source answered; mode 3 and mode 4 do not block waiting for input; and mode 5's run applies nothing, `--yes` or not.
 

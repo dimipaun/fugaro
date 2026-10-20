@@ -91,6 +91,61 @@ func TestDocsChecklistPlanStatusCitationsNameTheStatusLine(t *testing.T) {
 	}
 }
 
+// TestDocsChecklistInjectionGrepNamesCheck27sRowAndSection: Check 27's intro
+// and the plan's D10 both justify keeping the old probes with the same fact —
+// the grep for them returns Check 27's register row and its section, and
+// nothing else in the whole register. The review found the section paraphrasing
+// that as "this section and nothing else", which the grep itself contradicts
+// (line 499, the register's own row 27). So the claim is computed here: every
+// line the pattern matches is either that row or a line of Check 27's section.
+func TestDocsChecklistInjectionGrepNamesCheck27sRowAndSection(t *testing.T) {
+	doc := readDoc(t, setupWizardChecklist)
+	// the pattern the two documents quote, matched case-sensitively as grep does
+	pattern := regexp.MustCompile(`injection|hostile`)
+
+	registerEnd := strings.Index(doc, "\n## Check ")
+	sectionStart := strings.Index(doc, check27Heading)
+	sectionEnd := strings.Index(doc, check28Heading)
+	if registerEnd < 0 || sectionStart < 0 || sectionEnd < sectionStart {
+		t.Fatalf("%s has no register followed by Check 27: the grep's two halves cannot be told apart", setupWizardChecklist)
+	}
+
+	var rows, inSection []int
+	off := 0
+	for i, line := range strings.Split(doc, "\n") {
+		at := off
+		off += len(line) + 1
+		if !pattern.MatchString(line) {
+			continue
+		}
+		switch {
+		case at < registerEnd:
+			rows = append(rows, i+1)
+		case at >= sectionStart && at < sectionEnd:
+			inSection = append(inSection, i+1)
+		default:
+			t.Errorf("line %d matches the grep Check 27's intro and D10 both quote, and it is neither the register's row 27 nor a line of Check 27's section: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+	if len(rows) != 1 {
+		t.Errorf("the grep returns %d line(s) of the register (%v), and both Check 27's intro and D10 say it returns that check's row: %s", len(rows), rows, setupWizardChecklist)
+	}
+	if len(inSection) < 3 {
+		t.Errorf("the grep returns %d line(s) of Check 27's section (%v): the probes it is quoted for are gone", len(inSection), inSection)
+	}
+
+	// And the sentence has to say what the grep returns, the way D10 says it.
+	// Paraphrased as "this section and nothing else" it is false, because the
+	// register's own row 27 is the first line the grep prints.
+	const claim = "returns Check 27's register row and its section and nothing else in the whole register"
+	if !strings.Contains(flattenDoc(readDoc(t, setupWizardD5)), claim) {
+		t.Errorf("D10 in %s no longer states the grep's result as %q: Check 27's intro quotes it as the reason the old probes were kept", setupWizardD5, claim)
+	}
+	if !strings.Contains(flattenDoc(doc), claim) {
+		t.Errorf("Check 27's intro does not state the grep's result as D10 does — %q: a paraphrase that drops the register row turns a true claim into a false one", claim)
+	}
+}
+
 // TestDocsCheck27RestoreListsTheSecretsRatherThanCountingThem: the Restore's
 // final assertion has to be about the artifacts this check made — jobs and
 // buckets, which must read 0 — and the project's secrets must be out of it.
@@ -141,6 +196,19 @@ func TestDocsCheck27RestoreListsTheSecretsRatherThanCountingThem(t *testing.T) {
 			t.Errorf("Check 27's Restore cites %s, which is not on this tree: %v", module, err)
 		}
 	}
+
+	// The secrets are stored by the stage, and the stage is run by the commands
+	// this rewrite gives the owner (`fugaro setup`, `fugaro update`) — `fugaro
+	// init` is the old command line, and this rewrite renames it everywhere the
+	// owner types it. The Restore is inside the rewritten text, so it may not
+	// name it (except in the results table and the record below, which quote
+	// the old run on purpose and are outside this span).
+	if strings.Contains(restore, "fugaro init") {
+		t.Errorf("Check 27's Restore names `fugaro init`, which this rewrite renames: step 4 runs `fugaro setup` and step 16 runs `fugaro update`, and the Restore is rewritten text")
+	}
+	if !strings.Contains(restore, "the secrets stage this check's") {
+		t.Errorf("Check 27's Restore no longer says which run stores the project's secrets: the must-read-0 claim turns on the stage being this check's own")
+	}
 }
 
 // TestDocsCheck27DoctorStopStartsAtStepFive: the guard block's doctor stop
@@ -171,12 +239,35 @@ func TestDocsCheck27DoctorStopStartsAtStepFive(t *testing.T) {
 	}
 
 	// The stage that writes the config, on the tree: install() applies the
-	// installation root and then writes the config, which is why the config
-	// cannot exist before that stage's step.
-	initGo := readDoc(t, "internal/cli/init.go")
-	if !strings.Contains(initGo, "writeConfig(") {
-		t.Errorf("internal/cli/init.go no longer calls writeConfig: Check 27's step-5 paragraph is about the stage that does")
+	// installation root and THEN writes the config, which is why the config
+	// cannot exist before that stage's step. The call site is what the doc
+	// asserts, so it is read out of install()'s own body — the bare identifier
+	// is satisfied by writeConfig's own definition further down the file, and
+	// would hold this test up after install() stopped calling it.
+	body := funcBody(t, readDoc(t, "internal/cli/init.go"), "func (r *initRun) install(")
+	applied := strings.Index(body, "r.installRoot(")
+	written := strings.Index(body, "r.writeConfig(")
+	if applied < 0 || written < 0 {
+		t.Errorf("initRun.install() no longer applies the installation root (%d) and writes the config (%d) in that order: Check 27's step-5 paragraph is about the stage that does both", applied, written)
+	} else if applied > written {
+		t.Errorf("initRun.install() writes the config before the installation root's apply succeeds: Check 27's step-5 paragraph says the config is written once the apply has succeeded")
 	}
+}
+
+// funcBody is the text of the function whose declaration line starts with decl
+// (e.g. `func (r *initRun) install(`), up to the next top-level `func ` at the
+// start of a line. It fails the test when no such declaration is in the file.
+func funcBody(t *testing.T, src, decl string) string {
+	t.Helper()
+	i := strings.Index(src, decl)
+	if i < 0 {
+		t.Fatalf("this file has no %q: the function the checklist's claim rests on is gone", decl)
+	}
+	rest := src[i:]
+	if j := strings.Index(rest, "\nfunc "); j >= 0 {
+		return rest[:j]
+	}
+	return rest
 }
 
 // TestDocsCheck27ImageBuildIsStepTwentyAndNotInSectionA: the first image build
@@ -294,7 +385,10 @@ func TestDocsCheck111GuardDeclaresItsThirdProjectAndKeepsItsRoot(t *testing.T) {
 		"need_s_enabled() {",
 		// the premise, asserted against the project itself
 		`gcloud services list --enabled --project="${S:?}"`,
-		`[ "$got" = 1 ] ||`,
+		// an integer test, not a string one: this check runs on macOS too, and
+		// BSD wc pads its count ("       1"), so `= 1` would stop mode 2 on the
+		// very state it requires
+		`[ "${got:-0}" -ge 1 ] ||`,
 		// the root this check writes down once and reads back in every shell
 		`printf 'C=%s\n' "$CHK111/config" > "$CHK111/vars.env"`,
 		`. "$CHK111/vars.env"`,
@@ -401,8 +495,9 @@ func TestDocsCheck111AssertModeRefusesAModeWithNoCapture(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("Check 111 has no assert_mode function: the assertion block is gone")
 	}
+	body := code[i:]
 	var failures int
-	for _, line := range strings.Split(code[i:], "\n") {
+	for _, line := range strings.Split(body, "\n") {
 		if !strings.Contains(line, "FAIL:") {
 			continue
 		}
@@ -414,7 +509,27 @@ func TestDocsCheck111AssertModeRefusesAModeWithNoCapture(t *testing.T) {
 	if failures < 4 {
 		t.Errorf("Check 111's assert_mode has %d FAIL line(s): the block asserts a guided line, no account id, no display name and no numbered list, and each refusal has to be its own FAIL", failures)
 	}
-	if !strings.Contains(code[i:], "return 0") {
+	if !strings.Contains(body, "return 0") {
 		t.Errorf("Check 111's assert_mode no longer returns 0 on the pass path")
+	}
+
+	// Mode 2(a) is the run where the picker DOES list the accounts — display
+	// name AND id, per D6 — so the account-id greps have to be inside the
+	// may-list test's else branch. Above it, an owner who wrote the optional
+	// account-ids.txt gets a permanent FAIL out of the one run that is working
+	// as designed, which is the opposite of how the mode is described.
+	guarded := strings.Index(body, `if [ "$may" = may-list ]; then`)
+	idGrep := strings.Index(body, "billingAccounts/")
+	idsGrep := strings.Index(body, `account-ids.txt" $files`)
+	if guarded < 0 || idGrep < 0 || idsGrep < 0 {
+		t.Fatalf("Check 111's assert_mode no longer tests may-list (%d) and greps for account ids (%d, %d) in that shape", guarded, idGrep, idsGrep)
+	}
+	unlisted := strings.Index(body[guarded:], "\n  else")
+	if unlisted < 0 {
+		t.Fatalf("Check 111's may-list test has no else branch: the leak greps have nowhere to live")
+	}
+	unlisted += guarded
+	if idGrep < unlisted || idsGrep < unlisted {
+		t.Errorf("Check 111's assert_mode greps for account ids outside the may-list test's else branch (guard %d, else %d, id greps %d and %d): mode 2(a) lists the accounts by design, ids included", guarded, unlisted, idGrep, idsGrep)
 	}
 }
