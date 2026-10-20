@@ -1,0 +1,561 @@
+{
+  "project": "acme-platform",
+  "source": "history",
+  "by": "day",
+  "since": "2026-09-21",
+  "until": "2026-10-20",
+  "weeks": "",
+  "degraded": false,
+  "notice": null,
+  "rows": [
+    {
+      "key": "2026-09-21",
+      "start": "2026-09-21",
+      "end": "2026-09-21",
+      "partial": false,
+      "model_micros": 5500000,
+      "notional_micros": 12930000,
+      "compute_micros": 990000,
+      "run_hours": 1.32,
+      "runs": 3,
+      "calls": 42,
+      "tokens": {
+        "in": 552000,
+        "out": 63000,
+        "cache_read": 2760000,
+        "cache_write": 144000
+      }
+    },
+    {
+      "key": "2026-09-22",
+      "start": "2026-09-22",
+      "end": "2026-09-22",
+      "partial": false,
+      "model_micros": 11450000,
+      "notional_micros": 26910000,
+      "compute_micros": 2060000,
+      "run_hours": 2.31,
+      "runs": 4,
+      "calls": 57,
+      "tokens": {
+        "in": 737000,
+        "out": 84100,
+        "cache_read": 3680000,
+        "cache_write": 192000
+      }
+    },
+    {
+      "key": "2026-09-23",
+      "start": "2026-09-23",
+      "end": "2026-09-23",
+      "partial": false,
+      "model_micros": 8050000,
+      "notional_micros": 18920000,
+      "compute_micros": 1450000,
+      "run_hours": 1.74,
+      "runs": 5,
+      "calls": 72,
+      "tokens": {
+        "in": 922000,
+        "out": 105200,
+        "cache_read": 4600000,
+        "cache_write": 240000
+      }
+    },
+    {
+      "key": "2026-09-24",
+      "start": "2026-09-24",
+      "end": "2026-09-24",
+      "partial": false,
+      "model_micros": 14000000,
+      "notional_micros": 32900000,
+      "compute_micros": 2520000,
+      "run_hours": 2.73,
+      "runs": 3,
+      "calls": 45,
+      "tokens": {
+        "in": 555000,
+        "out": 63300,
+        "cache_read": 2760000,
+        "cache_write": 144000
+      }
+    },
+    {
+      "key": "2026-09-25",
+      "start": "2026-09-25",
+      "end": "2026-09-25",
+      "partial": false,
+      "model_micros": 10600000,
+      "notional_micros": 24910000,
+      "compute_micros": 1910000,
+      "run_hours": 2.17,
+      "runs": 4,
+      "calls": 60,
+      "tokens": {
+        "in": 740000,
+        "out": 84400,
+        "cache_read": 3680000,
+        "cache_write": 192000
+      }
+    },
+    {
+      "key": "2026-09-26",
+      "start": "2026-09-26",
+      "end": "2026-09-26",
+      "partial": false,
+      "model_micros": 2400000,
+      "notional_micros": 5640000,
+      "compute_micros": 430000,
+      "run_hours": 0.8,
+      "runs": 2,
+      "calls": 28,
+      "tokens": {
+        "in": 373000,
+        "out": 42500,
+        "cache_read": 1840000,
+        "cache_write": 96000
+      }
+    },
+    {
+      "key": "2026-09-27",
+      "start": "2026-09-27",
+      "end": "2026-09-27",
+      "partial": false,
+      "model_micros": 1600000,
+      "notional_micros": 3760000,
+      "compute_micros": 290000,
+      "run_hours": 0.67,
+      "runs": 1,
+      "calls": 15,
+      "tokens": {
+        "in": 190000,
+        "out": 21600,
+        "cache_read": 920000,
+        "cache_write": 48000
+      }
+    },
+    {
+      "key": "2026-09-28",
+      "start": "2026-09-28",
+      "end": "2026-09-28",
+      "partial": false,
+      "model_micros": 9750000,
+      "notional_micros": 22910000,
+      "compute_micros": 1760000,
+      "run_hours": 2.03,
+      "runs": 4,
+      "calls": 58,
+      "tokens": {
+        "in": 743000,
+        "out": 84700,
+        "cache_read": 3680000,
+        "cache_write": 192000
+      }
+    },
+    {
+      "key": "2026-09-29",
+      "start": "2026-09-29",
+      "end": "2026-09-29",
+      "partial": false,
+      "model_micros": 6350000,
+      "notional_micros": 14920000,
+      "compute_micros": 1140000,
+      "run_hours": 1.46,
+      "runs": 5,
+      "calls": 73,
+      "tokens": {
+        "in": 928000,
+        "out": 105800,
+        "cache_read": 4600000,
+        "cache_write": 240000
+      }
+    },
+    {
+      "key": "2026-09-30",
+      "start": "2026-09-30",
+      "end": "2026-09-30",
+      "partial": false,
+      "model_micros": 12300000,
+      "notional_micros": 28910000,
+      "compute_micros": 2210000,
+      "run_hours": 2.45,
+      "runs": 3,
+      "calls": 46,
+      "tokens": {
+        "in": 561000,
+        "out": 63900,
+        "cache_read": 2760000,
+        "cache_write": 144000
+      }
+    },
+    {
+      "key": "2026-10-01",
+      "start": "2026-10-01",
+      "end": "2026-10-01",
+      "partial": false,
+      "model_micros": 8900000,
+      "notional_micros": 20920000,
+      "compute_micros": 1600000,
+      "run_hours": 1.88,
+      "runs": 4,
+      "calls": 56,
+      "tokens": {
+        "in": 746000,
+        "out": 85000,
+        "cache_read": 3680000,
+        "cache_write": 192000
+      }
+    },
+    {
+      "key": "2026-10-02",
+      "start": "2026-10-02",
+      "end": "2026-10-02",
+      "partial": false,
+      "model_micros": 5500000,
+      "notional_micros": 12930000,
+      "compute_micros": 990000,
+      "run_hours": 1.32,
+      "runs": 5,
+      "calls": 71,
+      "tokens": {
+        "in": 931000,
+        "out": 106100,
+        "cache_read": 4600000,
+        "cache_write": 240000
+      }
+    },
+    {
+      "key": "2026-10-03",
+      "start": "2026-10-03",
+      "end": "2026-10-03",
+      "partial": false,
+      "model_micros": 1600000,
+      "notional_micros": 3760000,
+      "compute_micros": 290000,
+      "run_hours": 0.67,
+      "runs": 1,
+      "calls": 16,
+      "tokens": {
+        "in": 196000,
+        "out": 22200,
+        "cache_read": 920000,
+        "cache_write": 48000
+      }
+    },
+    {
+      "key": "2026-10-04",
+      "start": "2026-10-04",
+      "end": "2026-10-04",
+      "partial": false,
+      "model_micros": 2000000,
+      "notional_micros": 4700000,
+      "compute_micros": 360000,
+      "run_hours": 0.73,
+      "runs": 2,
+      "calls": 31,
+      "tokens": {
+        "in": 381000,
+        "out": 43300,
+        "cache_read": 1840000,
+        "cache_write": 96000
+      }
+    },
+    {
+      "key": "2026-10-05",
+      "start": "2026-10-05",
+      "end": "2026-10-05",
+      "partial": false,
+      "model_micros": 14000000,
+      "notional_micros": 32900000,
+      "compute_micros": 2520000,
+      "run_hours": 2.73,
+      "runs": 5,
+      "calls": 74,
+      "tokens": {
+        "in": 934000,
+        "out": 106400,
+        "cache_read": 4600000,
+        "cache_write": 240000
+      }
+    },
+    {
+      "key": "2026-10-06",
+      "start": "2026-10-06",
+      "end": "2026-10-06",
+      "partial": false,
+      "model_micros": 10600000,
+      "notional_micros": 24910000,
+      "compute_micros": 1910000,
+      "run_hours": 2.17,
+      "runs": 3,
+      "calls": 42,
+      "tokens": {
+        "in": 567000,
+        "out": 64500,
+        "cache_read": 2760000,
+        "cache_write": 144000
+      }
+    },
+    {
+      "key": "2026-10-07",
+      "start": "2026-10-07",
+      "end": "2026-10-07",
+      "partial": false,
+      "model_micros": 7200000,
+      "notional_micros": 16920000,
+      "compute_micros": 1300000,
+      "run_hours": 1.6,
+      "runs": 4,
+      "calls": 57,
+      "tokens": {
+        "in": 752000,
+        "out": 85600,
+        "cache_read": 3680000,
+        "cache_write": 192000
+      }
+    },
+    {
+      "key": "2026-10-08",
+      "start": "2026-10-08",
+      "end": "2026-10-08",
+      "partial": false,
+      "model_micros": 13150000,
+      "notional_micros": 30900000,
+      "compute_micros": 2370000,
+      "run_hours": 2.59,
+      "runs": 5,
+      "calls": 72,
+      "tokens": {
+        "in": 937000,
+        "out": 106700,
+        "cache_read": 4600000,
+        "cache_write": 240000
+      }
+    },
+    {
+      "key": "2026-10-09",
+      "start": "2026-10-09",
+      "end": "2026-10-09",
+      "partial": false,
+      "model_micros": 9750000,
+      "notional_micros": 22910000,
+      "compute_micros": 1760000,
+      "run_hours": 2.03,
+      "runs": 3,
+      "calls": 45,
+      "tokens": {
+        "in": 570000,
+        "out": 64800,
+        "cache_read": 2760000,
+        "cache_write": 144000
+      }
+    },
+    {
+      "key": "2026-10-10",
+      "start": "2026-10-10",
+      "end": "2026-10-10",
+      "partial": false,
+      "model_micros": 2000000,
+      "notional_micros": 4700000,
+      "compute_micros": 360000,
+      "run_hours": 0.73,
+      "runs": 2,
+      "calls": 32,
+      "tokens": {
+        "in": 387000,
+        "out": 43900,
+        "cache_read": 1840000,
+        "cache_write": 96000
+      }
+    },
+    {
+      "key": "2026-10-11",
+      "start": "2026-10-11",
+      "end": "2026-10-11",
+      "partial": false,
+      "model_micros": 2400000,
+      "notional_micros": 5640000,
+      "compute_micros": 430000,
+      "run_hours": 0.8,
+      "runs": 1,
+      "calls": 14,
+      "tokens": {
+        "in": 204000,
+        "out": 23000,
+        "cache_read": 920000,
+        "cache_write": 48000
+      }
+    },
+    {
+      "key": "2026-10-12",
+      "start": "2026-10-12",
+      "end": "2026-10-12",
+      "partial": false,
+      "model_micros": 8900000,
+      "notional_micros": 20920000,
+      "compute_micros": 1600000,
+      "run_hours": 1.88,
+      "runs": 3,
+      "calls": 43,
+      "tokens": {
+        "in": 573000,
+        "out": 65100,
+        "cache_read": 2760000,
+        "cache_write": 144000
+      }
+    },
+    {
+      "key": "2026-10-13",
+      "start": "2026-10-13",
+      "end": "2026-10-13",
+      "partial": false,
+      "model_micros": 5500000,
+      "notional_micros": 12930000,
+      "compute_micros": 990000,
+      "run_hours": 1.32,
+      "runs": 4,
+      "calls": 58,
+      "tokens": {
+        "in": 758000,
+        "out": 86200,
+        "cache_read": 3680000,
+        "cache_write": 192000
+      }
+    },
+    {
+      "key": "2026-10-14",
+      "start": "2026-10-14",
+      "end": "2026-10-14",
+      "partial": false,
+      "model_micros": 11450000,
+      "notional_micros": 26910000,
+      "compute_micros": 2060000,
+      "run_hours": 2.31,
+      "runs": 5,
+      "calls": 73,
+      "tokens": {
+        "in": 943000,
+        "out": 107300,
+        "cache_read": 4600000,
+        "cache_write": 240000
+      }
+    },
+    {
+      "key": "2026-10-15",
+      "start": "2026-10-15",
+      "end": "2026-10-15",
+      "partial": false,
+      "model_micros": 8050000,
+      "notional_micros": 18920000,
+      "compute_micros": 1450000,
+      "run_hours": 1.74,
+      "runs": 3,
+      "calls": 46,
+      "tokens": {
+        "in": 576000,
+        "out": 65400,
+        "cache_read": 2760000,
+        "cache_write": 144000
+      }
+    },
+    {
+      "key": "2026-10-16",
+      "start": "2026-10-16",
+      "end": "2026-10-16",
+      "partial": false,
+      "model_micros": 14000000,
+      "notional_micros": 32900000,
+      "compute_micros": 2520000,
+      "run_hours": 2.73,
+      "runs": 4,
+      "calls": 56,
+      "tokens": {
+        "in": 761000,
+        "out": 86500,
+        "cache_read": 3680000,
+        "cache_write": 192000
+      }
+    },
+    {
+      "key": "2026-10-17",
+      "start": "2026-10-17",
+      "end": "2026-10-17",
+      "partial": false,
+      "model_micros": 2400000,
+      "notional_micros": 5640000,
+      "compute_micros": 430000,
+      "run_hours": 0.8,
+      "runs": 1,
+      "calls": 15,
+      "tokens": {
+        "in": 210000,
+        "out": 23600,
+        "cache_read": 920000,
+        "cache_write": 48000
+      }
+    },
+    {
+      "key": "2026-10-18",
+      "start": "2026-10-18",
+      "end": "2026-10-18",
+      "partial": false,
+      "model_micros": 1600000,
+      "notional_micros": 3760000,
+      "compute_micros": 290000,
+      "run_hours": 0.67,
+      "runs": 2,
+      "calls": 30,
+      "tokens": {
+        "in": 395000,
+        "out": 44700,
+        "cache_read": 1840000,
+        "cache_write": 96000
+      }
+    },
+    {
+      "key": "2026-10-19",
+      "start": "2026-10-19",
+      "end": "2026-10-19",
+      "partial": false,
+      "model_micros": 13150000,
+      "notional_micros": 30900000,
+      "compute_micros": 2370000,
+      "run_hours": 2.59,
+      "runs": 4,
+      "calls": 59,
+      "tokens": {
+        "in": 764000,
+        "out": 86800,
+        "cache_read": 3680000,
+        "cache_write": 192000
+      }
+    },
+    {
+      "key": "2026-10-20",
+      "start": "2026-10-20",
+      "end": "2026-10-20",
+      "partial": true,
+      "model_micros": 9750000,
+      "notional_micros": 22910000,
+      "compute_micros": 1760000,
+      "run_hours": 2.03,
+      "runs": 5,
+      "calls": 74,
+      "tokens": {
+        "in": 949000,
+        "out": 107900,
+        "cache_read": 4600000,
+        "cache_write": 240000
+      }
+    }
+  ],
+  "totals": {
+    "model_micros": 233900000,
+    "notional_micros": 549690000,
+    "compute_micros": 42120000,
+    "run_hours": 51,
+    "runs": 100,
+    "partial": true
+  },
+  "warnings": []
+}

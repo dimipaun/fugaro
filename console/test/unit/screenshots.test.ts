@@ -1,0 +1,764 @@
+// The screenshot run's own rules, held without a window (owner ruling
+// 2026-10-20, step 5).
+//
+// The run itself launches Electron, and no unit test here does: what is held is
+// everything the run decides *before* and *after* a window exists --
+//
+//   1. **the refusals** (`tools/screenshots/isolation.ts`): a resolution that is
+//      not the fixture binary, and a launch environment or profile that names
+//      anything outside this run's scratch tree. These are the two rules that
+//      make "a screenshot could not have been of a real installation" a checked
+//      fact, so each is driven with the planted value and asserted to name it;
+//   2. **the environment allow-list**: a credential-shaped key in the ambient
+//      environment does not reach the child, and the three paths the run owns do;
+//   3. **the fixtures**: every document in `test/fixtures/screenshots/` goes
+//      through the console's **own** decoder, and the ids and project names the
+//      pictures depend on are asserted to agree across files. A fixture the
+//      console would refuse is a picture of a refusal, and this is the only
+//      place that is cheap to notice;
+//   4. **the manifest** (`tools/screenshots/manifest.ts`): the shape the website
+//      reads, and the five ways a manifest can be readable-but-wrong;
+//   5. **the blank-image check** (`tools/screenshots/png.ts`): a uniform
+//      rectangle is refused, a drawn one is not, and a capture at the wrong size
+//      is refused -- on PNGs built by the encoder below, because the check has to
+//      be driven with a picture whose pixels are known.
+//
+// What is *not* here, stated plainly: the Electron launch, the window's real
+// size, and the fact that a screen draws at all. Those need a display, and the
+// owner's own run (`scripts/console-screenshots.sh`) is where they are
+// exercised -- see `console/README.md`.
+
+import { readFileSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { deflateSync } from 'node:zlib'
+
+import { afterAll, describe, expect, it } from 'vitest'
+
+import { readInstallationFile } from '../../src/main/installations'
+import { decodeDocument, decodeSnapshot } from '../../src/shared/schema'
+import { buildRunModel, parseLogWindow } from '../../src/renderer/screens/run'
+import { SPEND_ACCOUNTS, buildSpendModel } from '../../src/renderer/screens/spend'
+import { parseLogEntries } from '../../src/source/cli'
+import type { JSONDoc } from '../../src/source/source'
+import { FIXTURE_COMMANDS, installScreenshotFixture, FIXTURES_RELATIVE, SEED_FILE_NAME } from '../../tools/screenshots/fixture'
+import { assertFixtureBinary, assertIsolated, launchEnvironment, newIsolation } from '../../tools/screenshots/isolation'
+import type { Isolation } from '../../tools/screenshots/isolation'
+import { BLANK_STDDEV_FLOOR, assertUsableCapture, decodePng, pixelStdDev } from '../../tools/screenshots/png'
+import { CAPTURE_WINDOW, buildManifest, serializeManifest, sha256Of } from '../../tools/screenshots/manifest'
+import { CAPTURE_PIXELS, OMISSIONS, PICKER_SCREEN, RUN_ID, SCREENS } from '../../tools/screenshots/screens'
+import { STUB_COMMAND_KEYS } from './stub'
+
+/** CONSOLE_ROOT is the console package, from this file's own location: the
+ * fixtures are read from the tree rather than from a copy of it. */
+const CONSOLE_ROOT = fileURLToPath(new URL('../../', import.meta.url))
+
+/** FIXTURES is `test/fixtures/screenshots`. */
+const FIXTURES = join(CONSOLE_ROOT, ...FIXTURES_RELATIVE)
+
+function fixture(name: string): string {
+  return readFileSync(join(FIXTURES, name), 'utf8')
+}
+
+// ---------------------------------------------------------------------------
+// 1. The refusals.
+// ---------------------------------------------------------------------------
+
+describe('the run refuses to start against anything but its own fixture', () => {
+  const scratch = '/tmp/fugaro-console-screenshots-abc123'
+  const isolation: Isolation = Object.freeze({
+    scratch,
+    home: join(scratch, 'home'),
+    xdgConfigHome: join(scratch, 'home', '.config'),
+    userData: join(scratch, 'user-data'),
+    bin: join(scratch, 'bin'),
+  })
+  const cleanEnv: Readonly<Record<string, string>> = Object.freeze({
+    PATH: isolation.bin,
+    HOME: isolation.home,
+    XDG_CONFIG_HOME: isolation.xdgConfigHome,
+  })
+
+  it('answers nothing but the fixture binary from the resolver', () => {
+    const fixtureBinary = join(isolation.bin, 'fugaro')
+    // The same path is not a refusal: it is the answer the run wants.
+    expect(() => {
+      assertFixtureBinary(fixtureBinary, fixtureBinary, 'the console’s startup handshake')
+    }).not.toThrow()
+  })
+
+  it('refuses a resolved binary that is not the fixture, naming the path it found', () => {
+    // The failure this exists for: a machine with a real `fugaro` in
+    // `/opt/homebrew/bin`, which the resolver's order reaches before any `PATH`
+    // entry. A run that proceeded here would photograph the operator's own runs.
+    expect(() => {
+      assertFixtureBinary('/opt/homebrew/bin/fugaro', join(isolation.bin, 'fugaro'), 'the startup handshake')
+    }).toThrow(/refuses to start.*the startup handshake.*\/opt\/homebrew\/bin\/fugaro/)
+  })
+
+  it('refuses a resolution that found no fugaro at all', () => {
+    expect(() => {
+      assertFixtureBinary(null, join(isolation.bin, 'fugaro'), 'the startup handshake')
+    }).toThrow(/no fugaro at all/)
+  })
+
+  it('refuses a HOME outside the scratch tree, naming the key and the path', () => {
+    expect(() => {
+      assertIsolated({
+        env: { ...cleanEnv, HOME: '/Users/somebody' },
+        isolation,
+        userDataDir: null,
+        real: { home: '/Users/somebody', xdgConfigHome: null },
+      })
+    }).toThrow(/refuses to start: HOME is the operator's home directory \(\/Users\/somebody\)/)
+  })
+
+  it("refuses the operator's real XDG_CONFIG_HOME even when it is inside a scratch-looking path", () => {
+    // The path is under the scratch tree *and* is the real config home: the
+    // two rules are separate, and the second one wins, because a directory the
+    // operator's CLI writes is a directory that can hold an installation.
+    const inside = join(scratch, 'home', '.config')
+    expect(inside.startsWith(scratch)).toBe(true)
+    expect(() => {
+      assertIsolated({
+        env: { ...cleanEnv, XDG_CONFIG_HOME: inside },
+        isolation,
+        userDataDir: null,
+        real: { home: '/Users/somebody', xdgConfigHome: inside },
+      })
+    }).toThrow(/XDG_CONFIG_HOME is the operator's XDG_CONFIG_HOME/)
+  })
+
+  it('refuses a profile outside the scratch tree', () => {
+    expect(() => {
+      assertIsolated({
+        env: cleanEnv,
+        isolation,
+        userDataDir: '/Users/somebody/Library/Application Support/Fugaro Console',
+        real: { home: '/Users/somebody', xdgConfigHome: null },
+      })
+    }).toThrow(/--user-data-dir is \/Users\/somebody\/Library\/Application Support\/Fugaro Console, which is outside/)
+  })
+
+  it('refuses an environment with no HOME or no XDG_CONFIG_HOME at all', () => {
+    const { HOME: _home, ...noHome } = cleanEnv
+    expect(() => {
+      assertIsolated({ env: noHome, isolation, userDataDir: null, real: { home: '', xdgConfigHome: null } })
+    }).toThrow(/sets no HOME/)
+    const { XDG_CONFIG_HOME: _xdg, ...noXdg } = cleanEnv
+    expect(() => {
+      assertIsolated({ env: noXdg, isolation, userDataDir: null, real: { home: '', xdgConfigHome: null } })
+    }).toThrow(/sets no XDG_CONFIG_HOME/)
+  })
+
+  it('accepts the launch this run actually makes', () => {
+    expect(() => {
+      assertIsolated({
+        env: cleanEnv,
+        isolation,
+        userDataDir: join(scratch, 'profile-abc'),
+        real: { home: '/Users/somebody', xdgConfigHome: '/Users/somebody/.config' },
+      })
+    }).not.toThrow()
+  })
+})
+
+describe('the environment a launch gets is an allow-list', () => {
+  const isolation = newIsolation()
+
+  afterAll(() => {
+    rmSync(isolation.scratch, { recursive: true, force: true })
+  })
+
+  it('carries a display and a locale, and nothing that can name a credential or a config', () => {
+    const env = launchEnvironment(
+      {
+        DISPLAY: ':0',
+        LANG: 'en_GB.UTF-8',
+        TMPDIR: '/var/folders/xx',
+        // The keys this rule exists for: each one names a file, a socket or a
+        // credential a child could reach, and none of them may reach the child.
+        GOOGLE_APPLICATION_CREDENTIALS: '/Users/somebody/.config/gcloud/application_default_credentials.json',
+        FUGARO_CONFIG: '/Users/somebody/.config/fugaro/config.yaml',
+        SSH_AUTH_SOCK: '/private/tmp/com.apple.launchd.abc/Listeners',
+        AWS_PROFILE: 'production',
+        HOME: '/Users/somebody',
+        XDG_CONFIG_HOME: '/Users/somebody/.config',
+        PATH: '/opt/homebrew/bin:/usr/bin',
+      },
+      isolation,
+    )
+    expect(env['DISPLAY']).toBe(':0')
+    expect(env['LANG']).toBe('en_GB.UTF-8')
+    expect(env['TMPDIR']).toBe('/var/folders/xx')
+    for (const key of [
+      'GOOGLE_APPLICATION_CREDENTIALS',
+      'FUGARO_CONFIG',
+      'SSH_AUTH_SOCK',
+      'AWS_PROFILE',
+    ]) {
+      expect(env[key], `${key} must not reach the launched console`).toBeUndefined()
+    }
+    // The three paths the run owns win over the operator's, which is what makes
+    // the resolution and the store the fixture's rather than the machine's.
+    expect(env['HOME']).toBe(isolation.home)
+    expect(env['XDG_CONFIG_HOME']).toBe(isolation.xdgConfigHome)
+    expect(env['PATH']).toBe(isolation.bin)
+  })
+
+  it('carries no key whose value is undefined', () => {
+    const env = launchEnvironment({ HOME: undefined, DISPLAY: ':0' }, isolation)
+    for (const [key, value] of Object.entries(env)) {
+      expect(typeof value, `${key} is present with a non-string value`).toBe('string')
+    }
+    expect(Object.prototype.hasOwnProperty.call(env, 'HOME')).toBe(true)
+  })
+
+  it('puts the three directories under one scratch tree it created', () => {
+    expect(isolation.home.startsWith(isolation.scratch)).toBe(true)
+    expect(isolation.xdgConfigHome.startsWith(isolation.home)).toBe(true)
+    expect(isolation.userData.startsWith(isolation.scratch)).toBe(true)
+    expect(isolation.bin.startsWith(isolation.scratch)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2. The fixtures, through the console's own decoder.
+// ---------------------------------------------------------------------------
+
+/** frames reads the `watch` fixture: the documents the fake prints, one per
+ * line. */
+function frames(): readonly unknown[] {
+  const parsed = JSON.parse(fixture(FIXTURE_COMMANDS.watch)) as { frames: readonly unknown[] }
+  return parsed.frames
+}
+
+describe('the fixtures are documents the console accepts', () => {
+  it('decodes every live frame through the schema the feed uses', () => {
+    const all = frames()
+    expect(all.length).toBeGreaterThan(1)
+    all.forEach((frame, index) => {
+      const decoded = decodeSnapshot(frame, `live.json frames[${String(index)}]`)
+      if (!decoded.ok) throw new Error(`frames[${String(index)}]: ${decoded.skew.because}`)
+    })
+  })
+
+  /** spendModel is the Spend screen's own model built from the two fixtures the
+   * screen draws: `report --json` is the curve and the rows, `budget show
+   * --json` is the caps panel. */
+  function spendModel(): ReturnType<typeof buildSpendModel> {
+    return buildSpendModel(
+      JSON.parse(fixture(FIXTURE_COMMANDS.report)) as JSONDoc,
+      JSON.parse(fixture(FIXTURE_COMMANDS['budget show'])) as JSONDoc,
+    )
+  }
+
+  it('reads the report and budget fixtures into the Spend screen’s own model', () => {
+    // **Two of the five fixtures are documents the schema does not decode, and
+    // that is the schema working.** `decodeDocument` admits the feed's shape and
+    // the degraded one (`LIVE_MARKERS`, `degraded`); `report --json` carries
+    // `degraded: false` and `budget show --json` carries `max_reserve_usd`,
+    // `global` and `repos` -- neither is a document `watch` writes, and reading
+    // one as a live document would be a guess about what the writer meant. The
+    // Spend screen reads both with its own field readers, so the fixtures are
+    // held to *those*: the figures the picture and its alt text claim are the
+    // figures the screen computes.
+    const model = spendModel()
+    expect(model.project).toBe('acme-platform')
+    expect(model.dimension).toBe('day')
+    expect(model.range.since).toBe('2026-09-21')
+    expect(model.range.until).toBe('2026-10-20')
+    // Thirty days, one row each: the curve the picture is of.
+    expect(model.rows.length).toBe(30)
+    expect(model.rows[0]?.key).toBe('2026-09-21')
+    expect(model.rows[29]?.key).toBe('2026-10-20')
+    expect(model.series.map((series) => series.account)).toEqual([...SPEND_ACCOUNTS])
+    const caps = model.caps
+    expect(caps.available).toBe(true)
+    expect(caps.project).toBe('acme-platform')
+    expect(caps.day).toBe('2026-10-20')
+    expect(caps.mode).toBe('enforce')
+    expect(caps.reserve.value).toBe(60)
+    expect(caps.global?.dailyCap.value).toBe(120)
+    expect(caps.global?.counted.value).toBe(41.82)
+    expect(caps.defaults?.repoDailyCap.value).toBe(40)
+    expect(caps.repos.map((row) => row.repo)).toEqual(['acme/platform-core', 'acme/platform-cli'])
+    expect(caps.repos.map((row) => row.dailyCap.value)).toEqual([80, 40])
+    expect(caps.warnings).toEqual([])
+  })
+
+  it('reads the diagnose fixture into the Run screen’s own model', () => {
+    // The third document the schema does not decode: `diagnose RUN --json` is a
+    // `runview` row and its findings, read by the Run screen's own reader. The
+    // picture is of the run the Live screen's first row names, so the model is
+    // held to that run -- a diagnose fixture for another run would draw a detail
+    // screen for a row nobody clicked.
+    const read = parseLogEntries(fixture(FIXTURE_COMMANDS.logs))
+    const model = buildRunModel({
+      diagnosis: JSON.parse(fixture(FIXTURE_COMMANDS.diagnose)),
+      logs: { entries: read.entries, total: read.total, refused: read.refused },
+      logLink: fixture(FIXTURE_COMMANDS['logs --url']).trim(),
+    })
+    expect(model.row.runId).toBe(RUN_ID)
+    expect(model.row.repo).toBe('acme/platform-core')
+    expect(model.row.status).toBe('running')
+    expect(model.stages.length).toBeGreaterThan(0)
+    expect(model.diagnosis.findings.length).toBeGreaterThan(0)
+    expect(model.logs.lines.length).toBeGreaterThan(0)
+    expect(model.logs.refused.value).toBe(0)
+    expect(model.pullRequest.number).toBe(412)
+    expect(model.pullRequest.repository).toBe('acme/platform-core')
+  })
+
+  it('reads the log window with no refused line', () => {
+    // The fixture is the *stdout* of `logs RUN --json`: one compact `logLine`
+    // object per line. It goes through the console's own line reader and then
+    // through the Run screen's window reader, which is the order the log read
+    // makes (`source/cli.ts`'s `parseLogEntries` answers `{entries, total,
+    // refused}` and the screen is handed exactly that). A fixture with a torn
+    // line or a missing field would be captured as a screen with a refusal
+    // count on it, and this is where that is cheap to notice.
+    const read = parseLogEntries(fixture(FIXTURE_COMMANDS.logs))
+    const lines = fixture(FIXTURE_COMMANDS.logs)
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+    expect(read.refused).toBe(0)
+    expect(read.total).toBe(lines.length)
+    const window = parseLogWindow({ entries: read.entries, total: read.total, refused: read.refused })
+    expect(window.lines.length).toBe(lines.length)
+    expect(window.total).toBe(lines.length)
+    expect(window.refused).toBe(0)
+    // A bare list carries no refused count, and the screen says so rather than
+    // drawing a zero: `null` is unavailable, which is a different fact.
+    expect(parseLogWindow(read.entries).refused).toBeNull()
+  })
+
+  it('names the same project in every document the dashboard draws', () => {
+    // A picture whose header says one project and whose document says another
+    // is a picture of a console reading the wrong installation. The fake answers
+    // whatever it is asked, so nothing but this assertion holds the three
+    // documents to one project name.
+    const seed = JSON.parse(fixture(SEED_FILE_NAME)) as { installations: readonly { project: string }[] }
+    const active = seed.installations[0]?.project
+    expect(active).toBeDefined()
+    for (const frame of frames()) {
+      expect((frame as { project: string }).project).toBe(active)
+    }
+    for (const name of [FIXTURE_COMMANDS['budget show'], FIXTURE_COMMANDS.report]) {
+      expect((JSON.parse(fixture(name)) as { project: string }).project).toBe(active)
+    }
+  })
+
+  it('answers the run the Live screen names, with the log link for that run', () => {
+    const first = frames()[0] as { runs: readonly { run: string }[] }
+    const row = (JSON.parse(fixture(FIXTURE_COMMANDS.diagnose)) as { row: { run: string } }).row
+    // The run detail is reached by clicking the Live screen's own row, and the
+    // screen then draws the diagnosis *it* asked for. Two files naming two runs
+    // would draw a run id the operator never clicked.
+    expect(first.runs[0]?.run).toBe(RUN_ID)
+    expect(row.run).toBe(RUN_ID)
+    expect(fixture(FIXTURE_COMMANDS['logs --url'])).toContain(RUN_ID)
+  })
+
+  it('prepares only commands the fake can be asked for', () => {
+    for (const name of Object.keys(FIXTURE_COMMANDS)) {
+      expect(STUB_COMMAND_KEYS, `${name} is not a command this console spawns`).toContain(name)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3. The fake CLI and the store it seeds.
+// ---------------------------------------------------------------------------
+
+describe('the fixture CLI and the installation store it seeds', () => {
+  it('writes a store the console’s own reader accepts, with the fake as every binary', () => {
+    const isolation = newIsolation()
+    try {
+      const installed = installScreenshotFixture({ fixtureDirectory: FIXTURES, isolation })
+      const profile = installed.newProfile()
+      const active = installed.installations[0]
+      expect(active).toBeDefined()
+      installed.seedInstallations(profile, active?.id ?? null)
+      const read = readInstallationFile(readFileSync(join(profile, 'installations.json'), 'utf8'))
+      if (!read.ok) throw new Error(read.reason)
+      expect(read.file.active).toBe(active?.id)
+      expect(read.file.installations.map((row) => row.project)).toEqual(
+        installed.installations.map((row) => row.project),
+      )
+      for (const row of read.file.installations) {
+        // Every row names the *fake*, which is the whole point: an installation
+        // pointing anywhere else is an installation this run must not have.
+        expect(row.binaryPath).toBe(installed.binary)
+        expect(installed.binary.startsWith(isolation.scratch)).toBe(true)
+      }
+    } finally {
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  })
+
+  it('seeds a first run with nothing chosen, which is what opens the picker', () => {
+    const isolation = newIsolation()
+    try {
+      const installed = installScreenshotFixture({ fixtureDirectory: FIXTURES, isolation })
+      const profile = installed.newProfile()
+      installed.seedInstallations(profile, null)
+      const read = readInstallationFile(readFileSync(join(profile, 'installations.json'), 'utf8'))
+      if (!read.ok) throw new Error(read.reason)
+      expect(read.file.active).toBeNull()
+      expect(read.file.installations.length).toBe(3)
+    } finally {
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to seed a choice the seed file does not hold', () => {
+    const isolation = newIsolation()
+    try {
+      const installed = installScreenshotFixture({ fixtureDirectory: FIXTURES, isolation })
+      const profile = installed.newProfile()
+      expect(() => {
+        installed.seedInstallations(profile, 'ffffffffffffffff')
+      }).toThrow(/does not hold/)
+    } finally {
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  })
+
+  it('answers no command it was not prepared for', () => {
+    // The scenario's `default` is a refusal, so a console that spawns something
+    // this run did not prepare fails the screen rather than being answered with
+    // an empty document. Held here by reading the scenario the fake writes.
+    const isolation = newIsolation()
+    try {
+      const installed = installScreenshotFixture({ fixtureDirectory: FIXTURES, isolation })
+      const scenario = JSON.parse(readFileSync(join(isolation.bin, 'scenario.json'), 'utf8')) as {
+        commands: Record<string, unknown>
+        default: { code?: number }
+      }
+      expect(scenario.default.code).toBe(2)
+      expect(Object.keys(scenario.commands).sort()).toEqual([...Object.keys(FIXTURE_COMMANDS), 'doctor', 'version'].sort())
+      // The version is the one the console was built against, so the handshake
+      // lands inside the supported range and the Spend screen is offered.
+      expect((scenario.commands['version'] as { stdout: string }).stdout.trim()).toBe('0.8.1')
+      expect(installed.binary.length).toBeGreaterThan(0)
+    } finally {
+      rmSync(isolation.scratch, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. The manifest.
+// ---------------------------------------------------------------------------
+
+describe('the manifest', () => {
+  const entry = {
+    file: 'console-live.png',
+    width: 2560,
+    height: 1600,
+    sha256: 'a'.repeat(64),
+    alt: 'The Live screen.',
+  }
+
+  it('carries what it is given, with the window every capture is taken at', () => {
+    const manifest = buildManifest({ screens: [entry] })
+    expect(manifest.version).toBe(1)
+    expect(manifest.window).toEqual(CAPTURE_WINDOW)
+    expect(manifest.screens).toEqual([entry])
+    expect(manifest.omitted).toEqual([])
+  })
+
+  it('refuses two entries for one file', () => {
+    expect(() => buildManifest({ screens: [entry, { ...entry }] })).toThrow(/lists console-live\.png twice/)
+  })
+
+  it('refuses a name with a path in it, and a name that is not a .png', () => {
+    expect(() => buildManifest({ screens: [{ ...entry, file: '../console-live.png' }] })).toThrow(/no path in it/)
+    expect(() => buildManifest({ screens: [{ ...entry, file: 'console-live.json' }] })).toThrow(/no path in it/)
+  })
+
+  it('refuses a pixel size that is not a positive whole number', () => {
+    expect(() => buildManifest({ screens: [{ ...entry, width: 0 }] })).toThrow(/not a positive whole number/)
+    expect(() => buildManifest({ screens: [{ ...entry, height: 1066.5 }] })).toThrow(/not a positive whole number/)
+  })
+
+  it('refuses a digest that is not a digest, and an alt text that is empty', () => {
+    expect(() => buildManifest({ screens: [{ ...entry, sha256: 'nope' }] })).toThrow(/carries no sha256/)
+    expect(() => buildManifest({ screens: [{ ...entry, alt: '   ' }] })).toThrow(/carries no alt text/)
+  })
+
+  it('writes the canonical form a later diff can be read against', () => {
+    const text = serializeManifest(
+      buildManifest({
+        screens: [entry],
+        omitted: [...OMISSIONS],
+      }),
+    )
+    expect(text.endsWith('}\n')).toBe(true)
+    expect(JSON.parse(text)).toEqual({
+      version: 1,
+      window: CAPTURE_WINDOW,
+      screens: [entry],
+      omitted: [...OMISSIONS],
+    })
+    // The keys are in the order the interface declares them, so two runs'
+    // manifests differ in the captures and nothing else.
+    expect(text.indexOf('"window"')).toBeLessThan(text.indexOf('"screens"'))
+    expect(text.indexOf('"screens"')).toBeLessThan(text.indexOf('"omitted"'))
+  })
+
+  it('hashes the bytes it is given', () => {
+    // The digest is the one every other tool computes for these bytes: an empty
+    // input's sha256, written out rather than computed by the code under test.
+    expect(sha256Of(new Uint8Array([]))).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
+  })
+
+  it('names the four captures and the one it does not take', () => {
+    expect(SCREENS.map((screen) => screen.file)).toEqual([
+      'console-live.png',
+      'console-run.png',
+      'console-spend.png',
+    ])
+    expect(PICKER_SCREEN.file).toBe('console-installations.png')
+    for (const screen of [...SCREENS, PICKER_SCREEN]) {
+      expect(screen.alt.trim().endsWith('.'), `${screen.file} has no alt sentence`).toBe(true)
+    }
+    // The alt text is *of the fixture*, so the figures in it are held to the
+    // fixture: a fixture edited for a better picture and an alt text left behind
+    // would describe a screen nobody took a picture of.
+    const last = frames()[frames().length - 1] as {
+      total: { percent: number; daily_cap_usd: number }
+      finished: readonly { pr_url: string | null; pr_number: number | null }[]
+    }
+    const live = SCREENS[0]?.alt ?? ''
+    expect(live).toContain(String(last.total.percent))
+    expect(live).toContain(String(last.total.daily_cap_usd))
+    const pull = last.finished.find((row) => row.pr_number !== null)
+    expect(pull?.pr_url).not.toBeNull()
+    expect(live).toContain(`#${String(pull?.pr_number)}`)
+    expect(live).toContain('acme/platform-core')
+    expect(PICKER_SCREEN.alt).toContain('acme-platform')
+    expect(PICKER_SCREEN.alt).toContain('acme-web')
+    expect(PICKER_SCREEN.alt).toContain('acme-data')
+    // The omission is a fact the manifest carries: a reader who expected the
+    // owner's fifth picture finds the reason rather than a silence.
+    expect(OMISSIONS.map((omission) => omission.file)).toEqual(['console-first-run.png'])
+    expect(OMISSIONS[0]?.because).toMatch(/#751/)
+  })
+
+  it('asks for a capture the size the manifest declares', () => {
+    expect(CAPTURE_PIXELS).toEqual({
+      width: CAPTURE_WINDOW.width * CAPTURE_WINDOW.deviceScaleFactor,
+      height: CAPTURE_WINDOW.height * CAPTURE_WINDOW.deviceScaleFactor,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. The blank-image check, on pictures whose pixels are known.
+// ---------------------------------------------------------------------------
+
+// A PNG encoder, for this file only. The check under test reads PNG bytes, and
+// the only way to drive it with a picture whose pixels are *known* is to write
+// one -- an image library is a dependency the console is not allowed to gain
+// (`test/unit/pinning.test.ts`), and a real capture needs a window. It writes
+// true PNGs: the signature, IHDR, the deflated scanlines with a filter per row,
+// and a CRC per chunk, so what the decoder reads here is what it reads on disk.
+
+const CRC_TABLE = ((): Uint32Array => {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) {
+    let c = n
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    table[n] = c >>> 0
+  }
+  return table
+})()
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff
+  for (const byte of bytes) c = (CRC_TABLE[(c ^ byte) & 0xff] ?? 0) ^ (c >>> 8)
+  return (c ^ 0xffffffff) >>> 0
+}
+
+function chunk(type: string, data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(12 + data.length)
+  const view = new DataView(out.buffer)
+  view.setUint32(0, data.length)
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i)
+  out.set(data, 8)
+  const crcInput = out.subarray(4, 8 + data.length)
+  view.setUint32(8 + data.length, crc32(crcInput))
+  return out
+}
+
+/** png encodes one RGBA image. `filter` is the filter byte written on every
+ * row, and `depth`/`interlace` exist so a test can write a PNG the decoder must
+ * refuse. */
+function png(options: {
+  readonly width: number
+  readonly height: number
+  readonly pixel: (x: number, y: number) => readonly [number, number, number]
+  readonly filter?: number
+  readonly depth?: number
+  readonly interlace?: number
+  readonly colourType?: number
+}): Uint8Array {
+  const { width, height, pixel } = options
+  const filter = options.filter ?? 0
+  const channels = options.colourType === 2 ? 3 : 4
+  const stride = width * channels
+  // The bytes on a scanline are the *filter's output*, not the pixels: a row
+  // written with filter 1 and absolute values decodes as the sum of its own
+  // prefixes, which is a picture nobody drew. The two filters the tests write
+  // are the two implemented here, and a third is refused rather than encoded as
+  // one of them.
+  if (filter !== 0 && filter !== 1) throw new Error(`this encoder writes filter 0 and 1, not ${String(filter)}`)
+  const raw = new Uint8Array((stride + 1) * height)
+  for (let y = 0; y < height; y++) {
+    raw[y * (stride + 1)] = filter
+    const base = y * (stride + 1) + 1
+    // The pixel as the bytes a row stores it in: three colour channels, and the
+    // opaque fourth the RGBA type carries.
+    const valueAt = (x: number): readonly number[] => {
+      const [r, g, b] = pixel(x, y)
+      return [r, g, b, 255]
+    }
+    for (let x = 0; x < width; x++) {
+      const value = valueAt(x)
+      for (let c = 0; c < channels; c++) {
+        const byte = value[c] ?? 0
+        // Sub stores the difference from the **pixel** to the left, byte by
+        // byte -- its value, not the difference already written there, which is
+        // what a decoder sums its prefixes from. Filter 0 stores the byte.
+        const left = filter === 1 && x > 0 ? ((valueAt(x - 1)[c] ?? 0) & 0xff) : 0
+        raw[base + x * channels + c] = (byte - left) & 0xff
+      }
+    }
+  }
+  const ihdr = new Uint8Array(13)
+  const view = new DataView(ihdr.buffer)
+  view.setUint32(0, width)
+  view.setUint32(4, height)
+  ihdr[8] = options.depth ?? 8
+  ihdr[9] = options.colourType ?? 6
+  ihdr[10] = 0
+  ihdr[11] = 0
+  ihdr[12] = options.interlace ?? 0
+  const parts = [
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', new Uint8Array(deflateSync(raw))),
+    chunk('IEND', new Uint8Array([])),
+  ]
+  const total = parts.reduce((sum, part) => sum + part.length, 0)
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const part of parts) {
+    out.set(part, at)
+    at += part.length
+  }
+  return out
+}
+
+/** flat is a rectangle of one colour: what a window that painted nothing after
+ * its ground would leave. */
+function flat(width: number, height: number, colour: readonly [number, number, number]): Uint8Array {
+  return png({ width, height, pixel: () => colour })
+}
+
+/** drawn is a rectangle with two colours on it -- a ground and ink -- which is
+ * what any real drawing of the console is. */
+function drawn(width: number, height: number): Uint8Array {
+  return png({
+    width,
+    height,
+    pixel: (x, y) => ((x + y) % 7 === 0 ? [235, 235, 245] : [16, 18, 24]),
+  })
+}
+
+describe('the blank-image check', () => {
+  it('reads a PNG back as its pixels', () => {
+    const image = decodePng(png({ width: 3, height: 2, pixel: (x, y) => [x * 10, y * 10, 0] }))
+    expect(image.width).toBe(3)
+    expect(image.height).toBe(2)
+    // Row-major RGBA: the pixel at (2, 1) is the sixth.
+    const at = (1 * 3 + 2) * 4
+    expect([...image.pixels.subarray(at, at + 4)]).toEqual([20, 10, 0, 255])
+  })
+
+  it('reverses a Sub-filtered scanline', () => {
+    // Filter 1 stores each byte as its difference from its left neighbour, so a
+    // decoder that ignored the filter would read a gradient as a black row.
+    const bytes = png({
+      width: 4,
+      height: 2,
+      filter: 1,
+      pixel: (x) => [x * 20, x * 20, x * 20],
+    })
+    const image = decodePng(bytes)
+    const at = (1 * 4 + 3) * 4
+    expect([...image.pixels.subarray(at, at + 3)]).toEqual([60, 60, 60])
+  })
+
+  it('refuses a rectangle with nothing on it, and its spread is under the floor', () => {
+    const bytes = flat(64, 64, [16, 18, 24])
+    expect(pixelStdDev(decodePng(bytes))).toBeLessThan(BLANK_STDDEV_FLOOR)
+    expect(() => assertUsableCapture(bytes, { width: 64, height: 64 }, 'console-live.png')).toThrow(
+      /console-live\.png is blank/,
+    )
+  })
+
+  it('accepts a rectangle with a drawing on it', () => {
+    const bytes = drawn(64, 64)
+    const image = assertUsableCapture(bytes, { width: 64, height: 64 }, 'console-live.png')
+    expect(image.width).toBe(64)
+    expect(pixelStdDev(image)).toBeGreaterThan(BLANK_STDDEV_FLOOR)
+  })
+
+  it('refuses a capture of the wrong size, naming both', () => {
+    expect(() => assertUsableCapture(drawn(64, 64), { width: 128, height: 128 }, 'console-run.png')).toThrow(
+      /console-run\.png is 64x64 pixels, and this run asked for 128x128/,
+    )
+  })
+
+  it('refuses a file that is not a PNG, and one whose header it cannot read', () => {
+    expect(() => decodePng(new Uint8Array([1, 2, 3]))).toThrow(/shorter than a PNG signature/)
+    expect(() => decodePng(new Uint8Array(32))).toThrow(/does not start with the PNG signature/)
+    expect(() => decodePng(png({ width: 8, height: 8, depth: 16, pixel: () => [0, 0, 0] }))).toThrow(/bit depth is 16/)
+    expect(() => decodePng(png({ width: 8, height: 8, interlace: 1, pixel: () => [0, 0, 0] }))).toThrow(/interlaced/)
+    expect(() => decodePng(png({ width: 8, height: 8, colourType: 0, pixel: () => [0, 0, 0] }))).toThrow(
+      /colour type is 0/,
+    )
+  })
+
+  it('reads a three-channel PNG as grey pixels', () => {
+    // `page.screenshot` writes RGBA today, and a decoder that reads RGB is what
+    // keeps a future Chromium that writes it from being graded as blank: the
+    // two colour types are read, and a third is refused above.
+    const image = decodePng(png({ width: 2, height: 2, colourType: 2, pixel: () => [10, 20, 30] }))
+    expect([...image.pixels.subarray(0, 4)]).toEqual([10, 20, 30, 255])
+  })
+})
+
+describe('the one scratch tree a run owns', () => {
+  it('is fresh per run, under a temporary directory, and holds the four directories', () => {
+    const first = newIsolation()
+    const second = newIsolation()
+    try {
+      expect(first.scratch).not.toBe(second.scratch)
+      expect(first.scratch.startsWith(tmpdir())).toBe(true)
+      for (const directory of [first.home, first.xdgConfigHome, first.userData, first.bin]) {
+        expect(statSync(directory).isDirectory(), `${directory} was not created`).toBe(true)
+        // 0700: the store the run writes lives in one of these, and the
+        // operator's own directories are the shape it is kept to.
+        expect(statSync(directory).mode & 0o777).toBe(0o700)
+      }
+    } finally {
+      rmSync(first.scratch, { recursive: true, force: true })
+      rmSync(second.scratch, { recursive: true, force: true })
+    }
+  })
+})
