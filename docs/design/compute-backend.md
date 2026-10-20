@@ -1735,8 +1735,9 @@ What follows, plainly:
 
   **Built** (Task 5) as **five** permissions, and no others: `batch.jobs.list`
   and `batch.jobs.get` (every decision comes from a job's own state),
-  `batch.jobs.delete` (the destructive one, for a stuck job and a stuck
-  `DELETION_IN_PROGRESS` only),
+  `batch.jobs.delete` (the destructive one, for a stuck job, a stuck
+  `DELETION_IN_PROGRESS`, and — since Task 9 — a job that never left `QUEUED`
+  past the queue deadline, which the Task 9 paragraph below and §1.4 justify),
   `compute.instances.list` (the project-wide aggregated list, the one call
   that finds a labelled VM in any of the region's zones) and
   `compute.instances.delete`.
@@ -3972,7 +3973,7 @@ senior reviewer before merge, not just the normal one.
    Compute Engine instances fake in `internal/gcpfake/compute.go`): the two
    deadlines, the decision table over every `JobStatus.State`, the client-side
    label checks, the refusals and the dry-run, held to by tests against the
-   Batch and Compute fakes. The account itself is Task 6's (the six
+   Batch and Compute fakes. The account itself is Task 6's (the five
    permissions §3.7 lists are what it must carry), and
    `backend: cloud-batch` stays refused everywhere, so nothing here is
    reachable in an installation.

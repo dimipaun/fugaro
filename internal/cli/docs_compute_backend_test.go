@@ -1360,6 +1360,53 @@ func TestDocsReleaseChecklistNamesEveryShippedGate(t *testing.T) {
 	}
 }
 
+// TestDocsComputeBackendReaperRoleCountMatchesTheModule: the reaper's role is
+// built in deploy/terraform/gcp/modules/compute/iam.tf, and the prose that
+// describes it drifted from it — Task 9 rewrote two of the three places that
+// said "six permissions" and the third survived (§7.2's Built note), so the
+// same tree stated both counts for the same list. The count is read out of the
+// module the role is created from, and the design's own present-tense claims
+// are read against it; the historical sentences ("an earlier shape of this note
+// named a sixth") are not what this bans, the "six permissions" claim is.
+//
+// Mutation (verified, run and restored): put "the six permissions §3.7 lists"
+// back into §7.2's Built note — this fails naming it.
+func TestDocsComputeBackendReaperRoleCountMatchesTheModule(t *testing.T) {
+	iam := readDoc(t, "deploy/terraform/gcp/modules/compute/iam.tf")
+	role := regexp.MustCompile(`(?s)resource "google_project_iam_custom_role" "reaper" \{.*?\n\}`).FindString(iam)
+	if role == "" {
+		t.Fatal("deploy/terraform/gcp/modules/compute/iam.tf has no google_project_iam_custom_role \"reaper\": the module is where the reaper's permission list is written, and the prose below is read against it")
+	}
+	list := regexp.MustCompile(`(?s)permissions = \[(.*?)\]`).FindStringSubmatch(role)
+	if list == nil {
+		t.Fatal("the reaper's custom role carries no `permissions = [...]` list")
+	}
+	var perms []string
+	for _, p := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(list[1], -1) {
+		perms = append(perms, p[1])
+	}
+	if len(perms) != 5 {
+		t.Fatalf("the reaper's role carries %d permissions (%v), and every surface that states the count says five: the module and the prose have to agree on the one number the role is built from", len(perms), perms)
+	}
+	// Flattened, as everywhere else in this file: the design wraps at about 78
+	// columns, and a phrase that only ever appears wrapped is a phrase a
+	// substring check written without it will miss.
+	design := flattenDoc(readDoc(t, "docs/design/compute-backend.md"))
+	if strings.Contains(design, "six permissions") || strings.Contains(design, "six-permission") {
+		t.Error("docs/design/compute-backend.md claims the reaper's list is six permissions: the module's role carries five, and the note that named a sixth is history (it says so itself) — a present-tense six in the same document as §3.7's five is the drift Task 9 left behind")
+	}
+	if !strings.Contains(design, "as **five** permissions") {
+		t.Error("docs/design/compute-backend.md's §3.7 Built note no longer states the count as **five** permissions: that sentence is what the tree's module is read against")
+	}
+	backends := flattenDoc(readDoc(t, "docs/backends.md"))
+	if strings.Contains(backends, "below this one") {
+		t.Error("docs/backends.md points at \"the note below this one\" for the sixth permission: nothing below it discusses the reaper's permissions, and the note that named the sixth is the design's §3.7 Built note — cite it by document and section")
+	}
+	if !strings.Contains(backends, "§3.7") {
+		t.Error("docs/backends.md's permission sentence cites no section for the sixth permission it records")
+	}
+}
+
 // TestReleaseChecklistCopiesNoApplyFailure: "fails partway through its apply" is
 // true of one bullet only — `managedDeployerShipped`, whose flip re-enables an
 // installation apply the deployer's fence refuses — and it was copied into the
