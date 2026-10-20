@@ -32,7 +32,7 @@ Constraints and the check table) · [../implementation-plan.md](../implementatio
 [../design/voice-evaluation-switch.md](../design/voice-evaluation-switch.md)
 (P5.3) · [../design/push-notifications.md](../design/push-notifications.md)
 (P5.2) · [../../gcp-live-checklist.md](../../gcp-live-checklist.md) (the
-register, and checks 112–117) · [../../../mobile/README.md](../../../mobile/README.md)
+register, and checks 113–118) · [../../../mobile/README.md](../../../mobile/README.md)
 (the app, and its **voiceless** status).
 
 ---
@@ -113,7 +113,7 @@ the owner's.
 | **VS4 — iOS** | The module's Swift half, the `ios/Shared/` sources compiled into both targets, the widget target and the Live Activity with its buttons. **The only part with owner-only steps in the Apple portal.** | VS4.1–VS4.4 | **Yes**, and independent of VS3 | VS2; **D204** (the minimum iOS version), **D203** (what Hang Up does), **D216**, **D217** |
 | **VS5 — What a kill leaves behind** | `cleanupStaleSessions()` on every launch, the Android self-stop when JS goes quiet, and the assertion that a **paused** session touches no credential (F24) and no transcript (F9). | VS5.1–VS5.2 | **Yes** | VS3 and VS4 |
 | **VS6 — The way back in** | The "Tap to resume" in-app banner on next open (D211's recommended first cut), and — its own task, after that — the dismissible local notification. | VS6.1–VS6.2 | **Yes** | VS5; D211 |
-| **VS7 — The checks** | Checks **112–117**, written into the register in the house style and run by the owner. | VS7.1–VS7.6 | Owner-run; no commit but the recorded result | A release (F16), and the parts each check covers |
+| **VS7 — The checks** | Checks **113–118**, written into the register in the house style and run by the owner. | VS7.1–VS7.6 | Owner-run; no commit but the recorded result | A release (F16), and the parts each check covers |
 
 ---
 
@@ -140,19 +140,33 @@ the one behaviour that needs an engine, and it is the only line of
 
 ## Check numbers this plan takes
 
-**112–117.** The register's written sections run to **89**; **90–99** are the
+**113–118.** The register's written sections run to **89**; **90–99** are the
 credentials service's; **100–104** are the mobile functional spec's, with
 **105–109 reserved and unused**; **110** is named by
 [../design/voice-evaluation-switch.md](../design/voice-evaluation-switch.md) as
 the next free number and was assigned by it; and **111** is taken by
 [docs/setup-wizard/](../../setup-wizard/README.md) ("110 is claimed by an open pull
-request … **111 is therefore the next free number**, and it is taken here"). So
-the first free number is **112**, and this work takes six of them. The command
-that shows the allocation, rather than a figure that any edit changes:
+request … **111 is therefore the next free number**, and it is taken here").
+
+**112 is taken too, and this branch merges second, so this work renumbers itself
+to 113–118.** `docs/windows-cli/` — **on `main` and not in this
+branch**, which is why it is a code path and not a link here — **proposes Check
+112** for its own owner-run check, and is merged as `58bd6b05` (PR #757) (*"a
+first run on a real Windows machine, from a downloaded archive, by the owner, in
+three terminals"*), and states that it is *"proposed … and not claimed and not
+written by this pull request"*. The register's own rule decides between two open
+claims: *"whichever of two open claims merges second renumbers itself"*
+([../../gcp-live-checklist.md](../../gcp-live-checklist.md)). #757 is on `main`
+and this branch is not, so **this branch is the second** and yields — exactly as
+[docs/setup-wizard/](../../setup-wizard/) recorded for the 110/111 collision. This
+work therefore takes **113–118**, and **112 stays the Windows work's proposal**.
+
+The commands that show the allocation, rather than a figure that any edit changes:
 
 ```
 git grep -n -E '^## Check 1(0|1)[0-9]' -- docs/gcp-live-checklist.md
 git grep -n 'Check 11[0-9]' -- docs/
+git grep -n 'Check 112' origin/main -- docs/windows-cli/
 ```
 
 **Check 86 is not touched.** It already owns *"Hands-free audio: the background
@@ -167,12 +181,12 @@ reused or renumbered* — and no phase here is approved. D219 records the choice
 
 | # | The check's subject (the text is VS7's) | Covers | Runs on |
 |---|---|---|---|
-| **112** | **Interruptions and the timeout**: a call arrives mid-session, is declined; is answered briefly; runs past the timeout. The `shouldResume: false` path. The suspension-notification caveat (P8). | F2, F26; P6, P8, P11, P19 | iPhone and Android device |
-| **113** | **The Live Activity and its buttons**: it appears, it survives backgrounding, its timer runs with no per-second update, Mute and Hang Up work from the lock screen and the Dynamic Island, and the paused state reads as paused (D216). | F25, F28; P1–P5 | iPhone (iOS 17+ under D204) |
-| **114** | **The Android service**: the notification, its two actions, the foreground-service type, the start-while-foreground rule and the `SecurityException` path, notifications denied, and what Doze does not do to it. | F26, F27, F29; P11–P14, P21, P22 | Android 14+ device; an emulator can rehearse the permission ask, the notification and the actions |
-| **115** | **Route changes**: unplug wired headphones and drop Bluetooth **mid-response**, on both platforms — the session pauses, nothing comes out of the loudspeaker, and a *connect* does not pause (spec §10). | F9; P9, P18 | iPhone and Android device; **an emulator cannot show this** |
-| **116** | **A kill, and what it leaves**: force-kill mid-session and relaunch — the activity is gone or reads stale, the notification is gone, no orphan service, no live-looking timer. Plus a media-services reset (P10). | F24, F29, D214; P5, P10, P22 | Either platform; `adb shell am force-stop` makes this the Android check an emulator can rehearse |
-| **117** | **The microphone's invariants**: the ask and the usage string, the indicator always visible while the mic is open, the mic never open while the app is locked and showing nothing, nothing recorded without the indicator, no audio or transcript in any log or report, no transcript in the App Group, and no credential read while paused. | F9, F24, F25, D213, D215 | iPhone and Android device |
+| **113** | **Interruptions and the timeout**: a call arrives mid-session, is declined; is answered briefly; runs past the timeout. The `shouldResume: false` path. The suspension-notification caveat (P8). | F2, F26; P6, P8, P11, P19 | iPhone and Android device |
+| **114** | **The Live Activity and its buttons**: it appears, it survives backgrounding, its timer runs with no per-second update, Mute and Hang Up work from the lock screen and the Dynamic Island, and the paused state reads as paused (D216). | F25, F28; P1–P5 | iPhone (iOS 17+ under D204) |
+| **115** | **The Android service**: the notification, its two actions, the foreground-service type, the start-while-foreground rule and the `SecurityException` path, notifications denied, and what Doze does not do to it. | F26, F27, F29; P11–P14, P21, P22 | Android 14+ device; an emulator can rehearse the permission ask, the notification and the actions |
+| **116** | **Route changes**: unplug wired headphones and drop Bluetooth **mid-response**, on both platforms — the session pauses, nothing comes out of the loudspeaker, and a *connect* does not pause (spec §10). | F9; P9, P18 | iPhone and Android device; **an emulator cannot show this** |
+| **117** | **A kill, and what it leaves**: force-kill mid-session and relaunch — the activity is gone or reads stale, the notification is gone, no orphan service, no live-looking timer. Plus a media-services reset (P10). | F24, F29, D214; P5, P10, P22 | Either platform; `adb shell am force-stop` makes this the Android check an emulator can rehearse |
+| **118** | **The microphone's invariants**: the ask and the usage string, the indicator always visible while the mic is open, the mic never open while the app is locked and showing nothing, nothing recorded without the indicator, no audio or transcript in any log or report, no transcript in the App Group, and no credential read while paused. | F9, F24, F25, D213, D215 | iPhone and Android device |
 
 **Owner-only steps** — the portal and the device work, in full, are
 [reconciliation.md](reconciliation.md) §6: the Apple portal (a new App ID for
@@ -347,8 +361,15 @@ and that is the point); `mobile/src/app-config.test.js` (extended); a new
 `UIBackgroundModes: ['audio']`, the owner's `NSMicrophoneUsageDescription`
 sentence (the owner writes the text — D122), `NSSupportsLiveActivities: true`,
 and the App Group entitlement (`com.apple.security.application-groups`). The
-widget's bundle identifier and the Apple Team ID are **derived from
-`FUGARO_IOS_BUNDLE_ID`**, not added as new environment variables (F6).
+**widget's bundle identifier** is **derived from `FUGARO_IOS_BUNDLE_ID`** (the
+app's identifier plus a suffix), not added as a new environment variable (F6).
+The **Apple Team ID is not derived from anything** — it is Apple's own
+ten-character team identifier, it cannot be computed from a bundle identifier, and
+it is **not written here**: **EAS already holds it with the owner's Apple
+credentials** and signs the app with it today, so the task reads it from those
+credentials where the generated extension target needs it (F6, and the owner's
+three portal steps in the reconciliation's §6.1 are the only Team-ID-adjacent work
+the owner does).
 **Why it is a task and not a line:** `mobile/src/app-config.test.js` asserts
 `RAW.includes('com.') === false`. The App Group string contains `com.`, so this
 task is exactly where that fence would be broken by accident. The new test is
@@ -671,7 +692,7 @@ restore — each **simple and scripted where a script can stand in for a hand**,
 each run by the **owner**, and **none written until the part it covers is
 approved and shipped**. A check is never run before its text is in the register.
 
-### Task VS7.1: Checks 112–117, as text — **OWNER-RUN**
+### Task VS7.1: Checks 113–118, as text — **OWNER-RUN**
 
 **Files.** `docs/gcp-live-checklist.md` (the six new sections, added by the
 work that ships each one — see the six tasks below; this task is where their
@@ -685,11 +706,11 @@ its restore; and **Check 86's section is untouched** (F17).
 
 | Task | Check | Runs after |
 |---|---|---|
-| **VS7.2** | **112** — interruptions and the timeout | VS4.4 |
-| **VS7.3** | **113** — the Live Activity and its buttons | VS4.4 |
-| **VS7.4** | **114** — the Android service, its actions, and notifications denied | VS3.3 |
-| **VS7.5** | **115** — route changes, both platforms | VS4.4 and VS3.3 |
-| **VS7.6** | **116 and 117** — a kill's leavings, and the microphone's invariants | VS5.2, VS6.1 |
+| **VS7.2** | **113** — interruptions and the timeout | VS4.4 |
+| **VS7.3** | **114** — the Live Activity and its buttons | VS4.4 |
+| **VS7.4** | **115** — the Android service, its actions, and notifications denied | VS3.3 |
+| **VS7.5** | **116** — route changes, both platforms | VS4.4 and VS3.3 |
+| **VS7.6** | **117 and 118** — a kill's leavings, and the microphone's invariants | VS5.2, VS6.1 |
 
 **Files.** None; the owner records the `FACT:` lines and pastes the results back.
 **Depends on.** The part named above, and an **`internal`-profile** build (F16)

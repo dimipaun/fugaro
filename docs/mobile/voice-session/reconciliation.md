@@ -207,10 +207,24 @@ purpose.** Every declaration the spec's §6.6 and §7.6 ask for therefore goes
 through `app.config.js` (or a plugin it applies): `UIBackgroundModes`,
 `NSMicrophoneUsageDescription`, `NSSupportsLiveActivities`, the App Group, the
 Android `uses-permission` list, the FGS type, and the widget target's own
-settings. The widget's bundle identifier and the Apple Team ID take the same
-route — **derived from `FUGARO_IOS_BUNDLE_ID`**, not a third and fourth
-environment variable, because each new variable is another thing the owner must
-set in three EAS environments and in a local shell.
+settings. **The widget's bundle identifier** takes the same route — it is the
+app's own identifier plus a suffix, so it is **derived from
+`FUGARO_IOS_BUNDLE_ID`** rather than added as a third environment variable,
+because each new variable is another thing the owner must set in three EAS
+environments and in a local shell.
+
+**The Apple Team ID is a different thing and is not derived from anything.** It
+is the **ten-character identifier Apple assigns to the owner's team**; it cannot
+be computed from a bundle identifier, and no string transformation produces it.
+It is also **not a secret and not an identity this work introduces**: EAS already
+holds it with the owner's Apple credentials (the certificates and provisioning
+profiles it manages are the team's), and the app target is already signed with it
+whenever the owner runs an `internal` build. So the plan **reads it from EAS's
+Apple credentials** where the generated extension target needs it, and the
+**owner's only job is the three portal steps of §6.1** — it is never written into
+`app.config.js`, `app.json` or `eas.json` as a literal, which the identity fences
+(`mobile/src/app-config.test.js`'s `com.` assertion, `mobile/src/eas-config.test.js`)
+would in any case refuse.
 
 ---
 
@@ -427,7 +441,7 @@ boundary is stated per check in the plan so that the owner runs each once.
 
 ---
 
-### F18 — The register's next free number is **112**. **Rule.**
+### F18 — The register's next free number was **112**; it is claimed, so this work takes **113–118**. **Rule.**
 
 **Evidence.** `docs/gcp-live-checklist.md`: written sections run to **89** (81,
 82 and 89 are the mobile block's, and 89's section is the last);
@@ -439,14 +453,24 @@ setup-wizard work takes **111** — `docs/setup-wizard/reconciliation.md` (*"110
 claimed by an open pull request … **111 is therefore the next free number**"*),
 its `implementation-plan.md` (*"the next free number, and it is taken here"*) and
 its `README.md`'s number table, which is the folder's index and not the sentence's
-source. The register's own rules:
-*"A reserved number is never reused and never renumbered"*, and
+source. **And 112 is proposed by another work**: `docs/windows-cli/` — **merged to
+`main` as `58bd6b05` (PR #757) and not present in this branch** —
+*"**Check 112** — **proposed** for the one part of this work that is genuinely a
+check in the register's sense — a first run on a real Windows machine, from a
+downloaded archive, by the owner, in three terminals … and **not claimed and not
+written** by this pull request"*; the command is
+`git grep -n 'Check 112' origin/main -- docs/windows-cli/`. The register's own
+rules: *"A reserved number is never reused and never renumbered"*, and
 *"the phase that ships the check writes them"*, and a check *"is never run before
-its text is in the register"*.
+its text is in the register"* — and the rule that decides between two claims,
+*"whichever of two open claims merges second renumbers itself"*.
 
-**Consequence.** This work takes **112–117** — six checks, listed in the plan —
-and **writes none of them into the register**, because the phase that ships a
-check writes it and no phase here is approved. Decision **D219**.
+**Consequence.** The register's collision rule decides it: **#757 is on `main`
+and this branch is not, so this branch merges second and yields 112.** This work
+therefore takes **113–118** — six checks, listed in the plan — exactly as
+[docs/setup-wizard/](../../setup-wizard/) recorded for the 110/111 collision, and
+**writes none of them into the register**, because the phase that ships a check
+writes it and no phase here is approved. Decision **D219**.
 
 ---
 
@@ -768,7 +792,7 @@ numbers and the resume rule.
 | **D216** | **What the Live Activity and the notification show while the session is paused.** | **The status word changes ("Paused — on a call", "Paused — headphones") and the timer keeps running**, because it is elapsed *session* time and a frozen timer reads as a hung app. The pause reason is the useful information, and it is one of the spec's own states. | **Freeze the timer.** Cost: the user cannot tell a paused session from a broken one, and the check cannot tell either. **Or hide the activity while paused**: cost: a session that vanishes from the lock screen at the moment the user is most likely to want to end it. |
 | **D217** | **How often `updateStatus` is called.** | **On a state change or a mute change, plus one `staleDate` refresh when the session changes state.** The spec's §5 already says to throttle; the tree's reason for doing so is that `updateStatus` is the only thing that writes to the Activity and re-posts the Android notification, and a per-frame writer is a battery cost with no reader. | **On a timer.** Cost: wake-ups and notification re-posts for a screen whose timer is already rendered by the platform (`Text(timerInterval:)`, P4) — i.e. work whose entire output the system produces for free. |
 | **D218** | **The Android notification's category** (spec §7.2 offers `CATEGORY_CALL` **or** `CATEGORY_SERVICE`). | **`CATEGORY_SERVICE`.** The spec's own non-goals say the session is *"not presented as a phone call"* and there is no CallKit/ConnectionService integration; `CATEGORY_CALL` sorts the notification with calls and implies a call is in progress. | **`CATEGORY_CALL`.** Cost: the shade ranks an assistant session beside a real call, which is a small lie the app tells every time; and the spec would be arguing against its own non-goals. |
-| **D219** | **Which check numbers this work takes** (F18). | **112–117**, the first free numbers after reading the register name by name (written sections to 89; 90–99 the credentials service; 100–104 proposed and 105–109 reserved for the functional spec; **110 named and unwritten** by the P5.3 design; **111 taken** by the setup-wizard work). Six checks, and **none of them is written into the register** by this plan. | **Extend check 86** (which already owns hands-free audio, F17). Cost: 86 is allocated to P3.5's subject and to P4.2, and its text is not yet written — folding a Live Activity, a foreground service and a crash-recovery case into it would make one check carry two subjects and two owners. **Or take 118+ and leave a gap**: cost: nothing, but there is no reason to. |
+| **D219** | **Which check numbers this work takes** (F18). | **113–118**, the first free numbers after reading the register name by name (written sections to 89; 90–99 the credentials service; 100–104 proposed and 105–109 reserved for the functional spec; **110 named and unwritten** by the P5.3 design; **111 taken** by the setup-wizard work; **112 proposed** by `docs/windows-cli/`, which is on `main` (PR #757) while this branch is not, so the register's two-claims rule renumbers this branch — F18). Six checks, and **none of them is written into the register** by this plan. | **Extend check 86** (which already owns hands-free audio, F17). Cost: 86 is allocated to P3.5's subject and to P4.2, and its text is not yet written — folding a Live Activity, a foreground service and a crash-recovery case into it would make one check carry two subjects and two owners. **Or take 118+ and leave a gap**: cost: nothing, but there is no reason to. |
 | **D220** | **May the session resume by itself after an interruption** (F26 point 3, against Play's evidence line for `TYPE_MICROPHONE`). | **Yes, within the timeout, exactly as the spec's §4 says** — the session was started by the user, the resume is the *same* session, and the user is looking at a notification that says it is paused (D216). The design's protection is not a second confirmation; it is that the paused state is **visible** and that the resume never happens after the timeout (spec §8's own rule). | **Always require a tap to resume.** Cost: the spec's primary promise — hands-free — is gone for the duration of every call and every alarm, and §2's Goal 3 is unmet. **Or resume only when the app is in the foreground**: cost: the headset case (paused on a Bluetooth drop) then behaves differently from the call case, for no reason the user can see. |
 
 **Nothing above is answered.** Every row is a question with a recommendation; the
@@ -802,7 +826,9 @@ These are the only Apple-side steps this work needs, and they arrive with the
    credentials and synchronizes the capability from `ios.entitlements`
    (`extra.eas.build.experimental.ios.appExtensions` + `ios.entitlements`; F15),
    so **no provisioning profile has to be created, downloaded or edited by
-   hand** — that is the whole reason this shape was chosen. If EAS's sync is
+   hand**, and **no Team ID is supplied by hand either**: EAS already holds the
+   owner's team identifier with the Apple credentials it signs the app with today
+   (F6) — that is the whole reason this shape was chosen. If EAS's sync is
    unavailable, the fallback is Apple's own *Profiles → +* for the two
    identifiers, which is the step the plan's check would then record.
 
@@ -889,4 +915,4 @@ belongs to) · [../design/voice-evaluation-switch.md](../design/voice-evaluation
 [../../voice-module/](../../voice-module/) (the pipeline this module drives) ·
 [../../design/voice.md](../../design/voice.md) (D39–D54b) ·
 [../../gcp-live-checklist.md](../../gcp-live-checklist.md) (the register, and
-checks 112–117) · [../../../mobile/README.md](../../../mobile/README.md) (the app).
+checks 113–118) · [../../../mobile/README.md](../../../mobile/README.md) (the app).
