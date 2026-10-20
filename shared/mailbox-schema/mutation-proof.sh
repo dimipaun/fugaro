@@ -6,7 +6,7 @@
 # at the end, in mac.js, the tag's own module — and every one of them must make
 # `npm test` fail. A guard whose mutation survives is a guard no test defends,
 # which for this module -- the protocol P1.1, P3.6 and P4.1 speak -- is the
-# difference between a fence and a comment. Section 7 is the one group that does
+# difference between a fence and a comment. Section 6 is the one group that does
 # not delete a check: it moves a comparison by one, which is the mutation this
 # module has actually been wrong about.
 #
@@ -415,7 +415,7 @@ run "canonicalBytes: -0 is refused" \
   "      if (!Number.isSafeInteger(value) || Object.is(value, -0)) {" "      if (!Number.isSafeInteger(value)) {"
 
 # ---------------------------------------------------------------------------
-# 7. The bounds, one step at a time.
+# 6. The bounds, one step at a time.
 #
 # Every guard above is DISABLED: a check deleted, a pattern replaced by `false`.
 # None of them moves a comparison by one, and that is the mutation this module
@@ -491,7 +491,7 @@ run "action: a pull request may be numbered nought" \
   "  if (!Number.isSafeInteger(pr) || pr < 0) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.pr') };"
 
 # ---------------------------------------------------------------------------
-# 6. mac.js, and the boundary that keeps the entry point loadable by the phone.
+# 7. mac.js, and the boundary that keeps the entry point loadable by the phone.
 #
 # macOf and verifyMac moved out of index.js in P6.3's review: a static import
 # of node's crypto in the entry point costs React Native far more than the tag
