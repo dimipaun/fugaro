@@ -15,9 +15,9 @@ import (
 // its own file — this one, the same convention docs_in_job_review_test.go
 // states for docs/in-job-review/.
 //
-// The documents are docs-only and no task in them is approved, so what a guard
-// can usefully hold is the plan's own shape and the plan's own claims about
-// itself: the status line, the numbered findings and decisions with no gap, the
+// The documents are docs-only and only Slice 0 and Slice 1 are approved (D16,
+// 2026-10-20), so what a guard can usefully hold is the plan's own shape and
+// the plan's own claims about itself: the status line, the numbered findings and decisions with no gap, the
 // support table naming commands that exist, the census stating the command
 // beside every count, and — the claim that would otherwise be unbacked — that
 // each documentation task names the guard that owns it. Every one of those is a
@@ -31,13 +31,26 @@ const (
 
 	// windowsCLIStatus is the index's status line, word for word: the folder is
 	// a plan with nothing implemented and every decision open. It moves only
-	// when the work it describes moves (implementation-plan.md T6.3), which is
-	// why it is asserted rather than left to a reader.
+	// when the work it describes moves (implementation-plan.md T0.3, then
+	// T6.3), which is why it is asserted rather than left to a reader — Slice
+	// 1's arrival is not one of those moves, and what it changed is stated in
+	// the index's own section (windowsCLIFirstCut below).
 	windowsCLIStatus = "**Status: plan only; nothing is implemented; decisions open.**"
 
 	// windowsCLIPin is this file, by path: the plan names it as the owning guard
 	// test of every documentation task, so the name lives in one place.
 	windowsCLIPin = "internal/cli/docs_windows_cli_test.go"
+
+	// windowsCLIFirstCut is the index's own statement that Slice 1's fixes are
+	// in the tree, and windowsCLIFirstCutCommand the one command that proves
+	// it: the headline's claim is a build, so the document that makes the claim
+	// has to name the build and the command, and a build that stops working has
+	// to be a red guard rather than a stale sentence (implementation-plan.md
+	// T1.5). This is not the status line above it: that one is the plan's own
+	// promise about the folder and moves at T0.3 and T6.3, with the evidence
+	// that licenses the move.
+	windowsCLIFirstCut        = "**The first cut builds.**"
+	windowsCLIFirstCutCommand = "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fugaro.exe ./cmd/fugaro"
 )
 
 // windowsCLIRevision is the commit the reconciliation was read at. A later run
@@ -76,6 +89,8 @@ func TestDocsWindowsCLIIsWritten(t *testing.T) {
 
 	for _, want := range append([]string{
 		windowsCLIStatus,
+		windowsCLIFirstCut,
+		windowsCLIFirstCutCommand,
 		"**Owner:** the Fugaro owner",
 		windowsCLIRevision,
 		// The ranges the index states, so its own summary can be counted.
