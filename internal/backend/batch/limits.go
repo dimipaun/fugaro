@@ -59,6 +59,12 @@ type Issue struct{ Field, Message string }
 // left to batch.New because this is the offline check, and a type the price
 // table does not carry can neither be priced nor sized honestly.
 func CheckResources(r config.Resources, machineType string) []Issue {
+	if machineType == "" {
+		// The block names no type: checkVM fills defaultMachineType in, so the
+		// ask is judged against what a run on this installation actually gets
+		// rather than against nothing.
+		machineType = defaultMachineType
+	}
 	mt, err := MachineTypeOf(machineType)
 	if err != nil {
 		return []Issue{{"", fmt.Sprintf("the Batch backend's machine type: %v", err)}}
