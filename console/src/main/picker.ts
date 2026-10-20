@@ -134,6 +134,13 @@ export interface InstallationPickerDeps {
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
   readonly fs?: InstallationFs
+  /** prefixes, when given, replaces rule 4's well-known directories
+   * (`binDirectories`' own parameter). It exists for the same reason `home`
+   * does: a unit test must be able to say "this machine has no `fugaro`"
+   * without a real `/usr/local/bin` on the machine under test deciding the
+   * answer. **The shipped app never passes it** -- `installInstallationPicker`
+   * leaves it out, so the rule's own list is the one that runs. */
+  readonly prefixes?: readonly string[] | undefined
   /**
    * onChosen is the seam the entry point consumes: it is called after a choose
    * has run the handshake and persisted `active`, and `src/main/index.ts` hands
@@ -312,12 +319,21 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   const validationDeps = (): ValidationDeps => ({
     appEnv: deps.appEnv,
     home: deps.home,
+    ...(deps.prefixes === undefined ? {} : { prefixes: deps.prefixes }),
     ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
     ...(deps.spawnLog === undefined ? {} : { spawnLog: deps.spawnLog }),
     ...(deps.fs === undefined ? {} : { fs: deps.fs }),
     verify,
   })
   const registry = createInstallationRegistry({ store })
+  // The store is read here, once, before any window: the picker's rows carry the
+  // records this console already has (`listReply` merges them, and `rowsOf` adds
+  // one per record the CLI did not list), and `refusal` -- the sentence a store
+  // file that cannot be read is drawn with -- comes from this read and from
+  // nowhere else. A picker that never loaded would draw an empty list over a
+  // store full of installations, and would open its first-run screen for an
+  // operator who has one.
+  registry.load()
 
   let window: BrowserWindow | null = null
   let openedOnFirstRun = false
@@ -342,24 +358,26 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   > => {
     const override = registry.active()?.binaryPath
     const configuredPath = override === undefined || override === '' ? {} : { configuredPath: override }
+    const searched = binDirectories({
+      ...configuredPath,
+      home: deps.home,
+      ...(deps.prefixes === undefined ? {} : { prefixes: deps.prefixes }),
+    })
     const resolution = await resolveBinary({
       ...configuredPath,
       appEnv: deps.appEnv,
+      home: deps.home,
+      ...(deps.prefixes === undefined ? {} : { prefixes: deps.prefixes }),
       directory: workingDirectory(),
       target: { project: '' },
       ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
       ...(deps.spawnLog === undefined ? {} : { log: deps.spawnLog }),
     })
     if (!resolution.ok) {
-      return {
-        ok: false,
-        onboarding: installCliState({
-          reason: resolution.reason,
-          searched: binDirectories({ ...configuredPath, home: deps.home }),
-        }),
-        reason: resolution.reason,
-        searched: binDirectories({ ...configuredPath, home: deps.home }),
-      }
+      // The screen is drawn from the resolution's own sentence and its own
+      // list of directories: this is where the console looked, and it is a fact
+      // rather than a guess about the operator's machine.
+      return { ok: false, onboarding: installCliState({ reason: resolution.reason, searched }), reason: resolution.reason, searched }
     }
     return readInstallations(resolution.path)
   }
@@ -578,6 +596,15 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    */
   const chooseInstallation = async (project: string): Promise<unknown> => {
     const held = registry.entry(project)
+    // A project this console never drew is not one it opens: the row is the
+    // handle, and the handles are the names the CLI printed (or a record this
+    // console already had, which is the no-migration case). Without this, a frame
+    // on the picker's document could name any string at all and have rule 4
+    // resolve -- and the dashboard be told to drive -- a project that appeared on
+    // no screen.
+    if (held === null && !lastListed.has(project)) {
+      return { ok: false, reason: `no installation is named ${JSON.stringify(project)}` }
+    }
     const probed = await probeInstallation(
       {
         project,

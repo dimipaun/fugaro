@@ -51,7 +51,6 @@ import {
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { NO_ACTIVE_INSTALLATION } from './ipc'
-import { validateExternalUrl } from './window'
 import { isSafeInstallationValue, privateWorkingDirectory, resolveBinary } from './spawn'
 import type { ChildSpawner, SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
@@ -773,11 +772,15 @@ export type InstallationOperationName = 'list' | 'choose' | 'checkout' | 'remove
  * by, which is the CLI's own name for the installation. `installationCheckout`
  * is a directory the CLI *itself* listed for that installation; the shape is
  * checked here and membership of that list is checked by the picker, so a
- * renderer cannot name a directory the CLI never offered. `externalUrl` is the
- * one link the onboarding screens may open, and its shape is the console's own
- * external-link rule (`validateExternalUrl` in `src/main/window.ts`).
+ * renderer cannot name a directory the CLI never offered.
+ *
+ * There is deliberately no `externalUrl` kind: the picker's one link row takes
+ * **no arguments at all**, so the URL is the main process's own constant and
+ * never crosses the boundary. The console's external-link rule still applies to
+ * it -- it is applied where the URL is opened, `openExternalValidated` in
+ * `src/main/window.ts`, which is the one place `shell.openExternal` is called.
  */
-export type InstallationArgumentKind = 'installationName' | 'installationCheckout' | 'externalUrl'
+export type InstallationArgumentKind = 'installationName' | 'installationCheckout'
 
 /** InstallationArgument is one argument of one operation. */
 export interface InstallationArgument {
@@ -817,7 +820,10 @@ export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.
     ],
   },
   { name: 'remove', method: 'remove', args: [{ key: 'project', kind: 'installationName', required: true }] },
-  { name: 'openExternal', method: 'openExternal', args: [{ key: 'url', kind: 'externalUrl', required: true }] },
+  // No arguments at all: `GETTING_STARTED_URL` is this process's constant, and
+  // the one path that opens it is `openExternalValidated`. A renderer that sends
+  // a URL has sent a key no row declares, and it is refused by name.
+  { name: 'openExternal', method: 'openExternal', args: [] },
 ] satisfies readonly InstallationOperation[]).map(
   (row): InstallationOperation => Object.freeze({ ...row, args: Object.freeze(row.args.map((arg) => Object.freeze(arg))) }),
 ))
@@ -853,9 +859,11 @@ export type InstallationArguments = Readonly<Record<string, string>>
  * checked values rather than the payload: a key the row does not declare never
  * reaches a handler, and neither does a value of the wrong shape.
  *
- * `redeem` is how a token is checked. It is called here, at validation time,
- * and it consumes the token: a token that is redeemed twice is refused the
- * second time, because the first redemption removed it. */
+ * There is no token to redeem (the add-an-installation form, and with it
+ * `createPickTokens` and `MAX_OUTSTANDING_PICKS`, is gone): what a row's subject
+ * is checked against is the table's own declaration, and a `checkout`'s
+ * membership of the list the CLI printed is the picker's check, against the
+ * document it last read. */
 export function validateInstallationArguments(
   operation: InstallationOperation,
   payload: unknown,
@@ -890,14 +898,6 @@ export function validateInstallationArguments(
         // would be the place a made-up path got through.
         if (!isAbsolutePath(value, MAX_INSTALLATION_PATH_LENGTH)) {
           return { ok: false, reason: `${arg.key} is not an absolute directory path` }
-        }
-        break
-      case 'externalUrl':
-        // The console's own external-link rule, in the one place that already
-        // states it: `validateExternalUrl` returns the URL or null, and the
-        // allow-list of hosts lives beside the only call to `shell.openExternal`.
-        if (validateExternalUrl(value) === null) {
-          return { ok: false, reason: `${arg.key} is not a link this console may open` }
         }
         break
     }

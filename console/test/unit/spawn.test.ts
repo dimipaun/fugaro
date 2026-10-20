@@ -51,6 +51,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CHILD_ENV_KEYS,
   CHILD_PATH_PREFIXES,
+  COMMANDS_WITHOUT_PROJECT,
+  INSTALLATION_LIST_COMMAND,
+  PICKER_COMMANDS,
+  PICKER_OPERATION_NAMES,
   SPAWN_COMMANDS,
   WELL_KNOWN_BINARY_PREFIXES,
   argvFor,
@@ -328,6 +332,42 @@ describe('the spawn table and the argv it builds', () => {
     expect(names).not.toContain('link.openExternal')
   })
 
+  it('has the picker’s own read as its own row, and the two tables agree', () => {
+    // The picker's table is exactly one row -- the local `fugaro config list
+    // --json` (`console/docs/json-contract.md` §6.8), which is how the console
+    // discovers the installations on this machine without asking the operator
+    // anything -- and `assertSpawnSurface` is what holds it to that.
+    expect([...PICKER_COMMANDS].map((row) => [row.operation, row.words.join(' ')])).toEqual([
+      ['installation.list', 'config list --json'],
+    ])
+    expect([...PICKER_OPERATION_NAMES]).toEqual(['installation.list'])
+    const first = PICKER_COMMANDS[0]
+    expect(first?.words.slice(0, 2).join(' ')).toBe(INSTALLATION_LIST_COMMAND)
+    // No `--project`, no `--dir`, no arguments: it is a local read that needs
+    // no project selected and opens no bucket (`internal/cli/config_list.go`).
+    expect(COMMANDS_WITHOUT_PROJECT).toContain(INSTALLATION_LIST_COMMAND)
+    expect(() => {
+      assertSpawnSurface(SPAWN_COMMANDS, PICKER_COMMANDS)
+    }).not.toThrow()
+    expect([...argvFor('installation.list', {}, { target: { project: 'acme' }, directory: '/tmp' })]).toEqual([
+      'config',
+      'list',
+      '--json',
+    ])
+    // ...and the read that names an installation the picker never asked for is
+    // refused, so the table cannot grow a second command without this failing.
+    expect(() => {
+      assertSpawnSurface(SPAWN_COMMANDS, [
+        { operation: 'installation.list', words: ['config', 'show', '--json'], takesProject: false, args: [], dirFlag: false },
+      ])
+    }).toThrow(/config show/)
+    expect(() => {
+      assertSpawnSurface(SPAWN_COMMANDS, [
+        { operation: 'config.list', words: ['config', 'list', '--json'], takesProject: false, args: [], dirFlag: false },
+      ] as never)
+    }).toThrow(/picker/)
+  })
+
   it('fixes the table the design allow-list fixes: eleven commands, nine with --project', () => {
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
@@ -369,7 +409,10 @@ describe('the spawn table and the argv it builds', () => {
         expect(argv).toContain('--project')
         expect(argv[argv.indexOf('--project') + 1]).toBe('chosen')
       } else {
-        expect(COMMANDS_WITHOUT_PROJECT).toContain(row.operation)
+        // `COMMANDS_WITHOUT_PROJECT` is keyed by the *command*, not by the
+        // operation (`assertSpawnSurface` reads it that way), so the row's own
+        // words are what it is asked about.
+        expect(COMMANDS_WITHOUT_PROJECT).toContain(row.words.filter((word) => !word.startsWith('--')).join(' '))
         expect(argv).not.toContain('--project')
       }
     },

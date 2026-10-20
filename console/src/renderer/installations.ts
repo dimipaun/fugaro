@@ -1,84 +1,141 @@
-// The picker's view (desktop-console plan Task 3.4b; design section 3.4 rules 5
-// and 7, D13, D14; owner ruling C9).
+// The picker's view (desktop-console plan Task 3.4b; design section 3.4 rules 4,
+// 5 and 7, D13, D14; owner ruling C9, 2026-10-18; owner ruling of 2026-10-20).
 //
 // The renderer half of the picker is deliberately the thinnest thing in this
 // task, and that is the design's rule 7 rather than a shortcut: **the document
-// holds no path, no id it can act on by itself, and no rule about what may be
-// stored.** It draws what the main process answered, sends a project name and
-// the tokens the main process issued, and nothing else. Every decision that
-// matters -- is this binary executable, is this CLI in range, does this checkout
-// belong to this project, is this token outstanding -- is made in
-// `src/main/installations.ts`, where a test can hold it under plain Node and a
-// renderer cannot reach it at all.
+// holds no path it can act on by itself, no URL, and no rule about what may be
+// stored.** It draws what the main process answered and sends back a project
+// name, a directory out of that project's own `checkouts`, or nothing at all.
+// Every decision that matters -- is there a `fugaro` at all, is this CLI in
+// range, is this checkout one the CLI listed, which installation is active -- is
+// made in `src/main/`, where a test can hold it under plain Node and a renderer
+// cannot reach it at all.
 //
-// `mountPicker` is the whole behaviour: it is handed the document and the
-// bridge and returns a `refresh`, so every step below -- the list, the three
-// pick buttons, the add form, a row's Choose and Remove -- is a unit test's to
-// drive. `test/unit/installations-view.test.ts` does exactly that, over a fake
-// document built from the ids `src/renderer/installations.html` actually
-// declares, because the console has no jsdom dependency and this view is small
-// enough that it does not need one.
+// **The add-an-installation form is gone** (owner's ruling of 2026-10-20): the
+// console asks the operator for no binary and no config, so there is no project
+// field, no "Choose binary…", no "Choose config…" and no Add. What is left is
 //
-// A token is the only thing that crosses back to the main process, and it is
-// **single-use**: a redemption removes it, so the view drops each token it holds
-// the moment the add that used it returns. The paths themselves never enter this
-// process at all -- `list` answers rows, and a row's `binary` is the main
-// process's account of a path it already holds, which is why `rowText` can draw
-// it and a pick cannot.
+//   1. the list the CLI printed, one row per installation, one click that opens
+//      it, and one click that removes the console's own record of it;
+//   2. rule 7's pairing, asked for **at the moment a screen needs it**: a row
+//      offers the checkouts that installation was listed with, and setting one
+//      is the only thing here that makes the console run a `doctor`;
+//   3. the two onboarding screens (`src/main/onboarding.ts` holds their copy),
+//      and one link, which this process does not name -- the `openExternal`
+//      operation takes no arguments, so the URL is the main process's constant.
+//
+// `mountPicker` is the whole behaviour: it is handed the document and the bridge
+// and returns a `refresh`, so every step below is a unit test's to drive.
+// `test/unit/installations-view.test.ts` does exactly that, over a fake document
+// built from the ids `src/renderer/installations.html` actually declares, because
+// the console has no jsdom dependency and this view is small enough that it does
+// not need one.
 //
 // Every string drawn here goes through `drawn`, the display layer's one door
-// (design section 5.1 rule 7): this document shows the CLI's own refusals, and
-// stderr is a channel the console does not own.
+// (design section 5.1 rule 7): this document shows the CLI's own refusals and its
+// own warning lines, and stderr is a channel the console does not own.
 
 import type { InstallationReply } from '../preload/installations'
 import { sanitizeRefusal } from '../shared/sanitize'
 
-/** InstallationListRow is one row as `fugaro:installations/list` answers it. */
-export interface InstallationListRow {
-  readonly id: string
+/** OnboardingState is the union `src/main/onboarding.ts` answers with, mirrored
+ * here the way the operation table is: the sandboxed renderer cannot import the
+ * main process's module, and a shape it does not know is drawn by `viewOf` as no
+ * screen rather than as half of one. */
+export type OnboardingState =
+  | { readonly kind: 'none' }
+  | {
+      readonly kind: 'install-cli'
+      readonly reason: string
+      readonly searched: readonly string[]
+      readonly command: string
+    }
+  | { readonly kind: 'first-installation'; readonly command: string }
+
+/** InstallationsListRow is one row as `fugaro:installations/list` answers it:
+ * the merge of what the CLI listed and what this console has recorded. */
+export interface InstallationsListRow {
   readonly project: string
-  readonly binary: string
-  readonly config?: string
-  readonly checkout?: string
+  readonly gcpProject: string
+  readonly region: string
+  readonly configUnreadable: boolean
+  readonly listed: boolean
+  readonly saved: boolean
   readonly active: boolean
   readonly mode: string
+  readonly checkout?: string
+  readonly checkouts: readonly string[]
 }
 
-/** InstallationListAnswer is the whole of what `list` answers. `refusal` is the
+/** InstallationsListAnswer is the whole of what `list` answers. `refusal` is the
  * sentence the *file* was refused with, and it is drawn with `path` so the
  * operator can fix the file rather than guess which one it is. */
-export interface InstallationListAnswer {
-  readonly rows: readonly InstallationListRow[]
+export interface InstallationsListAnswer {
+  readonly onboard: OnboardingState
+  readonly rows: readonly InstallationsListRow[]
+  readonly warnings: readonly string[]
   readonly refusal?: string
   readonly path: string
 }
 
-/** InstallationView is what the document shows: the status line, the rows, and
- * whether the add form is usable. */
+/** InstallationView is what the document shows: the status line, the rows, the
+ * CLI's own warning lines, and the onboarding screen (or none). */
 export interface InstallationView {
   readonly status: string
-  readonly rows: readonly InstallationListRow[]
-  readonly canAdd: boolean
+  readonly rows: readonly InstallationsListRow[]
+  readonly warnings: readonly string[]
+  readonly onboard: OnboardingState
 }
 
-/** viewOf turns one reply into the view. A refusal from the main process is the
- * status line verbatim -- it is already a sentence written for a person -- and
- * an unreadable file additionally disables the form, because an add is refused
- * while the file cannot be read. */
+/** EMPTY_ONBOARD is `kind: 'none'`, spelled once. */
+const NO_ONBOARD: OnboardingState = Object.freeze({ kind: 'none' })
+
+/** NO_INSTALLATION_STATUS is the line the list carries when the CLI listed
+ * nothing and the console has nothing recorded: the choice is not the operator's
+ * to make yet, which is what the first-installation screen beside it says. */
+export const NO_INSTALLATION_STATUS = 'No installations yet.'
+
+/**
+ * viewOf turns one reply into the view.
+ *
+ * A refusal from the main process is the status line verbatim -- it is already a
+ * sentence written for a person -- and an unreadable file is drawn with the path
+ * it names, because the operator has to be able to go and fix that file.
+ *
+ * An onboarding screen is drawn **instead of** a status line rather than beside
+ * one: it is the whole of what the window has to say, and a second sentence over
+ * it would be a second voice. The rows are still drawn under it, which is the
+ * case that matters -- a console whose CLI would not list still has the
+ * installations its own store holds, and hiding them would take away the one
+ * installation the operator can still open.
+ */
 export function viewOf(reply: InstallationReply): InstallationView {
-  if (!reply.ok) return { status: reply.reason, rows: [], canAdd: false }
-  const answer = reply.data as InstallationListAnswer
+  if (!reply.ok) {
+    return { status: reply.reason, rows: [], warnings: [], onboard: NO_ONBOARD }
+  }
+  const answer = reply.data as InstallationsListAnswer
+  const onboard = answer.onboard ?? NO_ONBOARD
+  const rows = answer.rows ?? []
+  const warnings = answer.warnings ?? []
   if (answer.refusal !== undefined) {
-    return { status: `${answer.path} could not be read: ${answer.refusal}`, rows: answer.rows, canAdd: false }
+    return {
+      status: `${answer.path} could not be read: ${answer.refusal}`,
+      rows,
+      warnings,
+      onboard: NO_ONBOARD,
+    }
   }
-  if (answer.rows.length === 0) {
-    return { status: 'No installations yet. Add one below.', rows: [], canAdd: true }
+  if (onboard.kind !== 'none') return { status: '', rows, warnings, onboard }
+  const active = rows.find((row) => row.active)
+  if (active !== undefined) {
+    return {
+      status: `${active.project} is the installation this console is showing (${active.mode}).`,
+      rows,
+      warnings,
+      onboard,
+    }
   }
-  const active = answer.rows.find((row) => row.active)
-  const status = active === undefined
-    ? 'No installation is chosen. Choose one below.'
-    : `${active.project} is the installation this console is showing (${active.mode}).`
-  return { status, rows: answer.rows, canAdd: true }
+  return { status: NO_INSTALLATION_STATUS, rows, warnings, onboard }
 }
 
 /** UNDRAWABLE is what this view draws where the sanitizer refuses a string. It
@@ -103,48 +160,88 @@ export const UNDRAWABLE = 'a line the console will not draw'
  * bounded line. The operator's own paths are exactly the strings this window is
  * for, and a token-shaped run inside one is exactly what must not be drawn.
  */
-function drawn(raw: string, field: string): string {
+export function drawn(raw: string, field: string): string {
   const result = sanitizeRefusal(raw, field)
   return result.ok ? result.text : UNDRAWABLE
 }
 
-/** rowText is one row's line: the project, the binary and the state. It carries
- * no id and no `--config`: the id is the main process's handle for a row, and
- * the config path is a path, which the document draws only because the operator
- * chose it and must be able to recognise it -- through `drawn`, like every other
- * string here. */
-export function rowText(row: InstallationListRow): string {
-  const parts = [`${drawn(row.project, 'the row’s project')} — ${drawn(row.binary, 'the row’s binary')}`]
-  if (row.config !== undefined) parts.push(`config ${drawn(row.config, 'the row’s config')}`)
+/** rowText is one row's line: the installation, the GCP project it is in, the
+ * region it runs in, and the state this console knows about it.
+ *
+ * A row whose config could not be read is drawn as **the CLI listed it** with the
+ * console's own word for the empty fields -- `the config could not be read` -- and
+ * never hidden: the CLI's own rule is that such an installation is still an
+ * installation (it is a directory with a name), and the warning line beneath the
+ * list says why. A row the CLI did not list at all says so too: it is a record
+ * this console holds, not a fact of the machine, and the operator has to be able
+ * to tell the two apart. */
+export function rowText(row: InstallationsListRow): string {
+  const project = drawn(row.project, 'the row’s project')
+  if (row.listed && row.configUnreadable) return `${project} — the config could not be read`
+  const parts: string[] = [project]
+  if (row.gcpProject !== '') parts.push(drawn(row.gcpProject, 'the row’s GCP project'))
+  if (row.region !== '') parts.push(drawn(row.region, 'the row’s region'))
+  if (!row.listed) parts.push('in this console’s list only')
   if (row.checkout !== undefined) parts.push(`checkout ${drawn(row.checkout, 'the row’s checkout')}`)
-  if (row.mode !== 'ok') parts.push(`(${drawn(row.mode, 'the row’s mode')})`)
+  if (row.mode !== 'ok' && row.mode !== 'unknown') parts.push(`(${drawn(row.mode, 'the row’s mode')})`)
   if (row.active) parts.push('active')
   return parts.join(' · ')
 }
+
+/**
+ * ONBOARDING_COPY is the two screens' fixed words, and it is the whole of what
+ * this file says about them: the title, the one sentence of what the console is
+ * missing, and the link button's label.
+ *
+ * The *command* is never here. It comes from the main process
+ * (`src/main/onboarding.ts`), which is the one place the console spells
+ * `brew install dimipaun/tap/fugaro` and `fugaro init` -- so a screen cannot
+ * drift from the command the repository documents, and the day `docs/setup-wizard/`
+ * renames `init` to `setup` there is one constant to change and a test that
+ * pins it.
+ */
+export const ONBOARDING_COPY: Readonly<Record<'install-cli' | 'first-installation', {
+  readonly title: string
+  readonly body: string
+  readonly link: string
+}>> = Object.freeze({
+  'install-cli': Object.freeze({
+    title: 'Install the Fugaro CLI first',
+    // Terse and true: what is missing, and that this console looked. The list of
+    // places is drawn from the answer's own `searched`, not from this sentence.
+    body: 'The console drives the Fugaro CLI, and it found none at the places it looks.',
+    link: 'Open the getting-started guide',
+  }),
+  'first-installation': Object.freeze({
+    title: 'Set up your first installation',
+    body: 'The console found the Fugaro CLI, and it has no installation to show. Create one with:',
+    link: 'Open the getting-started guide',
+  }),
+})
 
 // ---------------------------------------------------------------------------
 // The slice of the DOM this view uses
 // ---------------------------------------------------------------------------
 //
-// Four methods and three properties, declared here rather than taken from
-// `lib.dom`, for the same reason the preload declares its own `ipcRenderer`
+// A handful of methods and three properties, declared here rather than taken
+// from `lib.dom`, for the same reason the preload declares its own `ipcRenderer`
 // slice: the view is then drivable under plain Node, where there is no DOM at
 // all, and the interfaces say exactly what the view is allowed to touch. A
-// `textContent` assignment is not markup, `appendChild` takes an element
-// and not a string, and there is no `style`, no `href` and no `src`.
+// `textContent` assignment is not markup, `appendChild` takes an element and not
+// a string, and there is no `style`, no `href` and no `src` -- this document
+// opens no URL itself, and the one link it offers is a button whose click the
+// main process answers.
 
-/** PickerEvent is the slice of an event this view uses: the form's submit is
- * handled in the page, so it must not navigate. */
+/** PickerEvent is the slice of an event this view uses. */
 export interface PickerEvent {
   preventDefault(): void
 }
 
-/** PickerElement is one node. `value` and `disabled` are optional because the
- * view touches them on the controls that have them, and the test's fake
- * elements are not the only thing that may satisfy this. */
+/** PickerElement is one node. `disabled` is optional because the view touches it
+ * on the controls that have it, and the test's fake elements are not the only
+ * thing that may satisfy this. */
 export interface PickerElement {
   textContent: string | null
-  value?: string
   disabled?: boolean
   addEventListener(type: string, listener: (event: PickerEvent) => void | Promise<void>): void
   setAttribute(name: string, value: string): void
@@ -152,103 +249,76 @@ export interface PickerElement {
   replaceChildren(...nodes: PickerElement[]): void
 }
 
-/** PickerDocument is the document, by id, plus `createElement` for the rows. */
+/** PickerDocument is the document, by id, plus `createElement` for the rows and
+ * the onboarding screen. */
 export interface PickerDocument {
   getElementById(id: string): PickerElement | null
   createElement(tag: string): PickerElement
 }
 
-/** PickKind is the three dialogs, named as `src/main/installations.ts` names
- * them: one kind per argument of `add`. */
-export type PickKind = 'binary' | 'config' | 'checkout'
-
-/** PickerBridge is the view's whole capability. It is `InstallationBridge` as
- * the preload exposes it -- seven of its eight methods, because `current` is
- * the dashboard's read and the picker's status line is `list`'s -- and it is an
- * interface rather than the preload's own type so a test can hand in a fake
- * without pretending to be Electron. */
+/** PickerBridge is the view's whole capability: the picker's five operations,
+ * and nothing else. It is an interface rather than the preload's own type so a
+ * test can hand in a fake without pretending to be Electron.
+ *
+ * `checkout` takes a project and **optionally** a directory: absent means "stop
+ * using the one that is there", which is how an operator gets back to an
+ * installation with no checkout (rule 5's ordinary case).
+ */
 export interface PickerBridge {
   list(): Promise<InstallationReply>
-  pickBinary(): Promise<InstallationReply>
-  pickConfig(): Promise<InstallationReply>
-  pickCheckout(): Promise<InstallationReply>
-  add(args: Readonly<Record<string, string>>): Promise<InstallationReply>
   choose(args: Readonly<Record<string, string>>): Promise<InstallationReply>
+  checkout(args: Readonly<Record<string, string>>): Promise<InstallationReply>
   remove(args: Readonly<Record<string, string>>): Promise<InstallationReply>
+  openExternal(): Promise<InstallationReply>
 }
 
 /** PickerMount is the mounted view. `refresh` re-reads the list, which is what
  * every action ends with: the main process is the only thing that knows what is
- * stored, so the view never guesses what an add or a remove did to it. */
+ * stored, so the view never guesses what a choose or a remove did to it. */
 export interface PickerMount {
   refresh(): Promise<void>
-}
-
-/** PICK_LABELS is the three buttons' text, before and after a choice. A chosen
- * button says so, because the token it holds is the whole of what a successful
- * pick left behind: the view never learns the path, so it cannot draw one. */
-const PICK_LABELS: Readonly<Record<PickKind, { readonly idle: string; readonly chosen: string }>> = {
-  binary: { idle: 'Choose binary…', chosen: 'Binary chosen' },
-  config: { idle: 'Choose config…', chosen: 'Config chosen' },
-  checkout: { idle: 'Choose checkout…', chosen: 'Checkout chosen' },
 }
 
 /**
  * mountPicker wires the picker document to the bridge and returns its
  * `refresh`. Nothing here decides anything: it draws what a reply says, sends
- * what the operator entered, and re-reads. The four rules it does hold are the
+ * back what the operator clicked, and re-reads. The rules it does hold are the
  * ones rule 7 leaves it:
  *
- *   - **a path is never sent.** `add` carries a project name and the tokens the
- *     main process issued, and the view drops each token as soon as the add
- *     that used it returns -- a token is single-use, and a view that kept one
- *     would send a refused one the second time;
- *   - **a sentence is never written here.** Every refusal shown is a string the
- *     main process sent, and it is drawn through `drawn` rather than composed:
- *     the console does not paraphrase a refusal, and it does not trust one
- *     either;
- *   - **nothing is drawn as markup**: rows are elements whose text is
- *     `rowText`'s output, and the only attributes set are a button's `type`;
- *   - **a submit is handled in the page**, never as a navigation.
+ *   - **a path is never invented.** The only directory this view ever sends is
+ *     one out of that row's own `checkouts` -- a list the CLI printed -- and the
+ *     main process checks it against the document it last read;
+ *   - **a sentence is never written here**: every refusal shown is a string the
+ *     main process sent, drawn through `drawn` rather than composed;
+ *   - **nothing is drawn as markup**: rows and warning lines are elements whose
+ *     text is `rowText`'s or `drawn`'s output, and the only attribute set is a
+ *     button's `type`;
+ *   - **the link is a button, not an anchor**, and it sends no URL: `openExternal`
+ *     takes no arguments, so the address the operating system opens is the main
+ *     process's own constant (`GETTING_STARTED_URL`), checked against its host
+ *     allow-list on the way out.
  */
 export function mountPicker(document: PickerDocument, bridge: PickerBridge): PickerMount {
   const status = document.getElementById('picker-status')
   const list = document.getElementById('picker-list')
-  const project = document.getElementById('picker-project')
-  const submit = document.getElementById('picker-add-submit')
-  const form = document.getElementById('picker-add')
-
-  const pickers: Readonly<Record<PickKind, { readonly button: PickerElement | null; readonly send: () => Promise<InstallationReply> }>> = {
-    binary: { button: document.getElementById('picker-pick-binary'), send: () => bridge.pickBinary() },
-    config: { button: document.getElementById('picker-pick-config'), send: () => bridge.pickConfig() },
-    checkout: { button: document.getElementById('picker-pick-checkout'), send: () => bridge.pickCheckout() },
-  }
-
-  /** tokens are the outstanding choices, and the only path-shaped things this
-   * process ever holds are their names. */
-  const tokens: Record<PickKind, string | undefined> = { binary: undefined, config: undefined, checkout: undefined }
+  const warnings = document.getElementById('picker-warnings')
+  const onboarding = document.getElementById('picker-onboarding')
 
   const say = (sentence: string): void => {
     // Every sentence here is the main process's, and it is drawn through the
     // sanitizer like every other string this view writes: a refusal from the CLI
     // is stderr, and stderr is a channel the console does not own.
-    if (status !== null) status.textContent = drawn(sentence, 'the picker’s answer')
+    if (status !== null) status.textContent = sentence === '' ? '' : drawn(sentence, 'the picker’s answer')
   }
 
-  const controls = (): readonly (PickerElement | null)[] => [submit, pickers.binary.button, pickers.config.button, pickers.checkout.button]
-
   // busy is whether a request is in flight (review S6). While it is, every
-  // control -- the form's and every row's -- is disabled, and a click that still
+  // control -- a row's and the link's -- is disabled, and a click that still
   // arrives is dropped: the main process serialises its mutations as well, and
   // this is what stops a second choose from being *sent* at all.
   let busy = false
-  let view: InstallationView = { status: '', rows: [], canAdd: false }
-  let rowButtons: { readonly button: PickerElement; readonly activeRow: boolean }[] = []
+  let controls: PickerElement[] = []
   const settle = (): void => {
-    for (const control of controls()) {
-      if (control !== null) control.disabled = busy || !view.canAdd
-    }
-    for (const { button, activeRow } of rowButtons) button.disabled = busy || activeRow
+    for (const control of controls) control.disabled = busy
   }
   const exclusively = async (body: () => Promise<void>): Promise<void> => {
     if (busy) return
@@ -262,30 +332,112 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
     }
   }
 
-  const rowElement = (row: InstallationListRow): PickerElement => {
+  /** label is a `<code>` element holding one command, drawn exactly as the main
+   * process spelled it. */
+  const label = (tag: string, text: string, field: string): PickerElement => {
+    const element = document.createElement(tag)
+    element.textContent = drawn(text, field)
+    return element
+  }
+
+  const button = (text: string, onClick: () => Promise<void>): PickerElement => {
+    const element = document.createElement('button')
+    element.setAttribute('type', 'button')
+    element.textContent = text
+    // The promise is **returned**, not dropped: the click's work (the send, the
+    // re-read, the refusal's sentence) is what the next action waits for, and a
+    // listener that fired and forgot would leave a test -- and a second click --
+    // looking at a page mid-flight.
+    element.addEventListener('click', () => act(onClick))
+    controls.push(element)
+    return element
+  }
+
+  /** onboardingNodes is one screen, as elements: the title, the one sentence of
+   * what is missing, the one command, and the one link -- plus, for the
+   * absent-binary screen, the places the resolution looked, which is a fact the
+   * answer carries and this view does not paraphrase. */
+  const onboardingNodes = (state: Exclude<OnboardingState, { kind: 'none' }>): PickerElement[] => {
+    const copy = ONBOARDING_COPY[state.kind]
+    const nodes: PickerElement[] = [
+      label('h2', copy.title, 'the onboarding title'),
+      label('p', copy.body, 'the onboarding sentence'),
+      label('code', state.command, 'the onboarding command'),
+    ]
+    if (state.kind === 'install-cli') {
+      nodes.push(label('p', `Looked in: ${state.searched.join(', ')}`, 'the places the console looked'))
+    }
+    // The link is a button and not an anchor: this document has no `href` and
+    // no URL in it at all. The click is answered by the main process, whose one
+    // external-link path is what holds the address and its allow-list.
+    nodes.push(button(copy.link, async () => {
+      const reply = await bridge.openExternal()
+      if (!reply.ok) say(reply.reason)
+    }))
+    return nodes
+  }
+
+  const rowElement = (row: InstallationsListRow): PickerElement => {
     const item = document.createElement('li')
     item.textContent = rowText(row)
-    const choose = document.createElement('button')
-    choose.setAttribute('type', 'button')
-    choose.textContent = row.active ? 'Chosen' : 'Choose'
-    choose.addEventListener('click', () => act(() => bridge.choose({ id: row.id })))
-    const remove = document.createElement('button')
-    remove.setAttribute('type', 'button')
-    remove.textContent = 'Remove'
-    remove.addEventListener('click', () => act(() => bridge.remove({ id: row.id })))
-    rowButtons.push({ button: choose, activeRow: row.active }, { button: remove, activeRow: false })
-    item.appendChild(choose)
-    item.appendChild(remove)
+    const project = { project: row.project }
+    item.appendChild(
+      button(row.active ? 'Chosen' : 'Choose', async () => {
+        const reply = await bridge.choose(project)
+        await refresh()
+        if (!reply.ok) say(reply.reason)
+      }),
+    )
+    // Rule 7's pairing, asked for at the moment it is needed: the checkouts the
+    // CLI listed for this installation, offered one button each. A row with none
+    // offers none -- there is nothing to set, and the installation works without
+    // a checkout (rule 5) -- and a row that already has one offers to drop it.
+    const checkouts = row.checkouts ?? []
+    for (const checkout of checkouts) {
+      if (checkout === row.checkout) continue
+      item.appendChild(
+        button(`Use ${drawn(checkout, 'the row’s checkout')}`, async () => {
+          const reply = await bridge.checkout({ ...project, checkout })
+          await refresh()
+          if (!reply.ok) say(reply.reason)
+        }),
+      )
+    }
+    if (row.checkout !== undefined) {
+      item.appendChild(
+        button('Stop using this checkout', async () => {
+          const reply = await bridge.checkout(project)
+          await refresh()
+          if (!reply.ok) say(reply.reason)
+        }),
+      )
+    }
+    if (row.saved) {
+      item.appendChild(
+        button('Remove', async () => {
+          const reply = await bridge.remove(project)
+          await refresh()
+          if (!reply.ok) say(reply.reason)
+        }),
+      )
+    }
     return item
   }
 
-  /** render draws one answer. The rows are replaced wholesale rather than
-   * patched, so a row that is gone from the answer is gone from the page. */
+  /** render draws one answer. The rows, the warning lines and the screen are
+   * replaced wholesale rather than patched, so a row that is gone from the
+   * answer is gone from the page -- and a warning line the CLI printed is on the
+   * page for as long as the CLI prints it. */
   const render = (next: InstallationView): void => {
-    view = next
     say(next.status)
-    rowButtons = []
+    controls = []
     if (list !== null) list.replaceChildren(...next.rows.map(rowElement))
+    if (warnings !== null) {
+      warnings.replaceChildren(...next.warnings.map((line) => label('li', line, 'the CLI’s warning')))
+    }
+    if (onboarding !== null) {
+      onboarding.replaceChildren(...(next.onboard.kind === 'none' ? [] : onboardingNodes(next.onboard)))
+    }
     settle()
   }
 
@@ -293,91 +445,20 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
     render(viewOf(await bridge.list()))
   }
 
-  /** act sends one mutation and re-reads, with every control disabled until
-   * both are done. A refusal is shown **after** the re-read, so the operator
-   * sees the sentence over the list as it actually is rather than over a list
-   * the failed action did not change. */
-  const act = (send: () => Promise<InstallationReply>): Promise<void> =>
-    exclusively(async () => {
-      const reply = await send()
-      await refresh()
-      if (!reply.ok) say(reply.reason)
-    })
-
-  const clearTokens = (): void => {
-    for (const kind of ['binary', 'config', 'checkout'] as const) {
-      tokens[kind] = undefined
-      const button = pickers[kind].button
-      if (button !== null) button.textContent = PICK_LABELS[kind].idle
-    }
-  }
-  // The buttons start from the view's own labels, not from whatever the
-  // document's markup happened to say: a label is the one place the view
-  // reports whether a pick is held, so it is the view that writes it.
-  clearTokens()
-
-  for (const kind of ['binary', 'config', 'checkout'] as const) {
-    const picker = pickers[kind]
-    const button = picker.button
-    if (button === null) continue
-    button.addEventListener('click', () =>
-      exclusively(async () => {
-        const reply = await picker.send()
-        if (!reply.ok) {
-          say(reply.reason)
-          return
-        }
-        const token = (reply.data as { readonly token?: unknown }).token
-        if (typeof token !== 'string' || token === '') {
-          // The main process answers a cancel with `ok: false`, so a success
-          // with no token is a shape this view does not know: it says so rather
-          // than sending an empty string to `add`, which the validator would
-          // refuse with a sentence about the wrong thing.
-          say('the console answered without a choice')
-          return
-        }
-        tokens[kind] = token
-        button.textContent = PICK_LABELS[kind].chosen
-        say('Chosen. Fill in the project name, then press Add.')
-      }),
-    )
-  }
-
-  form?.addEventListener('submit', (event) => {
-    // The page is the whole application: a submit that navigated would leave
-    // the console for a URL the CSP refuses, and would take the picker with it.
-    event.preventDefault()
-    return exclusively(async () => {
-      const args: Record<string, string> = {}
-      const named = project?.value ?? ''
-      // A key is sent only when the operator filled it in: the main process's
-      // own sentence for a missing one ("project is required") is better than a
-      // refusal this view invented about a value it sent empty.
-      if (named !== '') args['project'] = named
-      for (const kind of ['binary', 'config', 'checkout'] as const) {
-        const token = tokens[kind]
-        if (token !== undefined) args[kind] = token
-      }
-      const reply = await bridge.add(args)
-      // The tokens are dropped whether the add succeeded or not: this view
-      // cannot tell **how far** the payload got (the main process redeems a
-      // token where its validation reaches it), and a view that kept them would
-      // sometimes send a spent one. Choosing again is one dialog.
-      clearTokens()
-      await refresh()
-      if (!reply.ok) say(reply.reason)
-      else if (project !== null) project.value = ''
-    })
-  })
+  /** act sends one mutation and re-reads, with every control disabled until both
+   * are done. A refusal is shown **after** the re-read, so the operator sees the
+   * sentence over the list as it actually is rather than over a list the failed
+   * action did not change. */
+  const act = (send: () => Promise<void>): Promise<void> => exclusively(send)
 
   return { refresh }
 }
 
 /**
  * The bootstrap is guarded on the document and the bridge being there, for the
- * reason `src/preload/index.ts` gives about its own guard: this file is
- * imported by a unit test under plain Node, where there is no `document` and no
- * bridge, and importing it must do nothing at all.
+ * reason `src/preload/index.ts` gives about its own guard: this file is imported
+ * by a unit test under plain Node, where there is no `document` and no bridge,
+ * and importing it must do nothing at all.
  *
  * The cast is the same one the preload makes: this module declares the slice of
  * the DOM it uses, so it reads `globalThis` through its own interface rather

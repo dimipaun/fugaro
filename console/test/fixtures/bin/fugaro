@@ -20,6 +20,12 @@
 #     (contract section 6.4). It is what `verifyCandidate` runs to prove an
 #     installation is usable, so a spec that adds one through the picker needs
 #     it; nothing in the dashboard draws it.
+#   * `config list --json` -- the installations document (contract section 6.8),
+#     read off `installations.ndjson` beside it, which `cliStub.ts` writes. It is
+#     the picker's one read and the only command with **no** `--project`: the
+#     document is the list of installations, so there is no project to name. An
+#     absent file means the machine has none -- the state the "set up your first
+#     installation" screen is drawn for.
 #   * `watch --json --project P` -- the frames in `frames.ndjson` beside it, one
 #     compact document per line, which `cliStub.ts` writes from the committed
 #     `test/fixtures/synthetic.ndjson`. This is the read the Live screen makes
@@ -58,6 +64,27 @@ if [ "$command" = 'version' ]; then
     refuse "'version' takes no arguments, and was asked for '$*'"
   fi
   cat "${here}/version.txt"
+  exit 0
+fi
+
+# `config list --json` is the installations read, and it is the one command that
+# takes **no** `--project`: it lists them (owner's ruling of 2026-10-20; the
+# console's picker draws exactly this document). It answers the lines in
+# `installations.ndjson` beside this script -- absent means "this machine has
+# none", which is a seeded empty list and not an error -- and it refuses any
+# `--project`, because a list for one project is not a list.
+if [ "$command" = 'config' ]; then
+  if [ "${1:-}" != 'list' ] || [ "${2:-}" != '--json' ]; then
+    refuse "the stub fugaro answers 'config list --json' and was asked for 'config $*'"
+  fi
+  if [ $# -gt 2 ]; then
+    refuse "'config list --json' takes no further arguments, and was asked for '${3}'"
+  fi
+  # A `--project` reaches this branch only if a console sent one, and it is not
+  # read as the seeded project: this command has no project.
+  if [ -f "${here}/installations.ndjson" ]; then
+    cat "${here}/installations.ndjson"
+  fi
   exit 0
 fi
 

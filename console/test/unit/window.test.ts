@@ -362,6 +362,10 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
     'https://github.com/fugaro/fugaro/pull/434',
     'https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/1',
     'https://console.cloud.google.com/run/jobs/executions/details/us-east5/web-00001-abcd?project=proj-1234',
+    // The console's own link, and the only one this process builds rather than
+    // reads out of a document: the two onboarding screens' link button
+    // (`GETTING_STARTED_URL` in `src/main/onboarding.ts`).
+    'https://fugaro.dev/getting-started/',
   ]
 
   it.each(accepted)('opens %s', (link) => {
@@ -372,8 +376,20 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
     expect(ALLOWED_EXTERNAL_HOSTS).toEqual([
       'bitbucket.org',
       'console.cloud.google.com',
+      // The website's own host, on the list because the onboarding screens link
+      // to it. A second entry here is a deliberate edit in `src/main/window.ts`
+      // and in this test together.
+      'fugaro.dev',
       'github.com',
     ])
+  })
+
+  it('does not open a host that merely ends with one of them', () => {
+    // The comparison is whole and lower-cased: a lookalike registered under a
+    // domain the console trusts is not on the list.
+    for (const lookalike of ['https://fugaro.dev.evil.test/getting-started/', 'https://evil-fugaro.dev/']) {
+      expect(validateExternalUrl(lookalike).ok, lookalike).toBe(false)
+    }
   })
 
   it('hands over the parsed URL, not the string it was spelled as', () => {
