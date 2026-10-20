@@ -48,7 +48,7 @@ safe direction, but it is not a fence: **after the flag flips, the deployer is
 expected to be fenced for Cloud Storage (proved by Check 32) and for Secret
 Manager, and to hold five roles that do nothing** — and even the Secret Manager
 half is expected rather than proved: that service's name-prefix condition is
-Check 52's U3, which is **NOT RUN** (F5's table above). So the one form this
+Check 52's U3, which is **NOT RUN** (F5's table below). So the one form this
 repository has measured live is Cloud Storage's, and every other service's is
 expected at best. The feature's own use of those services would then have to be
 reconsidered (§8 point 3), and no document here may claim more than that until

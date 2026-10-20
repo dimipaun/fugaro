@@ -2092,3 +2092,71 @@ func TestDeployerRoleCreationRefusesComputedProjectRolesForEitherRole(t *testing
 		})
 	}
 }
+
+// TestDeployerDesignDirectionalReferencesPointTheRightWay: §0 cited Check 52's
+// U3 as "(F5's table above)", and F5 is defined below it, inside §1 — the
+// reference sent a reader into §0's own prose, which holds no table. It is the
+// pointer to the evidence behind the sentence that even the Secret Manager half
+// of the fence is "expected rather than proved", which is the same claim Check
+// 68's C7 row rests on, so a design of record that points the wrong way costs a
+// reader the evidence at exactly the moment they go looking for it. The
+// reference is read for direction against where the labelled fact or section is
+// defined, not against a line counted here, so an edit that moves either side
+// fails this test rather than sliding past it. What it checks is the references
+// that carry a label — "F5's table below", "§9 below"; a bare "open point 3
+// above", which names no label this test can resolve, is not read here.
+//
+// Mutation (verified, run and restored): "F5's table below" back to "above", and
+// "§9 below" in §0 to "§9 above" — each fails here naming the reference.
+func TestDeployerDesignDirectionalReferencesPointTheRightWay(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	line := func(at int) int { return 1 + strings.Count(doc[:at], "\n") }
+
+	// Where each labelled fact is defined, and where each section starts.
+	facts := map[string]int{}
+	for _, m := range regexp.MustCompile(`(?m)^\*\*(F\d+) —`).FindAllStringSubmatchIndex(doc, -1) {
+		facts[doc[m[2]:m[3]]] = m[0]
+	}
+	if len(facts) == 0 {
+		t.Fatal("the design defines no F-labelled facts: §0's references are to them, so this test reads the definitions from here")
+	}
+	sections := map[string]int{}
+	for _, m := range regexp.MustCompile(`(?m)^## (\d+)\.`).FindAllStringSubmatchIndex(doc, -1) {
+		sections[doc[m[2]:m[3]]] = m[0]
+	}
+	if len(sections) == 0 {
+		t.Fatal("the design has no numbered sections: §0's references are to them, so this test reads the headings from here")
+	}
+
+	re := regexp.MustCompile(`(\bF\d+|§\d+)[^.\n]{0,60}?\b(above|below)\b`)
+	refs := re.FindAllStringSubmatchIndex(doc, -1)
+	if len(refs) == 0 {
+		t.Fatal("the design makes no directional reference (\"F5's table below\", \"§9 below\"): this test exists to hold the ones it makes to the tree of the document they point into")
+	}
+	for _, m := range refs {
+		label, dir := doc[m[2]:m[3]], doc[m[4]:m[5]]
+		var def int
+		var what string
+		if strings.HasPrefix(label, "§") {
+			def, what = sections[strings.TrimPrefix(label, "§")], "section "+label
+		} else {
+			def, what = facts[label], label
+		}
+		if what == "" || def == 0 {
+			t.Errorf("line %d of the design refers to %s, which the document does not define: a reference to a fact or section that is not here cannot be read", line(m[0]), label)
+			continue
+		}
+		defLine := line(def)
+		want := "below"
+		if def < m[0] {
+			want = "above"
+		}
+		if dir != want {
+			t.Errorf("line %d of the design says \"%s\", and %s is defined at line %d: the reference points a reader the wrong way, into material that does not hold it", line(m[0]), doc[m[0]:m[1]], what, defLine)
+		}
+	}
+}
