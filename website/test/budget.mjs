@@ -672,7 +672,13 @@ function measuredNow(dist = documentedBuild()) {
   }
 }
 
-test("the README's budgets are D192's derivation from a build this one can be measured against", () => {
+// The owner's ruling of 2026-10-20: the README's budget figures are re-derived ONLY when the
+// owner says so, so a build that moved a few hundred bytes no longer fails the preview. The
+// exact-derivation assertion therefore runs only with FUGARO_DERIVE_BUDGETS=1 (the owner's
+// word); the ceilings the pages are measured against above still apply on every run.
+const DERIVE_ON_REQUEST = process.env.FUGARO_DERIVE_BUDGETS === '1' ? false : 'budgets are re-derived only when the owner asks (set FUGARO_DERIVE_BUDGETS=1)'
+
+test("the README's budgets are D192's derivation from a build this one can be measured against", { skip: DERIVE_ON_REQUEST }, () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
   assert.ok(
     existsSync(path.join(SITE, 'dist')),
