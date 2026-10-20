@@ -162,19 +162,31 @@ func newFixture(t *testing.T) *fixture {
 
 // runClaims is the claim set of the run's Firebase ID token: what
 // token.Exchange's ID token carries for uid r~<slug>~<run>.
+//
+// The shape is the one the repository already models as a real ID token
+// (internal/gcpfake's IdentityToolkit.idToken, and the rules harness's
+// unsignedToken): iss is the securetoken URL of the project, aud is the
+// project id, sub and user_id are the uid, and the custom token's claims
+// (fs, fr, fx, fp, rb) arrive at the TOP level — Firebase lifts them out of
+// the custom token's "claims" object, which is exactly what
+// token.sameIdentity checks an exchanged token for. The verifier reads them
+// there; a test that put them under "claims" would be testing a token
+// Firebase never issues.
 func (f *fixture) runClaims(mutate ...func(map[string]any)) map[string]any {
 	c := map[string]any{
-		"iss":     "https://securetoken.google.com/" + testFirebase,
-		"aud":     testFirebase,
-		"sub":     "r~" + f.slug + "~" + f.run,
-		"user_id": "r~" + f.slug + "~" + f.run,
-		"iat":     f.now.Add(-time.Minute).Unix(),
-		"exp":     f.now.Add(30 * time.Minute).Unix(),
-		"fs":      f.slug,
-		"fr":      f.run,
-		"fp":      testProject,
-		"fx":      f.now.Add(2 * time.Hour).UnixMilli(),
-		"rb":      "operator@example.invalid",
+		"iss":       "https://securetoken.google.com/" + testFirebase,
+		"aud":       testFirebase,
+		"sub":       "r~" + f.slug + "~" + f.run,
+		"user_id":   "r~" + f.slug + "~" + f.run,
+		"auth_time": f.now.Add(-time.Minute).Unix(),
+		"iat":       f.now.Add(-time.Minute).Unix(),
+		"exp":       f.now.Add(30 * time.Minute).Unix(),
+		"firebase":  map[string]any{"identities": map[string]any{}, "sign_in_provider": "custom"},
+		"fs":        f.slug,
+		"fr":        f.run,
+		"fp":        testProject,
+		"fx":        f.now.Add(2 * time.Hour).UnixMilli(),
+		"rb":        "operator@example.invalid",
 	}
 	for _, m := range mutate {
 		m(c)
