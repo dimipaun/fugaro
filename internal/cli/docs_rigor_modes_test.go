@@ -97,7 +97,6 @@ var (
 // red state is this test: the folder's guard did not exist until this file did.
 func TestDocsRigorModesIsWritten(t *testing.T) {
 	readme := readDoc(t, rigorModesReadme)
-	spec := readDoc(t, rigorModesSpec)
 	recon := readDoc(t, rigorModesRecon)
 	plan := readDoc(t, rigorModesPlan)
 
@@ -115,22 +114,6 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", rigorModesReadme, want)
 		}
-	}
-
-	for _, want := range []string{
-		// The owner's spec, verbatim and unannotated.
-		"Oct 20, 2026 · @Dimi",
-		"## Open questions",
-		"Fugaro Rigor Modes Spec",
-	} {
-		if !strings.Contains(spec, want) {
-			t.Errorf("%s lacks %q", rigorModesSpec, want)
-		}
-	}
-	// The spec is the owner's; the folder does not add to it. Its open questions
-	// stay four, and no document in the folder claims any of them answered.
-	if got := strings.Count(spec[strings.Index(spec, "## Open questions"):], "\n- "); got != 4 {
-		t.Errorf("%s: the owner's open questions are %d, want 4", rigorModesSpec, got)
 	}
 
 	for _, want := range []string{
@@ -161,6 +144,55 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q", rigorModesPlan, want)
+		}
+	}
+}
+
+// TestDocsRigorModesSpecIsTheOwners: the spec is the owner's document, and the
+// folder does not put words in the owner's mouth. Its four open questions stay
+// open — no document here records an answer, which is the marker the sibling
+// folder uses ("**Answered 2026-10-19: option 1**") and the one this folder must
+// not carry while the status line says the decisions are open — and each of the
+// four has a numbered recommendation behind it rather than being left unread.
+func TestDocsRigorModesSpecIsTheOwners(t *testing.T) {
+	spec := readDoc(t, rigorModesSpec)
+	recon := readDoc(t, rigorModesRecon)
+	plan := readDoc(t, rigorModesPlan)
+
+	for _, want := range []string{
+		"# Fugaro Rigor Modes Spec",
+		"Oct 20, 2026 · @Dimi",
+		// The five modes, as the owner named them.
+		"**POC**", "**Startup**", "**Pro**", "**Critical**", "**Hotfix**",
+		"## Open questions",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("%s lacks %q", rigorModesSpec, want)
+		}
+	}
+	if got := strings.Count(spec[strings.Index(spec, "## Open questions"):], "\n- "); got != 4 {
+		t.Errorf("%s: the owner's open questions are %d, want 4", rigorModesSpec, got)
+	}
+
+	// No answer is recorded here: not by the sibling folder's marker, and not in
+	// words either.
+	for _, doc := range []struct{ path, body string }{
+		{rigorModesRecon, recon},
+		{rigorModesPlan, plan},
+	} {
+		for _, want := range []string{"**Answered", "the owner answered"} {
+			if strings.Contains(doc.body, want) {
+				t.Errorf("%s records %q: this folder recommends, and the status line says the decisions are open", doc.path, want)
+			}
+		}
+	}
+
+	// Each of the owner's four questions has a numbered recommendation or item
+	// behind it: the scale (D1), the calibration (O1), where the config lives
+	// (D5) and who may invoke Hotfix (D12).
+	for _, want := range []string{"### D1 —", "**O1 —", "### D5 —", "### D12 —"} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: every one of the owner's open questions has a recommendation behind it", rigorModesRecon, want)
 		}
 	}
 }
