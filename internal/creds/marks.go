@@ -83,9 +83,14 @@ func (m Mark) NeedsProbe(now time.Time) bool {
 	return m.State == StateBackedOff && !now.Before(m.Until)
 }
 
-// Ready is the time the credential becomes usable again by waiting, and
-// whether it ever does. It is false only for a broken credential, which no
-// amount of waiting clears.
+// Ready is the time the credential becomes usable again by waiting, and whether
+// it ever does. False is "no amount of waiting clears this": a broken credential
+// (the operator's, C1.21) and a hold that carries no time to wait for at all.
+//
+// The window it measures from is in the set the caller passes, and the caller
+// has applied Settings.forTier to it: the window is a shared tier's, so a tier B
+// credential's answer is its reset and nothing else. Nothing here needs to know
+// a tier — one settings value per credential is what forTier is for.
 //
 // An exhausted mark's answer is max(Until, window end): the reset the upstream
 // reported, and — with D142's first control on — the end of the subscription
@@ -104,18 +109,40 @@ func (m Mark) Ready(now time.Time, set Settings) (time.Time, bool) {
 		// Usable now. The only thing that can hold it is a lease, which the
 		// caller adds (see earliest).
 		return now, true
-	case StateExhausted:
+	case StateExhausted, StateBackedOff:
+		// Both states are an exhaustion, and both answer with the later of the
+		// two times in play: the wait (the reset the upstream reported, or the
+		// doubling for a credential that reported none) and, with D142's first
+		// control on, the end of the subscription window the exhaustion opened at
+		// Since.
+		//
+		// A backed_off mark is in this branch on purpose, and it is the review's
+		// finding M3. Its `Until` is the wait — fifteen minutes, then thirty —
+		// and a selection that answered with the wait alone would be saying "this
+		// can serve work again in fifteen minutes" about a token the control
+		// holds for the rest of its window: the caller would probe it, the probe
+		// would succeed, and the token would be back in rotation inside the
+		// window, which is the control's whole point reversed. With the window in
+		// the answer, the earliest a backed-off mark can serve is the window's
+		// end, and until then it is not a probe target either — `earliest` reads
+		// the answer this function gives.
 		at := m.Until
 		if set.stops() && !m.Since.IsZero() {
 			if end := m.Since.Add(set.Window); end.After(at) {
 				at = end
 			}
 		}
+		if at.IsZero() {
+			// A node that says a credential is held and carries no time at all —
+			// no reset, no wait, no window to measure from — is a node this
+			// release cannot read as a hold, and "no time" must not be read as
+			// "no hold": the previous shape answered the zero time, which is
+			// before now, and so reported an unknown node as an available
+			// credential. Fail closed instead: nothing is served from it, and
+			// nothing waits for it.
+			return time.Time{}, false
+		}
 		return at, true
-	case StateBackedOff:
-		// The wait ends at Until; what happens then is a probe, which either
-		// clears the mark or doubles it (C1.12).
-		return m.Until, true
 	case StateBroken:
 		return time.Time{}, false
 	}
@@ -142,6 +169,18 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 	if !reset.IsZero() && reset.After(now) {
 		return Mark{State: StateExhausted, Until: reset, Since: now}
 	}
+	if prev.State == StateBackedOff && now.Before(prev.Until) {
+		// A hold is already in force on this credential, and a usage limit with
+		// no reset time cannot be a fresh exhaustion of it: a backed-off
+		// credential is not selected (Usable is false for it), so the only calls
+		// that can be answering 429 here are the ones that were already in flight
+		// when the first 429 landed. Every one of those reports the same
+		// exhaustion again, and N of them must leave the state one of them left —
+		// otherwise a burst of concurrent calls doubles the wait once per call
+		// and walks the credential to its five-hour cap in a second. So the hold
+		// in force is left exactly as it is, date and all.
+		return prev
+	}
 	m := ProbeFailed(prev, now, set)
 	m.Since = now
 	return m
@@ -161,7 +200,21 @@ func ProbeFailed(prev Mark, now time.Time, set Settings) Mark {
 	}
 	set = set.withDefaults()
 	wait := set.BackoffInitial
-	if prev.Backoff > 0 {
+	switch {
+	case prev.Backoff <= 0:
+		// The first wait. It stands for a stored value that is absent, and for
+		// one that is negative — a node written by hand, or a value this release
+		// never writes — which must not be doubled into a longer hold.
+	case prev.Backoff >= set.BackoffCap/2:
+		// Doubling this reaches or passes the cap, and the comparison is the
+		// cap's half rather than "wait > cap" because of what a stored value near
+		// the int64 limit does: the multiply wraps to a *negative* duration, the
+		// "> cap" test then passes it through untouched, and the mark comes out
+		// with a wait that is already over — a credential probed again
+		// immediately, for ever. Deciding at the half is deciding before the
+		// multiply that would wrap.
+		wait = set.BackoffCap
+	default:
 		wait = prev.Backoff * 2
 	}
 	if wait > set.BackoffCap {
@@ -174,15 +227,55 @@ func ProbeFailed(prev Mark, now time.Time, set Settings) Mark {
 	return m
 }
 
-// Cleared is the mark a successful probe (C1.12) or the operator's clear
-// (C1.21) leaves: available, with the wait in force forgotten, so the next
-// exhaustion starts at the initial backoff again.
+// ProbeSucceeded is the mark a successful probe leaves (C1.12), and it is a
+// no-op unless the mark it is applied to is backed off.
+//
+// That restriction is the review's finding M4, and it is what keeps a probe from
+// being a way to clear a mark it was never allowed to touch. A probe asks one
+// question — "is the wait over for a credential that reported no reset?" — and
+// only a backed-off mark is that question's subject: C1.12 says a probe is never
+// run on a broken credential, so a probe's "yes" arriving for a broken one is
+// the racing case (a probe launched just before the 401 landed, or two instances
+// answering out of order), and it must not be the write that takes the 401 off.
+// C1.9's rule is that only the operator clears a broken mark (C1.21). An
+// exhausted mark is not a probe's business either: it has a reset time, and
+// clearing it would cut that reset short for a credential nobody asked about.
+//
+// What it writes when it does apply is usually Cleared, with one exception that
+// is D142's first control reaching the probe path (review finding M3): with the
+// control on, a successful probe does not put a shared token back in rotation
+// inside the window its exhaustion opened. The probe's "yes" answers whether the
+// credential works; the control answers whether the owner's donated quota may be
+// spent on it again yet, and "a probe cleared it" would otherwise be the way
+// around the control — back in rotation fifteen minutes after an exhaustion,
+// with the control on by default. So the mark becomes exhausted until the window
+// ends, dated from the exhaustion that opened it, which is exactly the answer
+// Ready gives such a mark and exactly when the credential is selected again.
+func ProbeSucceeded(prev Mark, now time.Time, set Settings) Mark {
+	if prev.State != StateBackedOff {
+		return prev
+	}
+	set = set.withDefaults()
+	if set.stops() && !prev.Since.IsZero() {
+		if end := prev.Since.Add(set.Window); end.After(now) {
+			return Mark{State: StateExhausted, Until: end, Since: prev.Since}
+		}
+	}
+	return Cleared()
+}
+
+// Cleared is the mark the operator's clear leaves (C1.21): available, with the
+// wait in force forgotten, so the next exhaustion starts at the initial backoff
+// again. It is the operator's transition and not a probe's — a probe leaves what
+// ProbeSucceeded answers — and it is the one transition that leaves a broken
+// mark.
 func Cleared() Mark { return Mark{State: StateAvailable} }
 
 // Break is the mark a 401 leaves (D139). It carries the time it was noticed
 // and nothing else: there is no reset to wait for, and the credential is out
 // until an operator replaces the token and clears the mark (C1.21). Cleared is
 // the only transition that leaves it: a usage limit and a failed probe are
-// refused on a broken mark rather than overwriting it, so nothing a busy token
-// reports can put a refused one back in rotation.
+// refused on a broken mark rather than overwriting it, and a *successful* probe
+// is a no-op on one (ProbeSucceeded), so nothing a busy token reports — and
+// nothing a probe answers — can put a refused one back in rotation.
 func Break(now time.Time) Mark { return Mark{State: StateBroken, Since: now} }

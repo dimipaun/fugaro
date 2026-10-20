@@ -86,6 +86,29 @@ type Selector struct {
 // candidate offered under `oauth-only` is not refused — it carries no mistake —
 // but it is never selected, and a call that nothing else can serve is answered
 // with ErrFallbackForbidden.
+//
+// # What this does not re-check, and what that costs
+//
+// The marks and leases are read once, at the top, and the decision is taken from
+// that reading (review finding m4). A mark written by another instance in
+// between — the token this call is about to use answered 401 a moment ago — is
+// therefore not seen here, and the call goes to a credential whose state has
+// just changed.
+//
+// That is deliberate rather than overlooked, and its whole cost is one call: the
+// credential is the one the reading said was usable, the call reaches the
+// provider, and the provider's answer (a 401, a 429) is what records the new
+// mark. Nothing durable is lost — the mark's write is a compare-and-set, so the
+// two instances' marks do not overwrite each other — and nothing is served from
+// a credential that the state will not correct a moment later. Reading the one
+// mark again under a condition before returning would close the window at the
+// price of a third round trip on every selection — the path taken by every call
+// the project makes — to avoid one wasted call in a race that needs two
+// instances to hit the same shared token in the same instant.
+//
+// The cap is the other read-then-write in this function, and its bound is
+// Lease's: the cap can be exceeded by the number of instances selecting at once,
+// for at most one lease TTL.
 func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential) (Credential, time.Duration, error) {
 	set := s.Settings.withDefaults()
 	now := s.now()
@@ -100,7 +123,7 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 	if err != nil {
 		return Credential{}, 0, err
 	}
-	leases, err := s.Store.Leases(ctx)
+	leases, err := s.Store.Leases(ctx, now)
 	if err != nil {
 		return Credential{}, 0, err
 	}
@@ -266,17 +289,36 @@ func (s *Selector) ProbeFailed(ctx context.Context, name string) (Mark, error) {
 	})
 }
 
-// Cleared records a successful probe (C1.12) — or the operator's clear of a
-// broken mark (C1.21), which is the same write: both say the credential may be
-// used again.
+// Probed records a successful probe of one credential (C1.12): the wait is
+// over, and the credential is Cleared — unless D142's first control holds it for
+// the rest of the window its exhaustion opened, which ProbeSucceeded decides.
+//
+// The tier is the caller's, because this is a write and the mark it writes does
+// not carry one: C1.12's probe runs on a credential it read from the candidates
+// it was given, and only the caller knows which tier that is. Tier B is the case
+// that matters — its controls are off (forTier) — and passing the wrong tier
+// here cannot put a credential back in rotation that a *mark* still holds: the
+// window this reads is the one its own exhaustion opened, which is only ever
+// shorter than leaving it backed off.
+func (s *Selector) Probed(ctx context.Context, name string, tier Tier) (Mark, error) {
+	now := s.now()
+	return s.Record(ctx, name, func(prev Mark, _ bool, set Settings) (Mark, error) {
+		return ProbeSucceeded(prev, now, set.forTier(tier)), nil
+	})
+}
+
+// Cleared records a successful probe's *operator* — the clear of a broken mark
+// (C1.21). It is the operator's write and the only one that takes a broken mark
+// off: a probe answers through Probed, which is a no-op on anything but a
+// backed-off mark (ProbeSucceeded), so a probe's success cannot clear a 401.
 func (s *Selector) Cleared(ctx context.Context, name string) (Mark, error) {
 	return s.Mark(ctx, name, func(Mark, bool) (Mark, error) { return Cleared(), nil })
 }
 
 // Broken records a 401 on one credential (D139). It is the one mark this
-// package will not undo on its own: only Cleared — an operator's (C1.21) or a
-// probe's, and a probe is never run on a broken credential (C1.12) — takes it
-// off.
+// package will not undo on its own: only the operator's Clear (C1.21) takes it
+// off — a probe never runs on a broken credential (C1.12), and ProbeSucceeded
+// refuses one that arrives anyway.
 func (s *Selector) Broken(ctx context.Context, name string) (Mark, error) {
 	now := s.now()
 	return s.Mark(ctx, name, func(Mark, bool) (Mark, error) { return Break(now), nil })
@@ -285,17 +327,17 @@ func (s *Selector) Broken(ctx context.Context, name string) (Mark, error) {
 // take records a decision: the run's current credential, which is D154's
 // stickiness, and its lease, which is the slot it holds under D142's cap.
 //
-// Both are writes, and either can fail; the error is returned rather than
-// swallowed, so the caller fails closed — a call is never sent on a decision
-// the service could not record. The order is deliberate: the lease is written
-// second, so a failure between them leaves a run that is sticky on a credential
-// it holds no slot for, and its next selection takes the slot, rather than a
-// run holding a slot nobody uses until the lease lapses.
+// The two are one fact — where this run is — and they are written as one
+// placement (Store.SetPlacement), atomically. They used to be two writes, which
+// left a window in which a failure took one and not the other and the run's
+// stickiness named a credential it held no slot on (or the reverse) until its
+// next selection; there is no order of two writes that avoids that, which is
+// why the fix is one write and not a different order.
+//
+// The error is returned rather than swallowed, so the caller fails closed: a
+// call is never sent on a decision the service could not record.
 func (s *Selector) take(ctx context.Context, run Run, c Credential, now time.Time, set Settings) error {
-	if err := s.Store.SetCurrent(ctx, run, c.Name); err != nil {
-		return err
-	}
-	return s.Store.SetLease(ctx, run, Lease{Credential: c.Name, Until: now.Add(set.LeaseTTL)})
+	return s.Store.SetPlacement(ctx, run, c.Name, Lease{Credential: c.Name, Until: now.Add(set.LeaseTTL)})
 }
 
 // leastRecentlyExhausted picks from a usable set: the credential exhausted
@@ -356,7 +398,15 @@ func recency(m Mark) time.Time {
 
 // free reports whether the credential can be used by run at now: its mark holds
 // nothing, and the per-token cap has room (D142's second control).
+//
+// The settings are read per tier here, at the one place a candidate's tier is
+// known, and that is where review findings M1 and M2 are settled: both of D142's
+// controls are a shared tier's (Settings.forTier), so this is the only line that
+// needs to know it. A tier B candidate is then held by its mark's own time — a
+// reset, or a backoff — and never by a window or a cap written for donated
+// subscription quota.
 func free(c Credential, marks map[string]Mark, leases []Lease, run Run, now time.Time, set Settings) bool {
+	set = set.forTier(c.Tier)
 	if !marks[c.Name].Usable(now, set) {
 		return false
 	}
@@ -364,10 +414,12 @@ func free(c Credential, marks map[string]Mark, leases []Lease, run Run, now time
 }
 
 // earliest is the time the first credential of a group becomes usable — by
-// waiting out its mark, or by another run's lease lapsing — and whether one
-// ever does (false when every credential of the group is broken). probe reports
-// that the earliest one is a backed-off credential whose wait has passed, which
-// becomes usable by being probed rather than by waiting (C1.12).
+// waiting out its mark, or by enough other runs' leases lapsing — and whether
+// one ever does (false when every credential of the group is broken, or holds a
+// mark no amount of waiting clears). probe reports that the credential that time
+// belongs to is backed off and its wait has passed, which is C1.12's probe
+// (NeedsProbe): the probe decides whether the wait is over, and the time is when
+// the credential could serve work once it is.
 func earliest(cs []Credential, marks map[string]Mark, leases []Lease, run Run, now time.Time, set Settings) (time.Time, bool, bool) {
 	var (
 		best  time.Time
@@ -376,23 +428,30 @@ func earliest(cs []Credential, marks map[string]Mark, leases []Lease, run Run, n
 	)
 	for _, c := range cs {
 		m := marks[c.Name]
-		at, ok := m.Ready(now, set)
+		// The tier's own settings, for the same reason free reads them: the
+		// window a mark is held for is the shared tier's (M1/M2).
+		tierSet := set.forTier(c.Tier)
+		at, ok := m.Ready(now, tierSet)
 		if !ok {
 			continue
 		}
-		// Probe is what the MARK needs, and it is decided before a lease has a
-		// chance to push the time later: a backed-off credential whose wait has
-		// passed needs probing whether or not another run is holding its slot,
-		// and a caller told to sleep instead would never probe it.
-		needs := !at.After(now) && m.NeedsProbe(now)
-		if !Free(leases, c.Name, now, run, set.concurrency()) {
+		// Probe is what the MARK needs — its own wait has passed, C1.12 — and it
+		// is decided before a lease, or D142's window, has a chance to push the
+		// time later: a caller told to sleep instead would never probe the
+		// credential at all. The two facts are both reported and neither is a
+		// lie: `at` is the earliest this credential could serve work (the window
+		// the control holds it for, or the lease that does), and Probe says the
+		// probe C1.12 owes it is due now.
+		needs := m.NeedsProbe(now)
+		if !Free(leases, c.Name, now, run, tierSet.concurrency()) {
 			// The cap is the other reason a credential is not usable, and it
-			// lifts when the holding lease lapses. It can only push the time
-			// later, never earlier: a credential both exhausted and held waits
-			// for the later of the two. So with both in play the answer carries
-			// both facts — probe it, and it could be used at best at `at` — and
-			// neither is a lie.
-			if exp, ok := EarliestExpiry(leases, c.Name, now, run); ok && exp.After(at) {
+			// lifts when the holding leases lapse — which lapse, for a cap above
+			// one, is SlotFrees' answer and not the first one's. It can only push
+			// the time later, never earlier: a credential both exhausted and held
+			// waits for the later of the two. So with both in play the answer
+			// carries both facts — probe it, and it could be used at best at `at`
+			// — and neither is a lie.
+			if exp, ok := SlotFrees(leases, c.Name, now, run, tierSet.concurrency()); ok && exp.After(at) {
 				at = exp
 			}
 		}

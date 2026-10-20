@@ -2,6 +2,7 @@ package creds
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -82,13 +83,196 @@ func TestBackedOffMarkWaitsForProbe(t *testing.T) {
 	}
 
 	// A successful probe clears the mark and the wait with it, so the next
-	// exhaustion starts at the initial wait rather than the cap.
-	c := Cleared()
+	// exhaustion starts at the initial wait rather than the cap. (The control is
+	// off here — noWindow — and ProbeSucceeded says below what it does when it
+	// is on.)
+	c := ProbeSucceeded(m, m.Until, noWindow())
 	if !c.Available() || c.Backoff != 0 || !c.Until.IsZero() {
 		t.Fatalf("a cleared mark = %+v; want an available one that remembers nothing", c)
 	}
 	if got := Exhaust(c, now, time.Time{}, set).Backoff; got != 15*time.Minute {
 		t.Fatalf("the wait after a clear = %s; want the initial 15m", got)
+	}
+}
+
+// A successful probe of a mark that is not backed off is a no-op, and that is
+// the whole of review finding M4: a probe asks whether the wait is over for a
+// credential that reported no reset, so its "yes" is no answer at all for a
+// broken credential (out until the operator clears it, C1.21) or for an
+// exhausted one (out until the reset it reported). A probe launched just before
+// a 401 landed, or two instances answering out of order, would otherwise be the
+// write that puts a refused token back in rotation.
+func TestAProbeClearsOnlyABackedOffMark(t *testing.T) {
+	set := Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour}
+	broken := Break(now.Add(-time.Hour))
+	exhausted := Mark{State: StateExhausted, Until: now.Add(time.Hour), Since: now}
+
+	for _, prev := range []Mark{broken, exhausted, {}, {State: State("draining")}} {
+		if got := ProbeSucceeded(prev, now, set); got != prev {
+			t.Fatalf("a successful probe of %+v left %+v; want the mark that was there", prev, got)
+		}
+	}
+	// The broken case once more, through the service's own write: Clear is the
+	// operator's, and Probe is not it.
+	st := newFakeStore()
+	st.setMark(a1.Name, broken)
+	s := selector(st, set)
+	if _, err := s.Probed(ctx, a1.Name, TierA); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Broken() || !m.Since.Equal(broken.Since) {
+		t.Fatalf("a successful probe of a broken credential left %+v; want the 401 to stand (C1.21)", m)
+	}
+	// And the backed-off case is the one it does write, which is what keeps this
+	// test from passing on a ProbeSucceeded that does nothing at all.
+	backedOff := Exhaust(Mark{}, now.Add(-16*time.Minute), time.Time{}, noWindow())
+	st.setMark(a2.Name, backedOff)
+	if _, err := selector(st, noWindow()).Probed(ctx, a2.Name, TierA); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a2.Name); !m.Available() {
+		t.Fatalf("a successful probe of a backed-off credential left %+v; want it cleared", m)
+	}
+}
+
+// With D142's first control on, a successful probe does not put a shared token
+// back in rotation inside the window its exhaustion opened: the probe answers
+// whether the credential works, the control answers whether the owner's donated
+// quota may be spent on it again yet. Review finding M3 — without this, a probe
+// fifteen minutes after an exhaustion was the way around the control that is on
+// by default.
+func TestAProbeInsideTheWindowLeavesTheTokenHeld(t *testing.T) {
+	const window = 5 * time.Hour
+	set := Settings{Window: window, BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour}
+	since := now.Add(-16 * time.Minute) // the exhaustion, one wait ago
+	m := Exhaust(Mark{}, since, time.Time{}, set)
+
+	// The wait has passed, so the probe is due; the window has not.
+	if !m.NeedsProbe(now) {
+		t.Fatal("a backed-off mark whose wait passed is not a probe target")
+	}
+	got := ProbeSucceeded(m, now, set)
+	if got.State != StateExhausted || !got.Until.Equal(since.Add(window)) || !got.Since.Equal(since) {
+		t.Fatalf("the probe's success left %+v; want the token held until %s, dated from the exhaustion", got, since.Add(window))
+	}
+	if got.Usable(now, set) {
+		t.Fatal("the token is usable inside the window its exhaustion opened, with the control on")
+	}
+	// It serves again exactly when the window ends, and no probe is owed then:
+	// the probe's "yes" is not dated, and the mark's answer is.
+	end := since.Add(window)
+	if ready, ok := got.Ready(end, set); !ok || !ready.Equal(end) || got.Usable(end, set) == false {
+		t.Fatalf("at the window's end the mark = %s, %v, usable=%v; want it ready at %s", ready, ok, got.Usable(end, set), end)
+	}
+	if got.NeedsProbe(end) {
+		t.Fatal("an exhausted mark asks for a probe: its reset is a time, not a question")
+	}
+	// A probe that answers *after* the window has ended does clear it, and one
+	// with the control off clears it immediately: the held case above is the
+	// control, not the probe's own state.
+	if after := ProbeSucceeded(m, end.Add(time.Second), set); !after.Available() {
+		t.Fatalf("a probe after the window left %+v; want it cleared", after)
+	}
+	if off := ProbeSucceeded(m, now, noWindow()); !off.Available() {
+		t.Fatalf("a probe with the control off left %+v; want it cleared", off)
+	}
+}
+
+// A mark that says a credential is held and carries no time at all is a node
+// this release cannot read, and it must fail closed: the previous shape answered
+// the zero time, which is before now, so {"state":"exhausted"} with no `until`
+// read as an available credential. Review finding m1.
+func TestAMarkHeldWithNoTimeFailsClosed(t *testing.T) {
+	for _, m := range []Mark{
+		{State: StateExhausted},
+		{State: StateBackedOff},
+		{State: StateExhausted, Backoff: time.Minute},
+	} {
+		if m.Usable(now, Settings{}) {
+			t.Fatalf("a mark of %+v is usable: a hold with no time to wait for must not read as no hold", m)
+		}
+		if _, ok := m.Ready(now, Settings{}); ok {
+			t.Fatalf("a mark of %+v is ready at some time: there is no time in it to be ready at", m)
+		}
+	}
+
+	// Through a selection: the credential is not used, and the run is not told
+	// to sleep either — nothing there becomes usable, so the refusal is the one
+	// that needs a person.
+	st := newFakeStore()
+	st.setMark(a1.Name, Mark{State: StateExhausted})
+	if _, _, err := selector(st, Settings{}).Select(ctx, run, []Credential{a1}); !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("the selection of a mark with no time in it = %v; want the refusal that says nothing can serve", err)
+	}
+}
+
+// A usage limit with no reset time that arrives while a hold is already in force
+// is the same exhaustion seen again: the credential is not selected while it is
+// backed off, so the only calls that can answer 429 are the ones that were in
+// flight when the first one landed. N of them must leave the state one of them
+// left — otherwise a burst doubles the wait once per call and walks the
+// credential to its five-hour cap in a second. Review finding m2.
+func TestConcurrentUsageLimitsDoNotDoubleTheWait(t *testing.T) {
+	set := Settings{BackoffInitial: 15 * time.Minute, BackoffCap: 5 * time.Hour}
+	first := Exhaust(Mark{}, now, time.Time{}, set)
+
+	// Ten copies of the same exhaustion, an instant apart, all inside the hold
+	// the first one wrote.
+	m := first
+	for i := 0; i < 10; i++ {
+		m = Exhaust(m, now.Add(time.Duration(i)*time.Second), time.Time{}, set)
+		if m != first {
+			t.Fatalf("a usage limit inside the hold left %+v; want %+v: the hold in force is the first one's", m, first)
+		}
+	}
+
+	// Once the hold has passed, the next one really is a fresh exhaustion: the
+	// guard is the window, not an exemption from doubling.
+	after := Exhaust(first, first.Until.Add(time.Second), time.Time{}, set)
+	if after.Backoff != 30*time.Minute {
+		t.Fatalf("a usage limit after the hold doubled to %s; want 30m", after.Backoff)
+	}
+	// And a reset that is reported is a reset: a credential that says when it
+	// comes back is not backed off at all, whatever it was in before.
+	withReset := Exhaust(first, now.Add(time.Second), now.Add(time.Hour), set)
+	if withReset.State != StateExhausted || !withReset.Until.Equal(now.Add(time.Hour)) {
+		t.Fatalf("a usage limit reporting a reset while backed off left %+v; want the reset to replace the wait", withReset)
+	}
+}
+
+// The wait doubles to its cap, and the doubling is decided before the multiply
+// that could pass it: a stored backoff at the value a wrapping multiply would
+// turn negative comes out at the cap, and a negative or absurd one is treated as
+// the first wait rather than doubled into a longer hold. A negative wait is a
+// hold that is already over, which is a credential re-probed for ever. Review
+// finding m3.
+func TestADoublingNeverOverflows(t *testing.T) {
+	set := Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour}
+
+	for _, stored := range []time.Duration{
+		time.Duration(math.MaxInt64),       // the largest a value can be
+		time.Duration(math.MaxInt64/2 + 1), // the smallest one whose double wraps
+		set.BackoffCap,                     // exactly at the cap
+		set.BackoffCap / 2,                 // and exactly at the half the check tests
+	} {
+		m := ProbeFailed(Mark{State: StateBackedOff, Backoff: stored, Since: now}, now, set)
+		if m.Backoff != set.BackoffCap {
+			t.Fatalf("a stored wait of %s doubled to %s; want the cap of %s", stored, m.Backoff, set.BackoffCap)
+		}
+		if !m.Until.Equal(now.Add(set.BackoffCap)) {
+			t.Fatalf("a stored wait of %s left a hold ending at %s; want %s", stored, m.Until, now.Add(set.BackoffCap))
+		}
+	}
+	// One nanosecond below the half still doubles, so the check is the half and
+	// not "cap the doubling always".
+	if got := ProbeFailed(Mark{State: StateBackedOff, Backoff: set.BackoffCap/2 - 1, Since: now}, now, set).Backoff; got != set.BackoffCap-2 {
+		t.Fatalf("a stored wait just below the half doubled to %s; want %s", got, set.BackoffCap-2)
+	}
+	// A negative stored wait is not doubled into a longer hold, and not kept
+	// either: it is a node this release never writes, and the first wait is the
+	// protective answer.
+	if got := ProbeFailed(Mark{State: StateBackedOff, Backoff: -time.Hour, Since: now}, now, set).Backoff; got != set.BackoffInitial {
+		t.Fatalf("a negative stored wait doubled to %s; want the initial %s", got, set.BackoffInitial)
 	}
 }
 

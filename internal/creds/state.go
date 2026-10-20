@@ -28,8 +28,12 @@
 //     stickiness: a run keeps its prompt cache by keeping its credential;
 //   - creds/leases/<slug>/<run> — a run's expiring hold on the credential it is
 //     on, which is how D142's per-token concurrency cap is counted without a
-//     registry to sweep;
+//     registry to sweep (the reader sweeps the lapsed ones it finds: Leases);
 //   - creds/roundrobin — the counter D154 breaks ties with.
+//
+// The pair of a run's current credential and its lease is one placement, written
+// atomically as one Patch (SetPlacement), so the two never disagree about where
+// a run is.
 //
 // Keys are escaped with budget.Key, the repository's one implementation of the
 // escaping RTDB paths need, and read back with budget.Unkey, so a credential
@@ -52,6 +56,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -62,6 +68,9 @@ import (
 // Node paths, relative to the database root, without a leading slash and
 // already key-escaped. Callers pass raw names; the builders escape them.
 const (
+	// pathRoot is the subtree the rules deny to every run token (O1), and the
+	// root one placement is patched under (SetPlacement).
+	pathRoot       = "creds"
 	pathMarks      = "creds/marks"
 	pathLeases     = "creds/leases"
 	pathCurrent    = "creds/current"
@@ -119,25 +128,42 @@ const (
 	DefaultBackoffCap          = projectpolicy.DefaultBackoffCap
 	DefaultConcurrencyPerToken = projectpolicy.DefaultConcurrencyPerToken
 
-	// DefaultWindow is the subscription window D142's first control measures
-	// from: one exhaustion costs a shared token the rest of its window.
-	//
-	// The plan's `credentials` block has no window member of its own (C1.2),
-	// and the spec names the value twice over: a probe's wait is "capped at the
-	// subscription window (5 hours)", and a backoff is capped at the same place.
-	// So the window is the policy's backoff cap, and a project that raises or
-	// lowers its cap moves this with it. It is a named constant of its own here
-	// rather than a silent reuse, so a later task that wants the two apart has
-	// one place to separate them.
-	DefaultWindow = projectpolicy.DefaultBackoffCap
-
 	// DefaultLeaseTTL is how long a run's hold on a credential stands without
 	// being refreshed, and therefore how long a slot stays taken after an
-	// instance dies mid-call. Ten minutes is longer than any single model call
-	// and shorter than any window a run would wait out; a working run refreshes
-	// it on every call, so it bounds a *dead* instance's hold, not a live one's.
+	// instance dies mid-call. A working run refreshes it on every call — every
+	// selection writes the lease again — so it bounds a *dead* instance's hold
+	// rather than a live one's.
+	//
+	// It is also the length of two other windows, and both are worth knowing.
+	// One is the over-admission window: a run whose call is still streaming when
+	// its lease lapses holds no slot on paper, so a selection may take one more
+	// than the cap for as long as that call runs (on top of the concurrency the
+	// cap's best-effort read admits at all: Lease). The other is the tail of a
+	// run that has finished: nothing deletes its lease, so it keeps its slot
+	// until this lapses unless the service deletes it at the run's end. Ten
+	// minutes covers a call that is streaming; a service whose request timeout is
+	// shorter or longer should set Settings.LeaseTTL from it (C1.11), which is
+	// what the member is for.
 	DefaultLeaseTTL = 10 * time.Minute
+
+	// DefaultLeaseResidue and DefaultLeasePrune are the two numbers of the lease
+	// sweep: how many lapsed nodes the reader tolerates, and how many of the
+	// oldest it deletes in one read once there are more than that (Leases).
+	//
+	// A residue of 64 dead nodes is a few kilobytes and costs a scan nothing, so
+	// the common project — one whose runs are live or recent — pays no writes at
+	// all on the read path. Above it the read prunes, so the subtree the next
+	// read decodes stays at (residue + the runs live within one lease TTL)
+	// instead of growing with the project's history.
+	DefaultLeaseResidue = 64
+	DefaultLeasePrune   = 8
 )
+
+// ptrTo is the address of a copy of v, for the two settings members whose
+// absent-key meaning is not their zero value. It is how Settings.forTier writes
+// a control off: an explicit false or 0, which is a *written* opt-out and not a
+// lost member.
+func ptrTo[T any](v T) *T { return &v }
 
 // Settings are the cascade's settings as this package enforces them: C1.2's
 // project-policy `credentials` block, read through its accessors, plus the two
@@ -168,11 +194,16 @@ type Settings struct {
 	// (D152): there is nothing to fail over to.
 	WaitThreshold time.Duration
 	// Window is the subscription window D142's first control holds an exhausted
-	// token for; it applies only when the control is on (stops).
+	// token for; it applies only when the control is on (stops) and only to the
+	// shared tier (forTier).
 	//
 	// The policy's block has no such member (C1.2), so there is no pointer to
-	// mirror: DefaultWindow is what a zero here means, and a caller that wants
-	// the window separated from the backoff cap sets it.
+	// mirror and no written value to read: a member left unset *is* the policy's
+	// backoff cap (withDefaults), which is the value the spec names twice over —
+	// a probe's wait is "capped at the subscription window (5 hours)" and a
+	// backoff is capped in the same place. A project that raises or lowers its
+	// cap therefore moves this with it, and a caller that wants the window
+	// separated from the cap sets this member.
 	Window time.Duration
 	// StopAfterExhaustionPerWindow is D142's first control, projectpolicy's
 	// member under its own name: nil is the absent key, which means *true*
@@ -220,9 +251,6 @@ func (s Settings) withDefaults() Settings {
 	if s.WaitThreshold <= 0 {
 		s.WaitThreshold = DefaultWaitThreshold
 	}
-	if s.Window <= 0 {
-		s.Window = DefaultWindow
-	}
 	if s.BackoffInitial <= 0 {
 		s.BackoffInitial = DefaultBackoffInitial
 	}
@@ -236,6 +264,13 @@ func (s Settings) withDefaults() Settings {
 	if s.BackoffCap < s.BackoffInitial {
 		s.BackoffCap = s.BackoffInitial
 	}
+	// The window is the backoff cap unless it was set: see the member's doc. It
+	// is filled in HERE, after the cap is known, rather than written as a
+	// constant of its own — a project that writes a two-hour cap gets a
+	// two-hour window, which is what the member promises.
+	if s.Window <= 0 {
+		s.Window = s.BackoffCap
+	}
 	if s.LeaseTTL <= 0 {
 		s.LeaseTTL = DefaultLeaseTTL
 	}
@@ -246,6 +281,35 @@ func (s Settings) withDefaults() Settings {
 	// zero runs may hold this" is a state in which nothing is selectable, which
 	// fails closed. Reading it as "no cap" would be the one mistake this member
 	// exists to prevent.
+	return s
+}
+
+// forTier is the settings as they apply to one tier's credentials, and the
+// answer for tier B is a change of two members rather than a check somewhere
+// below.
+//
+// D142's two controls are owner headroom over the SHARED credentials: the window
+// is the subscription window an exhaustion costs a donated token (D142's first
+// control, F20's "stop after one exhaustion per window"), and the cap is "the
+// number of runs that may hold one *shared* credential at a time"
+// (projectpolicy.Credentials.ConcurrencyCap). Neither has a subject on tier B,
+// which is the project's own paid API key: a rate limit that named a one-minute
+// reset must not hold that key for a five-hour subscription window, and "one run
+// at a time" on a key the project pays for is a self-inflicted outage rather
+// than headroom. Tier B's spend is bounded where it is metered, by the budget
+// caps the gateway enforces on this project's own calls — not by a control
+// written for someone else's donated quota.
+//
+// So on tier B both controls are off — a written false and a written 0, which
+// are exactly the opt-outs the policy spells — and the marks and leases of tier
+// B behave the way every credential did before D142: a usage limit holds it
+// until its reset, a cap of 0 is no cap.
+func (s Settings) forTier(t Tier) Settings {
+	if t == TierA {
+		return s
+	}
+	s.StopAfterExhaustionPerWindow = ptrTo(false)
+	s.ConcurrencyPerToken = ptrTo(0)
 	return s
 }
 
@@ -261,6 +325,11 @@ const DefaultAttempts = 5
 type DB interface {
 	GetETag(ctx context.Context, path string, out any) (etag string, found bool, err error)
 	PutIfMatch(ctx context.Context, path, etag string, v any) error
+	// Patch writes several locations under root in one atomic request (nil
+	// deletes), which is how a run's placement — its current credential and its
+	// lease — is written as one thing rather than two writes that can be torn
+	// apart by a failure between them (SetPlacement).
+	Patch(ctx context.Context, root string, updates map[string]any) error
 }
 
 // Store is the cascade's shared state as selection reads and writes it.
@@ -268,8 +337,10 @@ type DB interface {
 // It is an interface for two reasons, and both matter: the only implementation
 // that talks to a database is the service's, and the selection logic has to be
 // testable without one. It is not a framework — every method is one node, read
-// whole or written conditionally — and the whole contract is that a reader may
-// trust the values it hands back and a writer never lands a lost update.
+// whole or written whole — and the whole contract is that a reader may trust the
+// values it hands back, a mark is never written without the compare-and-set that
+// keeps another writer's change (UpdateMark), and no write leaves the state
+// holding two facts that disagree (SetPlacement).
 type Store interface {
 	// Marks reads every credential's mark in one call: the subtree is one short
 	// node per credential and a selection needs the marks of all its candidates
@@ -282,15 +353,21 @@ type Store interface {
 	// more than once. The mark written is returned.
 	UpdateMark(ctx context.Context, name string, f func(prev Mark, found bool) (Mark, error)) (Mark, error)
 	// Leases reads every lease — live and lapsed — in one call, for the reason
-	// Marks reads whole: one scan answers the cap for every candidate.
-	Leases(ctx context.Context) ([]Lease, error)
-	// SetLease writes one run's lease, conditionally; a lost race re-reads.
-	SetLease(ctx context.Context, run Run, l Lease) error
+	// Marks reads whole: one scan answers the cap for every candidate. now is
+	// the clock the reader uses to tell a lapsed hold from a live one while it
+	// sweeps (an implementation may sweep; see RTDBStore.Leases for what that
+	// means and why the read is bounded by it).
+	Leases(ctx context.Context, now time.Time) ([]Lease, error)
+	// SetPlacement writes one run's placement — the credential it is on and the
+	// lease it holds — as one write, atomically: the two are one fact about the
+	// run, and a failure between two separate writes would leave them disagreeing
+	// about it (SetPlacement, RTDBStore). It is not conditional, and needs no
+	// condition: the placement of a run is the last selection's, and two
+	// instances placing the same run at once are answering the same call.
+	SetPlacement(ctx context.Context, run Run, name string, l Lease) error
 	// Current reads the credential a run is on, if it is on one: D154's
 	// stickiness. found=false is a run that has not been placed yet.
 	Current(ctx context.Context, run Run) (name string, found bool, err error)
-	// SetCurrent records the credential a run is on.
-	SetCurrent(ctx context.Context, run Run, name string) error
 	// RoundRobin returns the tie-breaking counter's current value and advances
 	// it by one, conditionally on the value it read, so that two instances
 	// breaking a tie at once get two different values rather than one value
@@ -339,6 +416,12 @@ func (s *RTDBStore) Marks(ctx context.Context) (map[string]Mark, error) {
 		if err != nil {
 			return nil, fmt.Errorf("creds: a mark node is keyed %q, which is not an escaped name: %w", k, err)
 		}
+		if name == "" {
+			// An empty key unescapes to an empty name, and an empty name is not a
+			// credential: this package's paths panic on one (seg), so a node keyed
+			// "" must stop the read rather than travel onward as a name.
+			return nil, fmt.Errorf("creds: a mark node is keyed %q, which unescapes to no name at all", k)
+		}
 		out[name] = m
 	}
 	return out, nil
@@ -356,7 +439,40 @@ func (s *RTDBStore) UpdateMark(ctx context.Context, name string, f func(prev Mar
 // Leases implements Store. The lease nodes are keyed by slug and run id, and
 // the reader fills both back into the value, so a caller gets the whole lease
 // and not just its half.
-func (s *RTDBStore) Leases(ctx context.Context) ([]Lease, error) {
+//
+// # The read sweeps, because a read that cannot finish is a project that cannot run
+//
+// This subtree grows with the runs a project has ever had: one node per run,
+// written at every selection, and (until a later task deletes them) nothing
+// removes one when the run ends. An unbounded subtree is not merely slow here.
+// The database caps one response at 16 MiB (rtdb/client.go), so a project whose
+// history reached that size would be answered with a truncated document, this
+// decode would fail, and EVERY selection in the project would fail closed — the
+// whole project stopped, by its own history, with no attacker anywhere in it.
+// The read therefore cannot be left unbounded, and the bound has to be applied
+// by the reader, because a lapsed lease is nobody's work to clean up: the run it
+// belonged to is gone and no other caller knows it exists.
+//
+// So a read prunes the dead nodes it finds: once more than DefaultLeaseResidue
+// of them have lapsed, it deletes the oldest DefaultLeasePrune of them. The next
+// read then decodes (residue + the runs live within one lease TTL) nodes rather
+// than every run in the project's history. The residue is deliberate — 64 dead
+// nodes are a few kilobytes and cost a scan nothing, and pruning on *every* read
+// would turn the hot path into a write path for no benefit.
+//
+// The sweep is best effort in both directions, and both are load-bearing:
+//
+//   - It re-reads each candidate and writes under the ETag it finds there, so a
+//     run that refreshed its own lease between this read and the sweep keeps its
+//     node: PutIfMatch refuses a stale ETag rather than deleting a live hold.
+//     Deleting a hold that had just been refreshed would put a run back under a
+//     cap it had already taken a slot against.
+//   - A failure in it — a lost race, a transient write error, a node that
+//     disappeared — is not returned. The leases this read answered with are
+//     still the leases as they were, a lapsed one holds nothing either way, and
+//     failing a selection because a sweep of another run's dead node did not
+//     land would let the sweep decide the call.
+func (s *RTDBStore) Leases(ctx context.Context, now time.Time) ([]Lease, error) {
 	raw := json.RawMessage{}
 	if _, _, err := s.db().GetETag(ctx, pathLeases, &raw); err != nil {
 		return nil, fmt.Errorf("creds: reading the leases: %w", err)
@@ -369,31 +485,97 @@ func (s *RTDBStore) Leases(ctx context.Context) ([]Lease, error) {
 		return nil, fmt.Errorf("creds: reading the leases: %w", err)
 	}
 	out := make([]Lease, 0, len(read))
+	var lapsed []Lease
 	for sk, runs := range read {
 		slug, err := budget.Unkey(sk)
 		if err != nil {
 			return nil, fmt.Errorf("creds: a lease node is keyed %q, which is not an escaped slug: %w", sk, err)
+		}
+		if slug == "" {
+			return nil, fmt.Errorf("creds: a lease node is keyed %q, which unescapes to no slug at all", sk)
 		}
 		for rk, l := range runs {
 			id, err := budget.Unkey(rk)
 			if err != nil {
 				return nil, fmt.Errorf("creds: the leases of %q are keyed %q, which is not an escaped run id: %w", slug, rk, err)
 			}
+			if id == "" {
+				// An empty run id is not a run: the sweep deletes through the path
+				// builders, which panic on an empty segment, and a panic in the
+				// read path would be a hand-written node stopping the service
+				// rather than failing one read closed.
+				return nil, fmt.Errorf("creds: the leases of %q are keyed %q, which unescapes to no run id at all", slug, rk)
+			}
 			l.Slug, l.Run = slug, id
 			out = append(out, l)
+			if !l.Live(now) {
+				lapsed = append(lapsed, l)
+			}
 		}
 	}
+	s.sweepLeases(ctx, now, lapsed)
 	return out, nil
 }
 
-// SetLease implements Store.
-func (s *RTDBStore) SetLease(ctx context.Context, run Run, l Lease) error {
+// sweepLeases is the delete half of Leases: the oldest
+// (DefaultLeasePrune-bounded) part of what has lapsed past DefaultLeaseResidue.
+// Every error is dropped; the reason is in Leases, where the decision to sweep
+// is made and where a reader can see what it costs.
+func (s *RTDBStore) sweepLeases(ctx context.Context, now time.Time, lapsed []Lease) {
+	if len(lapsed) <= DefaultLeaseResidue {
+		return
+	}
+	// Oldest first, with the path breaking ties, so a run of sweeps across
+	// instances converges on the same nodes rather than each picking its own.
+	sort.Slice(lapsed, func(i, j int) bool {
+		if !lapsed[i].Until.Equal(lapsed[j].Until) {
+			return lapsed[i].Until.Before(lapsed[j].Until)
+		}
+		if lapsed[i].Slug != lapsed[j].Slug {
+			return lapsed[i].Slug < lapsed[j].Slug
+		}
+		return lapsed[i].Run < lapsed[j].Run
+	})
+	n := len(lapsed) - DefaultLeaseResidue
+	if n > DefaultLeasePrune {
+		n = DefaultLeasePrune
+	}
+	for _, l := range lapsed[:n] {
+		path := PathLease(Run{Slug: l.Slug, ID: l.Run})
+		var cur Lease
+		etag, found, err := s.db().GetETag(ctx, path, &cur)
+		if err != nil || !found || cur.Until.After(now) {
+			// Gone, or refreshed since the read: not dead after all, and a hold
+			// that has been renewed is not this sweep's to delete.
+			continue
+		}
+		_ = s.db().PutIfMatch(ctx, path, etag, nil)
+	}
+}
+
+// SetPlacement implements Store: a run's current credential and its lease are
+// one placement, written as one atomic Patch.
+//
+// Writing them as two conditional writes — which is what this used to do — was
+// the shape the review called compare-and-set in name only, and it was right
+// about what the condition bought: neither write's value is computed from the
+// value it read, so the ETag it retried under guarded nothing, and the only
+// thing that mattered about the pair was that both landed. Two writes can be
+// torn apart by a crash or a refused request between them, and then the run's
+// current credential and the credential it holds a slot on disagree — the cap
+// counting a hold on a credential the run is not on, until its next selection
+// happens to put them back in step. One Patch cannot tear: either the run is
+// placed or it is not.
+func (s *RTDBStore) SetPlacement(ctx context.Context, run Run, name string, l Lease) error {
 	// The run is the path, not the value: the node's own copy would be a second
 	// place for it to be wrong.
 	l.Slug, l.Run = "", ""
-	_, err := cas(ctx, s.db(), PathLease(run), s.attempts(), func(Lease, bool) (Lease, error) { return l, nil })
-	if err != nil {
-		return fmt.Errorf("creds: writing the lease of %s/%s: %w", run.Slug, run.ID, err)
+	updates := map[string]any{
+		strings.TrimPrefix(PathLease(run), pathRoot+"/"):   l,
+		strings.TrimPrefix(PathCurrent(run), pathRoot+"/"): name,
+	}
+	if err := s.db().Patch(ctx, pathRoot, updates); err != nil {
+		return fmt.Errorf("creds: placing %s/%s on %q: %w", run.Slug, run.ID, name, err)
 	}
 	return nil
 }
@@ -406,15 +588,6 @@ func (s *RTDBStore) Current(ctx context.Context, run Run) (string, bool, error) 
 		return "", false, fmt.Errorf("creds: reading the current credential of %s/%s: %w", run.Slug, run.ID, err)
 	}
 	return name, found, nil
-}
-
-// SetCurrent implements Store.
-func (s *RTDBStore) SetCurrent(ctx context.Context, run Run, name string) error {
-	_, err := cas(ctx, s.db(), PathCurrent(run), s.attempts(), func(string, bool) (string, error) { return name, nil })
-	if err != nil {
-		return fmt.Errorf("creds: writing the current credential of %s/%s: %w", run.Slug, run.ID, err)
-	}
-	return nil
 }
 
 // RoundRobin implements Store.
@@ -466,16 +639,34 @@ func (s *RTDBStore) attempts() int {
 // arguments. After attempts conflicts the write is refused (ErrContention) and
 // nothing is written: there is no unconditional fallback, because an
 // unconditional write is exactly the lost update this loop exists to prevent.
+//
+// The node is read as a raw message and decoded with decodeStrict rather than
+// straight into T by the client, which is a plain json.Unmarshal. The difference
+// is the one that matters most on this path: a node carrying a member this
+// release does not model would decode to a T whose unknown fields are zero, and
+// f — which is fed that value and answers the next one — would then write a
+// state derived from a state it did not understand. A mark node written
+// differently by a newer release is the case: {"status":"broken"} decodes to the
+// zero Mark, which is an available and usable credential, so the exhaustion
+// recorded on top of it would take a refused token off. decodeStrict refuses the
+// node instead, and the write does not happen.
 func cas[T any](ctx context.Context, db DB, path string, attempts int, f func(cur T, found bool) (T, error)) (T, error) {
 	var zero T
 	if attempts <= 0 {
 		attempts = DefaultAttempts
 	}
 	for i := 0; i < attempts; i++ {
-		var cur T
-		etag, found, err := db.GetETag(ctx, path, &cur)
+		var raw json.RawMessage
+		etag, found, err := db.GetETag(ctx, path, &raw)
 		if err != nil {
 			return zero, err
+		}
+		var cur T
+		if len(raw) > 0 {
+			cur, err = decodeStrict[T](raw)
+			if err != nil {
+				return zero, fmt.Errorf("creds: reading %s: %w", path, err)
+			}
 		}
 		next, err := f(cur, found)
 		if err != nil {

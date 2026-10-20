@@ -17,10 +17,21 @@ import (
 // fakeDB is the database as the state uses it: nodes of JSON, read with their
 // ETag and written under it. It is where the ETag path is exercised, without a
 // network — and it can lose a race on purpose.
+//
+// It compares the ETag a writer hands it against the node's current one, which
+// is the review's finding M5: the shape this fake used to have never looked at
+// the precondition at all, so a cas that dropped it — one that wrote without
+// retrying, or retried without re-reading — passed every test here. The two
+// other ways it was not the database are fixed with it: an absent node answers
+// the literal etag "null_etag" and an EMPTY etag is refused, both as
+// rtdb.Client does (client.go: GetETag's doc, PutIfMatch's first check), so a
+// writer that forgets to read the node first fails here the way it would fail
+// against the real database instead of quietly succeeding.
 type fakeDB struct {
-	mu    sync.Mutex
-	nodes map[string]json.RawMessage
-	etags map[string]int
+	mu     sync.Mutex
+	nodes  map[string]json.RawMessage
+	etags  map[string]string
+	writes int
 
 	// conflicts is the number of writes that will lose a race before one lands.
 	// Each lost write first lets rival take the node, which is what another
@@ -28,13 +39,24 @@ type fakeDB struct {
 	conflicts int
 	rival     any
 
-	gets, puts int
-	putErr     error
+	// onGet runs at the start of every read, under the lock: a test uses it to
+	// slip a write in before a reader reads a node again, which is the one race a
+	// scripted set of conflicts cannot express (a lease refreshed between the
+	// sweep's first read and its own re-read of the node).
+	onGet func(path string)
+
+	gets, puts, patches, deletes int
+	putErr, patchErr             error
 }
 
 func newFakeDB() *fakeDB {
-	return &fakeDB{nodes: map[string]json.RawMessage{}, etags: map[string]int{}}
+	return &fakeDB{nodes: map[string]json.RawMessage{}, etags: map[string]string{}}
 }
+
+// nullEtag is what the database answers for a node that is not there
+// (rtdb.Client.GetETag). It is a value a writer can hand back to PutIfMatch,
+// which is exactly why it is not the empty string.
+const nullEtag = "null_etag"
 
 func (d *fakeDB) put(path string, v any) {
 	b, err := json.Marshal(v)
@@ -42,25 +64,48 @@ func (d *fakeDB) put(path string, v any) {
 		panic(err)
 	}
 	d.nodes[path] = b
+	d.bump(path)
+}
+
+// bump gives the node a new etag, as any write to it does.
+func (d *fakeDB) bump(path string) {
+	d.writes++
+	d.etags[path] = "etag-" + strconv.Itoa(d.writes)
+}
+
+func (d *fakeDB) etagOf(path string) string {
+	if e, ok := d.etags[path]; ok {
+		return e
+	}
+	return nullEtag
 }
 
 // GetETag answers the node at path, and — as the database does — the whole
 // subtree below it when path is a prefix of the nodes that were written: the
 // state reads creds/marks and creds/leases whole, so the fake has to have the
 // same shape or the reads would silently be empty.
+//
+// A subtree's etag is the path's own, which is nullEtag unless something was
+// written at that exact path. That is enough because nothing writes under a
+// subtree's etag: every conditional write the state makes is one node, and the
+// one multi-node write it makes (SetPlacement) is a Patch, which has no
+// precondition at all.
 func (d *fakeDB) GetETag(_ context.Context, path string, out any) (string, bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.gets++
+	if d.onGet != nil {
+		d.onGet(path)
+	}
 	if raw, ok := d.nodes[path]; ok {
 		if err := json.Unmarshal(raw, out); err != nil {
 			return "", false, err
 		}
-		return strconv.Itoa(d.etags[path]), true, nil
+		return d.etagOf(path), true, nil
 	}
 	tree, ok := d.subtree(path)
 	if !ok {
-		return "", false, nil
+		return nullEtag, false, nil
 	}
 	b, err := json.Marshal(tree)
 	if err != nil {
@@ -69,7 +114,7 @@ func (d *fakeDB) GetETag(_ context.Context, path string, out any) (string, bool,
 	if err := json.Unmarshal(b, out); err != nil {
 		return "", false, err
 	}
-	return strconv.Itoa(d.etags[path]), true, nil
+	return d.etagOf(path), true, nil
 }
 
 // subtree is the nested object the leaves below prefix make, or false when
@@ -101,10 +146,18 @@ func (d *fakeDB) subtree(prefix string) (map[string]any, bool) {
 	return root, found
 }
 
+// PutIfMatch writes v at path if the node's etag is still the one the writer
+// read, and nil deletes it — the client's own contract, including the two ways
+// this call refuses.
 func (d *fakeDB) PutIfMatch(_ context.Context, path, etag string, v any) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.puts++
+	if etag == "" {
+		// rtdb.Client.PutIfMatch: an empty etag is no precondition. A writer that
+		// never read the node is refused here rather than allowed to write.
+		return errors.New("rtdb: an empty etag is no precondition")
+	}
 	if d.putErr != nil {
 		return d.putErr
 	}
@@ -114,12 +167,47 @@ func (d *fakeDB) PutIfMatch(_ context.Context, path, etag string, v any) error {
 		// moved and so did its ETag, which is what the database reports.
 		if d.rival != nil {
 			d.put(path, d.rival)
+		} else {
+			d.bump(path)
 		}
-		d.etags[path]++
 		return rtdb.ErrPrecondition
 	}
+	if etag != d.etagOf(path) {
+		// The precondition the writer handed in is not the node's: this is the
+		// check the fake did not have, and without it a cas that skipped the
+		// re-read after a conflict was untestable.
+		return rtdb.ErrPrecondition
+	}
+	if v == nil {
+		delete(d.nodes, path)
+		d.deletes++
+		d.bump(path)
+		return nil
+	}
 	d.put(path, v)
-	d.etags[path]++
+	return nil
+}
+
+// Patch writes every location of updates under root in one atomic step (nil
+// deletes), as rtdb.Client.Patch does: either all of them land or none does. The
+// paths are relative to root and without a leading slash.
+func (d *fakeDB) Patch(_ context.Context, root string, updates map[string]any) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.patches++
+	if d.patchErr != nil {
+		return d.patchErr
+	}
+	for rel, v := range updates {
+		path := root + "/" + rel
+		if v == nil {
+			delete(d.nodes, path)
+			d.deletes++
+			d.bump(path)
+			continue
+		}
+		d.put(path, v)
+	}
 	return nil
 }
 
@@ -276,7 +364,7 @@ func TestStoreReadsWholeSubtrees(t *testing.T) {
 		t.Fatalf("the mark of %q read as %+v", name, m)
 	}
 
-	leases, err := st.Leases(ctx)
+	leases, err := st.Leases(ctx, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,12 +393,16 @@ func TestStoreReadsWholeSubtrees(t *testing.T) {
 		t.Fatalf("an unplaced run's current credential = %q, %v, %v; want none", got, found, err)
 	}
 
-	// SetLease writes exactly what a reader reads back, with the run filled in
-	// from the path.
-	if err := st.SetLease(ctx, run, Lease{Credential: a1.Name, Until: now.Add(DefaultLeaseTTL)}); err != nil {
+	// SetPlacement writes exactly what a reader reads back, with the run filled
+	// in from the path — and it writes both halves of the placement, so the run
+	// that was placed somewhere has a lease and a current credential that agree.
+	if err := st.SetPlacement(ctx, run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(DefaultLeaseTTL)}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := st.Leases(ctx)
+	if got, found, err := st.Current(ctx, run); err != nil || !found || got != a1.Name {
+		t.Fatalf("after a placement the run is on %q, %v, %v; want %q", got, found, err, a1.Name)
+	}
+	after, err := st.Leases(ctx, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +454,7 @@ func TestStoreRefusesAMarkItDoesNotModel(t *testing.T) {
 
 	db2 := newFakeDB()
 	db2.nodes[pathLeases] = json.RawMessage(`{"acme":{"r1":{"credential":"shared-1","expires":"2026-10-20T13:00:00Z"}}}`)
-	if _, err := (&RTDBStore{DB: db2}).Leases(ctx); err == nil {
+	if _, err := (&RTDBStore{DB: db2}).Leases(ctx, now); err == nil {
 		t.Fatal("a lease node with a member this release does not model read as a hold")
 	}
 
@@ -419,4 +511,306 @@ func keysOf(m map[string]Mark) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// The compare-and-set decodes the node it read exactly as strictly as the
+// subtree reads do, and it matters most here: f is handed the value it read and
+// answers the next one, so a node carrying a member this release does not model
+// used to decode to the ZERO Mark — and the write that followed would have been
+// derived from "available" and taken a refused token off. Review finding m6.
+func TestTheCASRefusesAMarkItDoesNotModel(t *testing.T) {
+	const name = "shared-1"
+	db := newFakeDB()
+	raw := `{"status":"broken","until":"2026-10-20T13:00:00Z"}`
+	db.nodes[PathMark(name)] = json.RawMessage(raw)
+
+	calls := 0
+	_, err := (&RTDBStore{DB: db}).UpdateMark(ctx, name, func(prev Mark, _ bool) (Mark, error) {
+		calls++
+		return Exhaust(prev, now, time.Time{}, noWindow()), nil
+	})
+	if err == nil {
+		t.Fatal("a mark node with a member this release does not model was written over")
+	}
+	if calls != 0 {
+		t.Fatalf("the change was computed %d times from a node that could not be read", calls)
+	}
+	if db.puts != 0 {
+		t.Fatalf("the refused change reached the database %d times", db.puts)
+	}
+	var after json.RawMessage
+	if _, _, err := db.GetETag(ctx, PathMark(name), &after); err != nil || string(after) != raw {
+		t.Fatalf("the node after the refused write = %s, %v; want it exactly as it was", after, err)
+	}
+
+	// Strictness is about the members, not about the shape: a mark this release
+	// wrote is written over as before.
+	db2 := newFakeDB()
+	db2.put(PathMark(name), Mark{State: StateAvailable})
+	if _, err := (&RTDBStore{DB: db2}).UpdateMark(ctx, name, func(prev Mark, found bool) (Mark, error) {
+		if !found {
+			return Mark{}, errors.New("the closure was handed a mark that was not found")
+		}
+		return Exhaust(prev, now, now.Add(time.Hour), Settings{}), nil
+	}); err != nil {
+		t.Fatalf("a mark this release wrote was not written over: %v", err)
+	}
+}
+
+// A node that is not there is written under the etag the database answers for
+// one — "null_etag", and not the empty string, which PutIfMatch refuses — so a
+// writer that never read the node fails here exactly as it would against the
+// real database. Review finding M5: the fake answered "" for an absent node and
+// accepted it, so neither half of that was testable.
+func TestAnAbsentNodeIsWrittenUnderTheNullEtag(t *testing.T) {
+	db := newFakeDB()
+	st := &RTDBStore{DB: db}
+
+	// creds/roundrobin has never been written: the first read is of a node that
+	// is not there, and the write that follows it must land.
+	if n, err := st.RoundRobin(ctx); err != nil || n != 0 {
+		t.Fatalf("the first counter value = %d, %v; want 0 read from an absent node", n, err)
+	}
+	var left int64
+	if _, found, err := db.GetETag(ctx, pathRoundRobin, &left); err != nil || !found || left != 1 {
+		t.Fatalf("after the first advance the counter = %d, found=%v, %v; want 1", left, found, err)
+	}
+	// The database's own refusal, stated here so a later change to its user is
+	// caught: an empty etag is no precondition at all.
+	if err := db.PutIfMatch(ctx, pathRoundRobin, "", int64(9)); err == nil {
+		t.Fatal("the fake database accepted an empty etag as a precondition")
+	}
+	if _, found, err := db.GetETag(ctx, pathRoundRobin, &left); err != nil || !found || left != 1 {
+		t.Fatalf("the refused write landed: the counter = %d, found=%v, %v", left, found, err)
+	}
+
+	// The same for a mark with no node: the closure is handed a zero mark and
+	// found=false, which is what a first exhaustion looks like.
+	if _, err := st.UpdateMark(ctx, a1.Name, func(prev Mark, found bool) (Mark, error) {
+		if found {
+			return Mark{}, errors.New("an absent mark was reported as found")
+		}
+		return Exhaust(prev, now, now.Add(time.Hour), Settings{}), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var m Mark
+	if _, found, err := db.GetETag(ctx, PathMark(a1.Name), &m); err != nil || !found || m.State != StateExhausted {
+		t.Fatalf("the mark written to an absent node = %+v, found=%v, %v", m, found, err)
+	}
+}
+
+// A placement — the run's current credential and its lease — is written as one
+// atomic Patch, so a failure takes neither and a success leaves the two
+// agreeing. Review finding m5: as two conditional writes they were
+// compare-and-set in name only (neither value was computed from the one it read)
+// and could be torn apart, leaving the run sticky on a credential it held no
+// slot for.
+func TestAPlacementIsWrittenAsOneThing(t *testing.T) {
+	db := newFakeDB()
+	db.patchErr = errors.New("the database refused the patch")
+	st := &RTDBStore{DB: db}
+	l := Lease{Credential: a1.Name, Until: now.Add(time.Minute)}
+
+	if err := st.SetPlacement(ctx, run, a1.Name, l); err == nil {
+		t.Fatal("a placement the database refused reported success")
+	}
+	if _, found, err := st.Current(ctx, run); err != nil || found {
+		t.Fatalf("a refused placement left the run on a credential: found=%v, %v", found, err)
+	}
+	if held, err := st.Leases(ctx, now); err != nil || len(held) != 0 {
+		t.Fatalf("a refused placement left the leases %v, %v; want none", held, err)
+	}
+
+	// And each placement is one request: a two-write implementation would have
+	// landed the first of the two before the second was refused.
+	db.patchErr = nil
+	before := db.patches
+	if err := st.SetPlacement(ctx, run, a1.Name, l); err != nil {
+		t.Fatal(err)
+	}
+	if db.patches-before != 1 {
+		t.Fatalf("the placement took %d requests; want exactly one", db.patches-before)
+	}
+	if db.patches != 2 {
+		t.Fatalf("the two placements took %d requests in all; want one for each", db.patches)
+	}
+	if name, found, err := st.Current(ctx, run); err != nil || !found || name != a1.Name {
+		t.Fatalf("the placed run is on %q, found=%v, %v; want %q", name, found, err, a1.Name)
+	}
+	held, err := st.Leases(ctx, now)
+	if err != nil || len(held) != 1 || held[0].Credential != a1.Name || held[0].Slug != run.Slug || held[0].Run != run.ID {
+		t.Fatalf("the placed run's lease = %v, %v; want one hold on %q for %+v", held, err, a1.Name, run)
+	}
+}
+
+// leaseDB is a database holding lapsed leases: n of them, one per minute from
+// two hours ago — so every one of them has lapsed, whatever n is — plus one live
+// hold, which is what a project that has been running for a while looks like.
+func leaseDB(n int) (*fakeDB, Run) {
+	db := newFakeDB()
+	base := now.Add(-2 * time.Hour)
+	for i := 0; i < n; i++ {
+		r := Run{Slug: "acme", ID: "gone-" + strconv.Itoa(i)}
+		db.put(PathLease(r), Lease{Credential: a1.Name, Until: base.Add(time.Duration(i) * time.Minute)})
+	}
+	live := Run{Slug: "acme", ID: "live"}
+	db.put(PathLease(live), Lease{Credential: a1.Name, Until: now.Add(time.Minute)})
+	return db, live
+}
+
+// The lease read sweeps the dead nodes it finds, so what the next read must
+// decode stays at a residue plus the live holds instead of growing with every run
+// the project has ever had. Review finding M6: the subtree was unbounded, every
+// selection read it whole, and the database caps one response at 16 MiB — past
+// which the decode fails and EVERY selection in the project fails closed.
+func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
+	const gone = DefaultLeaseResidue + 6
+	db, live := leaseDB(gone)
+	st := &RTDBStore{DB: db}
+
+	leases, err := st.Leases(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The answer is every lease as it was read: a sweep does not change what this
+	// reader saw, and a lapsed lease holds nothing either way.
+	if want := gone + 1; len(leases) != want {
+		t.Fatalf("the read answered %d leases; want %d", len(leases), want)
+	}
+	if want := gone - DefaultLeaseResidue; db.deletes != want {
+		t.Fatalf("the sweep deleted %d nodes; want %d — the lapsed ones above the residue of %d", db.deletes, want, DefaultLeaseResidue)
+	}
+	// The oldest went, the newest lapsed stayed, and the live hold was never a
+	// candidate.
+	if _, found, _ := st.Current(ctx, Run{Slug: "acme", ID: "gone-0"}); found {
+		t.Fatal("the sweep left the oldest lapsed lease's run placed somewhere")
+	}
+	for _, r := range []Run{{Slug: "acme", ID: "gone-0"}, {Slug: "acme", ID: "gone-5"}} {
+		if _, ok := db.nodes[PathLease(r)]; ok {
+			t.Fatalf("the sweep left %+v: it deletes the oldest lapsed leases first", r)
+		}
+	}
+	if _, ok := db.nodes[PathLease(Run{Slug: "acme", ID: "gone-6"})]; !ok {
+		t.Fatal("the sweep deleted a lease newer than the ones it should have taken")
+	}
+	if _, ok := db.nodes[PathLease(live)]; !ok {
+		t.Fatal("the sweep deleted a live hold")
+	}
+
+	// A second read finds the residue and prunes nothing: the common project pays
+	// no writes at all on the read path.
+	before := db.deletes
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if db.deletes != before {
+		t.Fatalf("a read inside the residue deleted %d more nodes; want none", db.deletes-before)
+	}
+
+	// A read that finds only live holds deletes nothing, whatever their number:
+	// the cap is about runs working, and the sweep is about runs gone.
+	busy := newFakeDB()
+	for i := 0; i < DefaultLeaseResidue*2; i++ {
+		r := Run{Slug: "acme", ID: "busy-" + strconv.Itoa(i)}
+		busy.put(PathLease(r), Lease{Credential: a1.Name, Until: now.Add(time.Minute)})
+	}
+	if _, err := (&RTDBStore{DB: busy}).Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if busy.deletes != 0 {
+		t.Fatalf("the sweep deleted %d live holds", busy.deletes)
+	}
+}
+
+// A sweep that cannot land is not a read that fails: the leases it answered with
+// are the leases as they were, and failing a selection because another run's dead
+// node was not deleted would let the sweep decide the call.
+func TestTheLeaseSweepIsBestEffort(t *testing.T) {
+	db, _ := leaseDB(DefaultLeaseResidue + 3)
+	db.putErr = errors.New("the database refused the write")
+	st := &RTDBStore{DB: db}
+
+	leases, err := st.Leases(ctx, now)
+	if err != nil {
+		t.Fatalf("a sweep that could not write failed the read: %v", err)
+	}
+	if want := DefaultLeaseResidue + 4; len(leases) != want {
+		t.Fatalf("the read answered %d leases after a refused sweep; want %d", len(leases), want)
+	}
+	if db.deletes != 0 {
+		t.Fatalf("a refused write deleted %d nodes", db.deletes)
+	}
+}
+
+// A hold that is refreshed between the read and the sweep is not deleted: the
+// sweep re-reads each node it is about to remove and leaves it when it is live
+// again. Deleting a hold that had just been renewed would put a working run back
+// under a cap it had already taken a slot against.
+func TestTheLeaseSweepLeavesARefreshedHold(t *testing.T) {
+	db, live := leaseDB(DefaultLeaseResidue + 6)
+	oldest := Run{Slug: "acme", ID: "gone-0"}
+	refreshed := false
+	db.onGet = func(path string) {
+		// The lease's own run refreshed it between this reader's read and the
+		// sweep's re-read. The node is replaced in place, without a new etag, so
+		// what saves it here is the liveness check and not the precondition (a
+		// real refresh moves the etag too, and either guard leaves the hold).
+		if path == PathLease(oldest) && !refreshed {
+			refreshed = true
+			b, err := json.Marshal(Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
+			if err != nil {
+				panic(err)
+			}
+			db.nodes[path] = b
+		}
+	}
+
+	if _, err := (&RTDBStore{DB: db}).Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if !refreshed {
+		t.Fatal("the sweep never re-read the lease it was about to delete: it deletes what was lapsed at the read time alone")
+	}
+	if _, ok := db.nodes[PathLease(oldest)]; !ok {
+		t.Fatal("the sweep deleted a hold that had been refreshed since the read")
+	}
+	if _, ok := db.nodes[PathLease(live)]; !ok {
+		t.Fatal("the sweep deleted a live hold")
+	}
+	// Six candidates, five deleted: the refreshed one is the one that stayed.
+	if want := 5; db.deletes != want {
+		t.Fatalf("the sweep deleted %d nodes; want %d, the refreshed hold excepted", db.deletes, want)
+	}
+}
+
+// A node keyed by the empty string unescapes to an empty name, slug or run id,
+// and none of those is a credential or a run: the read refuses it. It must not
+// be carried onward as one either, because this package's path builders panic on
+// an empty segment (seg) and a panic in the read path is a hand-written node
+// stopping the whole service rather than failing one read closed.
+func TestStoreRefusesANodeWithNoKey(t *testing.T) {
+	for _, raw := range []string{
+		// An empty slug, and an empty run id under a real one.
+		`{"":{"r1":{"credential":"shared-1","until":"2026-10-20T13:00:00Z"}}}`,
+		`{"":{"":{"credential":"shared-1","until":"2026-10-20T13:00:00Z"}}}`,
+	} {
+		db := newFakeDB()
+		db.nodes[pathLeases] = json.RawMessage(raw)
+		if _, err := (&RTDBStore{DB: db}).Leases(ctx, now); err == nil {
+			t.Fatalf("the lease nodes %s read as holds; want a refusal", raw)
+		}
+	}
+
+	db2 := newFakeDB()
+	db2.nodes[pathLeases] = json.RawMessage(`{"acme":{"":{"credential":"shared-1","until":"2026-10-20T13:00:00Z"}}}`)
+	if _, err := (&RTDBStore{DB: db2}).Leases(ctx, now); err == nil {
+		t.Fatal("a lease node under an empty run id read as a hold")
+	}
+
+	db3 := newFakeDB()
+	db3.nodes[pathMarks] = json.RawMessage(`{"":{"state":"exhausted","until":"2026-10-20T13:00:00Z"}}`)
+	if _, err := (&RTDBStore{DB: db3}).Marks(ctx); err == nil {
+		t.Fatal("a mark node under an empty name read as a credential")
+	}
 }

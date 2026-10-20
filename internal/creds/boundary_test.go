@@ -1,31 +1,42 @@
 package creds
 
-// The runner boundary (credentials-service plan Convention 11; O1's ruling that
-// creds/ is denied to every run token).
+// The import boundary around the credential state (credentials-service plan
+// Convention 11; O1's ruling that creds/ is denied to every run token).
 //
-// The cascade's state is writable by the service's own account and by nothing
-// else: a run token holds no permission on creds/ at all, and the rules deny the
-// whole subtree to every run identity. That is a rule about who may WRITE, and
-// it is enforced in the database and pinned by C0.6/C1.3. This file pins the
-// other half of the same claim, which no database rule can express: a package
-// that can write the state must not be reachable from a run at all, so that a
-// future change to a run's permissions (or a mistake in the rules) does not put
-// the cascade's marks in the hands of the code a contributor controls.
+// What keeps a run out of the cascade's state is the DATABASE, and this file is
+// not that. A run token holds no permission on creds/ at all: the rules deny the
+// whole subtree to every run identity, and the service writes it with its own
+// admin account (O1, D136). That is the enforcement, it is pinned by C0.6/C1.3,
+// and no test in this package can stand in for it.
 //
-// So the test is an allow-list of the packages that may import internal/creds,
-// and it is deliberately short: the package itself, the service that owns the
-// state (internal/credsvc, C1.10 onward), and the operator's CLI (internal/cli,
-// which shows the marks and clears a broken one, C1.21). Every package on the
-// run side is off the list, and the ones that matter are named below so that a
-// reader does not have to work out which they are: internal/runner and
-// internal/gateway (the in-runner gateway), internal/agent, internal/managed,
-// internal/backend and internal/task, all of which a run's machine builds
-// against.
+// What this file pins is a second layer, and it is worth being exact about its
+// limits, because the first version of this comment was not (review finding m8).
+// It is an allow-list of the packages that may IMPORT internal/creds: the
+// package itself, the service that owns the state (internal/credsvc, C1.10
+// onward), and the operator's CLI (internal/cli, whose `fugaro accounts`
+// commands show the marks and clear a broken one, C1.21). Every package on the
+// run side is off the list — internal/runner and internal/gateway (the in-runner
+// gateway), internal/agent, internal/managed, internal/backend, internal/task —
+// so that a refactor cannot quietly move a write of the state into the code a
+// run executes, where a later loosening of the rules would hand it to a
+// contributor's process.
+//
+// It is not "nothing here is ever linked into the runner", and a reader should
+// not take it that way: cmd/fugaro links internal/cli and the runner into ONE
+// binary, so the binary a run's image carries does contain the operator commands
+// and, from C1.21, the state above them. The plan puts them there deliberately
+// (the operator has no admin endpoint to call, so the CLI writes creds/ as the
+// operator's own admin identity) and what a run cannot do is hold that identity:
+// the run's token is a different principal, and the rules are what refuse it. So
+// this test says "no run-side package imports the state", and never "the state
+// is not in the run's process".
 //
 // The scan reads import lines, parsed rather than grepped, so a comment or a
 // string that merely names the package is not an import and is not this test's
 // business. It walks the whole module, this file included: a test file is as
-// much part of a package's build as any other, and there is no exemption.
+// much part of a package's build as any other, and there is no exemption. The
+// allow-list itself is asserted to be exactly the three entries below, so
+// widening it is an edit a reviewer sees rather than a new import that slips in.
 
 import (
 	"go/parser"
@@ -98,8 +109,22 @@ func TestCredsIsNotReachableFromARun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(found) > 0 {
-		t.Fatalf("a run-side file reaches the credential state:\n  %s\n\nNothing here is ever linked into the runner (Convention 11): a run token holds no write on creds/ (O1), so a package that writes it must not be reachable from a run. Move the call into the service, or add the directory to credsImporters with its reason if this is genuinely a new caller of the state.",
+		t.Fatalf("a run-side file imports the credential state:\n  %s\n\nA run token holds no write on creds/ (O1), and the rules are what enforce it (C1.3); this list is what keeps a write of the state out of the code a run executes, so that a later loosening of the rules is not enough to hand the cascade's marks to a contributor's process. Move the call into the service, or add the directory to credsImporters with its reason if this is genuinely a new caller of the state.",
 			strings.Join(found, "\n  "))
+	}
+
+	// The allow-list is exactly the three callers above: a fourth entry is a
+	// deliberate edit here and not a quiet import somewhere (review finding m8),
+	// and a name that is no longer a caller should leave the list rather than
+	// widen it.
+	want := []string{"internal/creds", "internal/credsvc", "internal/cli"}
+	if len(credsImporters) != len(want) {
+		t.Fatalf("the allow-list holds %d entries %v; want exactly %v", len(credsImporters), credsImporters, want)
+	}
+	for i, dir := range want {
+		if credsImporters[i] != dir {
+			t.Fatalf("the allow-list is %v; want exactly %v", credsImporters, want)
+		}
 	}
 }
 

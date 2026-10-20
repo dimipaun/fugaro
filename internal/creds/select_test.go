@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -52,6 +53,16 @@ func (f *fakeStore) setLease(r Run, l Lease) {
 	f.leases[key(r)] = l
 }
 
+// setPlacement seeds both halves of a placement, as an earlier selection left
+// them.
+func (f *fakeStore) setPlacement(r Run, name string, l Lease) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l.Slug, l.Run = r.Slug, r.ID
+	f.leases[key(r)] = l
+	f.current[key(r)] = name
+}
+
 func (f *fakeStore) mark(name string) Mark {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -95,7 +106,7 @@ func (f *fakeStore) UpdateMark(_ context.Context, name string, fn func(prev Mark
 	return next, nil
 }
 
-func (f *fakeStore) Leases(context.Context) ([]Lease, error) {
+func (f *fakeStore) Leases(context.Context, time.Time) ([]Lease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]Lease, 0, len(f.leases))
@@ -105,8 +116,16 @@ func (f *fakeStore) Leases(context.Context) ([]Lease, error) {
 	return out, nil
 }
 
-func (f *fakeStore) SetLease(_ context.Context, r Run, l Lease) error {
-	f.setLease(r, l)
+// SetPlacement writes the current credential and the lease under one lock, so a
+// reader through this store can never see the torn pair a real two-write
+// implementation could leave: the atomicity the real one gets from one Patch is
+// what this mirrors.
+func (f *fakeStore) SetPlacement(_ context.Context, r Run, name string, l Lease) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l.Slug, l.Run = r.Slug, r.ID
+	f.leases[key(r)] = l
+	f.current[key(r)] = name
 	return nil
 }
 
@@ -115,11 +134,12 @@ func (f *fakeStore) Current(_ context.Context, r Run) (string, bool, error) {
 	return n, ok, nil
 }
 
-func (f *fakeStore) SetCurrent(_ context.Context, r Run, name string) error {
+// setRoundRobin seeds the tie-breaking counter, so a test can state the value a
+// hand-edit or a wrapped counter left behind.
+func (f *fakeStore) setRoundRobin(n int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.current[key(r)] = name
-	return nil
+	f.rr = n
 }
 
 func (f *fakeStore) RoundRobin(context.Context) (int64, error) {
@@ -459,7 +479,7 @@ func TestOAuthOnlyNeverReachesThePaidTier(t *testing.T) {
 	// not keep spending after the policy is turned back: its call moves to a
 	// shared credential (D152's rule is not weaker for being mid-run).
 	sticky := newFakeStore()
-	if err := sticky.SetCurrent(ctx, run, b1.Name); err != nil {
+	if err := sticky.SetPlacement(ctx, run, b1.Name, Lease{Credential: b1.Name, Until: now.Add(DefaultLeaseTTL)}); err != nil {
 		t.Fatal(err)
 	}
 	c, _, err = selector(sticky, Settings{}).Select(ctx, run, []Credential{a1, b1})
@@ -481,7 +501,9 @@ func TestBackedOffMarkAsksForAProbeNotASleep(t *testing.T) {
 	st.setMark(a1.Name, Exhaust(Mark{}, now.Add(-16*time.Minute), time.Time{},
 		Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour}))
 
-	_, wait, err := selector(st, Settings{}).Select(ctx, run, []Credential{a1})
+	// With D142's first control off — the one setting under which the wait is
+	// the whole of the hold — the answer is the probe and no sleep at all.
+	_, wait, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1})
 	var eu *ExhaustedUntil
 	if !errors.As(err, &eu) {
 		t.Fatalf("the selection = %v; want an ExhaustedUntil answer", err)
@@ -493,10 +515,25 @@ func TestBackedOffMarkAsksForAProbeNotASleep(t *testing.T) {
 		t.Fatalf("the wait = %s; want 0: the wait has passed, and a caller given a negative or positive sleep here probes nothing", wait)
 	}
 
-	// The same credential, now held by another run: the probe is still the
-	// instruction, and the wait is when it could at best be used.
-	st.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
+	// The same credential under the default settings, which is the control ON:
+	// the probe is still what is due (the mark's own wait has passed), and the
+	// credential cannot serve work before the subscription window its exhaustion
+	// opened ends — so the answer is both facts, not the shorter one. This is
+	// review finding M3 at the selection level: answering 0 here would send the
+	// probe's success straight back into rotation inside the window.
 	_, wait, err = selector(st, Settings{}).Select(ctx, run, []Credential{a1})
+	const window = 5 * time.Hour // DefaultBackoffCap, and so the default window
+	if !errors.As(err, &eu) || !eu.Probe {
+		t.Fatalf("the selection under the window control = %v, probe=%v; want the probe", err, eu.Probe)
+	}
+	if want := window - 16*time.Minute; wait != want || !eu.At.Equal(now.Add(want)) {
+		t.Fatalf("the wait under the window control = %s until %s; want %s: the window the exhaustion opened, not the 15m wait", wait, eu.At, want)
+	}
+
+	// The same credential, now held by another run, control off: the probe is
+	// still the instruction, and the wait is when it could at best be used.
+	st.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
+	_, wait, err = selector(st, noWindow()).Select(ctx, run, []Credential{a1})
 	if !errors.As(err, &eu) || !eu.Probe || wait != 30*time.Minute {
 		t.Fatalf("a backed-off credential held by another run = %s, probe=%v; want the probe and the lease's 30m", wait, eu.Probe)
 	}
@@ -524,13 +561,26 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 		t.Fatalf("the wait = %s until %s; want 10m until %s — the earliest reset, not the latest", wait, eu.At, want)
 	}
 
-	// Two runs hold one credential: the wait is the earlier of the two expiries.
+	// Two runs hold one credential under the default cap of ONE, so the lapse
+	// that frees a slot is the later of the two: Free asks for strictly fewer
+	// than one holder, and after the first run's lease ends there is still a
+	// holder. This is review finding m10 — the earlier shape answered the first
+	// expiry, and a caller that waited for it would wake up to a credential that
+	// was still full.
 	held := newFakeStore()
 	held.setLease(Run{Slug: run.Slug, ID: "other-1"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
 	held.setLease(Run{Slug: run.Slug, ID: "other-2"}, Lease{Credential: a1.Name, Until: now.Add(5 * time.Minute)})
 	_, wait, err = selector(held, Settings{}).Select(ctx, run, []Credential{a1})
+	if !errors.As(err, &eu) || wait != 30*time.Minute || !eu.At.Equal(now.Add(30*time.Minute)) {
+		t.Fatalf("the wait for a credential two runs hold under a cap of one = %s until %s; want the LATER expiry, 30m", wait, eu.At)
+	}
+
+	// Under a cap of two, the first expiry is the one that makes room: two runs
+	// are all the cap allows, so one of them ending is enough for a third.
+	two := Settings{StopAfterExhaustionPerWindow: ptr(false), ConcurrencyPerToken: ptr(2)}
+	_, wait, err = selector(held, two).Select(ctx, run, []Credential{a1})
 	if !errors.As(err, &eu) || wait != 5*time.Minute || !eu.At.Equal(now.Add(5*time.Minute)) {
-		t.Fatalf("the wait for a credential two runs hold = %s until %s; want the earlier expiry, 5m", wait, eu.At)
+		t.Fatalf("the wait for a credential two runs hold under a cap of two = %s until %s; want the earlier expiry, 5m", wait, eu.At)
 	}
 
 	// The comparison itself, so a flipped one is caught here and not only
@@ -539,17 +589,27 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 		{Slug: run.Slug, Run: "other-1", Credential: a1.Name, Until: now.Add(30 * time.Minute)},
 		{Slug: run.Slug, Run: "other-2", Credential: a1.Name, Until: now.Add(5 * time.Minute)},
 	}
-	if at, ok := EarliestExpiry(leases, a1.Name, now, run); !ok || !at.Equal(now.Add(5*time.Minute)) {
-		t.Fatalf("EarliestExpiry = %s, %v; want the earlier of the two expiries", at, ok)
+	if at, ok := SlotFrees(leases, a1.Name, now, run, 1); !ok || !at.Equal(now.Add(30*time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of one = %s, %v; want the later of the two expiries", at, ok)
+	}
+	if at, ok := SlotFrees(leases, a1.Name, now, run, 2); !ok || !at.Equal(now.Add(5*time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of two = %s, %v; want the earlier expiry", at, ok)
 	}
 	// A lapsed lease is nobody's hold, and one run's own expired hold is not a
 	// wait either.
 	lapsed := append(leases, Lease{Slug: run.Slug, Run: "gone", Credential: a1.Name, Until: now.Add(-time.Minute)})
-	if at, ok := EarliestExpiry(lapsed, a1.Name, now, run); !ok || !at.Equal(now.Add(5*time.Minute)) {
-		t.Fatalf("EarliestExpiry with a lapsed lease = %s, %v; want 5m", at, ok)
+	if at, ok := SlotFrees(lapsed, a1.Name, now, run, 2); !ok || !at.Equal(now.Add(5*time.Minute)) {
+		t.Fatalf("SlotFrees with a lapsed lease = %s, %v; want 5m", at, ok)
 	}
-	if _, ok := EarliestExpiry(leases, a1.Name, now, Run{Slug: run.Slug, ID: "other-1"}); !ok {
-		t.Fatal("EarliestExpiry found no hold for a run that is not the only holder")
+	// The asking run's own hold is not in its way: asked as other-1 under a cap
+	// of one, the only holder that counts is other-2, so the answer is its 5m
+	// and not the 30m its own lease would have added.
+	if at, ok := SlotFrees(leases, a1.Name, now, Run{Slug: run.Slug, ID: "other-1"}, 1); !ok || !at.Equal(now.Add(5*time.Minute)) {
+		t.Fatalf("SlotFrees for the holder itself = %s, %v; want the other run's 5m", at, ok)
+	}
+	// No cap, nothing to wait for: an answer of "no time" rather than a time.
+	if _, ok := SlotFrees(leases, a1.Name, now, run, 0); ok {
+		t.Fatal("SlotFrees answered a time under no cap at all")
 	}
 }
 
@@ -602,13 +662,41 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 		t.Fatalf("the second failed probe left a wait of %s; want 30m (doubling from the mark, not restarting)", m.Backoff)
 	}
 
-	// A clear is the same write a successful probe makes, and it forgets the
-	// wait in force.
+	// A successful probe of a tier B credential forgets the wait in force: the
+	// project's own paid key is held by its reset and by nothing else (forTier,
+	// D142's controls are the shared tier's).
+	if _, err := s.Probed(ctx, a1.Name, TierB); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); !m.Available() || m.Backoff != 0 {
+		t.Fatalf("the mark a successful tier B probe left = %+v; want available, remembering nothing", m)
+	}
+
+	// The same probe of a tier A credential, under the settings above (D142's
+	// first control on, and the window equal to the hour's cap): the wait is
+	// over, and the token is still held for the rest of the window its
+	// exhaustion opened — review finding M3, and the difference C1.12's probe
+	// would otherwise be the way around.
+	if _, err := s.Exhausted(ctx, a1.Name, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	backedOff := st.mark(a1.Name)
+	if backedOff.State != StateBackedOff || !backedOff.Since.Equal(now) {
+		t.Fatalf("the no-reset exhaustion left %+v; want a backoff dated now", backedOff)
+	}
+	got, err := s.Probed(ctx, a1.Name, TierA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateExhausted || !got.Until.Equal(now.Add(time.Hour)) || !got.Since.Equal(now) {
+		t.Fatalf("a successful tier A probe inside the window left %+v; want it held until the window ends", got)
+	}
+	// Cleared is the operator's (C1.21), and it is not what a probe writes.
 	if _, err := s.Cleared(ctx, a1.Name); err != nil {
 		t.Fatal(err)
 	}
 	if m := st.mark(a1.Name); !m.Available() || m.Backoff != 0 {
-		t.Fatalf("the mark a clear left = %+v; want available, remembering nothing", m)
+		t.Fatalf("the operator's clear left %+v; want available, remembering nothing", m)
 	}
 
 	// A 401, and then the two transitions a busy token can report while the 401
@@ -657,7 +745,10 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 		t.Fatalf("Mark left %+v", m)
 	}
 	if _, err := s.Record(ctx, a2.Name, func(prev Mark, _ bool, in Settings) (Mark, error) {
-		if in.BackoffCap != time.Hour || in.Window != DefaultWindow || !in.stops() {
+		// Window is the policy's backoff cap unless a caller sets it (review
+		// finding m7), so with a one-hour cap in force the window is an hour and
+		// not the package's five-hour default.
+		if in.BackoffCap != time.Hour || in.Window != time.Hour || !in.stops() {
 			return Mark{}, fmt.Errorf("the closure was handed %+v; want the settings the selector enforces", in)
 		}
 		return Exhaust(prev, now, time.Time{}, in), nil
@@ -682,5 +773,136 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 	}
 	if st.updates != writes {
 		t.Fatalf("the store was written to %d times by refused calls", st.updates-writes)
+	}
+}
+
+// D142's two controls are the SHARED tier's, and the state of a credential is
+// not what decides that (Settings.forTier; review findings M1 and M2). Both are
+// owner headroom over donated subscription quota: the window is the subscription
+// window an exhaustion costs, and the cap counts runs sharing one token. Neither
+// has a subject on tier B, the project's own paid API key — a rate limit that
+// named a one-minute reset must not take the paid key out for a five-hour
+// subscription window, and a cap of one run at a time on a key the project pays
+// for is an outage it wrote itself.
+func TestTheSharedControlsDoNotReachThePaidTier(t *testing.T) {
+	// A usage limit a minute ago whose reset has passed, which under the window
+	// control holds a shared token for the rest of a five-hour window; and two
+	// other runs holding the credential, which under a cap of one excludes a
+	// third.
+	since := now.Add(-time.Minute)
+	state := func() *fakeStore {
+		st := newFakeStore()
+		st.setMark(a1.Name, Mark{State: StateExhausted, Since: since, Until: now.Add(-time.Second)})
+		st.setMark(b1.Name, Mark{State: StateExhausted, Since: since, Until: now.Add(-time.Second)})
+		st.setLease(Run{Slug: run.Slug, ID: "other-1"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
+		st.setLease(Run{Slug: run.Slug, ID: "other-2"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
+		st.setLease(Run{Slug: run.Slug, ID: "other-1"}, Lease{Credential: b1.Name, Until: now.Add(30 * time.Minute)})
+		st.setLease(Run{Slug: run.Slug, ID: "other-2"}, Lease{Credential: b1.Name, Until: now.Add(30 * time.Minute)})
+		return st
+	}
+
+	// The paid key, under the default settings: the window control is on and the
+	// cap is one, and the selection goes there anyway.
+	set := Settings{Fallback: Auto}
+	c, wait, err := selector(state(), set).Select(ctx, run, []Credential{b1})
+	if err != nil || wait != 0 || c.Name != b1.Name {
+		t.Fatalf("a tier B selection = %q, %s, %v; want the paid key: neither D142 control reaches tier B", c.Name, wait, err)
+	}
+
+	// The same state on a shared token is held, by the window and by the cap:
+	// that is what makes the assertion above about the tier rather than about
+	// the state it was in.
+	_, _, err = selector(state(), set).Select(ctx, run, []Credential{a1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("the same state on a shared token = %v; want an ExhaustedUntil answer", err)
+	}
+	if want := since.Add(DefaultBackoffCap); !eu.At.Equal(want) {
+		t.Fatalf("the shared token's answer = %s; want %s, the end of the window", eu.At, want)
+	}
+}
+
+// A selection needs the run identity it places: the slug and the run id are the
+// run's own nodes under creds/, so a run without them is a caller's mistake and
+// never a credential chosen for nobody. (Review finding M5: this guard had no
+// test, so Run.valid could be deleted without a red test.)
+func TestSelectRefusesARunWithNoIdentity(t *testing.T) {
+	st := newFakeStore()
+	s := selector(st, noWindow())
+	for _, bad := range []Run{{}, {Slug: run.Slug}, {ID: run.ID}} {
+		if _, _, err := s.Select(ctx, bad, []Credential{a1}); err == nil {
+			t.Fatalf("a selection for the run %+v was made; want a refusal: the run's nodes are its slug and id", bad)
+		}
+	}
+	if len(st.leases) != 0 || len(st.current) != 0 {
+		t.Fatalf("a refused selection wrote %d leases and %d current nodes", len(st.leases), len(st.current))
+	}
+}
+
+// One credential offered twice is refused rather than counted twice: a duplicate
+// in a tie is a worse round robin for a reason nobody could see, and a
+// duplicate's second lease would count against the cap as another run. (Review
+// finding M5: this refusal had no test either.)
+func TestSelectRefusesADuplicateCandidate(t *testing.T) {
+	st := newFakeStore()
+	_, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1, a1})
+	if err == nil || !strings.Contains(err.Error(), a1.Name) {
+		t.Fatalf("a candidate list holding %q twice = %v; want the refusal that names it", a1.Name, err)
+	}
+	if len(st.leases) != 0 {
+		t.Fatal("a refused candidate list took a lease")
+	}
+}
+
+// The tie-breaking counter is read from the database, so a hand-edit can leave
+// it anywhere — including negative, and including the wrapped value a counter
+// incremented at its maximum lands on. Neither may index outside the tied set.
+// (Review finding M5: the clamp had no test.)
+func TestTheTieBreakSurvivesACounterOutOfRange(t *testing.T) {
+	for _, seed := range []int64{-1, math.MinInt64, math.MaxInt64} {
+		st := newFakeStore()
+		st.setRoundRobin(seed)
+		set := noWindow()
+		set.ConcurrencyPerToken = ptr(0)
+		s := selector(st, set)
+
+		c, _, err := s.Select(ctx, run, []Credential{a1, a2})
+		if err != nil {
+			t.Fatalf("a selection with the tie-breaking counter at %d = %v", seed, err)
+		}
+		if c.Name != a1.Name && c.Name != a2.Name {
+			t.Fatalf("a selection with the counter at %d took %q, which is not one of the candidates", seed, c.Name)
+		}
+		// And the next selection still works: the counter's value is clamped
+		// where it is read, not where it is written.
+		if _, _, err := s.Select(ctx, Run{Slug: run.Slug, ID: "r2"}, []Credential{a1, a2}); err != nil {
+			t.Fatalf("the selection after the counter reached %d = %v", seed, err)
+		}
+	}
+}
+
+// The sticky path takes the slot again rather than only answering: a run that
+// keeps its credential but refreshes no lease loses its slot to the cap while it
+// is still working, and its next call finds the credential full — of its own
+// lapsed hold. (Review finding M5: with the take removed from this path, nothing
+// went red, because the first selection's lease was still fresh.)
+func TestTheStickyPathRefreshesTheLease(t *testing.T) {
+	st := newFakeStore()
+	// The run is on shared-1 with a lease that is live but nearly out.
+	st.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(time.Minute)})
+
+	// shared-2 is the one a fresh run would take (shared-1 has been exhausted),
+	// so staying on shared-1 is the stickiness and not the ordering.
+	st.setMark(a1.Name, Mark{State: StateExhausted, Since: now.Add(-time.Hour), Until: now.Add(-time.Minute)})
+	c, _, err := selector(st, noWindow()).Select(ctx, run, []Credential{a1, a2})
+	if err != nil || c.Name != a1.Name {
+		t.Fatalf("the sticky selection = %q, %v; want %q", c.Name, err, a1.Name)
+	}
+	l, ok := st.lease(run)
+	if !ok || l.Credential != a1.Name || !l.Until.Equal(now.Add(DefaultLeaseTTL)) {
+		t.Fatalf("the sticky selection left the lease %+v, %v; want it refreshed to %s", l, ok, now.Add(DefaultLeaseTTL))
+	}
+	if cur, _, err := st.Current(ctx, run); err != nil || cur != a1.Name {
+		t.Fatalf("the sticky selection left the run on %q, %v; want %q", cur, err, a1.Name)
 	}
 }
