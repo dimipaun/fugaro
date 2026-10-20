@@ -1246,11 +1246,18 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 	if strings.Contains(doc, "C7 is not one of them") {
 		t.Errorf("%s's opening note says C7 has left the UNVERIFIED rows: no source in this tree quotes the reference's text for the grammar, and no live step can falsify the reading, so the label stays on", designPath)
 	}
-	// The two files that state the rule in code and in the plan: both may state
-	// the reading, and neither may promote it to a citation. The phrases are the
-	// ones the settled label was written in.
+	// Every file that states the rule: each may state the reading, and none may
+	// promote it to a citation. The phrases are the ones the settled label was
+	// written in. docs/design/managed-projects.md is here because the round-5
+	// revert left its 0.9.6 note saying C7 was "settled by the documented
+	// semantics" — a security-relevant reading the design of record holds
+	// UNVERIFIED — and a scan that stopped at the module and this package could
+	// not see it.
 	for _, path := range []string{
 		filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"),
+		filepath.Join("..", "..", "..", "docs", "design", "managed-projects.md"),
+		filepath.Join("..", "..", "..", "SECURITY.md"),
+		filepath.Join("..", "..", "..", "website", "content", "security.md"),
 		"cover.go",
 	} {
 		b, err := os.ReadFile(path)
@@ -1279,6 +1286,35 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 	mod := strings.Join(strings.Fields(string(modBytes)), " ")
 	if !strings.Contains(mod, "UNVERIFIED") {
 		t.Error("deployer.tf's header states the extract rule without recording that the design holds it UNVERIFIED: this file is what the owner reads before the apply that creates the fence, and the rule it states is a reading, not a citation")
+	}
+}
+
+// TestDeployerDesignSaysWhatTheCoverEnforces: §6 of the design used to say the
+// cover gate refuses "a second binding of any of the seven". It does not —
+// deployerGrant reads each binding's role, member, project and condition on its
+// own, so a second google_project_iam_member of the same role under the
+// byte-identical condition is accepted (harmless: IAM members are a set). The
+// single-binding property is the module tree's, and TestDeployerBindingsAreTheModules
+// is what holds it. A design sentence that credits the gate with a property the
+// gate does not have is the kind of claim a later change reasons from, so this
+// reads the two sentences that carry it.
+//
+// Mutation (verified, run and restored): put the old clause back into the
+// design — this fails naming it.
+func TestDeployerDesignSaysWhatTheCoverEnforces(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := strings.Join(strings.Fields(string(b)), " ")
+	if strings.Contains(doc, "a second binding of any of the seven are all refused") {
+		t.Error("the design says the cover gate refuses a second binding of any of the seven: deployerGrant reads each binding independently, so a second binding of the same role under the byte-identical condition is accepted, and the single-binding property is TestDeployerBindingsAreTheModules' (the module tree's), not the plan review's")
+	}
+	if !strings.Contains(doc, "TestDeployerBindingsAreTheModules") {
+		t.Error("the design does not name TestDeployerBindingsAreTheModules as what holds the one-binding-per-role property: the cover gate does not hold it, so a reader told otherwise has nowhere to look for the rule")
+	}
+	if !strings.Contains(doc, "harmless because IAM members are a set") {
+		t.Error("the design does not say why a second identical binding being accepted is harmless: without it the sentence reads as an unclosed hole rather than as IAM's own set semantics")
 	}
 }
 

@@ -457,10 +457,19 @@ IAM policy should see one fence, not seven names. The **role** is what differs.
 `internal/infra/tf` models this as a `DeployerService` per row — role, title,
 clauses — with `DeployerClause` gaining the `extract` form
 (`resource.name.extract("T").startsWith("V")`) alongside `startsWith`. The cover
-gate looks a binding's role up in the set and requires that binding's condition
-to be exactly that service's expression; a role outside the set, a condition
-that is not the one for that role, an unconditioned binding of any of the seven,
-and a second binding of any of the seven are all refused.
+gate (`deployerGrant`) looks a binding's role up in the set and checks that
+binding's member, project and condition on their own: a role outside the set, a
+binding of not the deployer account, a condition that is not the one for that
+role, and an unconditioned binding of any of the seven are all refused. What the
+cover does **not** enforce is one binding per role — it reads each binding
+independently, so a second `google_project_iam_member` of the same role under the
+byte-identical condition is accepted, which is harmless because IAM members are a
+set. The single-binding property is held by the module tree instead:
+`TestDeployerBindingsAreTheModules` (`internal/infra/tf/cover_test.go`) counts
+each role's binding in the modules and requires exactly one, the seven
+conditioned ones under their own condition local and the other under none, so a
+second binding in the module is a test failure rather than something a plan
+review catches.
 
 ## 7. What this changes about D75
 
