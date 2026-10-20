@@ -296,10 +296,19 @@ type ComputeOutputs struct {
 	ReaperRole            string `json:"reaper_role"`
 	PreloadAccount        string `json:"preload_account"`
 	PreloadScheduler      string `json:"preload_scheduler_job"`
-	Router                string `json:"router"`
-	NAT                   string `json:"nat"`
-	Network               string `json:"network"`
-	Subnetwork            string `json:"subnetwork"`
+	// ReaperJob and ReaperScheduler are the reaper's invocation by name: the
+	// Cloud Run job that runs `fugaro reaper` (as the reaper account above)
+	// and the Scheduler job that starts it every ReapMargin (reaper.tf, design
+	// §8.1 Task 11). Neither name starts with `fugaro-`, so neither is a
+	// workflow's, and a check that wants to ask Google whether the invocation
+	// exists -- `fugaro doctor`'s reaper check is the one that will -- would
+	// otherwise have to re-derive them from the module.
+	ReaperJob       string `json:"reaper_job"`
+	ReaperScheduler string `json:"reaper_scheduler_job"`
+	Router          string `json:"router"`
+	NAT             string `json:"nat"`
+	Network         string `json:"network"`
+	Subnetwork      string `json:"subnetwork"`
 }
 
 // DecodeComputeOutputs reads the compute root's outputs.

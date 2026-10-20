@@ -50,6 +50,12 @@ output "preload_scheduler_job" {
 # own locals and not inputs, because nothing outside the module creates them --
 # unlike the names in `var.names`, which fugaro init computes because two
 # sides write them.
+#
+# They travel the whole way out: this file, the root's outputs.tf and
+# internal/infra.ComputeOutputs are one interface, one-for-one
+# (TestComputeOutputsCoverTheRoot reads all three), because what a stage or a
+# later `doctor` check reads back is the ROOT's `terraform output -json`. A
+# name added here alone is a name the stage never sees.
 output "reaper_job" {
   value = google_cloud_run_v2_job.reaper.name
 }
