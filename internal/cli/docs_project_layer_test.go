@@ -522,6 +522,71 @@ func TestDocsReleaseChecklistNamesEveryPolicyVersion(t *testing.T) {
 	}
 }
 
+// TestDocsProjectLayerSaysWhatTiesARepositoryToAProject: task 4.1's step 4 —
+// the doc must state, in one paragraph, the three things that tie a repository
+// to a project (design project-centric.md §4.3) and that there is no
+// registration record, because the "no record is written" half is what an
+// operator has to believe before they trust `repos ls`'s answer, and the three
+// ties are what they have to satisfy before a run works at all.
+//
+// It also pins the two §7 rows the task changes — `repos ls` reads enrolled
+// against seen, `sync` offers the App's installed repositories — and that §10
+// stopped claiming the discovery surface is missing. An operator told a
+// shipped command is "not yet" looks for another way to do the work.
+//
+// The review's doc findings are pinned here too, because a row that describes
+// a command wrongly is one an operator plans against: the `repos ls` row said
+// a failed read "says so" (it is an error, and the command prints nothing)
+// and that each entry carries its provider (nothing prints one), and §10 said
+// the policy commands ship "in this release" where the release is what a
+// reader needs. The `sync` row has to say how wide to install the App, because
+// what it enumerates is exactly the installation's grant.
+//
+// Mutation (verified, run and restored): drop the "Three things" paragraph,
+// put `repos ls`'s "and the repositories running now" back, restore §10's
+// "without the fuller discovery answer phase 4 adds", restore the old
+// "(a project with no Firebase backend, or a read that failed, says so …)"
+// clause, or drop the App-scope sentence — this test fails, naming it.
+func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"### What ties a repository to a project",
+		"**Three things, all of them data**",
+		"default-branch `fugaro.yaml` names the project (`project:`",
+		"the project's published **allow-list**",
+		"provider-side access, the GitHub App installed on the repository",
+		"There is **no registration record**",
+		"the runs bucket's `runs/<slug>/` prefixes and Firestore's `spendDaily`",
+		"Discovery stays **optional and explicit**",
+		"| `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]` |",
+		"The **enrolled** against the **seen**",
+		"the ones the allow-list does not already admit, in **one batch, confirmed once**",
+		"the discovery answer has shipped too",
+		"never removes an entry",
+		// The review's doc findings (see above).
+		"ship in 0.9.5 (§7)",
+		"Install the App on the repositories you mean to run, and no wider",
+		"a read that **fails** is an error, and the command then prints nothing at all",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q", want)
+		}
+	}
+	for _, notWant := range []string{
+		"| `fugaro project repos ls` | The allow-list with each entry's source, and the repositories running now |",
+		"without the fuller discovery answer phase 4 adds",
+		"phase 4's discovery surface is where a durable answer comes from",
+		// The rows the review corrected: a failed read is not a note, and no
+		// provider is printed, so neither claim may come back.
+		"or a read that failed, says so instead of printing an empty history",
+		"each with its canonical name and its provider",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q, which task 4.1 made false", notWant)
+		}
+	}
+}
+
 // TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning: the publish row of
 // docs/project-layer.md is the operator's only description of what a publish
 // writes, and C1.2 added two things to it that the row did not carry before —

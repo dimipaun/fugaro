@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -19,8 +21,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -59,7 +64,7 @@ func newProjectCmd() *cobra.Command {
 		Short: "The project's policy, its allow-list and the repositories enrolled",
 		Args:  cobra.NoArgs,
 	}
-	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd())
+	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd())
 	return cmd
 }
 
@@ -444,7 +449,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		return nil, nil
 	case len(p.UnknownKeys) > 0:
 		return nil, userErr("%s lists %s, which this Fugaro does not know: publishing would drop them; upgrade Fugaro (fugaro upgrade), or fix the node by hand",
-			projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
+			projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, nil
 }
@@ -2128,8 +2133,19 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	if err != nil {
 		return err
 	}
+	// Every name on these two lists is a key of the run registry, which a run
+	// wrote: a repository's slug, and — for a key the database does not take as
+	// it stands — budget.Key's percent-escapes of it, which leave a bidi
+	// override, a C1 control, a zero-width character and the length of the name
+	// alone. Both forms of this command print them (the table and the --json
+	// document), so both carry the bounded printable form (printableName), and
+	// both carry the same value: a table and a document that mirror each other
+	// must not disagree. The raw names stay in `running`, which is what
+	// admission is asked of and what the pair of lists is computed on.
+	runningShown := boundedNames(running)
+	notAdmitted := map[string]bool{}
 	doc := projectShowDoc{Project: lc.Name, GCPProject: lc.GCPProject, Mode: cfg.Mode, Caps: caps,
-		Enrolled: map[string]string{}, Running: running, RunningNotEnrolled: []string{}, EnrolledNotRunning: []string{}}
+		Enrolled: map[string]string{}, Running: runningShown, RunningNotEnrolled: []string{}, EnrolledNotRunning: []string{}}
 	if found {
 		doc.Policy = showPolicyOf(p)
 		doc.AllowRepos = nonNil(p.AllowRepos)
@@ -2150,7 +2166,8 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 			continue
 		}
 		if !projectpolicy.AdmitRepo(p.AllowRepos, r) {
-			doc.RunningNotEnrolled = append(doc.RunningNotEnrolled, r)
+			notAdmitted[r] = true
+			doc.RunningNotEnrolled = append(doc.RunningNotEnrolled, printableName(r))
 		}
 	}
 	for _, r := range doc.AllowRepos {
@@ -2184,13 +2201,17 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	if len(running) == 0 {
 		fmt.Fprintln(out, "  (none)")
 	}
-	for _, r := range running {
+	for i, r := range running {
 		mark := ""
-		if slices.Contains(doc.RunningNotEnrolled, r) {
+		if notAdmitted[r] {
 			mark = notAdmittedNote(r)
 		}
-		fmt.Fprintf(out, "  %s%s\n", r, mark)
+		fmt.Fprintf(out, "  %s%s\n", runningShown[i], mark)
 	}
+	// EnrolledNotRunning is the allow-list's own entries, each one checked to
+	// be a pattern the allow-list takes (projectpolicy.ValidPattern, on decode
+	// and again on publish): a value there is this program's alphabet, never a
+	// run's.
 	for _, r := range doc.EnrolledNotRunning {
 		fmt.Fprintf(out, "  %s is on the allow-list and has no run in flight here\n", r)
 	}
@@ -2383,12 +2404,150 @@ func runningRepos(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) ([]
 	return slices.Sorted(maps.Keys(running)), nil
 }
 
+// boundedNames is a list of run-written names as this program prints them:
+// each one through printableName, in the same order, so a table line and the
+// --json document that mirror each other carry the same value. The raw list
+// stays the one matching and admission are asked of (AdmitRepo, MatchRepo,
+// entryHasARun): a name is compared as the run wrote it, and only what is
+// printed is bounded.
+func boundedNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, printableName(n))
+	}
+	return out
+}
+
+// printableName is one run-written name as every listing of this package
+// prints it: one inert line, bounded, still distinct from every other name,
+// and with its whitespace normalised the way safetext.Field normalises it.
+//
+// Field is the first half of that and not the whole of it. It drops what Strip
+// drops — bidi controls, zero-width and other format characters, invalid UTF-8
+// — so a name carrying U+2066 and U+2069 between its letters and a plain name
+// of the same letters without them print as one and the same line. An operator
+// reads that line as the entry of whichever of the two they have in mind, and
+// the two are not the same entry: one is admitted by the allow-list and the
+// other is refused. A name Field would change is therefore escaped with
+// pluginwire's rule (each of those characters as \uXXXX) instead of dropped,
+// so a name reads as what it is — the same choice the CLI makes for a policy
+// node's unknown keys (unknownPolicyKeysText), whose provenance this shares.
+//
+// Two things Field does that PrintableN does not, and that are done here
+// rather than inherited:
+//
+// The bound is on what is printed, and PrintableN's is on what it reads. It
+// counts runes of *input* against its argument and writes six characters for
+// each escaped one, so PrintableN(s, safetext.FieldMax) is no bound on the
+// line: a name of safetext.FieldMax zero-width joiners — which both durable
+// sources accept, a bucket object key having no length limit and
+// budget.FromFields checking only that a slug is valid UTF-8 and not empty —
+// comes out over three thousand runes wide, past even the listings' own line
+// bound (seenLineMaxRunes) and enough to push this program's words off the
+// screen, which is the whole point of bounding the name. So each rune is
+// escaped on its own here and the loop stops the moment the next one would
+// cross FieldMax, with Field's own ellipsis — printableNameMax is
+// safetext.FieldMax, the same bound Field has, not a multiple of it.
+//
+// Whitespace is normalised first, by Field's rule: every unicode space — tab,
+// newline, NEL and the line and paragraph separators among them — becomes one
+// space, runs of them collapse, and the ends are trimmed. PrintableN is
+// deliberately not Field here (it keeps a literal tab), and a tab in a listing
+// line shifts everything after it out of the column the operator is reading,
+// which is the one thing no other run-written value in this program does. The
+// reading that costs is a name that differs from another only in whitespace:
+// both print alike, and neither is a repository identifier (the alphabet has
+// no space in it) nor reaches a command. What is *not* normalised is the
+// format characters above, which are escaped — two names that differ in one of
+// those still read as two.
+//
+// What is escaped is inert either way: Printable escapes every control and
+// format character, so the result is still one line no terminal acts on. It
+// reaches no command: the advisory this package builds is enrollableArg's,
+// which returns only a value over the repository alphabet.
+//
+// The one reading it does not separate is a name that literally spells an
+// escape ("x⁦y" typed as nine ASCII characters), which Field leaves
+// alone and so prints exactly as the escaped form of a name carrying the
+// character. Real repository identifiers cannot carry a backslash at all, and
+// a name that spells one is not a repository identifier either, so neither
+// reaches a command, and telling them apart would cost the ordinary name its
+// plain form.
+func printableName(s string) string {
+	if f := safetext.Field(s); f == s {
+		return f
+	}
+	var b strings.Builder
+	used := 0
+	for _, r := range normalisedSpaces(s) {
+		e := pluginwire.PrintableN(string(r), 1)
+		n := utf8.RuneCountInString(e)
+		if used+n > safetext.FieldMax-1 {
+			b.WriteRune('…')
+			break
+		}
+		b.WriteString(e)
+		used += n
+	}
+	return b.String()
+}
+
+// printableNameMax is the most runes printableName returns. Its bound is on
+// what is printed, so it is safetext.FieldMax itself: the ellipsis stands in
+// for the rune it replaced.
+const printableNameMax = safetext.FieldMax
+
+// normalisedSpaces is s with Field's whitespace rule applied and nothing else.
+// Field does the same and then drops the format characters (and the invalid
+// UTF-8) as well; those are kept here, because printableName escapes them
+// rather than dropping them, so that two names that differ in one still read
+// as two.
+func normalisedSpaces(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	space := false
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			// Leading whitespace is dropped, interior runs are collapsed to
+			// one space, trailing whitespace never flushes: strings.Fields
+			// and its Join, which is what Field does with the same rule.
+			space = b.Len() > 0
+			continue
+		}
+		if space {
+			b.WriteByte(' ')
+			space = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // allowSources says where each entry of the published allow-list came from,
 // for `project show`. It is the same seed the publisher would compute, so an
 // entry that is not in it was added on purpose (`project repos add`) or is a
 // pattern.
 func allowSources(ctx context.Context, lc *localcfg.Config) (map[string]string, error) {
 	return allowSourcesOf(ctx, lc, false)
+}
+
+// unknownPolicyKeysText renders a policy node's unknown top-level keys for a
+// message. They are raw JSON member names of the node, which is hand-writable
+// (projectpolicy.Policy.UnknownKeys is what the strict top-level decode could
+// not place), and a key carrying a bidi override, a zero-width joiner or a
+// line/paragraph separator is a legal JSON name that unicode.IsControl does not
+// catch (checkTopLevelNames refuses duplicates and case-variants of the keys
+// this Fugaro knows, never their shape). Printed raw, such a name can rewrite
+// the line it is printed in — the terminal's reading of everything after it is
+// the file's to choose — so every name goes through pluginwire.Printable, the
+// same escaped form config.ValidateClaudeAccounts and
+// providerConventionRefusal print a name of the same provenance with.
+func unknownPolicyKeysText(keys []string) string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = pluginwire.Printable(k)
+	}
+	return strings.Join(out, ", ")
 }
 
 // refuseUnknownPolicyKeys is what every CLI reader of the published node does
@@ -2404,7 +2563,7 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 		return nil
 	}
 	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
-		projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
+		projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 }
 
 // notAdmittedNote marks a repository that has run here and that the published
@@ -2417,11 +2576,126 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 // operator has to name the repository instead of being handed an argument that
 // fails.
 func notAdmittedNote(r string) string {
-	if projectpolicy.ValidPattern(r) != nil {
-		return "  (not admitted: its next run is refused until the allow-list admits it; this is a slug, a hash of the repository's name, so name it: 'fugaro project repos add provider/owner/name')"
-	}
-	return "  (not admitted: its next run is refused until 'fugaro project repos add " + r + "')"
+	return "  (" + notAdmittedSentence(r) + ")"
 }
+
+// notAdmittedSentence is the sentence notAdmittedNote wraps, unwrapped for the
+// listings that print it inside a parenthetical of their own (`project repos
+// ls`'s seen list names the sources first). It is one sentence for one state,
+// so the two listings cannot word the same refusal differently.
+func notAdmittedSentence(r string) string {
+	// The remedy is a command an operator is invited to run, so it is built
+	// only from a repository identifier — never from a pattern, and never from
+	// a name a run wrote that is not one. `ValidPattern` is the wrong test for
+	// that: it is the allow-list's own test, and it accepts "*" (the entry that
+	// admits every repository) and every wildcard pattern besides, so a run
+	// that writes the bucket prefix `runs/*/` or a spendDaily slug of
+	// `github/*/*` made this program print
+	// 'fugaro project repos add *' — the widest enrollment there is, advised by
+	// the program itself out of data the run chose. A name that is not an
+	// identifier gets no command at all, whatever its shape.
+	if arg, ok := enrollableArg(r); ok {
+		return "not admitted: its next run is refused until 'fugaro project repos add " + arg + "'"
+	}
+	reason := notARepoName
+	if looksLikeASlug(r) {
+		reason = slugIsAHash
+	}
+	return "not admitted: its next run is refused until the allow-list admits it — " + reason + ", so " + slugNameIt
+}
+
+// enrollableArg is name as the one argument `fugaro project repos add` takes
+// for it, when name is a repository identifier and nothing else: a
+// provider/owner/name path (a repository may nest, so any depth above two) over
+// the repository alphabet [A-Za-z0-9._-], whose first segment is a provider
+// kind (task.ValidProvider, what projectpolicy.Canonical and task.Slug take),
+// with no empty, "." or ".." segment and no segment opening with "-" (a shell
+// word that opens with a dash reads as an option). A "*" — the wildcard of a
+// pattern, and the one character that makes the name admit more than itself —
+// is not in the alphabet, and neither is a space, so a pattern and a name a run
+// padded are both refused. The value comes back quoted as one shell word
+// (shellword.Quote: unchanged when it is already safe, single-quoted
+// otherwise), because what is printed is meant to be pasted into a shell.
+//
+// The bare owner/name form `repos add` also takes is deliberately not offered:
+// it resolves its provider through this machine's config (canonicalRepoArg),
+// and these listings reach this sentence exactly for the names the config does
+// not know. The canonical form is the one that stands on its own.
+//
+// The name is bounded too, at safetext.FieldMax bytes (the alphabet is ASCII,
+// so bytes are characters): every other name these listings print is held to
+// that bound, and without it a run that wrote a long enough identifier-shaped
+// slug made the advisory line, and the command in it, as long as it chose. A
+// longer name gets no command, the same answer as any other name that is not a
+// repository identifier.
+func enrollableArg(name string) (string, bool) {
+	if len(name) > safetext.FieldMax {
+		return "", false
+	}
+	segs := strings.Split(name, "/")
+	if len(segs) < 3 || !task.ValidProvider(segs[0]) {
+		return "", false
+	}
+	for _, seg := range segs {
+		if !repoIdentSegment(seg) {
+			return "", false
+		}
+	}
+	return shellword.Quote(name), true
+}
+
+// repoIdentSegment reports whether seg is one segment of a repository
+// identifier: non-empty, over [A-Za-z0-9._-], not "." or ".." (which name
+// directories, not repositories) and not opening with "-".
+func repoIdentSegment(seg string) bool {
+	if seg == "" || seg == "." || seg == ".." || seg[0] == '-' {
+		return false
+	}
+	for i := 0; i < len(seg); i++ {
+		switch c := seg[i]; {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// looksLikeASlug reports whether s is over the slug's own alphabet — lower-case
+// letters, digits and "-", no separator. That is the shape task.Slug mints and
+// runstore lists (its slugRE), and the shape of a name that cannot be turned
+// back into a repository: what the listing has to say about one is that it is a
+// slug, not a command.
+func looksLikeASlug(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// slugIsAHash and slugNameIt are the two halves of what a name that is a slug
+// means for a reader: it is not invertible, and the remedy is to name the
+// repository. A listing that prints a slug (the run registry's keys, the
+// bucket's runs/<slug>/ prefixes) hands the operator neither a provider nor a
+// name, so it says both, in the same words, wherever it prints one.
+const (
+	slugIsAHash = "this is a slug, a hash of the repository's name, so its provider is not recorded"
+	slugNameIt  = "name it: 'fugaro project repos add provider/owner/name'"
+	// notARepoName is the other reason a name gets no command: it is not a
+	// repository identifier at all — a pattern a run wrote (github/*/*), the
+	// allow-list's own "*", or a name with something else in it a repository
+	// cannot hold. Saying "this is a slug" of one of those would be false
+	// (nobody hashed it), and saying nothing would leave a reader wondering
+	// why the neighbouring entries are given a remedy and this one is not.
+	notARepoName = "this is not a repository name (a repository is provider/owner/name, with no wildcard)"
+)
 
 func sourceSuffix(src string) string {
 	if src == "" {
@@ -2435,442 +2709,4 @@ func orNone(s string) string {
 		return "not set"
 	}
 	return s
-}
-
-// ---------------------------------------------------------------- repos
-
-// newProjectReposCmd is `fugaro project repos`: the interim enrollment path
-// between phases 1 and 4 (P4, 12a item 3). `sync` and the discovery surface
-// stay in phase 4 (task 4.1).
-func newProjectReposCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "repos",
-		Short: "The project's allow-list: which repositories may run",
-		Args:  cobra.NoArgs,
-	}
-	cmd.AddCommand(newProjectReposLsCmd(), newProjectReposAddCmd(), newProjectReposRmCmd())
-	return cmd
-}
-
-type projectReposOptions struct {
-	cloud cloudOptions
-	yes   bool
-}
-
-func newProjectReposLsCmd() *cobra.Command {
-	var o projectReposOptions
-	cmd := &cobra.Command{
-		Use:   "ls",
-		Short: "List the allow-list and the repositories running now",
-		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return runProjectReposLs(cmd, &o) },
-	}
-	addCloudFlags(cmd, &o.cloud)
-	return cmd
-}
-
-func newProjectReposAddCmd() *cobra.Command {
-	var o projectReposOptions
-	cmd := &cobra.Command{
-		Use:   "add <provider/owner/name | owner/name | *>",
-		Short: "Enroll a repository: add it to the policy's allow-list",
-		Long: "Add a canonical repository (github/acme/app, bitbucket/acme/*) to the\n" +
-			"published policy's allow_repos, through the same ETag-guarded write the\n" +
-			"publisher uses, and print the change. A bare owner/name takes its provider\n" +
-			"from this machine's project config, and * is the list's own entry for every\n" +
-			"repository: it is written as it is. Only allow_repos changes.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], false) },
-	}
-	addCloudFlags(cmd, &o.cloud)
-	return cmd
-}
-
-func newProjectReposRmCmd() *cobra.Command {
-	var o projectReposOptions
-	cmd := &cobra.Command{
-		Use:   "rm <provider/owner/name | owner/name | *>",
-		Short: "Un-enroll a repository: remove it from the allow-list",
-		Long: "Remove an entry from the published policy's allow_repos. Removing an allowed\n" +
-			"repository stops its runs — a run of a repository the list does not admit is\n" +
-			"refused before it mints a git token — unless another entry on the list still\n" +
-			"admits it, which is the case a pattern makes (github/acme/app stays admitted\n" +
-			"while github/acme/* is there); the confirmation says which of the two it is.\n" +
-			"Removing * refuses every repository the rest of the list does not admit.\n" +
-			"So it asks you to type the project's name, and while a run is in flight --yes\n" +
-			"alone is not enough.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], true) },
-	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the removal without typing the project's name (not while a run is in flight)")
-	addCloudFlags(cmd, &o.cloud)
-	return cmd
-}
-
-func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
-	ctx := cmd.Context()
-	lc, db, err := openBudget(ctx, o.cloud)
-	if err != nil {
-		return err
-	}
-	out := cmd.OutOrStdout()
-	p, found, err := projectpolicy.Read(ctx, db)
-	if err != nil {
-		return policyReadErr(err)
-	}
-	if !found {
-		return userErr("no policy is published for project %s (%s): enroll repositories by publishing one ('fugaro project policy publish'), which seeds the allow-list from this machine's config", lc.Name, projectpolicy.PathShared())
-	}
-	if err := refuseUnknownPolicyKeys(p); err != nil {
-		return err
-	}
-	sources, err := allowSources(ctx, lc)
-	if err != nil {
-		return err
-	}
-	running, err := runningRepos(ctx, db, lc)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "allow_repos (%s):\n", projectpolicy.PathShared())
-	if len(p.AllowRepos) == 0 {
-		fmt.Fprintln(out, "  (empty: a published policy with an empty allow-list admits no repository at all)")
-	}
-	for _, r := range p.AllowRepos {
-		fmt.Fprintf(out, "  %s%s\n", r, sourceSuffix(sources[r]))
-	}
-	fmt.Fprintln(out, "repositories running now (from the run registry):")
-	if len(running) == 0 {
-		fmt.Fprintln(out, "  (none)")
-	}
-	for _, r := range running {
-		mark := ""
-		if !projectpolicy.AdmitRepo(p.AllowRepos, r) {
-			mark = notAdmittedNote(r)
-		}
-		fmt.Fprintf(out, "  %s%s\n", r, mark)
-	}
-	return nil
-}
-
-// runProjectReposEdit adds or removes one allow_repos entry. It edits the
-// node's allow_repos and nothing else: the rest of the published policy is
-// written back as it was read, under the ETag the read returned, so a
-// concurrent publisher is refused rather than overwritten.
-//
-// It is a writer, so it takes every refusal `policy publish` takes before it
-// writes anything: the shared config and a database that is not this
-// project's (openProjectBudget, whose comment above says why), and the
-// deployed rules marker (requirePolicyRules) — a policy written to a
-// deployment whose marker is absent or older than this Fugaro is one the runs
-// it bounds cannot read, and an edit to the allow-list is a publish of the
-// list. Without that last gate `repos add`/`repos rm` were the one way to
-// write the shared node the runner reads on a deployment `policy publish`
-// would refuse to touch.
-func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string, remove bool) error {
-	ctx := cmd.Context()
-	// openProjectBudget, not openBudget: this writes the published policy node,
-	// so it is a writer like `policy publish` and takes the same two refusals —
-	// the shared config is not an operator's own installation (and its repos:
-	// map is not the one a bare owner/name resolves against), and the database
-	// must be this project's.
-	lc, db, err := openProjectBudget(ctx, o.cloud)
-	if err != nil {
-		return err
-	}
-	// The same read `policy publish` makes first, and for the same reason: the
-	// marker says the deployed rules are new enough to read what is written.
-	if err := requirePolicyRules(ctx, db, lc); err != nil {
-		return err
-	}
-	out := cmd.OutOrStdout()
-	canonical, err := canonicalRepoArg(lc, repo)
-	if err != nil {
-		return err
-	}
-	etag, exists, raw, err := readPolicyNode(ctx, db, lc)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return userErr("no policy is published for project %s (%s): 'fugaro project repos add' edits the published allow-list, so publish one first ('fugaro project policy publish')", lc.Name, projectpolicy.PathShared())
-	}
-	if err := refuseNewerPolicy(raw); err != nil {
-		return err
-	}
-	p, err := publishedPolicyOf(raw, true)
-	if err != nil {
-		return err
-	}
-	// before is the list as the node holds it, under its own allocation: allow
-	// is edited in place (slices.DeleteFunc shifts and clears the backing
-	// array; append and Sort write it), and nonNil hands back the argument
-	// itself, so the two would otherwise be one list and the diff line would
-	// print the post-edit list on both sides — on a command whose point is
-	// showing the operator what the edit removed.
-	before := append([]string{}, nonNil(p.AllowRepos)...)
-	allow := nonNil(p.AllowRepos)
-	have := slices.Contains(p.AllowRepos, canonical)
-	if remove && !have {
-		// A name that is not an entry can still be admitted by a pattern on the
-		// list, and then the removal removes nothing and refuses nothing: saying
-		// only "nothing to remove" would read as if the repository had stopped
-		// running.
-		for _, pattern := range p.AllowRepos {
-			if projectpolicy.MatchRepo(pattern, canonical) {
-				return userErr("%s is not an entry of the allow-list of %s; the pattern %s admits it, so its runs keep running — remove that pattern to refuse them",
-					canonical, projectpolicy.PathShared(), pattern)
-			}
-		}
-		return userErr("%s is not on the allow-list of %s: nothing to remove", canonical, projectpolicy.PathShared())
-	}
-	if !remove && have {
-		fmt.Fprintf(out, "%s is already on the allow-list; nothing changed\n", canonical)
-		return nil
-	}
-	if remove {
-		inflight, err := runsInFlight(ctx, db, lc)
-		if err != nil {
-			return err
-		}
-		what := removalWarning(allow, canonical)
-		switch {
-		case inflight > 0:
-			// --yes was typed before the run started, so it is not the
-			// confirmation here: the project's name is.
-			if err := confirmRemovalStrict(cmd, lc, fmt.Sprintf("%s; %d run(s) are in flight", what, inflight)); err != nil {
-				return err
-			}
-		default:
-			if err := confirmRemoval(cmd, lc, o.yes, what); err != nil {
-				return err
-			}
-		}
-		allow = slices.DeleteFunc(allow, func(r string) bool { return r == canonical })
-	} else {
-		allow = append(allow, canonical)
-		slices.Sort(allow)
-	}
-	allow = nonNil(allow)
-	// The node is patched, not rewritten: only allow_repos changes, and a key
-	// this Fugaro does not know inside `routing` — a newer release's, where
-	// Decode cannot list it — stays exactly as it was (patchPolicyJSON).
-	// Providers entries are handled above: an unknown key inside one is a
-	// refusal, not something to preserve.
-	patched, err := patchPolicyJSON(raw, "allow_repos", allow)
-	if err != nil {
-		return userErr("editing %s: %v; nothing was written", projectpolicy.PathShared(), err)
-	}
-	if err := checkPolicyBytes(patched); err != nil {
-		return err
-	}
-	// The line is printed after the write, not before it: it is a claim about
-	// the node, and a PutIfMatch that comes back refused (the policy changed
-	// while this ran, or the credential may not write it) left the list
-	// exactly as it was — an operator who read "allow_repos: [a] → [a b]" on a
-	// failed write would take the entry for enrolled.
-	if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(patched)); err != nil {
-		if errors.Is(err, rtdb.ErrPrecondition) {
-			return userErr("the policy changed while this ran; nothing was written: run it again")
-		}
-		return dbErr(lc, err, true)
-	}
-	fmt.Fprintf(out, "allow_repos: %v → %v\n", before, allow)
-	fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
-	return nil
-}
-
-// removalWarning is what `repos rm` asks the operator to confirm. Removing an
-// entry refuses the repository's runs — a run of a repository the list does not
-// admit is stopped before it mints a git token — but only if nothing else on
-// the list still admits it: `github/acme/*` admits `github/acme/app` whatever
-// happens to the concrete entry, and a confirmation that said "its runs are
-// refused from now on" would be telling the operator a removal stops runs it
-// does not stop. Admission is the list's own matcher (projectpolicy.AdmitRepo,
-// which the runner and the launcher use), so the sentence is what the next run
-// will actually do.
-func removalWarning(allow []string, canonical string) string {
-	if canonical == wildcardEntry {
-		// The wildcard admits every repository, so what the removal refuses is
-		// a set — "every repository the rest of the list does not admit", the
-		// rule the command's own help states — and not one repository's runs.
-		// admittedBy cannot answer this one either: it asks whether a *string*
-		// is admitted, and no pattern matches the string "*". Saying "its runs
-		// are refused from now on" over a list that still holds github/acme/*
-		// would promise a stop the removal does not make.
-		rest := entriesExcept(allow, canonical)
-		if len(rest) == 0 {
-			return "this removes " + canonical + " from the allow-list: it was the only entry, so runs are refused from now on, and a run in flight keeps the policy until it finishes"
-		}
-		owns := "their own"
-		if len(rest) == 1 {
-			owns = "its own"
-		}
-		return "this removes " + canonical + " from the allow-list: a repository is refused only if no other entry admits it, and " + strings.Join(rest, ", ") + " still admits " + owns + ", and a run in flight keeps the policy until it finishes"
-	}
-	if still, by := admittedBy(allow, canonical); still {
-		return "this removes " + canonical + " from the allow-list, but " + by + " still admits it: its runs are not refused, and a run in flight keeps the policy until it finishes"
-	}
-	return "this removes " + canonical + " from the allow-list: its runs are refused from now on, and a run in flight keeps the policy until it finishes"
-}
-
-// wildcardEntry is the allow-list's own entry for every repository
-// (projectpolicy.ValidPattern has a branch for it, and it is the one entry that
-// is not a repository at all), so removing it is a question about the set the
-// rest of the list leaves rather than about one repository.
-const wildcardEntry = "*"
-
-// entriesExcept is allow without entry: the list a removal leaves.
-func entriesExcept(allow []string, entry string) []string {
-	rest := make([]string, 0, len(allow))
-	for _, p := range allow {
-		if p != entry {
-			rest = append(rest, p)
-		}
-	}
-	return rest
-}
-
-// admittedBy is the entry of allow that still admits arg once arg's own entry
-// is gone — the list the removal leaves, read with the same matcher the runner
-// and the launcher use (projectpolicy.MatchRepo), so the sentence above is what
-// the next run will actually do.
-//
-// One matcher answers both questions a removal raises. A concrete repository is
-// admitted by any remaining entry that matches it: the wildcard, or a pattern
-// such as github/acme/*. A *pattern* being removed is moot only if some
-// remaining entry admits every repository it admitted — and MatchRepo answers
-// that too, because it matches its second argument as a *repository*: an entry
-// that matches the string github/acme/* is one whose own segments match
-// "github", "acme" and "*", which is exactly what admitting github/acme/<any>
-// takes. github/*/* matches it, github/ac*/* matches it (github/ac* is every
-// owner whose name starts with "ac"), and github/*/app does not — its middle
-// segment would have to match the literal string "*". The reading is sound in
-// the direction that matters: a pattern that matches a string matches every
-// expansion of it, since a "*" stands for any run of characters within one
-// segment, so no entry can be reported as still admitting a repository the
-// removal really does refuse.
-//
-// That soundness is a property of the matcher, not of this function, and it
-// takes the "*" the second argument may carry being matched as the character
-// it stands for: github/acme/*app removed while github/acme/* remains is not a
-// revocation, and the matcher reads it that way only because a pattern's
-// wildcard is tried before literal equality (projectpolicy.matchSeg).
-//
-// An entry is a pattern when it carries a wildcard, and that is not a question
-// for this function: MatchRepo reads a concrete repository and a pattern alike,
-// because ValidPattern accepts a concrete name too (a pattern with no "*"
-// matches exactly itself) — so github/acme/app removed while github/acme/* is on
-// the list reads "its runs are not refused", which is what the removal does.
-func admittedBy(allow []string, arg string) (bool, string) {
-	for _, p := range entriesExcept(allow, arg) {
-		if projectpolicy.MatchRepo(p, arg) {
-			return true, p
-		}
-	}
-	return false, ""
-}
-
-// configRepo finds this machine's config entry for a bare owner/name, folding
-// case the way canonicalRepoArg does. The config's repos: map is keyed by the
-// operator's own spelling and the loader does not fold it, so the exact lookup
-// this used to be made `repos add Acme/App` refuse where
-// `repos add github/Acme/App` worked, although the doc above promises the
-// fold (the review finding on this change). The exact spelling is tried first,
-// so an entry the operator wrote with upper-case letters is read as written
-// where the argument is written the same way.
-func configRepo(lc *localcfg.Config, arg string) (localcfg.Repo, bool) {
-	if r, ok := lc.Repos[arg]; ok {
-		return r, true
-	}
-	folded := asciiLower(arg)
-	for name, r := range lc.Repos {
-		if asciiLower(name) == folded {
-			return r, true
-		}
-	}
-	return localcfg.Repo{}, false
-}
-
-// canonicalRepoArg is the operator's argument as a canonical allow-list
-// entry. A bare owner/name takes its provider from this machine's config
-// (repos: is keyed by owner/name); anything else must already be canonical,
-// which is what the allow-list matches, at whatever depth the repository path
-// has (a nested group is a repository path like any other). Upper-case letters
-// are folded — ASCII only, and a concrete name goes through
-// projectpolicy.Canonical — so the entry written is one the runner's own
-// canonical form could have produced. The config lookup folds with the rest
-// (configRepo): the repos: map is keyed by the operator's own spelling, which
-// this does not require to be lower-case, so `acme/app` and `Acme/App` find
-// each other's entry instead of the second spelling refusing on a
-// case-sensitive lookup.
-func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
-	if arg == "*" {
-		// The allow-list's own entry for every repository — the design's
-		// explicit choice (docs/design/project-centric.md §4.3), which
-		// MatchRepo reads as admitting anything. It is not a repository, so
-		// neither the config lookup below (there is no owner/name to resolve a
-		// provider from) nor projectpolicy.Canonical applies to it: it is
-		// taken as it is — projectpolicy.ValidPattern has a branch of its own
-		// for it, so there is nothing left to check here.
-		// Without this branch it fell through the split to "write it as
-		// provider/owner/name", so the widest list could not be written and a
-		// list holding it could not be narrowed without a full republish.
-		return arg, nil
-	}
-	parts := strings.Split(arg, "/")
-	if len(parts) == 2 {
-		r, ok := configRepo(lc, arg)
-		if !ok || r.Provider == "" {
-			return "", userErr("%q is not a repository this machine's config lists (its provider would come from there), so name it canonically: provider/owner/name, as in \"github/acme/app\" or \"bitbucket/acme/*\"", arg)
-		}
-		parts = []string{r.Provider, parts[0], parts[1]}
-	}
-	if len(parts) < 3 {
-		return "", userErr("%q is not a repository: write it as provider/owner/name (github/acme/app), or as owner/name for a repository this machine's config lists", arg)
-	}
-	// Everything after the provider is the repository path, whatever its depth:
-	// a repository may nest (task.CanonicalRepo admits "acme/group/app", and
-	// projectpolicy's own Canonical pins it as valid), so
-	// bitbucket/acme/group/app is the argument that allow-lists it — the form
-	// ValidPattern refuses to cap and MatchRepo matches segment against segment
-	// (the review finding on this change). Reading the path as exactly two
-	// segments refused it with "write it as provider/owner/name", the same way
-	// the cap did, and left the wildcard form as the only way to allow-list a
-	// nested repository.
-	provider, repo := asciiLower(parts[0]), asciiLower(strings.Join(parts[1:], "/"))
-	canonical := provider + "/" + repo
-	if !strings.Contains(canonical, "*") {
-		// A concrete repository goes through projectpolicy.Canonical, the one
-		// implementation of the form the runner compares an allow-list entry
-		// against. A pattern is not a repository (Canonical would refuse its
-		// "*"), so it is left to ValidPattern below.
-		c, err := projectpolicy.Canonical(provider, repo)
-		if err != nil {
-			return "", userErr("%q is not a repository: %v", arg, err)
-		}
-		canonical = c
-	}
-	if err := projectpolicy.ValidPattern(canonical); err != nil {
-		return "", userErr("%v", err)
-	}
-	return canonical, nil
-}
-
-// asciiLower lower-cases A–Z only, which is task's own rule for a repository
-// (task.asciiLower, unexported there, reached through
-// projectpolicy.Canonical). strings.ToLower case-folds Unicode instead: it
-// turns a Kelvin sign K (U+212A) into an ASCII "k", so an argument typed with
-// one would come out of here looking canonical while the runner's Canonical —
-// ASCII-only, and the form the allow-list is matched in — refuses to produce
-// that name at all. With this fold the look-alike survives into
-// ValidPattern/Canonical, which refuse it.
-func asciiLower(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b)
 }

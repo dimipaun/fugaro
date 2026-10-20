@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -3207,5 +3209,93 @@ func TestProjectPolicyPublishKeepsCloneURLs(t *testing.T) {
 	}
 	if !strings.Contains(shown, canonical+" → "+url) {
 		t.Errorf("policy show does not print the clone_urls entry:\n%s", shown)
+	}
+}
+
+// TestPolicyRefusalsEscapeTheNodesKeyNames: the top-level key names a refusal
+// prints come from the node, which is a hand-writable object
+// (projectpolicy.Policy.UnknownKeys is whatever the strict decode could not
+// place). A member name is legal JSON whatever it holds: a bidi override
+// (U+202E), a zero-width space (U+200B) or a line separator is not
+// unicode.IsControl, and projectpolicy's checkTopLevelNames refuses duplicates
+// and case-variants of the keys this Fugaro knows, never a name's shape —
+// so a node an operator did not write can rewrite the terminal line it is
+// printed in, which is exactly why the rest of this package prints a name of
+// that provenance through pluginwire.Printable.
+//
+// All three readers of the node are checked, because each words its own
+// refusal: refuseUnknownPolicyKeys (policy show, project show, repos ls),
+// publishedPolicyOf (the publish, which drops the keys), and projectPolicyRead
+// — the launch gate's own read, which is what refuses a `fugaro run` before
+// anything of it exists.
+//
+// Mutation (verified, run and restored): print the keys with
+// `strings.Join(p.UnknownKeys, ", ")` again — each join belongs to its own
+// reader, so the half that reads through it fails with the raw bidi override
+// back in the message (in project_cmd.go it takes the first two halves, in
+// projectPolicyRead the launch gate's).
+func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
+	f := newProjectFixture(t, "")
+	// The name the node carries: a bidi override inside it and a zero-width
+	// space after the visible word, which is how a key named `future_key`
+	// prints as something else entirely.
+	const hostile = "future‮key​"
+	// The form pluginwire.Printable must produce, written out independently of
+	// it: the runes as their `\u` escape text, which is what a terminal prints
+	// without acting on.
+	const escaped = "future\\u202ekey\\u200b"
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+		hostile:       true,
+	})
+	for _, tc := range []struct {
+		what   string
+		args   []string
+		wantIn string
+	}{
+		{"policy show, which refuses the node it cannot read whole", []string{"project", "policy", "show"}, "never takes effect"},
+		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish", "--yes"}, "publishing would drop them"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			_, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("%s: %v was accepted", tc.what, tc.args)
+			}
+			assertEscapedRefusal(t, err.Error(), tc.wantIn, hostile, escaped)
+		})
+	}
+	t.Run("the launch gate, which refuses a run against the node", func(t *testing.T) {
+		lc, err := localcfg.Load(f.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Called the way run_allowlist.go's launchPolicyGates calls it: the
+		// memoized read, its error worded by policyReadErr, which is the
+		// sentence a refused `fugaro run` prints.
+		var once policyReadOnce
+		_, _, rerr := once.read(context.Background(), lc)
+		err = policyReadErr(rerr)
+		if err == nil {
+			t.Fatal("a launch against a node with an unknown key was accepted")
+		}
+		assertEscapedRefusal(t, err.Error(), "never takes effect", hostile, escaped)
+	})
+}
+
+// assertEscapedRefusal checks one refusal of the unknown policy keys: that it
+// is the refusal about them (wantIn), that the node's name is printed escaped,
+// and that the raw name is nowhere in the line.
+func assertEscapedRefusal(t *testing.T, msg, wantIn, hostile, escaped string) {
+	t.Helper()
+	if !strings.Contains(msg, wantIn) {
+		t.Fatalf("the refusal is not the one about the unknown key (%q): %s", wantIn, msg)
+	}
+	if !strings.Contains(msg, escaped) {
+		t.Errorf("the node's key name is not escaped in the refusal: %q missing from %s", escaped, msg)
+	}
+	if strings.Contains(msg, hostile) {
+		t.Errorf("the node's key name reaches the terminal raw, so the line's reading is the node's to choose: %q in %s", hostile, msg)
 	}
 }

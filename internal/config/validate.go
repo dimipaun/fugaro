@@ -118,8 +118,8 @@ func Validate(c *Config) []Problem {
 	if !validBranchName(c.Git.BaseBranch) {
 		add("git.base_branch", "must be a plain git branch name: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'")
 	}
-	if !slices.Contains([]string{"vertex", "api-key", "oauth"}, c.Agent.Auth) {
-		add("agent.auth", "must be one of vertex, api-key, oauth")
+	if !KnownAgentAuth(c.Agent.Auth) {
+		add("agent.auth", "must be one of %s", strings.Join(AgentAuths, ", "))
 	}
 	if c.Agent.ReviewRounds < 1 || c.Agent.ReviewRounds > 10 {
 		add("agent.review_rounds", "must be between 1 and 10")

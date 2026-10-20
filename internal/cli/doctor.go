@@ -1659,7 +1659,15 @@ func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 		if c.OK && c.Severity == "" {
 			continue
 		}
-		if !c.OK {
+		// An "info" check is what doctor *measured*, never what it found
+		// wrong (checksFail: an info check does not fail doctor, with or
+		// without --strict), so it must not suppress the summary line either:
+		// counting it as a failure said "something is wrong" — by printing no
+		// "everything checked is ok" — on an installation whose only line was
+		// the launcher grants it had just measured. The surface a person has
+		// to be able to read is the whole point of such a check, and the
+		// summary line is exactly what tells them the read found nothing.
+		if !c.OK && c.Severity != "info" {
 			failed = true
 		}
 		line := c.ID + ": "

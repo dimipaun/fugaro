@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -118,11 +119,17 @@ func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 // check looks the way it does — but the printer's rule has moved, and an OK
 // check carrying a Severity would print today.
 //
+// It also has to leave doctor's summary line alone: an info check reports what
+// doctor *measured*, and counting it as a failure (printDoctorChecks' failed
+// flag) printed the reach while saying nothing at all about everything else —
+// "everything checked is ok" never came out on a healthy installation.
+//
 // Mutation (run, restore): drop the Severity from doctorLauncherReach (leaving
 // it not ok) — the line still prints, but Severity "" is the arm checksFail
 // fails on, so doctor exits non-zero and the ExitCode assertion below is what
-// catches it. Setting OK: true alone no longer changes what is printed, and
-// that is the rule this comment now states rather than the old one.
+// catches it. Setting OK: true alone no longer changes what is printed. The
+// other half, the check not holding back doctor's summary line, is
+// TestDoctorInfoChecksDoNotHoldBackTheSummary's subject.
 func TestDoctorPrintsTheLauncherReach(t *testing.T) {
 	r := newDoctorRig(t)
 	r.withLaunchers(t)
@@ -501,5 +508,39 @@ func TestDoctorLauncherReachEndsOnAnEndlessListing(t *testing.T) {
 	}
 	if !strings.Contains(c.Problem, "runs past 200 pages") {
 		t.Errorf("Problem does not say the listing ran past the bound: %s", c.Problem)
+	}
+}
+
+// TestDoctorInfoChecksDoNotHoldBackTheSummary: an "info" check is what doctor
+// measured rather than what it found wrong — the launcher reach the owner
+// reads after a migration, the price catalog's age, whether a policy node could
+// be read — and it must cost the reader neither the line nor the sentence.
+//
+// printDoctorChecks sets its failed flag from the checks it prints, and every
+// un-ok check used to set it: on a healthy installation whose only lines were
+// info ones, doctor printed them and then said nothing about the rest, which
+// is the one thing the summary line is for ("fugaro doctor: everything checked
+// is ok" is the answer to "did anything fail?"). checksFail already refuses to
+// fail doctor on an info check, with or without --strict, so the two readings
+// of the same check had to agree.
+//
+// Mutation (run, restore): take the `c.Severity != "info"` guard off
+// printDoctorChecks' failed flag — the summary line goes missing below, and
+// the exit code stays right, which is what made the old reading invisible.
+func TestDoctorInfoChecksDoNotHoldBackTheSummary(t *testing.T) {
+	var out bytes.Buffer
+	printDoctorChecks(&out, []doctorCheck{
+		{ID: "launcher-jobs", Severity: "info", Problem: "launcher grants on Cloud Run jobs: 0 grant(s) over 1 job(s), and a launcher can start 0 of them"},
+		{ID: "everything-else", OK: true},
+	})
+	got := out.String()
+	if !strings.Contains(got, "launcher-jobs: launcher grants") {
+		t.Errorf("doctor did not print the info check:\n%s", got)
+	}
+	if !strings.Contains(got, "fugaro doctor: everything checked is ok") {
+		t.Errorf("an info check held back doctor's summary line: it is a measurement, never a failure (checksFail):\n%s", got)
+	}
+	if checksFail([]doctorCheck{{ID: "launcher-jobs", Severity: "info"}}, true) {
+		t.Errorf("an info check fails doctor under --strict, so the exit code and the summary disagreed")
 	}
 }
