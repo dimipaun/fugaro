@@ -1,18 +1,25 @@
 # Central orchestrators — the documents
 
-**Status: plan only; no code is implemented.** This directory holds the owner's spec for
-**central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead of
-on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the
+**Status: plan only; no feature code is implemented, and P0 — the guard test that owns this
+folder — is the only part of the plan that has landed.** This directory holds the owner's spec
+for **central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead
+of on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the
 code at `origin/main` **`2f8b4dca`**, the decisions the reconciliation could not answer on its
-own (**D1–D26**, all open), and the plan that follows from them
-(`implementation-plan.md`). No Go, no TypeScript, no Terraform, no rules change, no
-`.github/workflows` change and no live action follows from these documents. **Owner: Dimi
-Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit every path and symbol below
-was read at, and this branch's own merge base.
+own (**D1–D26**), and the plan that follows from them (`implementation-plan.md`). **Six of the
+twenty-six decisions are answered — D1, D2, D3, D6, D12 and D19, each as its recommendation,
+by the owner on 2026-10-20 — and D4–D5, D7–D11, D13–D18 and D20–D26 are still open**
+(reconciliation §6). Nothing else follows from these documents yet: no feature Go, no
+TypeScript, no Terraform, no rules change, no `.github/workflows` change and no live action —
+the only Go they have produced is `internal/cli/docs_central_orchestrator_test.go`, the guard
+test P0 adds. **Owner: Dimi Paun. Date: 2026-10-20. Base: `main` at `2f8b4dca`** — the commit
+every path and symbol below was read at, and this branch's own merge base.
 
 **Nothing here is approved.** The owner wrote the spec; the reconciliation and the plan are
-this work's. No decision has been answered, no part of the plan has been accepted, and the
-plan's owner gate at the end is unpassed. The two siblings this work depends on are also
+this work's. **Six decisions — D1, D2, D3, D6, D12 and D19 — were answered by the owner on
+2026-10-20, each as the recommendation the plan was written to, and an answer is not an
+approval of anything**: no part of the plan has been accepted except P0 (the guard test), the
+gate in `implementation-plan.md` §9 is passed for nothing, and the parts the twenty open
+decisions block do not start. The two siblings this work depends on are also
 unbuilt: the always-on orchestrator design is in **open PR #632** (with the rigor modes work
 in **open PR #773**), and `docs/credentials-service/` and `docs/coordinator/` are each
 *"plan only; nothing is implemented"* in their own words.
@@ -59,7 +66,7 @@ have to become.
 
 | Numbers | Whose | State |
 | --- | --- | --- |
-| **D1–D26** | **this work's decisions**, folder-local and distinct by folder, as `docs/windows-cli/` (its D1–D16) and `docs/rigor-modes/` (its D1–D19) each chose and each recorded. Every one is **open**: the owner has answered none, and the reconciliation's §6 tables them with the recommendation first. Answering a decision is not approving a task | **open.** The register is [docs/coordinator/README.md](../coordinator/README.md) §"The numbers this work holds": **D1–D192 are taken** (the highest written anywhere in `docs/` is **D192**), **D79–D89 is deliberately unused** — *"an unused number is not a free number"* — and **D193 onward is free**, which is the block this work would take if the owner prefers one sequence. **Recommendation: keep D1–D26 local and distinct by folder** (D23) |
+| **D1–D26** | **this work's decisions**, folder-local and distinct by folder, as `docs/windows-cli/` (its D1–D16) and `docs/rigor-modes/` (its D1–D19) each chose and each recorded. **Six are answered** — **D1, D2, D3, D6, D12 and D19**, each as its recommendation, by the owner on 2026-10-20 — and **twenty are open**: D4–D5, D7–D11, D13–D18 and D20–D26. The reconciliation's §6 tables all twenty-six with the recommendation first and the answer beside it. **Answering a decision is not approving a task**, and answering allocates no D-number either | **six answered, twenty open.** The register is [docs/coordinator/README.md](../coordinator/README.md) §"The numbers this work holds", and **its own table is stale as read against `main`**: it records **D1–D192 are taken** (the highest it names, written at its base `c6009b5f`), **D79–D89 as deliberately unused** — *"an unused number is not a free number"* — and **D193 onward as free**, but `docs/mobile/voice-session/` (merged in `1d325928`) has since written **D201–D220** and left **D193–D200** unused, so **the highest D-number written anywhere under `docs/` is D220 and the next free block is D221 onward**, which is the block this work would take if the owner prefers one sequence (reconciliation §7, O1). **Recommendation: keep D1–D26 local and distinct by folder** (D23) |
 | **No check number** | this work proposes **none** | **not claimed and not written.** The register's own state is unsettled where this work would sit: **Check 110** is claimed **twice** — by `docs/mobile/design/voice-evaluation-switch.md` (P5.3) and by the always-on orchestrator design in **PR #632** (§7) — and written by neither, so the register's rule *"whichever of two open claims merges second renumbers itself"* applies; **111** is written by [docs/setup-wizard/](../setup-wizard/); **112** is proposed by [docs/windows-cli/](../windows-cli/); **113–118** are taken by [docs/mobile/voice-session/](../mobile/voice-session/); **119** is taken by `docs/rigor-modes/` in open PR #773. The owner-run checks this work needs are therefore **named and not numbered** (implementation-plan §7), and the part that writes one takes the next free number at merge time (D24) |
 
 Check numbers are allocated, never reused and never renumbered once taken — the live

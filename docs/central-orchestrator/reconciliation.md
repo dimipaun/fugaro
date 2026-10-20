@@ -6,7 +6,12 @@ reconciliation of that spec against the tree at `origin/main` **`2f8b4dca`** —
 this branch sits on — and the questions the reconciliation could not answer on its own, put
 to the owner as **D1–D26**, each with its recommendation first. **Where this document
 disagrees with `spec.md`, it wins.** No Go, no TypeScript, no Terraform, no rules change and
-no live action follows from it. **Owner: Dimi Paun. Date: 2026-10-20.**
+no live action follows from it — the plan's guard test (P0,
+`internal/cli/docs_central_orchestrator_test.go`) is the one piece of Go this work has
+written, and it implements no part of the orchestrator. **Six of the twenty-six decisions —
+D1, D2, D3, D6, D12 and D19 — were answered by the owner on 2026-10-20, each as its
+recommendation, and an answer is not an approval** (reconciliation §5, §6). **Owner: Dimi
+Paun. Date: 2026-10-20.**
 
 Every path and symbol below was read in this tree at `2f8b4dca`, and each is cited by path
 and **symbol** — never by line number, because the lines move while a document sits in
@@ -741,9 +746,13 @@ and if D6 is answered yes, the mobile spec needs a seventh edit.
 
 ## 5. Decisions D1–D26
 
-Each decision states the **recommendation first**, then the alternative and its cost. **All
-twenty-six are open**: this work was given no owner answers, and an open decision is not an
-approval. D-numbers here are **folder-local** (O1).
+Each decision states the **recommendation first**, then the alternative and its cost. **Six of
+the twenty-six are answered — D1, D2, D3, D6, D12 and D19 — each as its recommendation, by
+the owner on 2026-10-20, and each answer is recorded under the decision it answers and tabled
+in §6. The other twenty — D4–D5, D7–D11, D13–D18 and D20–D26 — are open.** An answered
+decision is still **not an approval**: no part of the plan starts on one until its own
+decisions are answered and the owner has passed the gate at the end of
+[implementation-plan.md](implementation-plan.md). D-numbers here are **folder-local** (O1).
 
 ### D1 — Where a lease lives, and what its record holds
 **Recommendation: in the Realtime Database, at `orchestrators/<slug>/<job>/lease`, a record
@@ -756,6 +765,13 @@ already live, and because a lease in the runs bucket would inherit the launcher'
 exactly, but every launcher can write it and a lease is a shepherding seat, not a launch
 guard. **Cost of the recommendation:** a new RTDB subtree and a rules change, so a
 `RulesVersion` bump and a golden regeneration.
+
+**Answered 2026-10-20 — the recommendation, as written above.** The owner's answer: the lease
+lives in the **Realtime Database** (`orchestrators/<slug>/<job>/lease`), written with an ETag
+compare-and-put — `GetETag` + `PutIfMatch` — and **never a whole-node put**, with the rules
+version bumped. Why: `internal/rtdb` has no transaction (#8), the RTDB is where the budget
+identity and the rules that could fence a lease already live, and a lease in the runs bucket
+would inherit every launcher's reach (SECURITY.md).
 
 ### D2 — One job, one shepherd: the invariant, the fencing token and the grace period
 **Recommendation: the lease is the invariant; a takeover is a compare-and-set on
@@ -775,6 +791,14 @@ spec says *"two orchestrators never act on the same PR"*) — a job's PR can out
 and the branch lock (`internal/lock/lock.go`) is already per branch. Recommendation: **per
 job, with the PR recorded on the lease**, and the branch lock left where it is.
 
+**Answered 2026-10-20 — the recommendation, as written above.** The owner's answer: the
+invariant is a **fencing token** — the **generation** — with a **compare-and-set takeover**;
+the lease is **per job, with the PR recorded on the lease**; expiry is judged on the
+**database's clock** (`ServerNow`); the heartbeat is **60 s** and the grace **10 minutes**,
+both per project; and the **branch lock stays where it is**. Why: fencing is the generation
+field and not a clock (#10), `ServerNow` is the one clock this tree can trust (#9), and the
+stale-heartbeat sweeper that was the alternative hands work to nobody (#11).
+
 ### D3 — Clock skew, and who may hold a lease
 **Recommendation: the lease's expiry is judged on the database's clock; the writer's lease
 record stores no absolute deadline it computes itself; and the holders are named identities,
@@ -782,6 +806,13 @@ never `host/pid/rand`** (`internal/cli/run.go` `claimHolder`, #6). The alternati
 claim's model, where *"Every CLI's clock must be within claimTTL - holdTimeout (5m)"* (#6) —
 costs nothing to write but makes the invariant a machine-configuration property; the central
 orchestrator has several machines and no operator to keep them in step.
+
+**Answered 2026-10-20 — the recommendation, as written above.** The owner's answer: **the
+database clock decides**; **the writer stores no absolute deadline** it computed itself; and
+the holders are **named identities, never `host/pid/rand`**. Why: the launch claim's own
+assumption — *"every CLI's clock must be within claimTTL - holdTimeout (5m)"* (#6) — makes the
+invariant a property of every machine's configuration, and a central orchestrator has several
+machines and no operator to keep them in step.
 
 ### D4 — Where the orchestrator's agent credentials come from, and the injection boundary
 **Recommendation: the agent runs in a Cloud Run job, not in the resident service, and the job
@@ -829,6 +860,13 @@ CLI, #33). **Alternative:** adopt the spec's wording literally — an email allo
 per-project sign-in-method policy plus domain restriction — cost: it reverses a standing
 platform rule (#32), makes the phone's authorisation model and the orchestrator's differ, and
 touches the rules whose generation is already at 3.
+
+**Answered 2026-10-20 — the recommendation, as written above.** The owner's answer: the
+allowlist is **the phone's device node plus an administered email field**, the **domain rule is
+enforced at administration**, an **unverified email is refused at pairing**, and the
+**custom-tokens-only sign-in rule is unchanged**. Why: the device node is the one authorisation
+record the phone and the orchestrator can share (D166, #31), and enforcing the domain at
+administration needs no change to a platform that refuses public sign-up (#32).
 
 ### D7 — The shared session and the action locks
 **Recommendation: one shared session per central orchestrator, as the spec says, with the
@@ -909,6 +947,13 @@ other project-level thing works (`fugaro project policy publish`, `fugaro budget
 `internal/cli/budget.go`, `internal/projectpolicy/`), and *"per-project allowlist of who may
 use which central orchestrator"* would have no writer.
 
+**Answered 2026-10-20 — the recommendation, as written above.** The owner's answer:
+`fugaro orchestrator add|rm|ls` are **project-level commands** in the shape of
+`fugaro budget set`, `add` is **refused unless it can name the identity, the allowlist and the
+cap**, and **`attach` comes only after D5**. Why: it is how every other project-level thing
+works (`internal/cli/budget.go`, `internal/projectpolicy/`), and it is what gives the
+per-project allowlist a writer.
+
 ### D13 — Cost and scale-to-zero
 **Recommendation: one service, `min-instances = 0`, request-based billing, a wake path that
 is an event rather than a poll** (an alert webhook, a phone request, or a scheduled tick only
@@ -981,6 +1026,14 @@ per named orchestrator from the start — cost: N services' worth of grants, sec
 rows for a feature whose sessions are idle, and a policy surface (`fugaro orchestrator add`)
 that now multiplies infrastructure.
 
+**Answered 2026-10-20 — the recommendation, as written above.** The owner's answer: **one
+Cloud Run service per installation in v1**, and the service type is **admitted deliberately**
+to the Terraform cover lists — `internal/infra/tf/cover.go`'s `allowedTypes` and
+`internal/infra/tf/managed_cover.go`'s `managedTypes` — with **its own typed confirmation and
+its own cost row**. Why: the installation is the tree's unit (a Fugaro project, #54), and one
+service per named orchestrator buys N grants, N secrets and N cost rows for sessions that are
+idle almost always.
+
 ### D20 — Where the agent runs
 **Recommendation: the agent runs in a **job**, and the resident service is a consumer plus a
 launcher** — PR #632's split (§4.2), which is also mobile D115's condition (#53) and the only
@@ -1010,8 +1063,11 @@ its guard fails in the same commit.
 **Recommendation: keep D1–D26 folder-local and distinct by folder, as
 `docs/windows-cli/` and `docs/rigor-modes/` do** (their O6 and O7), and cite the decision
 with its folder. The register is `docs/coordinator/README.md`'s "The numbers this work
-holds": D1–D192 are taken and **D193 onward is free**. **Alternative:** move this work to
-D193–D218 — cost: renumbering with no other benefit, unless the owner wants one global
+holds": D1–D192 are taken and **D193 onward is free** — a cell that is **stale as read
+against `main`**, where `docs/mobile/voice-session/` writes **D201–D220** and leaves D193–D200
+unused, so the highest written number is **D220** and the next free block is **D221 onward**
+(§7 reads the register by name; **O1** records it). **Alternative:** move this work to the
+next free block — cost: renumbering with no other benefit, unless the owner wants one global
 sequence.
 
 ### D24 — The live-check number
@@ -1040,47 +1096,70 @@ state, never a new RTDB node. **Alternative:** the mailbox's signed heartbeat mo
 (`shared/presence/`, D117) — cost: a write per beat per client from the phone (#28), for a
 fact the socket already carries.
 
-## 6. Open for the owner
+## 6. For the owner — the answered six, and the open twenty
 
-Nothing below is approved and nothing is answered. Each line is the recommendation first.
+**Six of these are answered and twenty are open, and none of it is an approval.** The six —
+**D1, D2, D3, D6, D12 and D19** — were answered by the owner on 2026-10-20, each as the
+recommendation the plan was written to, and each is recorded under its own decision in §5.
+**D4–D5, D7–D11, D13–D18 and D20–D26 are still open**, and no part they block starts on one.
+Each line is the recommendation first.
 
-| # | Question | Recommendation (first) | Alternative, and its cost |
-| --- | --- | --- | --- |
-| D1 | Where the lease lives | RTDB, `GetETag` + `PutIfMatch`, new subtree | the runs bucket beside `locks/`: every launcher can write it |
-| D2 | The invariant, fencing and grace | generation CAS + `ServerNow`; heartbeat 60 s, grace 10 min | reuse `budget/sweep.go`'s stale heartbeat: hands work to nobody |
-| D3 | Clock and holders | database clock; named identities | the claim's 5-minute skew assumption, on N machines |
-| D4 | Credentials and the injection boundary | agent in a job, no model credential in the service; dedicated profile for alert jobs | per-fix secret narrowing: not expressible (#46) |
-| D5 | WebSocket protocol and auth | one protocol, ID token at connect **and** per submission; console through the CLI | a CLI local API (console Option C) arriving early |
-| D6 | Allowlist, sign-in methods, domains | device node + email as an administered field; domain rule at administration | the spec literally: an email allowlist, SSO on, per-project methods — reverses `refusePublicSignUp` |
-| D7 | Shared session and action locks | one session; actions are prompts with an owner, re-read before acting | a lock object per job: a second mutex, and a lock is not an approval |
-| D8 | Routing, claiming, escalation timeouts | per-submitter routing; the mode-keyed table lives here (5/15/60) | put it in the rigor modes work: it declines to own notifications (its D15) |
-| D9 | Callback contract | HMAC-SHA-256 in the mailbox's canonical form, replay window, 60 s timeout | a per-provider scheme: a verifier each, no shared vocabulary |
-| D10 | Alerts: de-dup, rate limit, budget, breaker | fingerprint + attach; new `config/caps/automated` + `config/breaker/<slug>`; one summary | in-memory limits: lost on every cold start |
-| D11 | Session memory and TTL | Firestore, service-account only, expiry written only after archive; `ttl_config` as backstop | RTDB: widens the budget rules' blast radius |
-| D12 | Command surface | `fugaro orchestrator add|rm|ls` project-level; `attach` after D5 | local-config-only commands: no writer for the allowlist |
-| D13 | Cost and scale-to-zero | one service, `min-instances = 0`, event wake | `min-instances = 1`: an always-billing service per project |
-| D14 | The coordinator | the orchestrator reports; takes nothing back | one service with the coordinator as a role (PR #632 Q10 A): binds this work to the coordinator's Q4 |
-| D15 | The local orchestrator and the lost lease | seen in `watch`'s stream; return is explicit, through the same CAS | a push to the CLI: no server, no channel |
-| D16 | What v1 is | the deterministic half; no alert credential, no merge, no pre-built hotfix | the alert path first: needs the unbuilt service and push |
-| D17 | Release | 0.11.0 or later, after the credentials service's first slice | a slice in 0.10.0: a service whose surface is undecided |
-| D18 | Merge authority | no merge in v1 | lift the non-goal: a cloud component that can merge any PR |
-| D19 | Unit and service count | per installation, one service in v1; add the type to both allow-lists deliberately | one service per named orchestrator: N grants, N secrets, N cost rows |
-| D20 | Where the agent runs | in a job; the service consumes and launches | in the service: a long-lived model credential, deciding D115 |
-| D21 | Notifications | session marker, console feed, CLI; push waits on P5.2 | build push now: a second product |
-| D22 | The mobile spec's edits | a separate pull request applies §4's list | fold them in: redraws another work's pinned text |
-| D23 | D-numbers | folder-local D1–D26 | move to D193–D218 |
-| D24 | The check number | claim none; the writing task takes it | claim "the next free number" now |
-| D25 | Archive to Git | a stated non-goal for v1 | a service-owned archive branch: a new git identity |
-| D26 | Presence | derived from the connection | the signed heartbeat model: a write per beat per phone |
+| # | Question | Recommendation (first) | Alternative, and its cost | Answer, 2026-10-20 |
+| --- | --- | --- | --- | --- |
+| D1 | Where the lease lives | RTDB, `GetETag` + `PutIfMatch`, new subtree | the runs bucket beside `locks/`: every launcher can write it | **ANSWERED — the recommendation** |
+| D2 | The invariant, fencing and grace | generation CAS + `ServerNow`; heartbeat 60 s, grace 10 min | reuse `budget/sweep.go`'s stale heartbeat: hands work to nobody | **ANSWERED — the recommendation** |
+| D3 | Clock and holders | database clock; named identities | the claim's 5-minute skew assumption, on N machines | **ANSWERED — the recommendation** |
+| D4 | Credentials and the injection boundary | agent in a job, no model credential in the service; dedicated profile for alert jobs | per-fix secret narrowing: not expressible (#46) | **open** |
+| D5 | WebSocket protocol and auth | one protocol, ID token at connect **and** per submission; console through the CLI | a CLI local API (console Option C) arriving early | **open** |
+| D6 | Allowlist, sign-in methods, domains | device node + email as an administered field; domain rule at administration | the spec literally: an email allowlist, SSO on, per-project methods — reverses `refusePublicSignUp` | **ANSWERED — the recommendation** |
+| D7 | Shared session and action locks | one session; actions are prompts with an owner, re-read before acting | a lock object per job: a second mutex, and a lock is not an approval | **open** |
+| D8 | Routing, claiming, escalation timeouts | per-submitter routing; the mode-keyed table lives here (5/15/60) | put it in the rigor modes work: it declines to own notifications (its D15) | **open** |
+| D9 | Callback contract | HMAC-SHA-256 in the mailbox's canonical form, replay window, 60 s timeout | a per-provider scheme: a verifier each, no shared vocabulary | **open** |
+| D10 | Alerts: de-dup, rate limit, budget, breaker | fingerprint + attach; new `config/caps/automated` + `config/breaker/<slug>`; one summary | in-memory limits: lost on every cold start | **open** |
+| D11 | Session memory and TTL | Firestore, service-account only, expiry written only after archive; `ttl_config` as backstop | RTDB: widens the budget rules' blast radius | **open** |
+| D12 | Command surface | `fugaro orchestrator add|rm|ls` project-level; `attach` after D5 | local-config-only commands: no writer for the allowlist | **ANSWERED — the recommendation** |
+| D13 | Cost and scale-to-zero | one service, `min-instances = 0`, event wake | `min-instances = 1`: an always-billing service per project | **open** |
+| D14 | The coordinator | the orchestrator reports; takes nothing back | one service with the coordinator as a role (PR #632 Q10 A): binds this work to the coordinator's Q4 | **open** |
+| D15 | The local orchestrator and the lost lease | seen in `watch`'s stream; return is explicit, through the same CAS | a push to the CLI: no server, no channel | **open** |
+| D16 | What v1 is | the deterministic half; no alert credential, no merge, no pre-built hotfix | the alert path first: needs the unbuilt service and push | **open** |
+| D17 | Release | 0.11.0 or later, after the credentials service's first slice | a slice in 0.10.0: a service whose surface is undecided | **open** |
+| D18 | Merge authority | no merge in v1 | lift the non-goal: a cloud component that can merge any PR | **open** |
+| D19 | Unit and service count | per installation, one service in v1; add the type to both allow-lists deliberately | one service per named orchestrator: N grants, N secrets, N cost rows | **ANSWERED — the recommendation** |
+| D20 | Where the agent runs | in a job; the service consumes and launches | in the service: a long-lived model credential, deciding D115 | **open** |
+| D21 | Notifications | session marker, console feed, CLI; push waits on P5.2 | build push now: a second product | **open** |
+| D22 | The mobile spec's edits | a separate pull request applies §4's list | fold them in: redraws another work's pinned text | **open** |
+| D23 | D-numbers | folder-local D1–D26 | move to D193–D218 | **open** |
+| D24 | The check number | claim none; the writing task takes it | claim "the next free number" now | **open** |
+| D25 | Archive to Git | a stated non-goal for v1 | a service-owned archive branch: a new git identity | **open** |
+| D26 | Presence | derived from the connection | the signed heartbeat model: a write per beat per phone | **open** |
 
 ## 7. The numbers this work would hold
 
 **D-numbers.** This folder's decisions are **D1–D26**, **folder-local and distinct by
 folder**, which is the convention `docs/windows-cli/` (its D1–D16) and `docs/rigor-modes/`
-(its D1–D19) chose, each recording the same collision. The register is
-`docs/coordinator/README.md`'s "The numbers this work holds": **D1–D192 are taken** (the
-highest written is D192) and **D193 onward is free** (O1, D23). No D-number is allocated by
-this work — the decisions are the owner's to answer, and answering is not allocating.
+(its D1–D19) chose, each recording the same collision. No D-number is allocated by this work —
+the decisions are the owner's to answer, and **answering a decision allocates nothing**
+(O1, D23).
+
+**The register, read by name against `main`.** The register is
+`docs/coordinator/README.md`'s "The numbers this work holds", and its own table is stale, so
+it is read here by name and corrected here rather than quoted. It records **D1–D192** as taken
+— the highest *it* names, written at its own base `c6009b5f` — with **D79–D89** deliberately
+unused, and **D193 onward** as free. **That is no longer the tree's state.** Reading the tree
+at `main` now:
+
+- `docs/mobile/voice-session/` — merged on `main` in `1d325928` — writes **D201–D220**: its
+  `README.md` says *"decisions D201–D220"*, all open, and its `reconciliation.md` says of the
+  gap beside them, *"this work starts at D201 and leaves D193–D200 alone"* — because the brief
+  it was written from records **D200** as a ruling *"that this tree cannot cite"*. So
+  **D201–D220 are written and taken by that work**, and **D193–D200 are unused** — and by the
+  register's own rule, *"an unused number is not a free number"*, that gap is not free either.
+- The blocks below D193 are unchanged, and the highest D-number written anywhere under `docs/`
+  is therefore **D220**.
+- **The next free block is D221 onward, not D193 onward.** The register's own table still says
+  D193 onward, and correcting *that* table is the coordinator's folder's change rather than
+  this work's: it is recorded as **O1** below, which is where this folder's reading of the
+  register lives.
 
 **Check numbers.** This work proposes **no** number (D24). The register's claims, read name
 by name for this document:
@@ -1122,15 +1201,20 @@ Four items are about documents rather than about code, and they are recorded rat
 acted on. The decisions are §5's; these are smaller than decisions and one of them is not
 this work's to make.
 
-- **O1 — the D-number namespace.** This work's **D1–D26** and
-  [docs/setup-wizard/](../setup-wizard/)'s D1–D12 are numerically the same range and are told
-  apart only by their folder, as [docs/windows-cli/](../windows-cli/)'s D1–D16 and
+- **O1 — the D-number namespace, and the register's own stale table.** This work's **D1–D26**
+  and [docs/setup-wizard/](../setup-wizard/)'s D1–D12 are numerically the same range and are
+  told apart only by their folder, as [docs/windows-cli/](../windows-cli/)'s D1–D16 and
   `docs/rigor-modes/`'s D1–D19 already are. The register
   ([docs/coordinator/README.md](../coordinator/README.md), "The numbers this work holds")
   records D1–D192 as taken, **D79–D89 as deliberately unused** — *"an unused number is not a
-  free number"* — and **D193 onward as free**, which is the block this work would take if the
-  owner prefers one sequence. **Recommendation: keep the local namespace** (**D23**);
-  renumbering is mechanical and changes nothing but the numbers.
+  free number"* — and **D193 onward as free**. **Read against `main` by name (§7), that last
+  cell is stale**: `docs/mobile/voice-session/` (merged in `1d325928`) writes **D201–D220** and
+  leaves **D193–D200** unused, so the highest number written anywhere under `docs/` is
+  **D220**, and the next free block is **D221 onward** — which is the block this work would
+  take if the owner prefers one sequence, not D193–D218 as this folder's earlier draft of this
+  item said. Correcting the register's own table belongs to the coordinator's folder, and this
+  work does not edit it. **Recommendation: keep the local namespace** (**D23**); renumbering is
+  mechanical and changes nothing but the numbers.
 - **O2 — a stale citation this work would land on top of.**
   [docs/coordinator/README.md](../coordinator/README.md) and
   [docs/coordinator/reconciliation.md](../coordinator/reconciliation.md) (its finding #29 and
