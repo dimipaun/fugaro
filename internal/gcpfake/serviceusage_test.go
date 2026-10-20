@@ -132,7 +132,11 @@ func TestServiceUsageGetAnswersTheState(t *testing.T) {
 	if code, body := getJSON(t, su.URL+"/v1/projects/p/services/batch.googleapis.com"); code != http.StatusOK || body["state"] != "DISABLED" {
 		t.Fatalf("a disabled API: %d %v, want DISABLED", code, body)
 	}
-	su.Propagation = 2
+	// A propagation count of one, so that a get which consumed it is visible:
+	// with two, the assertion below could not fail whatever the get did — the
+	// enable would set stale to 2 and one consumed count would leave 1, and
+	// both refuse a call — and the fake's invariant would be unguarded.
+	su.Propagation = 1
 	resp, err := http.Post(su.URL+"/v1/projects/p/services/batch.googleapis.com:enable", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -141,9 +145,13 @@ func TestServiceUsageGetAnswersTheState(t *testing.T) {
 	if code, body := getJSON(t, su.URL+"/v1/projects/p/services/batch.googleapis.com"); code != http.StatusOK || body["state"] != "ENABLED" {
 		t.Fatalf("after the enable: %d %v, want ENABLED", code, body)
 	}
-	// Both calls to the API that the get made are still refused: the get is
-	// not one of them.
+	// The API's own call is still refused: the get is not one of them.
 	if !su.refuses("batch.googleapis.com") {
-		t.Error("the get consumed a propagation call: the API's own calls are refused one fewer time")
+		t.Error("the get consumed the propagation call: the API's own first call is no longer refused")
+	}
+	// And exactly one call was left to refuse — the count was whole, not
+	// partly spent — so the second one answers.
+	if su.refuses("batch.googleapis.com") {
+		t.Error("the API still refuses a call after its propagation count is used up")
 	}
 }
