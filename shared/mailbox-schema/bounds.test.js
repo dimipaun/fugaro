@@ -1,13 +1,17 @@
 // The JavaScript half of vectors.bounds.json, the shared bound vectors.
 //
 // vectors.json pins the tag, the direction and the refusals the schema has
-// always named; it pins no BOUND, because no case in it sits on one. That gap
-// was invisible until someone moved a comparison by one: `repo.length >
-// TARGET_MAX` widened to `> TARGET_MAX + 1` accepted a 201-code-unit repository
-// in this module with all 51 tests green, and narrowed to `>= TARGET_MAX` it
-// refused a 200-code-unit one. The Go binding has its own rows for the same
-// bounds; this file is what makes the JavaScript end hold them too, out of the
-// same artifact, so the two ends cannot drift apart in silence.
+// always named. It happens to sit on two lengths — every case carries a tag of
+// exactly MAC_MAX and every action case a head SHA of exactly SHA_MIN — so its
+// replay holds those two and nothing else: no case sits on a string, list,
+// repository or run bound, on the second head-SHA length, or on the C0, DEL and
+// carriage-return rules. That gap was invisible until someone moved a
+// comparison by one: `repo.length > TARGET_MAX` widened to `> TARGET_MAX + 1`
+// accepted a 201-code-unit repository in this module with all 51 tests green,
+// and narrowed to `>= TARGET_MAX` it refused a 200-code-unit one. The Go
+// binding has its own rows for the same bounds; this file is what makes the
+// JavaScript end hold them too, out of the same artifact, so the two ends
+// cannot drift apart in silence.
 //
 // The file is not vectors.json and does not extend it: see its
 // "not_vectors_json" note for why that artifact is P6.3's to change and this one
