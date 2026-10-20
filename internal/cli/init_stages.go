@@ -99,6 +99,16 @@ func (e *initEngine) setup(ctx context.Context) error {
 // replace it.
 var secretsHeld = func() []string { return nil }
 
+// loopProgram is the command every line the converge loop prints names
+// (initflow's Options.Program, task W1.1): the front door this run is. The
+// loop is behind both front doors and cannot know which one is running, so it
+// falls back to the program alone — and a fix that reads "rerun fugaro" is one
+// nobody can act on, which is why this is set and not left empty.
+//
+// There is one front door today. W1.2 splits the command into `fugaro setup`
+// and `fugaro update` and passes whichever one is running here.
+const loopProgram = "fugaro init"
+
 // options is the loop's configuration from the flags.
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
@@ -110,6 +120,7 @@ func (e *initEngine) options() initflow.Options {
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv), Out: r.w,
+		Program: loopProgram,
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
 	}
