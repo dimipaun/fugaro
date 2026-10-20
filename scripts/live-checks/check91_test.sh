@@ -255,7 +255,9 @@ if "-D" in args and flag("-D") == "-":
         sys.exit(0)
     header_lines = ["HTTP/1.1 200 OK", "Content-Type: text/event-stream", "X-Relay: chk91"]
     emit()
-    sys.exit(0)
+    # `timeout` mode: the headers probe is cut by its own --max-time exactly as
+    # the body probe is, and the headers it printed on the way are still read.
+    sys.exit(28 if mode == "timeout" and "--max-time" in args else 0)
 
 if not authed:
     status, body = 403, ""
@@ -305,6 +307,11 @@ if path.startswith("/sse"):
     sys.exit(0)
 
 # GET / -- liveness, and the started= value that makes a cold start checkable.
+if mode == "refuse-liveness" and fmt:
+    # The request that fails AFTER the idle wait: only the two probes that carry
+    # a -w format do, and a front end can answer one with a non-zero curl (a 504,
+    # a reset connection) while / answers the earlier calls normally.
+    sys.exit(7)
 counter = os.path.join(STATE, "instance-calls")
 n = 0
 try:
@@ -448,6 +455,9 @@ test_curl_cutting_the_stream() {
     expect_absent "$out" "FACT $fact: FAIL — not reached" "curl cut the stream: $fact was reached"
   done
   expect_contains "$out" "FACT stream-unbuffered: PASS" "curl cut the stream: the arrival times are still read"
+  # The headers probe is cut by its own --max-time too, and what it printed
+  # before that is still what the fact reports.
+  expect_contains "$out" "x-relay: chk91" "curl cut the stream: the headers the cut probe printed are read"
   expect_contains "$out" "curl exit 18" "curl cut the stream: the long stream records curl's own exit"
   expect_contains "$out" "curl exit 56" "curl cut the stream: a refused body row records curl's exit"
   expect_contains "$out" "413 2097152 over HTTP/1.1 (curl exit 56)" "curl cut the stream: the refusal is in the row"
@@ -478,6 +488,20 @@ test_burst_stream() {
   expect_contains "$out" "a burst, not a stream" "burst stream: the words"
 }
 
+# A request that fails after the idle wait is a FACT, not the end of the run:
+# the two cold-start probes are guarded, so the block still comes back with the
+# curl exits in it -- and with the steps after the wait still to run.
+test_liveness_probe_failure_is_recorded() {
+  local dir=$work/refuse
+  prepare "$dir"
+  run91 "$dir" FAKE_CURL_MODE=refuse-liveness
+  expect_status "$status" 1 "liveness refusal"
+  expect_contains "$out" "FACT cold-start: FAIL — a request failed (cold curl exit 7" \
+    "liveness refusal: the fact names the curl exits"
+  expect_absent "$out" "cold-start: FAIL — not reached" "liveness refusal: the fact was written"
+  expect_contains "$out" "END (exit 1)" "liveness refusal: the block still comes back"
+}
+
 test_no_http2_curl() {
   local dir=$work/nohttp2
   prepare "$dir"
@@ -494,14 +518,22 @@ test_restore_leftover() {
   expect_status "$status" 1 "leftover restore"
   expect_contains "$out" "FACT restore: FAIL" "leftover restore: the fact"
   expect_contains "$out" "services: 1, images: 1, repository: 1" "leftover restore: the counts"
-  # The scratch directory is KEPT, on purpose, so a re-run knows what is the
-  # check's own; the test removes it itself.
+  # The scratch directory is KEPT, on purpose: it holds the records that say
+  # what is this check's, which is what the owner deletes the survivors by hand
+  # from. The test removes it itself.
   if [ ! -d "$scratch" ]; then
-    fail "leftover restore: the scratch directory was removed and a re-run cannot read the records"
+    fail "leftover restore: the scratch directory was removed and its records are gone"
   else
     kept+=("$scratch")
   fi
   expect_contains "$err" "the scratch directory is kept" "leftover restore: the message"
+  # ... and the block must not send the owner to run the check again: a fresh
+  # run mints a scratch directory of its own and stops in the guards while the
+  # service or the repository is still in the project, so a count that is not 0
+  # is finished by hand or not at all.
+  expect_contains "$out" "does NOT take it over" "leftover restore: the block says a fresh run cannot finish this"
+  expect_contains "$out" "remove it yourself" "leftover restore: the block says what to do with the kept directory"
+  expect_absent "$out" "re-run this check" "leftover restore: the block promises no impossible re-run"
 }
 
 test_sigint() {
@@ -566,6 +598,7 @@ test_repo_taken
 test_happy_path
 test_warm_cold_start
 test_burst_stream
+test_liveness_probe_failure_is_recorded
 test_no_http2_curl
 test_restore_leftover
 test_sigint

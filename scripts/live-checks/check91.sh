@@ -179,7 +179,7 @@ restore_run() {
     --filter="name:${SVC}" --format='value(name)' | wc -l | tr -d ' ')
   fact "restore-counts" PASS "services: ${svc_left}, images: ${img_left}, repository: ${repo_left} (each must read 0)"
   if [ "$svc_left" != 0 ] || [ "$img_left" != 0 ] || [ "$repo_left" != 0 ]; then
-    fact "restore" FAIL "the counts are not all 0, so something this check created is still there (services=${svc_left} images=${img_left} repository=${repo_left}). The scratch directory is KEPT on purpose — it holds the records that say what is this check's — at $SCRATCH. Delete the survivors by hand, then re-run this check: it re-reads the records, deletes what is left and removes the directory once the three counts are 0."
+    fact "restore" FAIL "the counts are not all 0, so something this check created is still there (services=${svc_left} images=${img_left} repository=${repo_left}). Nothing was tried a second time: delete the survivors by hand (the service and its image, and the repository if the repo-existed record says no), then run the three list commands above until all three counts read 0. The scratch directory is KEPT on purpose — it holds the records that say what is this check's — at $SCRATCH, and it is this check's own: remove it yourself (rm -rf) once you no longer need them. A fresh run of this check does NOT take it over: it makes a new scratch directory of its own and stops in the guards while the service or the repository is still in the project."
     SCRATCH_KEPT=yes
     return 0
   fi
@@ -451,12 +451,14 @@ step_stream() {
   local probe=${CHECK91_PROBE_SECONDS:-30}
   : >"$SCRATCH/stream.times"
   local headers
-  # curl exits 28 when its own --max-time cuts the stream, and that is the
-  # EXPECTED end of a probe against a stream that runs for minutes: the guards
-  # below are what keep it from ending the run -- and with them, the last three
-  # of U5's numbers, which would otherwise be lost after the cold-start wait.
+  # curl exits 28 when its own --max-time cuts a probe, and that is the EXPECTED
+  # end of a probe against a stream that runs for minutes: the guard on each of
+  # the two calls here is what keeps it from ending the run -- and with them,
+  # the last three of U5's numbers, which would otherwise be lost after the
+  # cold-start wait. The headers curl has already printed its headers by the
+  # time its own --max-time cuts it, and those are what this line is after.
   headers=$(curl -sS -N -D - -o /dev/null --max-time "$probe" -H "Authorization: Bearer $(idt)" "${URL}/sse" 2>/dev/null |
-    sed -n 's/^[Xx]-[Rr]elay: */x-relay: /p' | head -n 1)
+    sed -n 's/^[Xx]-[Rr]elay: */x-relay: /p' | head -n 1) || true
   curl -sS -N --max-time "$probe" -H "Authorization: Bearer $(idt)" "${URL}/sse" 2>/dev/null |
     while IFS= read -r line; do
       [ -n "$line" ] || continue

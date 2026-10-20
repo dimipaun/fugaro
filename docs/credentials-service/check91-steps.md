@@ -344,14 +344,15 @@ REPO_LEFT=$(gcloud artifacts repositories list --project="${P:?}" --location="${
 echo "services:   $SVC_LEFT"
 echo "images:     $IMG_LEFT"
 echo "repository: $REPO_LEFT"
-# A re-run needs what is in $CHK91 — service-mine, repo-existed and the record
-# that says which repository is the check's — so on a count that is not 0 the
-# DIRECTORY STAYS: removing it here would make the next run treat the check's
-# own surviving service and repository as things it never created (hard stop 4
-# and the baseline would both refuse), which turns one failed delete into a
-# check that cannot be finished at all.
+# A count that is not 0 leaves the DIRECTORY IN PLACE: it holds service-mine,
+# repo-existed and the record of which repository is the check's, which is what
+# tells you by hand what is this check's and what is not. It does NOT let a
+# fresh run of the check finish the job: a run makes a scratch directory of its
+# own and stops in hard stop 4 or the baseline, because the service or the
+# repository is still in the project. Finishing this is hand work, and the
+# commands that survive are the three deletes above and the three lists below.
 if [ "$SVC_LEFT" != 0 ] || [ "$IMG_LEFT" != 0 ] || [ "$REPO_LEFT" != 0 ]; then
-  echo "Check 91 stopped: the counts above are not all 0, so something this check created is still there (services=$SVC_LEFT images=$IMG_LEFT repository=$REPO_LEFT). $CHK91 is KEPT on purpose — it holds the records that say what is this check's — so nothing was removed and the scratch directory is still yours to re-run this step from. Delete the survivors by hand (the service, its image, and the repository if $CHK91/repo-existed says no), then re-run this step: it re-reads the records, deletes what is left and removes the directory once the three counts are 0." >&2
+  echo "Check 91 stopped: the counts above are not all 0, so something this check created is still there (services=$SVC_LEFT images=$IMG_LEFT repository=$REPO_LEFT). $CHK91 is KEPT on purpose — it holds the records that say what is this check's — so nothing was removed. Delete the survivors by hand (the service, its image, and the repository if $CHK91/repo-existed says no), then run the three list commands above until all three counts read 0, and remove $CHK91 yourself when you no longer need the records." >&2
   exit 1
 fi
 # The recursive delete names only the scratch directory hard stop 3 made, and

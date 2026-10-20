@@ -95,6 +95,32 @@ func TestLiveChecksAreOneScriptTheOwnerRuns(t *testing.T) {
 		}
 	}
 
+	// A Restore that ends with a count that is not 0 is finished BY HAND: the
+	// register must not tell the owner to run the check again, which reads
+	// nothing -- a fresh run mints a scratch directory of its own and stops in
+	// the guards while the service or the repository is still in the project --
+	// and the appendix must not repeat the promise either.
+	sec91 := registerSection(t, doc, check91Heading)
+	for _, forbidden := range []string{"re-run the Restore", "a re-run needs the records", "re-reads the records"} {
+		if strings.Contains(sec91, forbidden) {
+			t.Errorf("%s: the section starting %q says %q, which no run does", liveChecksDoc, check91Heading, forbidden)
+		}
+	}
+	if want := "finishing a count that is not `0` is hand work"; !strings.Contains(sec91, want) {
+		t.Errorf("%s: the section starting %q lacks %q", liveChecksDoc, check91Heading, want)
+	}
+	for _, c := range []struct{ path, want string }{
+		{check91Steps, "Finishing this is hand work"},
+		{check91Script, "does NOT take it over"},
+	} {
+		if got := readRepoFile(t, c.path); !strings.Contains(got, c.want) {
+			t.Errorf("%s lacks %q, the correction of what a re-run can do", c.path, c.want)
+		}
+	}
+	if got := readDoc(t, check91Steps); strings.Contains(got, "re-run this step: it re-reads") {
+		t.Errorf("%s: the appendix still promises that re-running the step re-reads the kept records", check91Steps)
+	}
+
 	// The rows and the 90-99 paragraph name the scripts too, so an owner who
 	// reads only the table is told the same thing.
 	for _, want := range []string{
