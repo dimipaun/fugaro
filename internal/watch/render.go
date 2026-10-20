@@ -3,7 +3,6 @@ package watch
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/mattn/go-runewidth"
 
@@ -567,7 +566,12 @@ func colsOf(tier, w, recW int) runCols {
 func rowFlags(run RunRow, warn string, tier int) string {
 	f := flags(run, warn)
 	if tier < 3 {
-		f = strings.NewReplacer("LOST (sweeper pending)", "LOST", "OVER deadline", "OVER", "near deadline", "near").Replace(f)
+		// The waiting sentence is the longest flag there is and its instant
+		// is the part a narrow column would clip away, so the row says only
+		// that the run is waiting: the detail has the room for the rest
+		// (design §10.2, the same reason LOST drops its parenthetical).
+		f = strings.NewReplacer("LOST (sweeper pending)", "LOST", "OVER deadline", "OVER", "near deadline", "near",
+			"waiting for a credential, expected resume "+stampText(run.WaitingUntil), "waiting").Replace(f)
 	}
 	if tier < 3 && run.Notional {
 		if f != "" {
@@ -588,6 +592,10 @@ func flagColour(run RunRow) string {
 	case run.Health == HealthLost || run.Deadline == DeadlineOver:
 		return cBad
 	case run.Health == HealthSilent || run.Deadline == DeadlineNear || run.Halted != "":
+		return cWarn
+	case run.Waiting:
+		// Amber, not red: a run waiting for a credential is held up, not
+		// failing — the cascade resumes it by itself (D152).
 		return cWarn
 	}
 	return ""
@@ -818,7 +826,7 @@ func (r *rend) detail(run RunRow) []string {
 	}
 	dl := "-"
 	if run.DeadlineAt > 0 {
-		dl = time.UnixMilli(run.DeadlineAt).UTC().Format("2006-01-02 15:04Z")
+		dl = stampText(run.DeadlineAt)
 	}
 	models := run.Models
 	if run.Recipe != "" {
@@ -835,12 +843,23 @@ func (r *rend) detail(run RunRow) []string {
 		{"verify", run.Verify},
 		{"PR", pr},
 		{"spent", sp},
+		// Which credential the run is spending on: a name, never a value
+		// (C1.21), and the dash for a run that has reported none — which is
+		// "not recorded", not "no credential" (RunRow.Credential).
+		{"credential", dashIfEmpty(run.Credential)},
 		{"deadline", dl},
 		{"models", models},
 	}
+	// A waiting run says so, and until when: the row's FLAGS has neither the
+	// room for the instant nor, at a narrow width, the sentence at all.
+	if run.Waiting {
+		rows = append(rows, [2]string{"waiting", "expected resume " + stampText(run.WaitingUntil)})
+	}
 	out := make([]string, 0, len(rows))
 	for _, kv := range rows {
-		out = append(out, r.line(seg{"    " + r.fit(kv[0], 9), cFaint}, seg{" " + kv[1], ""}))
+		// 10 columns: the widest label ("credential", the name of the
+		// credential the run is spending on) must not be clipped.
+		out = append(out, r.line(seg{"    " + r.fit(kv[0], 10), cFaint}, seg{" " + kv[1], ""}))
 	}
 	return out
 }
