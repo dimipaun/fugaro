@@ -32,11 +32,13 @@ const (
 	// which is the only part of this folder a Windows reader can act on.
 	windowsCLIWSL = "docs/windows-cli/wsl.md"
 
-	// windowsCLIStatus is the index's status line, word for word: the folder is
-	// a plan with nothing implemented and every decision open. It moves only
-	// when the work it describes moves (implementation-plan.md T6.3), which is
-	// why it is asserted rather than left to a reader.
-	windowsCLIStatus = "**Status: plan only; nothing is implemented; decisions open.**"
+	// windowsCLIStatus is the index's status line, word for word: what has been
+	// approved, what of it is written, and which decisions are still open. It
+	// moves only when the work it describes moves — T0.3 moved it to the
+	// owner's ruling of 2026-10-20 (D16), and T6.3 is the move that will state
+	// the tier the work reached — which is why it is asserted rather than left
+	// to a reader.
+	windowsCLIStatus = "**Status: Slice 0 and Slice 1 approved (D16, 2026-10-20); Slice 0 is written; no code is implemented; D1–D6 are answered and D7–D15 are open.**"
 
 	// windowsCLIPin is this file, by path: the plan names it as the owning guard
 	// test of every documentation task, so the name lives in one place.
