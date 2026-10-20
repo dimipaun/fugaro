@@ -135,7 +135,7 @@ func TestWatchShowsWaitingUntil(t *testing.T) {
 	}
 
 	// Tier 3 is the widest table there is and its FLAGS column is still 30
-	// columns, against a 55-column sentence: the row shortens it there too,
+	// columns, against a 59-column sentence: the row shortens it there too,
 	// because the alternative is not the sentence but its first half with an
 	// ellipsis, and any flag behind it — r4's halt — gone with the instant the
 	// clip ate. The detail has the room, at every tier.
@@ -157,6 +157,37 @@ func TestWatchShowsWaitingUntil(t *testing.T) {
 	}
 	if got := rowStartingWith(wide, "▸ r1 "); strings.Contains(got, "expected resume") {
 		t.Fatalf("the tier-3 row of a waiting run carries the sentence:\n%s", got)
+	}
+}
+
+// The waiting sentence's width is a figure three places outside this file
+// state, and it has to be the width this test measures: rowFlags' comment in
+// render.go, the tier-3 comment above, and console/docs/json-contract.md's
+// `waiting_until` row — which is the published console contract, so a reader
+// outside this repository decides a layout from it.
+//
+// The review found all three saying 55 for a sentence that is 59, and the
+// reason nothing caught it is that the conclusion each draws is the same at
+// either figure: 59 is past every FLAGS column this table has (30 at its
+// widest), so the row shortens the sentence and the detail carries it, which is
+// what the tests around this one pin. A figure that nothing measures drifts, so
+// this measures it — the prefix and the stamp are the two halves, and if
+// stampText's layout ever changes, the three places that state the sum are what
+// have to change with it.
+func TestTheWaitingSentenceIsAsWideAsTheThreePlacesSayIt(t *testing.T) {
+	const stated = 59
+	resume := t0.Add(15 * time.Minute)
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"acme%2Fapp":{
+	 "r1":`+agent("acme/app", "waiting for a turn", fmt.Sprintf(`,"waiting_until":%d`, ms(resume)))+`}}`, t0)
+	v := Build(s, t0, Config{})
+
+	// The flag itself, built the way the plain table builds it — not a copy of
+	// the sentence, which could drift from the one the three comments are about.
+	got := flags(v.Repos[0].Runs[0], "!")
+	if len(got) != stated {
+		t.Fatalf("the waiting flag is %d columns (%q); rowFlags' comment, the tier-3 comment and console/docs/json-contract.md say %d",
+			len(got), got, stated)
 	}
 }
 

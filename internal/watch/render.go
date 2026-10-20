@@ -565,7 +565,7 @@ func colsOf(tier, w, recW int) runCols {
 
 func rowFlags(run RunRow, warn string, tier int) string {
 	f := flags(run, warn)
-	// The waiting sentence is the longest flag there is — 55 columns, past
+	// The waiting sentence is the longest flag there is — 59 columns, past
 	// every FLAGS column this table has (tier 3's is 30) — and its instant is
 	// the part a clip would eat, taking any flag behind it (SILENT, a halt)
 	// with it. So no tier's row carries it: the row says only that the run is
