@@ -1,12 +1,12 @@
 # Pending workflow changes
 
-**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check, 2026-10-20; see `## console-linux.yml` below), **`console-release-linux.yml`** (the console's signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged `console-release.yml`; see `## console-release-linux.yml` below) **and `console-windows.yml`** (the console's Windows installer build check, 2026-10-20; see `## console-windows.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check, 2026-10-20; see `## console-linux.yml` below), **`console-release-linux.yml`** (the console's signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged `console-release.yml`; see `## console-release-linux.yml` below) **and `console-windows.yml`** (the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check; see `## console-windows.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 - **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## shared-tests.yml` below, which also records what the job will report on `main` today.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
 - **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
-- **`console-windows.yml`** — the console's **Windows build check**: one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer on every pull request and every push to `main`, and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned). **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
+- **`console-windows.yml`** — the console's **Windows pack**, and the one file here that is **not** a pull-request check: one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
 - **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
@@ -608,7 +608,8 @@ files stay staged here by design**, `console-tests.yml` and
 P4.3; see `## shared-tests.yml` below), **`console-release-linux.yml`** (the console's signing
 pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
 `console-release.yml`; see `## console-release-linux.yml` below) **and `console-windows.yml`**
-(the console's Windows installer build check, 2026-10-20; see `## console-windows.yml` below).
+(the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check;
+see `## console-windows.yml` below).
 ```
 
 ```
@@ -617,8 +618,9 @@ pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
 P4.3) — `docs/pending-workflows/console-release-linux.yml` — the console's signing pipeline
 with the Linux legs added, which supersedes the staged `console-release.yml` and so is copied
 over it as well as into `.github/workflows/` — and `docs/pending-workflows/console-windows.yml`
-— the console's Windows installer build check, which is copied in only after the packer and the
-unit suite can pass on a Windows runner. None is this site's:
+— the console's Windows installer pack, which runs at release time only rather than on a pull
+request, and is copied in only after the packer and the unit suite can pass on a Windows runner.
+None is this site's:
 ```
 
 The second block is the head of `website/README.md`'s last paragraph, up to and
@@ -718,15 +720,16 @@ unchanged — `console-tests.yml` and `console-release.yml` do stay staged):
 ```
 **Two files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
 P4.3; see `## shared-tests.yml` below) **and `console-windows.yml`** (the console's Windows
-installer build check, 2026-10-20; see `## console-windows.yml` below).
+installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
+`## console-windows.yml` below).
 ```
 
 ```
 `docs/pending-workflows/` now holds two pending workflows,
 `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — and `docs/pending-workflows/console-windows.yml` — the console's Windows installer
-build check, which is copied in only after the packer and the unit suite can pass on a Windows
-runner. Neither is this site's:
+pack, which runs at release time only rather than on a pull request, and is copied in only after
+the packer and the unit suite can pass on a Windows runner. Neither is this site's:
 ```
 
 **The two blocks above are read by a test, and their wording is therefore
@@ -751,29 +754,51 @@ this change says they do.
 
 ## `console-windows.yml`
 
-The desktop console's **Windows build check**, staged on **2026-10-20** by the
-run that planned the console's Windows build. The owner's ruling of that date is
-what it serves: **0.10.0 gets a Windows build of the Console in which the Fugaro
-CLI is the *Linux* binary running inside WSL**, unsigned
+The desktop console's **Windows pack**, staged on **2026-10-20** by the run that
+planned the console's Windows build, and re-cut the same day for the owner's
+answer to that plan's decision **D7**. The owner's ruling of that date is what it
+serves: **0.10.0 gets a Windows build of the Console in which the Fugaro CLI is
+the *Linux* binary running inside WSL**, unsigned
 ([docs/console-windows/](../console-windows/README.md), and the CLI track's own
 [docs/windows-cli/](../windows-cli/README.md)). One job, `console-windows`, on
 `windows-latest`: `contents: read`, **no environment and no secret at all**, the
 pinned toolchain (`npm ci --ignore-scripts`), `npm run typecheck`, `npm run
 test:unit`, Electron's own download — which the checksums `console/package.json`
 pins will cover once the `win32-x64` hash below lands, and do not today —
-`npm run build`, then `npm run package:win` — which
-is `electron-builder --win --publish never`, with no `npx` in front of it — an
-assertion that exactly one `.exe` came out, and `upload-artifact`. It runs on
-every pull request and every push to `main`, with no path filter, for
-`console-linux.yml`'s reason: a Windows packaging path exercised only on a tag is
-one that breaks silently between releases.
+`npm run build`, then `npm run package:win` — which is
+`electron-builder --win --publish never`, with no `npx` in front of it — an
+assertion that exactly one `.exe` came out, and `upload-artifact`.
 
-**It is not build-only, and that is the point of a second runner.**
-`console-linux.yml` proves the packaging path; this job's subject is that the
-console has never *run* on Windows, so it typechecks and runs the unit suite
-before it packs. The e2e suite is not run here — it drives the console's real
-window under its real CSP and needs a display, which is the owner's manual
-checklist's job, not a runner's.
+**It runs at release time only, and that is a ruling rather than a design
+choice.** The triggers are `on: push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]` — the same
+strict tag `console-release.yml` runs on — and `workflow_dispatch` — and it is
+**never on a pull request**, not even path-filtered: there is no `pull_request`
+trigger and no `paths:` filter on any trigger. The owner weighed
+the recommendation (a pack on every pull request) against this and answered D7
+with the release-time option, in these words — *"a waste of resources; if there
+are problems we will fix them then"*
+([docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
+D7, and the answer table at the head of its §4).
+
+**The risk that accepts, stated rather than implied: a packaging break shows at
+release time**, and it is fixed then. Nothing between releases exercises the
+Windows pack, so a break in the `win` block, in the fuse table's `win32` row, or
+in a lockfile bump, is found by a release rather than by a pull request. **The
+mitigation is the manual dispatch**, and it is a step in the release document
+rather than a hope: [docs/release.md](../release.md)'s "Before you tag" checklist
+tells the owner to open Actions → `console-windows` → **Run workflow** on `main`
+before the tag and to look at the artifact, which is the only dry run this design
+has. The job's artifact is kept for **90 days** rather than `console-linux.yml`'s
+seven, so that it is still there for the release it was dispatched for.
+
+**It is not build-only, and that is why it is worth a runner at all.**
+`console-linux.yml` proves the packaging path on every pull request; this job's
+subject is that the console has never *run* on Windows, so it typechecks and runs
+the unit suite before it packs — **and with the pack moved to release time, this
+is the only place that suite ever runs on Windows**, which is what makes the
+POSIX repairs below worth doing. The e2e suite is not run here — it drives the
+console's real window under its real CSP and needs a display, which is the
+owner's manual checklist's job, not a runner's.
 
 **Read this before copying it in: it is red until three things in `console/` have
 landed, and they are not this directory's to do.**
@@ -810,7 +835,9 @@ that `scripts/release-gate.sh`'s `names=(...)` array is exactly the check names
 it reports plus `test`, `terraform` and `rules` — and `deriveConsoleCheckNames`
 **refuses a workflow with more than one job** ("this test cannot tell which of
 several jobs that is"). A second job there would therefore not be a packaging
-change at all: it would change which checks gate a release tag.
+change at all: it would change which checks gate a release tag. The release-time
+trigger is a second, independent reason: a job that must not run on a pull
+request does not belong in the file that runs on every one.
 
 **This job is deliberately NOT in the gate**, and that is a recorded decision
 rather than an oversight: a red Windows pack is information, not a blocked
@@ -823,21 +850,26 @@ them together fails.
 
 **The unsigned claim, plainly: the installer is not code-signed.** There is no
 Authenticode identity for this project and this change buys none, so the `.exe`
-this job uploads is the `.exe` a release would ship, and **Windows SmartScreen
-will warn that its publisher is unknown** — *More info → Run anyway* is the way
-past it. A release note saying "signed" of the Windows installer would be false,
-and `docs/release.md` carries the sentence once this lands
+this job uploads is unsigned and **Windows SmartScreen will warn that its
+publisher is unknown** — *More info → Run anyway* is the way past it. A release
+note saying "signed" of the Windows installer would be false, and
+[docs/release.md](../release.md) carries the sentence once this lands
 (docs/console-windows/reconciliation.md D10, F39).
 
-**The version it packs is `0.0.0`.** Nothing stamps `console/package.json` in CI
-and nothing should — only a release knows the version, and
-`console-release.yml` stamps it from the tag with
-`-c.extraMetadata.version` — so the artifact here will be named
-`Fugaro.Console-0.0.0-win-x64.exe`. It is a build check, not a release
-candidate, and nothing in `console-release.yml` is changed by this file: the
-release pipeline gains a Windows leg when the owner decides it does, which is
-the `docs/console-windows/implementation-plan.md` Part H work and not this
-staging.
+**The artifact is this job's own, and it is not attached to any release.** The
+installer is uploaded as a build artifact with a 90-day retention; **it is not an
+asset of `console-vX.Y.Z`**, and a `console-vX.Y.Z` release carries macOS and
+Linux and nothing else. Attaching it is a separate decision nobody has taken, and
+it is not a one-line change: that release's `publish` job is the only job holding
+`contents: write`, and it would have to fetch this workflow's artifact — a
+mechanism the console release does not have today. **The version it packs is
+`0.0.0`** for the same reason: nothing stamps `console/package.json` here, and
+whether the release-time pack should stamp the tag's `X.Y.Z` with
+`-c.extraMetadata.version`, the way `console-release.yml` stamps its own packs,
+is part of that same undecided question. So the artifact is named
+`Fugaro.Console-0.0.0-win-x64.exe`, and [docs/release.md](../release.md) says all
+of this in the release's own words
+(docs/console-windows/implementation-plan.md Part H).
 
 **To copy it in**, from the repository root (and then delete the staged copy, as
 `console-linux.yml`'s was: there is no byte-identity test for this file, because
@@ -847,7 +879,7 @@ it is a new workflow with nothing to be identical to):
 cp docs/pending-workflows/console-windows.yml .github/workflows/console-windows.yml
 git add .github/workflows/console-windows.yml
 git rm docs/pending-workflows/console-windows.yml
-git commit -m "console: build the Windows installer in CI"
+git commit -m "console: pack the Windows installer at release time"
 ```
 
 **Three follow-up edits belong in that commit**, because three sentences in this
@@ -868,31 +900,32 @@ the `## console-linux.yml` section's own pair of blocks already describes.
 run on a runner: the staged copies in this directory are read by tests on a
 machine with no `electron-builder` run and no Windows, so the typecheck, the
 unit suite, the pack and the fuse read-back are the first real run's to confirm —
-and the owner's manual checklist in
+and that first real run is now a **manual dispatch**, not a pull request. The
+owner's manual checklist in
 [docs/console-windows/implementation-plan.md](../console-windows/implementation-plan.md)
-§4 is what turns the uploaded installer into evidence.
+§4 is what turns the uploaded installer into evidence, and it is why the dry run
+in [docs/release.md](../release.md) matters more here than it would if a pull
+request ran this job every day.
 
-**And unlike its sibling, no test reads this file.** `## console-linux.yml` above
-can say that offline tests check the runner, the permissions, the action pins and
-that every `run:` step is valid shell, because
-`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` and its neighbours read that
-file's **text**. Nothing reads this file's text: `git grep -ln console-windows.yml
--- '*.go' '*.mjs' '*.js' '*.sh' '*.ts' '*.json' '*.yaml'` is empty, and every
-other hit in the tree is prose — this section, and this work's own three
-documents plus `website/README.md`'s name for it. The staging-directory guards
-see it only as a directory entry — `pendingWorkflows(t)` lists what is staged, and
-the count-and-name sentences in this README and in `website/README.md` are held to
-that list, so a copy-in that forgets this section is red. That is a guard over the
-*directory*, not over this file, and the difference matters: the runner, the
-permissions, the action pins, the shell of each `run:` step and the "must land
-first" paragraph above are all prose here, with a reviewer as the only thing
-checking them. The guards that would narrow that gap are Part H tasks in
-[docs/console-windows/implementation-plan.md](../console-windows/implementation-plan.md)
-— T-H1's directory guards and T-H2's red step, a test that this job's check name
-is **not** in `scripts/release-gate.sh`'s `names=(...)` — and neither is a shape
-guard of the Linux file's kind. Until one is written, the header repeats what must
-land first rather than pointing at a test, because there is no test to point at.
-
+**What *is* checked offline, and by which test.** Two guards in
+`internal/cli/docs_windows_console_test.go` read this file's **text**, through
+the same `consoleWorkflowText` helper the Linux file's guards use (so they pass
+before and after the copy-in):
+`TestWindowsConsoleWorkflowIsReleaseTimeOnly` — the trigger set is exactly the
+release tag and `workflow_dispatch`, there is no `pull_request` trigger and no
+`paths:` filter on any trigger, one job named `console-windows` on
+`windows-latest` with `contents: read` at both levels and no `secrets.`,
+`environment:`, `pull_request_target`, `workflow_run` or `write-all` anywhere in
+it, every `uses:` a 40-hex pin with its `# vX.Y.Z`, the six `run:` steps, the
+`unset CSC_*` line beside the exactly-one-`.exe` assertion, and an
+`upload-artifact` with `if-no-files-found: error` and `path:
+console/release/*.exe` — and
+`TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere`, which holds this section
+and `website/README.md`'s sentence to that file. **What is still prose, with a
+reviewer as the only thing checking it**: that the three `console/` edits above
+have landed, that the pack genuinely produces one installer, and that the fuse
+bytes are where the `win32` row says. Those are the first real run's, which is a
+manual dispatch before a tag.
 ## `website-preview.yml` and `website-promote.yml`
 
 Two **new** workflows, both `workflow_dispatch`-only, staged by the run that

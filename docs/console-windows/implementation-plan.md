@@ -1,8 +1,19 @@
 # The console on Windows — the implementation plan
 
-**Status: plan only; nothing is implemented; decisions open.** No task below is approved. **Part A is
-the first part that may start, and only after the OWNER APPROVAL GATE in §5 passes** — and Part A
-touches no production behaviour, which is why it is first and why it is safe first.
+**Status: plan only; nothing is implemented; the twelve decisions are answered and the OWNER APPROVAL
+GATE is still not passed.** No task below is approved. **Part A is the first part that may start, and
+only after the OWNER APPROVAL GATE in §5 passes** — and Part A touches no production behaviour, which
+is why it is first and why it is safe first.
+
+**The D7 ruling (2026-10-20): the Windows pack runs at release time only.** It is started by the
+release tag (`on: push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]`) or by a `workflow_dispatch` before it, and
+**never on a pull request**, not even path-filtered. There is no advisory pack check on a pull request,
+and nothing is added to `console-tests.yml`. **The accepted risk: a packaging break shows at release
+time**, and it is fixed then, because the `win32` fuse row and the `win` builder target still land
+**together, in one part** (F35) and nothing else exercises the Windows pack between releases. The
+mitigation is the by-hand dry run the release checklist carries
+([docs/release.md](../release.md), "Before you tag"). Everything below that described the pack as a
+per-pull-request job has been re-cut for this ruling.
 
 **Owner:** Dimi Paun. **Date:** 2026-10-20. **Base:** `main` at `ccc406b2`.
 **Source:** [reconciliation.md](reconciliation.md) — findings F1–F47, corrections C1–C6, decisions
@@ -29,8 +40,10 @@ Each task has:
     commands, and the only ones that record a result.
   Two more are used once each and are named where they appear: **`[vet]`** =
   `GOFLAGS=-p=2 go vet ./...` plus `gofmt -l .`, run before a part is offered for review; and
-  **`[pack]`** = the staged `console-windows.yml` on a `windows-latest` runner, which **cannot run at
-  all** until Parts B and C have landed (F35).
+  **`[pack]`** = **a manual dispatch** of the staged `console-windows.yml` on a `windows-latest`
+  runner — the job is a release-time one, so a dispatch is the only way a task can start it, and it
+  **cannot run at all** until Parts B and C have landed (F35). A tag would run it too, and a task does
+  not tag.
 - **Tier** — who can accept it as *done*:
   - **Tier A** — an owner or agent with no Windows machine: the change is source-readable and its
     evidence is `[unit]`, `[types]`, `[pins]` or `[site]`.
@@ -84,7 +97,7 @@ of it, so the native track lands on top rather than through this work.
 | **E** — the credential boundary | 3 | F18, F19, F20, F21, F22 | after C |
 | **F** — spawning, streaming, cancellation, exit codes | 4 | F23, F24, F25, F26, F27, F28, F29 | after C |
 | **G** — the first-run pages and the distro picker | 1 (pages) | F10, F11, F30, F31, F32, C2 | after C and F |
-| **H** — the installer job, the release text and the advisory CI | 5, 6 (CI half) | F39, F40, F41, F42, F43, F44 | after B and C |
+| **H** — the release-time pack job, the release text and the staging | 5, 6 (CI half) | F39, F40, F41, F42, F43, F44 | after B and C |
 
 ---
 
@@ -103,10 +116,13 @@ B ─────────────────────────►
   modules, and each is independently green.
 - **G after C and F** (its states read C's resolution and F's cancellation residual).
 - **H after B and C** — the staged workflow cannot be copied in, and cannot even run, until the packer
-  produces an artifact and the unit suite is green on a Windows runner.
-- **The owner's manual checklist (§4) runs after H is copied in and a real installer exists.** It is
-  the only part of this work that needs a Windows machine, and it is the reason Check 119 is
-  *proposed* rather than claimed.
+  produces an artifact and the unit suite is green on a Windows runner. H is also where the D7(c)
+  ruling lands: the staged job is a release-time one (a tag or a manual dispatch, never a pull
+  request), and the release checklist gains the by-hand dry run that stands in for the pull-request
+  check there is not.
+- **The owner's manual checklist (§4) runs after H is copied in and a manual dispatch has produced a
+  real installer.** It is the only part of this work that needs a Windows machine, and it is the reason
+  Check 119 is *proposed* rather than claimed.
 
 ---
 
@@ -618,24 +634,38 @@ Commit: `console: say which side of the boundary the credentials are on`
 
 ---
 
-## Part H — The installer job, the release text and the advisory CI
+## Part H — The release-time pack job, the release text and the staging
 
-*Goal: the Windows artifact is built by a runner, described honestly in the release, and gated by
-nothing until the owner says otherwise.*
+*Goal: the Windows artifact is packed by a runner **at release time and nowhere else**, described
+honestly in the release, and gated by nothing until the owner says otherwise.*
 
-**T-H1 — stage `docs/pending-workflows/console-windows.yml` and its copy-in (F40, F44, D7(a)).**
+**T-H1 — stage `docs/pending-workflows/console-windows.yml` and its copy-in (F40, F44, D7(c)).**
 Files: `docs/pending-workflows/console-windows.yml` (new), `docs/pending-workflows/README.md`.
 Red step: the Go guards over the staging directory — `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`
 (`internal/cli/docs_desktop_console_test.go:6345`), its `pendingWorkflows(t)` (6455) and the count-and-name
 sentences it reads (`consolePendingSentence`, 6500) — fail the moment the file exists and the README's
 opening line does not name it, and `TestStagedLinuxFilesSurviveTheCopyIn` (6665) fails if the copy-in is
 wrong. Run `GOFLAGS=-p=2 go test ./internal/cli -run 'TestConsoleLinuxStaging|TestStagedLinuxFilesSurviveTheCopyIn' -count=1`
-and watch it fail **before** the README edit.
-The file itself is `console-linux.yml` with three differences: `runs-on: windows-latest`, the pack step
-is `npm run package:win`, and the artifact assertion counts exactly one `*.exe`. `permissions: contents:
-read`, actions pinned by 40-hex SHA, `--publish never` in the script rather than the line, no secrets,
-and the header's first paragraph says **in those words** that it must not be copied in until Parts B
-and C have landed, because before that the packer refuses and the suite is red.
+and watch it fail **before** the README edit. The four guards this task lands
+(`internal/cli/docs_windows_console_test.go`; a fifth, the release checklist's, is T-H3's) are written
+first and fail until the file and the prose exist: `TestWindowsConsoleWorkflowIsReleaseTimeOnly` (the
+triggers, the pins, the artifact), `TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere` (the
+README's section and the site's sentence), `TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers`
+and `TestDocsWindowsConsolePlanIsReleaseTimeOnly` (the reconciliation's answer record and this plan's
+own re-cut). Each is mutation-proven by the edit named in its own comment.
+The file itself is `console-linux.yml` with **four** differences: `runs-on: windows-latest`, the pack
+step is `npm run package:win`, the artifact assertion counts exactly one `*.exe`, and — the D7(c)
+difference — the triggers are `on: push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]` and `workflow_dispatch`,
+**with no `pull_request` trigger and no `paths:` filter**. `permissions: contents: read`, actions pinned
+by 40-hex SHA, `--publish never` in the script rather than the line, no secrets, and the header's first
+paragraph says **in those words** that it must not be copied in until Parts B and C have landed, because
+before that the packer refuses and the suite is red — and that it is a release-time job, so nothing on a
+pull request ever runs it.
+The file uploads the installer as its own build artifact and **does not attach it to any release**: the
+release's assets are unchanged, and whether the installer joins `console-vX.Y.Z` is a decision D7 does
+not take (its `publish` job would have to fetch this workflow's artifact, a mechanism the console
+release does not have). The staging README says so in the same words, because it is the one thing a
+reader will otherwise assume.
 The four consistency edits this forces are one commit, not four, because any three of them without the
 fourth leaves `main` red: `docs/pending-workflows/README.md`'s opening line, `website/README.md`'s
 "now holds N pending workflows" sentence, `website/test/readme.mjs`'s words map and its regex, and the
@@ -646,7 +676,7 @@ Verification: `[pins]`, `[site]`, `[vet]`. Tier A to write; **Tier C to copy in*
 T-B2, T-C5.
 Commit: `docs(pending-workflows): stage console-windows.yml, unsigned and outside the release gate`
 
-**T-H2 — the advisory job's status is written down (F41, D8(a)).**
+**T-H2 — the release-time job's status is written down (F41, D8(a)).**
 Files: `docs/pending-workflows/console-windows.yml` (its header), `docs/pending-workflows/README.md`.
 Red step: `scripts/release-gate.sh`'s `names=(...)` and
 `internal/cli/docs_desktop_console_test.go`'s `deriveConsoleCheckNames` (4315) are the guard: a test
@@ -655,7 +685,10 @@ asserting that the Windows job's check name is **not** in the gate's list, and t
 claims otherwise or the file is absent.
 The reason in one sentence, in the file: the gate's list is derived from `console-tests.yml`'s **single**
 job and the derivation refuses a multi-job workflow, so adding the Windows leg to the gate is three
-edits in one commit that change which checks gate **every** tag on this repository.
+edits in one commit that change which checks gate **every** tag on this repository. The file also says,
+in the same header, that the job does not run on a pull request at all (D7(c)) — so the two rulings
+that keep it out of the gate and off the pull requests are read together, where a reader will find
+them.
 Verification: `[pins]`, `[vet]`. Tier A. Depends on: T-H1.
 Commit: `docs(pending-workflows): say why the Windows pack does not gate the release`
 
@@ -664,10 +697,16 @@ Files: `docs/release.md`, `console/README.md`, `docs/design/desktop-console.md`,
 `internal/cli/docs_desktop_console_test.go` (the guards that pin those sections).
 Red step: `[pins]` — the guards that pin `docs/release.md`'s console paragraphs and
 `console/README.md`'s Linux section fail the moment the sentences move, and the edit and the guard move
-together.
+together. The one this work adds for it is `TestDocsWindowsConsoleReleaseDocsCarryTheDryRun`
+(`internal/cli/docs_windows_console_test.go`), which fails until the checklist carries the dry run and
+the console paragraph says the installer is not a release asset.
 Four edits, each a **dated note rather than a rewrite** (O7, F43):
-1. `docs/release.md`'s console paragraphs gain the third asset and its line in "Verifying the
-   console's release".
+1. `docs/release.md`'s console paragraphs gain the Windows sentence: the pack runs **at release time
+   only** (a tag or a manual dispatch, **never on a pull request**), it produces an **unsigned**
+   NSIS installer, and **the Windows installer is not an asset of `console-vX.Y.Z`** — the release's
+   asset list is unchanged until the owner decides otherwise (D7). The "Before you tag" checklist gains
+   the by-hand dry run: open Actions → `console-windows` → **Run workflow** on `main` before the tag,
+   because nothing else exercises the pack between releases.
 2. `docs/release.md` says the Windows installer is **unsigned** and says what SmartScreen will show:
    *"the Windows installer is unsigned: Windows SmartScreen will warn that the publisher is unknown,
    and More info → Run anyway is the way past it"* (U18 — the exact wording is checked against the
@@ -686,7 +725,7 @@ Verification: `[pins]`, `[site]`. Tier A to write; **Tier C** for the two claims
 Depends on: T-H1.
 Commit: `docs: the Windows console in the release, unsigned, and the three notes that say which half moved`
 
-**T-H4 — the CI job's own document, and the mutation-proof discipline.**
+**T-H4 — the pack job's own document, and the mutation-proof discipline.**
 Files: `console/README.md`, `docs/pending-workflows/README.md`, this file's §4.
 Red step: `[pins]` — the guard that every file staged under `docs/pending-workflows/` is described by a
 section of that README, by name.
@@ -711,7 +750,9 @@ ships the check writes it, and no phase here is approved.
 **Prerequisites.** A Windows 10 or 11 machine with WSL 2; one distribution with a Linux `fugaro`
 installed by [docs/windows-cli/wsl.md](../windows-cli/wsl.md)'s procedure; a checkout of this
 repository **inside** the distribution (`~/src/fugaro`, not `/mnt/c/...` — the mode-bit trap that file
-records); the installer from `console-windows.yml`'s artifact; and **no** signing certificate.
+records); **the installer, from a manual dispatch of `console-windows.yml`** — a dispatch, because under
+D7(c) the job runs at release time only and a pull request never produces one, which is also why the
+release checklist carries the by-hand dry run; and **no** signing certificate.
 
 Each step says what to do, what must be true, and which finding or U-row it settles.
 
@@ -732,44 +773,47 @@ Each step says what to do, what must be true, and which finding or U-row it sett
 | 13 | Check the console's store on the host. | `%APPDATA%\Fugaro Console\installations.json` exists, holds the WSL installation, and **nothing** was written inside the distribution. | F14, T-D5 |
 | 14 | Open Task Manager while a long read runs, and look at the command lines. | The `wsl.exe` command line carries a distro name, a directory and CLI flags — **no token, no key, no environment dump**. | F19, F22, U16 |
 | 15 | Time the first invocation after `wsl --shutdown`. | It completes inside the console's own read deadline, or the screen says it timed out and names the distribution. | U15 |
-| 16 | Uninstall the console from Settings → Apps. | It uninstalls cleanly and leaves `%APPDATA%\Fugaro Console` alone (the store survives a reinstall). | D7(a) |
+| 16 | Uninstall the console from Settings → Apps. | It uninstalls cleanly and leaves `%APPDATA%\Fugaro Console` alone (the store survives a reinstall). | D7(c) |
 
 **Not in this checklist, deliberately:** anything about a Windows-native `fugaro` (there is none, and
 [docs/windows-cli/](../windows-cli/README.md) owns that track); anything about signing or notarisation
 (there is no Authenticode identity and this plan buys none — D10(c) is the owner's and is not
 proposed here); and anything about a Windows **release** (D8(a) keeps the job out of the gate, so a
-red Windows pack blocks nothing).
+red Windows pack blocks nothing — and under D7(c) a red pack is found at release time rather than
+before it, which is the risk the ruling accepts and the dry run above is there to reduce).
 
 ---
 
 ## 5. OWNER APPROVAL GATE
 
-**Not passed. Nothing in this plan may start until it is.** The gate passes when all five of the
-following are true, and each is a decision this plan cannot make for itself:
+**Not passed. Nothing in this plan may start until the owner passes it.**
 
-1. **D1 is answered** — the named wrapper on `SpawnPlan`, a longer argv, or a second spawner. It
-   decides the shape of T-C1, and every task in Parts C–G is written against that shape. The
-   recommendation is (a), and it is the only one of the three that keeps the argv the operator sees in
-   the spawn log honest.
-2. **D2 and D3 are answered** — what a distro is in the store and how its default is chosen, and which
-   spelling goes where. D2 decides T-C4, T-C5 and T-D1; D3 decides T-D3 and half of T-G1. Both are
-   recommendations (a), and D3(a) is the one that makes the screen's path the one the operator can
-   paste into a terminal.
-3. **D6 is answered** — whether cancellation reaches inside the distribution (a), terminates the
-   distribution (b, refused), or documents the orphan (c). It decides T-F4, and it is the one decision
-   whose answer changes whether a task is *scheduled* or *written as an honest residual*.
-4. **D7, D8 and D10 are answered** — NSIS unsigned and outside the gate, and the SmartScreen sentence.
-   D8 in particular is the only decision here that would change **which checks gate every tag** on this
-   repository, so it should be answered deliberately rather than by default. D10(c) — buying a
-   certificate — is out of scope and nothing in this plan proposes it.
-5. **The status line in [README.md](README.md) is still `reconciliation only; no code is written, no
-   decision is answered and no task is approved.`** It moves only as far as the evidence reaches and
-   only when a part lands, in the same commit as that part's first green `[verify]` run.
+**Answering a decision is not approving the build.** The five conditions this gate used to list were
+the twelve decisions, and **the owner answered all twelve on 2026-10-20** — each with its one-line why
+in [reconciliation.md](reconciliation.md) §4. That removes the *decisions* from the gate; it does not
+pass the gate. What the owner has not yet approved is **this plan**: eight parts, the order in §3, the
+staged workflow in `docs/pending-workflows/console-windows.yml`, the owner-run checklist in §4, and the
+risk the D7 ruling accepts (a packaging break shows at release time and is fixed then).
+
+| Decision | Answered | What it settled |
+|---|---|---|
+| **D1** | (a) | The shape of T-C1, and therefore every task in Parts C–G: a named wrapper on `SpawnPlan` (`command` + `prefix`), so the spawn log's `argv` line stays the operator's record of what ran. |
+| **D2** | (a) | T-C4, T-C5 and T-D1: a named distribution in the store, defaulted from `wsl.exe --status`, with no default at all when that command names none. |
+| **D3** | (a) | T-D3 and half of T-G1: the Linux spelling wherever the console states or passes a path, the UNC spelling only where Windows itself opens one. |
+| **D4** | (a) | The translation tasks in Part D: one `wslpath -a -u` call per distinct path, through the same spawner and the same deadline, cached for the life of the window. |
+| **D5** | (a) | Part E's shape: the existing `childEnvironment` allow-list stays the enforcement, `WSLENV` is set to the empty string, and the child-report test proves it through the wrapper. |
+| **D6** | (a) | T-F4 is **scheduled** rather than written as an honest residual: the Linux pid is captured and killed inside the distribution, with the residual window stated. |
+| **D7** | (c) | Part H, and the whole shape of the pack: **release time only** — the tag or a manual dispatch, **never on a pull request**, with the accepted risk and the by-hand dry run written down. |
+| **D8** | (a) | The gate's `names` list is untouched, and no job is added to `console-tests.yml`: a red Windows pack blocks no release. |
+| **D9** | (a) | T-G1's remedy text: it points at [docs/windows-cli/wsl.md](../windows-cli/wsl.md) rather than carrying a second copy of the procedure. |
+| **D10** | (a) | T-H3: one SmartScreen sentence in the release notes, `docs/release.md` and the download page, and no claim anywhere that the installer is signed. |
+| **D11** | (a) | Part A, and therefore the test strategy of every other part: a fake `wsl.exe` built on `installStub`, asserting what the Linux side received. |
+| **D12** | (a) | §4 stays *proposed*: Check 119 is named and unclaimed, and no row is written into the register. |
 
 **What may start when the gate passes.** **Part A alone**, which touches no production code and no
 document outside this folder, and whose only claim is that the tests that follow can run anywhere.
-Parts B–H wait for their own answers: B waits on D7 and D8, C on D1, D on D3, E on nothing beyond the
-gate, F on D6, G on D2 and D3, and H on D8 and D10.
+Parts B–H no longer wait on answers — theirs are above — they wait on the gate, and then on the order
+in §3.
 
 **What is explicitly *not* approved by any answer to this gate**: copying
 `docs/pending-workflows/console-windows.yml` into `.github/workflows/` (that is Tier C, and the file's

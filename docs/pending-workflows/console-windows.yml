@@ -1,17 +1,17 @@
-# STAGED, NOT APPLIED (2026-10-20). This file is the console's **Windows build
-# check**: it typechecks, runs the unit suite and packs the unsigned NSIS
-# installer on every pull request and every push to main, and uploads it. **No
-# agent copies, edits, renames or deletes it** -- GitHub rejects a Fugaro push
-# that touches .github/workflows/**, so an agent run cannot deliver a workflow
-# change at all, and every workflow change in this repository is staged here for
-# a human (docs/pending-workflows/README.md).
+# STAGED, NOT APPLIED (2026-10-20). This file is the console's **Windows pack**:
+# it typechecks, runs the unit suite and packs the unsigned NSIS installer --
+# **at release time only**, on the release tag or on a manual dispatch before
+# one, and never on a pull request. **No agent copies, edits, renames or deletes
+# it** -- GitHub rejects a Fugaro push that touches .github/workflows/**, so an
+# agent run cannot deliver a workflow change at all, and every workflow change in
+# this repository is staged here for a human (docs/pending-workflows/README.md).
 #
 # To apply it, from the repository root:
 #
 #     cp docs/pending-workflows/console-windows.yml .github/workflows/console-windows.yml
 #     git add .github/workflows/console-windows.yml
 #     git rm docs/pending-workflows/console-windows.yml
-#     git commit -m "console: build the Windows installer in CI"
+#     git commit -m "console: pack the Windows installer at release time"
 #
 # **The staged copy is deleted after the copy-in**, as console-linux.yml's is:
 # there is no byte-identity test for this file, because it is a new workflow with
@@ -21,7 +21,7 @@
 #
 # DO NOT COPY THIS IN YET. Read this paragraph first, because it is not a
 # formality: **this job is red until three things in console/ have landed**, and a
-# red check that nobody can fix by looking at it is worse than no check.
+# red pack is worse than no pack, because it arrives at release time.
 #
 #   1. `console/package.json` has no `package:win` script and no `win` block,
 #      and `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
@@ -45,6 +45,26 @@
 # The order the plan gives is: stage this file, land those three edits, then copy
 # it in. Staging it now is the point of the staging directory -- the file is
 # reviewable while it is still a proposal.
+#
+# WHEN THIS RUNS, AND WHY THAT IS THE OWNER'S RULING RATHER THAN A CHOICE HERE
+#
+# **The release tag, or a manual dispatch before one, and nothing else.** The
+# owner answered D7 on 2026-10-20 with option (c), against the recommendation
+# (docs/console-windows/reconciliation.md D7): *"a waste of resources; if there
+# are problems we will fix them then."* So there is **no `pull_request` trigger
+# and no `paths:` filter** -- not even a path-filtered one, and a filter would in
+# any case be a second way for the job not to run, on the one trigger the ruling
+# rules out entirely.
+#
+# **The risk this accepts, stated rather than implied: a packaging break shows at
+# release time**, and it is fixed then. Nothing between releases exercises the
+# Windows pack, so a break in the `win` block below, in the fuse table's `win32`
+# row, or in a lockfile bump, is found by a release rather than by a pull
+# request. **The mitigation is the manual dispatch**: docs/release.md's "Before
+# you tag" checklist tells the owner to run this job by hand before the tag --
+# Actions -> console-windows -> "Run workflow" on main -- and to look at its
+# artifact, which is the only dry run this design has. That step and this file
+# are one decision; changing one without the other leaves the risk uncovered.
 #
 # WHY THIS IS ITS OWN WORKFLOW, AND NOT A SECOND JOB IN console-tests.yml
 #
@@ -70,31 +90,35 @@
 #
 # WHAT THIS FILE IS
 #
-#   - It runs on every pull request and every push to main, with **no path
-#     filter**: a Windows packaging path that is only exercised on a tag is a
-#     packaging path that breaks silently between releases, which is the failure
-#     this job exists to catch. (The no-path-filter rule in design section 9.4 is
-#     about required checks; this one is not required, and it still carries no
-#     filter, because the console is the thing being built.)
+#   - **A release-time job, and the only place the console's unit suite ever runs
+#     on Windows.** It is not build-only, and console-linux.yml is: that file
+#     proves the packaging path on every pull request, while this job's subject
+#     is that the console has never *run* on Windows -- so it typechecks and runs
+#     the unit suite before it packs. The e2e suite is not run here: it drives
+#     the console's real window under its real CSP and needs a display, which is
+#     a separate question and a separate task (docs/console-windows/implementation-plan.md,
+#     the owner's checklist).
 #   - It holds **no secret of any kind**, and it never will: it packs
 #     **unsigned**. There is no Authenticode identity for this project and this
-#     change buys none, so the installer this job produces is the installer the
-#     release ships, and Windows SmartScreen will warn that its publisher is
-#     unknown (docs/console-windows/reconciliation.md D10, and the note
-#     docs/release.md carries once this lands).
-#   - **It is not build-only, and the Linux job is.** That difference is the
-#     whole reason for a second runner: `console-linux.yml` proves the packaging
-#     path, while this job's subject is that the console has never *run* on
-#     Windows -- so it typechecks and runs the unit suite before it packs. The
-#     e2e suite is not run here: it drives the console's real window under its
-#     real CSP and needs a display, which is a separate question and a separate
-#     task (docs/console-windows/implementation-plan.md, the owner's checklist).
-#   - **The version it packs is 0.0.0.** Nothing stamps console/package.json in
-#     CI and nothing should: only a release knows the version, and the release
-#     workflow stamps it from the tag with `-c.extraMetadata.version`. So the
-#     artifact here will be named `Fugaro.Console-0.0.0-win-x64.exe` (the same
-#     product name and the same arch the Linux job's artifacts carry), and it is
-#     a build check, not a candidate for a release.
+#     change buys none, so the installer this job produces is unsigned and
+#     Windows SmartScreen will warn that its publisher is unknown
+#     (docs/console-windows/reconciliation.md D10, and the note docs/release.md
+#     carries once this lands). Nothing in this file may ever claim otherwise.
+#   - **The artifact is this job's own, and it is not attached to any release.**
+#     The pack uploads `Fugaro.Console-0.0.0-win-x64.exe` as a build artifact
+#     with a 90-day retention, which is long enough to reach the release it was
+#     dispatched for. Attaching it to `console-vX.Y.Z` is **not** what D7
+#     decided: that release's `publish` job is the only job with
+#     `contents: write`, and it would have to fetch this workflow's artifact --
+#     a mechanism the console release does not have today. Until the owner
+#     decides that, a `console-vX.Y.Z` release carries macOS and Linux and
+#     nothing else, and docs/release.md says so.
+#   - **The version it packs is 0.0.0.** Nothing stamps console/package.json
+#     here: the release workflow stamps its own packs from the tag with
+#     `-c.extraMetadata.version`, and whether this job should do the same is part
+#     of the undecided "does the installer join the release" question above. So
+#     the artifact is named `Fugaro.Console-0.0.0-win-x64.exe` (the same product
+#     name and the same arch the Linux job's artifacts carry).
 #   - x64 only. There is no `build.win.target` in console/package.json today and
 #     this file does not add one: Part B does, pinned to x64, for the reason that
 #     a second architecture would be a cross-build nothing here can launch -- the
@@ -105,10 +129,13 @@
 
 name: console-windows
 
+# The triggers are the D7 ruling, and they are the whole of it: the release tag
+# -- the same strict pattern console-release.yml runs on -- and a manual dispatch
+# before one. No `pull_request`, and no `paths:` filter anywhere: see the header.
 on:
   push:
-    branches: [main]
-  pull_request:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
 
 # The workflow inherits nothing: `contents: read` is all it needs to check the
 # repository out, and it is declared here and on the job so that neither can
@@ -162,8 +189,9 @@ jobs:
       # something this repository does not run from CI.
       - name: install the pinned toolchain
         run: npm ci --ignore-scripts --no-audit --no-fund
-      # The half of this job the Linux one does not have. `npm run typecheck` is
-      # the TypeScript compiler over the whole tree with no emit, and
+      # The half of this job the Linux one does not have, and the only place the
+      # console's suite ever runs on Windows. `npm run typecheck` is the
+      # TypeScript compiler over the whole tree with no emit, and
       # `npm run test:unit` is vitest -- the 75 files under test/unit, which need
       # no display and no Electron. Both are expected to be red until the POSIX
       # repairs this file's header names have landed; that is what the staging is
@@ -229,4 +257,9 @@ jobs:
           name: console-windows
           path: console/release/*.exe
           if-no-files-found: error
-          retention-days: 7
+          # 90 days, not console-linux.yml's 7: that job runs on every pull
+          # request and its artifact is for the pull request that produced it,
+          # while this one runs once per release and its artifact is what the
+          # owner's manual checklist installs. An artifact that expires before
+          # the release it was dispatched for is an artifact nobody can use.
+          retention-days: 90

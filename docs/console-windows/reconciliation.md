@@ -50,7 +50,7 @@ questions about it.
 | **C3** | *"the unsigned Windows installer job (NSIS or the existing builder target)"* | **There is no existing builder target.** `console/package.json`'s `build` block has `mac` and `linux` and **no `win`**, `scripts` has no `package:win`, `build.electronDownload.checksums` pins three zips and no `win32-x64` one, and `fuseTarget` (`console/src/main/fuses.ts:379`) **throws** for `win32` because `SUPPORTED_PLATFORMS` (`fuses.ts:298`) is `['darwin','linux']` | The installer job cannot be *run* until three edits land in `console/` (F35, F36, F37). It is staged anyway, as the brief asks, and its header says in the first paragraph what must land before the copy-in is safe |
 | **C4** | *"the CLI resolver runs `wsl.exe -d <distro> -- fugaro …`"* | That argv cannot be built today: `assertArgvFlags` (`console/src/main/spawn.ts:683`) refuses any `-`-prefixed element outside `SPAWN_FLAGS` (`spawn.ts:272`), and `--` is one of them; `planFor` (`spawn.ts:1106`) has no field for a prefix, and `runToCompletion` reads the binary out of `plan.argv[0]` (`spawn.ts:1183`) | The WSL leg needs a **named wrapper** in the plan rather than a longer argv (F8, F9) |
 | **C5** | *"path translation (wslpath) for remembered checkouts and anything the console shows or opens"* | Nothing refuses a Windows path as a spawn argument: `--dir`'s and `--config`'s values are checked by `isSafeInstallationValue` (`spawn.ts:556`), which admits a backslash and a space | The hazard is not that translation is impossible but that it is **skippable**: an untranslated `C:\…` reaches the Linux `fugaro` as a `--dir` and produces a *wrong answer* rather than a refusal (F23) |
-| **C6** | *"the CLI resolver running `wsl.exe -d <distro> -- fugaro …` **instead of a host path**"* | *Instead of a host path* is the load-bearing half, and it changes what the tree's POSIX assumptions are for. On the WSL leg the CLI is a file **inside a distribution**, which the Windows side cannot `stat` at all — so `binDirectories`, `isExecutableFile`, `locationsFor` and `childPath`'s join are **not on the WSL route**: the question "is there a `fugaro` here, and does it run?" is answered by the distro, through the existing `--version` probe. They are still needed, for two other reasons, and the plan must not confuse the three: (i) the `windows-latest` advisory job runs the **whole unit suite**, and the suite's stub-based tests create a host executable and read its mode bits (F33), so a permanently red runner is a runner nobody reads; (ii) `console/src/main/installations.ts:619` asks `isExecutableFile` about a **stored** installation's `binaryPath`, and on the WSL leg that is a Linux path — the one place the host-path machinery meets a path it cannot see, and it must be taught to skip the question rather than answer it wrongly. The plan's Part C separates these: the **route** tasks (which the WSL leg needs) from the **suite** tasks (which the runner needs) |
+| **C6** | *"the CLI resolver running `wsl.exe -d <distro> -- fugaro …` **instead of a host path**"* | *Instead of a host path* is the load-bearing half, and it changes what the tree's POSIX assumptions are for. On the WSL leg the CLI is a file **inside a distribution**, which the Windows side cannot `stat` at all — so `binDirectories`, `isExecutableFile`, `locationsFor` and `childPath`'s join are **not on the WSL route**: the question "is there a `fugaro` here, and does it run?" is answered by the distro, through the existing `--version` probe. They are still needed, for two other reasons, and the plan must not confuse the three: (i) the `windows-latest` pack job runs the **whole unit suite** before it packs, and the suite's stub-based tests create a host executable and read its mode bits (F33), so a job that can never be green is a job whose release-time result nobody would believe; (ii) `console/src/main/installations.ts:619` asks `isExecutableFile` about a **stored** installation's `binaryPath`, and on the WSL leg that is a Linux path — the one place the host-path machinery meets a path it cannot see, and it must be taught to skip the question rather than answer it wrongly. The plan's Part C separates these: the **route** tasks (which the WSL leg needs) from the **suite** tasks (which the runner needs) |
 
 ---
 
@@ -152,7 +152,7 @@ constraint this work must not break; `Open` is a question the tree cannot answer
 | **F30** | Exists | `console/src/renderer/screens/degraded.ts:490` `NoBinaryState`; `degraded.ts:575` `noBinary`; `degraded.ts:661` `renderUnavailable` | The no-binary page draws a headline, the reason, the install command as `<code>`, a binary picker, and **the count of what was searched** — not the paths, which is the path-redaction rule. The state is *stated* in the renderer rather than imported from `src/source/cli.ts` (`degraded.ts:37`) because the renderer may not import a module that spawns. Consequence: the three (four, per F26) new pages are drawn the same way, in the same file, with the same stated-state rule — and [docs/design/console-styling.md](../design/console-styling.md) §2.7–§2.9 is where the variants and their one table live. |
 | **F31** | Exists | `console/src/source/cli.ts:181` `NoInstallationState`; `cli.ts:217` `noInstallationState`; `cli.ts:203` `class NoInstallation` | The state carries `kind: 'no-binary'`, a `reason`, the `installCommand`, the `searched` list (re-derived from the same `binDirectories` the failed resolution walked) and the `configuredPath`. `createBoundSource` refuses to spawn at all when there is no installation. Consequence: the WSL states are **siblings of this one** — same shape, same refusal path, no sidecar, no retry — and the plan's naming is `no-wsl`, `no-distro`, `no-fugaro-in-distro`, each with its own reason and remedy. |
 | **F32** | Wrong | `console/src/source/cli.ts:173` `FUGARO_INSTALL_COMMAND` = `brew install dimipaun/tap/fugaro` | One install line, shown on every platform. On the Windows leg it is wrong twice: it is not a Windows install, and Homebrew is not in the distribution. Consequence: the install line becomes per-route, and the WSL route's line is `docs/windows-cli/wsl.md`'s own procedure (download the linux archive, verify it, `tar -xzf`, put it on `~/.local/bin`) — pointed at, not retyped, so the two cannot drift. |
-| **F33** | Exists | `console/test/unit/stub.ts:113` `installStub`; `stub.ts:68` `StubReport` | The test double is a real executable `fugaro` that `exec`s the test's own Node and appends a JSON line to a report file — **the child's own view** of its argv, cwd, environment keys, `PATH` and `FUGARO_PROJECT`, out of band. Consequence: the fake `wsl.exe` the brief asks for is this mechanism with one more hop, and it is why the resolver tests need no Windows machine. One caveat: `installStub` sets the execute bit, which `isExecutableFile` reads — so the existing stub-based tests **cannot pass on `windows-latest` today** (F4), which is why the Windows CI job is advisory and expected red until Part C lands. |
+| **F33** | Exists | `console/test/unit/stub.ts:113` `installStub`; `stub.ts:68` `StubReport` | The test double is a real executable `fugaro` that `exec`s the test's own Node and appends a JSON line to a report file — **the child's own view** of its argv, cwd, environment keys, `PATH` and `FUGARO_PROJECT`, out of band. Consequence: the fake `wsl.exe` the brief asks for is this mechanism with one more hop, and it is why the resolver tests need no Windows machine. One caveat: `installStub` sets the execute bit, which `isExecutableFile` reads — so the existing stub-based tests **cannot pass on `windows-latest` today** (F4), which is why the release-time Windows pack job cannot be green until Part C lands — and why D7(c)'s by-hand dry run is the only way to find that out before a tag. |
 | **F34** | Exists | `spawn.ts:786` `binDirectories`'s `platform` option; `spawn.ts:919` `childPath`'s; `spawn.ts:234` `locationsFor`'s; `spawn.ts:955` `privateWorkingDirectory`'s `base`/`uid` options; `spawn.test.ts:753`–`:758`, `:963`, `:896`–`:926` | **Every platform-dependent function in the resolver already takes the platform as an argument**, and the tests already drive both platforms from one machine — `childPath(binary, 'darwin')` beside `childPath(binary, 'linux')`, `locationsFor(platform)` walked in a loop, `privateWorkingDirectory({base, uid})` with a fabricated uid. The comments say why: *"`platform` replaces `process.platform` … It is how a test on one machine drives the other platform's order"*. Consequence: this work's test strategy rests on a seam that **exists** rather than on one it must build, and the two Windows-shaped cases it adds (T-C7's `';'` split, T-D4's no-mode-claim) are rows in tests that already have the shape. It is also why the WSL route's *third* platform does not have to be the running one to be tested. |
 
 ### 2.6 The packer, the installer and the release (brief item 5)
@@ -164,7 +164,7 @@ constraint this work must not break; `Open` is a question the tree cannot answer
 | **F37** | Gap | `console/package.json`'s `build.electronDownload.checksums` | Three hashes are pinned: `darwin-arm64`, `darwin-x64`, `linux-x64`. Consequence: a Windows leg downloads Electron against **no pinned hash**. Adding one is a supply-chain pin and therefore an owner-reviewable edit, not a convenience. |
 | **F38** | Exists | `fuses.ts:331` `macExecutable`; `fuses.ts:358` `linuxExecutable`; `fuses.ts:358`–`fuses.ts:369` | The per-platform executable resolution is already one table with one refusal for a context that names nothing. Consequence: the `win32` row's shape is decided, not invented — and the refusal it inherits (a context that names no binary is refused rather than guessed) is the property that keeps a Windows pack from silently flipping nothing. |
 | **F39** | Rule | `docs/design/desktop-console.md` §7.6 rule 2; `docs/release.md` "Verifying the console's release" | The Linux artifacts are unsigned and *"the release must not describe the Linux artifacts as signed"*. The Windows ruling keeps the same shape and adds a user-visible consequence: **SmartScreen will warn** on an unsigned installer, and the warning names the publisher as unknown. Consequence: the docs and the release notes say "unsigned" in those words and say what SmartScreen will show; nothing in the installer job may claim otherwise, and there is no signing key to handle. |
-| **F40** | Exists | `docs/pending-workflows/console-linux.yml`; `docs/pending-workflows/README.md` `## console-linux.yml` | The Linux precedent, staged whole: the header's STAGED/NOT APPLIED block, the copy-in commands, `permissions: contents: read`, pinned actions by 40-hex SHA, `node-version-file: console/package.json`, `npm ci --ignore-scripts`, the exactly-one-artifact assertion, `upload-artifact` with `if-no-files-found: error`. Consequence: the Windows file is the same file with a different runner, a different packer target and a different artifact assertion — and the reason it is **its own workflow** is the one that file states: the release gate's required-check list is derived from `console-tests.yml`'s **single** job. |
+| **F40** | Exists | `docs/pending-workflows/console-linux.yml`; `docs/pending-workflows/README.md` `## console-linux.yml` | The Linux precedent, staged whole: the header's STAGED/NOT APPLIED block, the copy-in commands, `permissions: contents: read`, pinned actions by 40-hex SHA, `node-version-file: console/package.json`, `npm ci --ignore-scripts`, the exactly-one-artifact assertion, `upload-artifact` with `if-no-files-found: error`. Consequence: the Windows file is the same file with a different runner, a different packer target, a different artifact assertion **and different triggers** — the Linux file runs on every pull request, and D7(c) puts the Windows one on the release tag and a manual dispatch, and nowhere else. The reason it is **its own workflow** is still the one that file states: the release gate's required-check list is derived from `console-tests.yml`'s **single** job, so a second job in that file would be a gate change by the back door (D8(a)). |
 | **F41** | Rule | `scripts/release-gate.sh`'s `names=(...)`; `internal/cli/docs_desktop_console_test.go:4315` `deriveConsoleCheckNames`; `docs_desktop_console_test.go:4429` `TestReleaseGateRequiresTheConsoleCheck` | The gate's list is the two console matrix legs plus `test`, `terraform` and `rules`, and the derivation **refuses a workflow with more than one job**. Consequence: the Windows job is not in the gate, a red Windows pack is information rather than a blocked release, and folding it into `console-tests.yml` would silently change which checks gate every tag — the owner's decision, not this work's. |
 | **F42** | Gap | — `.github/workflows/` | `grep -rn windows-latest .github/workflows/` returns **0**. Consequence: the first Windows CI in this repository is this one, and there is no precedent to copy for the runner's quirks (shell, `unset`, path separators in a `run:` step). |
 | **F44** | Rule | `docs/pending-workflows/README.md`'s opening rule | *"Fugaro refuses to push a commit that touches `.github/workflows/**`"*, so every workflow change is staged for the owner. Consequence: the installer job is staged under its own name, with its copy-in in the staging README, and no agent writes the workflow. |
@@ -181,7 +181,7 @@ moved.
 |---|---|---|---|---|
 | **F43** | Wrong | `docs/windows-cli/wsl.md` (its "What native Windows does not do yet" table, the row *"The desktop console \| Out of scope: it needs a Windows CLI and an Authenticode-grade decision first (**F40**)"*, and its F40 line above the table) | The console cannot reach a WSL-only installation. | **Partly reversed for the console**: this work is exactly that reach, and the ruling is the owner's own. The row needs a dated note; the CLI track's F40 stays true of the *CLI*, not of the console. |
 | **F43** | Wrong | `docs/design/desktop-console.md` §4.2 *"**Windows as a *packaged* deliverable** — … signing and distributing Windows is still a later phase (**D10** …)"*, §7.6 rule 3 *"Windows is untouched"*, the owner-run table's *"Windows signing \| owner only, later (D10)"* and D10's row | Windows is out of 0.10.0 in full. | **Half of it moves**: the *build* is in 0.10.0 by the ruling, the *signing* answer is untouched (there is still no Authenticode identity and none is planned). Each sentence needs a dated note that says which half moved — a rewrite would claim more than the ruling does. |
-| **F43** | Wrong | `docs/release.md`'s console paragraphs (*"Windows stays out (D10's amendment takes Linux and leaves Windows where the 2026-10-15 answer put it)"*, and "Verifying the console's release") | The console release carries macOS and Linux and nothing else. | Once Part H lands, the release carries a third, unsigned, SmartScreen-warned asset, and the verification section needs its line. |
+| **F43** | Wrong | `docs/release.md`'s console paragraphs (*"Windows stays out (D10's amendment takes Linux and leaves Windows where the 2026-10-15 answer put it)"*, and "Verifying the console's release") | The console release carries macOS and Linux and nothing else. | **Half of it moves, and the Windows half moves to the end of the line**: under D7(c) the pack runs at release time only, so `docs/release.md` gains the by-hand dry run before the tag and the sentence that the installer is **unsigned** and SmartScreen-warned. **The release's own asset list is unchanged** — the installer is not an asset of `console-vX.Y.Z` (D7), and whether it becomes one is undecided. |
 | **F43** | Wrong | `console/README.md`'s "The Linux build, unsigned (the owner's ruling of 2026-10-20)" section, which opens *"Windows stays out"* | Same. | Same dated note. |
 | **F46** | Exists | `installations.ts`'s bounds (16 entries, 64 KiB) and modes (`0600`/`0700`); `INSTALLATION_KEYS` | The store's shape is fixed and validated with `hasExactlyKeys`, so an unknown key is refused. | A schema that grows must grow **by name** and in one version step, or a console that wrote the new key refuses to read its own file on the next start. The plan makes the schema change and its reader one task. |
 | **F47** | Rule | `website/data/install.yaml`'s Windows entry (*"Windows is untested: this repository builds no Windows binary."*), pinned by `internal/cli/docs_website_install_test.go` to `.goreleaser.yaml` and to README.md's "## Requirements" | Windows is untested and no Windows binary is built. | **Unchanged, and the plan must not touch it.** The console's Windows installer is not a `fugaro` binary: this repository still builds no Windows *CLI*, and the site's sentence is about the CLI. A future edit that read the console's installer as satisfying it would be false, and the Go test that pins the file to `.goreleaser.yaml` is what would catch it. |
@@ -216,13 +216,34 @@ path that exists and is unused.
 
 ## 4. Decisions for the owner
 
-Each is a real fork with a recommendation first, the alternative and what it costs. **None is
-answered, and answering one is not approving a task** — the plan's OWNER APPROVAL GATE is where
-approval happens. The namespaces are local: **D1–D12 are this folder's**, they are unrelated to
+Each is a real fork with a recommendation first, the alternative and what it costs. **The owner
+answered all twelve on 2026-10-20**, and the table below is the record: the option taken and the
+reason in one line. **Answering a decision is not approving the build** — the plan's OWNER APPROVAL
+GATE is where approval happens, and it is still not passed. The namespaces are local: **D1–D12 are
+this folder's**, they are unrelated to
 [docs/design/desktop-console.md](../design/desktop-console.md)'s D1–D20 and to
 [docs/windows-cli/](../windows-cli/README.md)'s D1–D16, and O6 records the collision.
 
+| # | The owner's answer (2026-10-20) | Why, in one line |
+|---|---|---|
+| **D1** | (a) — the named wrapper on `SpawnPlan` | The spawn log is the operator's record of what ran, and a longer argv would name `wsl.exe` as the binary in every refusal sentence they read |
+| **D2** | (a) — a named distribution, defaulted from `wsl.exe --status` | A typo has to be distinguishable from a missing distribution before the spawn fails, and only the enumeration does that |
+| **D3** | (a) — the Linux spelling where the console states or passes, the UNC spelling only where Windows opens | The path on the screen has to be the one the operator can paste into a terminal inside the distribution |
+| **D4** | (a) — one `wslpath -a -u` call per translation, through the same spawner, cached | A mapping the console computed and the distribution disagrees with is the silent wrong answer this repository refuses everywhere else |
+| **D5** | (a) — the existing allow-list, plus `WSLENV` empty and the child-report test | The boundary already holds by construction; the work is to prove it holds with `wsl.exe` in the middle, not to build it |
+| **D6** | (a) — capture the Linux pid and kill inside the distribution | A cancelled read must not leave a `fugaro` holding a lease inside the distribution with nothing on screen to say so |
+| **D7** | (c) — the pack runs at release time only, against the recommendation | The owner's words: *"a waste of resources; if there are problems we will fix them then"* — and the cost, a packaging break showing at release time, is accepted with a by-hand dry run before the tag |
+| **D8** | (a) — not in the release gate | A red Windows pack is information, and adding a leg to the gate would change which checks gate every tag on this repository |
+| **D9** | (a) — `docs/windows-cli/wsl.md` stays the authority | One procedure in one place; the console's first-run page names the document rather than retyping four commands that would then drift |
+| **D10** | (a) — the SmartScreen sentence in the release notes, the release doc and the download page | One sentence, three places a reader arrives from, and no claim anywhere that it is signed |
+| **D11** | (a) — the fake `wsl.exe` on the existing `installStub` | The only claim that matters is what the Linux side received, and only the stub's own out-of-band report can say that |
+| **D12** | (a) — propose Check 119 and claim nothing | The register's rule is that the phase which ships the check writes it, and no phase here is approved |
+
 ### D1 — Where the WSL wrapper lives in the plan
+
+**Answered, 2026-10-20: (a).** The spawn log's `argv` line is the operator's record of what ran, and
+option (b) would put `wsl.exe` where the binary belongs in every refusal sentence they read.
+
 
 **(a) Recommended: a named wrapper on `SpawnPlan`.** `planFor` gains a `command` (the executable,
 `wsl.exe`) and a `prefix` (the argv before the CLI's own words: `-d <distro>`, `--cd <linux-dir>`,
@@ -244,6 +265,9 @@ drift.
 
 ### D2 — What a "distro" is in the store, and its default
 
+**Answered, 2026-10-20: (a).** A typo has to be distinguishable from a missing distribution *before*
+the spawn fails, and only the enumeration does that.
+
 **(a) Recommended: a named distribution, picked from `wsl.exe --list --quiet`, with the default being
 the distribution `wsl.exe --status` names as default, and no default at all if that command says
 nothing.** The store gains one field (`distro`). A stored installation with no `distro` is a Windows
@@ -257,6 +281,9 @@ by one whole failure class.
 operator has two — which is the case the brief's "distro picker/default" exists for.
 
 ### D3 — Which spelling the console shows and which it passes
+
+**Answered, 2026-10-20: (a).** The path on the screen has to be the one the operator can paste into a
+terminal inside the distribution.
 
 **(a) Recommended: the Linux spelling everywhere the console *states* or *passes*, and the
 `\\wsl.localhost\<distro>\…` UNC spelling only where Windows itself opens the path.** The resolved
@@ -273,6 +300,9 @@ moment — the skippable translation F23 describes.
 option (b) with a check that never fires.
 
 ### D4 — How `wslpath` is invoked, and whether it is a separate process
+
+**Answered, 2026-10-20: (a).** A mapping the console computed and the distribution disagrees with is
+the silent wrong answer this repository refuses everywhere else.
 
 **(a) Recommended: one `wsl.exe -d <distro> -- wslpath -a -u <windows-path>` call per translation,
 through the same spawner and the same deadline, cached for the life of the window.** It is the
@@ -291,6 +321,9 @@ from a path that never did.
 
 ### D5 — What "nothing secret crosses" is enforced by
 
+**Answered, 2026-10-20: (a).** The boundary already holds by construction; the work is to prove it
+holds with `wsl.exe` in the middle, not to build it.
+
 **(a) Recommended: the existing construction, plus one explicit statement.** `childEnvironment`'s
 allow-list is the enforcement and it already holds; the plan adds `WSLENV` with an empty value to the
 Windows leg's child environment, so the "share these Windows variables" mechanism is *stated* to be
@@ -307,6 +340,16 @@ added for a future that may never arrive. The plan records it as the *only* admi
 should a secret ever have to cross (F19).
 
 ### D6 — Cancellation that reaches the Linux child
+
+**Answered, 2026-10-20: (a) — the kill inside the distribution.** A cancelled read must not leave a
+`fugaro` holding a lease, a lock or a run's worth of spend inside the distribution with nothing on
+screen to say so. **The residual window, stated rather than implied**: between the `SIGTERM` to
+`wsl.exe` and the `kill` inside the distribution there is a window in which the Windows-side process
+is gone and the Linux-side one is not yet — and if the `wsl.exe` that runs the pid-writing shell
+exits before that file is written, the window is the whole of the cancellation. Part F's cancellation
+task measures what a runner can measure of it and **U6 asks a Windows machine to settle the race**;
+until then the screen says the read was cancelled and the operator's remedy is `ps aux` inside the
+distribution, which is what the manual checklist's step 9 looks at.
 
 **(a) Recommended: capture the Linux-side pid and kill it inside the distribution.** The wrapper
 runs the CLI under a shell that writes its own pid to a file the console can read through the same
@@ -325,20 +368,61 @@ comment.
 
 ### D7 — Where the Windows artifact is built and what it is
 
-**(a) Recommended: `windows-latest`, `npm run package:win` → `electron-builder --win --publish
-never`, NSIS, unsigned, uploaded as a build check.** The default Windows target is NSIS, so it is
-named explicitly rather than inherited; `build.win.artifactName` follows the Linux pattern
-(`Fugaro.Console-${version}-win-${arch}.${ext}`); the version packs as `0.0.0` in CI, exactly as the
-Linux check does.
+**Answered (c), 2026-10-20 — the owner's ruling, against the recommendation below.** The Windows pack
+runs **at release time only**: on the release tag, or on a manual dispatch before it, and **never on a
+pull request**, not even path-filtered. The owner's words: *"a waste of resources; if there are
+problems we will fix them then."*
+
+**What that means, concretely.**
+
+- **The staged file stays its own workflow** — `docs/pending-workflows/console-windows.yml`, one job on
+  `windows-latest`, triggered by `on: push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]` **plus
+  `workflow_dispatch`** and by nothing else. There is no `pull_request` trigger, no advisory pack check
+  on a pull request, and **nothing is added to `console-tests.yml`**: the Windows job is not a third
+  matrix leg and it is not a second job in the tests workflow, which is what keeps the release gate's
+  derived check list exactly as it is (F41, D8(a)).
+- **The artifact is the unsigned NSIS installer** the recommendation describes, and nothing about it
+  changes: `npm run package:win` → `electron-builder --win --publish never`, the NSIS target named
+  explicitly rather than inherited, `build.win.artifactName` following the Linux pattern, uploaded as
+  the job's own artifact with `if-no-files-found: error`. Nothing signs it, so the SmartScreen sentence
+  (D10) is unchanged and the release notes must still say **unsigned** in those words.
+- **The accepted risk: a packaging break shows at release time**, and it is fixed then. Nothing between
+  releases exercises the Windows pack, so a break in `console/package.json`'s `win` block, in the fuse
+  table's `win32` row or in a lockfile bump is found by a release rather than by a pull request. **The
+  mitigation is the manual dispatch**: [docs/release.md](../release.md)'s "Before you tag" checklist
+  tells the owner to run the job by hand before the tag, which is the only dry run this design has, and
+  the checklist says so in those terms.
+- **What the ruling does not change.** The `win32` fuse row and the `win` builder target still land
+  **together, in one part** (F35): there is no "pack it and fix it later", and neither half ships
+  alone. And the ruling answers *where and when the pack runs*, not *what the release does with its
+  artifact*: **the Windows installer is not an asset of `console-vX.Y.Z`**, and whether it becomes one
+  — which would mean the release's `publish` job fetching this workflow's artifact, a mechanism the
+  console release does not have today — is a separate decision that nobody has taken.
+
+The three options as they were written, so the answer can be read against the fork it was made from:
+
+**(a) Recommended, and *not* taken: `windows-latest`, `npm run package:win` → `electron-builder --win
+--publish never`, NSIS, unsigned, uploaded as a build check on every pull request.** The default
+Windows target is NSIS, so it is named explicitly rather than inherited; `build.win.artifactName`
+follows the Linux pattern (`Fugaro.Console-${version}-win-${arch}.${ext}`); the version packs as
+`0.0.0`, exactly as the Linux check does. Its cost is a job on every pull request, which the owner
+weighed and refused.
 
 **(b) A portable `.zip` instead of an installer.** No installer means no SmartScreen decision to
 explain and no `nsis` step — and it means the operator has an unpacked directory, no Start-menu
-entry, no uninstaller, and no answer to "where did it go".
+entry, no uninstaller, and no answer to "where did it go". **Not taken.**
 
-**(c) Build it in the release workflow only (a tag).** Cheaper CI and exactly the failure the Linux
-precedent refuses: a packaging path that is only exercised on a tag breaks silently between releases.
+**(c) Build it at release time only (a tag, or a manual dispatch before one) — the owner's answer.**
+Cheaper CI, and exactly the failure the Linux precedent refuses: a packaging path that is only
+exercised on a tag breaks silently between releases. That objection is not answered by the ruling; it
+is **accepted**, with the by-hand dry run as the mitigation and a red pack at release time as the
+outcome to fix then.
 
 ### D8 — Whether the Windows check joins the release gate
+
+**Answered, 2026-10-20: (a).** A red Windows pack is information, and adding a leg to the gate would
+change which checks gate **every** tag on this repository — the owner's decision, taken deliberately
+rather than by default.
 
 **(a) Recommended: no, exactly as the Linux check does not.** The gate's `names` are derived from
 `console-tests.yml`'s single job and `deriveConsoleCheckNames` refuses a multi-job workflow, so
@@ -358,6 +442,9 @@ the back door. **Refused.**
 
 ### D9 — Where the WSL facts are documented for the operator
 
+**Answered, 2026-10-20: (a).** One procedure in one place; the console's first-run page names the
+document rather than retyping four commands that would then drift.
+
 **(a) Recommended: `docs/windows-cli/wsl.md` stays the install authority and the console links to
 it.** One procedure, one place, and the console's first-run page names the document rather than
 repeating four commands that would then drift (F32).
@@ -372,6 +459,9 @@ about the *console*, and the install procedure is about the *CLI*.
 
 ### D10 — The SmartScreen sentence, and where it goes
 
+**Answered, 2026-10-20: (a).** One sentence, three places a reader arrives from, and no claim anywhere
+that it is signed.
+
 **(a) Recommended: say it in the release notes, in `docs/release.md`'s console verification section,
 and on the download page's console entry — *"the Windows installer is unsigned: Windows SmartScreen
 will warn that the publisher is unknown, and More info → Run anyway is the way past it"*.** One
@@ -385,6 +475,9 @@ answer [docs/windows-cli/](../windows-cli/README.md) leaves standing, and nothin
 read as proposing it.
 
 ### D11 — The test seam for the resolver without a Windows machine
+
+**Answered, 2026-10-20: (a).** The only claim that matters is what the Linux side received, and only
+the stub's own out-of-band report can say that.
 
 **(a) Recommended: a fake `wsl.exe` built on the existing `installStub` mechanism.** A real
 executable named `wsl.exe` on a temporary directory that parses `-d`/`--cd`/`--`, records its own
@@ -401,6 +494,9 @@ self-consistent rather than that the child got the right thing — which is the 
 machine to record, which is the constraint the brief names.
 
 ### D12 — Whether this work claims a check number
+
+**Answered, 2026-10-20: (a).** The register's rule is that the phase which ships the check writes it,
+and no phase here is approved.
 
 **(a) Recommended: propose Check 119 for the owner's manual checklist and claim nothing.** The
 register's written sections run to 89; 90–99, 100–109, 110, 111, 112, 113–118 are taken or named, so
@@ -452,15 +548,15 @@ run by the owner, and so that no sentence in the docs depends on the answer befo
 
 | # | What is unverified | What would settle it |
 |---|---|---|
-| **U1** | That `electron-builder --win` produces an NSIS installer for this app at all, with the six fuses flipped by the `win32` row | The staged `console-windows.yml` on a `windows-latest` runner, once Part B lands |
+| **U1** | That `electron-builder --win` produces an NSIS installer for this app at all, with the six fuses flipped by the `win32` row | A manual dispatch of `console-windows.yml` on a `windows-latest` runner, once Part B lands — or the release-time run |
 | **U2** | That the fuse bytes are where the `win32` row says (`<appOutDir>/<productFilename>.exe`) for this packer version | The same run's artifact, opened; the Linux leg's `--appimage-extract` read-back is the precedent |
-| **U3** | Whether `npm run test:unit` passes on `windows-latest` once Part C lands — the suite has 75 test files and only some are platform-neutral | The staged workflow's test step |
+| **U3** | Whether `npm run test:unit` passes on `windows-latest` once Part C lands — the suite has 75 test files and only some are platform-neutral | The same run's `npm run test:unit` step |
 | **U4** | The exact behaviour of `wsl.exe` when `WSLENV` is **absent** rather than empty | A Windows machine, or the WSL documentation read at the version the runner has |
 | **U5** | Whether killing the Windows-side `wsl.exe` kills the Linux process it started | A Windows machine: start `sleep 300` through `wsl.exe`, kill the Windows side, look inside the distribution |
 | **U6** | Whether the pid-capture design of D6(a) survives a `wsl.exe` that exits before the pid file is written | The same machine, with the race run deliberately |
 | **U7** | Whether `wsl.exe` propagates the Linux child's exit status unchanged | A Windows machine: `wsl.exe -d <d> -- sh -c 'exit 7'`; read the status |
 | **U8** | What `wsl.exe` returns when the distribution does not exist, and when it exists but will not start | The same machine, both cases |
-| **U9** | The encoding of `wsl.exe --list --quiet` on the runner's Windows build (UTF-16LE or UTF-8), and whether `WSL_UTF8=1` is honoured | The staged workflow, or a Windows machine |
+| **U9** | The encoding of `wsl.exe --list --quiet` on the runner's Windows build (UTF-16LE or UTF-8), and whether `WSL_UTF8=1` is honoured | The same run, or a Windows machine |
 | **U10** | Whether `wslpath -a -u` round-trips a `\\wsl.localhost\…` UNC path and a path under a custom mount | A Windows machine with a non-default mount |
 | **U11** | Whether `privateWorkingDirectory`'s Windows degradation (F12) is safe enough: `tmpdir()` on Windows is per-user, but nothing checks the ACL | A Windows machine, and an owner decision on whether an ACL check is owed |
 | **U12** | Whether the console's own store's `0600` matters on NTFS at all (F45) | `SECURITY.md`'s existing answer, and the owner's view of whether a Windows-specific note is owed |
@@ -470,7 +566,7 @@ run by the owner, and so that no sentence in the docs depends on the answer befo
 | **U16** | Whether `wsl.exe`'s argv is visible in the Windows process table to *other* users, and whether that matters for the paths it carries | The owner's judgement; the argv carries paths and a project name, never a secret (F18, F22) |
 | **U17** | Whether a distribution can be listed while it is stopped, and what `--list --quiet` says about a stopped one | A Windows machine with a stopped distribution |
 | **U18** | Whether the SmartScreen warning's exact wording matches what D10(a) says | A Windows machine, downloading the first installer |
-| **U19** | Whether `electron-builder`'s NSIS target needs a Windows-only dependency the lockfile does not carry | The staged workflow's first run |
+| **U19** | Whether `electron-builder`'s NSIS target needs a Windows-only dependency the lockfile does not carry | The first manual dispatch of `console-windows.yml` |
 
 **What this repository *can* establish, and does**: the argv the console builds (unit tests, with the
 fake), the environment the child receives (the stub's own report), the translation calls and their

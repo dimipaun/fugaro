@@ -1483,9 +1483,11 @@ P4.3) — `docs/pending-workflows/console-linux.yml` — the desktop console's L
 holds no secret) — `docs/pending-workflows/console-release-linux.yml` — the console's
 signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
 and so is copied over it as well as into `.github/workflows/` — and
-`docs/pending-workflows/console-windows.yml` — the desktop console's Windows build check
-(2026-10-20: it typechecks, runs the unit suite and packs the unsigned NSIS installer on
-`windows-latest`, and holds no secret). None of the four is this
+`docs/pending-workflows/console-windows.yml` — the desktop console's Windows pack, and the one
+file of the four that is not a pull-request check (2026-10-20: it typechecks, runs the unit suite
+and packs the unsigned NSIS installer on `windows-latest`, and holds no secret, and it runs **at
+release time only** — the release tag or a manual dispatch before one, never on a pull request,
+not even path-filtered). None of the four is this
 site's: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
