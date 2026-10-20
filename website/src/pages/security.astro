@@ -94,8 +94,11 @@
  *
  * Nothing in this file fetches anything, reads a clock or starts a process: the page is
  * built from the files in this repository (Global Constraints 4 and 5). The diagram is one
- * inline `<svg>` and the page ships no script (the site's one first-party file is
- * `public/scripts/site.js`, which this page does not load).
+ * inline `<svg>`: the drawing loads nothing — no image file, no font file, no script of its
+ * own — and the page adds no script of its own either. The site's one first-party file,
+ * `public/scripts/site.js`, is the layout's and loads on every page (the layout is held to
+ * that by `website/test/layout.mjs`); nothing in it reads the drawing, which is markup a
+ * browser paints.
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
@@ -418,11 +421,16 @@ const DIAGRAM_LIMITS = [
           aria-label={DIAGRAM_LABEL}
           focusable="false"
         >
-          {/* Who sends the task: the repository, and the people the document trusts with it. */}
-          <rect class="boundary-card" x="12" y="12" width="336" height="92" rx="12" />
-          <text class="boundary-title" x="28" y="42">{diagramLabel('the source of the task')}</text>
-          <text class="boundary-line" x="28" y="66">{diagramLabel('anyone who can push to it, launch a run,')}</text>
-          <text class="boundary-line" x="28" y="88">{diagramLabel('or is listed in followup.trusted')}</text>
+          {/* Who sends the task: the repository, and the people the document trusts with it.
+              The phrase is the longest the drawing draws and it is broken where it is broken
+              because of that: at the estimate the gate measures with, the breaks the first cut
+              and its first repair used (after "run,", then after "launch") are each wider than
+              this card's content box, and this one fits it. The lines of a drawing are
+              hand-placed and the gate re-measures them. */}
+          <rect class="boundary-card" data-pad="16" x="12" y="12" width="336" height="92" rx="12" />
+          <text class="boundary-title" font-size="13" x="28" y="42">{diagramLabel('the source of the task')}</text>
+          <text class="boundary-line" font-size="13" x="28" y="66">{diagramLabel('anyone who can push to it, launch a')}</text>
+          <text class="boundary-line" font-size="13" x="28" y="88">{diagramLabel('run, or is listed in followup.trusted')}</text>
 
           <g class="boundary-arrow">
             <line x1="180" y1="104" x2="180" y2="121" />
@@ -432,22 +440,22 @@ const DIAGRAM_LIMITS = [
           {/* The boundary itself: one container per run, and what the document says is inside
               it. The dashed box is the boundary, so nothing is drawn crossing it except the
               two arrows that leave it. */}
-          <rect class="boundary-boundary" x="12" y="130" width="336" height="424" rx="16" />
-          <text class="boundary-heading" x="32" y="166">{diagramLabel('one container per run')}</text>
+          <rect class="boundary-boundary" data-pad="20" x="12" y="130" width="336" height="424" rx="16" />
+          <text class="boundary-heading" font-size="20" x="32" y="166">{diagramLabel('one container per run')}</text>
 
-          <rect class="boundary-card" x="32" y="182" width="274" height="72" rx="10" />
-          <text class="boundary-title" x="48" y="208">{diagramLabel('the agent')}</text>
-          <text class="boundary-line" x="48" y="232">{diagramLabel('permission prompts turned off')}</text>
+          <rect class="boundary-card" data-pad="16" x="32" y="182" width="288" height="72" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="208">{diagramLabel('the agent')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="232">{diagramLabel('permission prompts turned off')}</text>
 
-          <rect class="boundary-card" x="32" y="262" width="274" height="72" rx="10" />
-          <text class="boundary-title" x="48" y="288">{diagramLabel('the runner')}</text>
-          <text class="boundary-line" x="48" y="310">{diagramLabel('the agent shares the container')}</text>
-          <text class="boundary-line" x="48" y="328">{diagramLabel('can read its /proc')}</text>
+          <rect class="boundary-card" data-pad="16" x="32" y="262" width="288" height="72" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="288">{diagramLabel('the runner')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="310">{diagramLabel('the agent shares the container')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="328">{diagramLabel('can read its /proc')}</text>
 
-          <rect class="boundary-card" x="32" y="342" width="274" height="96" rx="10" />
-          <text class="boundary-title" x="48" y="368">{diagramLabel('per-repository identities')}</text>
-          <text class="boundary-line" x="48" y="392">{diagramLabel('their own service accounts')}</text>
-          <text class="boundary-line" x="48" y="416">{diagramLabel('narrow git credentials')}</text>
+          <rect class="boundary-card" data-pad="16" x="32" y="342" width="288" height="96" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="368">{diagramLabel('per-repository identities')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="392">{diagramLabel('their own service accounts')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="416">{diagramLabel('narrow git credentials')}</text>
 
           {/* The key the container holds, and the gateway that would keep it out of the agent's
               environment — the document's own conditional, in the order it states it: the
@@ -457,27 +465,28 @@ const DIAGRAM_LIMITS = [
               key and where it sits. Drawing "the budget gateway" beside "sits in the agent's
               environment" as two co-equal lines would be a conjunction the document never
               states (SECURITY.md:64 and :72 are the two halves of one conditional), and the
-              drawing is the one thing here no gate reads. */}
-          <rect class="boundary-card" x="32" y="446" width="274" height="96" rx="10" />
-          <text class="boundary-title" x="48" y="472">{diagramLabel('the budget gateway')}</text>
-          <text class="boundary-line" x="48" y="494">{diagramLabel('not on by default')}</text>
-          <text class="boundary-line" x="48" y="512">{diagramLabel('the real model key')}</text>
-          <text class="boundary-line" x="48" y="530">{diagramLabel("sits in the agent's environment")}</text>
+              arrangement is the one thing about this drawing no gate reads — the gate measures
+              each label against the box it is drawn in, and cannot read what the boxes mean. */}
+          <rect class="boundary-card" data-pad="16" x="32" y="446" width="288" height="96" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="472">{diagramLabel('the budget gateway')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="494">{diagramLabel('not on by default')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="512">{diagramLabel('the real model key')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="530">{diagramLabel("sits in the agent's environment")}</text>
 
           {/* Out of the container: the pull request every run ends with. */}
           <g class="boundary-arrow">
             <line x1="150" y1="554" x2="150" y2="571" />
             <polygon class="boundary-arrow-head" points="150,580 144,569 156,569" />
           </g>
-          <rect class="boundary-card" x="12" y="580" width="298" height="64" rx="12" />
-          <text class="boundary-title" x="28" y="618">{diagramLabel('ends every run with a pull request')}</text>
+          <rect class="boundary-card" data-pad="16" x="12" y="580" width="318" height="64" rx="12" />
+          <text class="boundary-title" font-size="13" x="28" y="618">{diagramLabel('ends every run with a pull request')}</text>
 
           {/* And out of the boundary, past it: the egress the document says nothing stops. */}
           <g class="boundary-arrow">
-            <path d="M316 528 H 328 V 631" />
-            <polygon class="boundary-arrow-head" points="328,640 322,629 334,629" />
+            <path d="M330 528 H 342 V 631" />
+            <polygon class="boundary-arrow-head" points="342,640 336,629 348,629" />
           </g>
-          <text class="boundary-line" x="348" y="664" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
+          <text class="boundary-line" font-size="13" x="348" y="664" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
         </svg>
 
         <ul class="boundary-facts">
@@ -535,11 +544,18 @@ const DIAGRAM_LIMITS = [
   /* The boundary diagram. One `<svg>` with a 360-unit-wide `viewBox`, drawn top to bottom and
      rendered at the width of the column up to 360 px, so the picture scales as one picture and
      every label keeps its place in it at every width. The drawing is vertical at all of them:
-     a second, narrower layout below a breakpoint would buy nothing, because the labels are the
-     site's smallest type size (`--font-size-xs`) at the 360 px the picture is laid out for and
-     scale with it below that — nothing reflows, so nothing can collide. No script reads or
-     writes any of this; the shapes are painted from the classes below and every colour is a
-     token. */
+     a second, narrower layout below a breakpoint would buy nothing, because the labels are set
+     at the site's smallest type size and scale with the picture below that — nothing reflows,
+     so nothing can collide.
+
+     The size is a `font-size` on each `<text>` and not a declaration here, because it is the
+     drawing's own geometry: the gate measures a label against the box it is drawn in
+     (`website/test/security.mjs`), and the box it has is a length in the picture's units, so
+     the size it is drawn at has to be one too. 13 units is `--font-size-xs` (0.8125rem) and 20
+     is `--font-size-lg` (1.25rem) at the 16 px root the picture's 360 units are laid out
+     against, which is the width it is shown at — the same arrangement, and the same estimate,
+     as the How It Works drawing (`src/components/RunDiagram.astro`). No script reads or writes
+     any of this; the shapes are painted from the classes below and every colour is a token. */
   [data-security-diagram] {
     margin: 0 0 var(--space-lg);
   }
@@ -557,7 +573,6 @@ const DIAGRAM_LIMITS = [
 
   [data-security-diagram] text {
     font-family: var(--font-sans);
-    font-size: var(--font-size-xs);
     fill: var(--text-muted);
   }
 
@@ -567,7 +582,6 @@ const DIAGRAM_LIMITS = [
   }
 
   [data-security-diagram] .boundary-heading {
-    font-size: var(--font-size-lg);
     font-weight: 600;
     fill: var(--accent);
   }

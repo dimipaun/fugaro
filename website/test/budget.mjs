@@ -26,7 +26,8 @@
 // policy document's own *In short* section, its own reporting section and a link to the
 // document — and, from the owner's brief of **2026-10-20**, the boundary diagram that page now
 // opens with (its labels, the facts under it and the two lines below them, all of them the
-// document's own words), which is the round this build's site figure comes from and the one
+// document's own words) and its review round's declaration of the drawing's own geometry in the
+// markup, which is the round this build's site figure comes from and the one
 // named in the list below, together with the 2 bytes the new spacing gate's own find cost the
 // console page — plus 25 %, which is D192's rule and the rule the README's
 // loose figures are three times.
@@ -106,7 +107,9 @@
 // it and the deletion section carved out from under it; the app's reporting made always-on, with
 // no switch in the app (the owner's ruling of 2026-10-19); the security page's cut to the
 // document's own *In short* section, its reporting section and a link, with its review rounds,
-// and the boundary diagram it now opens with (the owner's brief of 2026-10-20); and the header
+// and the boundary diagram it now opens with (the owner's brief of 2026-10-20) together with
+// that round's own review, which declared the drawing's geometry in its markup so the labels
+// can be measured against the boxes they are drawn in; and the header
 // put on a layer of its own — each re-derived
 // in the commit that moved it (D192). None of those figures is
 // repeated here, because a figure in a comment is a figure that moves with

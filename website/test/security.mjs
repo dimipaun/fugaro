@@ -470,6 +470,97 @@ function checkLinks(region, { document, heading, kind, fail, what }) {
 }
 
 /**
+ * What a run of text takes at a size, and the estimate the drawing is laid out against. The
+ * labels are set in the reader's own sans (`--font-sans`), whose stack lands on a wide face on
+ * more systems than not — DejaVu Sans on most Linux desktops is the widest of them, and about a
+ * tenth wider per character than Arial or Inter. `src/components/RunDiagram.astro` lays the How
+ * It Works drawing out with the same estimate and refuses an over-wide line at build time; this
+ * is the same measurement taken again over the built page.
+ */
+const CHAR = 0.62
+
+/** The width of a line at a size, at the estimate above. */
+const lineWidth = (said, size) => [...said].length * CHAR * size
+
+/**
+ * The box a `<text>` of the drawing is drawn in, read off the markup alone: the line's width at
+ * the size the node declares, the anchor it is drawn from, and the baseline it sits on. A node
+ * without those numbers is a line this check cannot measure, and `null` is what the caller
+ * refuses rather than passing.
+ */
+function drawnBox(node) {
+  const size = Number(node.attrs.get('font-size'))
+  const x = Number(node.attrs.get('x'))
+  const y = Number(node.attrs.get('y'))
+  if (![size, x, y].every(Number.isFinite)) return null
+  const width = lineWidth(prose(text(node)), size)
+  const anchor = node.attrs.get('text-anchor') ?? 'start'
+  const x0 = anchor === 'middle' ? x - width / 2 : anchor === 'end' ? x - width : x
+  return { size, x, y, width, x0, x1: x0 + width }
+}
+
+/**
+ * Every label of the drawing, measured against the box it is drawn in: the card whose rect
+ * holds the label's baseline, inset by the `data-pad` that card declares, or the drawing's own
+ * `viewBox` for a label drawn outside every card.
+ *
+ * The labels of this drawing are hand-placed against fixed card widths and every one of them is
+ * quoted from `SECURITY.md`, which the owner edits — so a phrase that grows a word or two
+ * overruns its card, and a line over a card's border is the one defect of this picture the
+ * label rule cannot see: the longer phrase is still a phrase of the document. The How It Works
+ * drawing is measured the same way, at build time and over the built page
+ * (`website/test/how-it-works.mjs`); here the built page is the whole of it, because the
+ * geometry is written by hand in the page rather than generated from the same numbers.
+ */
+function checkLabelBoxes(picture, drawn, fail) {
+  const view = (picture.attrs.get('viewbox') ?? '').trim().split(/\s+/).map(Number)
+  const cards = findAll(picture, 'rect').map((el) => ({
+    x: Number(el.attrs.get('x')),
+    y: Number(el.attrs.get('y')),
+    width: Number(el.attrs.get('width')),
+    height: Number(el.attrs.get('height')),
+    pad: Number(el.attrs.get('data-pad')),
+  }))
+  for (const [i, node] of drawn.entries()) {
+    const what = `the drawing's label ${i + 1}`
+    const label = drawnBox(node)
+    if (label === null) {
+      fail(
+        `${what} is drawn without the position or the size it is drawn at, and a label this check cannot measure is a label nothing holds inside its box: every label of the drawing carries its own \`x\`, \`y\` and \`font-size\`, because the size it is drawn at is a length in the picture's own units (the owner's brief of 2026-10-20)`,
+      )
+      continue
+    }
+    // The box the label is drawn in: the smallest rect whose own box holds the label's
+    // baseline. A label no rect holds is drawn in the open picture, and the picture's own edge
+    // is what it has to stay inside.
+    const holds = cards
+      .filter(
+        (card) =>
+          [card.x, card.y, card.width, card.height, card.pad].every(Number.isFinite) &&
+          label.y >= card.y &&
+          label.y <= card.y + card.height &&
+          label.x >= card.x &&
+          label.x <= card.x + card.width,
+      )
+      .sort((a, b) => a.width * a.height - b.width * b.height)
+    const box = holds[0]
+    const left = box === undefined ? view[0] : box.x + box.pad
+    const right = box === undefined ? view[0] + view[2] : box.x + box.width - box.pad
+    if (![left, right].every(Number.isFinite)) {
+      fail(
+        `${what} is drawn in a box this check cannot measure, and a box nothing can measure is a box nothing holds a label inside: the drawing declares the \`viewBox\` its units are in, and every card declares the inset (\`data-pad\`) its contents are drawn at (the owner's brief of 2026-10-20)`,
+      )
+      continue
+    }
+    if (label.x0 < left - 0.5 || label.x1 > right + 0.5) {
+      fail(
+        `${what} says ${JSON.stringify(prose(text(node)))} and is drawn from ${label.x0.toFixed(1)} to ${label.x1.toFixed(1)} units, and the ${box === undefined ? 'drawing' : 'card it is drawn in'} runs ${left.toFixed(1)} to ${right.toFixed(1)}: the picture is laid out for the font the page's stack resolves to on a reader's system (DejaVu Sans and the other wide sans faces are wider per character than Arial or Inter), and a line that does not fit its room is a line over the card's border — or past the picture's own edge. Every label here is hand-placed and every one of them is quoted from ${SOURCE}, which the owner edits, so a phrase that grows a word overruns its box and nothing else in this file would see it (the owner's brief of 2026-10-20)`,
+      )
+    }
+  }
+}
+
+/**
  * The boundary diagram, held to the brief's own rules (the owner's brief of 2026-10-20).
  *
  * The rule this gate exists for is the label one: **the picture is one named image, and each
@@ -484,7 +575,8 @@ function checkLinks(region, { document, heading, kind, fail, what }) {
  *
  * The rest is the shape the brief asks for: one `<svg>` with `role="img"` and a non-empty
  * `aria-label`, the labels inside it, the document's own facts as one list under the picture,
- * the two lines below that, and no script (the brief: "No JavaScript").
+ * the two lines below that, and no script (the brief: "No JavaScript") — and, over the built
+ * page, every label measured against the box it is drawn in (`checkLabelBoxes`).
  */
 function checkDiagram(region, { document, beside, fail }) {
   const headings = childElements(region).filter((child) => child.name === 'h2')
@@ -547,6 +639,7 @@ function checkDiagram(region, { document, beside, fail }) {
         `the drawing carries ${drawn.length} labels where the boundary diagram draws the trust boundary: the picture is this page's own, and a drawing with ${drawn.length} of them has stopped drawing what the document describes (the owner's brief of 2026-10-20)`,
       )
     }
+    checkLabelBoxes(picture, drawn, fail)
   }
 
   const facts = findAll(figure, 'li')
@@ -933,6 +1026,40 @@ test('a document the page cannot render stops the build', (t) => {
   )
 })
 
+test('a drawn phrase the document no longer carries stops the build', (t) => {
+  // The mechanism every label of the boundary diagram rests on: `security.astro`'s `quoted()`
+  // refuses a phrase the document does not carry, so a `SECURITY.md` edit that rewrites one of
+  // the phrases the picture is drawn from stops the build rather than shipping a drawing that
+  // makes a claim the policy no longer makes (D99). The plant is made in the copy's generated
+  // document — `website/content/security.md`, the file the page reads — because `SECURITY.md`
+  // itself is the owner's file and this gate does not edit it.
+  //
+  // The phrase planted out is the one the drawing is *named* with: `DIAGRAM_LABEL`, the
+  // sentence the picture is announced as, whose words are also one of the facts under it. The
+  // failure has to name it, because the person editing the document has to see which sentence
+  // the page needs and no longer has.
+  const drifted = buildCopy(
+    t,
+    ({ site }) => patchGenerated(site, /with its permission prompts turned off/g, 'with its permission prompts switched off'),
+    'fugaro-security-drifted-',
+  )
+  assert.notEqual(
+    drifted.status,
+    0,
+    `a phrase the boundary diagram draws, rewritten in ${SOURCE}, did not stop the build, so the page ships a picture drawn from a sentence the policy no longer carries:\n${drifted.output}`,
+  )
+  assert.match(
+    drifted.output,
+    /does not say "Fugaro runs a coding agent with its permission prompts turned off, in a fresh cloud container per run, and ends every run with a pull request"/,
+    `the build failed, but not at the page's own reading of the drawing's words: ${drifted.output}`,
+  )
+  assert.match(
+    drifted.output,
+    /renders it as a label of its boundary diagram/,
+    `the failure does not say the phrase is a label of the drawing, so the person editing the document cannot tell what the page needs it for: ${drifted.output}`,
+  )
+})
+
 test('a wrapped bullet is one bullet to the page', (t) => {
   // The other side of (a), and the reason the fix is a rule about blank lines rather than a ban
   // on the second line of a bullet: `SECURITY.md` wraps its bullets, and a continuation line is
@@ -1002,6 +1129,18 @@ test('the gate refuses each planted defect', (t) => {
     'the label is refused for the wrong reason, or not at all',
   )
 
+  // A label the drawing has no room for: the phrase is one `SECURITY.md` carries and the page
+  // renders beside the picture, so the label rule above and the phrase rule below both pass it
+  // — the box it is drawn in is the only rule here that sees it. This is what a longer phrase
+  // in the document does to a hand-placed drawing, and it is the defect a phrase the owner
+  // grows by a word would ship: a line over the card's border.
+  const overwide = planted(html, />the agent </, '>Fugaro runs a coding agent with its permission prompts turned off <')
+  assert.match(
+    verdict(t, overwide).join('\n'),
+    /the drawing's label \d+ says "Fugaro runs a coding agent with its permission prompts turned off" and is drawn from \d+\.\d+ to \d+\.\d+ units, and the card it is drawn in runs/,
+    'a label wider than the card it is drawn in is not refused, so a phrase that grows in SECURITY.md overruns the picture with nothing here to notice',
+  )
+
   // The picture with its name taken off: a screen reader reads the drawing as nothing. The
   // plant is anchored on the drawing's own class, because the layout's own markup carries
   // `aria-label`s of its own (the consent dialog, the sections menu) and an unanchored pattern
@@ -1027,7 +1166,7 @@ test('the gate refuses each planted defect', (t) => {
 
   // A script in the drawing: the brief's "No JavaScript", and the site loads one first-party
   // file and no other.
-  const scripted = planted(html, /(<rect class="boundary-card" x="12" y="12")/, '<script>void 0</script>$1')
+  const scripted = planted(html, /(<rect class="boundary-card"[^>]*x="12" y="12")/, '<script>void 0</script>$1')
   assert.match(verdict(t, scripted).join('\n'), /the boundary diagram carries a <script>/, 'a script inside the drawing is not refused')
 
   // A paragraph slipped into the diagram, where the balance counts it as the region's own text
