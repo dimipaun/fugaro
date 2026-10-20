@@ -316,7 +316,7 @@ store this work has to build (D7).
 
 **#16 — A lease's staleness signal is weaker than the branch lock's, and that is a property of the two mechanisms rather than an oversight. — Rule.**
 `internal/lock/lock.go`'s `Stale` needs more than a timer: `holder.Execution != ""` **and**
-`executionTerminal`, a fact the backend confirms — `internal/runner/lockcache.go`'s
+`executionTerminal`, a fact the backend confirms — `internal/runner/runner.go`'s
 `errOwnerUnknown` is the case where it cannot be confirmed, and the lock refuses to take over
 without it. A lease has no such oracle: the only signal is that heartbeats stopped
 (`internal/budget/registry.go`'s `Session.heartbeat`, `internal/budget/sweep.go`'s
