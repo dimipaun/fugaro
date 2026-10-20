@@ -226,9 +226,7 @@ func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
 	opts := gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
-	be, err := backend.Open(ctx, lc.Backend(), map[string]backend.Opener{
-		backend.CloudRun: func(ctx context.Context) (backend.Backend, error) { return gcp.New(ctx, opts) },
-	})
+	be, err := backend.Open(ctx, lc.Backend(), cloudOpeners(lc, opts))
 	if err != nil {
 		return nil, remote(err)
 	}
@@ -241,6 +239,104 @@ func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
 		return nil, err
 	}
 	return &cloudEnv{lc: lc, bucket: b, be: be, gcp: opts}, nil
+}
+
+// cloudOpeners is the opener map backend.Open picks from: one entry per
+// backend name this build can open, each constructing its backend from the
+// same project config. backend.Open's contract is kept on both sides:
+// lc.Backend() is backend.CloudRun when the config names none, and a name with
+// no entry here fails closed, naming the entries there are, rather than
+// falling back to Cloud Run.
+//
+// The Batch entry is registered and never selected: internal/localcfg refuses
+// `backend: cloud-batch` until the task that turns it on (design
+// compute-backend.md §8.1), so no installation reaches it. It is wired here
+// and not in a test because the seam's second implementation has to be opened
+// from an installation's own facts -- its run account, its network, its
+// recorded socket gid -- and this is the only place that holds them.
+func cloudOpeners(lc *localcfg.Config, runOpts gcp.Options) map[string]backend.Opener {
+	return map[string]backend.Opener{
+		backend.CloudRun: func(ctx context.Context) (backend.Backend, error) { return gcp.New(ctx, runOpts) },
+		backend.CloudBatch: func(ctx context.Context) (backend.Backend, error) {
+			return batch.New(ctx, batchOptions(lc))
+		},
+	}
+}
+
+// batchOptions is the Cloud Batch backend's Options, from the project config:
+// the installation's own identity, and the batch block (localcfg.Batch) for
+// everything a run's VM and job are built and placed from.
+//
+// A field left out of the block stays empty here and is then the backend's own
+// default or its refusal -- the machine type, the boot disk size and the socket
+// path have defaults; the image, the run account, the network and the
+// subnetwork are refused by batch.New, which is what a block that is missing one
+// of them should do (an installation is provisioned by Task 9, not guessed).
+func batchOptions(lc *localcfg.Config) batch.Options {
+	o := batch.Options{
+		GCPProject:    lc.GCPProject,
+		Region:        lc.Region,
+		FugaroProject: lc.Name,
+		Timeouts:      batchTimeouts{lc: lc},
+		Endpoints: batch.Endpoints{
+			Batch: lc.Endpoints.Batch, Logging: lc.Endpoints.Logging, NoAuth: lc.Endpoints.NoAuth,
+		},
+		LogView: lc.LogView,
+	}
+	if b := lc.Batch; b != nil {
+		o.Image, o.MachineType, o.BootImage = b.Image, b.MachineType, b.BootImage
+		o.Network, o.Subnetwork, o.ServiceAccount = b.Network, b.Subnetwork, b.ServiceAccount
+		o.Secrets = b.Secrets
+		o.Docker = batch.Docker{SocketGID: b.SocketGID}
+	}
+	return o
+}
+
+// batchTimeouts is the Batch backend's Timeouts, read from the project config.
+// On Cloud Run the workflow timeouts are read back from the deployed job; on
+// Batch there is no deployed job to read (a job is created per run and is
+// single-use), so they are a configuration read (design §2.3).
+//
+// What this holds is the installation's own bound, localcfg.BatchTaskTimeout --
+// backend.MaxRunTime unless the operator wrote batch.task_timeout -- and it is
+// deliberately one value for every workflow rather than a guess per workflow:
+// the failure directions are not symmetric, and a bound shorter than a
+// workflow's would truncate a run that was doing nothing wrong. A launch that
+// carries its own total (--total-timeout, LaunchSpec.Timeout) is unaffected
+// either way: the backend uses that one first, and this is only what a launch
+// that names none falls back to. The workflow's own timeouts.total, read per
+// workflow from the project layer, is what replaces this when the enable task
+// lands.
+type batchTimeouts struct{ lc *localcfg.Config }
+
+// TaskTimeout is the installation's task timeout. A workflow it cannot answer
+// for (one this installation's config does not carry) is answered for with the
+// same bound rather than with ErrNotFound: the bound is the installation's, and
+// refusing a workflow whose own timeout is unknown would keep a run from
+// starting over a question the installation has already answered
+// conservatively.
+func (t batchTimeouts) TaskTimeout(slug, workflow string) (time.Duration, error) {
+	return t.lc.BatchTaskTimeout(), nil
+}
+
+// LongestTaskTimeout is the same bound: every workflow gets it, so it is the
+// longest one too. It bounds how far back an active-only List looks.
+func (t batchTimeouts) LongestTaskTimeout() (time.Duration, error) {
+	return t.lc.BatchTaskTimeout(), nil
+}
+
+// launchBackend is the backend name a launch record carries: launch.json's
+// backend field and the run's FUGARO_BACKEND. It is read from the seam --
+// the codec of the backend the launch actually ran on -- and never written as
+// a constant, because a record that names the wrong backend is a record
+// fugaro logs, fugaro cancel, fugaro diagnose and the reaper all misread
+// (design §2.5). A backend with no codec (none this build opens has none)
+// records "" rather than a name that would be wrong.
+func launchBackend(be backend.Backend) string {
+	if c := be.Codec(); c != nil {
+		return c.Backend()
+	}
+	return ""
 }
 
 // budgetScopes are the OAuth scopes the Realtime Database REST API takes
@@ -351,15 +447,17 @@ func locateRun(ctx context.Context, env *cloudEnv, ref string) (slug, runID stri
 // the caller asked about, which the caller knows from the reference it
 // resolved (and not from an object the run itself can write).
 func (e *cloudEnv) checkExecution(ctx context.Context, x *backend.Execution, name, slug, runID string) (*backend.Execution, error) {
-	// TODO(compute-backend Task 8): this is Cloud Run's own codec, reached
-	// through the concrete gcp package rather than the backend seam, so a
-	// project whose backend is not Cloud Run would be checked with the wrong
-	// codec. It is correct today only because localcfg refuses every other
-	// backend name (internal/localcfg/localcfg.go). Task 8 -- not the enable
-	// task, which is Task 9 and only lifts that refusal -- replaces it with
-	// the selected backend's Codec (design compute-backend.md §8.1 Task 8,
-	// C12).
-	if err := gcp.CheckExecutionName(name, e.lc.Region); err != nil {
+	// The name is parsed by the codec of the backend this command selected,
+	// never by Cloud Run's own: the two backends spell a run's identity
+	// differently (eight fields with an execution in them against six with
+	// none), so a project whose backend is not Cloud Run would otherwise be
+	// checked against the wrong shape (design compute-backend.md §2.5, §8.1
+	// Task 8, C12). This is ParseInRegion rather than ValidateRun: the job
+	// binding a name would need is the run's own, and it is checked below by
+	// gcp.CheckRunExecution, which reads the FUGARO_RUN the execution itself
+	// reports (internal/backend/codec.go's ValidateRun has no production
+	// caller for that reason).
+	if _, err := e.be.Codec().ParseInRegion(name, e.lc.Region); err != nil {
 		var wr *backend.WrongRegionError
 		if errors.As(err, &wr) {
 			return nil, fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)

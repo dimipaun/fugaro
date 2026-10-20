@@ -128,6 +128,34 @@ func TestSecretMountsRefusesAnotherProvidersConventionalName(t *testing.T) {
 	}
 }
 
+// TestTheSpecAndValidateRefuseTheSameWorkflowSecretNames: the two refusals the
+// owner's providers table gives a workflow's secret -- a provider's own key
+// (config.ProviderBySecret) and the conventional name of one
+// (config.ReservedProviderSecret) -- are implemented twice: in
+// config.CheckWorkflowProviderSecrets, which `fugaro validate` calls, and
+// inline in SecretMounts above, whose message is the job's own. The two must
+// refuse the same names, or a name would pass `fugaro validate` and stop a
+// run's job at the mount, or be refused at the mount and admitted by the
+// command an operator checks with. This is that agreement, over the names the
+// table makes interesting: a key on convention, a key off convention, another
+// entry's conventional name, and a name no entry claims.
+func TestTheSpecAndValidateRefuseTheSameWorkflowSecretNames(t *testing.T) {
+	providers := map[string]config.ModelProvider{
+		"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/app"}},
+		"deepseek":   {Secret: "ds-key", AllowDataTo: []string{"acme/app"}},
+	}
+	for _, name := range []string{"openrouter-api-key", "deepseek-api-key", "ds-key", "npm-token", "some-other-name"} {
+		w := config.Workflow{Secrets: []config.Secret{{Name: name, Env: "X"}}}
+		cfg := &config.Config{Workflows: map[string]config.Workflow{"web": w}}
+		lc := &localcfg.Config{Providers: providers}
+		validateRefuses := len(config.CheckWorkflowProviderSecrets(cfg, providers)) > 0
+		_, err := SecretMounts("bitbucket-token", &config.Config{}, "app", config.DefaultClaudeAccount, w, lc, "acme/app")
+		if validateRefuses != (err != nil) {
+			t.Errorf("secret %q: fugaro validate refuses = %v, the job spec refuses = %v: the two must agree about which names belong to a provider", name, validateRefuses, err != nil)
+		}
+	}
+}
+
 // GitSecret is the git credential's logical name per provider, the one source
 // the spec and the secrets stage share.
 func TestGitSecret(t *testing.T) {

@@ -236,12 +236,16 @@ func TestParseEndpoints(t *testing.T) {
 			t.Errorf("%s: err = %v", bad, err)
 		}
 	}
-	// The endpoints only fugaro init uses are checked the same way.
-	for _, field := range []string{"storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler", "service_usage"} {
+	// The endpoints only fugaro init uses, and endpoints.batch -- the Batch
+	// API root the opener hands to internal/backend/batch, whose
+	// clientOptions attaches that same token to it (internal/cli/cloud.go's
+	// cloudOpeners) -- are checked the same way. One field is set per
+	// iteration, so the sum is that field's own value.
+	for _, field := range []string{"batch", "storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler", "service_usage"} {
 		c, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://127.0.0.1:9/\" }\n"))
 		if err != nil {
 			t.Errorf("%s: %v", field, err)
-		} else if e := c.Endpoints; e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler+e.ServiceUsage != "http://127.0.0.1:9/" {
+		} else if e := c.Endpoints; e.Batch+e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler+e.ServiceUsage != "http://127.0.0.1:9/" {
 			t.Errorf("%s: endpoints = %+v", field, e)
 		}
 		if _, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://example.com/\" }\n")); err == nil || !strings.Contains(err.Error(), "endpoints."+field) {
@@ -434,6 +438,215 @@ func TestCloudBatchIsRefused(t *testing.T) {
 	// than a silent fallback to Cloud Run.
 	if c != nil && c.BackendName != backend.CloudBatch {
 		t.Fatalf("a refused config rewrote its backend to %q", c.BackendName)
+	}
+}
+
+// The batch block is what the Cloud Batch backend reads (plan
+// 2026-10-19-compute-backend.md Task 8 step 2): the installation facts a run's
+// VM and job are built and placed from, which internal/cli/cloud.go's Batch
+// opener turns into internal/backend/batch.Options. Nothing selects that
+// opener — `backend: cloud-batch` is refused above — so this block changes
+// nothing about what runs; it is what the seam's second implementation would
+// be opened from, and it is validated where it is written.
+const batchSample = "batch:\n" +
+	"  image: us-central1-docker.pkg.dev/my-project/fugaro/fugaro:1.2\n" +
+	"  machine_type: e2-standard-4\n" +
+	"  boot_image: projects/my-project/global/images/family/fugaro-base\n" +
+	"  network: projects/my-project/global/networks/fugaro\n" +
+	"  subnetwork: projects/my-project/regions/us-central1/subnetworks/fugaro\n" +
+	"  service_account: fugaro-runs@my-project.iam.gserviceaccount.com\n" +
+	"  secrets:\n" +
+	"    ANTHROPIC_API_KEY: projects/my-project/secrets/anthropic-api-key\n" +
+	"    GITHUB_TOKEN: projects/my-project/secrets/github-token/versions/7\n" +
+	"  socket_gid: 412\n" +
+	"  task_timeout: 1h30m\n"
+
+// TestBatchSectionReadsEveryField: each field of the block reaches the config
+// as written, because a field the opener cannot read is a run launched with a
+// default rather than with the installation's fact.
+func TestBatchSectionReadsEveryField(t *testing.T) {
+	c, err := Parse([]byte(sample + batchSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := c.Batch
+	if b == nil {
+		t.Fatal("the batch block was not read")
+	}
+	for _, f := range []struct{ name, got, want string }{
+		{"image", b.Image, "us-central1-docker.pkg.dev/my-project/fugaro/fugaro:1.2"},
+		{"machine_type", b.MachineType, "e2-standard-4"},
+		{"boot_image", b.BootImage, "projects/my-project/global/images/family/fugaro-base"},
+		{"network", b.Network, "projects/my-project/global/networks/fugaro"},
+		{"subnetwork", b.Subnetwork, "projects/my-project/regions/us-central1/subnetworks/fugaro"},
+		{"service_account", b.ServiceAccount, "fugaro-runs@my-project.iam.gserviceaccount.com"},
+	} {
+		if f.got != f.want {
+			t.Errorf("batch.%s = %q, want %q", f.name, f.got, f.want)
+		}
+	}
+	if b.SocketGID != 412 {
+		t.Errorf("batch.socket_gid = %d, want 412 (the gid Check 57a read off the boot image)", b.SocketGID)
+	}
+	if want := map[string]string{
+		"ANTHROPIC_API_KEY": "projects/my-project/secrets/anthropic-api-key",
+		"GITHUB_TOKEN":      "projects/my-project/secrets/github-token/versions/7",
+	}; !reflect.DeepEqual(b.Secrets, want) {
+		t.Errorf("batch.secrets = %v, want %v", b.Secrets, want)
+	}
+	if d := c.BatchTaskTimeout(); d != 90*time.Minute {
+		t.Errorf("BatchTaskTimeout() = %v, want the written 1h30m", d)
+	}
+	// The default is the same one Cloud Run's jobs get, so turning the backend
+	// on does not silently change how long a run may take.
+	plain, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Batch != nil {
+		t.Error("a config with no batch block has one")
+	}
+	if d := plain.BatchTaskTimeout(); d != backend.MaxRunTime {
+		t.Errorf("BatchTaskTimeout() with no block = %v, want backend.MaxRunTime (%v)", d, backend.MaxRunTime)
+	}
+	// Leaving the key out is how a config takes the default; writing 0 is not
+	// (TestBatchSectionValidation below).
+	if c, err := Parse([]byte(sample + strings.Replace(batchSample, "  task_timeout: 1h30m\n", "", 1))); err != nil {
+		t.Fatal(err)
+	} else if d := c.BatchTaskTimeout(); d != backend.MaxRunTime {
+		t.Errorf("BatchTaskTimeout() with no task_timeout = %v, want the default", d)
+	}
+}
+
+// TestBatchSectionValidation: every field is refused in the spelling the
+// backend could not use, named by the key it was written under, and accepted
+// in the spelling it could. The backend re-checks the same values where it is
+// opened (internal/backend/batch's checkNetwork, checkDocker,
+// checkServiceAccount); this is the copy that fails at parse, where the
+// operator can still see which line to fix.
+func TestBatchSectionValidation(t *testing.T) {
+	replace := func(old, new string) string {
+		s := strings.Replace(batchSample, old, new, 1)
+		if s == batchSample {
+			t.Fatalf("the test's own sample does not contain %q", old)
+		}
+		return sample + s
+	}
+	for name, tc := range map[string]struct{ yaml, msg string }{
+		"no image":         {sample + strings.Replace(batchSample, "  image: us-central1-docker.pkg.dev/my-project/fugaro/fugaro:1.2\n", "", 1), "batch.image"},
+		"untagged image":   {replace("fugaro:1.2", "fugaro"), "batch.image"},
+		"spaced image":     {replace("fugaro:1.2", "fugaro 1.2"), "batch.image"},
+		"cloud build type": {replace("e2-standard-4", "E2_HIGHCPU_8"), "batch.machine_type"},
+		"bare boot image":  {replace("projects/my-project/global/images/family/fugaro-base", "fugaro-base"), "batch.boot_image"},
+		"generation boot image": {
+			replace("projects/my-project/global/images/family/fugaro-base", "projects/my-project/global/images/fugaro-base-v3"),
+			"batch.boot_image",
+		},
+		"bare network": {replace("projects/my-project/global/networks/fugaro", "default"), "batch.network"},
+		"other project network": {
+			replace("projects/my-project/global/networks/fugaro", "projects/other/global/networks/fugaro"),
+			"batch.network",
+		},
+		"bare subnetwork": {replace("projects/my-project/regions/us-central1/subnetworks/fugaro", "fugaro-subnet"), "batch.subnetwork"},
+		"account id not an email": {
+			replace("fugaro-runs@my-project.iam.gserviceaccount.com", "fugaro-runs"),
+			"batch.service_account",
+		},
+		"negative gid": {replace("socket_gid: 412", "socket_gid: -1"), "batch.socket_gid"},
+		// The secrets cases name the entry by position, never by its key: a
+		// key that failed the environment-variable-name rule may itself be a
+		// secret's value, so neither message repeats what it refused (the
+		// assertions below hold both halves of that).
+		"secret key with a dash": {
+			replace("    ANTHROPIC_API_KEY:", "    ANTHROPIC-API-KEY:"),
+			"batch.secrets: entry 1 of 2",
+		},
+		"secret value instead of a name": {
+			replace("projects/my-project/secrets/anthropic-api-key", "sk-ant-not-a-secret-name"),
+			"batch.secrets: entry 1 of 2",
+		},
+		"secret in another project's name shape": {
+			replace("projects/my-project/secrets/anthropic-api-key", "my-project/anthropic-api-key"),
+			"batch.secrets: entry 1 of 2",
+		},
+		"zero timeout":     {replace("task_timeout: 1h30m", "task_timeout: 0s"), "batch.task_timeout"},
+		"negative timeout": {replace("task_timeout: 1h30m", "task_timeout: -5m"), "batch.task_timeout"},
+		// An unparsable duration is refused by the decoder, which the two
+		// spellings of a duration in this file share (config.Duration): the
+		// message names the value and the syntax, not the key.
+		"bad timeout": {replace("task_timeout: 1h30m", "task_timeout: soon"), "invalid duration \"soon\""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.yaml))
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want it to name %s", err, tc.msg)
+			}
+		})
+	}
+	// Neither refusal may quote what it refused, on either side of the map: a
+	// value written where a name belongs is the case this section exists to
+	// catch, and a message that printed it would put the value in a log or a
+	// terminal. The key slot needs this as much as the value slot -- an
+	// environment variable name and an access key id can be spelled
+	// identically, so a refused key may be the value (the same rule
+	// internal/backend/batch/batch.go's checkSecrets follows).
+	for _, tc := range []struct{ name, old, new, value string }{
+		{"value in the name slot", "projects/my-project/secrets/anthropic-api-key", "sk-ant-not-a-secret-name", "sk-ant-not-a-secret-name"},
+		{"value in the key slot", "    ANTHROPIC_API_KEY:", "    sk-ant-api03-EXAMPLE:", "sk-ant-api03-EXAMPLE"},
+	} {
+		err := func() error { _, err := Parse([]byte(replace(tc.old, tc.new))); return err }()
+		if err == nil {
+			t.Fatalf("%s: a secret's value was accepted", tc.name)
+		}
+		if strings.Contains(err.Error(), tc.value) {
+			t.Errorf("%s: the refusal quotes the secret value: %v", tc.name, err)
+		}
+	}
+	// A key that is spelled like a legal environment variable name is still
+	// checked, and still accepted: nothing here can tell an access key id from
+	// a variable's name when the two are spelled the same, which is the
+	// limitation internal/backend/batch/batch.go's checkSecrets documents.
+	// What the refusal above must never do is repeat it.
+	if _, err := Parse([]byte(replace("    ANTHROPIC_API_KEY:", "    AKIAIOSFODNN7EXAMPLE:"))); err != nil {
+		t.Errorf("a key spelled like an environment variable name is refused, and it may be one: %v", err)
+	}
+	// The refusal of a bad key does not name the other entry either: the
+	// sample's GITHUB_TOKEN is a name here, so a message that mentioned it
+	// would be quoting a key nobody refused.
+	if _, err := Parse([]byte(replace("    ANTHROPIC_API_KEY:", "    sk-ant-api03-EXAMPLE:"))); err != nil &&
+		strings.Contains(err.Error(), "GITHUB_TOKEN") {
+		t.Errorf("the key-slot refusal names another entry: %v", err)
+	}
+	// A missing gid is not a broken gid: 0 is the recorded state "this
+	// installation has no socket", which the backend refuses a Docker run
+	// against (internal/backend/batch's checkDocker).
+	if _, err := Parse([]byte(replace("socket_gid: 412", "socket_gid: 0"))); err != nil {
+		t.Errorf("socket_gid: 0 is refused: %v", err)
+	}
+}
+
+// TestBatchSectionDoesNotEnableTheBackend: the block is what the opener would
+// read, not what selects it. `backend: cloud-batch` stays refused with the
+// block present, so an installation that writes the whole section still runs
+// on Cloud Run and TestCloudBatchIsRefused above stays the single place that
+// decides it.
+func TestBatchSectionDoesNotEnableTheBackend(t *testing.T) {
+	_, err := Parse([]byte(sample + batchSample + "backend: " + backend.CloudBatch + "\n"))
+	if err == nil || !strings.Contains(err.Error(), "not enabled yet") {
+		t.Fatalf("err = %v, want the block to leave the backend refused as not enabled yet", err)
+	}
+	c, err := Parse([]byte(sample + batchSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Backend() != backend.CloudRun {
+		t.Fatalf("a config with a batch block selects %q, want %s", c.Backend(), backend.CloudRun)
+	}
+	// And the block must not be a way to smuggle a second selection path in:
+	// there is one key that names a backend, and it is `backend`. A `backend`
+	// written *under* batch: is an unknown field of the block.
+	if _, err := Parse([]byte(sample + batchSample + "  backend: cloud-batch\n")); err == nil || !strings.Contains(err.Error(), "backend") {
+		t.Fatalf("err = %v, want batch.backend refused as an unknown field of the block", err)
 	}
 }
 

@@ -825,11 +825,27 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// neither a coding agent's session (which cannot create a project at
 	// all — projectStage.Apply needs a terminal and a typed confirmation)
 	// nor `fugaro managed apply`, which only reads, reaches one.
+	//
+	// While managed projects are off in this release (managedDeployerShipped),
+	// the label is not written: with it, a project this run created reads as
+	// managed, and the one reader of that in this release is init's own guard,
+	// whose refusal for a managed project drops the --allow-delete advice —
+	// in a release whose every managed entry point refuses. The creation fact
+	// is written as it always was, so the project is the state a project
+	// created before the label existed is in (docs/gcp-setup.md has the
+	// owner-run line that completes it).
+	labelOff := false
 	if err == nil {
-		err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
+		if managedDeployerOpen {
+			err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
+		} else {
+			labelOff = true
+		}
 	}
-	marked := err == nil
+	marked := err == nil && !labelOff
 	switch {
+	case labelOff:
+		fmt.Fprintf(r.w, "recorded that this run created project %s (gs://%s/%s); managed projects are off in this release, so it is not labelled %s=%s and is not a managed project\n", r.res.Created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	case marked:
 		if c := r.o.created; c != nil {
 			c.Marked = true
@@ -863,9 +879,12 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// (internal/managed/statebucket.go: OperatorStateRole, without which the
 	// apply's inventory read is denied for every operator). It
 	// belongs here for the same reason the marker does: it is setup on the
-	// operator's own credentials, in the managed creation and nowhere else.
-	// The region is the installation's, so the managed state sits where the
-	// rest of the project's storage does. Like the marker, this never changes
+	// operator's own credentials, by the run that creates the project, and no
+	// other command in the tree writes it. "The creation" here is every
+	// project this run creates and not the --managed one alone — the step is
+	// not gated on the flag, for the reason the paragraph below gives for the
+	// mark. The region is the installation's, so the managed state sits where
+	// the rest of the project's storage does. Like the marker, this never changes
 	// the outcome of the run — a project that is marked but has no state
 	// bucket is the fail-closed direction (a managed apply finds nowhere to
 	// keep its state and says so, rather than writing it somewhere else).
@@ -1001,15 +1020,12 @@ func (o *initOptions) checkOnboardRepo() error {
 
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
-	// Two features this release cannot complete, refused first and before
-	// any cloud call (managedDeployerShipped, batchProvisionShipped).
+	// The one feature this release cannot complete, refused first and before
+	// any cloud call (managedDeployerShipped). --provision-batch was refused
+	// here too until 0.9.5, when the compute module's reaper role stopped
+	// naming a permission Google does not have (batchProvisionShipped).
 	if o.managed {
 		if err := refuseManagedNotShipped(); err != nil {
-			return err
-		}
-	}
-	if o.provisionBatch {
-		if err := refuseBatchProvisionNotShipped(); err != nil {
 			return err
 		}
 	}
@@ -1731,10 +1747,16 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
 		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
-		if err := r.guard(ctx, c, plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
+		// The 0.9.0 upgrade replaces each launcher's runs/-only grant with
+		// the runs/ and tokens/ one (a condition is ForceNew); exactly that
+		// replace is allowed, and named (bucket-iam.md H5).
+		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
+		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
+		if err := r.guard(ctx, c, plan, allowed); err != nil {
 			return outs, false, err
 		}
 		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
+		fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
 		counts := infra.CountPlan(plan)
 		r.res.Changes = &counts
 		if r.o.planOnly {
@@ -2288,9 +2310,12 @@ func (r *initRun) printResult() error {
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
 	if o.provisionBatch {
-		if err := refuseBatchProvisionNotShipped(); err != nil {
-			return err
-		}
+		// This run validates here and never reaches check(), so the pair has
+		// to be refused here as well: --repo onboards a repository's own root
+		// and --provision-batch applies the installation's compute root, which
+		// is why the flag's help says it excludes --repo. Accepted, it would
+		// onboard the repository and drop the provisioning the user named.
+		return userErr("--provision-batch provisions the installation's Batch compute backend, which is an apply of the installation's own root: it excludes --repo (run fugaro init --provision-batch for the installation, then fugaro init --repo for the repository)")
 	}
 	if o.anchor {
 		return userErr("--anchor and --repo exclude one another: --anchor writes the gcp_project line of an onboarded repository's checkout (run fugaro init --anchor there), and fugaro init --repo does not write it")

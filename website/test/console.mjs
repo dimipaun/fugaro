@@ -1,31 +1,47 @@
 // website/test/console.mjs — the console page (website plan, Task W1.6).
 //
 // The spec asks for "Console downloads: per-OS download links (placeholder until the
-// console ships)" and there is nothing to download: the console is built — `console/` holds
-// the application, its packaging and the workflow that signs, notarises and staples its macOS
-// artifacts — but it is **unreleased**: that workflow creates the release as a draft the owner
-// publishes, `site.yaml`'s `features.console_downloads` is false until then, and a link to an
-// unsigned or unpublished artifact is the one outcome here with a real consequence for a
-// reader (finding 23, finding 25, D95). Four things are checked here:
+// console ships)", and the console has shipped: `console/` holds the application, its
+// packaging and the workflow that signed, notarised and stapled its macOS artifacts, the
+// release `console-v0.9.0` carries them, `site.yaml`'s `features.console_downloads` is true
+// and the data file's `available` is true with it. The page's Downloads section renders that
+// release, and the placeholder state it renders instead is a state a copy of the repository
+// is built into rather than the state this checkout ships (W3.1). Seven things are checked
+// here:
 //
-//   1. **The placeholder carries no link.** While `features.console_downloads` is false the
-//      built page contains no download URL, and the downloads section contains no element a
-//      reader can follow — no `<a>`, no `<button>`. This is the red step's test: written
-//      against a page that renders a hard-coded placeholder link, it fails, and the task
-//      is the commit that removes it.
-//   2. **The page renders its data file and types nothing of its own.** Every sentence in
+//   1. **The released section renders the release's own downloads.** One link per published
+//      asset, held to the repository, the release path, the tag and the **name the release
+//      serves** one part at a time (`test/lib/console-downloads.mjs`), with the checksum the
+//      data file carries beside each — and the data file's own sentence about the shipped
+//      console rather than a copy of it written into the markup.
+//   2. **The link carries the served name, not the name the build wrote.** GitHub rewrites a
+//      space in an uploaded asset's name to a dot, so the release's own files spell
+//      `Fugaro Console-0.9.0-universal.dmg` and the release serves, and the site must link to,
+//      `Fugaro.Console-0.9.0-universal.dmg`: the case below refuses any href carrying `%20`,
+//      which is the 404 every reader would have followed (`servedName` has the rule).
+//   3. **The unreleased state carries no link, and it is a fixture.** With
+//      `features.console_downloads` flipped back to false and the data file's `available`
+//      with it, the built section contains no download URL and no element a reader can
+//      follow — no `<a>`, no `<button>`. That state is not the checkout's own any more, so
+//      the case builds it in a copy of the repository: the refusal stays alive without the
+//      site claiming the console is unreleased (D95, Global Constraint 9).
+//   4. **The page renders its data file and types nothing of its own.** Every sentence in
 //      the built page's article appears in `website/content/downloads.json` — the
 //      mechanical form of the rule this site is written to, "a page renders a fact; it
 //      never restates one" (F37, Global Constraint 6).
-//   3. **Every claim is traceable to a decision.** Each sentence in the data file names the
+//   5. **Every claim is traceable to a decision.** Each sentence in the data file names the
 //      document it came from, that document is in this repository, and every decision id
 //      the source names is a decision that document actually carries (W1.6 step 3) — so a
 //      claim about the console cannot be written without provenance.
-//   4. **The rule the Go test enforces over the tree is wired into the build.** A download
-//      URL in the data file while the flag is false fails the build here, naming the file;
-//      and with the flag on — W3.1's state, once the console ships — the section renders
-//      the platform link the data carries, so the flip is a data change and not a code
-//      change.
+//   6. **The rule the Go test enforces over the tree is wired into the build.** A download
+//      URL in the data file fails the build here, naming the file, in either state: the
+//      URL is derived from the release's published names and is never written down
+//      (Global Constraint 9).
+//   7. **A checksum the release does not publish fails the build.** The data file's `sha256`
+//      values are held to the release's own `console-sha256sums.txt` (copied verbatim into
+//      `website/data/`), so a wrong value is a red build rather than a page printing a
+//      number no reader's download can match — and the case plants a well-formed wrong one,
+//      because the shape alone cannot tell the two apart.
 //
 // How it builds: the negative cases mutate a file and build again, so the builds happen in
 // a copy of the repository in a temp directory rather than in this checkout (the shape
@@ -47,12 +63,15 @@ import {
   DOWNLOADS_JSON,
   RELEASE_WORKFLOW,
   SITE_YAML,
+  SUMS_FILE,
   assertReleaseURL,
   downloadNeedle,
   downloadsData,
   publishedAssets,
   publishedDownloads,
+  releaseSums,
   repoFile,
+  servedName,
   workflowAssetRule,
   workflowTagPrefix,
   workflowTagShape,
@@ -90,8 +109,8 @@ function copyOfTheRepository() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
-      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
-      // quotes the skills (website/test/lib/build.mjs).
+      // Which parts of `plugin/` a build reads, and why each one: READ_UNDER_PLUGIN's
+      // own comment (website/test/lib/build.mjs).
       if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
@@ -168,22 +187,27 @@ test('the console page renders the facts its data file carries', async (t) => {
     assert.ok(page.includes(property.title), `the page does not render the title of the property "${property.id}"`)
   }
 
-  // And the section that carries the placeholder renders the data file's own not-released
-  // sentence rather than a copy of it written into the markup.
+  // And the section that offers the release renders the data file's own released sentence
+  // rather than a copy of it written into the markup — and not the sentence the unreleased
+  // state renders, which is now a state this checkout is not in.
   assert.ok(
-    downloadsSection(page).includes(data.not_released.text),
-    `the downloads section does not render not_released.text ${JSON.stringify(data.not_released.text)}`,
+    downloadsSection(page).includes(data.released.text),
+    `the downloads section does not render released.text ${JSON.stringify(data.released.text)}`,
+  )
+  assert.ok(
+    !page.includes(data.not_released.text),
+    `the page still renders not_released.text ${JSON.stringify(data.not_released.text)} with the console released`,
   )
 })
 
 test('the downloads section carries no link and no download URL while the flag is false', async (t) => {
-  // The flag the whole of this rests on, and the state it states: the console is **built for
-  // macOS and has not been published**. "Built" is not a claim taken on trust — the application
-  // and the workflow that signs, notarises and staples its `.dmg` and `.zip` are in this
-  // repository — and "not published" is what the flag and the data file's `available` say, in
-  // the two places this case reads. The four are asserted **before** the build below, because
-  // the build refuses the same disagreement: a case that read them afterwards would report the
-  // refusal instead of the broken premise, and could not fail on the premise at all.
+  // The state the console was in until W3.1, and the state the section has to keep rendering
+  // honestly if the flag is ever turned back off: **built for macOS and not published**.
+  // "Built" is not a claim taken on trust — the application and the workflow that signs,
+  // notarises and staples its `.dmg` and `.zip` are in this repository — and the site is not
+  // in that state any more, so this case BUILDS it: the checkout's own flag and `available`
+  // are the released pair, and the copy below flips both back. That is what keeps the refusal
+  // alive now that `npm run check` no longer builds the unreleased site (W3.1, D95).
   assert.ok(
     existsSync(path.join(REPO, 'console', 'package.json')),
     'console/ holds no application, so "the console is built" is not what this repository says',
@@ -192,14 +216,28 @@ test('the downloads section carries no link and no download URL while the flag i
     existsSync(path.join(REPO, RELEASE_WORKFLOW)),
     `${RELEASE_WORKFLOW} does not exist, and the console's release workflow is what makes "built" a statement about this repository rather than a design`,
   )
-  assert.match(repoFile(SITE_YAML), /^\s*console_downloads:\s*false\s*$/m, `${SITE_YAML} does not have features.console_downloads false`)
+  // The premise of the fixture: the checkout ships the RELEASED pair, so flipping both is
+  // what makes the unreleased state, and a checkout that still said "unreleased" would make
+  // this case assert nothing about the state it names.
+  assert.match(
+    repoFile(SITE_YAML),
+    /^\s*console_downloads:\s*true\s*$/m,
+    `${SITE_YAML} does not have features.console_downloads true, and this case's fixture is the unreleased state it flips back to`,
+  )
   assert.equal(
     downloadsData().available,
-    false,
-    `${DOWNLOADS_JSON} says the console is available, and this case is about the state in which it has not been published`,
+    true,
+    `${DOWNLOADS_JSON} does not say the console is available, and this case's fixture is the unreleased state it flips back to`,
   )
 
-  const built = buildWith(t, () => {})
+  const built = buildWith(t, (copy) => {
+    const yaml = path.join(copy.root, 'website', 'data', 'site.yaml')
+    writeFileSync(yaml, readFileSync(yaml, 'utf8').replace(/^(\s*console_downloads:\s*)true\s*$/m, '$1false'))
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.available = false
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
   const page = builtPage(built)
 
   const needle = downloadNeedle()
@@ -213,6 +251,10 @@ test('the downloads section carries no link and no download URL while the flag i
   const section = downloadsSection(page)
   assert.ok(!/<a[\s>]/.test(section), 'the downloads section carries a link while the console is unreleased')
   assert.ok(!/<button[\s>]/.test(section), 'the downloads section carries a button while the console is unreleased')
+  assert.ok(
+    section.includes(downloadsData().not_released.text),
+    'the downloads section does not render the data file\'s unreleased sentence while the flag is false',
+  )
 })
 
 test("the page names the console's read-only and no-telemetry properties", async (t) => {
@@ -237,7 +279,7 @@ test('every console claim is traceable to the document it came from', () => {
   // Every sentence the page renders carries a source, and the source is a document in this
   // repository that is about the console. A claim with no provenance is the failure W1.6
   // step 3 exists to prevent, and this is the mechanical form of it.
-  const claims = [data.what, data.not_released, ...data.properties]
+  const claims = [data.what, data.released, data.not_released, ...data.properties]
   assert.ok(claims.length >= 3, 'the console\'s data file carries too few claims to be the page\'s facts')
 
   const decisions = new Set()
@@ -283,6 +325,29 @@ test('every console claim is traceable to the document it came from', () => {
   assert.ok(
     aboutTheConsole.some((line) => /not released|has not been published|unpublished/i.test(line)),
     `${DOWNLOADS_JSON}'s not_released claim cites ${stateSource}, and none of its ${aboutTheConsole.length} line(s) about the console says the console is not released: the claim is the console's state, so the document cited for it has to state it`,
+  )
+
+  // The released claim is the same kind of claim about the same console, and its source has
+  // to carry the two things the page now promises about the shipped artifact: that it is
+  // signed and notarised, and that the CLI comes first because the CLI is the data plane.
+  // A page that promises a notarised download, or a console that runs without the CLI, is a
+  // page whose claim outran the document it cites.
+  const releasedSource = data.released.source.trim().split(/\s+/)[0]
+  const releasedIds = data.released.source.trim().split(/\s+/).slice(1)
+  assert.ok(
+    releasedIds.length > 0,
+    `${DOWNLOADS_JSON}'s released claim cites ${JSON.stringify(data.released.source)} with no decision in it, and the claim's two promises are decisions: signing and notarisation (D4) and the CLI as the data plane (D1)`,
+  )
+  assert.ok(
+    releasedIds.some((id) => /notaris/i.test(decisionRow(id))),
+    `the released claim promises a signed and notarised artifact and cites ${releasedIds.join(', ')}, and none of those rows in docs/design/desktop-console.md says the console's artifact is notarised: a page that promises a notarised download has to cite the row that decides it`,
+  )
+  assert.ok(
+    repoFile(releasedSource)
+      .split('\n')
+      .filter((line) => /console/i.test(line))
+      .some((line) => /data plane/i.test(line)),
+    `the released claim says the CLI is the data plane, and ${releasedSource} carries no line about the console that says so`,
   )
 })
 
@@ -425,6 +490,51 @@ test('the release the download URLs are built from is one this repository has re
     `${DOWNLOADS_JSON}'s asset names are not the names ${CONSOLE_README} documents for the release`,
   )
 
+  // And each asset carries the SHA-256 of the bytes the release published: the sums file the
+  // release publishes beside the two artifacts is `console-sha256sums.txt`, and the page
+  // prints each value beside its link so a reader can check what arrived against what was
+  // published. Two things are held here, and the second is the one that catches a wrong
+  // value rather than a malformed one:
+  //
+  //   - the shape: 64 lowercase hex digits, one per asset, no two assets sharing one. A value
+  //     that is not a checksum is one `shasum -a 256 -c` can never match, and a value copied
+  //     from the other asset makes the page print a checksum the reader's own download fails
+  //     against;
+  //   - the value itself, against the release's own list of them: `SUMS_FILE` is the
+  //     `console-sha256sums.txt` asset of the `console-vX.Y.Z` release, copied verbatim into
+  //     `website/data/` when the site's console downloads are turned on, and every entry's
+  //     checksum has to be what it records for the entry's published name. This is the check
+  //     that makes a wrong checksum a red build: a well-formed value is not evidence of
+  //     anything, and no build can compute the published one from anything in this tree. The
+  //     reader refuses a disagreement by name (`src/lib/console-downloads.mjs`), and the case
+  //     after this one plants one and requires that refusal.
+  const sums = releaseSums()
+  for (const entry of data.downloads) {
+    assert.match(
+      entry.sha256,
+      /^[0-9a-f]{64}$/,
+      `${DOWNLOADS_JSON}'s ${entry.id} carries ${JSON.stringify(entry.sha256)} as its sha256, and the checksum a reader checks a download against is 64 lowercase hex digits`,
+    )
+    const published = entry.file.split('{version}').join(release.version)
+    assert.equal(
+      sums.get(published),
+      entry.sha256,
+      `${DOWNLOADS_JSON}'s ${entry.id} carries ${JSON.stringify(entry.sha256)} and ${SUMS_FILE} records ${JSON.stringify(sums.get(published))} for ${JSON.stringify(published)}: the release's own sums file is what the page's checksum is checked against, and a value that disagrees with it fails for every reader who checks their download`,
+    )
+  }
+  assert.equal(
+    new Set(data.downloads.map((entry) => entry.sha256)).size,
+    data.downloads.length,
+    `${DOWNLOADS_JSON}'s assets do not each carry their own sha256 (${data.downloads.map((entry) => entry.sha256).join(', ')}): two assets with one checksum is one asset's checksum printed beside the other, and a reader who checked that download would be checking it against the wrong bytes`,
+  )
+  // And the release publishes nothing the site leaves out: a reader who wants an asset the
+  // release carries and the page does not offer has nowhere to get it.
+  assert.deepEqual(
+    [...sums.keys()].sort(),
+    data.downloads.map((entry) => entry.file.split('{version}').join(release.version)).sort(),
+    `${SUMS_FILE} and ${DOWNLOADS_JSON} name different sets of assets: the site offers the release's assets, and an asset the release carries and the page does not is a download a reader cannot reach`,
+  )
+
   // And the version is one this repository has released: the console's release is cut from the
   // CLI's own `vX.Y.Z` tag, and from 0.4.0 on a tag cannot be cut without a non-empty
   // `docs/releases/vX.Y.Z.md` on `main` (docs/release.md; both tag workflows run
@@ -432,12 +542,13 @@ test('the release the download URLs are built from is one this repository has re
   // a version the CLI was not released at, and not one the console was built from.
   //
   // **What this cannot prove, and nothing offline can: that `console-vX.Y.Z` is a release that
-  // exists.** That is W3.1's check — the Go boundary test fails a true flag until its commit
-  // extends `TestWebsiteLinksNoConsoleWhileTheFlagIsOff` to hold every release-asset URL under
-  // `website/` against an asset of a tag that exists (plan Task W3.1, W1.6 step 2) — and it is
-  // the owner's check against the published release. What is pinned here is the offline half:
-  // the version is one the CLI was released at, and the prefix and the names are the release
-  // workflow's and the release's own.
+  // exists on GitHub.** A git tag cannot be read without a fetch, and a shallow CI checkout has
+  // none. What W3.1 added is the offline half of that claim, and the Go boundary test is where
+  // it lives: the data file's release block has to name the version of a CLI release note that
+  // is in the tree and that names the console's own tag, and every asset has to be an asset the
+  // release's own sums file records (`TestWebsiteConsoleReleaseFactsAreComplete`). What remains
+  // the owner's check is the release page itself: the tag exists, its assets are the ones the
+  // site names, and the checksums the page prints are the ones the release published.
   const highlights = `docs/releases/v${release.version}.md`
   assert.ok(
     existsSync(path.join(REPO, highlights)),
@@ -445,14 +556,15 @@ test('the release the download URLs are built from is one this repository has re
   )
 })
 
-test('the build refuses a download URL while the flag is false', async (t) => {
+test('the build refuses a download URL in the data file, in the state this checkout ships', async (t) => {
   // The rule W0.2's Go test enforces over the whole tree, wired into the build (W1.6 step
-  // 2): a URL written into the data file stops the build here, naming the file — and the URL
-  // is synthetic, because no real artifact exists to point at. Both shapes it can arrive in
-  // are refused: as a `url` key of its own, and as a `file` that is a URL rather than a
-  // published name. Since the owner's item 6 the URLs are DERIVED — the data file carries the
-  // release's published names and nothing else — so either shape is a file that has stopped
-  // being the file the derivation reads.
+  // 2): a URL written into the data file stops the build here, naming the file. The URL is
+  // synthetic, and the refusal does not depend on the flag: since the owner's item 6 the URLs
+  // are DERIVED — the data file carries the release's published names and nothing else — so
+  // this holds in the shipped state as it held in the unreleased one, and it is the state
+  // this checkout is in that the build below mutates. Both shapes the URL can arrive in are
+  // refused: as a `url` key of its own, and as a `file` that is a URL rather than a published
+  // name. Either shape is a file that has stopped being the file the derivation reads.
   const url = 'https://downloads.example.invalid/console-macos.tar.gz'
 
   const asKey = buildWith(t, (copy) => {
@@ -461,11 +573,11 @@ test('the build refuses a download URL while the flag is false', async (t) => {
     data.downloads = [{ id: 'macos', platform: 'macOS', url }]
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
-  assert.notEqual(asKey.status, 0, `the build accepted a download URL while the console is unreleased:\n${asKey.output}`)
+  assert.notEqual(asKey.status, 0, `the build accepted a download URL:\n${asKey.output}`)
   assert.match(asKey.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
   assert.match(asKey.output, /carries the key "url"/, 'the failure does not say which key it refused')
   assert.match(asKey.output, /derived/, 'the failure does not say where a download URL comes from instead')
-  assert.equal(asKey.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+  assert.equal(asKey.page, null, 'the build wrote a page carrying a download URL the data file is not allowed to hold')
 
   const asFile = buildWith(t, (copy) => {
     const file = path.join(copy.root, 'website', 'content', 'downloads.json')
@@ -473,26 +585,104 @@ test('the build refuses a download URL while the flag is false', async (t) => {
     data.downloads[0].file = url
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
-  assert.notEqual(asFile.status, 0, `the build accepted a URL in the file field while the console is unreleased:\n${asFile.output}`)
+  assert.notEqual(asFile.status, 0, `the build accepted a URL in the file field:\n${asFile.output}`)
   assert.match(asFile.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
   assert.match(asFile.output, /\.file is "/, 'the failure does not name the field the URL was written into')
-  assert.equal(asFile.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+  assert.equal(asFile.page, null, 'the build wrote a page whose download link came from a URL rather than from the release it names')
+})
+
+test("the build refuses a checksum that is not the release's own", async (t) => {
+  // The checksum is the one value on the page a build cannot compute: it is a fact about bytes,
+  // and the release's own `console-sha256sums.txt` is its only source. So the reader holds the
+  // value against that file, and this is the case that proves the holding is real — the
+  // mutation is a WELL-FORMED checksum (64 lowercase hex digits, a real one's shape) with one
+  // character changed, which no shape check can tell from the right one. The build refuses it
+  // by name, in both directions the release's file can disagree with the data file: a value
+  // that is not the one it records, and an asset name it does not record at all.
+  const entry = downloadsData().downloads[0]
+  const wrong = `${entry.sha256.slice(0, -1)}${entry.sha256.endsWith('0') ? '1' : '0'}`
+  assert.notEqual(wrong, entry.sha256, 'the mutation below is not a mutation: the planted checksum is the published one')
+
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads[0].sha256 = wrong
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+  assert.notEqual(
+    built.status,
+    0,
+    `the build rendered ${wrong} as the checksum of ${entry.id}, which is not the value the release published:\n${built.output}`,
+  )
+  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the checksum came from')
+  assert.match(
+    built.output,
+    /console-sha256sums\.txt/,
+    "the failure does not name the release's own sums file, and that file is what the value was checked against rather than the value's shape",
+  )
+  assert.equal(built.page, null, 'the build wrote a page printing a checksum the release does not publish')
+
+  // The other half of the same fact: an asset name the release's file does not carry. The name
+  // is the URL's last segment, so a name the release does not publish is a download that 404s,
+  // and the release's sums file is where that is written down.
+  const unpublished = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads[0].file = 'Fugaro Console-{version}-universal.tar.gz'
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+  assert.notEqual(
+    unpublished.status,
+    0,
+    `the build rendered a download for an asset the release does not publish:\n${unpublished.output}`,
+  )
+  assert.match(
+    unpublished.output,
+    /console-sha256sums\.txt/,
+    "the failure does not name the release's own sums file, which is where the assets the release publishes are recorded",
+  )
+})
+
+test('the build refuses a tag prefix the release workflow does not compose', async (t) => {
+  // The one thing between the data file's names and the artifact a reader downloads is the
+  // release's tag: every URL is
+  // `<repository>/releases/download/<release.tag_prefix><release.version>/<name>`, and the
+  // prefix is composed by the release workflow (`CONSOLE_TAG="<prefix>$VERSION"`). The reader
+  // checks the prefix's SHAPE, and a shape is not the workflow's answer — so a prefix of the
+  // right shape that no run composes passes every other check here (the checksums match, the
+  // names are the release's, `console/README.md` documents them) and puts a 404 behind every
+  // button. The mutation below is that prefix, planted in the workflow itself, which is what
+  // makes the case a check of the build's reading rather than of a literal in this file.
+  const planted = 'console-desktop-v'
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.root, ...RELEASE_WORKFLOW.split('/'))
+    const workflow = readFileSync(file, 'utf8')
+    assert.ok(
+      workflow.includes('CONSOLE_TAG="console-v$VERSION"'),
+      `${RELEASE_WORKFLOW} no longer composes the console's tag as \`CONSOLE_TAG="console-v$VERSION"\`, so this case cannot plant the disagreement it is about`,
+    )
+    writeFileSync(file, workflow.replace('CONSOLE_TAG="console-v$VERSION"', `CONSOLE_TAG="${planted}$VERSION"`))
+  })
+
+  assert.notEqual(
+    built.status,
+    0,
+    `the build accepted release.tag_prefix ${JSON.stringify('console-v')} while ${RELEASE_WORKFLOW} composed the tag with ${JSON.stringify(planted)}: the URL it renders names a tag no run creates, and every download link on the page is a 404 for the reader who follows it:\n${built.output}`,
+  )
+  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the prefix came from')
+  assert.match(built.output, /console-release\.yml/, 'the failure does not name the workflow whose own line the prefix is checked against')
+  assert.equal(built.page, null, 'the build wrote a page whose download links name a tag no run creates')
 })
 
 test('with the console released, the section renders the downloads the release publishes', async (t) => {
-  // W3.1's state: the console has shipped, the flag in `site.yaml` and the data file's own
-  // `available` are both true — and that pair is the WHOLE change. Nothing in the page
-  // changes and no URL is written anywhere: the section's links are derived from the
+  // W3.1's state, which is the state this checkout ships: the flag in `site.yaml` and the
+  // data file's own `available` are both true, and that pair was the WHOLE change. Nothing in
+  // the page changed and no URL is written anywhere: the section's links are derived from the
   // release's published names, so the flip and a version bump move every button (the owner's
-  // changes spec of 2026-10-18, item 6).
-  const built = buildWith(t, (copy) => {
-    const yaml = path.join(copy.root, 'website', 'data', 'site.yaml')
-    writeFileSync(yaml, readFileSync(yaml, 'utf8').replace(/^(\s*console_downloads:\s*)false\s*$/m, '$1true'))
-    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
-    const data = JSON.parse(readFileSync(file, 'utf8'))
-    data.available = true
-    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
-  })
+  // changes spec of 2026-10-18, item 6). The build below is the checkout's own — the copy is
+  // the builder the negative cases use, with nothing mutated — because the unreleased state
+  // is now the fixture rather than the shipped one.
+  const built = buildWith(t, () => {})
 
   const page = decode(builtPage(built))
   const expected = publishedDownloads()
@@ -524,6 +714,53 @@ test('with the console released, the section renders the downloads the release p
   )
 })
 
+test('the links carry the name the release serves, not the name the build wrote', async (t) => {
+  // The bug this case exists for is the one no other check here could see, because every one of
+  // them was anchored to a document in this repository: the release's own `console-sha256sums.txt`
+  // and `console/README.md` both spell the artifacts with a space, GitHub serves them with a dot,
+  // and a build that pasted the release's spelling into the URL wrote
+  // `.../Fugaro%20Console-0.9.0-universal.dmg` — a 404 for every reader, with the checksum
+  // verification command failing beside it. So this case is about the SERVED name, and the two
+  // halves of it are the same fact: the href's last segment is the served name, and no href
+  // carries an encoded space at all.
+  const built = buildWith(t, () => {})
+  const page = decode(builtPage(built))
+
+  const hrefs = [...downloadsSection(page).matchAll(/<a[^>]*href="([^"]+)"/g)].map((match) => match[1])
+  assert.ok(hrefs.length >= 2, `the section renders ${hrefs.length} link(s), which is too few to prove the naming rule`)
+
+  for (const [index, download] of publishedDownloads().entries()) {
+    // `assertReleaseURL` holds the whole URL to the release's facts, the served name included;
+    // these two assertions are the ones whose failure message names the bug rather than the
+    // part, so a regression reads as what it is.
+    assertReleaseURL(hrefs[index], download.name)
+    assert.ok(
+      hrefs[index].endsWith(`/${download.name}`),
+      `the link ${hrefs[index]} does not end in ${JSON.stringify(download.name)}, the name the release serves; the release's own files spell that asset ${JSON.stringify(download.releaseName)}, and a link spelled that way is a 404`,
+    )
+    assert.equal(
+      /%20/i.exec(hrefs[index]),
+      null,
+      `the link ${hrefs[index]} carries an encoded space: the release serves a space in an asset's name as a dot, so this href is a 404 for every reader who follows it`,
+    )
+  }
+
+  // And the served name is a real transformation of the release's own, not a second name the
+  // test invented: the two differ only by GitHub's rewrite of a space.
+  for (const download of publishedDownloads()) {
+    assert.notEqual(
+      download.name,
+      download.releaseName,
+      `${download.releaseName} and its served form are the same string, so this case would pass on a build that never applied the rule at all`,
+    )
+    assert.equal(
+      servedName(download.releaseName),
+      download.name,
+      `${download.releaseName}'s served form is not ${JSON.stringify(download.name)}`,
+    )
+  }
+})
+
 test('the page states nothing its data file does not carry', async (t) => {
   const built = buildWith(t, () => {})
   const page = decode(builtPage(built))
@@ -544,7 +781,17 @@ test('the page states nothing its data file does not carry', async (t) => {
 
   assert.ok(rendered.length >= 5, `the page renders ${rendered.length} sentence(s), which is too few to prove anything`)
 
-  const sources = [data.name, data.what.text, data.not_released.text, ...data.properties.map((property) => property.text)]
+  const sources = [
+    data.name,
+    data.what.text,
+    data.released.text,
+    data.released.verify,
+    data.not_released.text,
+    ...data.properties.map((property) => property.text),
+    // Each asset's own checksum, which the section prints beside its link: a 64-character
+    // line a reader reads, so it is a sentence this rule sees.
+    ...data.downloads.map((download) => download.sha256),
+  ]
   for (const sentence of rendered) {
     assert.ok(
       sources.includes(sentence),

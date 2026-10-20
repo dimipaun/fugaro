@@ -462,6 +462,20 @@ func TestDeriveAccounts(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "may be used by no repository") {
 		t.Fatalf("an account with no allow_data_to: %v", err)
 	}
+	// A profile that names an account and no provider is refused for the
+	// field it is missing, not for the account's repository: this runs before
+	// the document is judged (internal/cli/project_cmd.go), and Canonical("",
+	// slug) would otherwise answer first and tell the operator their
+	// repository is not one. The sentence is validProfiles' own
+	// (profiles.go's provider required rule, providerRequired).
+	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{ClaudeAccounts: []string{"ops"}}}},
+		map[string]config.ClaudeAccount{"ops": {AllowDataTo: []string{"acme/app"}}}, secrets)
+	if err == nil || !strings.Contains(err.Error(), "profiles.standard.provider: a profile must name the provider it serves") {
+		t.Fatalf("an account-naming profile with no provider: %v", err)
+	}
+	if strings.Contains(err.Error(), "is not a repository") {
+		t.Errorf("the refusal reports the account's repository rather than the missing provider: %v", err)
+	}
 	// No profile names an account: the block is absent, not empty.
 	got, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github"}}}, accounts, secrets)
 	if err != nil || got != nil {

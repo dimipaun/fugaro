@@ -2,6 +2,7 @@ package budget_test
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,71 @@ func TestMaxEntryTokensMatchesRules(t *testing.T) {
 	if budget.MaxEntryTokens != rules.MaxTokensPerWrite {
 		t.Fatalf("budget.MaxEntryTokens = %d, rules.MaxTokensPerWrite = %d", budget.MaxEntryTokens, rules.MaxTokensPerWrite)
 	}
+}
+
+// TestMaxEntryTimestampMatchesRules is the same pin for the entry's other
+// duplicated bound: budget.MaxEntryTimestamp and rules.MaxTimestamp, which the
+// template's TIMESTAMP validator applies to `waiting_until`. A rules change
+// that moves one without the other reopens the same freeze for an instant: a
+// value the rules refuse but Go would still send.
+func TestMaxEntryTimestampMatchesRules(t *testing.T) {
+	if budget.MaxEntryTimestamp != rules.MaxTimestamp {
+		t.Fatalf("budget.MaxEntryTimestamp = %d, rules.MaxTimestamp = %d", budget.MaxEntryTimestamp, rules.MaxTimestamp)
+	}
+}
+
+// TestRegistryClipsTheCredentialAndTheWaitingTime (the review finding on
+// C1.3's two new entry fields): clipEntry is the one function every registry
+// write goes through, and its documented job is to keep every value inside the
+// bounds the rules check, so that one bad value cannot make the whole
+// agents/<slug>/<run> PATCH denied and stop every later heartbeat. Credential
+// and WaitingUntil were outside it. A name past the rules' MaxString, or
+// carrying a character safetext strips, and an instant outside
+// [0, MaxTimestamp], went out as they stood — and the rules refuse the whole
+// entry for either, which the rules package's emulator cases pin (the
+// credential-name case and the waiting-until case beside it). Session.Update
+// is where C1.16 records the name the service answered with, so that writer is
+// where the freeze would have arrived.
+//
+// What the entry carries instead is the clipped value: the same treatment
+// every other string of the entry gets, so the run keeps heartbeating and the
+// name it shows is the name it was given, minus what a terminal must not be
+// handed.
+func TestRegistryClipsTheCredentialAndTheWaitingTime(t *testing.T) {
+	f := newFixture(t)
+	s := f.started(budget.AgentEntry{Stage: "bootstrap"})
+	entry := func() map[string]any {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e
+	}
+	// Over the bound, and carrying what safetext strips: a bidi override and a
+	// control character.
+	long := "claude-shared-account-" + strings.Repeat("x", rules.MaxString) + "‮\u0007"
+	s.Update(func(e *budget.AgentEntry) { e.Credential, e.WaitingUntil = long, -1 })
+	waitFor(t, "the clipped credential to reach the registry", func() bool {
+		e := entry()
+		return e != nil && e["credential"] != nil
+	})
+	got, _ := entry()["credential"].(string)
+	if len(got) > rules.MaxString {
+		t.Errorf("the credential sent is %d bytes, want at most %d: the rules refuse the whole entry for a longer one", len(got), rules.MaxString)
+	}
+	if !strings.HasPrefix(got, "claude-shared-account-") {
+		t.Errorf("the credential = %q, want the name the run was given, clipped", got)
+	}
+	if strings.ContainsAny(got, "‮\u0007") {
+		t.Errorf("the credential = %q still carries the characters safetext strips", got)
+	}
+	// A negative instant is outside the rules' bound, and zero is "nothing
+	// pending": the node is absent rather than refused.
+	if v := entry()["waiting_until"]; v != nil {
+		t.Errorf("waiting_until = %v for a negative instant, want the node absent (clamped to 0)", v)
+	}
+	// An instant past the exact-double line is clamped to the line rather than
+	// sent for the rules to refuse.
+	s.Update(func(e *budget.AgentEntry) { e.WaitingUntil = budget.MaxEntryTimestamp + 1 })
+	want := json.Number(strconv.FormatInt(budget.MaxEntryTimestamp, 10))
+	waitFor(t, "the clamped instant to reach the registry", func() bool { return entry()["waiting_until"] == want })
 }
 
 // TestRegistryDropsNewKeysOnceWhenRulesRefuse (Review Focus 4): rules

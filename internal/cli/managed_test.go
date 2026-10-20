@@ -818,7 +818,7 @@ var initFlagCases = map[string]string{
 	"allow-fork":       "OUTSIDE the property: lets plugin wiring move a ref; the wiring's apply still confirms through ask",
 	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
 	"no-build":         "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
-	"provision-batch":  "main's compute stage (0.9.0, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
+	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	"alert-email": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",

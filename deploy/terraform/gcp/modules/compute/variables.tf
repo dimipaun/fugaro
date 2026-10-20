@@ -57,7 +57,8 @@ variable "names" {
     # jobsEditor Condition is narrowed to it (§3.7).
     job_prefix = string
     # The reaper: the account the scheduled sweeper runs as, and the custom
-    # role carrying its six permissions.
+    # role carrying its five permissions (Task 9: never six -- batch.jobs.cancel
+    # is not a permission Google defines).
     reaper_account_id = string
     reaper_role_id    = string
     # The preload builder: the account the scheduled rebuild runs as, and the

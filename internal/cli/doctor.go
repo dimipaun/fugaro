@@ -483,7 +483,7 @@ func doctorManagedDeployer() *doctorCheck {
 		return nil
 	}
 	return &doctorCheck{ID: "managed-deployer-disabled", Severity: "info",
-		Problem: "the managed deployer's scoped role is disabled in this release, so its absence is expected: its fmgd- prefix fence is not an IAM condition GCP accepts yet, so the role and its binding are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.9.0",
+		Problem: "the managed deployer's scoped role is disabled in this release, so its absence is expected: its fmgd- prefix fence is not an IAM condition GCP accepts yet, so the role and its binding are not created, and managed projects (fugaro init --create-project --managed, fugaro managed apply, fugaro restore) are refused until 0.9.5",
 		Fix:     "nothing to do: an installation and a project created without --managed are unaffected (docs/design/managed-projects.md)"}
 }
 
@@ -1659,7 +1659,15 @@ func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 		if c.OK && c.Severity == "" {
 			continue
 		}
-		if !c.OK {
+		// An "info" check is what doctor *measured*, never what it found
+		// wrong (checksFail: an info check does not fail doctor, with or
+		// without --strict), so it must not suppress the summary line either:
+		// counting it as a failure said "something is wrong" — by printing no
+		// "everything checked is ok" — on an installation whose only line was
+		// the launcher grants it had just measured. The surface a person has
+		// to be able to read is the whole point of such a check, and the
+		// summary line is exactly what tells them the read found nothing.
+		if !c.OK && c.Severity != "info" {
 			failed = true
 		}
 		line := c.ID + ": "

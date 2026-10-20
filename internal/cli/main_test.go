@@ -13,6 +13,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// testCacheRoot is TestMain's own cache directory. It is never removed (the
+// operating system cleans its temp directory), unlike t.TempDir's. A test
+// whose command leaves a background cache write running past its return can
+// point XDG_CACHE_HOME here, so the late write cannot race t.TempDir's
+// RemoveAll cleanup. "" when TestMain could not create it.
+var testCacheRoot string
+
 // TestMain closes the ways a test could reach real Google through a
 // gs:// bucket_url or an unfaked client: no application default
 // credentials (a file that doesn't exist), no metadata server, and every
@@ -33,6 +40,7 @@ func TestMain(m *testing.M) {
 	// stops the (rare, info-severity) doctor lookup that reaches it from
 	// going anywhere real.
 	if dir, err := os.MkdirTemp("", "fugaro-test-cache-"); err == nil {
+		testCacheRoot = dir
 		os.Setenv("XDG_CACHE_HOME", dir)
 	}
 	// init refuses to apply anything in a coding agent's session, and the
@@ -63,11 +71,12 @@ func TestMain(m *testing.M) {
 	// while their configs carry fake endpoints, so they turn the skip off and
 	// the tests of the skip itself turn it on.
 	skipGSOnFakeEndpoints = false
-	// Managed projects and --provision-batch are refused in this release
-	// (managedDeployerShipped, batchProvisionShipped). Their own tests run
-	// with both gates open, as the release that ships them will; the refusal
-	// tests (shipped_gates_test.go) put each back to its constant.
-	managedDeployerOpen, batchProvisionOpen = true, true
+	// Managed projects are refused in this release (managedDeployerShipped).
+	// Its own tests run with the gate open, as the release that ships it will;
+	// the refusal tests (shipped_gates_test.go) put it back to its constant.
+	// --provision-batch has no gate any more: batchProvisionShipped is true as
+	// of 0.9.5.
+	managedDeployerOpen = true
 	// findLayer's bucket has no seam override redirecting gs:// elsewhere
 	// the way sharedBucketOpener does above: a rig whose local config
 	// computes a gs:// runs bucket URL (most do; only bucket_url: file://

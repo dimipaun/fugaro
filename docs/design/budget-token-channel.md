@@ -88,7 +88,8 @@ prefix because the job serves every repository admitted to its profile, so a per
 `fugaro doctor`'s `job-token-grant` check knows both shapes, and the cover, the module's
 `precondition` and the installation root's variable type hold the expression to the one clause.
 
-**The Batch backend refuses a sealed launch (decided in Slice B; an open owner question).** Once
+**The Batch backend refuses a sealed launch — the owner's answer, and a documented limit (decided
+in Slice B, answered 2026-10-19).** Once
 the launcher seals, the key it hands the execution would, on Batch, become a plain variable of the
 job's definition — Batch has no per-execution override. **The note this replaces named the wrong
 reader** (a peer's `gcloud run jobs describe`): on Batch a run's own account holds only
@@ -105,9 +106,29 @@ allows no other carrier: a per-run Secret Manager secret read by the VM's accoun
 above (the shared account reads every peer's secret, and revocation is not fail-closed). So the
 launcher hands the key as a *secret* launch variable (`LaunchSpec.SecretEnv`), Cloud Run carries it
 in the override, and Batch refuses the launch before creating anything (`ErrRejected`, the value
-never quoted). Batch's launcher wiring is not built, so no launch reaches this today. **Open for the
-owner:** whether Batch should ever run a budget-on run, and through which carrier — this document
-names none that satisfies §3's constraints.
+never quoted). Batch's launcher wiring is not built, so no launch reaches this today.
+
+**The owner's answer: Batch runs no sealed budget run, and the refusal is a documented limit**
+(2026-10-19, the compute backend plan's P1 — this document's question is closed rather than
+deferred). The refusal stays, because **the carriers it would take are worse than the limit**: the
+job's own `variables` make the key **a standing copy in the job resource** — a job's variables are
+the job's definition, not the per-execution override this document prices — **and widen its audience
+to the reaper**, whose custom role carries `batch.jobs.get` (the launchers, this document says
+above, are already in the override's audience in kind, and §7 says what the seal does and does not
+remove: it is a capability, not a boundary), and `secretVariables` needs a per-run Secret Manager
+secret, which is the rejected C2. **What the limit costs, stated plainly**: **an installation that
+mints budget tokens cannot launch any run on Batch.** Minting is a property of the installation and
+not of a run — `internal/cli/launch_budget.go`'s `budgetMintOn` mints for **every** launch of a
+configuration that names a budget database with budget mode on, or a published policy (a signer is
+required in both cases) — and an installation has **one** backend
+(`localcfg.Config.Backend`, one value for the whole installation), so a minting installation that
+selects `cloud-batch` gets **every** launch refused, after its token was minted and dropped, and has
+to stay on `backend: cloud-run`, where the key travels in the override. There is no per-run fallback
+and no budget-off run on that backend: a launch that carries the seal key is refused before
+`jobs.create` (`ErrRejected`, the value never quoted), and the refusal an operator sees says so —
+what was refused, that it is deliberate, and what the installation has to do instead. The runner is
+unaffected: it reads the key from its environment either way. Nothing else in this document changes,
+and no carrier is added here for Batch.
 
 Every symbol below was read on `next` on 2026-10-15 and is cited by name rather than by line
 number, because the lines move.

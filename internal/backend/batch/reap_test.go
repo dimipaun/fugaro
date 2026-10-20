@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -456,9 +457,13 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 }
 
 // TestReaperQueueDeadline: a job that has sat in QUEUED past the deadline is
-// cancelled -- jobs.cancel, never jobs.delete, because its record is what ls,
-// diagnose and watch read (design §1.4, C8) -- and one within the deadline is
-// left alone.
+// DELETED -- the queue deadline's verb since jobs.cancel turned out not to be
+// a permission Google has, and the one case where the delete is affordable:
+// a job that never left QUEUED never ran a task, so it has no result.json and
+// no VM, and its run's launch.json is the launcher's own write to the runs
+// bucket (cli/run.go), which the delete leaves in place -- which is what ls,
+// diagnose and watch read for it (design §1.4) -- and one within the deadline
+// is left alone.
 func TestReaperQueueDeadline(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	// 40 minutes: past the 32-minute queue deadline, on a 30-minute workflow.
@@ -467,33 +472,42 @@ func TestReaperQueueDeadline(t *testing.T) {
 	young := rt.addJob(t, "20260927-100001-abcd", "QUEUED", 10*time.Minute)
 	// Both jobs' VMs, old enough that only the job behind each stands between
 	// it and the reaper: one job is still waiting for capacity, the other is
-	// being cancelled, and neither frees its VM in this pass.
+	// being deleted, and neither frees its VM in this pass.
 	rt.vm("vm-young", runLabels(t, "20260927-100001-abcd"), rt.old())
 	rt.vm("vm-cancelled", runLabels(t, "20260927-100000-abcd"), rt.old())
 	rep := rt.reap(t)
-	if got := rt.bf.Cancels(); len(got) != 1 || got[0] != old {
-		t.Fatalf("jobs.cancel = %v, want [%s]", got, old)
+	if got := rt.bf.Deletes(); len(got) != 1 || got[0] != old {
+		t.Fatalf("jobs.delete = %v, want [%s]", got, old)
 	}
-	if len(rt.bf.Deletes()) != 0 {
-		t.Fatalf("the queue deadline deleted a job (%v): it must leave the record behind", rt.bf.Deletes())
+	if got := rt.bf.Cancels(); len(got) != 0 {
+		t.Fatalf("the queue deadline cancelled a job (%v): jobs.cancel is not a permission the reaper's role can carry", got)
 	}
-	if !hasAction(rep, ActionCancelJob, rt.name(old)) {
-		t.Fatalf("report = %v, want a cancel of %s", rep.Lines(), old)
+	if !hasAction(rep, ActionDeleteJob, rt.name(old)) {
+		t.Fatalf("report = %v, want a delete of %s", rep.Lines(), old)
+	}
+	// The job's record is gone, not assumed gone: a job that never left QUEUED
+	// has no result.json and no VM to lose (it never ran a task), so the job's
+	// own record is all the delete erases -- the run's launch.json is the
+	// launcher's object in the runs bucket, which is why ls, diagnose and
+	// watch keep showing the run (design §1.4). This is the assertion that
+	// says so rather than the comment above it.
+	if got := rt.bf.IDs(); len(got) != 1 || got[0] != JobID(backendtest.Slug, backendtest.Workflow, "20260927-100001-abcd") {
+		t.Fatalf("jobs = %v, want the deleted job's record gone and the young one's left", got)
 	}
 	if strings.Contains(strings.Join(rep.Lines(), "\n"), young) {
 		t.Fatalf("a job still within the queue deadline was reported: %v", rep.Lines())
 	}
 	// Neither job's VM was the reaper's in that pass: the young one is still
-	// Batch's, and the cancelled one is being torn down from
-	// CANCELLATION_IN_PROGRESS.
+	// Batch's, and the deleted one's VM is Batch's teardown, which the delete
+	// must not race.
 	if got := rt.cf.Deletes(); len(got) != 0 {
 		t.Fatalf("a queued job's VM was deleted: %v", got)
 	}
 	if !refusedBecause(rep, "fake-region-a/vm-young", "still within the queue deadline") {
 		t.Fatalf("report = %v, want the queued job's VM refused", rep.Lines())
 	}
-	if !refusedBecause(rep, "fake-region-a/vm-cancelled", "cancelled") {
-		t.Fatalf("report = %v, want the cancelled job's VM refused", rep.Lines())
+	if !refusedBecause(rep, "fake-region-a/vm-cancelled", "deleted by this pass for the queue deadline") {
+		t.Fatalf("report = %v, want the deleted job's VM refused", rep.Lines())
 	}
 }
 
@@ -1253,14 +1267,14 @@ func TestReaperIsIdempotent(t *testing.T) {
 	rt.vm("vm-2", map[string]string{labelManaged: managedValue}, rt.old())
 	first := rt.reap(t)
 	if len(first.Actions) != 3 {
-		t.Fatalf("first pass actions = %v, want a job, a cancel and a VM", first.Lines())
+		t.Fatalf("first pass actions = %v, want two jobs and a VM", first.Lines())
 	}
 	second := rt.reap(t)
 	if len(second.Actions) != 0 {
 		t.Fatalf("second pass actions = %v, want none", second.Lines())
 	}
-	if len(rt.cf.Deletes()) != 1 || len(rt.bf.Deletes()) != 1 || len(rt.bf.Cancels()) != 1 {
-		t.Fatalf("a second pass made a second call: jobs=%v cancels=%v instances=%v", rt.bf.Deletes(), rt.bf.Cancels(), rt.cf.Deletes())
+	if len(rt.cf.Deletes()) != 1 || len(rt.bf.Deletes()) != 2 {
+		t.Fatalf("a second pass made a second call: jobs=%v instances=%v", rt.bf.Deletes(), rt.cf.Deletes())
 	}
 	if !refused(second, "fake-region-a/vm-2") {
 		t.Fatalf("the second pass stopped refusing: %v", second.Lines())
@@ -1317,26 +1331,23 @@ func TestReaperToleratesADeleteOfSomethingAlreadyGone(t *testing.T) {
 }
 
 // TestReaperDeadlineBoundaries pins the `<=`: a job exactly at a deadline is
-// inside it, not past it. Off by one here is off by one run: the queue
-// deadline cancels, and the run deadline deletes, so a boundary read the wrong
-// way acts a second (or a pass) early on something that was still legitimate.
+// inside it, not past it. Off by one here is off by one run: both deadlines
+// delete, so a boundary read the wrong way acts a second (or a pass) early on
+// something that was still legitimate.
 func TestReaperDeadlineBoundaries(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	// Exactly at the queue deadline (the run ceiling plus the slack): still
-	// waiting, not cancelled.
+	// waiting, not past it.
 	at := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline())
-	// One second past it: cancelled.
+	// One second past it: deleted by the queue deadline.
 	past := rt.addJob(t, "20260927-100001-abcd", "QUEUED", rt.r.QueueDeadline()+time.Second)
 	// Exactly at the run budget (the ceiling, the slack and ReapMargin) in
 	// state: still live. One second past it: stuck.
 	live := rt.addJob(t, "20260927-100002-abcd", "RUNNING", rt.r.RunBudget())
 	stuck := rt.addJob(t, "20260927-100003-abcd", "RUNNING", rt.r.RunBudget()+time.Second)
 	rep := rt.reap(t)
-	if got := rt.bf.Cancels(); len(got) != 1 || got[0] != past {
-		t.Fatalf("jobs.cancel = %v, want only [%s] (the job exactly at the deadline is inside it)", got, past)
-	}
-	if got := rt.bf.Deletes(); len(got) != 1 || got[0] != stuck {
-		t.Fatalf("jobs.delete = %v, want only [%s]", got, stuck)
+	if got := rt.bf.Deletes(); len(got) != 2 || !slices.Contains(got, past) || !slices.Contains(got, stuck) {
+		t.Fatalf("jobs.delete = %v, want [%s %s] and nothing else (the job exactly at the deadline is inside it)", got, past, stuck)
 	}
 	if strings.Contains(strings.Join(rep.Lines(), "\n"), at) || strings.Contains(strings.Join(rep.Lines(), "\n"), live) {
 		t.Fatalf("report = %v, want neither job that was exactly at its deadline", rep.Lines())
@@ -1388,24 +1399,24 @@ func TestReaperWaitsOutAnOverriddenRun(t *testing.T) {
 }
 
 // TestReaperDryRunListsWhatItWouldDelete: dry-run is the way an operator sees
-// what a pass would do before letting it -- and it touches nothing, cancel
-// included.
+// what a pass would do before letting it -- and it touches nothing, both of the
+// reaper's verbs included.
 func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	rt := newReaperTest(t, func(o *ReaperOptions) { o.DryRun = true })
 	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
 	queued := rt.addJob(t, "20260927-100001-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
 	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), rt.old())
 	// A VM whose run is the queued job, so the refusal's wording for that job
-	// is in the report too: a dry run cancels nothing, and a line saying the
-	// job "was cancelled" would be a line an operator cannot act on.
+	// is in the report too: a dry run deletes nothing, and a line saying the
+	// job "was deleted" would be a line an operator cannot act on.
 	rt.vm("vm-2", runLabels(t, "20260927-100001-abcd"), rt.old())
 	rep := rt.reap(t)
 	if !rep.DryRun {
 		t.Fatal("Report.DryRun is false")
 	}
-	if !hasAction(rep, ActionDeleteJob, rt.name(id)) || !hasAction(rep, ActionCancelJob, rt.name(queued)) ||
+	if !hasAction(rep, ActionDeleteJob, rt.name(id)) || !hasAction(rep, ActionDeleteJob, rt.name(queued)) ||
 		!hasAction(rep, ActionDeleteVM, "fake-region-a/vm-1") {
-		t.Fatalf("dry-run report = %v, want the job, the cancel and the VM", rep.Lines())
+		t.Fatalf("dry-run report = %v, want both jobs and the VM", rep.Lines())
 	}
 	if len(rt.bf.Deletes()) != 0 || len(rt.bf.Cancels()) != 0 || len(rt.cf.Deletes()) != 0 {
 		t.Fatalf("dry-run touched something: jobs=%v cancels=%v instances=%v", rt.bf.Deletes(), rt.bf.Cancels(), rt.cf.Deletes())
@@ -1414,25 +1425,25 @@ func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	if !strings.Contains(lines, "would delete job") {
 		t.Fatalf("dry-run lines do not say what they would do: %v", rep.Lines())
 	}
-	if !refusedBecause(rep, "fake-region-a/vm-2", "this pass would cancel it, not delete it") {
+	if !refusedBecause(rep, "fake-region-a/vm-2", "would be deleted by this pass for the queue deadline") {
 		t.Fatalf("dry-run lines do not say what they would do about the queued job: %v", rep.Lines())
 	}
-	if strings.Contains(lines, "was cancelled") {
-		t.Fatalf("a dry run says a job was cancelled: %v", rep.Lines())
+	if strings.Contains(lines, "was deleted by this pass") {
+		t.Fatalf("a dry run says a job was deleted: %v", rep.Lines())
 	}
 	// The same project, really reaped afterwards: the same three actions,
 	// and this time they happen.
 	rt.r.o.DryRun = false
 	rep = rt.reap(t)
-	if len(rep.Actions) != 3 || len(rt.bf.Deletes()) != 1 || len(rt.bf.Cancels()) != 1 || len(rt.cf.Deletes()) != 1 {
+	if len(rep.Actions) != 3 || len(rt.bf.Deletes()) != 2 || len(rt.cf.Deletes()) != 1 {
 		t.Fatalf("the real pass after a dry run did not do what the dry run listed: %v", rep.Lines())
 	}
 	lines = strings.Join(rep.Lines(), "\n")
 	if strings.Contains(lines, "would ") {
 		t.Fatalf("a real pass's lines say they would: %v", rep.Lines())
 	}
-	if !refusedBecause(rep, "fake-region-a/vm-2", "was cancelled, not deleted") {
-		t.Fatalf("the real pass's line about the cancelled job does not say it was cancelled: %v", rep.Lines())
+	if !refusedBecause(rep, "fake-region-a/vm-2", "is being deleted by this pass for the queue deadline") {
+		t.Fatalf("the real pass's line about the queued job does not say it was deleted: %v", rep.Lines())
 	}
 }
 
@@ -1484,86 +1495,79 @@ func TestReaperFailsClosedWhenTheListingsFail(t *testing.T) {
 	}
 }
 
-// TestReaperCancelKeepsTheRecordAndDeleteDoesNot: the queue deadline's
-// cancel and the failure to cancel both leave the record; only the stuck-job
-// delete erases one. This is the promise §1.4 makes about ls, diagnose and
-// watch.
-func TestReaperCancelKeepsTheRecordAndDeleteDoesNot(t *testing.T) {
+// TestReaperQueueDeadlineErasesTheRecordAndAStartedJobKeepsIt: the queue
+// deadline's delete erases the job's own record -- its state and the status
+// message Batch attaches, and nothing the run's readers depend on, because the
+// run's launch.json is the launcher's object in the runs bucket -- for a job
+// that never ran a task -- and it
+// must not touch a job that DID leave QUEUED, whatever the listing said when
+// the pass decided. The second half is the promise §1.4 makes about ls,
+// diagnose and watch: a run that ran keeps its record.
+func TestReaperQueueDeadlineErasesTheRecordAndAStartedJobKeepsIt(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
+	gone := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
 	rt.reap(t)
-	if got := rt.bf.IDs(); len(got) != 1 {
-		t.Fatalf("the queue deadline's cancel removed the job: %v", got)
+	if got := rt.bf.IDs(); len(got) != 0 {
+		t.Fatalf("the queue deadline left the record of %s behind: %v", gone, got)
 	}
-	if st := rt.bf.State(JobID(backendtest.Slug, backendtest.Workflow, "20260927-100000-abcd")); st != "CANCELLED" {
-		t.Fatalf("the cancelled job's state = %q, want CANCELLED", st)
-	}
-}
 
-// TestReaperToleratesACancelThatRacesTheJobsOwnEnd: the job was QUEUED in the
-// listing the pass decided from and had finished by the time the cancel
-// arrived -- the API refuses a cancel of a terminal job, FAILED_PRECONDITION
-// in the fake, UNDOCUMENTED in the real one (design §9, Check 57a step 7). The
-// pass must read the job back rather than fail on it, exactly as Cancel does
-// (§2.3, live check 5), and must leave its record alone.
-func TestReaperToleratesACancelThatRacesTheJobsOwnEnd(t *testing.T) {
-	rt := newReaperTest(t, nil)
-	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
-	// The race: the job reaches a terminal state as the cancel arrives, which
-	// is the only way this branch is reachable at all (a listing and a cancel
-	// read the same stored state otherwise).
-	rt.bf.CancelRace = map[string]string{id: "SUCCEEDED"}
-	// An old VM of the run, so the age floor cannot be what saves it.
-	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
+	// The other half: the listing says QUEUED past the deadline and the job
+	// has left QUEUED by the time the reaper reads it back. Deleting it would
+	// erase a run that ran -- and a run that left QUEUED is the one shape the
+	// queue deadline may never delete.
+	rt = newReaperTest(t, nil)
+	id := rt.addJob(t, "20260927-100001-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
+	// The race, and the only way a test can reach it: a listing and a
+	// read-back read the same stored state otherwise.
+	rt.bf.GetRace = map[string]string{id: "RUNNING"}
+	// Its VM, old enough that the age floor cannot be what saves it: the VM
+	// must be left alone because the job behind it is a run Batch owns, not
+	// because it is young.
+	rt.vm("vm-1", runLabels(t, "20260927-100001-abcd"), rt.old())
 	rep := rt.reap(t)
-	if len(rt.bf.Cancels()) != 0 {
-		t.Fatalf("a cancel that raced the job's own end was recorded: %v", rt.bf.Cancels())
+	if got := rt.bf.Deletes(); len(got) != 0 {
+		t.Fatalf("the queue deadline deleted a job that had left QUEUED: %v", got)
 	}
 	if len(rep.Actions) != 0 {
-		t.Fatalf("actions = %v, want none (the job had finished by itself)", rep.Lines())
+		t.Fatalf("actions = %v, want none: the job is left to the next pass, which judges it on its time in its new state", rep.Lines())
 	}
-	if len(rt.bf.Deletes()) != 0 {
-		t.Fatalf("the reaper deleted a job that finished on its own: %v", rt.bf.Deletes())
+	// It is left where it is, in the state it reached on its own: no state
+	// was rewritten by the pass that decided against the delete, and no API
+	// call was made that would have rewritten one.
+	if st := rt.bf.State(id); st != "RUNNING" {
+		t.Fatalf("the job's state = %q, want RUNNING", st)
 	}
-	if got := rt.bf.IDs(); len(got) != 1 || got[0] != id {
-		t.Fatalf("jobs = %v, want the record of %s left behind", got, id)
-	}
-	if st := rt.bf.State(id); st != "SUCCEEDED" {
-		t.Fatalf("the raced job's state = %q, want the state it reached on its own", st)
-	}
-	// Its VM is left alone by this pass: the run was cancelled, and a cancel
-	// does not clear a run (the next pass reads the job as finished and reaps
-	// the VM then). Deleting it here would race Batch's own teardown.
+	// Its VM too: a job that left QUEUED is a run in flight, and Batch owns
+	// its teardown. Deleting the VM here would race it.
 	if got := rt.cf.Deletes(); len(got) != 0 {
-		t.Fatalf("a cancelled run's VM was deleted in the same pass: %v", got)
+		t.Fatalf("the VM of a job that had left QUEUED was deleted in the same pass: %v", got)
 	}
-	if !refusedBecause(rep, "fake-region-a/vm-1", "cancelled") {
-		t.Fatalf("report = %v, want the cancelled run's VM refused", rep.Lines())
+	if !refusedBecause(rep, "fake-region-a/vm-1", "left QUEUED") {
+		t.Fatalf("report = %v, want the run's VM refused", rep.Lines())
 	}
 }
 
-// TestReaperCancelOfAQueuedJobThatIsAlreadyGone: the job was in the listing the
-// pass decided from and had been deleted by the time the cancel arrived --
-// someone else's delete, or Batch's own 60-day rule (§9) -- so :cancel answers
-// 404. That is not a failure of the pass: one vanished job must not stop the
-// reaper from doing everything else it had decided to do, which is the same
-// idempotence the deletes have (a 404 from jobs.delete is success). Nothing is
-// recorded, because nothing was cancelled.
-func TestReaperCancelOfAQueuedJobThatIsAlreadyGone(t *testing.T) {
+// TestReaperQueueDeadlineOfAJobThatIsAlreadyGone: the job was in the listing
+// the pass decided from and had been deleted by the time the read-back arrived
+// -- someone else's delete, or Batch's own 60-day rule (§9) -- so the read
+// answers 404. That is not a failure of the pass: one vanished job must not
+// stop the reaper from doing everything else it had decided to do, which is the
+// same idempotence the deletes have (a 404 from jobs.delete is success).
+// Nothing is recorded, because nothing was deleted.
+func TestReaperQueueDeadlineOfAJobThatIsAlreadyGone(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
-	rt.bf.CancelGone = map[string]bool{id: true}
+	// The read-back is refused as a 404, which is the shape of a job that
+	// vanished: a real 404 needs a second reaper to race this one.
+	rt.bf.RefusePath(rt.name(id), http.StatusNotFound, "NOT_FOUND", "NOT_FOUND", "job "+id+" not found")
 	// Something else in the same pass that the reaper must still do: a stuck job
 	// after the vanished one. Without it the test would pass on a pass that gave
-	// up at the first cancel.
+	// up at the first difference.
 	stuck := rt.addJobStateAt(t, "20260927-100001-abcd", "SCHEDULED", rt.startedAfter(rt.stuck()), rt.stuck())
 	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 	rep, err := rt.r.Reap(context.Background())
 	if err != nil {
-		t.Fatalf("Reap: %v, want no error: a job that is already gone needed no cancel", err)
-	}
-	if len(rt.bf.Cancels()) != 0 {
-		t.Fatalf("jobs.cancel = %v, want none recorded: the API answered 404", rt.bf.Cancels())
+		t.Fatalf("Reap: %v, want no error: a job that is already gone needed no delete", err)
 	}
 	if got := rt.bf.Deletes(); len(got) != 1 || got[0] != stuck {
 		t.Fatalf("jobs.delete = %v, want [%s]: the pass went on after the vanished job", got, stuck)
@@ -1574,34 +1578,33 @@ func TestReaperCancelOfAQueuedJobThatIsAlreadyGone(t *testing.T) {
 	if len(rt.cf.Deletes()) != 0 {
 		t.Fatalf("the vanished job's VM was deleted in the same pass: %v", rt.cf.Deletes())
 	}
-	// The run is owned for this pass as if the cancel had happened: the job is
+	// The run is owned for this pass as if the delete had happened: the job is
 	// gone, so nothing would have raced the VM's delete -- but the pass decided
-	// to cancel, and one pass of grace costs an interval on a leak that the next
+	// to delete, and one pass of grace costs an interval on a leak that the next
 	// pass reaps (§3.4).
-	if !refusedBecause(rep, "fake-region-a/vm-1", "cancelled") {
+	if !refusedBecause(rep, "fake-region-a/vm-1", "is being deleted by this pass for the queue deadline") {
 		t.Fatalf("report = %v, want the run's VM refused for this pass", rep.Lines())
 	}
 }
 
-// TestReaperCancelOfAQueuedJobThatFails: a cancel the API refuses for a reason
-// that is not the race -- a missing permission, say -- is a real failure. The
-// pass must say so rather than read a refused cancel as a cancel, and the job
-// must be left where it was.
-func TestReaperCancelOfAQueuedJobThatFails(t *testing.T) {
+// TestReaperQueueDeadlineDeleteThatFails: a delete the API refuses for a reason
+// that is not the job's own absence -- a missing permission, say -- is a real
+// failure. The pass must say so rather than read a refused delete as a delete,
+// and the job must be left where it was. The read-back the queue deadline makes
+// before the delete still answers, so the failure is the delete's.
+func TestReaperQueueDeadlineDeleteThatFails(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
-	// Only the cancel is refused: the listing and the read-back it falls back
-	// on still answer, so the failure is the cancel's and not the listing's.
-	rt.bf.RefusePath(id+":cancel", http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "no batch.jobs.cancel")
+	rt.bf.FailDeleteWith = http.StatusForbidden
 	rep, err := rt.r.Reap(context.Background())
 	if err == nil {
-		t.Fatal("Reap with a cancel the API refused: want an error")
+		t.Fatal("Reap with a delete the API refused: want an error")
 	}
-	if !strings.Contains(err.Error(), "batch.jobs.cancel") {
-		t.Fatalf("error = %v, want it to name the permission the pass needed", err)
+	if !strings.Contains(err.Error(), "deleting queued job") {
+		t.Fatalf("error = %v, want it to name what the pass was doing", err)
 	}
 	if len(rep.Actions) != 0 {
-		t.Fatalf("actions = %v, want none: nothing was cancelled", rep.Lines())
+		t.Fatalf("actions = %v, want none: nothing was deleted", rep.Lines())
 	}
 	if st := rt.bf.State(id); st != "QUEUED" {
 		t.Fatalf("the job's state = %q, want it untouched", st)

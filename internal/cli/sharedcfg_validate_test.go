@@ -23,6 +23,19 @@ base_images:
     base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1
 build:
     machine_type: E2_HIGHCPU_8
+# The batch block is published — it is the installation's facts, every one of
+# them a resource of the anchor's own GCP project — so the valid file carries
+# one and every foreign value below is a mutation of it.
+batch:
+    image: us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1
+    machine_type: e2-standard-4
+    boot_image: projects/fugaro-belong/global/images/family/fugaro-base-1
+    network: projects/fugaro-belong/global/networks/fugaro-runs
+    subnetwork: projects/fugaro-belong/regions/us-east5/subnetworks/fugaro-runs
+    service_account: fugaro-batch@fugaro-belong.iam.gserviceaccount.com
+    secrets:
+        GITHUB_TOKEN: projects/fugaro-belong/secrets/github-token
+    socket_gid: 412
 log_view: projects/fugaro-belong/locations/us-east5/buckets/fugaro-runs/views/fugaro-runs
 budget:
     mode: observe
@@ -70,7 +83,12 @@ func TestParseSharedRefusals(t *testing.T) {
 		{"base image in a look-alike project", func(s string) string {
 			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base", "us-east5-docker.pkg.dev/fugaro-belong-evil/fugaro-base", 1)
 		}, "base_images"},
-		{"foreign log view", func(s string) string { return strings.Replace(s, "projects/fugaro-belong/", "projects/evil-proj/", 1) }, "log_view"},
+		{"foreign log view", func(s string) string {
+			// Anchored: the batch block's own resource names carry
+			// "projects/fugaro-belong/" too, and the first match in the file
+			// is not the log view any more.
+			return strings.Replace(s, "log_view: projects/fugaro-belong/", "log_view: projects/evil-proj/", 1)
+		}, "log_view"},
 		{"signer outside the firebase project", func(s string) string {
 			return strings.Replace(s, "token-signer@fugaro-belong", "token-signer@evil-proj", 1)
 		}, "token_signer"},
@@ -133,6 +151,80 @@ func TestParseSharedRefusals(t *testing.T) {
 			s = strings.Replace(s, "    token_signer: fugaro-token-signer@fugaro-belong.iam.gserviceaccount.com\n", "", 1)
 			return strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)
 		}, "firebase_project"},
+		// The batch block: the published block is the installation's own
+		// facts, so every value in it that names a cloud resource is held to
+		// the anchor's project. A writer with objectAdmin on the runs bucket
+		// must not be able to run another machine's jobs from an image they
+		// built (which would run as the run's service account), place its VMs
+		// on their network, run them as their account, or feed them secrets
+		// out of their project.
+		{"batch image of another project", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/evil-proj/fugaro/edgeweb:1", 1)
+		}, "batch.image"},
+		{"batch image of a look-alike project", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong-evil/fugaro/edgeweb:1", 1)
+		}, "batch.image"},
+		{"batch image from another registry", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "evil.example/fugaro/edgeweb:1", 1)
+		}, "batch.image"},
+		// The project in this path is the anchor's own, so the check above
+		// passes it: what makes it foreign is the repository. fugaro-ghcr is
+		// a pull-through repository to ghcr.io, so its contents are whatever
+		// the upstream package's owner published -- anyone with a GitHub
+		// account -- and the image would run as the installation's run
+		// account. (The probe is the shape the review named.)
+		{"batch image through the ghcr remote repository", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/attacker/evil:1", 1)
+		}, "batch.image"},
+		{"batch image through the ghcr remote repository, one path component", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-central1-docker.pkg.dev/fugaro-belong/fugaro-ghcr/evil:1", 1)
+		}, "batch.image"},
+		// Pinning a digest does not make it this installation's either: the
+		// digest is of whatever the upstream owner published, and a
+		// base_images pin -- the one thing of the installation's the remote
+		// repository holds -- carries a release tag and a digest together,
+		// which localcfg's batch.image grammar refuses, so nothing legitimate
+		// is refused with this.
+		{"batch image through the ghcr remote repository, digest-pinned", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/dimipaun/fugaro-base@sha256:"+strings.Repeat("a", 64), 1)
+		}, "batch.image"},
+		// The path's segments, which the repository check above cannot see
+		// because it reads one segment and not what Docker resolves around
+		// it: every one of these carries the anchor's own host and project,
+		// so the project check passes it, and the repository check reads a
+		// segment that is not the repository the image ends up in. Docker
+		// rejects all three references, and fugaro's own reader must not be
+		// the looser of the two: an empty, "." or ".." segment is how a
+		// writer reaches a repository the check never read — the
+		// pull-through above among them — so the shape is refused before
+		// the repository is. (These three are the probes the review named.)
+		{"batch image with an empty path segment", func(s string) string {
+			return strings.Replace(s, "fugaro-belong/fugaro/edgeweb:1", "fugaro-belong//fugaro-ghcr/attacker/evil:1", 1)
+		}, "batch.image"},
+		{"batch image with a dot path segment", func(s string) string {
+			return strings.Replace(s, "fugaro-belong/fugaro/edgeweb:1", "fugaro-belong/./fugaro-ghcr/attacker/evil:1", 1)
+		}, "batch.image"},
+		{"batch image with a dot-dot path segment", func(s string) string {
+			return strings.Replace(s, "fugaro-belong/fugaro/edgeweb:1", "fugaro-belong/fugaro/../fugaro-ghcr/attacker/evil:1", 1)
+		}, "batch.image"},
+		{"batch boot image of another project", func(s string) string {
+			return strings.Replace(s, "projects/fugaro-belong/global/images/family/fugaro-base-1", "projects/evil-proj/global/images/family/fugaro-base-1", 1)
+		}, "batch.boot_image"},
+		{"batch network of another project", func(s string) string {
+			return strings.Replace(s, "projects/fugaro-belong/global/networks/fugaro-runs", "projects/evil-proj/global/networks/fugaro-runs", 1)
+		}, "batch.network"},
+		{"batch subnetwork of another project", func(s string) string {
+			return strings.Replace(s, "projects/fugaro-belong/regions/us-east5/subnetworks/fugaro-runs", "projects/evil-proj/regions/us-east5/subnetworks/fugaro-runs", 1)
+		}, "batch.subnetwork"},
+		{"batch service account of another project", func(s string) string {
+			return strings.Replace(s, "fugaro-batch@fugaro-belong.iam.gserviceaccount.com", "fugaro-batch@evil-proj.iam.gserviceaccount.com", 1)
+		}, "batch.service_account"},
+		{"batch service account of a look-alike project", func(s string) string {
+			return strings.Replace(s, "fugaro-batch@fugaro-belong.iam.gserviceaccount.com", "fugaro-batch@fugaro-belong-evil.iam.gserviceaccount.com", 1)
+		}, "batch.service_account"},
+		{"batch secret of another project", func(s string) string {
+			return strings.Replace(s, "projects/fugaro-belong/secrets/github-token", "projects/evil-proj/secrets/github-token", 1)
+		}, "batch.secrets"},
 		{"repo base_branch", func(s string) string {
 			return strings.Replace(s, "provider: bitbucket", "provider: bitbucket\n        base_branch: attacker-branch", 1)
 		}, "base_branch"},
@@ -425,6 +517,90 @@ func TestParseSharedAcceptsTheValidFileAndTheSizeCap(t *testing.T) {
 	noFirebase := minimal + "budget:\n    mode: observe\n    per_run_usd: 5\n    firebase_api_key: AIzaSyA0123456789abcdefghijklmnopqrstu\n"
 	if c, err := ParseShared([]byte(noFirebase), sharedAnchor); err != nil || c.Budget == nil || c.Budget.Mode != "observe" {
 		t.Errorf("a budget block without Firebase values: %+v, %v", c, err)
+	}
+}
+
+// TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen pins the
+// positives the batch refusals above leave open, so a later tightening of
+// them is a decision rather than an accident:
+//
+//   - an image in another region of the anchor's own Artifact Registry is
+//     accepted. registry_host names one region, and it is the region the base
+//     images are pinned to; a run's job image is built where the build runs,
+//     and what the check is for is whose project it is, not which region.
+//   - an empty network, subnetwork or service account is accepted, and refused
+//     by the backend instead (internal/backend/batch's checkNetwork and
+//     checkServiceAccount refuse a launch without them). There is no resource
+//     named for a writer to move, and refusing the block here would lock a
+//     teammate out of a shared config over a field their own launch refuses
+//     anyway.
+//   - an image in this project's fugaro-base repository is accepted, which is
+//     the other half of refusing fugaro-ghcr above: fugaro-base is a
+//     repository only operators push (deploy/terraform/gcp/modules/installation/
+//     registry.tf), holding this installation's own copy of the base image a
+//     run's image derives FROM, so a writer with objectAdmin on the runs bucket
+//     cannot put code of their own in it. A later decision to refuse it is a
+//     decision, not a hole this test happened to leave open.
+func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
+	otherRegion := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-central1-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", 1)
+	baseRepo := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", 1)
+	noNetwork := strings.Replace(validShared(),
+		"    network: projects/fugaro-belong/global/networks/fugaro-runs\n    subnetwork: projects/fugaro-belong/regions/us-east5/subnetworks/fugaro-runs\n    service_account: fugaro-batch@fugaro-belong.iam.gserviceaccount.com\n", "", 1)
+	if noNetwork == validShared() {
+		t.Fatal("fixture: the batch block's network lines are gone from validShared")
+	}
+	image := func(ref string) string {
+		return strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", ref, 1)
+	}
+	for name, data := range map[string]string{
+		"image in another region of this project": otherRegion,
+		"image in this project's base repository": baseRepo,
+		"no network, subnetwork or account":       noNetwork,
+		// The strict path grammar (batchImageRE) is a refusal of empty, "."
+		// and ".." segments, and of nothing else: the shapes fugaro init
+		// writes stay accepted, so a later tightening of it that refuses
+		// one of these is a refusal of this installation's own build.
+		"image pinned by digest":                          image("us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb@sha256:" + strings.Repeat("a", 64)),
+		"image in a nested path":                          image("us-east5-docker.pkg.dev/fugaro-belong/fugaro/team/edgeweb:1"),
+		"image in a repository whose name has separators": image("us-east5-docker.pkg.dev/fugaro-belong/fugaro_base-x.v2/edgeweb:1"),
+		// The residue itself, which is not a positive anyone wants and is
+		// here so it cannot be lost: see
+		// TestParseSharedLeavesAnotherPullThroughRepository.
+		"image in a second pull-through repository": image("us-east5-docker.pkg.dev/fugaro-belong/docker-hub/attacker/evil:1"),
+	} {
+		c, err := ParseShared([]byte(data), sharedAnchor)
+		if err != nil {
+			t.Errorf("%s: refused: %v", name, err)
+			continue
+		}
+		if c.Batch == nil {
+			t.Errorf("%s: parsed with no batch block", name)
+		}
+	}
+}
+
+// TestParseSharedLeavesAnotherPullThroughRepository pins the residue the design
+// now states instead of smoothing over (docs/design/shared-config.md §5, the
+// follow-up to Task 8's first half): the fugaro-ghcr refusal is by that one
+// repository ID, so a SECOND pull-through repository of the anchor's project —
+// one an operator created under another ID, whose contents are its upstream's
+// rather than this installation's — passes the reader with an attacker's path
+// inside it. The reader cannot close this: it has a name, a GCP project and a
+// bucket, and no repository list to tell the project's remote repositories from
+// the ones this installation's builds push to.
+// plan 2026-10-19-compute-backend.md Task 10 step 5 owns closing it, and this
+// test is what fails on the day it is closed: an image refused here means the
+// reader changed, and §5's sentence, the plan's step and this test move
+// together with it.
+func TestParseSharedLeavesAnotherPullThroughRepository(t *testing.T) {
+	const ref = "us-east5-docker.pkg.dev/fugaro-belong/docker-hub/attacker/evil:1"
+	published := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", ref, 1)
+	c, err := ParseShared([]byte(published), sharedAnchor)
+	if err != nil {
+		t.Fatalf("ParseShared refused %q: %v — the refusal is by the one repository ID fugaro-ghcr and the reader has no repository list, so a refusal here is the change Task 10 step 5 makes, and docs/design/shared-config.md §5 and this test's comment have to move with it", ref, err)
+	}
+	if c.Batch == nil || c.Batch.Image != ref {
+		t.Fatalf("batch.image = %+v, want %q: the reader passed the reference but not as the batch image", c.Batch, ref)
 	}
 }
 

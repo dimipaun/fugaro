@@ -604,7 +604,17 @@ func TestSetupSkillHandlesSeveralProjects(t *testing.T) {
 			t.Errorf("SKILL.md does not recognise the error %q", phrase)
 		}
 	}
-	for _, want := range []string{"Ask the user which Fugaro project this repository belongs to", "don't open the config directory", "exactly as the user confirmed it", "refuse any that holds a space, a quote or a shell character", "`FUGARO_PROJECT=<name> fugaro validate --json`", "`FUGARO_PROJECT=<name> fugaro config example`"} {
+	for _, want := range []string{
+		"Ask the user which Fugaro project this repository belongs to", "don't open the config directory",
+		"exactly as the user confirmed it", "refuse any that holds a space, a quote or a shell character",
+		"`FUGARO_PROJECT=<name> fugaro validate --json`", "`FUGARO_PROJECT=<name> fugaro config example`",
+		// The init blocks below the paragraph carry `--project <name>` in
+		// their `user-runs` fences, and passing it is only theirs to do when a
+		// project had to be chosen here. The sentence that says so keeps an
+		// agent from making the user select a project twice; a trim dropped it
+		// once, so it is pinned rather than left to the next trim.
+		"drop `--project <name>` below when no project had to be chosen",
+	} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("SKILL.md never says %q", want)
 		}
@@ -821,5 +831,44 @@ func TestSetupSkillSaysWhoWritesTheManagedMarks(t *testing.T) {
 	const both = "It writes the label `fugaro_managed=true` on the project as well, in the same command"
 	if !strings.Contains(reference, both) {
 		t.Errorf("reference/managed.md does not say the flagging command writes the label too:\nwant %q", both)
+	}
+}
+
+// TestSetupSkillSaysManagedIsGatedOff (round-3 review, medium): both the setup
+// skill and its managed reference describe the managed workflow — the apply,
+// the flag, the creation — and every one of those entry points refuses before
+// any cloud call in this release, because `managedDeployerShipped`
+// (internal/cli/recipes_skew.go) is false. A skill that presents the mode as
+// the working path sends the user's agent at a workflow that cannot run, and
+// the plugin's own convention for a gate is to state its state where the
+// feature is described: decisions.md's checkout topic says `cloneShipped` is
+// open, pinned by TestSetupSkillOffersClone. So both files must name the
+// constant, where it lives, that it is false, the refusal a user will see, and
+// when the gate opens: the redesign is planned for 0.9.5, by the owner's ruling
+// of 2026-10-19, which moved it off 0.9.0 — the release the skill is read in.
+// The release name is the half a reader acts on: without it, "disabled in this
+// release" reads as a temporary state of the tree rather than as 0.9.0's own
+// behaviour, which docs/gcp-setup.md:622, docs/design/managed-projects.md:3 and
+// internal/cli/recipes_skew.go all name as 0.9.5.
+//
+// Mutations (each verified, planted and reverted): drop the gate paragraph from
+// reference/managed.md, and change SKILL.md's "is false" to "is open" — both
+// fail here. Dropping "planned for 0.9.5" from either file fails it too.
+func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
+	for name, doc := range map[string]string{
+		"SKILL.md":             setupFiles(t)["skills/setup/SKILL.md"],
+		"reference/managed.md": setupFiles(t)["skills/setup/reference/managed.md"],
+	} {
+		for _, want := range []string{
+			"managedDeployerShipped",
+			"internal/cli/recipes_skew.go",
+			"is false",
+			"managed projects are disabled in this release",
+			"planned for 0.9.5",
+		} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s never says %q: the managed mode's gate is closed in this release (managedDeployerShipped is false, internal/cli/recipes_skew.go), so the skill has to say where the gate stands beside the workflow it describes", name, want)
+			}
+		}
 	}
 }

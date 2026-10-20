@@ -245,11 +245,19 @@ makes is signed by it. The alternative -- putting `acked` inside the tag -- is
 not available: the ack is written after the tag was made, and a launcher that
 could not ack could not release a prompt either.
 
-## The audio stub (P3.4 is not merged)
+## The audio stub (P3.4 has merged; P3.5 wired this client to it)
 
 P3.4 (`mobile/src/audio/`, the AudioIn/STT/TTS interfaces and their fakes, PR
-#592) is **not merged**, and this task may not depend on unmerged code. So
-`speaker.js` is a one-method seam of this task's own -- `speak(text)` returning
+#592) landed after this task: it had no directory in the tree when P3.6 was
+written, and this task may not depend on code that is not on `main`. **It has
+since merged with this change** -- `mobile/src/audio/` is the tree's now -- and
+**P3.5 has since wired the two together**: `mobile/src/voice/speaker.js`'s
+`createPipelineSpeaker({ pipeline })` is the adapter the voice screen hands the
+client, so a built app speaks through P3.4's pipeline and the client never
+learns what is behind the port. The port itself stays this module's own -- the
+mailbox module keeps its `MemorySpeaker`, and merging the two into one would be
+a second way to speak. So `speaker.js` is a one-method seam of this
+task's own -- `speak(text)` returning
 `{ ok: true }`, or `{ ok: false, code, field }` with a code from
 `SPEAK_CODES` (`bad-text`, `speak-failed`) -- with `MemorySpeaker` as its
 double. (The refusal shape was written as `{ id, code }` here until the
@@ -257,9 +265,10 @@ review's last round; that is the shape of the client's own `unspoken` list,
 which names the message the refusal is about, not the port's.) What
 P3.6 needs from it is exactly one thing: **whether the utterance was spoken**,
 because the ack is written only after it was. Voices, queues, barge-in,
-interruption and latency are P3.4's and P3.5's, and none of them is here. When
-P3.4 merges, `speaker.js` is the file that goes, and its `MemorySpeaker` is what
-the P3.4 fakes replace.
+interruption and latency are P3.4's and P3.5's, and none of them is here.
+`speaker.js` is the file that goes, and its `MemorySpeaker` is what the P3.4
+fakes replace in a built app -- P3.5 did that wiring; this module still defines
+the port and does not reach for the pipeline itself.
 
 The **secure store is not stubbed**: P3.1 is merged and its `SecretStore` is
 reused, with one addition (below).
@@ -363,20 +372,21 @@ from their absence:
   `acked` is an ordinary message) and
   nothing else -- no auth, no durability, no listeners, no quota. The deployed
   rules are checks **81/82**, owner-run, and none of them is run here.
-* **The template does not accept `mac` yet, and that is P6.4's task.** This
-  client signs every message because the plan's P3.6 entry requires it (P6.3 and
-  P6.4 "require `mac` on every inbox message, so P3.6 must sign"), and
-  `shared/mailbox-schema` is the merged authority for the record's shape. The
-  template in `internal/budget/rules/rules.json.tmpl` today validates exactly
-  `id`, `sender`, `text`, `at` (plus `acked` on the outbox) with `$other:
-  false`, so **a message this client writes would be denied by the rules as
-  they now stand** until **P6.4** -- proposed, NOT APPROVED, and the task that
-  adds "the same fields in the mailbox subtree" -- lands and is deployed. That
-  is a sequencing fact, not a defect in this module, and it is named here
-  because a reader who tries this against a real project deserves to know it
-  before the rules refuse the write. `store.js`'s double deliberately does not
-  model a field allow-list: the shape is the schema's rule, and P6.3's tests
-  hold it.
+* **No deployment, and the template's allow-list is newer than any deployed
+  one.** This client signs every message because the plan's P3.6 entry requires
+  it (P6.3 and P6.4 "require `mac` on every inbox message, so P3.6 must
+  sign"), and `shared/mailbox-schema` is the merged authority for the record's
+  shape. The template in `internal/budget/rules/rules.json.tmpl` now agrees
+  with it: P6.4 merged on 2026-10-18 and its inbox and outbox message nodes
+  require `id`, `sender`, `text`, `at` **and `mac`**, and carry `kind`,
+  `agent`, `options`, `reply_to` and the action record with `$other: false`.
+  What is *not* true is that anything is running it -- the template is a
+  template, and the deployed rules are checks **81/82**, owner-run and not run
+  here -- so a reader pointing this client at a project whose rules predate
+  P6.4 would still see the write refused. That is a sequencing fact about a
+  deployment, not a defect in this module. `store.js`'s double deliberately
+  does not model a field allow-list either: the shape is the schema's rule,
+  and P6.3's tests hold it.
 * **The Realtime Database adapter does not exist yet.** `store.js` is the port
   and its double; the SDK adapter is `mobile/index.js`'s wiring (P3.2's and
   P6.10's territory), and there is no test for it because there is no file.
@@ -396,6 +406,15 @@ from their absence:
   **A message this client sends is therefore never answered end to end in CI**:
   the "clears the pending message" path is tested with a locally signed `answer`
   record, not with the consumer.
+* **Demo mode (the owner's ruling of 2026-10-19) reuses this module and forks
+  nothing.** `src/demo/` drives THIS client over THIS port double, with the
+  consumer's side delivered into the tree by `MemoryMailboxStore.deliver` --
+  the other end's write, which is not a phone write, is not recorded in
+  `writes()`, and so keeps the one-write-path scan (`write-path.test.js`) a
+  statement about the client. Its tags are made by this directory's own
+  `macOf`, for the reason the bullet above gives: the simulator signs nothing,
+  so it cannot be the demo's other end either (`src/demo/transport.js` says
+  so at the code). Nothing in this directory knows the demo exists.
 * **P3.4's audio and P3.5's voice screen are not here.** `speaker.js` is the
   stub described above -- the interface P3.6 needs and no more. Nothing in this
   directory records audio, transcribes, or decides when to speak.

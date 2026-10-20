@@ -270,6 +270,68 @@ func TestTheFlagsWriteErrorIsBounded(t *testing.T) {
 	}
 }
 
+// TestTheLabelsWritersErrorsAreBounded: WriteManagedLabel (the creating run,
+// Task 3.0) and WriteManagedLabelForFlag (the owner's flag, Task 6.1) are the
+// two hands a project's label is written by, and both end in the same write
+// WriteMarker's does. Their errors carry text that is not this program's — the
+// project name out of a configuration and the words of a Resource Manager
+// answer about a request that failed — and the caller prints them: `fugaro
+// init` puts the warning in its output and in res.Warnings on exactly the
+// branch where the label write failed, and `fugaro managed flag` prints its
+// own. So both are bounded like every sibling writer, and the bound is on the
+// message alone.
+func TestTheLabelsWritersErrorsAreBounded(t *testing.T) {
+	ctx := context.Background()
+	for name, v := range hostileValues() {
+		t.Run(name+" in the creation write's refusal", func(t *testing.T) {
+			// The refusal names the project it was asked to label and the one
+			// the run created; the first is the caller's own value.
+			err := WriteManagedLabel(ctx, nil, testFugaroProject, v+"\n  and a forged line")
+			if err == nil {
+				t.Fatal("a label for a project this run did not create was written")
+			}
+			bounded(t, name+" in WriteManagedLabel's refusal", err.Error(), 1)
+		})
+		t.Run(name+" in the flag's write error", func(t *testing.T) {
+			// The flag's gate is the command's, so this is reached with the
+			// operator's value as the project: the read names it and the API's
+			// 5xx body is what arrives in the error.
+			c, cf := newCRM(t)
+			cf.AddProject(testProject, testProjectNumber)
+			cf.FailGet(testProject, http.StatusInternalServerError, "INTERNAL", "backend error"+v)
+			err := WriteManagedLabelForFlag(ctx, c, testProject)
+			if err == nil {
+				t.Fatal("the project read failed, and the label was written anyway")
+			}
+			bounded(t, name+" in WriteManagedLabelForFlag's error", err.Error(), 1)
+		})
+		t.Run(name+" in the label write's project", func(t *testing.T) {
+			// The same write with no client at all: the sentence names the
+			// project before anything is read, and that name is the caller's.
+			err := WriteManagedLabel(ctx, nil, v, v)
+			if err == nil {
+				t.Fatal("a label with no Resource Manager client was written")
+			}
+			bounded(t, name+" in WriteManagedLabel's refusal", err.Error(), 1)
+		})
+	}
+	// And the API's own words are what reaches the sentence, not the caller's:
+	// the failing read above carries the hostile value in its body too.
+	c, cf := newCRM(t)
+	cf.AddProject(testProject, testProjectNumber)
+	cf.FailGet(testProject, http.StatusInternalServerError, "INTERNAL", "backend error\n  and a forged line")
+	err := WriteManagedLabel(ctx, c, testProject, testProject)
+	if err == nil {
+		t.Fatal("the project read failed, and the label was written anyway")
+	}
+	bounded(t, "the API's body in WriteManagedLabel's error", err.Error(), 1)
+	// The bound is on the message: the typed error inside it is still reachable.
+	var ge *googleapi.Error
+	if !errors.As(err, &ge) {
+		t.Errorf("the bound hid the API error: %v", err)
+	}
+}
+
 // TestTheGuardsRefusalCapsItsListing: the addresses a command line named are
 // as many as the session passed, so the refusal that repeats them (twice) is
 // capped at safetext.FieldListMax and says how many it left out — and never

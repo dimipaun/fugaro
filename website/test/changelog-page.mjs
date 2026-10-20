@@ -1,48 +1,50 @@
 // website/test/changelog-page.mjs — the changelog page against docs/releases/ (W1.9).
 //
-// The page is a rendering of `docs/releases/vX.Y.Z.md` and of nothing else, so the source
-// of truth of every assertion below is **the directory itself** — read here, never the
-// generator's own output and never a git tag (D100, finding 44). Four things are checked:
+// The page is a rendering of `docs/releases/vX.Y.Z.md` and of `website/data/release-summaries.yaml`,
+// and of nothing else, so the source of truth of every assertion below is **those two files** —
+// read here, never the generator's own output and never a git tag (D100, finding 44). Five
+// things are checked:
 //
 //   1. **The page's release set equals the directory's, in both directions.** A release
 //      file the page omits fails, and a tag the page lists that no file backs fails. D100
 //      calls this the whole of the drift protection, because the page is the first
 //      reader-facing index of those files (the README keeps no changelog section).
 //   2. **The newest entry is the newest file**, by the version in the filename.
-//   3. **The page adds no sentence of its own**, and drops no line of any file.** Every
-//      sentence the page renders appears in a release file, and every content line of
-//      every release file appears on the page. The only words the page writes itself are
-//      its title, the summary block's heading, the "not yet released" marker W1.9 step 1
-//      requires, and the tags, which come from the filenames.
+//   3. **The page adds no sentence of its own beyond those two files**, and drops no line of
+//      any release file.** Every sentence the page renders is in a release file or in the
+//      summary the data file carries for that release, and every content line of every
+//      release file appears on the page. The only words the page writes itself are its
+//      title, the notes block's label, the "not yet released" marker, and the tags, which
+//      come from the filenames.
 //   4. **Every entry links to its GitHub release**, at a URL built from site.yaml's
 //      repository rather than typed into the page, and the page states no date — the files
-//      carry none and the newest entry has no tag to read one from (D100).
-//   5. **The summary block is the files' text too** (P4, D189; RF24). The page opens with
-//      the newest releases' first Highlights line above the full list, and those lines are
-//      the release files' own: the case below pins each item to the first content line of
-//      the file its tag names, in the newest-first order, so the one place where a line
-//      appears twice on this page is still a line no one wrote here. The block is a
-//      summary a reader reads and not a second changelog — the number of releases it shows
-//      is the page's choice and is deliberately not pinned here; what it shows is.
+//      carry none, and the date a reader wants is the one GitHub states (D100).
+//   5. **Each release's summary is the one the data file carries for it** (the owner's brief
+//      of 2026-10-19): the page renders one summary per release, from
+//      `website/data/release-summaries.yaml`, and the release file's own Highlights are the
+//      block a reader opens below it. Every release file has an entry in that file, none is
+//      empty, no entry outlives the file it names, and the words of an entry are the site's
+//      rather than an internal id or a repository path.
 //
-// **How it builds, and why the build has no tags.** A page is observable only as HTML, so
-// this file builds the site — in a **copy of the repository in a temp directory**, with
-// `node_modules` symlinked rather than installed, the way W1.3's layout test builds for the
-// same reason: a build must not be run against the checkout it is asserted over, and the
-// assertion needs a checkout whose shape this file controls. The copy deliberately carries
-// **no `.git`**, so the checkout the build runs in has no tags at all. That is exactly the
-// state W0.6 designed the generator for (a shallow CI checkout has none either), and it is
-// what makes the "not yet released" state deterministic here **without any test reading a
-// tag**: in the copy every entry is unreleased, and the case below asserts the page says so.
-// The released half of that pair is deliberately not asserted — it is decided by the tags
-// of the checkout the build ran in, and D100's rule is that no test reads one.
+// **How it builds, and why the copy's plugin version is lowered.** A page is observable only
+// as HTML, so this file builds the site — in a **copy of the repository in a temp directory**,
+// with `node_modules` symlinked rather than installed, the way W1.3's layout test builds for
+// the same reason: a build must not be run against the checkout it is asserted over, and the
+// assertion needs a checkout whose shape this file controls. The copy carries **no `.git`**,
+// which is what makes the released state deterministic without any test reading a tag: which
+// releases are published is decided by the plugin's own version
+// (`plugin/.claude-plugin/plugin.json`, the owner's brief of 2026-10-19), a file this copy
+// carries. The copy's manifest is written with **the second-newest release file's version**,
+// so the build under test is the state of a tree one release ahead of its version bump:
+// exactly the newest release file is not yet released, and every older one is. A build whose
+// "not yet released" came from the checkout's tags could not produce that answer at all.
 //
 // The build is network-free: `npm ci` is not run here, and the only executable it starts is
 // the site's own installed Astro.
 
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -55,6 +57,11 @@ const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
 
 const RELEASES_DIR = path.join(REPO, 'docs', 'releases')
+
+// The site's own data: the end-user summary of each release (the owner's brief of
+// 2026-10-19), and the plugin manifest whose version decides which releases are published.
+const SUMMARIES_FILE = path.join(SITE, 'data', 'release-summaries.yaml')
+const PLUGIN_FILE = path.join(REPO, 'plugin', '.claude-plugin', 'plugin.json')
 
 // `docs/releases/README.md` describes the format; it is the one file in the directory that
 // is not a release, and it is skipped by name rather than by the `vX.Y.Z.md` pattern, so a
@@ -77,11 +84,10 @@ function sectionHeading(title) {
   return `### ${title}`
 }
 
-// The heading of the summary block P4 put above the list (D189). It is the page's own word
-// — the block is the page's summary of the newest releases, not a line of any one of them —
-// and it is named here because the "no sentence of its own" case below has to allow it, and
-// nothing else of that kind, on the page.
-const SUMMARY_HEADING = 'The newest releases'
+// The label on the collapsed block of a release file's own lines (the component's own word,
+// and the whole of what the block adds to the page): a reader who wants the Highlights of a
+// release opens it, and the summary above says what the release gives them.
+const NOTES_LABEL = 'Highlights'
 
 // What a site build cannot read, and therefore what the copy below leaves out: the Go
 // module's own tree and test data, the console application, and the installed and built
@@ -112,8 +118,9 @@ function build() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
-      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
-      // quotes the skills (website/test/lib/build.mjs).
+      // `plugin/skills` and `plugin/.claude-plugin` are the parts of `plugin/` a build
+      // reads: the hero's chat quotes the skills, and the changelog decides which releases
+      // are published from the plugin's own version (website/test/lib/build.mjs).
       if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
@@ -122,6 +129,18 @@ function build() {
   // The installed tree is symlinked rather than copied: it is the pinned tree `npm ci`
   // wrote, and this file installs nothing (W1.1).
   linkNodeModules(path.join(root, 'website', 'node_modules'))
+
+  // The plugin's version the copy is built with: the second-newest release file's, so the
+  // build under test is a tree one release ahead of its version bump. Exactly the newest
+  // release file is then not yet released, and every older one is — an answer a tag-reading
+  // rule could not produce, because the copy has no `.git` at all (the header says why).
+  const rank = newestFirst()
+  assert.ok(rank.length >= 2, 'docs/releases/ carries fewer than two release files, so this file cannot build the state of a tree one release ahead')
+  const publishedVersion = rank[1].slice(1)
+  writeFileSync(
+    path.join(root, 'plugin', '.claude-plugin', 'plugin.json'),
+    `${JSON.stringify({ name: 'fugaro', version: publishedVersion }, null, 2)}\n`,
+  )
 
   const site = path.join(root, 'website')
   const result = spawnSync(process.execPath, [path.join(site, 'node_modules', 'astro', 'bin', 'astro.mjs'), 'build'], {
@@ -135,6 +154,7 @@ function build() {
     dir,
     root,
     site,
+    publishedVersion,
     status: result.status,
     output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
     html: existsSync(page) ? readFileSync(page, 'utf8') : null,
@@ -219,14 +239,58 @@ function releasesText() {
 }
 
 // ---------------------------------------------------------------------------------------
+// The site's data: website/data/release-summaries.yaml, read here rather than asked of the
+// generator, the way `docs/releases/` is above.
+// ---------------------------------------------------------------------------------------
+
+// The one shape an entry in that file may take, exactly as the file's own header writes it
+// and as `website/src/content.ts` reads it: two spaces, a `vX.Y.Z` key, `: `, and the
+// summary on that one line. A folded value, a quoted key or a second line under an entry is
+// refused here rather than read approximately — a test that parsed the file loosely could
+// agree with a file the site's own reader refuses.
+const SUMMARY_ENTRY = /^ {2}(v\d+\.\d+\.\d+): (.+)$/
+
+/**
+ * Every entry in `website/data/release-summaries.yaml`, by tag, with the file's own lines
+ * checked first: the reader below understands one shape and says so, so a file it does not
+ * understand fails here rather than silently yielding a shorter map.
+ */
+function summaryEntries() {
+  const lines = readFileSync(SUMMARIES_FILE, 'utf8').split('\n')
+  const start = lines.indexOf('summaries:')
+  assert.notEqual(start, -1, `${path.relative(REPO, SUMMARIES_FILE)} carries no \`summaries:\` line at the start of a line: the file states its entries under it`)
+
+  const entries = new Map()
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue
+    if (!line.startsWith(' ')) break // the next top-level key ends the map.
+    const match = SUMMARY_ENTRY.exec(line)
+    assert.ok(
+      match,
+      `${path.relative(REPO, SUMMARIES_FILE)}:${i + 1}: ${JSON.stringify(line)} is not \`  vX.Y.Z: one line of text\`: an entry is a tag and its summary on one line, and a value written another way is refused rather than read approximately`,
+    )
+    const [, tag, summary] = match
+    assert.ok(summary.trim().length > 0, `${path.relative(REPO, SUMMARIES_FILE)}:${i + 1}: ${tag} carries an empty summary, and the changelog renders it under the release's heading`)
+    assert.equal(entries.has(tag), false, `${path.relative(REPO, SUMMARIES_FILE)}:${i + 1}: ${tag} is written twice, and the file's own reader keeps one entry per tag`)
+    entries.set(tag, summary)
+  }
+
+  assert.ok(entries.size > 0, `${path.relative(REPO, SUMMARIES_FILE)} carries no entry under \`summaries:\``)
+  return entries
+}
+
+// ---------------------------------------------------------------------------------------
 // The page: the built HTML, read the way a reader reads it.
 // ---------------------------------------------------------------------------------------
 
 // The text-bearing elements of the page's main region, one entry per element: a heading, a
-// paragraph or a list item. Reading the page element by element is what keeps two adjacent
-// blocks from being glued into one "sentence" that no file carries — the page's text is
-// exactly these strings, in this order.
-const TEXT_ELEMENT = /<(h1|h2|h3|p|li)\b[^>]*>([\s\S]*?)<\/\1>/g
+// paragraph, a list item or the label of a details block. Reading the page element by
+// element is what keeps two adjacent blocks from being glued into one "sentence" that no
+// file carries — the page's text is exactly these strings, in this order. The `<summary>`
+// label is in the list because it is a word a reader reads, and it is short enough to slip
+// past a rule about sentences: the case below holds it to the page's own words.
+const TEXT_ELEMENT = /<(h1|h2|h3|p|li|summary)\b[^>]*>([\s\S]*?)<\/\1>/g
 
 function decodeEntities(text) {
   return text
@@ -269,11 +333,9 @@ function pageSentences(html) {
  *
  * An entry heading is an `<h2>` whose `id` is the tag and whose text is the tag: the id is
  * what the entry is linked by, and the text is what a reader reads, so the two are one fact
- * and are asserted to agree. The summary block P4 added above the list (D189) carries a
- * heading of its own, which is a heading like any other and is not an entry — reading every
- * `<h2>` on the page would count it as a release and fail the coverage case below for the
- * wrong reason, so an entry heading is recognised by its id, which is the tag and nothing
- * else.
+ * and are asserted to agree. Nothing else on this page is an `<h2>`, and recognising an
+ * entry by its id — which is the tag and nothing else — keeps a heading added later from
+ * counting as a release.
  */
 function tagsOnPage(html) {
   return [...html.matchAll(/<h2\b[^>]*\bid="([^"]*)"[^>]*>([\s\S]*?)<\/h2>/g)].map((match) => {
@@ -288,20 +350,28 @@ function tagsOnPage(html) {
 }
 
 /**
- * The summary block's items, in the order the page renders them: the tag each item names
- * and the text of its line. The block is the page's one summary (P4, D189), and it is read
- * here as a block of its own so that the case below can pin it to the release files.
+ * The summaries the page renders, in the order it renders them: the tag each one names
+ * (carried as an attribute, so an entry and its summary are read as one fact) and the text
+ * of the line.
  */
-function summaryItems(html) {
-  const items = []
-  for (const match of html.matchAll(/<div class="summary-release"[^>]*\bdata-summary-release="([^"]+)"[^>]*>([\s\S]*?)<\/div>/g)) {
-    const line = /<p class="summary-line"[^>]*>([\s\S]*?)<\/p>/.exec(match[2])
-    items.push({
+function summariesOnPage(html) {
+  return [...html.matchAll(/<p class="release-summary"[^>]*\bdata-release-summary="([^"]+)"[^>]*>([\s\S]*?)<\/p>/g)].map(
+    (match) => ({
       tag: match[1],
-      line: line === null ? null : decodeEntities(line[1].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim(),
+      text: decodeEntities(match[2].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim(),
+    }),
+  )
+}
+
+/** The tags whose entry carries the "not yet released" marker, in the order they appear. */
+function unpublishedOnPage(html) {
+  return [...html.matchAll(/<article\b[^>]*>([\s\S]*?)<\/article>/g)]
+    .filter((article) => article[1].includes('data-status="not-yet-released"'))
+    .map((article) => {
+      const heading = /<h2\b[^>]*\bid="([^"]*)"[^>]*>/.exec(article[1])
+      assert.ok(heading, 'an entry carries the "not yet released" marker and no heading with a tag in its id, so this reader cannot name it')
+      return heading[1]
     })
-  }
-  return items
 }
 
 /**
@@ -312,8 +382,10 @@ function summaryItems(html) {
  * Reading the entry out of its own `<article>` — which opens at the heading its tag carries
  * — is what lets the case below compare one release's rendering against one release file:
  * the sequence of elements is the file's lines, in the file's order, with each section
- * heading as the heading element it is. The "not yet released" marker is the page's own
- * line rather than a release file's and is left out here as it is left out of the gate above.
+ * heading as the heading element it is. The "not yet released" marker and the summary are
+ * the page's own lines rather than the release file's — the summary is the data file's, and
+ * the case below holds it there — so both are left out here, as they are left out of the
+ * gate above.
  */
 function entryElements(html, tag) {
   const at = html.indexOf(`<h2 id="${tag}"`)
@@ -322,7 +394,7 @@ function entryElements(html, tag) {
 
   const out = []
   for (const match of article.matchAll(/<(h3|p|li)\b([^>]*)>([\s\S]*?)<\/\1>/g)) {
-    if (match[2].includes('release-status')) continue
+    if (match[2].includes('release-status') || match[2].includes('release-summary')) continue
     const text = decodeEntities(match[3].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
     if (text.length > 0) out.push({ kind: match[1], text: plain(text) })
   }
@@ -392,58 +464,108 @@ test('the changelog page lists the newest release first', () => {
 test('the changelog page adds no sentence of its own', () => {
   const html = builtPage()
   const files = releasesText()
-  // The page's own words, and the whole of them: its title, the summary block's heading —
-  // the one word of the block that is not a release file's, which names what the block is
-  // rather than saying anything about a release (P4, D189) — the marker W1.9 step 1
-  // requires for a release with no tag, and the tags, which come from the filenames.
-  const own = new Set(['Changelog', SUMMARY_HEADING, 'not yet released', ...releaseFiles().map(tagOf)])
+  const summaries = [...summaryEntries().values()].map(plain).join('\n')
+  // The page's own words, and the whole of them: its title, the notes block's label — the
+  // one word of an entry that names what the block is rather than saying anything about a
+  // release — the marker a release the plugin's version has not reached carries, and the
+  // tags, which come from the filenames. Every other word the page renders comes from a
+  // release file or from the release's own summary in website/data/release-summaries.yaml.
+  const own = new Set(['Changelog', NOTES_LABEL, 'not yet released', ...releaseFiles().map(tagOf)])
 
   for (const sentence of pageSentences(html)) {
-    if (files.includes(sentence)) continue
+    if (files.includes(sentence) || summaries.includes(sentence)) continue
     assert.ok(
       own.has(sentence),
-      `the page carries a sentence no release file does: ${JSON.stringify(sentence)}. The page renders the release notes; it writes no summary, no "what's new" and no editorial of its own (W1.9 step 2).`,
+      `the page carries a sentence that is in no release file and in no summary: ${JSON.stringify(sentence)}. The page renders the release notes and their summaries; it writes no "what's new" and no editorial of its own (W1.9 step 2).`,
     )
   }
 })
 
-test('the summary block renders the newest releases’ first Highlights line', () => {
+test('each release renders the summary its own entry in the data file carries', () => {
   const html = builtPage()
-  const items = summaryItems(html)
-  const newest = newestFirst()
+  const entries = summaryEntries()
+  const onPage = summariesOnPage(html)
+  const releases = newestFirst()
 
-  // The block exists and is a summary rather than a second changelog: it shows a run of the
-  // newest releases, in the order a reader expects, and never more than the list below
-  // carries. How many it shows is the page's choice (P4, D189) — a summary is a gist — so
-  // the number is not pinned here; that it is the *newest* run of them is.
-  assert.ok(
-    items.length > 0,
-    'the page carries no summary block: the changelog opens straight into its first entry, which is the gap RF24 names and D189 answers with the newest releases’ first Highlights line',
+  // One summary per release, in the order the entries are, and none anywhere else: a
+  // release whose summary is missing is an entry with nothing under its heading, and a
+  // summary for a release the page does not list is a line nothing renders.
+  assert.deepEqual(
+    onPage.map((item) => item.tag),
+    releases,
+    'the page does not render one summary per release, in the newest-first order of the entries',
   )
-  assert.ok(
-    items.length <= newest.length,
-    `the summary block shows ${items.length} releases and docs/releases/ holds ${newest.length}`,
+
+  for (const item of onPage) {
+    // The description of the owner's brief of 2026-10-19, in one pair of assertions: every
+    // release file has an entry in the data file, and its text is what the page renders.
+    assert.ok(
+      entries.has(item.tag),
+      `the page renders a summary for ${item.tag}; website/data/release-summaries.yaml has no entry for it, and every release file needs one`,
+    )
+    assert.equal(
+      item.text,
+      plain(entries.get(item.tag)),
+      `the summary rendered under ${item.tag} is not the entry website/data/release-summaries.yaml carries for it`,
+    )
+    assert.ok(item.text.length > 0, `the summary rendered under ${item.tag} is empty`)
+  }
+
+  // And the other direction: every entry in the data file is a release file this page
+  // lists, so an entry outliving its release is refused rather than left unrendered.
+  const files = new Set(releaseFiles().map(tagOf))
+  for (const tag of entries.keys()) {
+    assert.ok(files.has(tag), `website/data/release-summaries.yaml carries an entry for ${tag}, and docs/releases/ holds no such file`)
+  }
+})
+
+test('a release’s summary is the site’s words, not an internal id or a repository path', () => {
+  // The owner's brief of 2026-10-19 asks for "product features that end users understand":
+  // an internal task id, a decision number or a path into this repository is none of them,
+  // and a reader who meets one in the first line under a release has been handed the
+  // contributor's view of it. The check is deliberately narrow — the identifiers this
+  // repository writes its own work with, and a filename — so it refuses what the brief
+  // names and guesses at nothing else a summary might say.
+  const INTERNAL_ID = /\b[DWPF]\d+(?:\.\d+)?\b|\bRF\d+\b/
+  const REPO_PATH = /\b\S+\.(?:md|json|yaml)\b/
+
+  for (const [tag, summary] of summaryEntries()) {
+    assert.doesNotMatch(summary, INTERNAL_ID, `the summary for ${tag} carries an internal id (${INTERNAL_ID.source}): a summary says what the release gives a reader, not what this repository called the work`)
+    assert.doesNotMatch(summary, REPO_PATH, `the summary for ${tag} names a file in this repository (${REPO_PATH.source}): a reader of the changelog has no use for the path a change was made in`)
+  }
+})
+
+test('the release the plugin’s version has not reached is rendered as not yet released', () => {
+  const html = builtPage()
+  const { publishedVersion } = build()
+  // The release files above the version the copy's plugin manifest carries — the same rule
+  // the generator applies (`src/lib/changelog.mjs`), computed here from the filenames so the
+  // expectation is the directory's rather than the generator's own answer.
+  const ahead = newestFirst().filter((tag) => {
+    const file = versionOf(tag)
+    const published = versionOf(`v${publishedVersion}`)
+    for (let i = 0; i < 3; i++) {
+      if (file[i] !== published[i]) return file[i] > published[i]
+    }
+    return false
+  })
+
+  // The copy's manifest carries the second-newest release file's version and the copy has no
+  // `.git` at all, so a tag cannot be the reason for this answer: the one release file ahead
+  // of that version is the one entry the page marks, and every older one is published (the
+  // header says why the copy is built this way). Every release file is listed on the page, so
+  // "every older one is published" is the whole of the list minus the one marked — a page
+  // that marked nothing, or marked everything, differs here.
+  assert.equal(
+    ahead.length,
+    1,
+    'the copy is built one release ahead of its version bump, so exactly one release file is above it',
   )
   assert.deepEqual(
-    items.map((item) => item.tag),
-    newest.slice(0, items.length),
-    'the summary block is not the newest releases, in the order the list below renders them',
+    unpublishedOnPage(html),
+    ahead,
+    `the page marks ${JSON.stringify(unpublishedOnPage(html))} as not yet released, and the release files above the plugin’s ${publishedVersion} are ${JSON.stringify(ahead)}`,
   )
-
-  // And every line in it is the file's own: the first line a reader of that release file
-  // reads, with its bullet marker and its inline markup rendered the way the entry below
-  // renders it. This is the assertion D189 asks for — the summary is rendered from the
-  // files, so a line written for the summary instead is a defect, not copy.
-  for (const item of items) {
-    const first = contentLines(`${item.tag}.md`)[0]
-    assert.ok(first !== undefined, `docs/releases/${item.tag}.md carries no line for the summary to render`)
-    assert.ok(item.line !== null, `the summary's item for ${item.tag} carries no line`)
-    assert.equal(
-      item.line,
-      plain(first),
-      `the summary block's line for ${item.tag} is not the first line of docs/releases/${item.tag}.md`,
-    )
-  }
 })
 
 test('the changelog page renders each release file, line for line and in the file’s order', () => {
@@ -482,36 +604,25 @@ test('the changelog page renders each release file, line for line and in the fil
   }
 })
 
-test('a release with no tag in the checkout is rendered as not yet released', () => {
-  const html = builtPage()
-
-  // The copy this build ran in has no `.git`, so it has no tags: every entry is unreleased,
-  // which is the state a shallow CI checkout is in too, and the state of the newest file
-  // everywhere — it is committed to main before its tag exists (D100).
-  const markers = (html.match(/not yet released/g) ?? []).length
-  assert.equal(
-    markers,
-    releaseFiles().length,
-    `the page marks ${markers} releases as not yet released, and a checkout with no tags has ${releaseFiles().length}`,
-  )
-})
-
 test('the changelog page states no date', () => {
   const html = builtPage()
 
   // No date of the page's own: the files carry none, the site's build is network-free and
-  // the newest entry has no tag to read one from, so the date a reader wants is the one the
+  // the entries carry no tag to read one from, so the date a reader wants is the one the
   // GitHub release page states (D100). A `<time>` element is the way a page states one.
   assert.ok(!/<time\b/i.test(html), 'the page carries a <time> element, and the site states no release date')
 
-  // The dates the release notes themselves mention stay: they are the files' own text, and
-  // they are rendered because the line around them is.
-  const text = pageText(html)
-  const own = pageSentences(html).filter((sentence) => !releasesText().includes(sentence))
+  // The dates a release file's own notes mention stay: they are that file's text, and they
+  // are rendered because the line around them is. The summaries are the site's own lines
+  // (the owner's brief of 2026-10-19), and they are the other half of what the page says
+  // besides the files — so the sentences held to "no date" are the ones that are neither.
+  const files = releasesText()
+  const summaries = [...summaryEntries().values()].map(plain)
+  const own = pageSentences(html).filter((sentence) => !files.includes(sentence) && !summaries.includes(sentence))
   for (const sentence of own) {
     assert.doesNotMatch(sentence, /\b\d{4}-\d{2}-\d{2}\b/, `the page writes a date of its own: ${JSON.stringify(sentence)}`)
   }
-  assert.ok(text.length > 0, 'the page renders no text at all')
+  assert.ok(pageText(html).length > 0, 'the page renders no text at all')
 })
 
 test('every entry links to its GitHub release, at a URL built from site.yaml', () => {

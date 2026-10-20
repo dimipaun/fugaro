@@ -28,6 +28,15 @@
 // counts elements: `home.mjs` counts the flow's three arrows and `copy.mjs` clicks the
 // control, and neither of them says which way the one points or where the other is drawn.
 //
+// **And the run under the picture is one vertical timeline** (the owner's feedback of
+// 2026-10-19: "The run, step by step section does not look good"). Five steps laid out as a
+// `repeat(auto-fit, minmax(18rem, 1fr))` grid read three beside two with a hole in the last
+// row on a desktop and two-by-two on a tablet, with nothing joining one step to the next — a
+// list of facts rather than a run. `runTimelineFailures` reads the shape the timeline claims:
+// one column in force at 360, 768 and 1280 px, a connector on the steps that have one below
+// them and none on the last, and no width or `nowrap` in the section wider than the phone's
+// content box, which is the overflow a browser would show at 360 px.
+//
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file.
 // No browser, no network: the checks are over the HTML and CSS a browser would receive.
 
@@ -102,21 +111,33 @@ function mediaBlocks(css) {
 
 // The layout the header and the menu are held to, as a function over one built page's CSS, so
 // that each part of it is proved by the fixture below rather than only observed on today's
-// stylesheet. It states three things, and each of them is a defect rather than a preference:
+// stylesheet. It states four things, and each of them is a defect rather than a preference:
 //
-//   - the header is one row that cannot wrap, with the drawer positioned against it (RF3
-//     measured 177 px of three wrapped nav rows on a 390 px first screen);
-//   - **the wide viewport is where the menu is.** The base rule hides the panel and the
-//     drawer's `open` attribute is the one thing that shows it again — and that block is
-//     exactly where the drawer itself is taken away, so no `open` attribute can arrive up
-//     there. A 48rem block that moves the panel (`position: static`) without displaying it
-//     therefore leaves the menu `display: none` at every viewport at or above the breakpoint:
-//     the wordmark, and no way to reach a section. Each of the three wide rules is asserted,
-//     because the layout is the three of them together;
-//   - **opening anything must not move the page.** The drawer's panel is an overlay rather
-//     than a block in the header's row, and a group's own dropdown is out of that row's flow
-//     for the same reason: opening *Product* at 1280 px must not grow the header and push the
-//     page down under the reader.
+//   - **the menu is three labels in the header's one row, at every width.** The owner's brief
+//     of 2026-10-19 (item 1) took the single "Menu" toggle away, so the three group labels are
+//     the menu at 375 px as much as at 1280: `.site-nav-groups` is a row at every width, no
+//     rule for the drawer it replaced survives, and nothing hides a group's list — a closed
+//     `<details>` is the one thing that does that, and a stylesheet that hides a list too is a
+//     menu that cannot open;
+//   - **the header is one row that cannot wrap** (RF3 measured 177 px of three wrapped nav
+//     rows on a 390 px first screen). A group's list hangs out of that row's flow rather than
+//     joining it, at both widths: a phone's drawer across the header's width, a wide
+//     viewport's dropdown under its own label;
+//   - **a phone's row fits.** The wordmark's text is taken out of the row below the phone
+//     breakpoint (the owner's ruling: the mark stays, the text goes), and the gap between the
+//     wordmark and the labels is the phone's 8 px rather than the wide layout's 32 px. Those
+//     two are what the row measures against at 320 px, and neither is decoration: with the
+//     text drawn, or with the wide gap, the row is wider than the header's content box and
+//     the page gets a sideways scroll. Out of the row is not out of the page, though: the mark
+//     beside the text is decoration with an empty `alt`, so the text is the home link's only
+//     name and no `.site-wordmark-name` rule — in the phone block **or in the base rule above
+//     it**, which is where a `display:none` would hide it at every width — may hide it from a
+//     screen reader;
+//   - **opening anything must not move the page.** A group's list is out of the header's flow,
+//     so opening *Product* at 1280 px must not grow the header and push the page down under
+//     the reader; and on a wide viewport the dropdown hangs from the group's **right** edge,
+//     because a list opening rightwards from the last group runs past the viewport between the
+//     breakpoint and the page's maximum width, where the header's padding is still narrow.
 //
 // Whether the row *fits* 390 px, and whether a real browser's `<details>` behaves as the
 // markup says, are rendered measurements no hermetic test can take; they are the owner's live
@@ -125,10 +146,64 @@ export function navLayoutFailures(css, rel = '') {
   const out = []
   const fail = (why) => out.push(rel ? `${rel}: ${why}` : why)
 
+  // The row, and the labels in it.
   if (!/\.site-header\{[^}]*flex-wrap:nowrap/.test(css)) fail('the header wraps, so the menu can become a second row')
-  if (!/\.site-header\{[^}]*position:relative/.test(css)) fail('the header is not the box the drawer is positioned against')
-  if (!/\.site-nav-panel\{[^}]*position:absolute/.test(css)) fail("the drawer is in the header's flow, so opening it makes the header taller")
-  if (!/\.site-nav-drawer\[open\]\s*~\s*\.site-nav-panel\{[^}]*display:block/.test(css)) fail("the drawer's open state does not show the panel")
+  if (!/\.site-header\{[^}]*position:relative/.test(css)) fail("the header is not the box a phone's drawer is positioned against")
+  if (!/\.site-nav-groups\{[^}]*display:flex/.test(css)) fail("the three group labels are not laid out in the header's row")
+  if (!/\.site-nav-group ul\{[^}]*position:absolute/.test(css)) {
+    fail("a group's list is in the header's flow, so opening one grows the header's row and pushes the page down")
+  }
+  if (!/\.site-nav-group ul\{[^}]*left:0/.test(css) || !/\.site-nav-group ul\{[^}]*right:0/.test(css)) {
+    fail("a group's list is not the header's width on a phone, so the drawer is a column under one label instead of the menu")
+  }
+  for (const [, decls] of css.matchAll(/\.site-nav-group ul\{([^}]*)\}/g)) {
+    if (/display:none/.test(decls)) {
+      fail("a rule hides a group's list, and the list is the menu: a closed `<details>` is what hides it, and a stylesheet that hides it too leaves nothing that can open it")
+    }
+  }
+  // The toggle this menu replaced. Its styles outliving it would be a second control in the
+  // markup's absence, and the first sign that the drawer was half removed.
+  if (/\.site-nav-(?:toggle|panel|drawer)\b/.test(css)) {
+    fail('the stylesheet still styles the drawer the menu no longer has')
+  }
+
+  // The row at a phone's width: the text out of it, and the gap the phone's rather than the
+  // wide layout's. `min-height` is the target size the owner's brief asks the menu to be
+  // measured against — 44 px, on the labels and on the links inside a list.
+  if (!/\.site-nav-group>details>summary\{[^}]*min-height:44px/.test(css)) {
+    fail("a group's label is a tap target smaller than the 44 px the owner's brief asks for")
+  }
+  if (!/\.site-nav a\{[^}]*min-height:44px/.test(css)) {
+    fail("a link inside a group's list is a tap target smaller than the 44 px the owner's brief asks for")
+  }
+  // The base header rule and not the wide block's, which is where the 32 px belongs: the
+  // stylesheet is read as rules, so the one with no condition over it is the one at 320 px.
+  const baseHeader = cssRules(css).find((r) => !(r.conditions ?? []).length && r.selector === '.site-header')
+  if (!baseHeader || /var\(--space-lg\)/.test(baseHeader.body ?? '')) {
+    fail("the header's gap between the wordmark and the labels is the wide layout's 32 px at 320 px, where the row has none to spare")
+  }
+
+  const phone = mediaBlocks(css).filter((block) => /24\.375rem/.test(block.query))
+  if (phone.length === 0) {
+    fail("the stylesheet has no phone breakpoint, so the wordmark's text is drawn beside the labels at 375 px")
+  }
+  const hidden = phone.map((block) => /\.site-wordmark-name\{([^}]*)\}/.exec(block.body)).find(Boolean)?.[1]
+  if (phone.length && !hidden) fail("the wordmark's text is drawn beside the labels at 375 px, where the row has no room for it")
+  if (hidden && !/position:absolute/.test(hidden)) {
+    fail("the wordmark's text is taken out of the row without being taken out of the flow, so the row is still as wide as the word")
+  }
+  // **Every** `.site-wordmark-name` rule, not only the phone block's: the base rule is the one
+  // that is in force at 1280 px, so a `display:none` there takes the name away at every width
+  // while the phone block still reads as the correct clipping, and a check that only read
+  // inside the block would pass it (the review of 2026-10-19). The mark beside the text is
+  // decoration with an empty `alt`, so the text is the link's only name and this is not a
+  // layout preference.
+  for (const rule of cssRules(css)) {
+    if (rule.selector !== '.site-wordmark-name') continue
+    if (/display:none|visibility:hidden/.test(rule.body ?? '')) {
+      fail("the wordmark's text is hidden from a screen reader as well as from the eye, and the logo beside it is decoration with an empty alt: the link to the home page is left naming nothing")
+    }
+  }
 
   const wide = mediaBlocks(css).filter((block) => /48rem/.test(block.query))
   if (wide.length === 0) {
@@ -141,17 +216,19 @@ export function navLayoutFailures(css, rel = '') {
   const rule = (name) => wide.map((block) => new RegExp(`\\${name}\\{([^}]*)\\}`).exec(block.body)).find(Boolean)?.[1]
   const has = (name, declaration) => (rule(name) ?? '').split(';').filter(Boolean).some((d) => declaration.test(d))
 
-  // The one the menu dies of: the wide block has to display the panel, not only reposition it.
-  if (!has('.site-nav-panel', /^display:(?!none)/)) {
-    fail(
-      "the 48rem block hides the drawer and never displays the panel — the base rule's display:none still stands there, and the drawer whose open attribute would undo it is the element that block takes away, so the menu is invisible at every viewport at or above 48rem (P3, D182)",
-    )
+  if (!has('.site-header', /^gap:var\(--space-2xs\) var\(--space-lg\)$/)) {
+    fail('the wide viewport keeps the phone\'s 8 px between the wordmark and the labels, where the wide layout has room for 32 px')
   }
-  if (!has('.site-nav-drawer', /^display:none$/)) fail("the drawer's toggle is still shown on a wide viewport, where nothing needs opening")
-  if (!has('.site-nav-panel', /^position:static$/)) fail('the wide panel is still an overlay, hanging over the page below the header')
-  if (!has('.site-nav-groups', /^display:flex$/)) fail('the wide viewport does not lay the three groups out in one row')
-  if (!has('.site-nav-group ul', /^position:absolute$/)) {
-    fail("a group's dropdown is in the header's flow, so opening one at a wide viewport grows the header's row and pushes the page down (the drawer's panel is out of flow for the same reason)")
+  if (!has('.site-nav-group', /^position:relative$/)) {
+    fail("a group is not the box its dropdown is positioned against, so at a wide viewport the list is still anchored to the header and is the header's width")
+  }
+  // The base rule puts the list out of the header's flow and this block must leave it there:
+  // a wide rule that names a `position` of its own is a rule that takes it back in.
+  if (/position:(?:static|relative)/.test(rule('.site-nav-group ul') ?? '')) {
+    fail("a group's dropdown is in the header's flow, so opening one at a wide viewport grows the header's row and pushes the page down")
+  }
+  if (!has('.site-nav-group ul', /^left:auto$/)) {
+    fail("a group's dropdown keeps the phone's full width at a wide viewport, so it hangs across the header instead of under its label")
   }
   // And out of flow *rightwards of nothing*: the menu sits at the right of the header, so a
   // list opening to the right of the last group runs past the viewport between the breakpoint
@@ -196,61 +273,152 @@ function plant(from, to, which = 'first') {
   return css.replace(from, to)
 }
 
+/**
+ * Today's stylesheet with **one named rule** rewritten — `selector` is a fragment of the rule's
+ * selector, `edit` gets the rule's own text and has to change it. The fixture for a case about
+ * one of several rules that declare the same thing, or about the selector itself: the
+ * homepage's top-level blocks each write `padding:0 var(--space-md) var(--space-3xl)` — the same
+ * declaration, in the rule of the file that renders each one — so a case about the benefits'
+ * padding has nothing to tell it apart from the install's (`plant` takes the first or the last
+ * occurrence of a fragment, and *which* rule that is depends on the order Astro emits the
+ * components in, which is not something a case should rest on).
+ */
+function plantRule(selector, edit) {
+  const css = TODAY()
+  const at = css.indexOf(selector)
+  assert.ok(at !== -1, `this fixture rewrites the rule whose selector carries ${JSON.stringify(selector)}, and the built stylesheet no longer carries it`)
+  const end = css.indexOf('}', at)
+  assert.ok(end !== -1, `the rule whose selector carries ${JSON.stringify(selector)} has no body in the built stylesheet`)
+  const rule = css.slice(at, end + 1)
+  const rewritten = edit(rule)
+  assert.notEqual(rewritten, rule, `this fixture rewrites the rule whose selector carries ${JSON.stringify(selector)}, and the edit changed nothing`)
+  return css.slice(0, at) + rewritten + css.slice(end + 1)
+}
+
 test('the layout rule passes on the built stylesheet, so each refusal below is the one edit it names', () => {
   assert.deepEqual(navLayoutFailures(TODAY()), [])
 })
 
 test('every layout refusal fires on the defect it names', () => {
   const cases = [
-    [
-      'a wide block that repositions the panel but never displays it',
-      plant('display:block;position:static', 'position:static'),
-      /never displays the panel/,
-    ],
-    [
-      'no 48rem breakpoint at all',
-      TODAY().replaceAll('(width>=48rem)', '(width>=99rem)'),
-      /no 48rem breakpoint/,
-    ],
-    [
-      'the wide row still shows the drawer toggle',
-      plant('.site-nav-drawer{display:none}', '.site-nav-drawer{display:block}'),
-      /toggle is still shown on a wide viewport/,
-    ],
-    [
-      'a wide panel that is still an overlay',
-      plant('display:block;position:static', 'display:block'),
-      /still an overlay/,
-    ],
-    [
-      'the wide groups not laid out in one row',
-      plant('gap:var(--space-3xs) var(--space-2xs);display:flex}', 'gap:var(--space-3xs) var(--space-2xs)}'),
-      /out in one row/,
-    ],
-    [
-      "a group's dropdown left in the header's flow",
-      plant('background:var(--ground);position:absolute;top:100%;right:0}', 'background:var(--ground);top:100%;right:0}'),
-      /dropdown is in the header's flow/,
-    ],
-    [
-      "a group's dropdown opening rightwards off the viewport",
-      plant('position:absolute;top:100%;right:0}', 'position:absolute;top:100%;left:0}'),
-      /sideways scroll/,
-    ],
+    // The row, and the three labels in it.
     [
       'a header that can wrap',
       plant('flex-wrap:nowrap;display:flex;position:relative}', 'display:flex;position:relative}'),
       /header wraps/,
     ],
     [
-      'a drawer panel that is not an overlay',
-      plant('display:none;position:absolute;top:100%', 'display:none;top:100%'),
-      /drawer is in the header's flow/,
+      'a header that is not the box a phone drawer hangs from',
+      plant('flex-wrap:nowrap;display:flex;position:relative}', 'flex-wrap:nowrap;display:flex}'),
+      /not the box a phone's drawer/,
     ],
     [
-      'a panel the drawer cannot show',
-      plant('.site-nav-drawer[open]~.site-nav-panel{display:block}', '.site-nav-drawer[open]~.site-nav-panel{border-color:red}'),
-      /open state does not show the panel/,
+      "the three labels stacked instead of in the header's row",
+      plant('.site-nav-groups{gap:var(--space-3xs);display:flex}', '.site-nav-groups{gap:var(--space-3xs)}'),
+      /not laid out in the header's row/,
+    ],
+    [
+      "a group's list left in the header's flow",
+      plant('background:var(--ground);position:absolute;top:100%;left:0;right:0}', 'background:var(--ground);top:100%;left:0;right:0}'),
+      /in the header's flow/,
+    ],
+    [
+      'a phone drawer that is a column under one label',
+      plant('position:absolute;top:100%;left:0;right:0}', 'position:absolute;top:100%;left:auto;right:0}'),
+      /not the header's width/,
+    ],
+    [
+      "a rule that hides a group's list",
+      plant('background:var(--ground);position:absolute', 'background:var(--ground);display:none;position:absolute'),
+      /hides a group's list/,
+    ],
+    [
+      'the drawer this menu replaced, styled again',
+      plant('.site-nav-groups{gap:var(--space-3xs)', '.site-nav-drawer{display:none}.site-nav-groups{gap:var(--space-3xs)'),
+      /still styles the drawer/,
+    ],
+    [
+      'a label smaller than the tap target the brief asks for',
+      plant('box-sizing:border-box;min-height:44px;padding:var(--space-3xs)', 'box-sizing:border-box;padding:var(--space-3xs)'),
+      /label is a tap target smaller/,
+    ],
+    [
+      'a link smaller than the tap target the brief asks for',
+      plant('.site-nav a{box-sizing:border-box;min-height:44px', '.site-nav a{box-sizing:border-box'),
+      /link inside a group's list is a tap target/,
+    ],
+    [
+      "the wide layout's gap left in the phone's row",
+      plant('align-items:center;gap:var(--space-2xs);padding-block', 'align-items:center;gap:var(--space-2xs) var(--space-lg);padding-block'),
+      /32 px at 320 px/,
+    ],
+    // The phone's row: the text out of it, and the text out of the eye only.
+    [
+      'no phone breakpoint at all',
+      TODAY().replaceAll('(width<=24.375rem)', '(width<=99rem)'),
+      /no phone breakpoint/,
+    ],
+    [
+      "a phone breakpoint that leaves the wordmark's text in the row",
+      plant('.site-wordmark-name{clip-path', '.site-wordmark-name-kept{clip-path'),
+      /drawn beside the labels at 375 px/,
+    ],
+    [
+      "the wordmark's text hidden without leaving the row's flow",
+      plant(
+        '.site-wordmark-name{clip-path:inset(50%);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}',
+        '.site-wordmark-name{clip-path:inset(50%);white-space:nowrap;width:1px;height:1px;overflow:hidden}',
+      ),
+      /without being taken out of the flow/,
+    ],
+    [
+      "the wordmark's text hidden from a screen reader as well",
+      plant('.site-wordmark-name{clip-path:inset(50%)', '.site-wordmark-name{display:none;clip-path:inset(50%)'),
+      /naming nothing/,
+    ],
+    // And the same hiding in the base rule, which is in force at every width: the phone block
+    // is untouched here, so a check that read only inside it would pass this stylesheet while
+    // the home link names nothing at 1280 px.
+    [
+      "the wordmark's text hidden at every width by the base rule",
+      plant('.site-wordmark-name{text-overflow:ellipsis', '.site-wordmark-name{display:none;text-overflow:ellipsis'),
+      /naming nothing/,
+    ],
+    [
+      "the wordmark's text made invisible at every width by the base rule",
+      plant('.site-wordmark-name{text-overflow:ellipsis', '.site-wordmark-name{visibility:hidden;text-overflow:ellipsis'),
+      /naming nothing/,
+    ],
+    // The wide viewport.
+    [
+      'no 48rem breakpoint at all',
+      TODAY().replaceAll('(width>=48rem)', '(width>=99rem)'),
+      /no 48rem breakpoint/,
+    ],
+    [
+      "the wide viewport keeping the phone's gap",
+      plant('@media (width>=48rem){.site-header{gap:var(--space-2xs) var(--space-lg)}', '@media (width>=48rem){.site-header{gap:var(--space-2xs)}'),
+      /room for 32 px/,
+    ],
+    [
+      "a group that is not the box its dropdown hangs from",
+      plant('padding-inline:var(--space-2xs)}.site-nav-group{position:relative}', 'padding-inline:var(--space-2xs)}.site-nav-group{position:static}'),
+      /not the box its dropdown/,
+    ],
+    [
+      "a wide dropdown left in the header's flow",
+      plant('min-width:max-content;padding:var(--space-2xs)', 'position:static;min-width:max-content;padding:var(--space-2xs)'),
+      /dropdown is in the header's flow/,
+    ],
+    [
+      "a wide dropdown that is still the header's width",
+      plant('border-radius:var(--radius-sm);left:auto;right:0}', 'border-radius:var(--radius-sm);left:0;right:0}'),
+      /hangs across the header/,
+    ],
+    [
+      "a group's dropdown opening rightwards off the viewport",
+      plant('border-radius:var(--radius-sm);left:auto;right:0}', 'border-radius:var(--radius-sm);left:auto;right:auto}'),
+      /sideways scroll/,
     ],
   ]
   for (const [what, css, expected] of cases) {
@@ -316,7 +484,12 @@ function appliesAt(width) {
   }
 }
 
-/** A CSS length as pixels: a token, a `rem`/`px` length, or `calc(var(--x) * n)`. */
+/**
+ * A CSS length as pixels: a token, a `rem`/`px` length, or a `calc(var(--x) * n)` — and a
+ * `calc(var(--x) / n)`, which is how a length that is half of a token is written (the run's
+ * connector is placed at half the marker's width, `left: calc(var(--space-lg) / 2)`), so that a
+ * value the stylesheet writes in the reading's own vocabulary is one the reading can measure.
+ */
 function toPx(value, tokens) {
   if (value === undefined) return NaN
   // A bare zero is zero pixels, and it is the one length CSS lets a rule write without a unit:
@@ -327,6 +500,8 @@ function toPx(value, tokens) {
   if (variable) return tokens.get(variable[1]) ?? NaN
   const calc = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\*\s*([\d.]+)\s*\)$/.exec(value)
   if (calc) return (tokens.get(calc[1]) ?? NaN) * Number(calc[2])
+  const divide = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\/\s*([\d.]+)\s*\)$/.exec(value)
+  if (divide) return (tokens.get(divide[1]) ?? NaN) / Number(divide[2])
   const rem = /^([\d.]+)rem$/.exec(value)
   if (rem) return Number(rem[1]) * 16
   const px = /^([\d.]+)px$/.exec(value)
@@ -1356,6 +1531,348 @@ test('every run-detail refusal fires on the defect it names', () => {
   }
 })
 
+// ---- How It Works: the run is one vertical timeline (owner's feedback, 2026-10-19) --------
+//
+// The owner read the detail under the picture on 2026-10-19: "The run, step by step section
+// does not look good". What it was: the five steps were a `repeat(auto-fit, minmax(18rem,
+// 1fr))` grid, so a desktop read three blocks beside two with a hole in the last row, a tablet
+// read them two-by-two, and nothing in the section joined one step to the next — five short
+// paragraphs in boxes, which is a list of facts rather than a run. What replaces it: one
+// column at every width, each step a numbered marker on a rail with a one-pixel line drawn
+// from it down to the marker below, and the step's name and its line in the column beside it.
+//
+// Three claims of that shape are read here, because each is a defect a reader would see rather
+// than a preference:
+//
+//   - **the steps are one column, at every width.** A sequence that puts one of its steps
+//     beside another reads as a choice between them, and the run has an order: the grid the
+//     owner measured is refused at the widths a reader is most likely to meet (a 360 px phone,
+//     a 768 px tablet, the 1280 px desktop the page's own column maxes out at), and so is
+//     every `repeat(…)` — see `runLayoutAt`, which is where the definite repeat that used to
+//     read as one track is dealt with.
+//   - **the line joins the steps and stops at the last one.** The links in the chain are what
+//     make five blocks one run, so a stylesheet with no line is refused; so is a line that is
+//     not thin (the owner asked for a thin connecting line, and a 4 px rule is a rail); and so
+//     is one drawn by every step, which would hang off the end of the run with no step below
+//     it to point at.
+//   - **nothing in the section is wider than a phone.** `width`, `min-width` and
+//     `white-space: nowrap` are the three declarations that give a phone a sideways scroll
+//     when they are wrong: a box as wide as a desktop column, or a line that cannot break, is
+//     content the page cannot fit. Both are read against the phone's **content box**, which is
+//     360 px less `main`'s own inline padding — read out of the same stylesheet rather than
+//     typed, so the arithmetic cannot drift from the gutter the page is drawn with.
+
+/** The widths the run's shape is read at: a phone, a tablet, and the width the page stops growing at. */
+export const TIMELINE_WIDTHS = [360, 768, 1280]
+
+/** The phone whose content box nothing in the section may exceed. */
+const PHONE = 360
+
+/**
+ * The run's own layout at one width, as a description of it, or `null` when the steps are in
+ * one column. A grid whose track list is one track is the timeline; a row-direction flex, a
+ * grid with more than one track and anything written with a `repeat(…)` are each a run laid
+ * out across the page.
+ *
+ * **Every `repeat` is refused, counted or not** — the same reading the chat's own one-column
+ * case takes (`chatConversationFailures`). Two of them cannot be counted at all: an
+ * `auto-fit`/`auto-fill` repeat fits as many tracks as the width allows, which is a fact about
+ * the viewport rather than about the declaration. And a definite one hides its tracks in
+ * parentheses that `splitTop` deliberately does not split — `repeat(5, 1fr)` is the five steps
+ * in one row, and the top-level split read it as **one track**, so the grid the owner measured
+ * walked back in through the shape this reading was written for. The refusal names the
+ * declaration rather than a count, because a count is what it got wrong.
+ */
+function runLayoutAt(declaredAt, width) {
+  const display = declaredAt('run-steps', 'display', width)
+  const columns = declaredAt('run-steps', 'grid-template-columns', width)
+  const direction = declaredAt('run-steps', 'flex-direction', width)
+  if (display === 'flex' && (direction === undefined || direction === 'row')) return 'a row, one column per step'
+  if (columns === undefined) return null
+  if (/repeat\(/.test(columns)) return `a grid declared \`${columns}\``
+  const tracks = splitTop(columns, ' ').length
+  return tracks > 1 ? `a grid of ${tracks} columns` : null
+}
+
+/** Every way the run's timeline is not the shape the owner's feedback asked for, as the lines a reader gets. */
+export function runTimelineFailures(css) {
+  const out = []
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const named = (klass) => new RegExp(`\\.${klass}(?![\\w-])`)
+  const declaredAt = (klass, property, width) =>
+    rules
+      .filter((r) => named(klass).test(r.selector) && appliesAt(width)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+  // The `main` rule itself, which is an element rather than a class: `main:has(> .hero)` is a
+  // different rule on a different page and is not this page's container.
+  const mainPadding = rules
+    .filter((r) => r.selector === 'main' && appliesAt(PHONE)(r))
+    .map((r) => declarations(r).padding)
+    .filter((value) => value !== undefined)
+    .pop()
+
+  // The phone's content box: the viewport less the gutter `main` gives the page at it. A
+  // `main` this stylesheet does not describe is one nothing here can measure, and the reading
+  // says so rather than comparing against a number it invented.
+  const gutter = toPx(inlineToken(mainPadding ?? ''), tokens)
+  const phoneBox = PHONE - 2 * gutter
+  if (Number.isNaN(gutter) || phoneBox <= 0) {
+    out.push(
+      `\`main\`'s inline padding cannot be read from the built stylesheet at ${PHONE} px, so the box this check holds the run's own widths to is unknown: nothing in the section can be shown to fit a phone without it (owner's feedback, 2026-10-19)`,
+    )
+  }
+
+  for (const width of TIMELINE_WIDTHS) {
+    const layout = runLayoutAt(declaredAt, width)
+    if (layout !== null) {
+      out.push(
+        `at ${width} px the run's five steps are laid out as ${layout}, and the run is one vertical timeline: a step beside another step reads as an alternative to it, and the run has an order (owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+
+  // The line between two steps. It is the step's own `::before`, and every declaration that
+  // makes it exist, takes it out of the flow and lands it on the rail is read — because each of
+  // them alone is enough to leave the rule reading correctly and the line invisible or in the
+  // wrong place: a pseudo-element with no `content` is not generated at all, a connector left
+  // in the flow is a one-pixel box in the step's own grid cell rather than a line down the
+  // rail, the step's own `position: relative` is what the connector's offsets are measured
+  // against, a line with no `left` sits at the step's edge, and a line with no `background` is
+  // painted in nothing. The geometry is read too: no `top` or no `bottom` is a line drawn from
+  // nowhere to nowhere rather than the segment between two markers.
+  const connectors = rules.filter((r) => named('run-step').test(r.selector) && /::?before/.test(r.selector))
+  if (connectors.length === 0) {
+    out.push(
+      "the run's steps carry no line between them (no `.run-step` `::before` draws one), and the line is what makes five steps one run: without it the section is five paragraphs a reader has to join up themselves (owner's feedback, 2026-10-19)",
+    )
+  }
+  // The rail's own width, read from the marker the line is drawn through: the step's number is
+  // one square and the line's `left` is half of it. Read at the phone's width, which is where
+  // the run's shape is read (`runLayoutAt`): the timeline has no breakpoint, so the marker is
+  // one width.
+  const markerWidth = toPx(declaredAt('run-step-number', 'width', PHONE), tokens)
+  // The step's own `position`, from the rules that style the step and not its pseudo-element.
+  const stepPosition = rules
+    .filter((r) => named('run-step').test(r.selector) && !/::?before/.test(r.selector) && appliesAt(PHONE)(r))
+    .map((r) => declarations(r).position)
+    .filter((value) => value !== undefined)
+    .pop()
+  if (connectors.length > 0 && stepPosition !== 'relative') {
+    out.push(
+      `\`.run-step\` is \`position: ${stepPosition ?? '(nothing declared)'}\`, and the connector's offsets are measured from the step it belongs to: without a positioned step the line is placed against whatever ancestor is positioned, which is not the step the line joins (owner's feedback, 2026-10-19)`,
+    )
+  }
+  for (const rule of connectors) {
+    const decls = declarations(rule)
+    if (decls.content === undefined || decls.content === 'none' || decls.content === 'normal') {
+      out.push(
+        `the run's line is \`content: ${decls.content ?? '(nothing declared)'}\`, and a pseudo-element with no content is not generated: the rule is here and the line is not (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.position !== 'absolute') {
+      out.push(
+        `the run's line is \`position: ${decls.position ?? '(nothing declared)'}\`, and a connector left in the flow is a one-pixel box in the step's own grid cell: the line is drawn down the rail by taking it out of the flow (owner's feedback, 2026-10-19)`,
+      )
+    }
+    const left = toPx(decls.left, tokens)
+    if (Number.isNaN(left)) {
+      out.push(
+        `the run's line is \`left: ${decls.left ?? '(nothing declared)'}\`, which this check cannot turn into pixels, and a place it cannot read is a place nothing checked — \`NaN\` passes the comparison below (owner's feedback, 2026-10-19)`,
+      )
+    } else if (Number.isNaN(markerWidth)) {
+      out.push(
+        `the step's number declares \`width: ${declaredAt('run-step-number', 'width', PHONE) ?? '(nothing)'}\`, which this check cannot read, and the marker is the rail the line is measured against: where the line has to land is unknown (owner's feedback, 2026-10-19)`,
+      )
+    } else if (Math.abs(left - markerWidth / 2) > tokens.get('border-width') / 2) {
+      out.push(
+        `the run's line starts ${Math.round(left)} px from the step's edge, and the marker's centre is ${Math.round(markerWidth / 2)} px from it (the step's number is ${Math.round(markerWidth)} px wide): a line that misses the marker is drawn beside the run rather than through it (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (!/:not\(:(last-child|last-of-type)\)/.test(rule.selector)) {
+      out.push(
+        `the run's line is drawn by \`${rule.selector}\` on every step including the last, and a line with no step below it is the run continuing past its own end: the connector belongs to the step that has a next one (owner's feedback, 2026-10-19)`,
+      )
+    }
+    const thin = toPx(decls.width, tokens)
+    if (Number.isNaN(thin)) {
+      out.push(
+        `the run's line is \`width: ${decls.width ?? '(nothing declared)'}\`, which this check cannot turn into pixels, and a width it cannot read is one nothing checked (\`NaN\` passes the comparison below) — write the line's width in a shape \`website/test/base-styles.mjs\` reads (owner's feedback, 2026-10-19)`,
+      )
+    } else if (thin > tokens.get('border-width')) {
+      out.push(
+        `the run's line is ${Math.round(thin)} px wide and the run's line is thin: \`--border-width\` is ${tokens.get('border-width')} px, and the connector joins the steps rather than framing them (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.top === undefined || decls.bottom === undefined) {
+      out.push(
+        `the run's line declares \`top: ${decls.top ?? '(nothing)'}\` and \`bottom: ${decls.bottom ?? '(nothing)'}\`, and a segment between two steps is one that starts at the marker above it and ends at the step's own edge: a line placed anywhere else is drawn across a step or off the end of the run (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.background === undefined) {
+      out.push(
+        "the run's line declares no `background`, and an unpainted box is a line no reader sees: the connector is drawn in `var(--border)`, the site's separator (owner's feedback, 2026-10-19)",
+      )
+    } else if (!/^var\(--[a-z0-9-]+\)$/.test(decls.background.trim())) {
+      out.push(
+        `the run's line is drawn in \`background: ${decls.background}\`, and every colour on the site is a palette token (\`var(--…)\`): a literal is a colour no palette moves (W1.2, owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+
+  // What a phone cannot fit: a fixed width, a floor under one, or a line that cannot break.
+  for (const rule of rules) {
+    if (!/\.run-(detail|steps|step|note)\b/.test(rule.selector)) continue
+    const decls = declarations(rule)
+    for (const property of ['width', 'min-width']) {
+      if (decls[property] === undefined) continue
+      const px = toPx(decls[property], tokens)
+      if (Number.isNaN(px)) {
+        out.push(
+          `\`${rule.selector}\` is \`${property}: ${decls[property]}\`, which this check cannot turn into pixels, and a width it cannot read is one nothing checked — \`NaN\` passes the comparison below (owner's feedback, 2026-10-19)`,
+        )
+      } else if (px > phoneBox) {
+        out.push(
+          `\`${rule.selector}\` is \`${property}: ${decls[property]}\` — ${Math.round(px)} px, and a ${PHONE} px phone's content box is ${Math.round(phoneBox)} px (\`main\`'s gutter is ${Math.round(gutter)} px a side): a box wider than the phone is a page the phone scrolls sideways (owner's feedback, 2026-10-19)`,
+        )
+      }
+    }
+    if (decls['white-space'] === 'nowrap') {
+      out.push(
+        `\`${rule.selector}\` sets \`white-space: nowrap\`, and a step's text that cannot break is text that runs past the page on a phone: every line of the run wraps (owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+  return out
+}
+
+test('the run under the picture is one vertical timeline a phone can read', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('run-steps')) continue
+    checked += 1
+    failures.push(...runTimelineFailures(pageCss(html)).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the run, and item 4 puts the detail of the picture on How It Works')
+  assert.deepEqual(failures, [], `the run is not one vertical timeline:\n  ${failures.join('\n  ')}`)
+})
+
+test('every timeline refusal fires on the defect it names', () => {
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  const css = pageCss(page)
+  /** The How It Works stylesheet with one fragment replaced, as the run-detail cases above. */
+  const change = (from, to) => {
+    assert.ok(css.includes(from), `this fixture replaces ${JSON.stringify(from)}, and How It Works' stylesheet no longer carries it`)
+    return css.replace(from, to)
+  }
+  const cases = [
+    // The defect the owner measured: the five steps as a grid of their own, which is three
+    // columns beside a hole in the last row on a desktop and two-by-two on a tablet.
+    [
+      'the five steps as a grid of their own',
+      change('grid-template-columns:minmax(0,1fr)', 'grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))'),
+      /a grid declared `repeat\(auto-fit/,
+    ],
+    // The same grid written as a repeat of five, which is the shape `splitTop` cannot see into:
+    // its five tracks are inside parentheses, so the top-level split read the whole declaration
+    // as one track and the five steps in one row passed a check whose claim is that they are
+    // one column.
+    [
+      'the five steps as one repeat of five',
+      change('grid-template-columns:minmax(0,1fr)', 'grid-template-columns:repeat(5,1fr)'),
+      /a grid declared/,
+    ],
+    // The picture without the line: five blocks a reader joins up themselves.
+    ['the steps with no line between them', css.replace(/\.run-step\[[^\]]+\]:not\(:last-child\):before\{[^}]*\}/, ''), /carry no line between them/],
+    // A line that is never generated: a pseudo-element's `content` is what makes the box exist.
+    ['a line with no content', change('content:"";top:var(--space-lg)', 'top:var(--space-lg)'), /is `content: \(nothing declared\)`/],
+    // A line left in the flow: one pixel in the step's own cell rather than a line on the rail.
+    ['a line left in the flow', change('background:var(--border);position:absolute}', 'background:var(--border)}'), /a connector left in the flow/],
+    // A step nothing is positioned against: the connector's offsets then land somewhere else.
+    ['a step with no positioned context', change(';display:grid;position:relative}', ';display:grid}'), /without a positioned step/],
+    // A line drawn at the step's edge rather than through the marker in the rail.
+    ['a line beside the rail', change('left:calc(var(--space-lg) / 2)', 'left:0'), /misses the marker/],
+    // A line with no paint: the rule is here and a reader sees nothing.
+    ['a line with no paint', change('background:var(--border);position:absolute}', 'position:absolute}'), /declares no `background`/],
+    // A line painted in a colour no palette moves: the one declaration on the connector that is
+    // not geometry, and the reason the colour rule is read at all.
+    ['a line drawn in a literal', change('background:var(--border)', 'background:#fff'), /is drawn in `background: #fff`/],
+    // A place on the rail the check cannot measure: `NaN` would pass every comparison below it,
+    // so an unreadable `left` is refused rather than assumed to be somewhere.
+    ['a line placed in a shape nothing reads', change('left:calc(var(--space-lg) / 2)', 'left:half'), /cannot turn into pixels/],
+    // A rail with no width to land on: the marker's own box is what the line's `left` is half
+    // of, and without it where the line has to land is unknown.
+    [
+      'a rail with no declared width',
+      change('width:var(--space-lg);height:var(--space-lg)', 'height:var(--space-lg)'),
+      /the step's number declares `width: \(nothing\)`/,
+    ],
+    // The line drawn by every step, which hangs off the end of the run.
+    [
+      'a line drawn by the last step too',
+      change(':not(:last-child):before', ':before'),
+      /on every step including the last/,
+    ],
+    // A rail rather than a line: the owner asked for a thin connecting line.
+    ['a four-pixel line', change('width:var(--border-width);margin-left:', 'width:calc(var(--border-width) * 4);margin-left:'), /wide and the run's line is thin/],
+    // A line placed by nothing: no `top` or `bottom` is a line drawn across whatever it lands on.
+    ['a line with no extent', change('content:"";top:var(--space-lg);bottom:0;', 'content:"";'), /declares `top: \(nothing\)` and `bottom: \(nothing\)`/],
+    // The one text run in the section that cannot break: a phone has to scroll sideways for it.
+    [
+      'a line of the run that cannot break',
+      change(
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;white-space:nowrap;margin:0}',
+      ),
+      /white-space: nowrap/,
+    ],
+    // And a box as wide as a desktop column, on a page whose gutter leaves a phone 328 px.
+    [
+      'a step as wide as a desktop column',
+      change(
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+        'width:40rem;color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+      ),
+      /a 360 px phone's content box is 328 px/,
+    ],
+  ]
+  for (const [what, stylesheet, expected] of cases) {
+    const lines = runTimelineFailures(stylesheet)
+    // Deduplicated: a layout defect is a defect at each width it is read at, and the three
+    // widths say the same thing about the same declaration. What no case may do is say
+    // something *else* beyond the refusal it names, which is what the set holds.
+    assert.deepEqual(
+      [...new Set(lines.map((line) => (expected.test(line) ? 'fired' : line)))],
+      ['fired'],
+      `${what}: the refusal did not fire, and this is what it said instead`,
+    )
+  }
+
+  // The connector's own width, which cannot go in the list above: an unreadable width is
+  // refused by **two** readers of the same declaration — the connector's own and the phone's,
+  // which reads every `width` in the section — so the set-shaped assertion in the loop cannot
+  // tell "both refused it" from "one of them did", and the line this case is about is the one
+  // that has to be named. Read by name, both: the connector's guard is `thin > …`'s other half,
+  // and `NaN` passes that comparison.
+  const unreadableWidth = runTimelineFailures(change('width:var(--border-width);margin-left:', 'width:thin;margin-left:'))
+  assert.equal(
+    unreadableWidth.filter((line) => /the run's line is `width: thin`, which this check cannot turn into pixels/.test(line)).length,
+    1,
+    'a connector width this check cannot measure passes: the rule is read, its width is `NaN`, and `NaN` is smaller than every ceiling the check compares it to',
+  )
+  assert.deepEqual(
+    unreadableWidth.filter((line) => /is `width: thin`, which this check cannot turn into pixels/.test(line) && !/the run's line is/.test(line)).length,
+    1,
+    'the phone-side reading of the same unreadable width did not fire: the two are one edit apart and only one of them is the connector\'s',
+  )
+
+  // The control: the page as it is built passes every one of them.
+  assert.deepEqual(runTimelineFailures(css), [], 'the built run does not pass the shape its own cases are drawn from')
+})
+
 // ---- the homepage's vertical rhythm: one gap, not two (review round 5) ---------------------
 //
 // The homepage's top-level blocks carry their own gutter and the room below themselves — the
@@ -1367,6 +1884,17 @@ test('every run-detail refusal fires on the defect it names', () => {
 // band between the flow's last card and the "Install" heading was 7 rem + 2 rem = 144 px of
 // blank page — the widest gap on the page, and twice the rhythm every other pair of blocks
 // keeps. Whichever of the two blocks owns a gap, only one of them may pad it.
+//
+// **A rule is read against the element it claims to style, scope attribute and all** (review
+// round 6). Astro gives every element a `data-astro-cid-…` for the component that rendered it
+// and appends the page's own to the selectors the page's `<style>` declares, so a page's rule
+// reaches the elements the page renders and no other. `.home-benefits` was declared on the
+// homepage and rendered by `Benefits.astro`: the rule was dead, the section kept no gutter and
+// no room below it, and this reading — which matched a rule to a block by class name — took the
+// dead rule's `padding` for the block's and passed at all three widths. So a selector that
+// names a scope the element does not carry is not in force, and a block the stylesheet names
+// and no rule reaches is a refusal of its own, because the pair reading below can only see a
+// block that declares a padding *somewhere*.
 //
 // It is read from the built page rather than from the sources: the top-level blocks of the
 // homepage's `main`, in document order, and each one's own `padding` out of the cascade.
@@ -1387,8 +1915,10 @@ export const RHYTHM_WIDTHS = [80 * 16, 48 * 16, 375]
 
 /**
  * Every pair of the homepage's top-level blocks that both pad the gap between them, as the
- * sentences a reader of the failure gets. A page with no `main`, or with one block, has no
- * pair to read and is not a failure here.
+ * sentences a reader of the failure gets — and, before the pairs, every top-level block the
+ * stylesheet names and no rule can reach (the round-6 reading: a block whose rule is scoped to
+ * something the element is not). A page with no `main`, or with one block, has no pair to read
+ * and is not a failure here.
  */
 export function homeRhythmFailures(css, html) {
   const out = []
@@ -1398,6 +1928,32 @@ export function homeRhythmFailures(css, html) {
   const blocks = [...walk(main)].filter((el) => el.parent === main)
   const rules = allRules(css)
   const tokens = lengthTokens(css)
+
+  /**
+   * The scope attributes an element carries: Astro writes one `data-astro-cid-…` per component
+   * that rendered it, and appends the page's own to every compound selector the page's `<style>`
+   * declares. So a selector that names a scope the element does not carry **cannot match the
+   * element**, however its class name reads — and that is the shape the review of round 6 found:
+   * `.home-benefits` was declared on the homepage and rendered by `Benefits.astro`, and a
+   * reading that matched on the class alone took the dead rule's padding for the section's.
+   */
+  const scopesOf = (el) => new Set([...el.attrs.keys()].filter((name) => name.startsWith('data-astro-cid-')))
+
+  /** True when one selector — not a list of them — can match an element carrying `scopes`: every
+   *  `[data-astro-cid-…]` it names is one of the element's. A selector with none is unscoped
+   *  (`base.css`, and the rules these cases plant) and matches anything. */
+  const reaches = (selector, scopes) =>
+    [...selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].every(([, scope]) => scopes.has(scope))
+
+  /** True when a rule names one of `classes` in a selector that can reach an element carrying
+   *  `scopes`. A selector list is read one selector at a time: it matches if *any* of them does. */
+  const names = (rule, classes, scopes) =>
+    rule.selector
+      .split(',')
+      .some(
+        (part) =>
+          classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(part)) && reaches(part, scopes),
+      )
 
   /**
    * A block's own vertical padding, out of the declarations in force at `width` on any of its
@@ -1416,9 +1972,8 @@ export function homeRhythmFailures(css, html) {
    */
   const vertical = (block, width) => {
     const classes = classesOf(block)
-    const inForce = rules.filter(
-      (r) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector)) && appliesAt(width)(r),
-    )
+    const scopes = scopesOf(block)
+    const inForce = rules.filter((r) => names(r, classes, scopes) && appliesAt(width)(r))
     let top
     let bottom
     for (const rule of inForce) {
@@ -1447,6 +2002,37 @@ export function homeRhythmFailures(css, html) {
 
   /** The name a block is reported by: its classes, as a reader finds them in the markup. */
   const nameOf = (block) => classesOf(block).map((klass) => `.${klass}`).join('') || block.name
+
+  /**
+   * **A block the stylesheet names and no rule reaches**, which is a failure of its own whatever
+   * the pairs below read (review round 6). The pair reading can only see a block that declares a
+   * vertical padding somewhere, and a block whose padding sits in a rule that cannot match it
+   * declares nothing at all — `vertical` returns `null`, and `null` on either side of a pair
+   * skips that pair **in silence**. That is how every gate passed over a section that padded
+   * nothing on any width: the class was named by `index.astro`'s rule, the `<section>` carried
+   * `Benefits.astro`'s scope, and a block the page means to style reads exactly like a block
+   * that has no padding to give. The refusal names the rule, the scope it is written for and the
+   * scope the element carries, because the two are one line apart in a source file and the fix
+   * is to move the rule, not to change the class.
+   */
+  for (const block of blocks) {
+    const classes = classesOf(block)
+    if (classes.length === 0) continue
+    const scopes = scopesOf(block)
+    const namedBy = rules.filter((r) =>
+      r.selector.split(',').some((part) => classes.some((klass) => new RegExp(`\\.${klass}(?![\\w-])`).test(part))),
+    )
+    if (namedBy.length === 0 || namedBy.some((r) => names(r, classes, scopes))) continue
+    const selectors = [...new Set(namedBy.map((r) => r.selector))]
+    const wanted = [
+      ...new Set(
+        selectors.flatMap((selector) => [...selector.matchAll(/\[(data-astro-cid-[^\]]+)\]/g)].map(([, scope]) => scope)),
+      ),
+    ]
+    out.push(
+      `the homepage's ${nameOf(block)} is named by the stylesheet (\`${selectors.join('`, `')}\`) and no selector of ${namedBy.length === 1 ? 'that rule' : 'those rules'} can reach the element: the element carries ${scopes.size ? [...scopes].join(', ') : 'no scope attribute'} where the rule is scoped to ${wanted.join(', ') || 'no scope at all'}. A rule the element cannot be matched by is a rule the block never gets, so the block keeps no gutter and no room below it — and the pair reading above skips it in silence, because a block with no padding of its own reads like a block that has no padding to give (review round 6: a page's scoped rule reaches the elements the page renders, and this block is rendered by a component that carries its own scope)`,
+    )
+  }
 
   for (let i = 1; i < blocks.length; i += 1) {
     const above = blocks[i - 1]
@@ -1487,25 +2073,37 @@ test('the homepage’s blocks pad the gap between them once, and not twice', () 
 test('the rhythm refusal fires on the doubled gap, and the pairs that keep the rhythm pass', () => {
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const cases = [
-    // The defect as it shipped: the install section's own `--space-lg` on top of the flow's
-    // `--space-3xl` under it — the 144 px band the review measured between the last card and
-    // the "Install" heading. `'first'`: `HomeInstall.astro`'s rule is emitted before
-    // `index.astro`'s in the built page, so the install's padding is the earlier occurrence and
-    // the figures' the later one.
+    // The defect as it shipped: the install section's own `--space-lg` on top of the room the
+    // block above it already carries — the 144 px band the review of round 5 measured between
+    // the last block and the "Install" heading, which was the flow's last card then and is the
+    // benefits section now. The plant names the rule rather than the declaration, because all
+    // three blocks write `padding:0 var(--space-md) var(--space-3xl)` (the benefits' rule first
+    // in the built page, the install's second and the page's last) and a case about the
+    // install's declaration is a case about the rule the install's file declares it in.
     [
       'an install section padding the gap the flow above it already pads',
-      plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)'),
-      [/the gap between them is 144 px/],
+      plantRule('.home-install[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/\.home-benefits ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
     ],
-    // And the same edit on the page's own rule for the two figures, which is one rule for both
-    // of them: the chat's top padding over the hero's bottom one, and the flow's over the
-    // chat's — two pairs padded twice by the one declaration, and both refused. It is the same
-    // rule at every width, so it is refused at each of the three — which is what the count
-    // below holds this case and the one above to.
+    // And the same edit on the page's own rule, which is one rule for the two blocks the page
+    // places and no longer names the benefits: the chat's top padding over the hero's bottom
+    // one, and the flow's over the chat's — two pairs padded twice by the one declaration, and
+    // both refused at each of the three widths, which is what the count below holds. **The
+    // benefits are not in this rule, and that is the point of the round-6 fix**: the block is
+    // rendered by `Benefits.astro`, the page's scope does not reach it, and the rule that pads
+    // it is the component's own — which is the next case.
     [
       'the figures padding the gaps the blocks above them already pad',
-      plant('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)', 'last'),
-      [/the gap between them is 64 px/, /the gap between them is 144 px/],
+      plantRule('.home-chat[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/the gap between them is 64 px/, /\.home-chat ends with 112 px under it and \.home-flow opens with 32 px over it, so the gap between them is 144 px/],
+    ],
+    // The benefits' own rule, in the component that renders the section — the rule the round-6
+    // review found missing (the padding was declared on the page, where it reached nothing). The
+    // gap it pads is the one above it, and one plant refuses the one pair.
+    [
+      'a benefits section padding the gap the flow above it already pads',
+      plantRule('.home-benefits[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
+      [/\.home-flow ends with 112 px under it and \.home-benefits opens with 32 px over it, so the gap between them is 144 px/],
     ],
     // **The case the three widths are for.** The same doubled gap, written inside a rule that is
     // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
@@ -1553,6 +2151,42 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
   // And the page as it ships: the pairs above, with the gap padded once, are not refused — so
   // the two cases are the edit and not the check.
   assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships pads one of its gaps twice')
+})
+
+test('the rhythm reading refuses a block whose rule cannot reach it', () => {
+  const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const pageScope = html.match(/class="home-chat" data-astro-cid-(\w+)/)?.[1]
+  assert.ok(pageScope, 'the built homepage no longer carries the page’s scope on `.home-chat`, and this case re-scopes a rule to it')
+
+  // **The defect of round 6, as it shipped**: `.home-benefits` declared in the page's `<style>`
+  // and the `<section>` rendered by `Benefits.astro`, so the rule carried the page's scope
+  // (`[data-astro-cid-lcdefpme]`), the element carried the component's, and the rule reached
+  // neither. The plant is that file's own edit, made to the rule that now belongs to the
+  // component: the selector's scope attribute swapped for the page's.
+  const rescoped = plantRule('.home-benefits[data-astro-cid-', (rule) =>
+    rule.replace(/\[data-astro-cid-\w+\]/, `[data-astro-cid-${pageScope}]`),
+  )
+  // And the other half of the same defect, from the element's side: the section with the scope
+  // attribute its component gives it removed, which is a rule that names a scope nothing on the
+  // element carries. Either way the block is one the stylesheet names and no rule reaches.
+  const unscoped = html.replace(/<section class="home-benefits"([^>]*)>/, (tag, rest) => `<section class="home-benefits"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
+  assert.notEqual(unscoped, html, 'the built homepage’s benefits section no longer carries a scope attribute, and this case takes one off')
+
+  const cases = [
+    ['a rule scoped to the page rather than to the component that renders the block', rescoped, html, /scoped to data-astro-cid-/],
+    ['a block whose scope attribute is gone', TODAY(), unscoped, /the element carries no scope attribute/],
+  ]
+  for (const [what, css, page, expected] of cases) {
+    const failures = homeRhythmFailures(css, page)
+    assert.equal(failures.length, 1, `${what}: the reading refused ${failures.length} thing(s) where this case plants one:\n  ${failures.join('\n  ') || '(nothing)'}`)
+    assert.match(failures[0], /^the homepage's \.home-benefits is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
+    assert.match(failures[0], expected, `${what}: the refusal does not name the scopes it read:\n  ${failures[0]}`)
+  }
+
+  // And the two halves restore the reading: the defect is the scope mismatch and not the class,
+  // so a rule that names the class *and* carries the element's scope is in force — the shipped
+  // page passing is what the test above asserts.
+  assert.deepEqual(homeRhythmFailures(TODAY(), html), [], 'the homepage as it ships carries a block its rules cannot reach')
 })
 
 // ---- the chat is one card, one conversation (review round 3, item 3a) ----------------------
@@ -1799,7 +2433,16 @@ export function chatConversationFailures(css, html) {
  *     through;
  *   - **the image that lands in it is sized already.** A rule for the slot's own `img` is here,
  *     so the later task's change is one `<img>` line in the markup and no CSS that nobody has
- *     looked at.
+ *     looked at;
+ *   - **and the image that landed is sized so it scales.** The screenshot is a 1459 x 441
+ *     logical capture of a terminal, and the owner's brief for putting it on the page asks for
+ *     the page at 1280, 768 and 375 px: a fixed width is the picture running past a phone's
+ *     edge — the column is 327 px at 375 — and a fixed height is the same picture squashed into
+ *     a box that is not its shape. So the rule that sizes it takes its width from the column it
+ *     is in (a percentage of it, or a percentage `max-width`) and lets the height follow the
+ *     file's own ratio (`height: auto` or an `aspect-ratio`). This is what "it scales down
+ *     without horizontal scroll" is made of, and it is the same reading `test/base-styles.mjs`
+ *     takes everywhere else: the built stylesheet's own declarations.
  */
 export function chatSlotFailures(css, html) {
   const out = []
@@ -1824,9 +2467,52 @@ export function chatSlotFailures(css, html) {
       )
     }
   }
-  if (!own.some((rule) => /(^|[^\w-])img(?![\w-])/.test(rule.selector))) {
+  const sizes = own.filter((rule) => /(^|[^\w-])img(?![\w-])/.test(rule.selector))
+  if (sizes.length === 0) {
     out.push(
       "no rule sizes the image that goes into the watch screenshot's slot (`.chat-shot > img`): the image is a separate task's to add, and the rule that draws it belongs beside the slot so that adding it is one line of markup (review round 3, item 3b)",
+    )
+    return out
+  }
+  // The width the picture is laid out at, as the widest declaration any rule of the slot's own
+  // makes about it: a percentage of the column is one that tracks the column at every viewport.
+  const percents = sizes.flatMap((rule) => {
+    const declared = declarations(rule)
+    return ['width', 'max-width']
+      .map((property) => declared[property])
+      .filter((value) => value !== undefined)
+  })
+  const tracks = percents.find((value) => /^\d+(\.\d+)?%$/.test(value) && Number.parseFloat(value) <= 100)
+  if (tracks === undefined) {
+    out.push(
+      `the rule that sizes the watch screenshot declares ${
+        percents.length === 0 ? 'no width at all' : `\`width\`/\`max-width\` of ${percents.map((v) => `\`${v}\``).join(' and ')}`
+      }, and the picture is a 1459 px-wide capture of a terminal: at 375 px the column it sits in is 327 px, so a width that is not a percentage of that column is the screenshot running past the phone's edge, which is the horizontal scroll the owner's brief for this asset asks the page not to have (owner spec 2026-10-18, item 5)`,
+    )
+  }
+  // And no rule of the slot's own gives the picture a fixed length at all — the check above
+  // reads the declarations there are, and this one reads the ones a breakpoint could add: a
+  // `width` in pixels inside a media query overrides the percentage above at exactly the
+  // viewports that query answers, which is where the overflow would live.
+  for (const rule of sizes) {
+    const declared = declarations(rule)
+    for (const property of ['width', 'max-width', 'min-width', 'height', 'min-height']) {
+      const value = declared[property]
+      if (value === undefined || !/^\d+(\.\d+)?(px|rem|em|ch|vh|vw|pt)$/.test(value)) continue
+      out.push(
+        `\`${rule.selector}\` gives the watch screenshot a \`${property}: ${value}\`${rule.query ? ` inside ${rule.query}` : ''}, and a length in units is a box the picture does not grow out of: the capture is 1459 logical pixels wide in a column that is 327 px at 375, so the picture's own width has to come from the column (a percentage) and its height from the file's ratio (owner spec 2026-10-18, item 5)`,
+      )
+    }
+  }
+  const ratios = sizes.flatMap((rule) => {
+    const declared = declarations(rule)
+    return ['height', 'aspect-ratio']
+      .map((property) => declared[property])
+      .filter((value) => value !== undefined)
+  })
+  if (!ratios.some((value) => value === 'auto' || /^\d+(\.\d+)?\s*\/\s*\d+(\.\d+)?$/.test(value))) {
+    out.push(
+      `the rule that sizes the watch screenshot declares ${ratios.length === 0 ? 'no height at all' : `\`height\`/\`aspect-ratio\` of ${ratios.map((v) => `\`${v}\``).join(' and ')}`}, and the picture's height has to follow the file's own ratio: a fixed height with a width that shrinks with the column is the screenshot squashed out of its shape at every viewport narrower than the one the number was typed at (owner spec 2026-10-18, item 5)`,
     )
   }
   return out
@@ -2032,10 +2718,27 @@ test('every chat-conversation refusal fires on the defect it names', () => {
   assert.notEqual(nothingPainted, css, "this fixture turns the slot's `:empty` rule into one that still draws it, and the built stylesheet no longer carries that rule")
   const noImageRule = css.replace(/\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img[^{]*\{[^}]*\}/, '')
   assert.notEqual(noImageRule, css, "this fixture removes the rule that sizes the image in the slot, and the built stylesheet no longer carries one")
+  // And the picture's own sizing, each planted the way the defect reads on the page: a width
+  // in pixels is the screenshot wider than the phone's column, and a height in pixels is the
+  // same screenshot squashed into a box that is not its shape.
+  const fixedWidth = css.replace(/(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{)width:100%/, '$1width:1459px')
+  const fixedHeight = css.replace(/(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\]\{width:100%;)height:auto/, '$1height:441px')
+  assert.notEqual(fixedWidth, css, "this fixture fixes the watch screenshot's width in pixels, and the built stylesheet no longer sizes it with a percentage")
+  assert.notEqual(fixedHeight, css, "this fixture fixes the watch screenshot's height in pixels, and the built stylesheet no longer lets it follow the file's ratio")
+  // The same defect one breakpoint down: the base rule still tracks the column, and a media
+  // query answers a phone with a fixed width instead — the shape a "just for small screens"
+  // override takes, and the one a check that read only the declarations in front of it would
+  // miss.
+  const imgSelector = /(\.chat-shot\[data-astro-cid-[a-z0-9]+\]>img\[[^\]]*\])/.exec(css)?.[1]
+  assert.ok(imgSelector, "this fixture needs the rule that sizes the image in the watch slot, and the built stylesheet no longer carries one to read its selector from")
+  const phoneWidth = `${css}\n@media (max-width:40rem){${imgSelector}{width:900px}}`
   const slotCases = [
     ['the slot left in the page while it is empty', nothingPainted, /takes the watch screenshot's slot out of the page/],
+    ['the screenshot fixed in width inside a breakpoint', phoneWidth, /a length in units is a box the picture does not grow out of/],
     ['a box drawn around the empty slot', `${css}\n.chat-shot{min-height:140px}`, /gives the watch screenshot's slot a `min-height/],
     ['the image rule removed with the slot still empty', noImageRule, /no rule sizes the image that goes into the watch screenshot's slot/],
+    ['the screenshot given a fixed width', fixedWidth, /the picture is a 1459 px-wide capture of a terminal/],
+    ['the screenshot given a fixed height', fixedHeight, /the picture's height has to follow the file's own ratio/],
   ]
   for (const [what, stylesheet, expected] of slotCases) {
     const failures = chatSlotFailures(stylesheet, home)
@@ -2899,11 +3602,19 @@ test('every command-block refusal fires on the defect it names', () => {
 
 // The rule the menu is held to, as a function over one built page, so that each part of it
 // can be proved by a fixture below rather than only observed on today's markup. It is the
-// contract RF4 names, rewritten for the two-level menu: the nav is still a labelled landmark,
-// its top-level items are links or `<summary>` elements, every link in it is keyboard
-// reachable, and the page still carries exactly one `aria-current="page"` — on the wordmark
-// when the page being read is the home page (D182 makes the logo the link home), on the menu
-// link otherwise.
+// contract RF4 names, rewritten twice: once for the two-level menu (the nav is a labelled
+// landmark, its top-level items are `<details>` disclosures, every link in it is keyboard
+// reachable, and the page carries exactly one `aria-current="page"` — on the wordmark when the
+// page being read is the home page, D182 having made the logo the link home, on the menu link
+// otherwise), and once for the owner's brief of 2026-10-19 (item 1), which took the single
+// "Menu" toggle away: the three group labels are the menu, nothing stands in front of them,
+// and a group's list of links is the `<details>`'s own child, because a closed `<details>` is
+// the one thing that hides it.
+//
+// The wordmark's text is checked here too, beside the menu it has to share a row with: the
+// phone breakpoint takes `.site-wordmark-name` out of that row, so a wordmark whose text is
+// loose in the link is a row that overflows at 375 px with nothing in the stylesheet able to
+// say which part of it gives way.
 
 /** The route a built page's relative path serves. */
 function routeOf(rel) {
@@ -2930,32 +3641,29 @@ export function navFailures(html, rel) {
   const nav = navs[0]
   if (!(nav.attrs.get('aria-label') ?? '').trim()) fail('the section nav has an empty label: a screen reader lists landmarks by name')
 
-  // The drawer: the toggle and the panel it opens. The panel is the toggle's next element
-  // sibling, which is the structure `base.css`'s sibling combinator reads — if it stops being
-  // one, the wide layout still works and the narrow drawer silently never opens.
-  const elements = nav.children.filter((child) => child.name !== undefined)
-  const drawer = [...walk(nav)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-drawer'))
-  const panel = [...walk(nav)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-panel'))
-  if (!drawer) fail('the nav has no drawer toggle (a <details class="site-nav-drawer">): a narrow viewport shows the menu behind one control')
-  if (!panel) fail('the nav has no panel (a .site-nav-panel) holding the groups')
-  if (drawer && panel && (panel.parent !== nav || elements.indexOf(panel) !== elements.indexOf(drawer) + 1)) {
-    fail("the panel is not the drawer toggle's next sibling, which is the wire base.css shows it with: as a child of the toggle the narrow drawer would never open, because a closed <details> hides its own children")
+  // The drawer the menu replaced. A toggle standing in front of the three labels is the thing
+  // the owner's brief of 2026-10-19 took away, and its markup coming back — in any of the three
+  // parts it was made of — is a control between the reader and a section they can already see.
+  for (const gone of ['site-nav-drawer', 'site-nav-toggle', 'site-nav-panel']) {
+    if (all.some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(gone))) {
+      fail(`the page still carries a .${gone}: the menu is the three group labels in the header's row, with no toggle in front of them`)
+    }
   }
-  if (drawer) {
-    const summary = drawer.children.find((el) => el.name === 'summary')
-    if (!summary || !textOf(summary).trim()) fail('the drawer toggle is not a <summary> with words on it')
-    // The panel is the toggle's sibling rather than its child, so nothing but this attribute
-    // tells assistive technology which region the toggle's expanded state is about.
-    const controls = summary?.attrs.get('aria-controls') ?? ''
-    if (!panel || !controls || panel.attrs.get('id') !== controls) {
-      fail(`the drawer toggle's aria-controls is ${JSON.stringify(controls)} and the panel's id is ${JSON.stringify(panel?.attrs.get('id') ?? '')}: the panel is outside the <details>, so the toggle has to name the region it opens`)
+  // And nothing names a region outside the nav any more: the one `aria-controls` the menu had
+  // was the toggle's, naming the panel that was its sibling rather than its child. A group's
+  // list is its own `<details>`'s child, so a control that names something else is a control
+  // describing a structure the menu no longer has.
+  for (const el of walk(nav)) {
+    const controls = el.attrs.get('aria-controls')
+    if (controls !== undefined) {
+      fail(`a <${el.name}> in the nav names ${JSON.stringify(controls)} with aria-controls: nothing the menu draws is outside the control that opens it`)
     }
   }
 
-  // The menu itself: groups of a summary and a list of links. Every top-level item is a link
-  // or a summary — a plain span that looks like a control is one a keyboard cannot open.
-  const groups = panel ? [...walk(panel)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group')) : []
-  if (panel && groups.length === 0) fail('the menu has no groups: the nav is three groups of three (D182)')
+  // The menu itself: the three groups, as a list directly in the nav. Nothing between the nav
+  // and the groups is what there is to say about a narrow viewport — the labels are the menu.
+  const groups = [...walk(nav)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group'))
+  if (groups.length !== 3) fail(`the menu carries ${groups.length} groups: the nav is three groups of three (D182)`)
   // One `name` across the groups makes them an exclusive set, without script: opening one
   // dropdown closes the one already open, so two never hang over each other on a wide row.
   const names = new Set(groups.flatMap((group) => group.children.filter((el) => el.name === 'details').map((el) => el.attrs.get('name') ?? '')))
@@ -2965,12 +3673,33 @@ export function navFailures(html, rel) {
   for (const group of groups) {
     for (const item of group.children.filter((child) => child.name !== undefined)) {
       if (item.name !== 'details') {
-        fail(`a top-level menu item is a <${item.name}>, and every top-level item is a link or a <summary> (a disclosure a keyboard can open)`)
+        fail(`a top-level menu item is a <${item.name}>, and every top-level item is a <details> disclosure a keyboard can open`)
         continue
       }
       const summary = item.children.find((el) => el.name === 'summary')
       if (!summary || !textOf(summary).trim()) fail('a menu group has no <summary> with words on it')
+      // The list is the `<details>`'s own child, and that is the whole of the mechanism: a
+      // closed `<details>` hides what it holds, in every engine, with no stylesheet involved.
+      // A list moved out of its details — as the drawer's panel once sat outside its toggle —
+      // is a menu drawn open on every page at every width.
+      const list = item.children.find((el) => el.name === 'ul')
+      if (!list) {
+        fail("a group's list of links is not inside its own <details>, so the group is drawn open wherever it appears: a closed <details> is the one thing that hides a list")
+      } else if (![...walk(list)].some((el) => el.name === 'a')) {
+        fail('a group has no links: the nav is three groups of three (D182)')
+      }
     }
+  }
+
+  // The way home on a phone: the wordmark's text is in its own element, because that element is
+  // what the phone breakpoint takes out of the header's row (the owner's ruling of 2026-10-19:
+  // the mark stays, the text goes). Loose text in the link is text nothing can hide.
+  const wordmark = all.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark'))
+  const wordmarkName = wordmark && [...walk(wordmark)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark-name'))
+  if (!wordmark) {
+    fail('the page carries no wordmark link to the home page')
+  } else if (!wordmarkName || !textOf(wordmarkName).trim()) {
+    fail("the wordmark's text is not in its own element (.site-wordmark-name), so the phone breakpoint has nothing to take out of the header's row and the row is wider than the viewport at 375 px")
   }
 
   // Keyboard reachability, and the current page.
@@ -3011,19 +3740,22 @@ const FIXTURE_GROUPS = [
   ['Project', [['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community']]],
 ]
 
-const FIXTURE_DRAWER = '<details class="site-nav-drawer"><summary class="site-nav-toggle" aria-controls="site-nav-panel">Menu</summary></details>'
+// The wordmark, as the layout writes it: the logo is decoration beside the name, and the name
+// is the element the phone breakpoint takes out of the row.
+const FIXTURE_WORDMARK =
+  '<a class="site-wordmark" href="/" rel="home"><img src="/logo.png" alt="" width="47" height="32" /><span class="site-wordmark-name">Fugaro</span></a>'
 
-function fixtureNav({ label = 'Sections', current = '/docs/', drawer = FIXTURE_DRAWER } = {}) {
+function fixtureNav({ label = 'Sections', current = '/docs/' } = {}) {
   const groups = FIXTURE_GROUPS.map(([group, items]) => {
     const links = items
       .map(([href, text]) => `<li><a href="${href}"${href === current ? ' aria-current="page"' : ''}>${text}</a></li>`)
       .join('')
     return `<li class="site-nav-group"><details name="site-nav-group"><summary>${group}</summary><ul>${links}</ul></details></li>`
   }).join('')
-  return `<nav class="site-nav" aria-label="${label}">${drawer}<div class="site-nav-panel" id="site-nav-panel"><ul class="site-nav-groups">${groups}</ul></div></nav>`
+  return `<nav class="site-nav" aria-label="${label}"><ul class="site-nav-groups">${groups}</ul></nav>`
 }
 
-function fixturePage({ nav = fixtureNav(), wordmark = '<a class="site-wordmark" href="/" rel="home">Fugaro</a>' } = {}) {
+function fixturePage({ nav = fixtureNav(), wordmark = FIXTURE_WORDMARK } = {}) {
   return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><header class="site-header">${wordmark}${nav}</header></body></html>`
 }
 
@@ -3038,7 +3770,7 @@ test('the menu passes its own rule, so each refusal below is the one thing it br
     navRefusals(
       fixturePage({
         nav: fixtureNav({ current: '' }),
-        wordmark: '<a class="site-wordmark" href="/" rel="home" aria-current="page">Fugaro</a>',
+        wordmark: FIXTURE_WORDMARK.replace('rel="home"', 'rel="home" aria-current="page"'),
       }),
       'index.html',
     ),
@@ -3049,18 +3781,49 @@ test('the menu passes its own rule, so each refusal below is the one thing it br
 test('every menu refusal fires on the defect it names', () => {
   const cases = [
     ['an unlabelled nav', fixturePage({ nav: fixtureNav({ label: '' }) }), /empty label/],
-    ['no drawer toggle', fixturePage({ nav: fixtureNav({ drawer: '' }) }), /no drawer toggle/],
-    ['the panel inside the toggle', fixturePage({ nav: fixtureNav().replace('</details><div class="site-nav-panel" id="site-nav-panel">', '<div class="site-nav-panel" id="site-nav-panel">').replace('</ul></div></nav>', '</ul></div></details></nav>') }), /next sibling/],
-    ['a drawer toggle that does not name its panel', fixturePage({ nav: fixtureNav().replace(' aria-controls="site-nav-panel"', '') }), /aria-controls is ""/],
-    ['a drawer toggle naming another region', fixturePage({ nav: fixtureNav().replace(' id="site-nav-panel"', ' id="elsewhere"') }), /panel's id is "elsewhere"/],
-    ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
+    [
+      'the drawer toggle, back in the header',
+      fixturePage({ nav: fixtureNav().replace('<ul class="site-nav-groups">', '<details class="site-nav-drawer"><summary class="site-nav-toggle">Menu</summary></details><ul class="site-nav-groups">') }),
+      /still carries a \.site-nav-drawer/,
+    ],
+    [
+      'the panel the drawer opened, back around the groups',
+      fixturePage({
+        nav: fixtureNav()
+          .replace('<ul class="site-nav-groups">', '<div class="site-nav-panel" id="site-nav-panel"><ul class="site-nav-groups">')
+          .replace('</ul></nav>', '</ul></div></nav>'),
+      }),
+      /still carries a \.site-nav-panel/,
+    ],
+    [
+      'a control naming a region outside itself',
+      fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '<summary aria-controls="site-nav-panel">Product</summary>') }),
+      /names "site-nav-panel" with aria-controls/,
+    ],
     ['a group with no summary', fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '') }), /no <summary> with words on it/],
+    ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
+    [
+      "a group's list moved out of its own <details>",
+      fixturePage({
+        nav: fixtureNav()
+          .replace('<summary>Product</summary><ul>', '<summary>Product</summary></details><ul>')
+          .replace('</ul></details></li>', '</ul></li>'),
+      }),
+      /list of links is not inside its own <details>/,
+    ],
+    ['a group with no links', fixturePage({ nav: fixtureNav().replace(/<ul>.*?<\/ul>/, '<ul></ul>') }), /no links/],
     ['a top-level item that is not a control', fixturePage({ nav: fixtureNav().replace('<li class="site-nav-group">', '<li class="site-nav-group"><span>Product</span>') }), /top-level menu item is a <span>/],
     ['a link with no href', fixturePage({ nav: fixtureNav().replace('<a href="/docs/" aria-current="page">', '<a aria-current="page">') }), /no href/],
     ['a link out of the tab order', fixturePage({ nav: fixtureNav().replace('<a href="/faq/">', '<a href="/faq/" tabindex="-1">') }), /out of the tab order/],
     ['no current page marked', fixturePage({ nav: fixtureNav({ current: '' }) }), /marks 0 elements/],
     ['two current pages marked', fixturePage({ nav: fixtureNav().replace('<a href="/console/">', '<a href="/console/" aria-current="page">') }), /marks 2 elements/],
     ['the wrong page marked current', fixturePage({ nav: fixtureNav({ current: '/console/' }) }), /its own route is "\/docs\/"/],
+    [
+      "the wordmark's text loose in the link",
+      fixturePage({ wordmark: '<a class="site-wordmark" href="/" rel="home">Fugaro</a>' }),
+      /not in its own element/,
+    ],
+    ['no wordmark at all', fixturePage({ wordmark: '' }), /no wordmark link to the home page/],
   ]
   for (const [what, html, expected] of cases) {
     const failures = navRefusals(html)

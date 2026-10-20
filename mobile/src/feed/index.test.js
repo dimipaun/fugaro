@@ -64,6 +64,11 @@ test('the door exports the reader, the view, the document rules and the vocabula
     'notional',
     'percent',
     'recompute',
+    // Added by P3.3: `availability.js` names `shown` as the one function a
+    // screen prints a figure with, and the job list is the first screen that
+    // prints one -- so it reaches it here rather than reading the five states a
+    // second time. Nothing else about the door moves for that task.
+    'shown',
     'unavailable',
     'usd',
     'validateDocument',

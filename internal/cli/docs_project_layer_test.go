@@ -521,3 +521,118 @@ func TestDocsReleaseChecklistNamesEveryPolicyVersion(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsProjectLayerSaysWhatTiesARepositoryToAProject: task 4.1's step 4 —
+// the doc must state, in one paragraph, the three things that tie a repository
+// to a project (design project-centric.md §4.3) and that there is no
+// registration record, because the "no record is written" half is what an
+// operator has to believe before they trust `repos ls`'s answer, and the three
+// ties are what they have to satisfy before a run works at all.
+//
+// It also pins the two §7 rows the task changes — `repos ls` reads enrolled
+// against seen, `sync` offers the App's installed repositories — and that §10
+// stopped claiming the discovery surface is missing. An operator told a
+// shipped command is "not yet" looks for another way to do the work.
+//
+// The review's doc findings are pinned here too, because a row that describes
+// a command wrongly is one an operator plans against: the `repos ls` row said
+// a failed read "says so" (it is an error, and the command prints nothing)
+// and that each entry carries its provider (nothing prints one), and §10 said
+// the policy commands ship "in this release" where the release is what a
+// reader needs. The `sync` row has to say how wide to install the App, because
+// what it enumerates is exactly the installation's grant.
+//
+// Mutation (verified, run and restored): drop the "Three things" paragraph,
+// put `repos ls`'s "and the repositories running now" back, restore §10's
+// "without the fuller discovery answer phase 4 adds", restore the old
+// "(a project with no Firebase backend, or a read that failed, says so …)"
+// clause, or drop the App-scope sentence — this test fails, naming it.
+func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"### What ties a repository to a project",
+		"**Three things, all of them data**",
+		"default-branch `fugaro.yaml` names the project (`project:`",
+		"the project's published **allow-list**",
+		"provider-side access, the GitHub App installed on the repository",
+		"There is **no registration record**",
+		"the runs bucket's `runs/<slug>/` prefixes and Firestore's `spendDaily`",
+		"Discovery stays **optional and explicit**",
+		"| `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]` |",
+		"The **enrolled** against the **seen**",
+		"the ones the allow-list does not already admit, in **one batch, confirmed once**",
+		"the discovery answer has shipped too",
+		"never removes an entry",
+		// The review's doc findings (see above).
+		"ship in 0.9.5 (§7)",
+		"Install the App on the repositories you mean to run, and no wider",
+		"a read that **fails** is an error, and the command then prints nothing at all",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q", want)
+		}
+	}
+	for _, notWant := range []string{
+		"| `fugaro project repos ls` | The allow-list with each entry's source, and the repositories running now |",
+		"without the fuller discovery answer phase 4 adds",
+		"phase 4's discovery surface is where a durable answer comes from",
+		// The rows the review corrected: a failed read is not a note, and no
+		// provider is printed, so neither claim may come back.
+		"or a read that failed, says so instead of printing an empty history",
+		"each with its canonical name and its provider",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q, which task 4.1 made false", notWant)
+		}
+	}
+}
+
+// TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning: the publish row of
+// docs/project-layer.md is the operator's only description of what a publish
+// writes, and C1.2 added two things to it that the row did not carry before —
+// the per-repository admissions (O4) and the direction their two writes take,
+// and the warning the diff prints for the two members an older Fugaro refuses
+// whole. A row that named neither would leave an operator publishing an account
+// list and a cascade with no page telling them what either costs.
+//
+// Mutation (verified, run and restored): delete the admissions sentence from the
+// row — this fails naming the order; delete the warning sentence — it fails
+// naming the warning; restore "an account's `allow_data_to` admits" in place of
+// "an account **a profile names** admits" — it fails naming the accounts that
+// are published (security review m-4: the row claimed every account's
+// allow_data_to publishes a child, and the code publishes the accounts some
+// profile names, which is narrower); delete the cascade-refusal clause — it
+// fails naming it (security review M-1's behaviour is described here too).
+func TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"`config/policy/repos/$slug` holding the **names** of its admitted accounts",
+		"each repository an account **a profile names** admits gets a child",
+		"an account the config defines but no profile names admits nothing a run reads",
+		"is written **before** the shared node while the widening half follows it",
+		"leaves the installation tighter than the config asked and never looser",
+		"The diff also **warns** when the node it wrote carries a member an older",
+		"`routing.claude.via: cascade`, which stops those **and**",
+		"refuses to **turn the credentials cascade off**",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's publish row lacks %q: the row is where an operator reads what a publish writes and what it costs", want)
+		}
+	}
+	// The command's own help is the other text an operator reads before running
+	// it, and it carries the same two facts.
+	help := newProjectPolicyPublishCmd().Long
+	for _, want := range []string{
+		"holding the NAMES of its admitted accounts",
+		"an account a profile names admits",
+		"an account this config defines but",
+		"narrowed before the shared node and widened",
+		"tighter than the config asked, never looser",
+		"the diff warns: older launchers",
+		"refuses to turn the credentials cascade off",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("the publish command's help lacks %q: the help is what an operator reads before a publish", want)
+		}
+	}
+}
