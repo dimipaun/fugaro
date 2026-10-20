@@ -746,8 +746,11 @@ export function runDiagramFailures(html, css, docs = sources()) {
     }
   }
   const switchColumn = switchAt === null ? null : columnAt(css, switchAt)
-  if (switchColumn === null || phoneColumn === null) {
-    out.push(`the column the drawings are scaled into cannot be read out of the page's own stylesheet (${switchColumn === null ? 'the width they change over at, ' : ''}${phoneColumn === null ? "`main`'s own inline padding or the page's ceiling" : ''}), and the box a drawing is drawn in is what every readability number here is taken at: a check that wrote the box down instead would keep measuring a page the reader no longer has (the owner's draft of 2026-10-19)`)
+  if (phoneColumn === null) {
+    out.push(`the column a ${PHONE_WIDTH} px phone gives the drawings cannot be read out of the page's own stylesheet: \`main\` declares no inline padding this check can turn into pixels, and the box a drawing is scaled into is what the phone's label size is taken at (the owner's draft of 2026-10-19)`)
+  }
+  if (switchAt !== null && switchColumn === null) {
+    out.push(`the column the drawings change over at (${switchAt} px) cannot be read out of the page's own stylesheet — \`main\`'s inline padding or the page's ceiling is not declared in a form this check can turn into pixels — and that column is the narrowest one the wide drawing is shown in, which is where its label floor is taken (the owner's draft of 2026-10-19)`)
   }
 
   // The readable floor: the smallest label of each drawing, at the narrowest column it is
@@ -988,6 +991,13 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       shiftX(page, 'run-loop-head', 40),
       /draws the arrow's head from x .* and the head of the round trip sits at the end of its line/,
     ],
+    [
+      'a loop line nothing can measure',
+      // The line's `d` replaced by a curve: the drawing's own paths are polylines, and a path
+      // this check cannot read is one whose ends are not held to the pills at all.
+      page.replace(/(class="run-loop-line" d=")[^"]*"/, '$1C 0 0 4 4 8 8"'),
+      /draws the loop with a path this check cannot read/,
+    ],
     // A label written for the page rather than quoted: the sentence a reader reads has to be
     // the document's own.
     [
@@ -1053,6 +1063,12 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     assert.equal(css.split(from).length - 1, 1, `this fixture replaces ${JSON.stringify(from)}, and the built stylesheet carries it ${css.split(from).length - 1} times rather than once`)
     return css.replace(from, to)
   }
+  /** A fragment of the built stylesheet replaced wherever it appears, when it appears at all. */
+  const replaceEvery = (pattern, to) => {
+    const found = [...css.matchAll(pattern)].length
+    assert.ok(found > 0, `this fixture replaces ${pattern}, and the built stylesheet does not carry it`)
+    return css.replace(pattern, to)
+  }
   const cssCases = [
     ['a drawing with a fixed width', rewrite('run-svg', 'width:100%', 'width:40rem'), /is `width: 40rem`|box wider than the phone/],
     ['a drawing with no width', rewrite('run-svg', 'width:100%;', ''), /`\.run-svg` is `width: \(nothing declared\)`/],
@@ -1082,6 +1098,28 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       'a tall drawing with no ceiling of its own',
       rewrite('run-tall', 'max-width:22.5rem;', ''),
       /declares `max-width: \(nothing\)`.*declares no ceiling at all/,
+    ],
+    // A ceiling under the phone's own column: the drawing is scaled down rather than up, and
+    // the phone's label size is taken in that box.
+    [
+      'a tall drawing capped below the phone',
+      rewrite('run-tall', 'max-width:22.5rem', 'max-width:14rem'),
+      /tall drawing's smallest label is .* px in the .* px box a 360 px phone gives it/,
+    ],
+    // The other half of the changeover: the tall drawing turns on where the wide one is not
+    // turned off, which is two drawings on one page.
+    [
+      'a wide drawing that is not turned off at the changeover',
+      replaceOnce('{display:none}.run-tall', '{display:block}.run-tall'),
+      /the wide drawing is `display: block` inside a media query/,
+    ],
+    // And the arithmetic itself: a stylesheet that does not say what `main`'s gutter is leaves
+    // the box every readability number is taken at unmeasurable, which is refused rather than
+    // defaulted — the check writes no box of its own.
+    [
+      'a page whose gutter cannot be read',
+      replaceEvery(/main\{[^}]*\}/g, ''),
+      /cannot be read out of the page's own stylesheet/,
     ],
   ]
   for (const [what, stylesheet, expected] of [...cases, ...cssCases]) {
