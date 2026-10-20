@@ -138,10 +138,10 @@ const defaultBootDiskGB = 50
 // while it was `e2-standard-4`, whose task share is 2000m/4096MiB -- Check 57a's
 // measured request, and below the default ask.
 //
-// The design's e2-standard-4 (§1.3: "the likely default", and the type 57a
-// measured the cold start, the shares and the price on, §7.2) is therefore not
-// this fallback's value. Its likely-default sentence is about which type the
-// measurements were taken on; what a run gets when the installation names no
+// The design's e2-standard-4 (§1.3, and the type 57a measured the cold start,
+// the shares and the price on, §7.2) is therefore not this fallback's value,
+// and §1.3 says so itself: it names the type the figures were measured on and
+// not the default a run gets. What a run gets when the installation names no
 // type is a choice, and the one that works is the type sized to the default ask.
 // An installation that wants the cheaper measured type names it: `batch.
 // machine_type: e2-standard-4` and workflows that name no resources are then

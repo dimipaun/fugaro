@@ -1970,6 +1970,41 @@ func TestDocsComputeBackendTask10EnableIsTiedToTheArtifactGatesRefResidual(t *te
 	}
 }
 
+// TestDocsComputeBackendNamesTheDefaultMachineType: §1.3 called an
+// `e2-standard-4`-class VM "the likely default" while `internal/backend/batch`'s
+// defaultMachineType is `e2-standard-8` — the smallest type whose task share
+// carries the config's default ask of 4 CPU / 8Gi, because an e2-standard-4's
+// share of 2000m/4096MiB is below it and every workflow that names no
+// `resources:` would then be refused (the constant's own comment argues the
+// change). Nothing held the sentence, so the design and the code could disagree
+// about what a run gets with no test failing, which is the drift this pins: the
+// design states what the 57a figures were measured on and names the type a
+// default installation actually gets.
+//
+// Mutation (call a type the likely default again in §1.3, or change the
+// constant without the design): one of the two assertions fails.
+func TestDocsComputeBackendNamesTheDefaultMachineType(t *testing.T) {
+	src := readDoc(t, "internal/backend/batch/batch.go")
+	const decl = `defaultMachineType = "`
+	i := strings.Index(src, decl)
+	if i < 0 {
+		t.Fatal("internal/backend/batch/batch.go declares no defaultMachineType")
+	}
+	rest := src[i+len(decl):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("the constant's value is not a quoted string: %q", rest[:min(len(rest), 40)])
+	}
+	name := rest[:j]
+	design := readDoc(t, "docs/design/compute-backend.md")
+	if !strings.Contains(design, "`"+name+"`") || !strings.Contains(design, "defaultMachineType") {
+		t.Errorf("docs/design/compute-backend.md does not name %s (nor the constant that sets it), the machine type a run gets when the installation names none: the design's §1.3 cost figures are one type's and the default is the code's answer", name)
+	}
+	if strings.Contains(design, "likely default") {
+		t.Error("the design calls a machine type the likely default again: §1.3 states which type the 57a figures were measured on and what a run gets by default, and the default is the code's own constant")
+	}
+}
+
 // TestDocsSharedConfigStatesTheImageChecksExactly: the design's §5 bullet is
 // what a later reader checks the reader's own batch.image checks against, so it
 // has to claim exactly what they enforce. Two halves are pinned here, and the

@@ -79,9 +79,10 @@ type MachineType struct {
 // doubt; the prices are.
 
 // machineTypes are the machine types this table carries. It is the
-// families the design names -- e2-standard, whose e2-standard-4 is the
-// likely default (§1.3), and c2-standard, whose c2-standard-60 is Check
-// 57a step 11's quota probe (§7.2) -- at each standard size of each.
+// families the design names -- e2-standard, whose e2-standard-4 is the type
+// 57a measured on and the one an installation may select (§1.3, §7.2), and
+// c2-standard, whose c2-standard-60 is Check 57a step 11's quota probe
+// (§7.2) -- at each standard size of each.
 //
 // Sizes read 2026-10-15 off cloud.google.com/compute/docs/general-purpose-machines
 // (e2-standard-2 2/8, -4 4/16, -8 8/32, -16 16/64, -32 32/128) and
