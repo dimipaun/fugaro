@@ -23,7 +23,7 @@
   "properties": {
     "version": { "const": 1 },
     "project": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The Fugaro project this repository belongs to." },
-    "gcp_project": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$", "description": "The GCP project ID of the installation. Optional; the trust anchor that lets a teammate use the installation without running fugaro init (written by fugaro init). Never guessed from the project name." },
+    "gcp_project": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$", "description": "The GCP project ID of the installation. Optional; the trust anchor that lets a teammate use the installation without running fugaro setup (written by fugaro setup). Never guessed from the project name." },
     "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile of the implicit workflow \"default\", for a file with no workflows: (docs/project-layer.md). Absent: the project's default_profile. Needs fugaro 0.6.0." },
     "git": {
       "type": "object",

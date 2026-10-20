@@ -1,5 +1,5 @@
 # One (repository, workflow). The repository module calls this once per
-# workflow with its slice of fugaro init --repo's terraform.tfvars.json. The
+# workflow with its slice of fugaro update's terraform.tfvars.json. The
 # validation blocks check shapes only; nothing here derives a name.
 
 variable "project" {

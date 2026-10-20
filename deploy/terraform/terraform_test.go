@@ -75,7 +75,7 @@ func TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites(t *testing.T) {
 	}
 }
 
-// The embedded tree is what fugaro init writes into its workdir, so every
+// The embedded tree is what fugaro update writes into its workdir, so every
 // root, module and lock file it needs must be in it. Each task that adds a
 // root or module adds its paths here.
 func TestEmbeddedTree(t *testing.T) {
@@ -3457,6 +3457,6 @@ func TestRootManagedDeployerScopedDefaultsOff(t *testing.T) {
 	}
 	body := code[m[1]:matchBrace(code, m[1]-1)]
 	if !hasAttr(body, "default", "false") {
-		t.Errorf("the root's managed_deployer_scoped must default to false; fugaro init never sets it in 0.8.6:\n%s", body)
+		t.Errorf("the root's managed_deployer_scoped must default to false; fugaro update never sets it in 0.8.6:\n%s", body)
 	}
 }

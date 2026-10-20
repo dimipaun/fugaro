@@ -1,4 +1,4 @@
-# fugaro init reads these with terraform output -json and passes them to
+# fugaro update reads these with terraform output -json and passes them to
 # each repository root.
 
 output "project_name" {

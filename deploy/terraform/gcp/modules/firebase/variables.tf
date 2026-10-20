@@ -1,4 +1,4 @@
-# Every name and member arrives from fugaro init's terraform.tfvars.json,
+# Every name and member arrives from fugaro update's terraform.tfvars.json,
 # which reads the installation's outputs and the GCP project's IAM policy.
 # The validation blocks check shapes only; nothing here derives a name.
 
@@ -13,7 +13,7 @@ variable "project" {
 }
 
 variable "fugaro_project" {
-  description = "The Fugaro project's name. It is in the signer's description; the RTDB's /fugaro/project holds it too, written by fugaro init."
+  description = "The Fugaro project's name. It is in the signer's description; the RTDB's /fugaro/project holds it too, written by fugaro update."
   type        = string
 
   validation {
@@ -54,7 +54,7 @@ variable "manage_apis" {
 }
 
 variable "skip_apis" {
-  description = "APIs this root does not enable because the installation root, in the same GCP project, does (set by fugaro init when the FP is the installation's own project; empty with two projects)."
+  description = "APIs this root does not enable because the installation root, in the same GCP project, does (set by fugaro update when the FP is the installation's own project; empty with two projects)."
   type        = list(string)
   default     = []
   nullable    = false
@@ -90,7 +90,7 @@ variable "operators" {
 }
 
 variable "admins" {
-  description = "The GCP project's roles/owner and roles/editor members, which fugaro init --firebase reads from the project's IAM policy. They become budget admins (D6): roles/firebasedatabase.admin."
+  description = "The GCP project's roles/owner and roles/editor members, which fugaro update reads from the project's IAM policy. They become budget admins (D6): roles/firebasedatabase.admin."
   type        = list(string)
   default     = []
   nullable    = false
@@ -102,7 +102,7 @@ variable "admins" {
 }
 
 variable "budget_admins" {
-  description = "Further budget admins, from terraform.budget_admins (fugaro init --budget-admin): roles/firebasedatabase.admin."
+  description = "Further budget admins, from terraform.budget_admins (fugaro update --budget-admin): roles/firebasedatabase.admin."
   type        = list(string)
   default     = []
   nullable    = false
