@@ -37,6 +37,7 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, session, shell } f
 import type { OpenDialogOptions } from 'electron'
 
 import { handleAppRequests, registerAppScheme } from './protocol'
+import { consoleIconPath, installDevDockIcon } from './icon'
 import { installInstallationPicker } from './picker'
 import type { DialogLike, InstallationPicker } from './picker'
 import {
@@ -417,6 +418,18 @@ const pickerDialog: DialogLike = {
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
+  // The icon first, and before any window exists: an unpackaged console has no
+  // bundle to carry `build/icon.png`, so until this runs the dock shows
+  // Electron's own icon rather than the website's mark (the owner's brief of
+  // 2026-10-19). It is a no-op once packaged -- the bundle's icon is the same
+  // file, put there by the packager -- and off macOS, where there is no dock to
+  // set. `installDevDockIcon` is where all of that is decided and tested.
+  installDevDockIcon({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    dock: app.dock,
+    iconPath: consoleIconPath(app.getAppPath()),
+  })
   serveBundle()
   picker = installInstallationPicker({
     electron: { BrowserWindow, session: session.defaultSession, ipcMain, dialog: pickerDialog, Menu, app },
