@@ -250,7 +250,10 @@ above is the list it must not lose.
    image build, replacing a registry tag and onboarding an unlisted repository
    are **covered**, in both front doors, where they were `Typed` before D12 was
    answered. That is the whole of what the answer moves, and it is written out
-   row by row in §5.
+   row by row in §5. One more confirmation is typed by a *different* decision —
+   the offer to enable `cloudbilling.googleapis.com` (D3, W4.4), which `--yes`
+   never covers either — so this list is D12's rows and not every typed step in
+   the work.
 5. **The rename does not touch the cloud.** W2.x changes text, comments and
    descriptions only: no Terraform resource, variable name or path moves, so an
    apply on an existing installation sees no diff.
@@ -610,7 +613,7 @@ relaxed, by relaxing one locally and not committing it; W5.1's flip is where a
 red step exists.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Refusal|YesCovers|Confirm' -count=1`.
 **Depends on.** Nothing. **Reviewer.** standard.
-**Commit.** `cli: pin the confirmation matrix both front doors must pass (no task may relax a row)`
+**Commit.** `cli: pin the confirmation matrix both front doors must pass (three rows may never be relaxed)`
 
 ### Task W0.2: The rename census and its frozen list — test
 
