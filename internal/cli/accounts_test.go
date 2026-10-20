@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -315,7 +316,15 @@ func TestAccountsLsNeverTouchesSecretManager(t *testing.T) {
 // credsMarkPath is where the service keeps one credential's mark
 // (creds.PathMark). The tests seed it by hand: the write is the service's, and
 // what these tests are about is what the CLI reads back.
-func credsMarkPath(name string) string { return "creds/marks/" + name }
+//
+// The name is escaped the way the service escapes it (budget.Key), and that is
+// what makes a seeded mark readable at all: creds.RTDBStore.Marks refuses a
+// subtree whose node is keyed some other way, so a fixture that wrote the raw
+// name would seed a mark no reader returns — the read would fail and the test
+// around it would be about the failure instead of the name. The names that
+// carry nothing to escape key to themselves, so this is the identity for every
+// ordinary one.
+func credsMarkPath(name string) string { return "creds/marks/" + budget.Key(name) }
 
 // TestAccountsLsShowsStates is C1.21's red step: every listed account carries
 // its credential state beside its name, read from creds/marks — the four
