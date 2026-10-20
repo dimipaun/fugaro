@@ -774,6 +774,33 @@ func TestWaitAnswersTheEarliestOfTheCandidates(t *testing.T) {
 	if at, ok := SlotFrees(leases, a1.Name, now, run, 2); !ok || !at.Equal(now.Add(5*time.Minute)) {
 		t.Fatalf("SlotFrees under a cap of two = %s, %v; want the earlier expiry", at, ok)
 	}
+	// The worked example in SlotFrees' own comment, asserted rather than only
+	// described: a cap of three with five holders waits for the THIRD lapse
+	// (holders - limit + 1), because five, four and three holders are all "not
+	// fewer than limit" and only the third lapse leaves two. It was written as
+	// "two lapses" until review finding m11, which is the error a reader would
+	// have reasoned from — a run told to come back at the second lapse returns
+	// to a credential that is still full.
+	five := []Lease{
+		{Slug: run.Slug, Run: "r1", Credential: a1.Name, Until: now.Add(5 * time.Minute)},
+		{Slug: run.Slug, Run: "r2", Credential: a1.Name, Until: now.Add(10 * time.Minute)},
+		{Slug: run.Slug, Run: "r3", Credential: a1.Name, Until: now.Add(15 * time.Minute)},
+		{Slug: run.Slug, Run: "r4", Credential: a1.Name, Until: now.Add(20 * time.Minute)},
+		{Slug: run.Slug, Run: "r5", Credential: a1.Name, Until: now.Add(25 * time.Minute)},
+	}
+	if at, ok := SlotFrees(five, a1.Name, now, run, 3); !ok || !at.Equal(now.Add(15*time.Minute)) {
+		t.Fatalf("SlotFrees under a cap of three with five holders = %s, %v; want the THIRD lapse, 15m", at, ok)
+	}
+	// And the answer is the one Free agrees with, which is what makes it the
+	// lapse that matters: three holders are still live an instant before it,
+	// and the instant SlotFrees names is the first at which Free admits the run
+	// (Live is a strict After, so the lease ending at that instant is over).
+	if Free(five, a1.Name, now.Add(15*time.Minute-time.Second), run, 3) {
+		t.Error("Free admitted the run an instant before the lapse SlotFrees names, while three holders were still live")
+	}
+	if !Free(five, a1.Name, now.Add(15*time.Minute), run, 3) {
+		t.Error("Free refused the run at the lapse SlotFrees names, so the time it answers is not when the run may come back")
+	}
 	// A lapsed lease is nobody's hold, and one run's own expired hold is not a
 	// wait either.
 	lapsed := append(leases, Lease{Slug: run.Slug, Run: "gone", Credential: a1.Name, Until: now.Add(-time.Minute)})
