@@ -49,9 +49,23 @@ func (e *NoDirError) Error() string {
 //   - then $HOME, or %USERPROFILE% where HOME is unset, plus the POSIX
 //     directory: ~/.config, ~/.cache, ~/.local/state.
 //
-// A variable that is set but not absolute is ignored rather than joined, as
-// the XDG spec says and as the state and cache paths already did. goos is a
-// parameter rather than a read of runtime.GOOS so the Windows rule is
+// A variable that is set but not absolute is ignored rather than joined, which
+// is the XDG spec's own rule — such a path "should be considered invalid and
+// ignored" — and what xdgDir in internal/infra/workdir.go already did for the
+// state and the provider cache on main.
+//
+// For the config and the other two caches it is the one place this port changes
+// a POSIX path, and it is deliberate. On main, configDir, cachePath in
+// internal/localcfg/checkcache.go and cachePath in internal/updatecheck took any
+// non-empty $XDG_CONFIG_HOME or $XDG_CACHE_HOME, so a *relative* one — invalid
+// per the spec, and set by no correct desktop — was joined onto the process's
+// working directory and decided where the project config, the name check and
+// the update check were written. Here it is ignored and the fallback above
+// decides instead, which is the same answer the state already gave. An absolute
+// value, the escape hatch every POSIX user actually has, is untouched, and
+// TestARelativeXDGVariableIsIgnoredOnPOSIX is the pin for the change.
+//
+// goos is a parameter rather than a read of runtime.GOOS so the Windows rule is
 // testable from a Linux checkout; callers pass runtime.GOOS.
 //
 // This is F5's one place: before it, a Windows user with no HOME had no

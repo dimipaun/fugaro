@@ -738,3 +738,33 @@ func TestWarnNothingToSay(t *testing.T) {
 		}
 	})
 }
+
+// TestARelativeXDGCacheHomeIsIgnoredOnPOSIX pins this package's half of the one
+// POSIX behaviour this port changes: main's cachePath here took any non-empty
+// $XDG_CACHE_HOME, so a relative one decided where the update check was
+// written, joined onto the process's working directory; localcfg.UserDir now
+// ignores it — the XDG spec's own rule — and the fallback decides. An absolute
+// value is unchanged. HOME is read rather than the platform's own cache
+// variable on purpose, so this row says the same thing on every platform.
+//
+// Mutation: cachePath back to `if dir := getenv("XDG_CACHE_HOME"); dir != ""`
+// makes the path "rel-cache/fugaro/update-check.json" and fails this test.
+func TestARelativeXDGCacheHomeIsIgnoredOnPOSIX(t *testing.T) {
+	home := t.TempDir()
+	env := func(k string) string {
+		switch k {
+		case "HOME":
+			return home
+		case "XDG_CACHE_HOME":
+			return "rel-cache"
+		}
+		return ""
+	}
+	got, err := cachePath(env)
+	if err != nil {
+		t.Fatalf("cachePath: %v", err)
+	}
+	if want := filepath.Join(home, ".cache", "fugaro", "update-check.json"); got != want {
+		t.Errorf("cachePath = %q, want %q: a relative XDG_CACHE_HOME must not decide where the cache goes", got, want)
+	}
+}

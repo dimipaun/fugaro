@@ -60,6 +60,18 @@ func TestConfigDirFollowsThePlatform(t *testing.T) {
 			want: filepath.Join("/h", ".config"),
 		},
 		{
+			name: "a relative XDG_CACHE_HOME is ignored too",
+			goos: "linux", kind: DirCache,
+			env:  map[string]string{"XDG_CACHE_HOME": "rel", "HOME": "/h"},
+			want: filepath.Join("/h", ".cache"),
+		},
+		{
+			name: "a relative XDG_STATE_HOME is ignored as well",
+			goos: "linux", kind: DirState,
+			env:  map[string]string{"XDG_STATE_HOME": "rel", "HOME": "/h"},
+			want: filepath.Join("/h", ".local", "state"),
+		},
+		{
 			name: "Linux cache falls back to ~/.cache",
 			goos: "linux", kind: DirCache,
 			env:  map[string]string{"HOME": "/h"},
@@ -166,6 +178,49 @@ func TestConfigDirFollowsThePlatform(t *testing.T) {
 				t.Fatalf("UserDir(%s, %s) = %q, %v; want %q", tc.goos, tc.kind, got, err, tc.want)
 			}
 		})
+	}
+}
+
+// TestARelativeXDGVariableIsIgnoredOnPOSIX is the same rule at the callers
+// rather than in the helper, because a *relative* $XDG_CONFIG_HOME or
+// $XDG_CACHE_HOME is the one POSIX behaviour this port changes and the change
+// has to be pinned where it happens: on main, configDir and cachePath took any
+// non-empty value, so a relative one was joined onto the process's working
+// directory and decided where the project config, the name check and the update
+// check were written (internal/updatecheck's cachePath the same — its own test
+// pins its half). Now localcfg.UserDir's IsAbs rule ignores it and the
+// fallback decides, which is what the XDG spec asks for and what the state
+// path already did. An absolute value is unchanged.
+//
+// Mutation: dropping the filepath.IsAbs check from UserDir (any non-empty value
+// decides, as main did) makes both paths below relative to the test's working
+// directory, and this test fails on the first of them.
+func TestARelativeXDGVariableIsIgnoredOnPOSIX(t *testing.T) {
+	home := t.TempDir()
+	env := func(k string) string {
+		switch k {
+		case "HOME":
+			return home
+		case "XDG_CONFIG_HOME":
+			return "rel-config"
+		case "XDG_CACHE_HOME":
+			return "rel-cache"
+		}
+		return ""
+	}
+	dir, err := configDir(env)
+	if err != nil {
+		t.Fatalf("configDir: %v", err)
+	}
+	if want := filepath.Join(home, ".config", "fugaro"); dir != want {
+		t.Errorf("configDir = %q, want %q: a relative XDG_CONFIG_HOME must not decide where the config goes", dir, want)
+	}
+	path, err := cachePath(env, "project-check", "aurora")
+	if err != nil {
+		t.Fatalf("cachePath: %v", err)
+	}
+	if want := filepath.Join(home, ".cache", "fugaro", "project-check", "aurora.json"); path != want {
+		t.Errorf("cachePath = %q, want %q: a relative XDG_CACHE_HOME must not decide where the cache goes", path, want)
 	}
 }
 
