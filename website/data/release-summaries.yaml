@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.9.5: The desktop console has a new dark design with a rail for your installations and full keyboard navigation, and a repository's spending caps and kill switch can be set from inside its checkout without typing its name. A project can now list which repositories are enrolled against those that have actually run, and enroll the repositories its GitHub App is installed on in one step.
   v0.9.0: A project's repositories can now share Cloud Run jobs, and a project can name several Claude accounts so a person's own subscription serves the project's runs from its own job. A run's budget token is sealed so no other run can use it, spend can be reported per person, and the watch screen names who launched each run.
   v0.8.7: The desktop console is published reliably again, because Apple's notarisation and stapling now retry the part that fails when Apple's service drops the connection. The command line itself is unchanged from the previous release.
   v0.8.6: Setup completes again on every installation, after the previous release stopped while creating an account's role. Managed projects and the batch provisioning step are switched off in this release, and both are planned to return after a redesign.

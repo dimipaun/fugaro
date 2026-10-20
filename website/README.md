@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **982,221 bytes in a checkout with no tags** and to **982,221 bytes with the
+  commit builds to **990,197 bytes in a checkout with no tags** and to **990,197 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -466,6 +466,11 @@ added or removed without this sentence moving fails there:
     heaviest page, which renders the whole reference) and 975,034 → **982,221** at the site.
     The script and the number of files did not move, and the clone figure moved by the same
     bytes.
+  - **The 0.9.5 release notes** (`docs/releases/v0.9.5.md` and its line in
+    `data/release-summaries.yaml`): the changelog page gains the 0.9.5 entry, its summary and
+    its collapsed Highlights, and that moved the site figure by **7,976 bytes**, 982,221 →
+    **990,197**. The changelog page is not the heaviest page, so the page weight did not move,
+    and neither did the script or the number of files; the clone figure moved by the same bytes.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -492,7 +497,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,079,505 bytes. Three times 359,835: the heaviest page, the
     docs hub, at 287,868 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,683,331 bytes. Three times 1,227,777 (every file in `dist/`, 982,221
+  - **Whole site:** 3,713,241 bytes. Three times 1,237,747 (every file in `dist/`, 990,197
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
