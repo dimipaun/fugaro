@@ -34,6 +34,20 @@ import (
 // never fails the command that would have recorded it), it is dropped and
 // rebuilt without ceremony, and its reader never trusts it — see
 // `fugaro config list --json`, which re-validates every path it reads.
+//
+// It lives in a directory of its own under the config home (CheckoutsDir),
+// created 0700, rather than beside the project configs: the config home is
+// the operator's and may be 0755 — an existing directory's mode is left alone
+// by MkdirAll, and this is not the file to chmod someone's ~/.config over —
+// while the file itself is 0600 (the shape the console documents as its
+// config-list contract, §6.8 of the JSON contract).
+//
+// Two writers racing lose one of the two updates: the load-modify-write is
+// not locked, and the rename makes the file whole, not the pair of writes.
+// The state is best effort by design — the loser's path is recorded the next
+// time a command runs in that checkout — so no lock is taken and no caller
+// has to know; the guarantee is that a reader never sees half a file, not
+// that every concurrent write survives.
 
 // CheckoutsVersion is the version of the checkouts document. A file whose
 // version is not this one is refused rather than read as this version's (and
@@ -44,6 +58,14 @@ const CheckoutsVersion = 1
 // checkouts are cloned, moved and deleted, and they are small on purpose: the
 // console shows a handful of paths per repository, and the one an operator
 // uses is the one they used last.
+//
+// They are kept on the write (RecordCheckout drops the oldest) and applied
+// again on the read (Bounded), because the state file is a file on this
+// machine that this process did not write: a hand-edited one — or one written
+// by a machine that has since cloned far more — must not cost a reader more
+// than the bounds the writer keeps. Each checked path costs a stat and about
+// three git executions, so the difference is a listing or a console hanging
+// at startup.
 const (
 	// MaxCheckoutRepos is the most repositories remembered per project. The
 	// repository recorded longest ago is dropped.
@@ -51,6 +73,11 @@ const (
 	// MaxCheckoutPaths is the most paths remembered per repository. The path
 	// recorded longest ago is dropped.
 	MaxCheckoutPaths = 5
+	// MaxCheckoutRows is the most entries one read examines across the whole
+	// document: ten projects at their full per-project bound
+	// (MaxCheckoutRepos x MaxCheckoutPaths). Over it, the newest rows are the
+	// ones examined and the reader says how many it did not.
+	MaxCheckoutRows = 1000
 	// maxCheckoutsBytes bounds the read: the document is a few hundred bytes
 	// per entry, so anything near this is not one.
 	maxCheckoutsBytes = 1 << 20
@@ -59,8 +86,14 @@ const (
 	maxCheckoutPathLen = 4096
 )
 
-// CheckoutsFile is the state file's name, inside the config directory.
+// CheckoutsFile is the state file's name, inside CheckoutsDir.
 const CheckoutsFile = "checkouts.json"
+
+// CheckoutsDir is the directory the state file lives in, inside the config
+// home: <config home>/state. It is a directory of its own so it can be 0700
+// without touching the mode of the config home, which is the operator's
+// (and may already be 0755).
+const CheckoutsDir = "state"
 
 // CheckoutIdentity is the identity a checkout is remembered by: the git
 // provider and the repository's owner/name. It is the same pair
@@ -73,6 +106,35 @@ type CheckoutIdentity struct {
 
 // Key is the identity as the document's map key: "<provider>/<owner>/<name>".
 func (i CheckoutIdentity) Key() string { return i.Provider + "/" + i.Repo }
+
+// Enrolls reports whether the project config c enrolls the repository a
+// checkout was recorded under: c's own repos: map names owner/name, and — when
+// that entry names a provider — the same one. The map is keyed by the
+// operator's own spelling, so the comparison folds case (the same fold
+// configRepo makes for the allow-list commands).
+//
+// It is a *local* fact, and that is the point: it reads the operator's own
+// project config and nothing else. The published allow-list is the cloud's
+// copy of the same decision (project policy publish seeds it from this map),
+// and it is not read here — `fugaro config list --json` opens no bucket and
+// takes no credentials.
+//
+// An entry with no provider: counts: provider: is optional there, and the
+// checkout's fugaro.yaml git.provider decides it when the entry is silent.
+// A nil config — one that could not be read — enrolls nothing: nothing can be
+// proved about it, and the reader fails closed.
+func (c *Config) Enrolls(provider, repo string) bool {
+	if c == nil {
+		return false
+	}
+	for name, r := range c.Repos {
+		if !strings.EqualFold(name, repo) {
+			continue
+		}
+		return r.Provider == "" || strings.EqualFold(r.Provider, provider)
+	}
+	return false
+}
 
 // CheckoutPath is one remembered checkout: an absolute path, and when it was
 // first recorded (the order the bound drops by).
@@ -103,19 +165,29 @@ type Checkouts struct {
 }
 
 // CheckoutsPath is where the remembered checkouts live:
-// $XDG_CONFIG_HOME/fugaro/checkouts.json, else ~/.config/fugaro/checkouts.json.
+// $XDG_CONFIG_HOME/fugaro/state/checkouts.json, else
+// ~/.config/fugaro/state/checkouts.json.
 //
-// It is beside the projects/ directory the project configs are in, not
+// The `state` directory is this file's own, created 0700 by the writer, and
+// it is beside the projects/ directory the project configs are in rather than
 // inside it: that directory is read as "the project configs" by Projects (and
 // by anything else that looks at an operator's config directory), and a JSON
-// state file among them is not one.
+// state file among them is not one. The config home itself is not chmodded —
+// see the package comment.
 func CheckoutsPath(getenv func(string) string) (string, error) {
 	d, err := configDir(getenv)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(d, CheckoutsFile), nil
+	return filepath.Join(d, CheckoutsDir, CheckoutsFile), nil
 }
+
+// errCheckoutsVersion marks the one refusal RecordCheckout must not write
+// over: a document a *newer* fugaro wrote. Every other refusal — JSON this
+// build cannot parse, a byte count over the bound, a file that is not a
+// regular file — is state that has gone wrong on this machine, and the
+// writer replaces it (see RecordCheckout).
+var errCheckoutsVersion = errors.New("checkouts document is from another version of fugaro")
 
 // EmptyCheckouts is the document for a machine that has recorded nothing.
 func EmptyCheckouts() *Checkouts {
@@ -124,38 +196,35 @@ func EmptyCheckouts() *Checkouts {
 
 // LoadCheckouts reads the remembered checkouts. A machine that has recorded
 // none (no file, or one that was deleted) is an empty document and no error;
-// a file that cannot be read, is larger than the bound, is not JSON, or is
-// not this version, is an error — a reader that took it for "nothing
-// recorded" would hide a state file that is there and wrong, and one that
-// took a corrupt file for an empty one would then write over it.
+// a file that cannot be read, is larger than the bound, is not a regular file
+// (a symlink, a FIFO, a directory), is not JSON, or is not this version, is an
+// error — a reader that took it for "nothing recorded" would hide a state file
+// that is there and wrong, and one that took a corrupt file for an empty one
+// would then write over it.
+//
+// The file is read through config.ReadRegular: it is inspected and then
+// opened, so a symlink is refused rather than followed, a FIFO is refused
+// rather than blocked on, and a file that grew between the two calls is not
+// read in full.
 func LoadCheckouts(getenv func(string) string) (*Checkouts, error) {
 	path, err := CheckoutsPath(getenv)
 	if err != nil {
 		return nil, err
 	}
-	fi, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := config.ReadRegular(path, maxCheckoutsBytes)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return EmptyCheckouts(), nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
-	}
-	if fi.Size() > maxCheckoutsBytes {
-		return nil, fmt.Errorf("%s is %d bytes, over the %d-byte bound for the remembered checkouts", path, fi.Size(), maxCheckoutsBytes)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+	case err != nil:
+		return nil, err
 	}
 	var c Checkouts
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("%s is not a checkouts document: %w", path, err)
 	}
 	if c.Version != CheckoutsVersion {
-		return nil, fmt.Errorf("%s is version %d of the checkouts document, and this fugaro writes version %d", path, c.Version, CheckoutsVersion)
+		return nil, fmt.Errorf("%s is version %d of the checkouts document, and this fugaro writes version %d: %w",
+			path, c.Version, CheckoutsVersion, errCheckoutsVersion)
 	}
 	if c.Projects == nil {
 		c.Projects = map[string]map[string]CheckoutRepo{}
@@ -163,9 +232,92 @@ func LoadCheckouts(getenv func(string) string) (*Checkouts, error) {
 	return &c, nil
 }
 
+// Bounded is this document as a read may present it: for each of the named
+// projects, the newest MaxCheckoutRepos repositories by their recorded time
+// and the newest MaxCheckoutPaths paths of each, and MaxCheckoutRows rows in
+// total across all of them (newest first). dropped is how many entries those
+// bounds cut, so a reader can say the file is over them rather than present
+// the trimmed list as the whole one.
+//
+// It is the same bound RecordCheckout keeps on the write, applied on the read
+// because the file is one this process did not write. Nothing here reads the
+// filesystem: the paths are not touched, only chosen.
+func (c *Checkouts) Bounded(projects []string) (*Checkouts, int) {
+	type row struct {
+		project string
+		repo    CheckoutRepo
+		path    CheckoutPath
+	}
+	out := EmptyCheckouts()
+	dropped := 0
+	var rows []row
+	for _, project := range projects {
+		repos := c.ProjectCheckouts(project)
+		if len(repos) > MaxCheckoutRepos {
+			dropped += len(repos) - MaxCheckoutRepos
+			repos = newest(repos, func(r CheckoutRepo) time.Time { return r.RecordedAt }, MaxCheckoutRepos)
+		}
+		for _, r := range repos {
+			if len(r.Paths) > MaxCheckoutPaths {
+				dropped += len(r.Paths) - MaxCheckoutPaths
+			}
+			r.Paths = newest(r.Paths, func(p CheckoutPath) time.Time { return p.RecordedAt }, MaxCheckoutPaths)
+			for _, p := range r.Paths {
+				rows = append(rows, row{project: project, repo: r, path: p})
+			}
+		}
+	}
+	if len(rows) > MaxCheckoutRows {
+		slices.SortStableFunc(rows, func(a, b row) int { return b.path.RecordedAt.Compare(a.path.RecordedAt) })
+		dropped += len(rows) - MaxCheckoutRows
+		rows = rows[:MaxCheckoutRows]
+	}
+	for _, r := range rows {
+		proj := out.Projects[r.project]
+		if proj == nil {
+			proj = map[string]CheckoutRepo{}
+			out.Projects[r.project] = proj
+		}
+		key := CheckoutIdentity{r.repo.Provider, r.repo.Repo}.Key()
+		bounded := proj[key]
+		bounded.Provider, bounded.Repo, bounded.RecordedAt = r.repo.Provider, r.repo.Repo, r.repo.RecordedAt
+		bounded.Paths = append(bounded.Paths, r.path)
+		proj[key] = bounded
+	}
+	return out, dropped
+}
+
+// newest is the n entries of items with the newest stamps, in the order items
+// holds them: the entry recorded longest ago is what a bound drops, and a
+// listing keeps the order the file has (the maps above are unordered, so the
+// order here is what makes two reads of one file print the same thing).
+// Ties go to the entry items holds later, which is the one written later.
+func newest[T any](items []T, at func(T) time.Time, n int) []T {
+	if len(items) <= n {
+		return items
+	}
+	type indexed struct {
+		i int
+		t time.Time
+	}
+	idx := make([]indexed, len(items))
+	for i, it := range items {
+		idx[i] = indexed{i: i, t: at(it)}
+	}
+	slices.SortStableFunc(idx, func(a, b indexed) int { return a.t.Compare(b.t) })
+	idx = idx[len(idx)-n:]
+	slices.SortStableFunc(idx, func(a, b indexed) int { return a.i - b.i })
+	out := make([]T, len(idx))
+	for i, k := range idx {
+		out[i] = items[k.i]
+	}
+	return out
+}
+
 // ProjectCheckouts is project's remembered repositories, in identity order
 // (the document's own maps are unordered, so a listing that ranged over them
-// would print a different table on each read).
+// would print a different table on each read). It is the document as it is
+// held, bounds and all: a reader presents it through Bounded.
 func (c *Checkouts) ProjectCheckouts(project string) []CheckoutRepo {
 	m := c.Projects[project]
 	out := make([]CheckoutRepo, 0, len(m))
@@ -206,8 +358,20 @@ func RecordCheckout(getenv func(string) string, project string, id CheckoutIdent
 	}
 	c, err := LoadCheckouts(getenv)
 	if err != nil {
-		// Never write over a document this fugaro does not understand.
-		return err
+		if errors.Is(err, errCheckoutsVersion) {
+			// Never write over a document a newer fugaro wrote: this build
+			// cannot read it, and rebuilding it from nothing would drop that
+			// fugaro's state.
+			return err
+		}
+		// Everything else the read refuses — JSON this build cannot parse, a
+		// byte count over the bound, a file that is not a regular file — is
+		// this machine's state gone wrong, and this file is pure state: it is
+		// dropped and rebuilt rather than left refusing every later write.
+		// (The refusal is otherwise sticky: nothing but a person could clear
+		// a zero-length file left by a crash, and recording would stay broken
+		// until they did.)
+		c = EmptyCheckouts()
 	}
 	proj := c.Projects[project]
 	if proj == nil {

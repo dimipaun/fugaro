@@ -28,13 +28,17 @@ const checkoutsYAML = "version: 1\nproject: aurora\ngit: { provider: github, bas
 
 // checkoutsFixture points XDG_CONFIG_HOME at a directory of the test's own
 // and writes two installations into it: the sandbox one (aurora) and a second
-// (bramble), so a listing that returned "the one config" fails here.
+// (bramble), so a listing that returned "the one config" fails here. aurora
+// enrolls the two repositories these tests work in, because only a repository
+// the project enrolls is recorded or validated (localcfg.Config.Enrolls).
 func checkoutsFixture(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	isolateProjects(t, dir)
 	writeProject(t, "aurora", "aurora-gcp")
 	writeProject(t, "bramble", "bramble-gcp")
+	enrollRepo(t, "aurora", "acme/app")
+	enrollRepo(t, "aurora", "acme/other")
 	return dir
 }
 
@@ -310,5 +314,78 @@ func TestAFailedRecordNeverFailsTheCommand(t *testing.T) {
 		if strings.Contains(out, "checkout") || strings.Contains(out, dir) {
 			t.Errorf("the failure to remember the checkout was printed: %q", out)
 		}
+	}
+}
+
+// TestAnUnenrolledCheckoutIsNeverRecorded: the recorder writes a checkout
+// down only when the project's own config enrolls the repository its origin
+// names. A directory whose fugaro.yaml claims the project — a fork, a
+// third-party repository, a hostile pull request — is a claim the checkout
+// makes and not an enrolment the operator gave, and recording it would spend
+// the 20-repository bound on it and put its path in front of the console.
+//
+// Mutation (run, restore): drop the LoadProject/Enrolls gate from
+// recordCheckout (project.go) and this fails with the un-enrolled checkout in
+// the state file.
+func TestAnUnenrolledCheckoutIsNeverRecorded(t *testing.T) {
+	dir := checkoutsFixture(t)
+	// aurora enrolls acme/app; this checkout's origin is another repository
+	// of the same owner, with the project: line copied in.
+	co := checkoutsAt(t, filepath.Join(dir, "src", "evil"), checkoutsProjectYAML("aurora"), "https://github.com/acme/evil.git")
+	got, err := checkoutProject(context.Background(), co)
+	if err != nil || got == nil {
+		t.Fatalf("checkoutProject = %+v, %v", got, err)
+	}
+	known, err := localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(known.Projects["aurora"]) != 0 {
+		t.Errorf("aurora's checkouts = %+v, want none: the project does not enroll github/acme/evil", known.Projects)
+	}
+	// The control, in the same fixture: the enrolled repository is recorded
+	// by the same call, so this is the gate and not a broken fixture.
+	app := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	if _, err := checkoutProject(context.Background(), app); err != nil {
+		t.Fatal(err)
+	}
+	known, err = localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := known.Projects["aurora"]["github/acme/app"]; !ok {
+		t.Errorf("aurora's checkouts = %+v, want the enrolled repository recorded", known.Projects)
+	}
+}
+
+// TestARewrittenOriginIsNeverRecorded: a checkout whose raw .git/config names
+// a different host or repository than git resolves for "origin"
+// (url.<base>.insteadOf) is not recorded at all. The rewrite is a local
+// config line that can point anywhere, so the pair (provider, repository) it
+// would produce is not a fact about the directory — and the state file is
+// what the console offers paths from.
+//
+// Mutation (run, restore): change `if !ok || oi.Rewritten` to `if !ok` in
+// recordCheckout (project.go) and this fails with the checkout recorded.
+func TestARewrittenOriginIsNeverRecorded(t *testing.T) {
+	dir := checkoutsFixture(t)
+	// The raw origin is the gh: shorthand and the rewrite resolves it to the
+	// enrolled github repository: with the guard gone the checkout would be
+	// recorded under a name it is enrolled for, so this isolates the guard.
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "gh:acme/app.git")
+	testutil.Git(t, co, "config", "--local", "--add",
+		"url.https://github.com/acme/app.git.insteadOf", "gh:acme/app.git")
+	if oi, ok := readOrigin(context.Background(), co); !ok || !oi.Rewritten {
+		t.Fatalf("the fixture did not produce a rewritten origin: %+v ok=%v", oi, ok)
+	}
+	if _, err := checkoutProject(context.Background(), co); err != nil {
+		t.Fatal(err)
+	}
+	known, err := localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(known.Projects["aurora"]) != 0 {
+		t.Errorf("aurora's checkouts = %+v, want none: the origin is rewritten", known.Projects)
 	}
 }

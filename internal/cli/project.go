@@ -97,10 +97,11 @@ func resolveCheckout(ctx context.Context, dir string) (*localcfg.Checkout, error
 // It is best effort in every direction: a checkout with no project:, an
 // origin git rewrites (readOrigin's Rewritten: the repository a checkout
 // resolves to is not the one its own config says), a host no provider lives
-// on, a checkout path the state file refuses — none of them is an error, and
-// none of them is printed. Nothing here can fail the command that runs it,
-// and the path never reaches stdout, stderr or a log line: it is local state
-// for `fugaro config list --json` and nothing else.
+// on, a repository the project does not enroll, a checkout path the state
+// file refuses — none of them is an error, and none of them is printed.
+// Nothing here can fail the command that runs it, and the path never reaches
+// stdout, stderr or a log line: it is local state for `fugaro config list
+// --json` and nothing else.
 func recordCheckout(ctx context.Context, co *localcfg.Checkout) {
 	if consoleRead(ctx) {
 		// A read the desktop console spawns changes nothing (see
@@ -119,6 +120,19 @@ func recordCheckout(ctx context.Context, co *localcfg.Checkout) {
 	// The provider is the origin's, not the file's: see checkoutProvider.
 	provider := checkoutProvider(co, oi.Host)
 	if provider == "" {
+		return
+	}
+	// And only a repository the project enrolls: the checkout's own
+	// fugaro.yaml saying `project: aurora` is a claim the checkout makes, so a
+	// fork, a third-party repository or a hostile pull request that copies the
+	// line would otherwise be remembered as one of aurora's checkouts — and
+	// remembered rows are what the console's first run offers, and what the
+	// 20-repository bound is spent on. Enrollment is a local fact
+	// (localcfg.Config.Enrolls, the machine's own project config), so this
+	// costs one config read and no network. A config that cannot be read
+	// proves nothing and records nothing.
+	lc, _, err := localcfg.LoadProject(os.Getenv, co.Project)
+	if err != nil || !lc.Enrolls(provider, oi.Repo) {
 		return
 	}
 	_ = localcfg.RecordCheckout(os.Getenv, co.Project,

@@ -614,8 +614,19 @@ and one entry of `installations[].checkouts`:
 | --- | --- | --- | --- | --- |
 | `repository` | string | never | never | `<provider>/<owner>/<name>`, the identity the path was recorded under |
 | `path` | string | never | never | the absolute path, made printable and bounded (control and format characters escaped, at most 200 runes) |
-| `valid` | bool | never | never | whether the path is still a checkout of this project and this repository, as of this read |
-| `reason` | string | **yes** | never | why it is not, one of `missing`, `not_a_checkout`, `unreadable`, `other_project`, `other_repository`; **absent exactly when `valid` is true** |
+| `enrolled` | bool | never | never | whether the installation's project config enrolls `repository` in its own `repos:` map — **a local fact**, false when that config could not be read |
+| `valid` | bool | never | never | whether the path is still a checkout of this project and this repository **and that repository is enrolled**, as of this read |
+| `reason` | string | **yes** | never | why it is not, one of `missing`, `not_a_checkout`, `unreadable`, `other_project`, `other_repository`, `not_enrolled`, `not_representable`; **absent exactly when `valid` is true** |
+
+`enrolled` is reported separately from `valid` on purpose: it is the one part of
+the verdict that is a fact of a **local file** rather than of the directory the
+path names, it is the only part that is meaningful when the path itself is gone,
+and a reader that wants to explain "this project does not own this repository"
+must be able to say that without also claiming the directory is not a checkout.
+It is **not** a cloud fact: it is the operator's own `repos:` map in
+`projects/<name>.yaml`, read locally. The published allow-list is the cloud's
+copy of the same decision (project policy publish seeds it from this map) and is
+**not** read here — this command opens no bucket and needs no credentials.
 
 **`checkouts` is what makes the first run zero-configuration** (v1 design D13
 and §3.4 rule 7; console v2 plan V2.1.1): the installation list and the local
@@ -624,11 +635,20 @@ checkouts cannot disagree about which installation is which. The rows are
 **local state and nothing else** — the paths are never published to the runs
 bucket, never merged into the shared config, and never printed by any other
 command. They come from a machine-local state file
-(`$XDG_CONFIG_HOME/fugaro/checkouts.json`, beside the project configs and not
-among them), written best effort by the commands that resolve a checkout's
+(`$XDG_CONFIG_HOME/fugaro/state/checkouts.json`, in a directory of its own
+beside the project configs and not among them: the `state` directory is created
+0700 and the file 0600, and the operator's config home itself is never
+chmodded), written best effort by the commands that resolve a checkout's
 project and are **not** reads the console spawns — `fugaro validate`,
 `fugaro run`, `fugaro init --repo` and the rest — bounded to 20 repositories
-per project and 5 paths per repository. **The reads §5.1 allows never record,
+per project and 5 paths per repository, **and to 1000 rows across the whole
+document**. A repository the project config does not enroll is **not
+recorded at all**: an un-enrolled clone must not push a real repository out of
+the per-project bound, and a row for it could only ever be `not_enrolled`. The
+bounds are kept on the write and **applied again on this read**, because the
+state file is one this process did not write: a hand-edited one, or one written
+by a machine that has since cloned far more, is trimmed to the newest rows and
+the trimming is named in `warnings` rather than presented as the whole file. **The reads §5.1 allows never record,
 by the console's hand or the operator's**: `fugaro doctor` and
 `fugaro accounts ls` resolve a checkout too, but a read writes nothing, and
 the CLI cannot tell who spawned it, so the rule is by command path
@@ -642,11 +662,30 @@ that has moved or been deleted, that is no longer a git checkout's own root,
 whose `fugaro.yaml` names another project, or whose origin is another
 repository is reported with `valid: false` and its `reason` — never dropped,
 because the write path is what prunes and a directory that comes back is a
-checkout again. **The console must render an invalid row and never act on it**:
-the path is where the checkout was, not where it is. A state file that cannot
-be read (not JSON, another version, over its size bound) is a warning naming
-it and `checkouts: []` for every installation — never a silent "there are
-none", and never a listing that fails.
+checkout again. A repository the project config does not enroll is
+`not_enrolled`; a path that had to be escaped or truncated for printing, or
+that is not absolute or does not carry a well-formed identity, is
+`not_representable` — **the printed string names a different directory than the
+stored one, so it must never be presented as a path that works**. A state file
+that cannot be read (not JSON, another version, over its size bound, not a
+regular file) is a warning naming it and `checkouts: []` for every
+installation — never a silent "there are none", and never a listing that fails.
+
+**What a reader may do with a row — one rule, and the whole rule.** A row
+carrying `valid: true` is a string from this document and the absolute path of
+a git checkout this machine has, of this project and this repository, which the
+project enrolls. The console may use such a path for exactly one thing: **as
+the working directory of a read-only CLI command from §5.1's exact-argv
+allow-list**, spawned with the path as a directory and nothing else. It may
+show it to the operator, and it may offer it as a pre-fill the operator
+confirms. It may **not** join, open, stat, copy, delete or execute anything at
+that path itself, may not pass the string as a flag or an argument to any other
+command, and may not treat it as a working directory for anything that writes.
+**A row with `valid: false` — whatever its `reason` — is never used for
+anything, not even as a working directory**: it is where a checkout was, or a
+path this document cannot spell, not where work can be done. This is §3.4 rule
+7, and it is what the two halves above mean together: the CLI re-validates
+because it, and not the app, is the thing allowed to look at the disk.
 
 **`<provider>` in `repository` is the one the origin's host gives, never the
 one the checkout's own `fugaro.yaml` claims.** A checkout is remembered and
@@ -668,16 +707,31 @@ remembered best effort, where the origin is the source that decides.
 **The rows are strings off this machine's disk**, so every one of them is
 escaped and bounded like the rest of this contract: a repository identity or a
 path carrying a control character, a bidi override or 400 bytes of padding
-arrives escaped and marked. A reader renders them as text and nothing else —
-**no path in this document is ever a path the console joins, opens or passes
-back as a flag** (§3.4 rule 7).
+arrives escaped and marked. **Such a row is `not_representable` and `valid:
+false`**: the escaping and the truncation are for printing, and the string that
+prints is not the string the checkpoint was recorded at, so it names a
+different directory than the one on disk. A reader renders every row as text
+and nothing else; what it may *use* is the single rule above, and it applies to
+`valid: true` rows only (§3.4 rule 7).
 
 **An installation whose config cannot be read is still listed, by name, with a
 warning** — a picker that offered a name and then failed silently is worse than
-one that says what it could not read. **Its `checkouts` are listed anyway**:
+one that says what it could not read. **Its `checkouts` are listed anyway, and
+every one of them is `enrolled: false`, `valid: false` and `not_enrolled`**:
 which directory holds this project's checkout is a fact of this machine, not of
-the file that could not be parsed, and it is the one thing a reader can still
-act on.
+the file that could not be parsed, so the row — the repository and the path —
+is still there to show the operator, but enrolment is a fact of that very file
+and a file that cannot be read enrolls nothing. The reader fails closed: no row
+of such an installation may be used for anything.
+
+**Two writers racing lose one of the two updates.** The state file is written
+by a load-modify-write that is not locked, under a rename: a reader therefore
+never sees half a file — the file is whole or it is the previous one — but a
+pair of concurrent writes can lose one of them. Nothing is corrupted and
+nothing is corrupted by it: the loser's checkout is recorded again the next
+time a command runs in it. This is why the field is a convenience for the first
+run and not an inventory: **a reader must not treat a missing row as "this
+machine does not have that checkout"**.
 
 **The document is a named set of fields and it is deliberately not a marshalled
 `localcfg.Config`.** That struct carries the operator's providers and their base

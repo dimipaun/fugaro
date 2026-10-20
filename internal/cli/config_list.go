@@ -7,13 +7,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // configListDoc is `fugaro config list --json`: the installations this
@@ -118,8 +121,21 @@ type configListCheckout struct {
 	// Path is the absolute path that was recorded, made printable and
 	// length-bounded: it is a string off this machine's disk.
 	Path string `json:"path"`
-	// Valid is whether the path is still a checkout of this project and this
-	// repository (see validateCheckoutPath).
+	// Enrolled is whether this machine's own project config enrolls this
+	// repository (localcfg.Config.Enrolls: the repos: map of
+	// projects/<name>.yaml, the one local fact about enrollment there is — the
+	// published allow-list is the cloud's copy of it and is not read here). It
+	// is a field of its own, next to Valid, because the two questions are not
+	// the same one: a checkout's fugaro.yaml saying `project: aurora` is a
+	// claim the checkout makes, and a repository the installation does not
+	// enroll is not one of its checkouts however its file reads. False, too,
+	// when the project config could not be read: nothing can be proved about
+	// it, so the row fails closed.
+	Enrolled bool `json:"enrolled"`
+	// Valid is whether the path is still a checkout of this project, of this
+	// repository, and of a repository the project enrolls — the whole
+	// conjunction, as of this read (see validateCheckoutPath). It is the only
+	// field the console may act on.
 	Valid bool `json:"valid"`
 	// Reason is the code for why it is not, "" when Valid. A code and not a
 	// sentence: the console renders it, and a sentence built here would be a
@@ -149,6 +165,22 @@ const (
 	// checkoutOtherRepository: its origin is another repository than the one
 	// the path was recorded for, or an origin git config rewrites.
 	checkoutOtherRepository = "other_repository"
+	// checkoutNotEnrolled: the path is a checkout of this project and this
+	// repository, and the project does not enroll that repository
+	// (configListCheckout.Enrolled). A clone whose own fugaro.yaml claims the
+	// project — a fork, a third-party repository, a hostile pull request — is
+	// not one of the installation's checkouts, and the console must not be
+	// sent to it as the working directory of an installation's command.
+	checkoutNotEnrolled = "not_enrolled"
+	// checkoutNotRepresentable: the row cannot be taken as it stands, so
+	// nothing about it is checked and nothing may be acted on: the identity is
+	// not a provider's owner/name, the path is not absolute (a relative one
+	// would be resolved against *this* command's working directory, which is
+	// not where it was recorded), or printing it changed it — the escaping and
+	// the length bound below are what a row is printed through, and a printed
+	// path that is not the recorded path names a directory that may exist and
+	// is not this one.
+	checkoutNotRepresentable = "not_representable"
 )
 
 func newConfigListCmd() *cobra.Command {
@@ -210,7 +242,17 @@ func buildConfigList(ctx context.Context, getenv func(string) string, now time.T
 	if c, err := localcfg.LoadCheckouts(getenv); err != nil {
 		doc.Warnings = append(doc.Warnings, fmt.Sprintf("the remembered checkouts could not be read, so no checkout is listed: %v", err))
 	} else {
-		known = c
+		// The write path's bounds, applied on this read: the file is one this
+		// process did not write, and every path examined here costs a stat and
+		// about three git executions. What the bounds cut is said, never
+		// silently absorbed.
+		bounded, dropped := c.Bounded(names)
+		known = bounded
+		if dropped > 0 {
+			doc.Warnings = append(doc.Warnings, fmt.Sprintf(
+				"the remembered checkouts hold %d entries more than this listing examines (at most %d repositories per project, %d paths each, %d rows in all): the newest are listed and the rest are not checked",
+				dropped, localcfg.MaxCheckoutRepos, localcfg.MaxCheckoutPaths, localcfg.MaxCheckoutRows))
+		}
 	}
 	for _, name := range names {
 		inst := configListInstallation{Name: name, Checkouts: []configListCheckout{}}
@@ -220,8 +262,10 @@ func buildConfigList(ctx context.Context, getenv func(string) string, now time.T
 			// The checkouts are listed anyway: which directory holds this
 			// project's checkout is a fact of this machine, not of the file
 			// that could not be parsed, and it is the one thing a reader can
-			// still act on.
-			inst.Checkouts = configListCheckouts(ctx, known, name)
+			// still act on. None of them is valid, though: enrollment is read
+			// off that same file, so none of them can be proved enrolled
+			// (configListCheckout.Enrolled) and the reader fails closed.
+			inst.Checkouts = configListCheckouts(ctx, known, name, nil)
 			doc.Installations = append(doc.Installations, inst)
 			continue
 		}
@@ -239,27 +283,42 @@ func buildConfigList(ctx context.Context, getenv func(string) string, now time.T
 					name, now.Sub(e.CheckedAt).Round(time.Second), localcfg.SharedFreshFor))
 			}
 		}
-		inst.Checkouts = configListCheckouts(ctx, known, name)
+		inst.Checkouts = configListCheckouts(ctx, known, name, lc)
 		doc.Installations = append(doc.Installations, inst)
 	}
 	return doc
 }
 
 // configListCheckouts is one project's remembered checkouts, re-validated on
-// this read and flattened to one entry per path.
-func configListCheckouts(ctx context.Context, known *localcfg.Checkouts, project string) []configListCheckout {
+// this read and flattened to one entry per path. lc is the installation's own
+// project config, nil when it could not be read: it is where enrollment is
+// read from (localcfg.Config.Enrolls, a local fact).
+func configListCheckouts(ctx context.Context, known *localcfg.Checkouts, project string, lc *localcfg.Config) []configListCheckout {
 	out := []configListCheckout{}
 	for _, r := range known.ProjectCheckouts(project) {
 		id := localcfg.CheckoutIdentity{Provider: r.Provider, Repo: r.Repo}
+		enrolled := lc.Enrolls(id.Provider, id.Repo)
 		for _, p := range r.Paths {
-			valid, reason := validateCheckoutPath(ctx, p.Path, project, id)
+			// The row as it is printed, and the row as it is: an identity no
+			// provider serves, a relative path, or a string the escaping or
+			// the length bound below changed is a row nothing can be checked
+			// against, so nothing is checked and it is reported as what it is.
+			printed := pluginwire.Printable(p.Path)
+			representable := printed == p.Path &&
+				pluginwire.Printable(id.Key()) == id.Key() &&
+				filepath.IsAbs(p.Path) && validIdentity(id)
+			valid, reason := false, checkoutNotRepresentable
+			if representable {
+				valid, reason = validateCheckoutPath(ctx, p.Path, project, id, enrolled)
+			}
 			out = append(out, configListCheckout{
 				// The repository goes through the escaping like the path:
 				// both come from a file on this machine that this process
 				// did not write (a hand-edited state file, or one an older
 				// fugaro wrote).
 				Repository: pluginwire.Printable(id.Key()),
-				Path:       pluginwire.Printable(p.Path),
+				Path:       printed,
+				Enrolled:   enrolled,
 				Valid:      valid,
 				Reason:     reason,
 			})
@@ -268,18 +327,36 @@ func configListCheckouts(ctx context.Context, known *localcfg.Checkouts, project
 	return out
 }
 
+// validIdentity reports whether an entry's identity from the state file is one
+// this tree can name a repository by: a known provider and an owner/name. The
+// write path refuses anything else (RecordCheckout), so an entry that is not
+// is a hand-edited file's, and the row it makes is not one the console may act
+// on or even read as a repository name.
+func validIdentity(id localcfg.CheckoutIdentity) bool {
+	if !slices.Contains(config.Providers, id.Provider) {
+		return false
+	}
+	_, err := task.CanonicalRepo(id.Repo)
+	return err == nil
+}
+
 // validateCheckoutPath re-validates one remembered path, on the read: the
-// directory exists, it is a git checkout, and its fugaro.yaml still names
-// this project and the same repository. It reports the first thing that is
-// wrong as a reason code (the consts above), and does not repair or drop
-// anything — the write path is what prunes (localcfg.RecordCheckout), so a
-// path that is stale here is still there for the operator to see, and still
-// there if the directory comes back.
+// directory exists, it is a git checkout, its fugaro.yaml still names this
+// project and the same repository, and that repository is one the project
+// enrolls (enrolled, read off the project config by the caller). It reports
+// the first thing that is wrong as a reason code (the consts above), and does
+// not repair or drop anything — the write path is what prunes
+// (localcfg.RecordCheckout), so a path that is stale here is still there for
+// the operator to see, and still there if the directory comes back.
+//
+// The caller has already checked that the row is representable (an absolute
+// path, a well-formed identity, a path printing does not change), which is why
+// nothing here touches the filesystem with a string that is not a path.
 //
 // resolveCheckout and not checkoutProject: this is a read, and reading must
 // not record (or re-record, under an identity the checkout has since
 // changed to) what it looked at.
-func validateCheckoutPath(ctx context.Context, path, project string, id localcfg.CheckoutIdentity) (bool, string) {
+func validateCheckoutPath(ctx context.Context, path, project string, id localcfg.CheckoutIdentity, enrolled bool) (bool, string) {
 	fi, err := os.Stat(path)
 	if err != nil || !fi.IsDir() {
 		return false, checkoutMissing
@@ -288,7 +365,7 @@ func validateCheckoutPath(ctx context.Context, path, project string, id localcfg
 	if err != nil {
 		return false, checkoutUnreadable
 	}
-	if co == nil || filepath.Clean(path) != co.Root {
+	if co == nil || !sameCheckoutRoot(path, co.Root) {
 		// co.Root is the git toplevel git resolves for path: a path that is
 		// not that toplevel is a checkout of nothing (a subdirectory of
 		// another checkout, or a directory that has since become one).
@@ -312,7 +389,37 @@ func validateCheckoutPath(ctx context.Context, path, project string, id localcfg
 	if provider != id.Provider || !sameRepo(oi.Repo, id.Repo) {
 		return false, checkoutOtherRepository
 	}
+	// Last, after the checkout is known to be what it says it is: is it one of
+	// this installation's repositories at all? A clone whose own fugaro.yaml
+	// claims the project — a fork, a third-party repository, a hostile pull
+	// request — is a checkout of *a* repository of that project's name, and
+	// not a checkout of one the operator enrolled.
+	if !enrolled {
+		return false, checkoutNotEnrolled
+	}
 	return true, ""
+}
+
+// sameCheckoutRoot reports whether path names the same directory as root, the
+// git toplevel git resolves for it. The two are normally the same string,
+// because a recorded path is a toplevel a command was run in — but a
+// hand-written state file, or one an older fugaro wrote, can hold a spelling
+// that is not the resolved one: on darwin every /var/... temp directory is
+// /private/var/..., so a comparison of the strings alone would call a real
+// checkout "no longer a checkout". The resolved forms are compared when the
+// strings differ, and only then: the common case costs nothing, and both
+// spellings of one directory are one directory.
+func sameCheckoutRoot(path, root string) bool {
+	if filepath.Clean(path) == root {
+		return true
+	}
+	if p, err := filepath.EvalSymlinks(path); err == nil && p == root {
+		return true
+	}
+	if r, err := filepath.EvalSymlinks(root); err == nil && r == filepath.Clean(path) {
+		return true
+	}
+	return false
 }
 
 func printConfigList(w io.Writer, doc configListDoc, asJSON bool) error {

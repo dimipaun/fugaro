@@ -168,6 +168,14 @@ func TestLayerBucketOpenerRefusesARealGSBucket(t *testing.T) {
 // checkoutProject over it. The state file it writes must be the one under
 // TestMain's config home.
 //
+// The one thing the test does set up is the enrolment the recorder now
+// requires (recordCheckout): TestMain's config home gets a project config for
+// this test's own project name, written there and removed again at the end of
+// the test, so the recorder has something to record under. It is a name of
+// its own rather than one a fixture uses, so a test that reads TestMain's
+// directory while this one runs — none does, they all isolate — would not
+// find a project it did not write.
+//
 // Mutation (run, restore): delete the XDG_CONFIG_HOME block from TestMain and
 // this fails twice over — testConfigRoot is empty and XDG_CONFIG_HOME is the
 // developer's own (usually unset, so the recording would land in
@@ -179,8 +187,20 @@ func TestATestNeverWritesTheDeveloperConfigHome(t *testing.T) {
 	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(testConfigRoot, home+string(filepath.Separator)) {
 		t.Fatalf("TestMain's config home %q is inside the developer's home %q", testConfigRoot, home)
 	}
+	const project = "devhome"
+	projDir := filepath.Join(testConfigRoot, "fugaro", "projects")
+	if err := os.MkdirAll(projDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	projPath := filepath.Join(projDir, project+".yaml")
+	body := "version: 1\nname: " + project + "\ngcp_project: fugaro-tests-devhome\n" +
+		"region: us-east5\nruns_bucket: fugaro-runs-fugaro-tests-devhome\nrepos:\n  acme/app: {}\n"
+	if err := os.WriteFile(projPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(projPath) })
 	// A checkout with an origin, and the recorder over it — no isolate call.
-	dir := gitCheckout(t, filepath.Join(t.TempDir(), "app"), checkoutsProjectYAML("aurora"))
+	dir := gitCheckout(t, filepath.Join(t.TempDir(), "app"), checkoutsProjectYAML(project))
 	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
 	co, err := checkoutProject(context.Background(), dir)
 	if err != nil || co == nil {
@@ -190,7 +210,7 @@ func TestATestNeverWritesTheDeveloperConfigHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(testConfigRoot, "fugaro", localcfg.CheckoutsFile); path != want {
+	if want := filepath.Join(testConfigRoot, "fugaro", localcfg.CheckoutsDir, localcfg.CheckoutsFile); path != want {
 		t.Fatalf("the state file = %s, want %s", path, want)
 	}
 	if _, err := os.Stat(path); err != nil {

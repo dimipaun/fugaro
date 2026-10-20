@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -286,6 +287,25 @@ func configListState(t *testing.T) string {
 	return string(b)
 }
 
+// configListWriteState puts a state file this process did not write where the
+// reader looks for it: the tests that hand over a body rather than recording a
+// checkout have to make the file's directory too (the writer makes it 0700;
+// here any mode does, the reader does not look at the directory's).
+func configListWriteState(t *testing.T, body string) string {
+	t.Helper()
+	path, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // TestConfigListListsTheCheckoutsThisMachineRemembers: the field is the second
 // half of what the console's first run needs (D13, §3.4 rule 7) — the
 // repositories of each installation and where this machine has them — and it
@@ -354,7 +374,7 @@ func TestConfigListListsTheCheckoutsThisMachineRemembers(t *testing.T) {
 	for _, row := range rows {
 		k := keysOf(t, row)
 		if row["valid"] == true {
-			if want := []string{"path", "repository", "valid"}; !reflect.DeepEqual(k, want) {
+			if want := []string{"enrolled", "path", "repository", "valid"}; !reflect.DeepEqual(k, want) {
 				t.Errorf("a valid row's keys = %v, want %v (reason is omitted when there is none)", k, want)
 			}
 			continue
@@ -364,10 +384,10 @@ func TestConfigListListsTheCheckoutsThisMachineRemembers(t *testing.T) {
 		}
 	}
 
-	// The named set, spelled out: the checkout is exactly these four fields,
+	// The named set, spelled out: the checkout is exactly these five fields,
 	// so a localcfg field cannot join the document by a rename or a
 	// promotion.
-	wantCheckout := []string{"repository", "path", "valid", "reason"}
+	wantCheckout := []string{"repository", "path", "enrolled", "valid", "reason"}
 	if got := jsonTags(t, configListCheckout{}); !reflect.DeepEqual(got, wantCheckout) {
 		t.Errorf("configListCheckout fields = %v, want exactly %v", got, wantCheckout)
 	}
@@ -465,6 +485,13 @@ func TestConfigListReportsACheckoutThatNamesAnotherProject(t *testing.T) {
 	other := checkoutsAt(t, filepath.Join(dir, "src", "other"), checkoutsProjectYAML("bramble"), "https://github.com/acme/app.git")
 	none := gitCheckout(t, filepath.Join(dir, "src", "none"), "version: 1\n")
 	testutil.Git(t, none, "remote", "add", "origin", "https://github.com/acme/app.git")
+	// The recorded string is the toplevel as git resolves it, the way a
+	// command running in the checkout records it (resolveCheckout): the temp
+	// directory's own spelling is not the path git answers with, and on darwin
+	// it never is (/var is a symlink to /private/var), so recording the raw
+	// one would make this test read the directory as "not a checkout" for a
+	// reason that has nothing to do with the project its file names.
+	none = testutil.Git(t, none, "rev-parse", "--show-toplevel")
 	checkoutsRemember(t, "aurora", other, "https://github.com/acme/app.git")
 	checkoutsRemember(t, "aurora", none, "https://github.com/acme/app.git")
 
@@ -668,18 +695,12 @@ func TestConfigListPrintsNothingTheDiskCanDrive(t *testing.T) {
 	// Hand-written state, the way a state file that is not ours arrives:
 	// the identity carries a right-to-left override and the path a bell, an
 	// escape and 400 bytes of padding.
-	path, err := localcfg.CheckoutsPath(os.Getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
 	long := "/src/" + strings.Repeat("x", 400)
 	body := `{"version": 1, "projects": {"aurora": {"github/acme‮app": {` +
 		`"provider": "github", "repo": "acme‮app", "recorded_at": "2026-10-20T00:00:00Z", "paths": [` +
 		`{"path": "/src/\u0007app", "recorded_at": "2026-10-20T00:00:00Z"},` +
 		`{"path": "` + long + `", "recorded_at": "2026-10-20T00:00:00Z"}]}}}}` + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	configListWriteState(t, body)
 
 	doc, out := configListJSON(t)
 	got := configListCheckoutsOf(t, doc, "aurora")
@@ -727,13 +748,7 @@ func TestConfigListReportsAStateFileItCannotRead(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			checkoutsFixture(t)
-			path, err := localcfg.CheckoutsPath(os.Getenv)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			path := configListWriteState(t, body)
 			doc, _ := configListJSON(t)
 			if len(doc.Installations) != 2 {
 				t.Errorf("installations = %+v, want them still listed", doc.Installations)
@@ -805,10 +820,13 @@ func TestConfigListKeepsTheBounds(t *testing.T) {
 }
 
 // TestConfigListListsTheCheckoutsOfAConfigItCannotParse: an installation
-// whose config cannot be read still carries its checkouts. Which directory
-// holds this project's checkout is a fact of this machine, not of the file
-// that could not be parsed, and it is the one thing a reader can still act
-// on.
+// whose config cannot be read still carries its checkouts — where this
+// machine has a checkout is a fact of the machine, not of the file that could
+// not be parsed, so the row is still listed with its path. What it does not
+// carry is a verdict: enrolment is a fact of that config, so a config that
+// cannot be read enrolls nothing and every row of it is not_enrolled and
+// invalid. The path is still printed — a reader that wants to show the
+// operator where their work is can — but nothing may act on it.
 func TestConfigListListsTheCheckoutsOfAConfigItCannotParse(t *testing.T) {
 	dir := checkoutsFixture(t)
 	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
@@ -823,8 +841,11 @@ func TestConfigListListsTheCheckoutsOfAConfigItCannotParse(t *testing.T) {
 		t.Fatalf("installations = %+v, want both names", doc.Installations)
 	}
 	got := configListCheckoutsOf(t, doc, "aurora")
-	if len(got) != 1 || !got[0].Valid || got[0].Path != co {
+	if len(got) != 1 || got[0].Path != co {
 		t.Errorf("aurora's checkouts = %+v, want the remembered path despite the unreadable config", got)
+	}
+	if len(got) == 1 && (got[0].Valid || got[0].Enrolled || got[0].Reason != checkoutNotEnrolled) {
+		t.Errorf("the row of an unreadable config = %+v, want enrolled false, valid false and reason %q", got[0], checkoutNotEnrolled)
 	}
 	if len(doc.Warnings) == 0 || !strings.Contains(strings.Join(doc.Warnings, "\n"), "aurora") {
 		t.Errorf("warnings = %q, want the unreadable config named", doc.Warnings)
@@ -941,5 +962,211 @@ func TestConsoleV2ReadsWriteNothing(t *testing.T) {
 	}
 	if after := treeState(t, planDir); !reflect.DeepEqual(beforePlan, after) {
 		t.Errorf("plan graph changed the checkout:\nbefore %v\nafter  %v", beforePlan, after)
+	}
+}
+
+// TestConfigListReportsACheckoutTheProjectDoesNotEnroll: a directory that IS
+// a checkout of the project it claims — its fugaro.yaml says aurora, its
+// origin is a real repository of that name — but that the project's own
+// config does not enroll is not one of this installation's checkouts. The
+// claim is the checkout's; the enrolment is the operator's.
+//
+// This is the probe an independent review ran: a fork, a third-party
+// repository or a hostile pull request copies `project: aurora` into its
+// fugaro.yaml, and a listing that took the claim for enrolment would hand the
+// console a path to offer. The row is still printed — where the machine has
+// this directory is a fact — but it is never valid and never usable.
+//
+// Mutation (run, restore): drop the `!enrolled` check from
+// validateCheckoutPath (return valid with no reason) and the first row below
+// is valid: the claim is taken for enrolment again.
+func TestConfigListReportsACheckoutTheProjectDoesNotEnroll(t *testing.T) {
+	dir := checkoutsFixture(t)
+	// Not in aurora's repos: nothing the fixture enrolls.
+	evil := checkoutsAt(t, filepath.Join(dir, "src", "evil"), checkoutsProjectYAML("aurora"), "https://github.com/acme/evil.git")
+	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
+		localcfg.CheckoutIdentity{Provider: "github", Repo: "acme/evil"}, evil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// The control: the same fixture's enrolled repository, same run.
+	app := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	checkoutsRemember(t, "aurora", app, "https://github.com/acme/app.git")
+
+	doc, _ := configListJSON(t)
+	got := map[string]configListCheckout{}
+	for _, c := range configListCheckoutsOf(t, doc, "aurora") {
+		got[c.Repository] = c
+	}
+	if c, ok := got["github/acme/evil"]; !ok || c.Valid || c.Enrolled || c.Reason != checkoutNotEnrolled {
+		t.Errorf("github/acme/evil = %+v (present %v), want the path listed, enrolled false, valid false and reason %q", c, ok, checkoutNotEnrolled)
+	} else if c.Path != evil {
+		t.Errorf("github/acme/evil's path = %q, want %q: the row is still shown, it is only never valid", c.Path, evil)
+	}
+	if c, ok := got["github/acme/app"]; !ok || !c.Valid || !c.Enrolled || c.Reason != "" {
+		t.Errorf("github/acme/app = %+v (present %v), want enrolled and valid: the fixture enrolls it", c, ok)
+	}
+	if !strings.Contains(configListState(t), "acme/evil") {
+		t.Errorf("the state file no longer holds the un-enrolled row:\n%s", configListState(t))
+	}
+}
+
+// TestConfigListReportsAPathItCannotSpell: a path that printing changes — a
+// relative one, one carrying a control character, one so long it is truncated
+// — and an identity that is not a repository at all are reported as
+// not_representable. The string in the document is not the string on the
+// machine, so a reader that used it would use a directory that is not the one
+// the row is about.
+//
+// Mutation (run, restore): drop `filepath.IsAbs(p.Path)` from the
+// representability test and the relative row becomes `missing` instead —
+// the read then touches the filesystem with a string that names nothing.
+// Drop `validIdentity(id)` and the bad-identity row is `missing` too, for the
+// same reason and one stat further along.
+func TestConfigListReportsAPathItCannotSpell(t *testing.T) {
+	checkoutsFixture(t)
+	// Hand-written state: the write path refuses every one of these
+	// (RecordCheckout), which is exactly why the read has to.
+	long := "/src/" + strings.Repeat("x", 400)
+	body := `{"version": 1, "projects": {"aurora": {` +
+		`"github/acme/rel": {"provider": "github", "repo": "acme/rel", "recorded_at": "2026-10-20T00:00:00Z", "paths": [` +
+		`{"path": "src/rel", "recorded_at": "2026-10-20T00:00:00Z"}]},` +
+		`"github/acme/ctl": {"provider": "github", "repo": "acme/ctl", "recorded_at": "2026-10-20T00:00:00Z", "paths": [` +
+		`{"path": "/src/\u0007ctl", "recorded_at": "2026-10-20T00:00:00Z"}]},` +
+		`"github/acme/trunc": {"provider": "github", "repo": "acme/trunc", "recorded_at": "2026-10-20T00:00:00Z", "paths": [` +
+		`{"path": "` + long + `", "recorded_at": "2026-10-20T00:00:00Z"}]},` +
+		`"fake/acme/bad": {"provider": "fake", "repo": "not a repo", "recorded_at": "2026-10-20T00:00:00Z", "paths": [` +
+		`{"path": "/src/bad", "recorded_at": "2026-10-20T00:00:00Z"}]}}}}` + "\n"
+	configListWriteState(t, body)
+
+	doc, _ := configListJSON(t)
+	got := configListCheckoutsOf(t, doc, "aurora")
+	if len(got) != 4 {
+		t.Fatalf("checkouts = %+v, want the four hand-written rows", got)
+	}
+	for _, c := range got {
+		if c.Valid || c.Reason != checkoutNotRepresentable {
+			t.Errorf("%s = %+v, want valid false and reason %q", c.Repository, c, checkoutNotRepresentable)
+		}
+	}
+}
+
+// TestConfigListReportsACheckoutRecordedUnderALinkedSpellingOfItsPath: a
+// state file can hold a spelling of a path that is not the one git resolves
+// for it — an older fugaro's, a hand-edited one's, or a machine whose temp
+// directory is behind a symlink (darwin's /var → /private/var) — and it is
+// still the same directory. The row must be the valid checkout it is, not
+// "not_a_checkout" because two spellings of one path differ as strings.
+//
+// Mutation (run, restore): make sameCheckoutRoot compare the cleaned strings
+// only (drop the two EvalSymlinks arms) and this fails with the row
+// not_a_checkout although the directory is the very checkout it names.
+func TestConfigListReportsACheckoutRecordedUnderALinkedSpellingOfItsPath(t *testing.T) {
+	dir := checkoutsFixture(t)
+	real := checkoutsAt(t, filepath.Join(dir, "src", "real"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	link := filepath.Join(dir, "src", "link")
+	if err := os.Symlink(filepath.Dir(real), link); err != nil {
+		t.Skipf("this machine cannot make a symlink: %v", err)
+	}
+	// The path as the operator's shell spelled it on the way in: through the
+	// link. git resolves it to the same toplevel; the state file holds the
+	// spelling.
+	aliased := filepath.Join(link, filepath.Base(real))
+	checkoutsRemember(t, "aurora", aliased, "https://github.com/acme/app.git")
+
+	doc, _ := configListJSON(t)
+	got := configListCheckoutsOf(t, doc, "aurora")
+	if len(got) != 1 {
+		t.Fatalf("checkouts = %+v, want the one remembered path", got)
+	}
+	if c := got[0]; !c.Valid || c.Reason != "" {
+		t.Errorf("the aliased path = %+v, want valid with no reason: %s and %s are one directory", c, aliased, real)
+	}
+}
+
+// TestConfigListDistrustsARewrittenOrigin: a checkout whose raw .git/config
+// names a different host or repository than the one git itself resolves for
+// "origin" (url.<base>.insteadOf) must not be re-validated against what the
+// rewrite resolves to. The rewrite is a local config line that can point
+// anywhere; the raw origin is the one the operator's checkout actually
+// records, and the review's probe is a row that goes valid because the reader
+// followed the rewrite instead of refusing it.
+//
+// Mutation (run, restore): change `if !ok || oi.Rewritten` to `if !ok` in
+// validateCheckoutPath and this fails: the row is valid with no reason.
+func TestConfigListDistrustsARewrittenOrigin(t *testing.T) {
+	dir := checkoutsFixture(t)
+	// The raw .git/config says gh:acme/app.git, git resolves it through the
+	// rewrite to the github repository the row was recorded as — so the
+	// rewritten origin is the ONLY thing keeping this row invalid. (A rewrite
+	// that resolved to another host would be caught by the provider rule even
+	// with this guard gone, and would prove nothing about it.)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "gh:acme/app.git")
+	checkoutsRemember(t, "aurora", co, "https://github.com/acme/app.git")
+	testutil.Git(t, co, "config", "--local", "--add",
+		"url.https://github.com/acme/app.git.insteadOf", "gh:acme/app.git")
+	if oi, ok := readOrigin(context.Background(), co); !ok || !oi.Rewritten {
+		t.Fatalf("the fixture did not produce a rewritten origin: %+v ok=%v", oi, ok)
+	}
+
+	doc, _ := configListJSON(t)
+	c := configListCheckoutsOf(t, doc, "aurora")[0]
+	if c.Valid || c.Reason != checkoutOtherRepository {
+		t.Errorf("the rewritten-origin checkout = %+v, want valid false and reason %q", c, checkoutOtherRepository)
+	}
+}
+
+// TestConfigListWarnsWhenTheStateFileIsOverItsReadBounds: the state file this
+// read opens is one this process did not write — a hand-edited one, or one a
+// machine that has since cloned far more wrote — and each row costs a stat
+// and about three git executions. The bounds the write keeps are therefore
+// applied again here (localcfg.Bounded: 20 repositories per project, 5 paths
+// each, 1000 rows in the document), and what they cut is named in warnings
+// rather than silently presented as the whole file.
+//
+// Mutation (run, restore): pass `known` instead of `known.Bounded(names)` in
+// buildConfigList and this fails with all 22 rows listed and no warning.
+func TestConfigListWarnsWhenTheStateFileIsOverItsReadBounds(t *testing.T) {
+	checkoutsFixture(t)
+	// Hand-written, because the write path would have dropped the oldest
+	// (RecordCheckout): this is the file a reader has to survive, not the
+	// file a writer produces.
+	const n = 22
+	var b strings.Builder
+	b.WriteString(`{"version": 1, "projects": {"aurora": {`)
+	for i := range n {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		repo := fmt.Sprintf("acme/app-%02d", i)
+		fmt.Fprintf(&b, `%q: {"provider": "github", "repo": %q, "recorded_at": "2026-10-20T00:%02d:00Z", "paths": [{"path": "/src/%s", "recorded_at": "2026-10-20T00:%02d:00Z"}]}`,
+			"github/"+repo, repo, i, repo, i)
+	}
+	b.WriteString("}}}\n")
+	configListWriteState(t, b.String())
+
+	doc, _ := configListJSON(t)
+	got := configListCheckoutsOf(t, doc, "aurora")
+	if len(got) != localcfg.MaxCheckoutRepos {
+		t.Fatalf("checkouts = %d, want the %d-repository read bound", len(got), localcfg.MaxCheckoutRepos)
+	}
+	seen := map[string]bool{}
+	for _, c := range got {
+		seen[c.Repository] = true
+	}
+	if newest := fmt.Sprintf("github/acme/app-%02d", n-1); !seen[newest] {
+		t.Errorf("checkouts = %+v, want the newest repository %s kept", seen, newest)
+	}
+	if oldest := "github/acme/app-00"; seen[oldest] {
+		t.Errorf("checkouts = %+v, want the oldest repository %s dropped", seen, oldest)
+	}
+	if len(doc.Warnings) == 0 || !strings.Contains(strings.Join(doc.Warnings, "\n"), "checkouts") {
+		t.Errorf("warnings = %q, want the over-bound state file named", doc.Warnings)
+	}
+	text, _, err := execute(t, "config", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "checkouts") {
+		t.Errorf("the text form says nothing about the trimmed state file:\n%s", text)
 	}
 }

@@ -1,6 +1,7 @@
 package localcfg
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,16 +31,20 @@ func checkoutID(provider, repo string) CheckoutIdentity {
 // fast the machine ran.
 func at(min int) time.Time { return time.Date(2026, 10, 20, 12, min, 0, 0, time.UTC) }
 
-// TestRecordCheckoutWritesTheDocument: recording a checkout writes a file of
-// its own beside the projects directory (never into a project config), mode
-// 0600 in a 0700 directory, keyed by the repository identity.
+// TestRecordCheckoutWritesTheDocument: recording a checkout writes a file in
+// a directory of its own under the config home (never into a project config,
+// and never beside it), mode 0600 in a 0700 directory, keyed by the
+// repository identity. The directory is the file's own because the config home
+// belongs to the operator and this is not the writer to chmod it over: that
+// directory may well be 0755, and the state file's own directory is created
+// 0700.
 func TestRecordCheckoutWritesTheDocument(t *testing.T) {
 	getenv := checkoutsEnv(t)
 	path, err := CheckoutsPath(getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(getenv("XDG_CONFIG_HOME"), "fugaro", CheckoutsFile); path != want {
+	if want := filepath.Join(getenv("XDG_CONFIG_HOME"), "fugaro", CheckoutsDir, CheckoutsFile); path != want {
 		t.Fatalf("CheckoutsPath = %q, want %q", path, want)
 	}
 	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), "/src/app", at(0)); err != nil {
@@ -344,12 +349,15 @@ func TestLoadCheckoutsRefusesSomethingThatIsNotADocument(t *testing.T) {
 // partial file.
 func TestRecordCheckoutIsBestEffortWhenItCannotWrite(t *testing.T) {
 	getenv := checkoutsEnv(t)
-	dir := filepath.Join(getenv("XDG_CONFIG_HOME"), "fugaro")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	path, err := CheckoutsPath(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	// A directory where the state file goes: the rename over it fails.
-	if err := os.MkdirAll(filepath.Join(dir, CheckoutsFile), 0o700); err != nil {
+	if err := os.MkdirAll(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), "/src/app", at(0)); err == nil {
@@ -408,3 +416,258 @@ func TestCheckoutsAreNotInTheSharedConfig(t *testing.T) {
 func pathOf(i int) string { return "/src/app-" + string(rune('a'+i)) }
 
 func repoOf(i int) string { return "acme/app-" + string(rune('a'+i)) }
+
+// TestLoadCheckoutsRefusesAFileThatIsNotRegular is the read's half of the
+// file-type rule: the state file is read through config.ReadRegular, which
+// inspects the path and refuses a symlink rather than following it — a
+// symlink's target is another file on this machine, and the state file is not
+// a pointer to one. A FIFO or a device would be refused by the same check
+// (and a FIFO would block a plain ReadFile for as long as no one writes to
+// it).
+//
+// Mutation (run, restore): read the file with os.Stat + os.ReadFile, as the
+// code did before the review — the symlink is followed and this test fails
+// with the target's contents beside it.
+func TestLoadCheckoutsRefusesAFileThatIsNotRegular(t *testing.T) {
+	getenv := checkoutsEnv(t)
+	path, err := CheckoutsPath(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "elsewhere.json")
+	writeFile(t, target, `{"version": 1, "projects": {}}`+"\n")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("this filesystem does not do symlinks: %v", err)
+	}
+	if _, err := LoadCheckouts(getenv); err == nil {
+		t.Fatal("a symlinked state file was followed, want a refusal")
+	}
+}
+
+// TestRecordCheckoutReplacesAFileItCannotRead: a state file that has gone
+// wrong — a crash left it empty or half-written, or it is not a document at
+// all — is pure state, and the writer replaces it rather than leaving the
+// recording broken until someone deletes the file by hand. A *newer* version
+// is the one refusal that is honoured (TestLoadCheckoutsRefusesAnotherVersionAndIsNotClobbered).
+func TestRecordCheckoutReplacesAFileItCannotRead(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty":     "",
+		"half JSON": `{"version": 1, "proj`,
+		"not JSON":  "this is not json\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			getenv := checkoutsEnv(t)
+			path, err := CheckoutsPath(getenv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, path, body)
+			if _, err := LoadCheckouts(getenv); err == nil {
+				t.Fatal("the broken file was read as a document, want a refusal")
+			}
+			if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), "/src/app", at(0)); err != nil {
+				t.Fatalf("recording over a broken state file: %v", err)
+			}
+			c, err := LoadCheckouts(getenv)
+			if err != nil {
+				t.Fatalf("the file the writer left is not a document: %v", err)
+			}
+			if r := c.Projects["aurora"]["github/acme/app"]; len(r.Paths) != 1 || r.Paths[0].Path != "/src/app" {
+				t.Errorf("the document = %+v, want the recorded path", c.Projects)
+			}
+		})
+	}
+}
+
+// TestBoundedAppliesTheWriteBoundsOnTheRead: the bounds RecordCheckout keeps
+// are applied again where the document is read, because the file is one this
+// process did not write — a hand-edited file, or one written by a machine
+// that has since cloned far more, must not cost a reader more than the writer
+// allows. Every examined path costs a stat and about three git executions, so
+// an unbounded read is a console that hangs at startup. dropped says how many
+// entries the bounds cut, so a reader can say so rather than present a
+// trimmed list as the whole one.
+//
+// The document here is written by hand (the writer would have trimmed it, and
+// a document built through RecordCheckout is the test that does not test the
+// read), and the entries it keeps are the newest by their own recorded_at.
+func TestBoundedAppliesTheWriteBoundsOnTheRead(t *testing.T) {
+	doc := &Checkouts{Version: CheckoutsVersion, Projects: map[string]map[string]CheckoutRepo{}}
+	proj := map[string]CheckoutRepo{}
+	for i := range MaxCheckoutRepos + 4 {
+		r := CheckoutRepo{Provider: "github", Repo: repoOf(i), RecordedAt: clock(0, i, 0)}
+		for j := range MaxCheckoutPaths + 3 {
+			r.Paths = append(r.Paths, CheckoutPath{Path: pathOf(i) + "-" + string(rune('a'+j)), RecordedAt: clock(0, i, j)})
+		}
+		proj[checkoutID("github", repoOf(i)).Key()] = r
+	}
+	doc.Projects["aurora"] = proj
+	doc.Projects["bramble"] = map[string]CheckoutRepo{
+		"github/acme/other": {Provider: "github", Repo: "acme/other", RecordedAt: clock(0, 0, 0),
+			Paths: []CheckoutPath{{Path: "/src/other", RecordedAt: clock(0, 0, 0)}}},
+	}
+
+	getenv := checkoutsEnv(t)
+	path, err := CheckoutsPath(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeHandWritten(t, path, doc)
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(c.ProjectCheckouts("aurora")); got != MaxCheckoutRepos+4 {
+		t.Fatalf("the hand-written document holds %d repositories, want %d (the read is what is under test)", got, MaxCheckoutRepos+4)
+	}
+	bounded, dropped := c.Bounded([]string{"aurora"})
+	if dropped == 0 {
+		t.Error("dropped = 0, want the entries the bounds cut")
+	}
+	got := bounded.ProjectCheckouts("aurora")
+	if len(got) != MaxCheckoutRepos {
+		t.Fatalf("repositories = %d, want the %d bound", len(got), MaxCheckoutRepos)
+	}
+	for _, r := range got {
+		if len(r.Paths) != MaxCheckoutPaths {
+			t.Errorf("%s holds %d paths, want the %d bound", r.Repo, len(r.Paths), MaxCheckoutPaths)
+		}
+	}
+	// The newest repository survives and the oldest is what the bound drops.
+	kept := map[string]bool{}
+	for _, r := range got {
+		kept[r.Repo] = true
+	}
+	if !kept[repoOf(MaxCheckoutRepos+3)] || kept[repoOf(0)] {
+		t.Errorf("kept = %v, want the newest %d repositories and not the oldest", kept, MaxCheckoutRepos)
+	}
+	// The projects a reader did not ask for are not in the result at all: the
+	// bound is applied to the projects this listing is about.
+	if _, ok := bounded.Projects["bramble"]; ok {
+		t.Error("Bounded carried a project it was not asked about")
+	}
+}
+
+// TestBoundedCapsTheWholeDocument: over MaxCheckoutRows entries across all the
+// projects — which a hand-written file can hold, since the file's only other
+// bound is its byte size — a read examines the newest MaxCheckoutRows and
+// says how many it did not.
+func TestBoundedCapsTheWholeDocument(t *testing.T) {
+	// One project more than MaxCheckoutRows can hold, each at its full
+	// per-project bound: 11 x 20 x 5 = 1100 rows.
+	count := MaxCheckoutRows/(MaxCheckoutRepos*MaxCheckoutPaths) + 1
+	doc := &Checkouts{Version: CheckoutsVersion, Projects: map[string]map[string]CheckoutRepo{}}
+	names := make([]string, count)
+	for p := range count {
+		names[p] = "p" + string(rune('a'+p))
+		proj := map[string]CheckoutRepo{}
+		for i := range MaxCheckoutRepos {
+			r := CheckoutRepo{Provider: "github", Repo: repoOf(i), RecordedAt: clock(p, i, 0)}
+			for j := range MaxCheckoutPaths {
+				r.Paths = append(r.Paths, CheckoutPath{Path: "/src/" + names[p] + "-" + repoOf(i), RecordedAt: clock(p, i, j)})
+			}
+			proj[checkoutID("github", repoOf(i)).Key()] = r
+		}
+		doc.Projects[names[p]] = proj
+	}
+
+	getenv := checkoutsEnv(t)
+	path, err := CheckoutsPath(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeHandWritten(t, path, doc)
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded, dropped := c.Bounded(names)
+	if want := count*MaxCheckoutRepos*MaxCheckoutPaths - MaxCheckoutRows; dropped != want {
+		t.Errorf("dropped = %d, want %d (the rows over the %d-row bound)", dropped, want, MaxCheckoutRows)
+	}
+	rows := 0
+	for _, name := range names {
+		for _, r := range bounded.ProjectCheckouts(name) {
+			rows += len(r.Paths)
+		}
+	}
+	if rows != MaxCheckoutRows {
+		t.Errorf("rows = %d, want the %d-row bound", rows, MaxCheckoutRows)
+	}
+	// The newest rows are the ones kept: the last project's stamps are the
+	// latest, so the bound must not cut its rows.
+	if got := len(bounded.ProjectCheckouts(names[count-1])); got == 0 {
+		t.Error("the newest project's rows were dropped, want the newest rows kept")
+	}
+}
+
+// clock is a distinct stamp per (project, repository, path), so "newest" is a
+// fact of the test rather than of how fast the machine ran.
+func clock(p, i, j int) time.Time {
+	return time.Date(2026, 10, 20, 12, p, i, j, time.UTC)
+}
+
+// writeHandWritten writes a document to path the way a hand-edited state file
+// arrives: as JSON, without going through RecordCheckout (whose own bounds are
+// the thing under test here).
+func writeHandWritten(t *testing.T, path string, doc *Checkouts) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, string(data))
+}
+
+// TestConfigEnrollsIsALocalFact: whether a repository is enrolled is read off
+// this machine's own project config's repos: map — the same map `fugaro
+// project policy publish` seeds the published allow-list from — and nothing
+// else: no bucket, no credentials, no policy node. It is what a checkout's
+// row is held to before it can be valid (or recorded at all), because a
+// checkout's own fugaro.yaml claiming a project is a claim the checkout
+// makes, not an enrollment the operator gave.
+//
+// Mutation (run, restore): return true unconditionally, or compare only
+// owner/name and not the provider, and the first and third cases below fail.
+func TestConfigEnrollsIsALocalFact(t *testing.T) {
+	cfg := &Config{Repos: map[string]Repo{
+		"acme/app":     {Provider: "github"},
+		"Acme/Mixed":   {Provider: "bitbucket"},
+		"acme/no-prov": {},
+		"acme/other":   {Provider: "github"},
+	}}
+	for _, c := range []struct {
+		name     string
+		provider string
+		repo     string
+		want     bool
+	}{
+		{"enrolled, same provider", "github", "acme/app", true},
+		{"enrolled, another provider", "bitbucket", "acme/app", false},
+		{"enrolled with no provider in the entry", "github", "acme/no-prov", true},
+		{"the fold the allow-list uses", "bitbucket", "acme/mixed", true},
+		{"not in the map at all", "github", "attacker/evil", false},
+		{"a different repository", "github", "acme/vanished", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := cfg.Enrolls(c.provider, c.repo); got != c.want {
+				t.Errorf("Enrolls(%q, %q) = %v, want %v", c.provider, c.repo, got, c.want)
+			}
+		})
+	}
+	// A config that could not be read enrolls nothing: the reader fails
+	// closed, so a row it cannot check is never valid.
+	var nilCfg *Config
+	if nilCfg.Enrolls("github", "acme/app") {
+		t.Error("a nil config enrolled a repository, want nothing enrolled")
+	}
+	if (&Config{}).Enrolls("github", "acme/app") {
+		t.Error("a config with no repos: enrolled a repository, want nothing enrolled")
+	}
+}
