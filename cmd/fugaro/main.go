@@ -16,9 +16,10 @@ func main() {
 	// SIGTERM is how Cloud Run asks a task to stop; cancelling the context lets
 	// the runner abandon the current stage and still finalize.
 	ctx, stop := signalContext()
-	// A bare --repo (secrets) is rewritten at the argv boundary before cobra
-	// parses anything: pflag cannot express an optional-value string flag
-	// without swallowing the `--repo owner/name` form (see NormalizeRepoArgs).
+	// A bare --repo (secrets set/ls, budget set/kill/resume) is rewritten at
+	// the argv boundary before cobra parses anything: pflag cannot express an
+	// optional-value string flag without swallowing the `--repo owner/name`
+	// form (see NormalizeRepoArgs).
 	root := cli.NewRootCmd()
 	root.SetArgs(cli.NormalizeRepoArgs(os.Args[1:]))
 	cmd, err := root.ExecuteContextC(ctx)
