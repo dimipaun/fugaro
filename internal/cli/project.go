@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,13 +22,30 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
-// checkoutProject is the checkout at dir ("" is the working directory):
+// checkoutProject is resolveCheckout plus the one side effect every command
+// that resolves a checkout's project has: the checkout is remembered for
+// that project (recordCheckout), best effort.
+//
+// The split exists for the readers that must not write: `fugaro project ls`
+// re-validates the checkouts it reads and records nothing, so it calls
+// resolveCheckout. Everything else wants the checkout remembered and calls
+// this one.
+func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error) {
+	co, err := resolveCheckout(ctx, dir)
+	if err != nil || co == nil {
+		return co, err
+	}
+	recordCheckout(ctx, co)
+	return co, nil
+}
+
+// resolveCheckout is the checkout at dir ("" is the working directory):
 // its git toplevel and its fugaro.yaml's project:. Nil when dir is in no
 // checkout, or its toplevel holds no fugaro.yaml. The project: is read
 // leniently (config.ProjectOf), so a fugaro.yaml that doesn't parse still
 // says which project it belongs to; YAML that doesn't decode, or a
 // project: that isn't one string, is an error.
-func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error) {
+func resolveCheckout(ctx context.Context, dir string) (*localcfg.Checkout, error) {
 	if dir == "" {
 		dir = "."
 	}
@@ -55,7 +73,71 @@ func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error
 	if gcp != "" && !config.GCPProjectRE.MatchString(gcp) {
 		return nil, userErr("%s: gcp_project %q is not a GCP project ID", filepath.Join(root, "fugaro.yaml"), gcp)
 	}
-	return &localcfg.Checkout{Root: root, Project: project, GCPProject: gcp}, nil
+	// The git provider is read leniently and never validated here: this
+	// function answers "which project does this checkout belong to", and a
+	// file that names no provider (or one nothing carries) still answers it.
+	// A provider that is not a string is not an error here either — the file
+	// is refused where it is read as a config, and remembering a checkout is
+	// not the place to refuse one.
+	provider, _ := config.ProviderOf(data)
+	return &localcfg.Checkout{Root: root, Project: project, GCPProject: gcp, Provider: provider}, nil
+}
+
+// recordCheckout remembers the checkout a command is running in for the
+// project it belongs to (localcfg.RecordCheckout).
+//
+// It is here, in the one code path that resolves a checkout's project
+// (checkoutProject), rather than in each command that wants it recorded:
+// `fugaro init --repo`, `fugaro run` and `fugaro validate` all reach this
+// function — through selectProject, selectNamed and selectedProjectConfigErr
+// — and so does every other command that acts on a checkout, which is what
+// makes the remembered set the checkouts the operator actually works in
+// rather than the ones three commands happen to name.
+//
+// It is best effort in every direction: a checkout with no project:, an
+// origin git rewrites (readOrigin's Rewritten: the repository a checkout
+// resolves to is not the one its own config says), a host no provider lives
+// on, a checkout path the state file refuses — none of them is an error, and
+// none of them is printed. Nothing here can fail the command that runs it,
+// and the path never reaches stdout, stderr or a log line: it is local state
+// for `fugaro project ls` and nothing else.
+func recordCheckout(ctx context.Context, co *localcfg.Checkout) {
+	if !config.ProjectNameRE.MatchString(co.Project) {
+		return
+	}
+	oi, ok := readOrigin(ctx, co.Root)
+	if !ok || oi.Rewritten {
+		return
+	}
+	// The provider the checkout's own fugaro.yaml names wins; a file that
+	// names none (or names one this build does not carry) falls back to the
+	// provider whose host the origin is on, which is the same pair
+	// localcfg.ProviderHosts holds and repoKnown already trusts.
+	provider := co.Provider
+	if !slices.Contains(config.Providers, provider) {
+		provider = ""
+	}
+	if provider == "" {
+		provider = providerForHost(oi.Host)
+	}
+	if provider == "" {
+		return
+	}
+	_ = localcfg.RecordCheckout(os.Getenv, co.Project,
+		localcfg.CheckoutIdentity{Provider: provider, Repo: oi.Repo}, co.Root, time.Now())
+}
+
+// providerForHost is the provider whose repositories live on host
+// (localcfg.ProviderHosts, inverted), "" for a host no provider lives on —
+// GitHub Enterprise and self-hosted Bitbucket included, whose repositories
+// this tree does not name by provider anywhere.
+func providerForHost(host string) string {
+	for _, p := range config.Providers {
+		if localcfg.ProviderHosts[p] == host {
+			return p
+		}
+	}
+	return ""
 }
 
 // selectProject picks the project config a cloud command acts on
