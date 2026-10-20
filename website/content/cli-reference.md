@@ -215,8 +215,11 @@ everything else this program's printers would touch — so an argument that stil
 holds one is refused rather than recorded as an entry that would match no
 removal. The two ends agree byte for byte because the identity is written in an
 escaped form — a space in a value as \x20, a backslash as \\, a parenthesis as
-\x28 and \x29, and any other byte with no printable form as \xHH — so that what
-a refusal prints is exactly what a plan shows. An identity longer than 8192
+\x28 and \x29, any other byte with no printable form as \xHH, and every byte a
+shell reads in a way of its own — a separator, a pipe, a redirection, a
+substitution, a quote, a glob, an expansion — as \xHH as well, so that what a
+refusal prints is one word no shell rewrites, whether the reader quotes it or
+not, and is exactly what a plan shows. An identity longer than 8192
 characters is refused here and by the plan: no refusal prints one, and the plan
 refuses the removal rather than matching a printed part of it, so recording it
 would be an approval that deletes nothing.
