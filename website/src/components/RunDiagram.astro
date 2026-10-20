@@ -249,8 +249,12 @@ function textWidth(text: string, size: number): number {
 /**
  * A label's lines: the text broken at word boundaries to fit `room` units, and a single word
  * wider than the room broken inside itself — a name the repository words in one long word
- * breaks rather than running out of the box, the guard the retired flow's `overflow-wrap:
- * anywhere` was for its step names, and the slider's `overflow-wrap` is for its own.
+ * breaks rather than running out of the box, which is what the retired flow declared
+ * `overflow-wrap: anywhere` for on its step names, and what the slider gets from the
+ * `overflow-wrap: break-word` its page already sets: `base.css` writes it once on `main`, the
+ * property is inherited, and the slider's third grid track is a `minmax(0, 1fr)` the step name
+ * is broken inside rather than allowed to widen (this drawing cannot lean on that, because a
+ * label here is drawn at coordinates rather than laid out, so it breaks the text itself).
  */
 function wrap(text: string, room: number, size: number): string[] {
   const chars = Math.max(3, Math.floor(room / (CHAR * size)))
