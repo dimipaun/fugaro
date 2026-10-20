@@ -695,6 +695,13 @@ describe('createConsoleWindow', () => {
         height: 780,
         show: false,
         title: CONSOLE_WINDOW_TITLE,
+        // The one ground literal (Task 6.5): the window paints the colour the
+        // stylesheet paints, so the first frame is not a flash of white. It is
+        // spelled out here as well as held equal to the token layer's `--ground`
+        // in `theme-tokens.test.ts`, because this case is about the options the
+        // window is built with and a `backgroundColor` that went missing would
+        // otherwise be a change this list could not see.
+        backgroundColor: '#0A0E16',
         webPreferences: dashboardWebPreferences(PRELOAD_PATH),
       },
     ])

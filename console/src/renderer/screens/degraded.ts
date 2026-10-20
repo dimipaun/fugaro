@@ -320,8 +320,18 @@ function textCell(
   return element
 }
 
-/** numberCell is `cell` with a reading written through `putReading`, so a number
- * cannot be drawn without its state. */
+/** numberCell is `cell` with a reading written into it through `putReading`, so
+ * the number cannot be drawn without its state.
+ *
+ * **`degraded-num` is prepended here, and it is the one code change the styling
+ * work makes** (desktop-console plan Task 6.4; design section 2.10). The class
+ * is the single hook that gives a figure tabular figures and right alignment,
+ * and every other screen's `numberCell` has one: `live-num`, `spend-num`,
+ * `projects-number`, `run-number`. This one had none, so the degraded and
+ * unavailable screens' figures -- the feed age, the runs, the money totals, the
+ * per-row money, the searched count -- were the only numbers in the console
+ * with no alignment hook at all. The rule it feeds is in `theme/screens.css`,
+ * beside the other four. */
 function numberCell(
   parent: ScreenElement,
   factory: ScreenFactory,
@@ -330,7 +340,7 @@ function numberCell(
   unit: Parameters<typeof putReading>[2],
   ...classes: string[]
 ): ScreenElement {
-  const element = cell(parent, factory, tag, ...classes)
+  const element = cell(parent, factory, tag, 'degraded-num', ...classes)
   putReading(element, reading, unit)
   return element
 }
