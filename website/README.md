@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **975,034 bytes in a checkout with no tags** and to **975,034 bytes with the
+  commit builds to **968,762 bytes in a checkout with no tags** and to **968,762 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -459,6 +459,17 @@ added or removed without this sentence moving fails there:
     four glyphs are shapes in the markup, and `test/home.mjs` reads each one back off the built
     page and refuses an icon that references a file or an origin. The words are the ones the
     section already carried, so the word ceiling did not move.
+  - **The homepage became the hero, one three-tab slider and one Get started button** (the
+    owner's approved draft "Home, draft 2 (slider)", 2026-10-19), and it moved the site figure
+    alone, 975,034 → **968,762**, by **6,272 bytes**. All of it is on the homepage: the chat's
+    conversation left the site with `AgentChat.astro` — its markup and the rules that drew it,
+    which the page inlined — the flow's figure and its stylesheet went with the rest of the
+    page's middle, and the two install cards became one button and one command. The slider's own
+    rules and the `fugaro watch` capture's slot came back onto the page, which is why the move is
+    a net 6,272 bytes rather than the whole of what left. The page weight and the script did not
+    move: the heaviest page is the docs hub, which renders none of this, and the site ships the
+    same one script. The word ceiling is `privacy`'s own page, which the draft did not touch; the
+    homepage's own words are well under it. The clone figure moved by the same bytes.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -485,7 +496,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
     docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,656,379 bytes. Three times 1,218,793 (every file in `dist/`, 975,034
+  - **Whole site:** 3,632,859 bytes. Three times 1,210,953 (every file in `dist/`, 968,762
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 

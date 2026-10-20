@@ -5,33 +5,32 @@
  *
  * **One slider with three tabs, and no JavaScript anywhere in it.** The draft puts the whole
  * of what the page has to show into one block with three tabs — how it is to use, why it is
- * worth it, and what it looks like running — and the tabs are radio inputs, labels and
- * sibling selectors: the input is the state, the label is the control, `:checked ~` is what
+ * worth it, and what it looks like running — and the tabs are three links to the panels' own
+ * ids: the fragment in the address is the state, the stylesheet's `:target` rules are what
  * shows a panel, and the reader's browser is the whole of the mechanism. The site ships one
  * script (`public/scripts/site.js`, the copy control), and this block asks it for nothing:
  * with the script blocked, off, or never delivered, all three tabs still switch and all three
  * panels are in the HTML a reader receives. `website/test/slider.mjs` is the gate — the three
- * panels, one `:checked` rule per tab, an input that is still focusable, and a focus ring
- * that lands on the tab the keyboard is on.
+ * panels, one `:target` rule per tab, the opening panel's own rule, and the focus ring the
+ * site draws on every control.
  *
- * **The keyboard is the reason the inputs are hidden rather than removed.** A radio group
- * moves with the arrow keys and is announced as a group of three choices, so the tabs are
- * reachable with Tab once and switchable with the arrows — but an input the stylesheet hides
- * with `display: none` is out of the tab order and out of the accessibility tree, and a
- * control a reader cannot reach is not a control. `.tab-input` is therefore a 1 px,
- * transparent, absolutely positioned input: focusable, announced, and invisible, which is the
- * one shape this pattern has. The ring the reader sees is drawn on the *label* the focused
- * input belongs to (`:focus-visible ~`), because a ring around a 1 px box nobody can see is
- * not a focus ring; `base.css`'s `:focus-visible` rule draws the ring on every other
- * control on the site.
+ * **Fragment links rather than radio inputs, and the site's own privacy page is the reason.**
+ * A radio group is the other way to write this pattern and it reads better to a screen reader:
+ * the group is announced as three choices and the arrow keys move between them. What it costs
+ * is a form control on a page — three of them — and this site states, in `privacy.astro` and
+ * in the gate that holds the page to the artifact (`test/consent.mjs`), that it has **no form
+ * and asks a reader for nothing**. That claim is about collection, and a radio that switches a
+ * panel collects nothing — but it is a form control, and the sentence and the gate are the
+ * owner's, not this component's to spend. So the control is a link: `href="#home-panel-…"`,
+ * which every browser has understood since HTML 2, no form, no name, nothing submitted.
  *
  * **No ARIA tab roles, on purpose.** `role="tab"` and `role="tabpanel"` describe a widget
  * whose selection is scripted: the roles promise a relationship (`aria-selected`,
  * `aria-controls`, the panel that follows the selected tab) that a stylesheet cannot keep and
- * only JavaScript can. The markup says what it is instead — a group of three radio buttons
- * named "Easy to use", "Benefits" and "See it", each with a label — which is a shape screen
- * readers already know, and `website/test/a11y.mjs` reads the labels the same way it reads
- * every other form control's.
+ * only JavaScript can. The markup says what it is instead — a list of three links named "Easy
+ * to use", "Benefits" and "See it", each pointing at the panel it opens — which is a shape
+ * screen readers already know, and the panel a link opens is the element the address names.
+ * `website/test/a11y.mjs` reads the links the way it reads every other link on the site.
  *
  * **The three panels.** *Easy to use* is the reader's three steps, numbered, one inline SVG
  * each: tell your agent, Fugaro runs it in your cloud, you get a draft pull request — the
@@ -152,7 +151,9 @@ const GLYPHS: { [name: string]: string } = {
     '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7"/><path d="M18 15.5V11a3 3 0 0 0-3-3h-4"/><path d="m13 6-2 2 2 2"/>',
 }
 
-/** The tabs, in the order the panels are read: the draft's three, and the labels a reader sees. */
+/** The tabs, in the order the panels are read: the draft's three, and the labels a reader sees.
+ *  Each one's `id` is the panel it opens (`#home-panel-<id>`) and the fragment its link carries,
+ *  so the tab, the link and the panel are one name rather than three that have to agree. */
 const TABS = [
   { id: 'easy', label: 'Easy to use' },
   { id: 'benefits', label: 'Benefits' },
@@ -219,31 +220,23 @@ if (
 ---
 
 <section class="home-slider" data-slot="home-slider" aria-label="What Fugaro is and does">
-  {/* The three inputs, one per tab, in the panels' own order. The first is the one a reader
-      arrives on. They are siblings of the tab bar and of the panels — that is what `:checked ~`
-      needs — and they are the only `input` elements here, which is what the `:nth-of-type`
-      reading in the stylesheet is about. */}
-  {
-    TABS.map((tab, index) => (
-      <input
-        class="tab-input"
-        type="radio"
-        name="home-tab"
-        id={`home-tab-${tab.id}`}
-        checked={index === 0}
-      />
-    ))
-  }
-
-  <div class="tab-bar">
+  {/* The three tabs, in the panels' own order: three links to the panels' ids, which is the
+      whole of the switching. A fragment link is the one control a page has had since HTML 2 —
+      no input, no button, no script — and the stylesheet shows the panel the fragment names
+      (`:target`). The first panel is the one a reader arrives on, and the rule below shows it
+      while no fragment is targeted. A list rather than three loose links, because three things
+      a reader chooses between are a list, and the list is what a screen reader announces. */}
+  <ul class="tab-bar">
     {
       TABS.map((tab) => (
-        <label class="tab" for={`home-tab-${tab.id}`}>
-          {tab.label}
-        </label>
+        <li class="tab-item">
+          <a class="tab" href={`#home-panel-${tab.id}`}>
+            {tab.label}
+          </a>
+        </li>
       ))
     }
-  </div>
+  </ul>
 
   <div class="panels">
     <div class="panel panel-easy" id="home-panel-easy">
@@ -336,26 +329,16 @@ if (
     padding: 0 var(--space-md) var(--space-3xl);
   }
 
-  /* **The inputs: focusable and invisible.** Not `display: none`, which would take the group
-     out of the tab order and out of the accessibility tree and leave three tabs a keyboard
-     cannot reach; a 1 px transparent box in the corner of the block is the shape that keeps the
-     control and loses the drawing. `position: absolute` against the block above rather than
-     against the page, so the box is inside the column it belongs to. */
-  .tab-input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: 0;
-    opacity: 0;
-  }
-
   /* The tabs: one row, wrapping rather than scrolling on a phone, and each one a 44 px target
-     (the owner's brief's measurement) whether or not it is the selected one. */
+     (the owner's brief's measurement) whether or not it is the selected one. A list with its
+     markers off, because it is a row of three controls and not a list of prose. */
   .tab-bar {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2xs);
-    margin-bottom: var(--space-md);
+    margin: 0 0 var(--space-md);
+    padding: 0;
+    list-style: none;
   }
 
   .tab {
@@ -370,46 +353,52 @@ if (
     font-family: var(--font-sans);
     font-size: var(--font-size-base);
     font-weight: var(--weight-medium);
-    cursor: pointer;
+    text-decoration: none;
   }
 
-  /* The selected tab, by the input it belongs to: the accent as a fill and the ground as its
-     label, the pair `a11y.mjs` computes at 4.5:1 — the same pair the hero's call to action is
-     set in. Three rules naming three ids rather than one `:nth-of-type` rule, because the
-     pairing of input to label is the whole of what makes a tab switch, and a reader of this
-     stylesheet should be able to see which input shows which panel.
+  /* **The selected tab**, by the fragment that selects it: the accent as a fill and the ground
+     as its label, the pair `a11y.mjs` computes at 4.5:1 — the same pair the hero's call to
+     action is set in. One rule per tab rather than one `:nth-child` rule, because the pairing of
+     a tab with the panel it opens is the whole of what makes a tab switch, and a reader of this
+     stylesheet should be able to see which link shows which panel.
      `website/test/slider.mjs` reads the pairs out of the built stylesheet and refuses a tab
-     whose `:checked` rule is missing. */
-  #home-tab-easy:checked ~ .tab-bar label[for='home-tab-easy'],
-  #home-tab-benefits:checked ~ .tab-bar label[for='home-tab-benefits'],
-  #home-tab-see:checked ~ .tab-bar label[for='home-tab-see'] {
+     whose `:target` rule is missing.
+
+     The first tab is the selected one while nothing is targeted, which is the page a reader
+     arrives on: the first panel is the one the stylesheet shows then, so the first tab is the
+     one that reads as selected. */
+  .home-slider:not(:has(.panel:target)) .tab[href='#home-panel-easy'],
+  .home-slider:has(#home-panel-easy:target) .tab[href='#home-panel-easy'],
+  .home-slider:has(#home-panel-benefits:target) .tab[href='#home-panel-benefits'],
+  .home-slider:has(#home-panel-see:target) .tab[href='#home-panel-see'] {
     border-color: var(--accent);
     background: var(--accent);
     color: var(--ground);
   }
 
-  /* The ring, on the label the keyboard is on: the focused control is a 1 px box nobody can
-     see, so the visible ring is drawn where the reader is looking. It is the site's own ring —
-     the width and the offset `base.css`'s `:focus-visible` rule uses — and it is declared per
-     tab for the same reason the selected state is. */
-  #home-tab-easy:focus-visible ~ .tab-bar label[for='home-tab-easy'],
-  #home-tab-benefits:focus-visible ~ .tab-bar label[for='home-tab-benefits'],
-  #home-tab-see:focus-visible ~ .tab-bar label[for='home-tab-see'] {
-    outline: var(--focus-ring-width) solid var(--accent);
-    outline-offset: var(--focus-ring-offset);
-  }
-
   /* **The panels, and the whole of the switching.** Every panel is in the HTML a reader
-     receives; the stylesheet shows the one whose input is checked and takes the other two out
-     of the layout. A reader with no script gets all three of them behind these rules, which is
-     the point of the pattern — nothing here is built at runtime. */
+     receives; the stylesheet shows the one the address's fragment names and takes the other two
+     out of the layout. A reader with no script gets all three of them behind these rules, which
+     is the point of the pattern — nothing here is built at runtime.
+
+     The focus ring is not declared here: `base.css`'s `:focus-visible` rule draws the site's
+     ring on every control, and a link is one of them, so a tab the keyboard is on carries the
+     ring the rest of the site carries. It is the accent at the token's width and offset, which
+     is visible against the page and against the tab's own ground — and a rule here that removed
+     it would be the one thing `a11y.mjs` refuses. */
   .panel {
     display: none;
   }
 
-  #home-tab-easy:checked ~ .panels > #home-panel-easy,
-  #home-tab-benefits:checked ~ .panels > #home-panel-benefits,
-  #home-tab-see:checked ~ .panels > #home-panel-see {
+  .panel:target {
+    display: block;
+  }
+
+  /* The page's opening panel, while no tab has been chosen: the first one, because a reader who
+     has clicked nothing is reading the first thing the block has to say. Written on the id, so
+     it is in force whatever order these rules end up in — and out of force the moment any panel
+     is targeted, which is when a tab has been chosen. */
+  .home-slider:not(:has(.panel:target)) #home-panel-easy {
     display: block;
   }
 

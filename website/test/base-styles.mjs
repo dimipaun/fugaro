@@ -2157,37 +2157,40 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
 
 test('the rhythm reading refuses a block whose rule cannot reach it', () => {
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
-  const panelScope = /class="home-slider"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
-  assert.ok(panelScope, 'the built homepage no longer carries the slider’s scope on `.home-slider`, and this case re-scopes a rule to it')
+  const sliderScope = /class="home-slider"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(sliderScope, 'the built homepage no longer carries the slider’s scope on `.home-slider`, and this case re-scopes a rule to it')
 
-  // **The defect of round 6, as it shipped**: `.home-benefits` declared by a component other
-  // than the one that renders the section — the page's `<style>` then, `HomeSlider.astro`'s now
-  // — so the rule carries that component's scope (`[data-astro-cid-d3mmljir]`), the element
-  // carries the benefits' own, and the rule reaches neither. The plant is that edit, made to a
-  // block the reading walks: the slider's rule, re-scoped to the component that renders the
-  // section inside it. Round 6 found the shape on the benefits section when the page declared
-  // the rule; the draft of 2026-10-19 puts that section inside a panel, where the reading does
-  // not walk it — `website/test/slider.mjs` holds the panel's own rule to the scope the section
-  // carries — so the case is written on the block the reading can still see.
-  const benefitsScope = /class="home-benefits[^"]*"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
-  assert.ok(benefitsScope, 'the built homepage no longer carries a scope on `.home-benefits`, and this case re-scopes a rule to it')
-  const rescoped = plantRule('.home-slider[data-astro-cid-', (rule) =>
-    rule.replace(/\[data-astro-cid-\w+\]/, `[data-astro-cid-${benefitsScope}]`),
-  )
+  // **The defect of round 6, as it shipped**: a block declared by a component other than the one
+  // that renders it, so its rules carry that component's scope (`[data-astro-cid-…]`), the
+  // element carries its own, and the rules reach neither. The plant is that edit, made to a block
+  // the reading walks and to every rule that names it — the install block, whose two rules are
+  // both declared by `HomeInstall.astro`, re-scoped to the component that renders the slider.
+  // **Every** rule naming the block has to move for the refusal to fire, which is the reading's
+  // own rule and not a way around it: the refusal says the stylesheet names a block no rule
+  // reaches, and one rule that still reaches it means the block is reached. Round 6 found the
+  // shape on the benefits section when `index.astro` declared the rule; the draft of 2026-10-19
+  // puts that section inside a panel, where the reading does not walk it —
+  // `website/test/slider.mjs` holds the panel's own rule to the scope the section carries — so
+  // the case is written on a block the reading can still see.
+  const installScope = /class="home-install"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(installScope, 'the built homepage no longer carries a scope on `.home-install`, and this case re-scopes its rules away from it')
+  assert.notEqual(installScope, sliderScope, 'the install block and the slider now carry one scope, and this case tells them apart')
+  const rescoped = TODAY().replaceAll(`[data-astro-cid-${installScope}]`, `[data-astro-cid-${sliderScope}]`)
+  assert.notEqual(rescoped, TODAY(), 'the built homepage’s stylesheet no longer names the install block’s scope, and this case re-scopes the rules that do')
   // And the other half of the same defect, from the element's side: the block with the scope
   // attribute its component gives it removed, which is a rule that names a scope nothing on the
   // element carries. Either way the block is one the stylesheet names and no rule reaches.
-  const unscoped = html.replace(/<section class="home-slider"([^>]*)>/, (tag, rest) => `<section class="home-slider"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
-  assert.notEqual(unscoped, html, 'the built homepage’s slider no longer carries a scope attribute, and this case takes one off')
+  const unscoped = html.replace(/<section class="home-install"([^>]*)>/, (tag, rest) => `<section class="home-install"${rest.replace(/ data-astro-cid-\w+/g, '')}>`)
+  assert.notEqual(unscoped, html, 'the built homepage’s install block no longer carries a scope attribute, and this case takes one off')
 
   const cases = [
-    ['a rule scoped to the component that renders the panel rather than to the one that renders the block', rescoped, html, /scoped to data-astro-cid-/],
+    ['every rule naming the block scoped to the component that renders the slider rather than to the one that renders the block', rescoped, html, new RegExp(`scoped to data-astro-cid-${sliderScope}`)],
     ['a block whose scope attribute is gone', TODAY(), unscoped, /the element carries no scope attribute/],
   ]
   for (const [what, css, page, expected] of cases) {
     const failures = homeRhythmFailures(css, page)
     assert.equal(failures.length, 1, `${what}: the reading refused ${failures.length} thing(s) where this case plants one:\n  ${failures.join('\n  ') || '(nothing)'}`)
-    assert.match(failures[0], /^the homepage's \.home-slider is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
+    assert.match(failures[0], /^the homepage's \.home-install is named by the stylesheet/, `${what}: the refusal does not say which block it is about, or does not begin with it:\n  ${failures[0]}`)
     assert.match(failures[0], expected, `${what}: the refusal does not name the scopes it read:\n  ${failures[0]}`)
   }
 

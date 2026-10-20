@@ -289,27 +289,21 @@ test('every copy-control refusal fires on the defect it names', () => {
   }
 })
 
-test('the homepage offers `fugaro watch` in one block with one control, and the agent\'s launch in none', () => {
-  // Item 3's shape, held on the built page rather than on a fixture: the homepage's one
-  // command block besides the install paths is the watch snippet, and the agent's launch — a
-  // status line the reader did not type — is a paragraph in the chat, in no block and with no
-  // control. A page that wrapped the launch in a `[data-copy]` block would be offering the
-  // reader a command they never ran, which is the defect this case is here for. (The block is
-  // `chat-watch` and the launch is `turn-status`: item 3 asks for the launch as "a subtle
-  // tool-call / status line", so it is not a command block at all.)
+test("the homepage offers `fugaro watch` in one block with one control", () => {
+  // Item 3's shape, held on the built page rather than on a fixture: the homepage's one command
+  // block besides the install block is the watch block, and it holds the command and nothing
+  // else — the note under it is outside the block, so what the control copies is the command a
+  // reader runs rather than the sentence describing it. The block is the slider's third panel
+  // since the owner's approved draft of 2026-10-19; the chat's status line, which this case also
+  // held out of any `[data-copy]` block, left the site with `AgentChat.astro`.
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const page = parse(html)
   const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
-  const watch = [...walk(page)].find((el) => classes(el).includes('chat-watch'))
-  assert.ok(watch, 'the homepage carries no watch snippet block, and the hero offers `fugaro watch` as its one command besides the install paths (changes spec 2026-10-18, item 3)')
-  assert.ok(watch.attrs.has('data-copy'), 'the watch snippet is in no [data-copy] block')
+  const watch = [...walk(page)].find((el) => classes(el).includes('watch-block'))
+  assert.ok(watch, 'the homepage carries no watch block, and the panel offers `fugaro watch` as its one command besides the install block (changes spec 2026-10-18, item 3)')
+  assert.ok(watch.attrs.has('data-copy'), 'the watch block is in no [data-copy] block')
   assert.equal(words(sourceOf(watch)), 'fugaro watch', `the watch block's control would copy ${JSON.stringify(words(sourceOf(watch)))}, and the block holds the command and nothing else`)
   assert.deepEqual(failuresOf(html), [], 'the built homepage breaks the copy control\'s rule')
-
-  const status = [...walk(page)].find((el) => classes(el).includes('turn-status'))
-  assert.ok(status, "the homepage chat carries no status line, and the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)")
-  assert.equal(blockOf(status), null, "the agent's launch is inside a [data-copy] block, and the reader did not type it: the homepage offers `fugaro watch` to copy, not the launch (changes spec 2026-10-18, item 3)")
-  assert.deepEqual([...walk(status)].filter((el) => el.attrs.has('data-copy-button')), [], "the agent's launch carries a copy control of its own (changes spec 2026-10-18, item 3)")
 })
 
 // ---- the script itself (P3, P6, D183) -----------------------------------------------------
@@ -627,10 +621,10 @@ test('site.js reveals every control and copies exactly the command each one sits
       assert.equal(block.querySelector('[data-copy-status]').textContent, 'Copied', `${rel}: a copy that happened was not announced`)
     }
     if (rel === 'index.html') {
-      // The hero's one command besides the install paths, clicked the way a reader clicks it
+      // The panel's one command besides the install block, clicked the way a reader clicks it
       // (changes spec 2026-10-18, item 3): what lands on the clipboard is the command, and it
       // is a command README.md prints.
-      const watch = page.find('.chat-watch')[0]
+      const watch = page.find('.watch-block')[0]
       watch.querySelector('[data-copy-button]').dispatch('click')
       await flush()
       const copied = page.written.at(-1)
