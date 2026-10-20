@@ -400,7 +400,10 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"gcloud secrets versions access",
 		"fail closed",
 		"managed_deployer_scoped",
-		"terraform apply -input=false -auto-approve",
+		// The Restore plans and reads the plan instead of applying with
+		// -auto-approve: the restore is the one apply nobody reads, and it is
+		// where a hand-edited resource would otherwise be applied unread.
+		"terraform apply -input=false \"$CHK68_TMP/restore.tfplan\"",
 		// The Restore deletes everything the check created, the near miss
 		// included: a probe left behind is a resource the next run's plan and
 		// the next reader both have to account for.
@@ -1037,5 +1040,91 @@ func TestChecklistCheck68NegativeDirectionNamesAgree(t *testing.T) {
 	}
 	if !strings.Contains(para, "RUNS_BUCKET") {
 		t.Errorf("%s's Check 68 instruction does not name ${RUNS_BUCKET:?}: the block it introduces lists %d resources and step 5 acts on %d, so the seventh name's home has to be said rather than left to the reader", path, len(listed), len(acts))
+	}
+}
+
+// TestChecklistCheck68AssertsThePlanShape: step 2 applied whatever plan step 1
+// had written and step 7 restored with `-auto-approve` and no plan at all, so a
+// plan carrying anything other than the gate's own fourteen addresses — a
+// resource the owner had edited by hand, a provider that wanted to replace
+// something, a state bucket that is not the one the installation lives under —
+// was applied unread, in a live project, twice. The check now reads the shape
+// before each apply: fourteen to add and nothing to change or destroy when the
+// gate opens, and on the restore a plan that destroys those fourteen addresses
+// and nothing else.
+//
+// Mutations (verified, run and restored): step 2's shape assertion removed →
+// FAIL; the restore's plan-then-apply reverted to `-auto-approve` → FAIL; the
+// restore's "nothing outside the gate" clause dropped → FAIL; the assertion
+// moved after its apply → FAIL.
+func TestChecklistCheck68AssertsThePlanShape(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	step := func(name, next string) string {
+		i := strings.Index(section, name)
+		if i < 0 {
+			t.Fatalf("Check 68 has no %q step: the plan's shape is asserted there", name)
+		}
+		rest := section[i:]
+		if j := strings.Index(rest, next); j >= 0 {
+			return rest[:j]
+		}
+		return rest
+	}
+
+	// Step 2, the one live write of the opening half.
+	step2 := step("### 2. Apply it", "### 3.")
+	if !strings.Contains(step2, `terraform show -json "$CHK68_TMP/chk68.tfplan"`) {
+		t.Error("Check 68's step 2 does not read the plan it is about to apply: the apply is a live write in the pinned project, and the plan file is the last chance to see what it carries")
+	}
+	for _, want := range []string{
+		`select(.change.actions == ["create"])`,
+		`select(.change.actions == ["update"])`,
+		`select(.change.actions == ["delete"])`,
+		`[ "$ADD" = 14 ] && [ "$CHG" = 0 ] && [ "$DEL" = 0 ]`,
+		"Check 68 plan stop:",
+	} {
+		if !strings.Contains(step2, want) {
+			t.Errorf("Check 68's step 2 does not carry %q: opening the gate on a converged installation adds the gate's fourteen addresses and changes or destroys nothing, and a plan of any other shape is a reason to stop rather than apply", want)
+		}
+	}
+	apply := strings.Index(step2, `terraform apply -input=false "$CHK68_TMP/chk68.tfplan"`)
+	asserted := strings.Index(step2, "Check 68 plan stop:")
+	if apply < 0 {
+		t.Fatal("Check 68's step 2 no longer applies the plan step 1 wrote")
+	}
+	if asserted < 0 || asserted > apply {
+		t.Error("Check 68's step 2 asserts the plan's shape after the apply it is meant to gate: the assertion is what makes the apply safe, so it runs first")
+	}
+
+	// Step 7, the restore.
+	restore := step("### 7. Restore", "**FACT (on `${P:?}`):** the binding count")
+	for _, line := range strings.Split(restore, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "terraform apply") && strings.Contains(line, "-auto-approve") {
+			t.Errorf("Check 68's Restore applies with -auto-approve (%q): the restore is the one apply nobody reads, and it has to be planned and its plan asserted before it runs", line)
+		}
+	}
+	for _, want := range []string{
+		`terraform plan -input=false -out="$CHK68_TMP/restore.tfplan"`,
+		`terraform show -json "$CHK68_TMP/restore.tfplan"`,
+		`terraform apply -input=false "$CHK68_TMP/restore.tfplan"`,
+		`[ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$DEL" = 14 ] && [ "$OTHER" = 0 ]`,
+		`google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[`,
+		"Check 68 plan stop:",
+	} {
+		if !strings.Contains(restore, want) {
+			t.Errorf("Check 68's Restore does not carry %q: closing the gate destroys the seven roles and the seven bindings and nothing else, and the plan is where that is checked", want)
+		}
+	}
+	planned := strings.Index(restore, `terraform plan -input=false -out="$CHK68_TMP/restore.tfplan"`)
+	restoreApply := strings.Index(restore, `terraform apply -input=false "$CHK68_TMP/restore.tfplan"`)
+	restoreAsserted := strings.Index(restore, "Check 68 plan stop:")
+	if planned < 0 || restoreApply < 0 {
+		t.Fatal("Check 68's Restore no longer plans and applies that plan")
+	}
+	if restoreAsserted < 0 || restoreAsserted > restoreApply {
+		t.Error("Check 68's Restore asserts the plan's shape after applying it")
 	}
 }

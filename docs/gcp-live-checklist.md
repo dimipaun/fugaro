@@ -4384,6 +4384,18 @@ The backend is the sandbox installation's own, and it is read rather than assume
 
 This is F1, and it is the check's go/no-go: an accepted apply means every one of the seven conditions is a policy `setIamPolicy` takes. **A refusal here is a result, not a fault** — the exact error text is what the design's §3 has to be corrected with, and it stops the rest of the check until the offending service is dropped from the design (R5: the type is dropped, never granted unconditioned).
 
+**Read the plan's shape first.** The plan file is the last chance to see what is about to be written into a live project, and the apply is the only write of the opening half: step 1's `grep` is what says the installation was converged with the gate off, and on a converged installation opening the gate adds exactly the gate's fourteen addresses — the seven roles and the seven bindings — and changes and destroys nothing. Any other shape is a reason to stop rather than apply: a resource the owner edited by hand, a provider that wants to replace something, a state bucket that is not the one this installation lives under. The count is the same fourteen step 1's own `grep` counted in the plan's text; this reads the plan itself.
+
+```bash
+terraform show -json "$CHK68_TMP/chk68.tfplan" > "$CHK68_TMP/plan.json"
+ADD=$(jq '[.resource_changes[] | select(.change.actions == ["create"])] | length' "$CHK68_TMP/plan.json")
+CHG=$(jq '[.resource_changes[] | select(.change.actions == ["update"])] | length' "$CHK68_TMP/plan.json")
+DEL=$(jq '[.resource_changes[] | select(.change.actions == ["delete"])] | length' "$CHK68_TMP/plan.json")
+echo "plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy"
+[ "$ADD" = 14 ] && [ "$CHG" = 0 ] && [ "$DEL" = 0 ] \
+  || { echo "Check 68 plan stop: the plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy, and opening the gate on a converged installation adds exactly the gate's fourteen addresses (seven roles, seven bindings) and changes or destroys nothing. Read the plan's own lines above; if the installation was not converged, re-run step 1." >&2; exit 1; }
+```
+
 ```bash
 cd "$W/gcp/roots/installation"                  # the same workdir root step 1 planned
 export TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"
@@ -4533,7 +4545,23 @@ grep -n 'managed_deployer_scoped' "$W/gcp/roots/installation/terraform.tfvars.js
   || echo "no managed_deployer_scoped in the tfvars: the gate is closed, as fugaro init writes it"
 cd "$W/gcp/roots/installation"
 export TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"
-terraform apply -input=false -auto-approve
+# Plan the restore, and read the plan before applying it. Closing the gate on
+# the installation the check opened it in destroys the gate's fourteen
+# addresses — the seven roles and the seven bindings — and nothing else, so a
+# plan carrying anything more is a change this check did not make and must not
+# apply. `-auto-approve` on its own would apply whatever the plan turned out to
+# be, and the restore is the one apply nobody reads.
+terraform plan -input=false -out="$CHK68_TMP/restore.tfplan" | tee "$CHK68_TMP/restore-plan.txt"
+terraform show -json "$CHK68_TMP/restore.tfplan" > "$CHK68_TMP/restore.json"
+ADD=$(jq '[.resource_changes[] | select(.change.actions == ["create"])] | length' "$CHK68_TMP/restore.json")
+CHG=$(jq '[.resource_changes[] | select(.change.actions == ["update"])] | length' "$CHK68_TMP/restore.json")
+DEL=$(jq '[.resource_changes[] | select(.change.actions == ["delete"])] | length' "$CHK68_TMP/restore.json")
+OTHER=$(jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | .address' "$CHK68_TMP/restore.json" \
+  | grep -cvE '^google_project_iam_(custom_role|member)\.fugaro_deployer_(storage|secret|account|apikey|repository|run_job|scheduler_job)\[')
+echo "restore plan: ${ADD} to add, ${CHG} to change, ${DEL} to destroy, ${OTHER} outside the gate"
+{ [ "$ADD" = 0 ] && [ "$CHG" = 0 ] && [ "$DEL" = 14 ] && [ "$OTHER" = 0 ]; } \
+  || { echo "Check 68 plan stop: the restore plan is ${ADD} to add, ${CHG} to change, ${DEL} to destroy with ${OTHER} address(es) outside the gate's own fourteen. Closing the gate destroys the seven conditioned roles and the seven bindings and nothing else; read the plan's own lines above rather than apply it." >&2; exit 1; }
+terraform apply -input=false "$CHK68_TMP/restore.tfplan"
 gcloud projects get-iam-policy "${P:?}" --format=json \
   | jq -r '[.bindings[] | select(.members[]? == "serviceAccount:'"${DEPLOYER:?}"'")] | length'
 rm -rf "$CHK68_TMP"
