@@ -769,12 +769,14 @@ it copies has its own typed rule (numbers are copied; an enum is copied only if
 the value is in the CLI's vocabulary; a free string is refused unless the key has
 an explicit replacement). It replaces the project, repo, slug, run ID, title
 (`# Task: example task N`), models, requester and kill actor, PR URL, workflow,
-recipe and every dollar amount, and **shifts the whole clock by a random offset
-drawn for the run** (`now`, `day`, the header's `recorded`, `kill.at`, and the
-run IDs' timestamps, which are the shifted `now` minus the run's own age, so
-every `age_seconds` stays consistent). Totals, percentages, `runs` and
-`run_hours` are recomputed from the invented rows so the document's invariants
-hold. The result then goes through the console's redactor with a public key (as
+recipe, the 0.9.0 job triple (`job`, `profile`, `provider`) with the two people
+beside it (`account`, `launched_by`), the credential's **name** (`credential`,
+0.10.0) and every dollar amount, and **shifts the whole clock by a random offset
+drawn for the run** (`now`, `day`, the header's `recorded`, `kill.at`,
+`waiting_until`, and the run IDs' timestamps, which are the shifted `now` minus
+the run's own age, so every `age_seconds` stays consistent). Totals,
+percentages, `runs` and `run_hours` are recomputed from the invented rows so the
+document's invariants hold. The result then goes through the console's redactor with a public key (as
 `synthetic.ndjson` does), which is why the repo and slug read as pseudonyms
 (`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
 them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,

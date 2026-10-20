@@ -198,8 +198,9 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // expects to resume at, RFC 3339 UTC. It is a stamp for the same reason the
   // others are -- an instant a reader compares with `now`, and one whose
   // **presence** is the state ("this run is held up rather than spending")
-  // rather than a string to draw. The recorder shifts it like every other
-  // instant, so a fixture's copy is a reading and not the wire's own value.
+  // rather than a string to draw. The scrub shifts it with the rest of the
+  // clock (`tools/scrub-fixture/scrub.ts`'s `instant` rule, beside `now` and a
+  // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
   'waiting_until',
 ])
 
