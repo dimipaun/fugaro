@@ -458,8 +458,10 @@ added or removed without this sentence moving fails there:
     smaller table size. The page weight and the script did not move: the heaviest page is the
     docs hub, which renders neither table, and the caps page's own growth is nowhere near it.
     The clone figure moved by the same bytes. The shape is held by `test/caps-figures.mjs`
-    (above), whose reading run against the old component names all six of the defects it was
-    written for.
+    (above), whose reading run against the old component fails on every defect it is written for:
+    the cells unlabelled, the five stacking declarations missing, the head row left in the flow,
+    no label rule reaching the page's cells, the wide layout's nowrap figures and scroll box in
+    force at the phone's width, and the figures at the table's smaller type.
   - **The console page was cut to its essentials** (the owner's feedback of 2026-10-19: "way
     too much text, nobody cares"), and moved the site figure alone, 974,846 → **974,047**, by
     **799 bytes off** one page. What a reader gets now is one sentence on what the console is,
@@ -789,15 +791,23 @@ added or removed without this sentence moving fails there:
   around them — is scoped to `min-width: 48rem`, and the stacked figures are set at
   `--font-size-base`, because `base.css` sets every `table` at the table's smaller type. The
   gate reads the built page's own markup and stylesheet: every cell's `data-label` is its
-  column's head text in its column's order, both tables are stacked at 360 and at 390 px with
-  the label rule in force, nothing in force at those widths holds a figure on one line or in a
-  scroll box, no box is wider than `main`'s own content box at 360 px (read out of the
-  stylesheet, not typed), and the figures are no smaller than the body. It reads the checkout's
-  build and a copy built with a fixture `costs.json`, because the per-recipe table is the one
-  this checkout cannot render (D96); the fixture case also plants a defect only that table's
-  cells can show, so the second table is read rather than assumed. Its refusals are kept the
-  way the others keep theirs: the reading run against `main`'s own `CapsCosts.astro` names all
-  six defects at once, and every refusal has a case that plants the one thing it names in the
+  column's head text in its column's order, each of the five elements a stacked table is made of
+  (the table, its body, its rows and both kinds of cell) is separately `display: block` at 360 and
+  at 390 px with the head out of the flow, the rule that prints the labels is matched against the
+  page's own cells — a `content: attr(data-label)` on a selector that reaches no cell prints
+  nothing, and reads exactly like the rule that works — nothing in force at those widths holds a
+  figure on one line or in a scroll box, no box is wider than `main`'s own content box at 360 px
+  (read out of the stylesheet, not typed), the figures are no smaller than the body, and the two
+  declarations the wide layout is made of are read again at 768 and at 1280 px, so a block that
+  was deleted or moved behind a wider query is refused rather than green on every phone width.
+  It reads the checkout's build and a copy built with a fixture `costs.json`, because the
+  per-recipe table is the one this checkout cannot render (D96); the fixture case also plants a
+  defect only that table's cells can show, so the second table is read rather than assumed. Its
+  refusals are kept the way the others keep theirs: the reading run against `main`'s own
+  `CapsCosts.astro` fails on every defect it is written for — every cell unlabelled, the five
+  stacking declarations missing, the head row left in the flow, no rule printing a label, the
+  nowrap figures and the scroll box in force at the phone's width, and the figures at the table's
+  smaller type — and every refusal has a case that plants the one thing it names in the
   artifact's own bytes.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,

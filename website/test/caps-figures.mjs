@@ -26,23 +26,36 @@
 //      second name for one column, which is how a header and its label drift apart. The row
 //      header (`<th scope="row">`) is a cell like any other here: stacked, the block's title is
 //      the row's first cell, and the column that names it names it too.
-//   2. **the figures are stacked, and the labels are printed.** At 360 and at 390 px the table,
-//      its rows and its cells are blocks, the head is out of the layout, and a cell's `::before`
-//      is `attr(data-label)`. Each of the four is separately enough to leave a rule reading
-//      correctly and a reader seeing a table: a head left in the flow with every cell a block is
-//      six unlabelled words above the first row, and a `::before` whose `content` is not the
-//      cell's own label is a page of wrong labels.
-//   3. **nothing at a phone's width holds a figure on one line or in a scroll box.** The wide
+//   2. **the figures are stacked, and the head is out of the layout.** At 360 and at 390 px the
+//      table, its body, its rows and both kinds of cell are blocks, and the head is out of the
+//      flow. Each is separately enough to leave a rule reading correctly and a reader seeing a
+//      table: a head left in the flow with every cell a block is six unlabelled words above the
+//      first row, and a cell left laid out as a table cell is a column of the table this page
+//      replaced. The five elements are read one at a time and by their own names, because a
+//      selector that names four of them is a rule that looks like this one and stacks four of
+//      the five.
+//   3. **the rule that prints the labels selects the cells it prints them on.** `content:
+//      attr(data-label)` on a cell's `::before` is the whole of the printing, and a rule whose
+//      selector matches no cell on the page — a scope attribute the build never wrote, a class
+//      the page does not carry — prints nothing at all while reading exactly like the rule that
+//      works. So the reader matches each printing rule's own selector against the page's own
+//      cells, and refuses a cell no printing rule reaches, naming the cell and the selector.
+//   4. **nothing at a phone's width holds a figure on one line or in a scroll box.** The wide
 //      table's own fit — `white-space: nowrap` on the figures and the `overflow-x` box around
 //      them — belongs to the layout above the breakpoint; in force at 360 it is the defect the
 //      owner read, and a figure that cannot break runs out of its card at 360 whatever the
 //      table around it does.
-//   4. **a fixed width fits the phone's content box.** A cell or a table given a length wider
+//   5. **a fixed width fits the phone's content box.** A cell or a table given a length wider
 //      than 328 px is a box wider than the screen it is read on — the arithmetic the run's own
 //      gate does, over the boxes this page draws.
-//   5. **the figures are at least the body's size.** `base.css` sets every `table` at 15 px
+//   6. **the figures are at least the body's size.** `base.css` sets every `table` at 15 px
 //      (`--font-size-sm`) where the body is 17 px: a table's smaller type for six columns, and
 //      not a phone's one figure under its name.
+//   7. **above the breakpoint the wide table's own fit is there.** The same two declarations of
+//      4 are read again at 768 px — the site's own breakpoint, and the first width at which the
+//      wide layout is in force — and at 1280 px: a block that was deleted, or moved to a wider
+//      query, leaves a window from the breakpoint up in which the figures wrap mid-number with
+//      no box to scroll them in, which is the defect the owner read one breakpoint along.
 //
 // **How the two tables are both read.** This checkout builds the empty state — `costs.json` is
 // the owner-run aggregation's output and is absent here (D96) — so `#costs` renders no table at
@@ -67,6 +80,14 @@ const ROUTE = 'caps-and-costs/index.html'
 /** The two widths the owner named: a small phone, and the width the site is designed against. */
 export const FIGURE_WIDTHS = [360, 390]
 
+/**
+ * The widths above the breakpoint, where the wide table's own fit has to be in force: 768 px is
+ * the site's breakpoint (48 rem) and therefore the first width the wide layout is meant to hold
+ * at, and 1280 px is a desktop. A block that was deleted, or moved behind a wider query, is
+ * green on every phone width and leaves a window from the breakpoint up with no fit at all.
+ */
+export const WIDE_WIDTHS = [768, 1280]
+
 /** The phone whose content box nothing the figures draw may exceed. */
 const PHONE = 360
 
@@ -80,10 +101,27 @@ const FIGURE_SECTIONS = new Set(['typical-costs', 'costs'])
 const FIGURE = /(^|[^\w-])(table|thead|tbody|tr|th|td|table-scroll)(?![\w-])/
 const TABLE = /(^|[^\w-])table(?![\w-])/
 const HEAD = /(^|[^\w-])thead(?![\w-])/
+const BODY_ROW = /(^|[^\w-])tbody(?![\w-])/
 const ROW = /(^|[^\w-])tr(?![\w-])/
+const HEADER_CELL = /(^|[^\w-])th(?![\w-])/
+const DATA_CELL = /(^|[^\w-])td(?![\w-])/
 const CELL = /(^|[^\w-])(th|td)(?![\w-])/
+const SCROLL = /(^|[^\w-])table-scroll(?![\w-])/
 const BODY = /^body$/
 const MAIN = 'main'
+
+/**
+ * The five elements the stacked layout is made of, each with its own name: the rule below reads
+ * them one at a time, because a selector that names four of the five is a rule that looks like a
+ * stacked table and leaves the fifth laid out as a cell.
+ */
+const STACKED = [
+  [TABLE, 'a table'],
+  [BODY_ROW, 'the body'],
+  [ROW, 'a row'],
+  [HEADER_CELL, 'a header cell'],
+  [DATA_CELL, 'a data cell'],
+]
 
 /** A string with its whitespace flattened, for comparisons across markup. */
 function collapse(text) {
@@ -165,6 +203,69 @@ function moreSpecific(a, b) {
   return false
 }
 
+/**
+ * The pseudo-element a selector part ends in, as the text it is written with, or `null` when it
+ * names none. The label is printed by a pseudo-element's `content`, so this is what tells the
+ * rule that prints a label from every other rule that declares a `content`.
+ *
+ * **A pseudo-class is not a pseudo-element**, and the difference is load-bearing here: `::before`
+ * (which the minifier writes `:before`) is the label's own box, and `:where(table)` — `base.css`'s
+ * own way of setting a table's font size — is the table itself. A reader that took every leading
+ * colon for a pseudo-element would throw away the rule that sets the table's type and read the
+ * figures as though nothing had set their size at all.
+ */
+const PSEUDO_ELEMENTS = new Set(['before', 'after', 'first-line', 'first-letter'])
+
+function pseudoOf(part) {
+  const match = /(::?)([a-z-]+)(\([^)]*\))?$/.exec(part.trim())
+  if (match === null) return null
+  if (match[1] === '::' || PSEUDO_ELEMENTS.has(match[2])) return match[0]
+  return null
+}
+
+/**
+ * Whether a selector part's **subject compound** selects an element of the built page: the part
+ * with its pseudo-element taken off, read against the element's own tag name, classes and
+ * attributes. `true`, `false`, or `null` for a compound this reader cannot evaluate (a selector
+ * with a descendant, an attribute operator it does not know) — and `null` is never a match, so a
+ * rule that cannot be read is a rule that is not credited with printing anything.
+ *
+ * This is the half that a reader of the **declaration** alone cannot see: `content:
+ * attr(data-label)` on `th[data-astro-cid-…]::before` prints the label, and the same declaration
+ * on a scope attribute the build never wrote prints nothing whatever, though the two rules read
+ * the same in the stylesheet. The page's own cells are what the rule is held to, so the answer
+ * comes from the markup the gate is reading.
+ */
+function selectsElement(part, el) {
+  const pseudo = pseudoOf(part)
+  const compound = (pseudo === null ? part : part.trim().slice(0, part.trim().length - pseudo.length)).trim()
+  const shape = /^([a-z][a-z0-9]*)?((?:\.[A-Za-z_][-\w]*|\[[^\]]*\])*)$/.exec(compound)
+  if (shape === null) return null
+  const [, tag, rest] = shape
+  if (tag !== undefined && tag !== el.name) return false
+  const classes = new Set((el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean))
+  for (const token of rest.match(/\.[A-Za-z_][-\w]*|\[[^\]]*\]/g) ?? []) {
+    if (token.startsWith('.')) {
+      if (!classes.has(token.slice(1))) return false
+      continue
+    }
+    const inner = token.slice(1, -1)
+    const equal = /^([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s\]]+))$/.exec(inner)
+    if (equal !== null) {
+      if (el.attrs.get(equal[1]) !== (equal[2] ?? equal[3] ?? equal[4])) return false
+      continue
+    }
+    if (/^[\w-]+$/.test(inner)) {
+      if (!el.attrs.has(inner)) return false
+      continue
+    }
+    // An operator this reader does not evaluate: the compound is not a match, and the failure
+    // it produces says so rather than crediting the rule with a selector nobody read.
+    return null
+  }
+  return true
+}
+
 /** The tokens a stylesheet declares, as `name -> px`. */
 function lengthTokens(css) {
   const out = new Map()
@@ -223,6 +324,10 @@ export function figureLayoutFailures(css, html) {
     return out
   }
 
+  // Every cell the figures tables render, with where it is: the label check below holds each of
+  // them to the rule that prints it, and a cell nothing prints on is a figure with no name.
+  const EVERY_CELL = []
+
   tables.forEach(({ id, table }, index) => {
     const where = `figures table ${index + 1} (#${id})`
     const head = find(table, 'thead')
@@ -245,6 +350,7 @@ export function figureLayoutFailures(css, html) {
       }
       cells.forEach((cell, column) => {
         const label = cell.attrs.get('data-label')
+        EVERY_CELL.push({ el: cell, where: `${where} row ${at + 1}`, column: columns[column] ?? `column ${column + 1}` })
         if (label === undefined || collapse(label) === '') {
           fail(
             `${where} row ${at + 1} carries no label on the cell for ${JSON.stringify(columns[column])}: below the site's breakpoint the figures are labelled lines, and a cell with no \`data-label\` reads as a figure under nothing (the owner's feedback of 2026-10-19)`,
@@ -267,6 +373,11 @@ export function figureLayoutFailures(css, html) {
    * The value a property has on the elements a test names, at a viewport width: the last of the
    * rules in force whose parts match, the most specific of them winning, `undefined` when no
    * rule states it.
+   *
+   * A part that names a **pseudo-element** is not read here: `th::before { display: block }` is a
+   * declaration about the label printed on a cell and not about the cell, and crediting it to the
+   * cell is how a rule that stacks four elements instead of five reads as one that stacks all
+   * five — the label rule declares `display: block` for exactly that reason.
    */
   const declared = (width, test, property) => {
     let best = null
@@ -276,6 +387,7 @@ export function figureLayoutFailures(css, html) {
       if (value === undefined) continue
       let ratio = null
       for (const part of splitTop(rule.selector, ',')) {
+        if (pseudoOf(part) !== null) continue
         if (!test.test(part)) continue
         const reading = specificityOf(part)
         if (ratio === null || moreSpecific(reading, ratio)) ratio = reading
@@ -287,19 +399,28 @@ export function figureLayoutFailures(css, html) {
   }
 
   /**
-   * What a cell's `::before` prints at a width, or `undefined` when no rule prints one. It is
-   * read apart from `declared` because it is a pseudo-element's declaration: the rule that
-   * carries it is matched by the cell's own part **and** by the `::before` on it.
+   * The rules in force at a width that print a label on a cell's `::before`, as
+   * `{ selector, content, prints }`: the part of the selector list that carries the declaration,
+   * what it declares, and whether what it declares is the cell's own `data-label`.
+   *
+   * It is read apart from `declared` because it is a pseudo-element's declaration, and it is what
+   * the refusals below hold to **the page's own cells**: a rule that declares `content:
+   * attr(data-label)` on a selector that matches no cell on the page is a rule that prints
+   * nothing, and reading the declaration alone cannot tell it from the rule that works.
    */
-  const labelContent = (width) => {
-    let value
+  const printingRules = (width) => {
+    const out = []
     for (const rule of rules) {
       if (!inForce(rule, width)) continue
       const content = new Map(cssDeclarations(rule.body)).get('content')
       if (content === undefined) continue
-      if (splitTop(rule.selector, ',').some((part) => CELL.test(part) && /::?before/.test(part))) value = content
+      for (const part of splitTop(rule.selector, ',')) {
+        if (!/^::?before$/.test(pseudoOf(part) ?? '')) continue
+        if (!EVERY_CELL.some(({ el }) => selectsElement(part, el) === true)) continue
+        out.push({ selector: part, content, prints: /^attr\(\s*data-label\s*\)$/.test(content.trim()) })
+      }
     }
-    return value
+    return out
   }
 
   // The phone's content box: the viewport less the gutter `main` gives the page at it, read out
@@ -330,33 +451,39 @@ export function figureLayoutFailures(css, html) {
   for (const width of FIGURE_WIDTHS) {
     const at = `${width} px`
 
-    // The stacking, rule by rule: each of the four is separately enough to leave a reader with a
-    // table where the page says a column of labelled figures.
-    if (declared(width, TABLE, 'display') !== 'block') {
-      fail(
-        `at ${at} the figures are not stacked (no rule in force gives a table \`display: block\`): six columns of figures are about 460 px in a ${phoneBox} px content box, so a table read as a table at ${at} is a sideways scroll or six crushed columns (the owner's feedback of 2026-10-19)`,
-      )
+    // The stacking, one element at a time: a selector that names four of the five is a rule that
+    // looks like a stacked table and leaves the fifth laid out as a cell of the one it replaced.
+    for (const [test, what] of STACKED) {
+      if (declared(width, test, 'display') !== 'block') {
+        fail(
+          `at ${at} ${what} is not \`display: block\`: the figures are one labelled line each at ${at}, and a table, its body, its rows or its cells still laid out as a table is the six-column table this page replaced — a table read as a table at ${at} is a sideways scroll or six crushed columns in a ${phoneBox} px content box (the owner's feedback of 2026-10-19)`,
+        )
+      }
     }
     if (declared(width, HEAD, 'display') !== 'none') {
       fail(
         `at ${at} the head row is still laid out: with every cell a block the names are six unlabelled words above the first row's figures instead of the labels of the cells under them`,
       )
     }
-    for (const [test, what] of [
-      [ROW, 'a row'],
-      [CELL, 'a cell'],
-    ]) {
-      if (declared(width, test, 'display') !== 'block') {
+
+    // The labels: a rule in force that prints the cell's own `data-label`, and **that rule
+    // selects the cells it is meant to label**. The declaration on its own is not the claim — a
+    // rule on a selector that matches no cell on the page prints nothing whatever, and reads
+    // exactly like the rule that works — so every cell the tables render is held to a printing
+    // rule that its own selector reaches.
+    const printing = printingRules(width)
+    const labels = printing.filter((rule) => rule.prints)
+    if (labels.length === 0) {
+      fail(
+        `at ${at} no rule prints the cell's own label on a cell the page renders (\`content: ${printing[0]?.content ?? '(nothing declared on a before-pseudo-element of a cell)'}\`, where \`attr(data-label)\` is the label the markup carries): the labels are in the markup and a reader at ${at} is shown something else, or nothing at all`,
+      )
+    } else {
+      for (const { el, where, column } of EVERY_CELL) {
+        if (labels.some((rule) => selectsElement(rule.selector, el) === true)) continue
         fail(
-          `at ${at} ${what} is not \`display: block\`: the figures are one labelled line each at ${at}, and a row or a cell still laid out as a table cell is a column of the table this page replaced`,
+          `at ${at} no rule prints a label on the ${el.name} of ${where} for ${JSON.stringify(column)}: the rules in force that declare \`content: attr(data-label)\` are ${labels.map((rule) => JSON.stringify(rule.selector)).join(', ')}, and this check cannot show any of them selecting that cell — a label rule whose selector reaches no cell prints nothing at ${at}, which is the defect this gate exists for`,
         )
       }
-    }
-    const content = labelContent(width)
-    if (!/^attr\(\s*data-label\s*\)$/.test((content ?? '').trim())) {
-      fail(
-        `at ${at} no rule prints the cell's own label (\`content: ${content ?? '(nothing declared)'}\` on a cell's \`::before\`, where \`attr(data-label)\` is the label the markup carries): the labels are in the markup and a reader at ${at} is shown something else, or nothing at all`,
-      )
     }
 
     // Nothing at a phone's width may hold a figure on one line, put it in a box that scrolls
@@ -409,6 +536,32 @@ export function figureLayoutFailures(css, html) {
           `at ${at} the figures are set at ${Math.round(px)} px where the body is ${Math.round(bodyPx)} px: \`base.css\` sets every \`table\` at the table's smaller type (\`--font-size-sm\`), which is a table's own size for six columns and not a phone's one figure under its name (the owner's feedback of 2026-10-19)`,
         )
       }
+    }
+  }
+
+  // ---- above the breakpoint: the wide table's own fit is there ---------------------------
+  //
+  // The two declarations the phone layout moved out of the base rules have to be in force again
+  // somewhere above the site's breakpoint, and this is the half a gate over phone widths alone
+  // cannot see: a block that was deleted, or moved behind a wider query, passes every phone rule
+  // above and leaves a window from the breakpoint up in which six columns of figures wrap
+  // mid-number with no box to scroll them in — the defect the owner read, one breakpoint along.
+  // 768 px (48 rem) is the site's own breakpoint and therefore the first width the wide layout is
+  // meant to hold at; 1280 px is a desktop.
+
+  for (const width of WIDE_WIDTHS) {
+    const at = `${width} px`
+    const box = declared(width, SCROLL, 'overflow-x')
+    if (!/^(auto|scroll)$/.test((box ?? '').trim())) {
+      fail(
+        `at ${at} the box the figures tables are wrapped in does not scroll sideways (\`overflow-x: ${box ?? '(nothing declared)'}\` on \`.table-scroll\`): above the site's breakpoint six columns of nowrap figures are wider than a narrow desktop, and with no scroll box they widen the document instead — the phone layout is what makes them fit below the breakpoint, and above it this box is what does (the owner's feedback of 2026-10-19, and the wide layout's own fit)`,
+      )
+    }
+    const wrap = declared(width, FIGURE, 'white-space')
+    if ((wrap ?? '').trim() !== 'nowrap') {
+      fail(
+        `at ${at} the figures are not held on their own lines (\`white-space: ${wrap ?? '(nothing declared)'}\` where the wide layout writes \`nowrap\`): a figure that breaks mid-number is a figure a reader cannot read, and this is the fit the phone layout turned off below the breakpoint and the page owes again above it`,
+      )
     }
   }
 
@@ -540,16 +693,25 @@ test('every figures refusal fires on the defect it names', () => {
     ['a cell with an empty label', plant(/data-label="Runs"/, 'data-label=" "'), /no label on the cell for "Runs"/],
     ['a row the head has no column for', plant(/<td data-label="Worst"[^>]*>[^<]*<\/td>/, ''), /carries 5 cell\(s\) where its head names 6 columns/],
     // The phone's layout, one declaration at a time.
-    ['no phone breakpoint at all', plant(/\(width<=47\.98rem\)/, '(width<=9.98rem)', 'css'), /the figures are not stacked/],
+    ['no phone breakpoint at all', plant(/\(width<=47\.98rem\)/, '(width<=9.98rem)', 'css'), /a table is not `display: block`/],
     ['a head row left in the layout', plant(/thead\[[^\]]*\]\{display:none\}/, '', 'css'), /the head row is still laid out/],
+    ['the table body left out of the stacking rule', plant(/,tbody\[[^\]]*\]/, '', 'css'), /the body is not `display: block`/],
+    ['the header cells left out of the stacking rule', plant(/,th\[[^\]]*\](?=,td\[[^\]]*\]\{display:block\})/, '', 'css'), /a header cell is not `display: block`/],
+    ['the data cells left out of the stacking rule', plant(/,td\[[^\]]*\](?=\{display:block\})/, '', 'css'), /a data cell is not `display: block`/],
     ['the label rule gone', plant(/th\[[^\]]*\]\[data-label\]:before,td\[[^\]]*\]\[data-label\]:before\{[^}]*\}/, '', 'css'), /no rule prints the cell's own label/],
     ['a label that prints something else', plant(/content:attr\(data-label\)/, 'content:"figure"', 'css'), /no rule prints the cell's own label/],
+    ['a label rule whose selector reaches no cell', plant(/th\[[^\]]*\]\[data-label\]:before/, (part) => part.replace('[data-label]', '[data-astro-cid-0000000000][data-label]'), 'css'), /no rule prints a label on the th of/],
     ['the figures left at the table\'s smaller type', plant(/table\[[^\]]*\]\{font-size:var\(--font-size-base\)\}/, '', 'css'), /where the body is 17 px/],
     // The wide table's own fit, left in force at 360: the defect the owner read.
     ['the wide layout\'s nowrap left in force', plant(/@media \(width<=47\.98rem\)\{/, '#typical-costs td{white-space:nowrap}@media (width<=47.98rem){', 'css'), /holds the figures on one line/],
     ['the wide table\'s scroll box left in force', plant(/@media \(width<=47\.98rem\)\{/, '.table-scroll{overflow-x:auto}@media (width<=47.98rem){', 'css'), /is a box that scrolls sideways/],
     ['a fixed width on the cells', plant(/th\[[^\]]*\],td\[[^\]]*\]\{border-bottom:none;padding:0\}/, (rule) => rule.replace('padding:0}', 'padding:0;width:400px}'), 'css'), /against the 328 px a phone's content box/],
     ['a width this check cannot measure', plant(/th\[[^\]]*\],td\[[^\]]*\]\{border-bottom:none;padding:0\}/, (rule) => rule.replace('padding:0}', 'padding:0;width:calc(20rem + 1px)}'), 'css'), /not a length this check can turn into pixels/],
+    // And the same fit above the breakpoint, which is the half a gate over phone widths alone
+    // cannot see: gone, or moved behind a wider query, it leaves the window from 768 px up.
+    ['the wide layout\'s block deleted', plant(/@media \(width>=48rem\)\{[^}]*\{[^}]*\}[^}]*\{[^}]*\}\}/, '', 'css'), /does not scroll sideways/],
+    ['the wide layout\'s block moved behind a wider query', plant(/\(width>=48rem\)/, '(width>=60rem)', 'css'), /does not scroll sideways/],
+    ['the nowrap figures deleted from it', plant(/white-space:nowrap/, 'white-space:normal', 'css'), /are not held on their own lines/],
   ]
   for (const [what, page, expected] of cases) {
     const failures = figureLayoutFailures(page.css, page.html)
