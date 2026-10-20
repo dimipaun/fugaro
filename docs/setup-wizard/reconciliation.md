@@ -79,8 +79,8 @@ The flag's usage text today (`internal/cli/init.go`, `f.StringVar(&o.firebase,
 **C3. The count of "places that name `fugaro init`" is the real estimate.** In
 Go: 410 non-test lines and 378 test lines, across 107 non-test files, including
 7 `selfCommand() + " init"` sites. In markdown: 111 files outside this folder
-(115 with it — `docs/setup-wizard/` names the command 71 times and is exempt,
-§3 F20), 158 mentions in
+(115 with it — `docs/setup-wizard/` names the command **75 times across its four
+documents** and is exempt, §3 F20), 158 mentions in
 `docs/gcp-live-checklist.md` alone and 113 in `docs/gcp-setup.md`. Plus 29
 Terraform files whose variable `description`s name the command, and
 `website/content/cli-reference.md` (generated) and `website/data/install.yaml`
@@ -435,9 +435,10 @@ judgement: (a) **live user-facing text is renamed** — everything a user or an
 agent reads today, including skill files, Terraform descriptions and the
 generated CLI reference; (b) **dated records are not rewritten** —
 `docs/plans/**`, `docs/releases/v*`, `docs/design/**` describing a shipped
-state, `docs/credentials-service/**` and `docs/setup-wizard/**` itself — both
-are another plan's record, and this folder's own prose cannot stop naming the
-command it is about without ceasing to be a record of it. This
+state, `docs/credentials-service/**`, `docs/website/**` and
+`docs/setup-wizard/**` itself — the first two are another artifact's plan
+record, and this folder's own prose cannot stop naming the command it is about
+without ceasing to be a record of it. This
 follows the tree's own precedent: `plugin/readme_test.go`'s
 `TestReadmeNamesNoRetiredSkill` carries a `skip` regex over
 `docs/plans/`, `docs/design/m11-` and the spec-source precisely because a
@@ -545,8 +546,11 @@ from, with the counts that decide the ordering of the work.
 `docs/mobile/`, `docs/in-job-review/`, `plugin/skills/setup/SKILL.md` and
 `plugin/skills/setup/reference/*`, `.claude/skills/new-release/SKILL.md`.
 Dated (left alone): `docs/plans/**`, `docs/releases/v*`,
-`docs/design/**`, `docs/credentials-service/**`, `docs/setup-wizard/**` (this
-folder: 71 mentions, and its prose is *about* the retirement).
+`docs/design/**`, `docs/credentials-service/**`, `docs/website/**` (another
+artifact's plan record — 3 mentions between `implementation-plan.md` and
+`reconciliation.md`; `docs/website/redesign/**` names the command zero times) and
+`docs/setup-wizard/**` (this folder: 75 occurrences over four documents, and its
+prose is *about* the retirement).
 
 **Terraform — 29 files.** Variable and output `description`s saying what `fugaro
 init` writes, e.g. `deploy/terraform/gcp/modules/repo/variables.tf` ("Every name
@@ -732,9 +736,10 @@ unrelated words for the same moment.
 user-facing strings, skill files, README, the live `docs/` guides, generated
 website content, Terraform descriptions. Left alone: `docs/plans/**`,
 `docs/releases/v*`, `docs/design/**` describing shipped state,
-`docs/credentials-service/**`, and **this whole folder** — its spec.md is the
-owner's words, and its reconciliation and plan cannot describe a rename without
-naming what is renamed. This is the tree's own precedent, in
+`docs/credentials-service/**`, `docs/website/**`, and **this whole folder** —
+its spec.md is the owner's words, and its reconciliation and plan cannot
+describe a rename without naming what is renamed. The six roots are the plan's
+one `datedRecords` constant, written in W0.2. This is the tree's own precedent, in
 `TestReadmeNamesNoRetiredSkill`'s `skip` regex, and it is the only way a
 ~790-line rename stays reviewable. The plan adds one **new** guard test that
 asserts the split explicitly, so the line is enforced and not merely intended.
@@ -783,6 +788,36 @@ scope here.
 today) and make the wizard adopt-only unless told otherwise. Cost: the brief's
 own example command has to keep its flag, and the first-time user — who has no
 project to adopt — is refused by the wizard that exists to set them up.
+
+### D12 — Is `update --yes` as non-interactive as the brief's "non-interactive friendly" sounds (F7, F16)?
+
+**This decision was opened by the review of this plan, not by the brief.** The
+brief says `fugaro update` is the re-converge "after a CLI upgrade", and calls
+it "non-interactive friendly"; the plan's first draft read that as *`--yes`
+applies everything `update` owns with no typed confirmation* — which
+`internal/initflow/stage.go` contradicts. `runCovered` covers the ordinary steps
+of Installation, Firebase, Images, Installation2 and Repository, and its own
+comment says that **within** those stages the Firestore database's location, a
+**Cloud Build**, replacing a registry tag and onboarding an unlisted repository
+**stay `Typed`**. A Cloud Build is billable and the Firestore location is
+permanent, so `update --yes` can legitimately stop on an upgrade that has to
+rebuild an image — and W0.1's matrix pins that no row may be relaxed.
+
+**Recommend: keep `update`'s confirmations identical to `setup`'s.** Same five
+covered stages, same four Typed steps, nothing relaxed for the re-converge. The
+cost is that "non-interactive friendly" means *"no question that the run does
+not already have to ask"*: a CI job that upgrades the CLI and rebuilds an image
+with no terminal gets `needs-you` and exit code 1 (the loop's existing "left for
+you"), not a silent build. That is the honest reading, it needs no code change
+to `runCovered`, and it keeps one matrix for both front doors.
+
+*Alternative:* give `update` a way to cover the billable and permanent steps
+non-interactively — a `--rebuild` or `--accept-billable` flag, or refusing those
+stages under `--yes` and exiting 1 with the reason. Cost: a second confirmation
+class to reason about, a new row of W0.1's matrix that no longer holds for
+`setup`, and a flag whose whole purpose is to skip a confirmation — which is the
+one kind of change `SECURITY.md` and F8/F9 are meant to make hard. It is the
+owner's call, and until it is made no task relaxes a row.
 
 ---
 

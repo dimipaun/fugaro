@@ -11,7 +11,7 @@ and rename the retired word everywhere a user or an agent reads it today.
 Where the reconciliation and the brief disagree, **the reconciliation wins**.
 
 **Status: plan only; nothing is implemented; decisions open.** Not one line of
-any task below has been written or run. **D1–D11 in
+any task below has been written or run. **D1–D12 in
 [reconciliation.md](reconciliation.md) §5 are open**: every one carries a
 recommendation and none is taken. Answering a decision is not approving a task.
 The gate at the end of this file is **not passed**.
@@ -27,7 +27,7 @@ are named throughout and are the plan's best verification target:
 and `internal/cli/testdata/init_retire.golden` (`-update-retire`).
 
 **Spec.** [spec.md](spec.md) (verbatim). **Reconciliation.** [reconciliation.md](reconciliation.md)
-— C1–C3, F1–F24, D1–D11, O1–O5, the UNVERIFIED table. **Index.** [README.md](README.md).
+— C1–C3, F1–F24, D1–D12, O1–O5, the UNVERIFIED table. **Index.** [README.md](README.md).
 
 **Related.** [gcp-setup.md](../gcp-setup.md) · [gcp-live-checklist.md](../gcp-live-checklist.md)
 (Checks 27 and 111) · [m11-setup-and-skills.md](../design/m11-setup-and-skills.md) ·
@@ -46,11 +46,11 @@ and `internal/cli/testdata/init_retire.golden` (`-update-retire`).
   default is used. Nothing about `fugaro-runs-<gcp-project>`,
   `fugaro-tfstate-<gcp-project>` or the managed fact's path moves.
 - **No historical rewrite.** `docs/plans/**`, `docs/releases/v*`,
-  `docs/design/**` describing shipped state, `docs/credentials-service/**` and
-  **`docs/setup-wizard/**` itself** keep the old name (D9, F20). The rename's
-  guard test enforces the line, and this folder is on the exempt side of it:
-  these three documents are where the retirement is described, so they name
-  the retired command 71 times by necessity.
+  `docs/design/**` describing shipped state, `docs/credentials-service/**`,
+  `docs/website/**` and **`docs/setup-wizard/**` itself** keep the old name
+  (D9, F20). The rename's guard test enforces the line, and this folder is on
+  the exempt side of it: its four documents are where the retirement is
+  described, so they name the retired command **75 times** by necessity.
 - **No fourth verb** (O1): `setup`, `update`, `upgrade`, the hidden `init`
   tombstone, and `fugaro config init` left alone.
 - **No `fugaro upgrade` change beyond its text.** D1 (recommended) keeps the two
@@ -87,7 +87,7 @@ and `internal/cli/testdata/init_retire.golden` (`-update-retire`).
 
 | Slice | What it is | Tasks | Mergeable alone? | When |
 |---|---|---|---|---|
-| **0 — Verify first** | The refusal matrix and the rename census pinned as tests; Checks 27 and 111 written | W0.1–W0.3 | Yes — two new test files and one document | Now, on the owner's go |
+| **0 — Verify first** | The refusal matrix and the rename census pinned as tests; Checks 27 and 111 written | W0.1–W0.3 | Yes — two new test files and one document | W0.1 and W0.2 now, on the owner's go; W0.3 as soon as **D10** is answered |
 | **1 — The two front doors** | `initflow` stops naming a command; `setup` and `update` registered; `init` a tombstone; `restore` repointed; `setup` is the wizard | W1.1–W1.3 | Yes — the CLI keeps converging; the old name still resolves to the tombstone | After Slice 0 |
 | **2 — The rename** | The retired word out of every live string, document, skill, Terraform description, generated file and pinned test; the census emptied | W2.1–W2.7 | Yes, in the order given — a partial rename is a failing docs pin, which is the intent | After W1.2 (W2.5 can start at any time) |
 | **3 — The wizard's questions** | The id default, the region kept apart from the Firestore location, `--firebase-project`, the first-repository question, and the two-phase input | W3.1–W3.5 | Yes — each leaves a working wizard with one more question answered | After Slice 1 |
@@ -161,10 +161,13 @@ rewritten stays the same number and is not reused elsewhere.
 10. **One file, one writer per level.** The levels below are disjoint by file;
     `internal/cli` is one lane, which is why the table looks thin.
 11. **The dated records are read-only** (D9): `docs/plans/**`,
-    `docs/releases/v*`, `docs/design/**`, `docs/credentials-service/**` and
-    **this whole folder, `docs/setup-wizard/**`** — never edited by a rename
-    task. Its prose is *about* the retirement and cannot stop naming the
-    retired command; W0.2's census exempts it for that reason.
+    `docs/releases/v*`, `docs/design/**`, `docs/credentials-service/**`,
+    `docs/website/**` and **this whole folder, `docs/setup-wizard/**`** — never
+    edited by a rename task. These six are exactly W0.2's `datedRecords`
+    constant, and the two plan folders on the list (`docs/website/`,
+    `docs/credentials-service/`) are another plan's record, while
+    `docs/setup-wizard/`'s prose is *about* the retirement and cannot stop
+    naming the retired command.
 
 ---
 
@@ -176,13 +179,14 @@ rewritten stays the same number and is not reused elsewhere.
    files outside `docs/`; this pull request does not.)
 2. **No task is approved.** Each starts on the owner's explicit go for that task
    or a named group.
-3. **Slices 1–5 wait for the D-rows they depend on**, and the
+3. **Slices 1–5 wait for the D-rows they depend on** — D12 was opened by this
+   plan's own review and is the newest of them — and the
    "Decisions → tasks" table below is this map in full: W1.2 on **D2** (the
    tombstone's text, and whether there is an alias at all) and W1.3 on **D11**
    (does `setup` create by default?); W3.1 and W3.2 on **D4**, W3.3 on **D7**,
    W3.4 on **D5**; W4.1, W4.3 and W4.5 on **D6**, W4.4 on **D3**; W5.1 on
-   **D1** and **D5**; W2.3 on **D8**; W0.2 and W2.6 on **D9**; W0.3, W6.1 and
-   W6.2 on **D10**. W3.5 waits on **F12** rather than on a decision.
+   **D1**, **D5** and **D12**; W2.3 on **D8**; W0.2 and W2.6 on **D9**; W0.3,
+   W6.1 and W6.2 on **D10**. W3.5 waits on **F12** rather than on a decision.
 4. **The wizard never softens a confirmation.** `--yes`, `--non-interactive`,
    `--json`, a pipe and an agent session behave exactly as
    `internal/initflow`'s `YesCovers`/`CanConfirm` say today; W0.1's matrix is the
@@ -193,7 +197,9 @@ rewritten stays the same number and is not reused elsewhere.
 6. **`fugaro config init` stays.** W1.2 does not rename it, and the tombstone
    must not shadow it (F21); `TestDocsCheckoutCommandsExist` resolves both.
 7. **The dated records keep the old name** (Convention 11), and W2.6's guard
-   test fails if the exemption list is wrong in either direction.
+   test fails if the exemption list is wrong in either direction: `datedRecords`
+   is **one** constant, written in W0.2 and referenced — never restated — by
+   every other task, because two copies of the list are two lists that drift.
 8. **The billing picker runs only where `canType()` says yes.** Under `--json`,
    `--non-interactive`, no TTY or an agent session the run uses today's
    `guided()` line and lists nothing (D6, W4.3).
@@ -209,12 +215,18 @@ A reviewer of **this pull request** (docs only) should check:
 - That no task takes a decision: the D-row each slice waits on is named in
   Global Constraint 3 and repeated in the task's own entry.
 - That the rename's line is enforceable (W2.6's guard test fails in both
-  directions), and that the exemption list matches D9's answer.
+  directions), that `datedRecords` is stated in exactly **one** place (W0.2),
+  and that the six roots it names match D9's answer — in particular that
+  `docs/website/` is on the list and `docs/website/redesign/**`, which names
+  the command zero times, is not.
 - That Check 27's rewrite and Check 111 are the owner's to run, are sandbox
   only, never touch `belong`, and follow the register's form.
-- That the levels contain no two writers of one file, that every "Depends on"
-  line is an edge below and every edge is a "Depends on" line, and that the
-  critical path is the one named.
+- That the levels contain no two writers of one file — check it against **`### The
+  file lanes`**, which lists every file with more than one writer and its
+  writers in level order; that every "Depends on" line is an edge below and
+  every edge is a "Depends on" line (the lanes are deliberately *not* edges, and
+  are listed separately for that reason); and that the critical path is the one
+  named.
 - That the refusals of F7/F8/F9 in the reconciliation have no task that
   weakens them.
 
@@ -237,6 +249,7 @@ A reviewer of a **task** reads its own "Reviewer" line.
 | D9 (the rename's line) | W0.2, W2.6 |
 | D10 (Check 27, 111) | W0.3, W6.1, W6.2 |
 | D11 (create by default?) | W1.3 |
+| D12 (`update --yes`'s confirmations) | W5.1, and W0.1's matrix row for `update` |
 | F12 (two phases) | W3.5 |
 | F16 (`update`'s refusals) | W5.1 |
 | F21 (`fugaro config init`) | W1.2, Global Constraint 6 |
@@ -251,7 +264,7 @@ A reviewer of a **task** reads its own "Reviewer" line.
 
 | Path | Task | What it is |
 |---|---|---|
-| `internal/cli/setup_refusals_test.go` (**new**) | W0.1 | The refusal matrix both front doors must pass |
+| `internal/cli/setup_refusals_test.go` (**new**) | W0.1 (W5.1 adds `update`'s column) | The refusal matrix both front doors must pass |
 | `internal/cli/docs_live_init_census_test.go` (**new**) | W0.2 (emptied by W2.6) | The live-name census and its frozen, shrinking list |
 | `internal/cli/setup.go` (**new**) | W1.2 | The `setup` command: `Use`, `Short`, `Long`, the flag set, the run |
 | `internal/cli/update.go` (**new**) | W1.2 | The `update` command, its stage set and its refusals |
@@ -289,10 +302,15 @@ A reviewer of a **task** reads its own "Reviewer" line.
 
 ### The edges
 
-Every line is exactly one task's "Depends on" line below, and nothing else.
+Every line here is exactly one task's "Depends on" line below, and nothing else.
+A task that also waits on a **decision** shows it in parentheses; the D-row each
+one waits on is in Global Constraint 3, and a D-row is not a task and never
+appears on the left of an arrow. A parenthesised D-row is the one the task
+*waits* on; where a D-row instead gates a merge (W4.1 under D6), the task's own
+"Depends on" line says so and it is not a wait.
 
 ```
-W0.1 ← nothing     W0.2 ← nothing     W0.3 ← nothing     W1.1 ← nothing
+W0.1 ← nothing     W0.2 ← nothing     W0.3 ← nothing (D10)   W1.1 ← nothing
 W4.1 ← nothing     W4.2 ← W4.1        W2.5 ← nothing
 
 W1.2 ← W1.1
@@ -321,19 +339,20 @@ W6.2 ← W4.4, W4.5 (owner; plus a release)
 | **L4** | W3.1 the id default · W3.3 `--firebase-project` · W2.4 the website and the generated reference | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init,init_firebase,init_project}.go` · `website/**` |
 | **L5** | W3.2 the region and the Firestore location · W3.4 the first-repository question · W2.6 the census emptied and the tail | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init_repo_gate,init_repo_target,setup}.go` · `internal/config/{example.yaml,example.go}`, `schemas/`, `images/verify-public.sh`, `docs/gcp-live-checklist.md`, `docs_live_init_census_test.go` |
 | **L6** | W3.5 the two-phase wizard stage | opus | `internal/cli/wizard_stage.go`, `init_inputs.go` |
-| **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | opus | `internal/cli/{update,init_stages,init}.go`, `docs/gcp-setup.md` (its `update` section) |
+| **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | opus | `internal/cli/{update,init_stages,init}.go`, `internal/cli/setup_refusals_test.go`, `docs/gcp-setup.md` (its `update` section) |
 | **L8** | W5.2 the e2e tests, renamed | standard | `internal/e2e/init_test.go` → `update_test.go` |
 | **L9** | W4.3 the picker prompt | **opus + mandatory** | `internal/cli/billing_prompt.go`, `init_project.go`, `init_inputs.go` |
 | **L10** | W4.4 the API-enable refusal · W4.5 the comments that become false | **opus + mandatory** · standard | `internal/cli/billing_prompt.go`, `internal/preflight/google.go` · `internal/cli/init_project.go`, `internal/infra/projectcreate.go` |
 | **L11** | W2.7 the pure file rename | standard | the `internal/cli/init*.go` → `install*.go` move only |
 | **L12** | W6.1 Check 27 · W6.2 Check 111 | owner · owner | none (the owner records the FACT lines) |
 
-**Widest levels: L0 (five) and L5 (three).** No two tasks in a level write one
-file. The thinness is the honest shape of this work: **`internal/cli` is one
-lane**, so the tasks that reshape the wizard follow one another by file even
-where they do not depend on each other logically.
+**Widest levels: L0 (five) and L5 (three).** The levels obey one rule, and it is
+the one a reviewer can check mechanically: **no task sits at or below the level
+of another task it shares a file with.** That is what "no two writers of one
+file in a level" means, and it is a *lower bound* — a task may sit later than
+its edges and lanes require.
 
-**W2.7 has a level to itself (L11), and that is not cosmetic.** Its edge,
+**W2.7 has a level to itself (L11), and that is exactly that rule.** Its edge,
 `W2.7 ← W2.6`, puts it at L6 alongside W3.5, and W3.5 *edits*
 `internal/cli/init_inputs.go` while W2.7 *renames* it — two writers of one file
 in one level, which Convention 10 forbids. The rename wants to be last anyway
@@ -342,12 +361,52 @@ every behaviour and every edit to an `init*.go` file has landed, and the two
 owner-run checks move to L12 behind it — which is where their other edge,
 `W6.1 ← W2.7`, already asked them to be.
 
+### The file lanes
+
+The edges above are **not** the only ordering, and the levels are not derivable
+from them alone. `internal/cli` is one lane: several tasks touch one file
+without depending on each other, and the file forces the order. Each chain
+below is one file, in level order, with the level in brackets; a task appears
+once per file it writes.
+
+```
+internal/cli/init_inputs.go        W3.1 (L4) → W3.2 (L5) → W3.5 (L6) → W4.3 (L9)
+internal/cli/init_project.go       W1.3 (L3) → W3.3 (L4) → W4.3 (L9) → W4.5 (L10)
+internal/cli/init.go               W1.2 (L1) → W2.1 (L2) → W3.3 (L4) → W5.1 (L7)
+internal/cli/init_stages.go        W1.2 (L1) → W1.3 (L3) → W5.1 (L7)
+internal/cli/setup.go              W1.2 (L1) → W1.3 (L3) → W3.4 (L5)
+internal/cli/update.go             W1.2 (L1) → W5.1 (L7)
+internal/cli/billing_prompt.go     W4.3 (L9) → W4.4 (L10)
+testdata/*.golden                  W1.2 (L1) → W2.1 (L2)
+docs/gcp-live-checklist.md         W0.3 (L0) → W2.6 (L5)
+docs_live_init_census_test.go      W0.2 (L0) → W2.6 (L5)
+setup_refusals_test.go             W0.1 (L0) → W5.1 (L7)
+docs/gcp-setup.md                  W2.3 (L3) → W5.1 (L7)
+
+every internal/cli/*.go            ← W1.2 (L1) · W2.1 (L2) · W1.3 and later (L3+)
+```
+
+W2.1's line is a **sweep**, not a single file: it rewrites every
+`internal/cli/*.go` that names the command, so it sits between W1.2 (L1) and
+the first task after it (W1.3, L3) on every chain it touches — including the
+ones where it is not the task that changes the behaviour.
+
+Every file written by more than one task is on this list, and no chain goes
+backwards. Three consequences a reviewer should spot: **W3.2 is at L5 because
+W3.1 writes `init_inputs.go` at L4**, not because of an edge (its only edge is
+`← W1.3`); **W3.4 is at L5** for the same reason via `setup.go`; and **W2.7 has
+a level to itself at L11**, after the last writer of any `init*.go` file. The
+thinness is the honest shape of this work — `internal/cli` is one lane, so the
+tasks that reshape the wizard follow one another by file even where they do not
+depend on each other logically.
+
 ### The critical path
 
 **W1.1 → W1.2 → W1.3 → W3.1 → W3.2 → W3.5 → W4.3 → W4.4 → W6.2 (owner)** —
 nine steps, the last owner-run. That is the billing leg, not the rename leg:
-W3.1 and W3.2 both write `internal/cli/init_inputs.go`, so they are sequential
-by file. The rename leg is shorter — W1.2 → W2.1 → W2.3 → W2.6 → W2.7 → W6.1 —
+**W3.1 → W3.2 is the `internal/cli/init_inputs.go` lane, not an edge** — the
+edges give `W3.2 ← W1.3` only — and W3.1 and W3.2 are sequential because they
+write one file, not because either waits on the other. The rename leg is shorter — W1.2 → W2.1 → W2.3 → W2.6 → W2.7 → W6.1 —
 and W2.5 (Terraform) is free to start at once, since it depends on nothing.
 Two things shorten the rest: W4.1 (the billing client) depends on nothing and
 can be built while the wizard is still being reshaped, and the owner-run checks
@@ -374,12 +433,18 @@ or owner-built binary.
    nothing else writes an `init*.go` file (L11, after L10).
 8. **W4.3 before W4.4 and W4.5.** The refusal and the corrected comments are
    about code that must exist first.
-
----
+9. **Every file lane, not only the edges above** (`### The file lanes`). Four
+   orderings here are *file* ordering and have no edge behind them: **W3.1
+   before W3.2** (`init_inputs.go`), **W1.3 before W3.4** (`setup.go`), **W2.3
+   before W5.1** (`docs/gcp-setup.md`) and **W1.2/W2.1 before W3.3/W5.1**
+   (`init.go`). A task that renames a file (W2.7) waits for every writer of it,
+   which is why its level is last.
 
 ## Slice 0 — Verify first
 
-*Safe to start at once; touches two new test files and one document.*
+*W0.1 and W0.2 are safe to start at once — two new test files, neither waiting
+on a decision. W0.3 writes the checks' text, which is **D10's recommendation**,
+so it waits for D10 to be answered.*
 
 ### Task W0.1: The refusal matrix, pinned — test
 
@@ -412,10 +477,18 @@ roots, `plugin/`, `.claude/`, `website/`, `schemas/`, `scripts/`, `internal/`,
 and asserts that set equals a checked-in `pendingRename` list plus the
 `datedRecords` list. A new occurrence fails (the set grew); a renamed file that
 was not removed from `pendingRename` fails (the set shrank). The
-`datedRecords` list is `docs/plans/`, `docs/releases/v`, `docs/design/`,
-`docs/credentials-service/` and **`docs/setup-wizard/` itself** — matching
+`datedRecords` list is **the six dated roots, and it is stated once, here**:
+`docs/plans/`, `docs/releases/v`, `docs/design/`, `docs/credentials-service/`,
+`docs/website/` and **`docs/setup-wizard/` itself** — matching
 `plugin/readme_test.go`'s `TestReadmeNamesNoRetiredSkill` `skip` regex in
-spirit. The handful of *generated* files (`website/content/cli-reference.md`,
+spirit. Every other task that mentions the exemption list repeats this one
+verbatim rather than paraphrasing it, because a second copy is a second list
+that can disagree: `docs/website/` is a whole second artifact's record
+(`docs/website/README.md`, decisions D90–D109, dated 2026-10-16) and its
+`reconciliation.md` and `implementation-plan.md` name the command 3 times
+between them, while `docs/website/redesign/**` names it **zero** times — so the
+redesign folder is not the thing to exempt, the folder that holds the plan is.
+The handful of *generated* files (`website/content/cli-reference.md`,
 `website/content/security.md`) are asserted to be in `pendingRename` and are
 removed from it by W2.4, which regenerates them rather than editing them.
 **A second exemption class, `retirementText`, is needed for the flip to be
@@ -450,8 +523,10 @@ reads `0`. Check 111: the five modes, the guided line each prints, and a `FACT:`
 line that nothing was enabled and no account list was printed.
 **Tests.** None (a document). **Red step.** n/a (docs).
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Checklist' -count=1`.
-**Depends on.** Nothing; the checks describe the target state and are **not run**
-until W6.1 and W6.2. **Reviewer.** standard.
+**Depends on.** **D10's answer** — the task *is* D10's recommendation (rewrite
+Check 27 in place, take 111), so writing it takes the decision rather than
+assuming it. It depends on no *other task*; the checks describe the target state
+and are **not run** until W6.1 and W6.2. **Reviewer.** standard.
 **Commit.** `docs(gcp-live-checklist): Check 27 rewritten for fugaro setup, and Check 111 for the billing picker's refusals`
 
 ---
@@ -727,10 +802,16 @@ assertion flips to "`pendingRename` is empty, and `retirementText` is exactly
 the four files whose subject is the retirement"), the leftovers the other rename
 tasks did not own — `docs/gcp-live-checklist.md`'s remaining prose mentions
 (other than Checks 27 and 111, which are W0.3's and already name the new
-commands). Three roots are **exempt and not touched**, D9: `docs/website/
-redesign/**` (a dated record), `docs/credentials-service/**` (another plan's
-record) and `docs/setup-wizard/**` (this folder, 71 mentions — these three
-documents are where the retirement is described).
+commands). The exempt roots are **exactly W0.2's six, no more and no fewer** —
+`docs/plans/`, `docs/releases/v`, `docs/design/`, `docs/credentials-service/`,
+`docs/website/` and `docs/setup-wizard/` — and this task does not restate them
+from memory: the guard's `datedRecords` is one constant, and W0.2 is where it is
+written. `docs/setup-wizard/` is among them because it is where the retirement
+is described (75 occurrences, four documents). `docs/website/redesign/**` is
+**not** on the list, and that is deliberate: it names the command **zero**
+times, and an exemption for a root with no occurrences is exactly the "wrong in
+one direction" Global Constraint 7 forbids. The root that does name it,
+`docs/website/`, is on the list.
 **Tests.** `internal/cli/docs_live_init_census_test.go` — the flip **is** the
 test.
 **Red step.** Flip the assertion first: it fails and prints the files still
@@ -1023,7 +1104,9 @@ to* is never printed — the half of the old rule that survives).
 
 **Files.** `internal/cli/update.go`, `internal/cli/init_stages.go` (the stages
 `update` registers, and the `runCovered` row that says whether `--yes` may
-cover them — the map lives in `internal/initflow/stage.go`), `internal/cli/init.go` (the
+cover them — the map lives in `internal/initflow/stage.go`),
+`internal/cli/setup_refusals_test.go` (W0.1's matrix gains `update`'s column),
+`internal/cli/init.go` (the
 `errNoState` family's wording), `docs/gcp-setup.md` (its `fugaro update`
 section), their tests.
 **What it is (F11, F16, D1, D5).** `update` registers everything `setup` does
@@ -1036,23 +1119,35 @@ repository. Its refusals, each with a test:
 - an unenrolled checkout → not silently enrolled: one line naming `fugaro
   setup`, and exit code 1 (`left for you`), which `Result.ExitCode()` already
   means.
-And its contract: `update` under `--yes` applies **every stage it owns** without
-a typed confirmation, because nothing it does is money, permanent or someone
-else's — that is what "non-interactive friendly" means, and W0.1's matrix gains
-`update`'s column. `update` with neither `--yes` nor a terminal plans only, as
-`initflow.Run` already says.
+And its contract: `update` under `--yes` covers **the ordinary steps of every
+stage it owns** — the same five `internal/initflow/stage.go`'s `runCovered`
+names, `Installation`, `Firebase`, `Images`, `Installation2` and `Repository` —
+and **exactly the same four things stay Typed as in `setup`**, because they are
+money or permanent whatever command asks for them: the Firestore database's
+location, a Cloud Build, replacing a registry tag, and onboarding an unlisted
+repository. `runCovered`'s own comment says so, and `update` does **not** relax
+a row of it: `update --yes` on a checkout whose image must be rebuilt still
+stops and asks (and, with no terminal, answers `needs-you` and exits 1), which
+is the honest reading of "non-interactive friendly" — nothing is money,
+permanent or someone else's *without the confirmation the run already
+requires*. W0.1's matrix gains `update`'s column, and D12 owns the question of
+whether that is the contract the owner wants.
+`update` with neither `--yes` nor a terminal plans only, as `initflow.Run`
+already says.
 **Tests.** `TestUpdateRefusesCreateProjectAndLinkBilling`,
 `TestUpdateWithoutAnInstallationNamesSetup`,
 `TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne`,
-`TestUpdateUnderYesAppliesEveryStageItOwns` (no typed confirmation is asked),
+`TestUpdateUnderYesCoversEveryStageItOwns` (a covered stage applies with no
+typed confirmation; **planting the bug** — relaxing a Typed step to covered —
+must fail it, and it fails W0.1's matrix too),
 `TestUpdateNonInteractiveWithoutYesPlansOnly`,
 `TestUpdateConvergesTwiceAndSaysNoChanges` (the second run's every stage is
 `done`/"No changes", which is Check 27's assertion in miniature),
 `TestUpdateNeverCreatesAnything` (the project-creation client is never reached).
 **Red step.** `TestUpdateRefusesCreateProjectAndLinkBilling` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Update' -count=1 && fugaro verify test`.
-**Depends on.** W1.3, and D1's and D5's answers. **Reviewer.** opus.
-**Commit.** `cli: fugaro update re-converges what exists, refuses to create anything, and needs no typed confirmation`
+**Depends on.** W1.3, and D1's, D5's and **D12**'s answers. **Reviewer.** opus.
+**Commit.** `cli: fugaro update re-converges what exists, refuses to create anything, and keeps the confirmations that are money or permanent`
 
 ### Task W5.2: The e2e tests, renamed for what they test — standard
 
@@ -1163,17 +1258,18 @@ Each needs its own plan amendment and the owner's go.
   critical path is nine steps; a task that touches two of the wizard's files at
   once lengthens it. Stated rather than hidden.
 - **No task here is approved, and the D-rows are open.** Anything built before
-  D1–D11 are answered may have to be undone; the slivers least at risk are
+  D1–D12 are answered may have to be undone; the slivers least at risk are
   W0.1, W0.2, W2.5 and W4.1, which take no decision.
 
 ---
 
 ## OWNER APPROVAL GATE
 
-**Not passed. No task is approved. Nothing is implemented.** D1–D11 in
+**Not passed. No task is approved. Nothing is implemented.** D1–D12 in
 [reconciliation.md](reconciliation.md) §5 are open; each carries a
 recommendation, and answering one is not a go. To start any task the owner names
 it (or a slice) and says go. The tasks that wait on no decision and no other
-task are **W0.1, W0.2, W0.3, W1.1, W2.5 and W4.1** — the two pins, the checks'
-text, the loop's one change, the Terraform descriptions and the billing client.
-Everything else waits on the D-row named in Global Constraint 3.
+task are **W0.1, W0.2, W1.1, W2.5 and W4.1** — the two pins, the loop's one
+change, the Terraform descriptions and the billing client. Everything else
+waits on the D-row named in Global Constraint 3; W0.3 writes the checks' text,
+which *is* D10's recommendation, so it waits on **D10** and on no task.
