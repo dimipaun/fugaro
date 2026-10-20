@@ -579,15 +579,17 @@ func TestLiveCredsRules(t *testing.T) {
 
 	// 4. The markers as the run: a cascade launch reads them with the run's own
 	// identity (C1.19), and neither is a run's to write.
-	runCredsMarker, err := crMarker(ctx, facts, run, rules.PathCredsRulesMarker())
-	if err != nil {
-		t.Errorf("a run's identity could not read %s: %s", rules.PathCredsRulesMarker(), facts.errText(err))
-	}
+	maxResPath := budget.PathLimits + "/maxReserveMicros"
 	maxRes, err := crMaxReserve(ctx, facts, run)
 	if err != nil {
 		t.Fatalf("%s", facts.errText(err))
 	}
-	facts.fact("the run's own identity read %s (=%d, the gate a cascade launch reads) and %s (=%d micro-dollars, the largest lease the counter leaves are bounded by)", rules.PathCredsRulesMarker(), runCredsMarker, "config/limits/maxReserveMicros", maxRes)
+	facts.fact("the run's own identity read %s (=%d micro-dollars, the bound every counter leaf carries)", maxResPath, maxRes)
+	if runCredsMarker, err := crMarker(ctx, facts, run, rules.PathCredsRulesMarker()); err != nil {
+		t.Errorf("a run's identity could not read %s: %s", rules.PathCredsRulesMarker(), facts.errText(err))
+	} else {
+		facts.fact("the run's own identity read %s (=%d, the gate a cascade launch reads before it starts)", rules.PathCredsRulesMarker(), runCredsMarker)
+	}
 
 	// 5. The table, and its own safety invariants, before the first write.
 	cases := crCases(n, maxRes, target.requestedBy)
@@ -735,7 +737,8 @@ func crMaxReserve(ctx context.Context, facts *crFacts, run *rtdb.Client) (int64,
 // once, with budget.Key like every path in this tree, so the table, the seed,
 // the denied reads and the cleanup cannot disagree about a path.
 type crCreds struct {
-	mark1, mark2, mark3, lease, current, roundrobin string
+	mark1, mark2, mark3, lease, roundrobin string
+	currentParent, current                 string // the sticky credential, and the node it lives under
 }
 
 // seeded are the nodes the owner writes, and so the ones a denial is proven
@@ -744,35 +747,42 @@ func (c crCreds) seeded() []string {
 	return []string{c.mark1, c.mark2, c.lease, c.current, c.roundrobin}
 }
 
-// all are every node under /creds the check names, for the reads and for the
-// cleanup.
+// all are every node under /creds the check names, for the reads.
 func (c crCreds) all() []string {
 	return append(c.seeded(), c.mark3)
+}
+
+// cleanup are the nodes the check deletes. It is not all(): the sticky
+// credential itself is named by currentParent instead, because one multi-path
+// update may not name a node and its own descendant, and deleting the parent
+// deletes the child.
+func (c crCreds) cleanup() []string {
+	return []string{c.mark1, c.mark2, c.mark3, c.lease, c.currentParent, c.roundrobin}
 }
 
 func crCredsPaths(n crNames) crCreds {
 	slug, run := budget.Key(n.slug), budget.Key(n.run)
 	return crCreds{
-		mark1:      "creds/marks/" + budget.Key(n.n1),
-		mark2:      "creds/marks/" + budget.Key(n.n2),
-		mark3:      "creds/marks/" + budget.Key(n.n3),
-		lease:      "creds/leases/" + run,
-		current:    "creds/current/" + slug + "/" + run,
-		roundrobin: "creds/roundrobin/" + budget.Key(n.n1),
+		mark1:         "creds/marks/" + budget.Key(n.n1),
+		mark2:         "creds/marks/" + budget.Key(n.n2),
+		mark3:         "creds/marks/" + budget.Key(n.n3),
+		lease:         "creds/leases/" + run,
+		currentParent: "creds/current/" + slug,
+		current:       "creds/current/" + slug + "/" + run,
+		roundrobin:    "creds/roundrobin/" + budget.Key(n.n1),
 	}
 }
 
 // crWritten is every node the check may write, in one list: the cleanup
-// deletes exactly these, and nothing else, whatever happened before it.
+// deletes exactly these, and nothing else, whatever happened before it. No
+// entry here is an ancestor of another, so they go out in one update.
 func crWritten(n crNames) []string {
-	cp := crCredsPaths(n)
 	return append([]string{
 		"agents/" + budget.Key(n.slug),
 		budget.PathRun(n.slug, n.run),
 		budget.PathSpendRepo(n.day, n.slug),
 		budget.PathSpendRun(n.day, n.slug, n.run),
-		"creds/current/" + budget.Key(n.slug), // the parent: every run's sticky credential under it is the check's
-	}, cp.all()...)
+	}, crCredsPaths(n).cleanup()...)
 }
 
 // crSeed writes, as the owner, the nodes a denial has to be proven against.
