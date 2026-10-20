@@ -23,7 +23,9 @@
 //      slider's first panel, so what this file holds to the repository instead is the run the
 //      reader is shown: the watch block, which is the one command the page offers to copy
 //      besides the install command (`fugaro watch`, with the old `fugaro run` example asserted
-//      gone), and the slot for the screenshot, which is asserted to be marked and to hold
+//      gone by `runExampleFailures` over every command block and every word of the built
+//      homepage — the two shapes it came back in), and the slot for the screenshot, which is
+//      asserted to be marked and to hold
 //      **the owner's real capture** (owner spec of 2026-10-18, item 5; PR #622) — the slot's
 //      own hook, a non-empty `alt`, the capture's declared dimensions and a same-origin path,
 //      so the page carries the wordmark and the working terminal and nothing else.
@@ -1225,6 +1227,48 @@ test('the hero offers the console from its call to action only while the flag is
 // conversation left the site with `AgentChat.astro`; what stayed is the pair a reader can
 // act on, so the cases below read the panel the draft puts them in.
 
+/** The old hero example, the transcript item 3 removes from the hero ("Remove `fugaro run`
+ * from the hero example"): the launch line a reader was once meant to type, with the task the
+ * spec's own example asks for. It is read as one string so that the gate and this comment
+ * cannot drift from each other. */
+const RETIRED_EXAMPLE = 'add a --verbose flag to the export command'
+
+/**
+ * The homepage's commands and its words against item 3's one rule: **the command the reader is
+ * offered is `fugaro watch`, and the manual `fugaro run` line is not on the page**.
+ *
+ * The commands are the page's `<pre>` blocks and the words are the page's text, both read over
+ * the whole homepage rather than over a section: the retired hero example came back as a
+ * command block a reader could copy and as a transcript in prose, and a gate that read one
+ * shape would let the other through. It is a fact about the page, which is what makes it
+ * readable here — the case in `copy.mjs` that refuses the word `run` knows about commands the
+ * page *offers* and not about a line the site publishes as prose.
+ *
+ * The two branches are the two ways the example returns, and each has a plant in the case
+ * below: a `<pre>` whose command is a `fugaro run` invocation, and the transcript's own words
+ * anywhere in the page's text. Neither can be seen by the page's byte budget — which only
+ * tells a reader that *something* moved — so this is where the example is held gone.
+ */
+function runExampleFailures(html) {
+  const out = []
+  const commands = [...walk(parse(html))]
+    .filter((el) => el.name === 'pre')
+    .map((el) => text(readableText(el)))
+  for (const command of commands) {
+    if (/^fugaro run\b/.test(command)) {
+      out.push(
+        `the homepage offers ${JSON.stringify(command)} as a command the reader can copy, and a \`fugaro run\` line is the manual path the documentation keeps rather than what the reader types (changes spec 2026-10-18, item 3)`,
+      )
+    }
+  }
+  if (text(html).includes(RETIRED_EXAMPLE)) {
+    out.push(
+      `the homepage still carries the old hero example, the \`fugaro run "${RETIRED_EXAMPLE}"\` transcript (changes spec 2026-10-18, item 3: "Remove \`fugaro run\` from the hero example")`,
+    )
+  }
+  return out
+}
+
 test('the watch block is the command the reader keeps, and it copies itself', () => {
   const page = builtPage('')
   const command = classText(page, 'watch-command')
@@ -1248,6 +1292,44 @@ test('the watch block is the command the reader keeps, and it copies itself', ()
   assert.ok(
     normalize(repoFile('plugin/skills/working/SKILL.md')).includes(normalize(note)),
     `the note under the command, ${JSON.stringify(note)}, is not a line of plugin/skills/working/SKILL.md: the page quotes the skill rather than describing what the screen does (Global Constraint 6)`,
+  )
+})
+
+test('the homepage offers the reader fugaro watch and not the retired fugaro run example', () => {
+  const page = builtPage('')
+  const commands = [...walk(parse(page))].filter((el) => el.name === 'pre').map((el) => text(readableText(el)))
+  assert.ok(
+    commands.includes('fugaro watch'),
+    `the homepage's command blocks are ${JSON.stringify(commands)}, and read off the whole page rather than off a section: what a reader is offered to copy is a fact about the page, and \`fugaro watch\` is the command item 3 asks for`,
+  )
+  const failures = runExampleFailures(page)
+  assert.deepEqual(
+    failures,
+    [],
+    `the homepage carries the retired \`fugaro run\` example, which item 3 removes from the hero:\n  ${failures.join('\n  ')}`,
+  )
+
+  // And each way it comes back is refused, one plant per branch. The first is the example as a
+  // command block — what the retired hero carried, and what a page that copied the
+  // documentation's manual path would ship; the second is the transcript as prose, which no
+  // command-block reading sees and which is why the words are swept too.
+  const asCommand = page.replace(
+    '<pre class="watch-command"',
+    `<pre class="planted">fugaro run --batch demo</pre>\n<pre class="watch-command"`,
+  )
+  assert.match(
+    runExampleFailures(asCommand).join('\n'),
+    /the homepage offers "fugaro run --batch demo" as a command the reader can copy/,
+    'a `fugaro run` line put back among the page\'s command blocks is not refused, so the manual path is free to return as something the reader is asked to type',
+  )
+  const asProse = page.replace(
+    /<\/main>/,
+    `<p>Launch the run yourself with \`fugaro run "${RETIRED_EXAMPLE}"\`.</p></main>`,
+  )
+  assert.match(
+    runExampleFailures(asProse).join('\n'),
+    /the homepage still carries the old hero example, the `fugaro run "add a --verbose flag to the export command"` transcript/,
+    'the retired hero example put back as prose is not refused, and a transcript is not a command block: the example would ship again with every other gate green',
   )
 })
 
