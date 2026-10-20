@@ -671,22 +671,42 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	// (c) An address on the owner's list does not permit an init --yes
 	// delete, and the entry here is the strongest one there is: it names this
 	// plan's own address and the identity this plan's own before view carries
-	// (identityOf reads it back through the plan, so the two cannot drift). A
-	// list that matched is the only way this row says anything — an object
-	// whose before view identified nothing, or a version-1 object a reader
-	// takes for no entries at all, would be refused whatever init did with
-	// the list — and what it says is the SCOPING: fugaro init's guard is the
-	// address half over fugaro's own roots (tf.Guard with the command line's
-	// own --allow-delete, D72/D74), and the owner's entries are read by a
-	// managed apply of the project's agent-authored root alone.
+	// (identityOf reads it back through the plan, so the two cannot drift).
+	// Every part the identity needs is in that view, the per-instance one
+	// included — google_storage_bucket's time_created, without which
+	// Identifies is false and tf.Approves refuses the removal for its own
+	// reason (see the positive control below). A list that matched is the only
+	// way this row says anything — an object whose before view identified
+	// nothing, or a version-1 object a reader takes for no entries at all,
+	// would be refused whatever init did with the list — and what it says is
+	// the SCOPING: fugaro init's guard is the address half over fugaro's own
+	// roots (tf.Guard with the command line's own --allow-delete, D72/D74), and
+	// the owner's entries are read by a managed apply of the project's
+	// agent-authored root alone.
 	const bucket = "module.installation.google_storage_bucket.runs"
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	ch := planChange{"address": bucket, "type": "google_storage_bucket",
 		"change": map[string]any{"actions": []string{"delete"},
-			"before": map[string]any{"id": "fugaro-runs-" + initProject, "name": "fugaro-runs-" + initProject, "project": initProject},
-			"after":  nil}}
-	r.allowDeleteList(t, initProject, tf.DeleteEntry{Address: bucket, Before: identityOf(t, ch)})
+			"before": map[string]any{"id": "fugaro-runs-" + initProject, "name": "fugaro-runs-" + initProject, "project": initProject,
+				"time_created": "2026-01-02T03:04:05.678Z"},
+			"after": nil}}
+	entry := tf.DeleteEntry{Address: bucket, Before: identityOf(t, ch)}
+	// The positive control: this entry really would clear this removal under
+	// the entries rule, so init's refusal of the same plan is a refusal to
+	// consult the owner's list and not an entry that could never have matched.
+	// Without it the row passes for the wrong reason — the fixture above once
+	// left time_created out, Identifies was false, and tf.GuardEntries refuses
+	// an unidentified removal with a sentence of its own, so no guard change
+	// could have made this row fail.
+	var plan tf.Plan
+	if err := json.Unmarshal([]byte(planJSON(t, ch)), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := tf.GuardEntries(&plan, []tf.DeleteEntry{entry}, ""); err != nil {
+		t.Fatalf("the entry this row records does not clear the removal it is about under the entries rule (%v): the row then says nothing about which list init consults, because a guard that read the owner's entries would refuse it too", err)
+	}
+	r.allowDeleteList(t, initProject, entry)
 	r.setPlan(t, ch)
 	_, _, err := executeStdin(t, "", "init", "--yes")
 	managedRefusal(t, err, bucket, true)
