@@ -8,9 +8,11 @@
 # **It needs a display, and it needs to be run on your Mac.** The console is an
 # Electron application: this script builds it (`npm ci`, `npm run build`) and
 # then launches the *built* app in a real window through the same
-# Playwright/Electron path the e2e suite uses, resizes that window to
-# 1280x800 and captures the Live screen, a run's detail, the Spend screen and
-# the installation picker. There is no headless mode and none is wanted: the
+# Playwright/Electron path the e2e suite uses, resizes that window to 1280x800
+# and captures the Live screen, a run's detail and the Spend screen -- then
+# opens the installation picker from the console's own `Installations...` menu
+# item and captures that too. One launch, four pictures. There is no headless
+# mode and none is wanted: the
 # picture is of the application as a person sees it, and the window has to fit
 # on the display (1280x800 of content, so a screen at least that tall).
 #

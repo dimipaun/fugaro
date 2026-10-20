@@ -4,7 +4,7 @@
 // what it captured.
 //
 // `scripts/console-screenshots.sh` is the command an owner runs; this file is
-// what that command runs. It is one file of three: `isolation.ts` is the screen
+// what that command runs. It is one file of four: `isolation.ts` is the screen
 // the run has to pass before a window exists (the binary, the three paths, the
 // environment), `fixture.ts` is the fake CLI and the store it seeds, `png.ts` is
 // the check on what came back, and `manifest.ts` is the document the run leaves.
