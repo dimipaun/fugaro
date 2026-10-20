@@ -60,8 +60,8 @@ and `internal/cli/testdata/init_retire.golden` (`-update-retire`).
 | What exists | Where | Used by |
 |---|---|---|
 | The converge loop: `Stage`, the canonical `order` with `needs`/`noYes`, states, `Left`/`LeftKind`, `Options`, `Result`, `Run`, `Validate`, the preview and its plan view | `internal/initflow/loop.go`, `stage.go` | W1.1, W1.2, every task that asserts a state |
-| The confirmation machinery: `ConfirmClass` (`YesOrTyped`, `Typed`), `Conditions`, `Managed`, `CanConfirm`, `CanConfirmManaged`, `CanConfirmRun`, `RunCovers`, `YesCovers`, `SelfConfirming`, `InputStage.Missing()` | `internal/initflow/stage.go` | W0.1, W1.3, W3.5, W4.3 |
-| The stage registration, `runCovered`, the `engineStage` adapter, `outcome()` | `internal/cli/init_stages.go` | W1.2, W1.3, W5.1 |
+| The confirmation machinery: `ConfirmClass` (`YesOrTyped`, `Typed`), `Conditions`, `Managed`, `CanConfirm`, `CanConfirmManaged`, `CanConfirmRun`, `runCovered`, `RunCovers`, `YesCovers`, `noYes`, `SelfConfirming`, `InputStage.Missing()` | `internal/initflow/stage.go` | W0.1, W1.3, W3.5, W4.3 |
+| The stage registration, the `engineStage` adapter, `outcome()` | `internal/cli/init_stages.go` | W1.2, W1.3, W5.1 |
 | The command, every flag and its usage text, `initOptions`, `newInitCmdWith`, `runInit`, `markCreated`, `installOptions`, the `strictCreate`/`created` pair | `internal/cli/init.go` | W1.2, W2.1, W2.2, W3.3 |
 | The interactive inputs: `gatherInputs`, `prompt`, `canAsk`, `firstRunMissing`, `suggestGCPProject`, `sanitiseName`/`suggestName`, `installationName`/`readInstallationName`, `const defaultRegion` | `internal/cli/init_inputs.go` | W3.1, W3.2, W3.5 |
 | The project stage and its three typed banners: `projectStage`, `typed`, `canType`, `checkCreateProject`, `guided`, `billingHelp`, `existingNote`, `sanitized` | `internal/cli/init_project.go` | W1.3, W4.3, W4.4, W4.5 |
@@ -102,11 +102,11 @@ and `internal/cli/testdata/init_retire.golden` (`-update-retire`).
 never-exercised `--create-project` / `--link-billing` path; its steps name flags
 and a command this work renames, so its text is stale rather than performed, and
 it is rewritten **in place** — same number, still NOT RUN (D10). The register's
-highest written section is 70c; 80–89 are mobile, 90–99 the credentials service,
-100–109 the mobile functional spec, **110 is claimed by an open pull request**,
-and the register's rule is that whichever of two open claims merges second
-renumbers itself. **111 is therefore the next free number**, and it is taken
-here.
+written sections run to **89** (81, 82 and 89 are written, in the mobile block);
+90–99 are the credentials service, 100–109 the mobile functional spec, and
+**110 is claimed by an open pull request** — the register's rule is that
+whichever of two open claims merges second renumbers itself. **111 is therefore
+the next free number**, and it is taken here.
 
 | # | The check | Written by | Run at | Where |
 |---|---|---|---|---|

@@ -54,7 +54,7 @@ no defaults for two of the three inputs, and no billing list.
 
 Two findings dominate the cost of this work, and they are not the wizard:
 **the billing list reverses a written rule** (§3 F5) and **the rename touches
-~900 Go lines, ~110 markdown files and 36 Terraform files** (§3 F20, §4).
+~790 Go lines, 111 markdown files and 29 Terraform files** (§3 F20, §4).
 
 ---
 
@@ -77,9 +77,11 @@ The flag's usage text today (`internal/cli/init.go`, `f.StringVar(&o.firebase,
 "firebase", ...)`) treats it as an independent project to adopt. See F4, D7.
 
 **C3. The count of "places that name `fugaro init`" is the real estimate.** In
-Go: 409 non-test lines and 511 test lines, across ~84 non-test files, including
-19 `selfCommand() + " init"` sites. In markdown: 112 files, 158 mentions in
-`docs/gcp-live-checklist.md` alone and 113 in `docs/gcp-setup.md`. Plus 36
+Go: 410 non-test lines and 378 test lines, across 107 non-test files, including
+7 `selfCommand() + " init"` sites. In markdown: 111 files outside this folder
+(115 with it — `docs/setup-wizard/` names the command 71 times and is exempt,
+§3 F20), 158 mentions in
+`docs/gcp-live-checklist.md` alone and 113 in `docs/gcp-setup.md`. Plus 29
 Terraform files whose variable `description`s name the command, and
 `website/content/cli-reference.md` (generated) and `website/data/install.yaml`
 (pinned byte-for-byte). See F20 for where the line between "rename" and "leave
@@ -200,11 +202,14 @@ project's name or id, and each reachable only through `canType()` (`terminal ∧
 `init_firebase.go`; a billable first image build is typed in `init_images.go`
 and `init_review.go`.
 
-`initflow.RunCovers` and `YesCovers` are the arbiters: `init_stages.go`'s
-`runCovered` is installation, Firebase, images, installation-second-pass,
-repository — so project creation, secrets and compute are **never** covered by
-`--yes`, and `internal/initflow/loop_test.go`'s `TestYesDoesNotCoverCreateOrBilling`
-pins exactly that.
+`internal/initflow/stage.go` holds the arbiters: `runCovered` — installation,
+Firebase, images, installation-second-pass, repository — and `RunCovers`, which
+is `runCovered[name] ∧ YesCovers(name)`; `noYes` (seven occurrences, same file)
+is what a stage declares itself as never covered. `internal/cli/init_stages.go`
+is what *registers* the stages and hands them to `initflow.Run`. So project
+creation, secrets and compute are **never** covered by `--yes`, and
+`internal/initflow/loop_test.go`'s `TestYesDoesNotCoverCreateOrBilling` pins
+exactly that.
 
 **Consequence.** All of it stays, verbatim in behaviour. The wizard may
 *reorder* the questions (F12) but must not soften a single one of these. The
@@ -368,7 +373,9 @@ init`, `/fugaro:setup`, `fugaro upgrade --local` — and is pinned byte-for-byte
 by `internal/cli/docs_website_install_test.go`. `website/src/pages/getting-
 started.astro` is hand-kept, not generated: its `#setup` block is a seven-step
 `<ol>`, it reads `const [initCommand, setupCommand] = pluginPath.commands`, and
-its anchor fragment `the-short-path-fugaroinitthen-fugarosetup` appears twice.
+its anchor fragment `the-short-path-fugaro-init-then-fugarosetup` appears twice
+(the slug is the heading's words joined with hyphens, so it keeps a hyphen the
+name `fugaro-init` does not have).
 `website/test/docs-hub.mjs` and `website/test/caps-and-costs.mjs` also name it.
 
 **Consequence.** A rename here is a two-file change plus the anchor fragment
@@ -421,14 +428,16 @@ the checklist:
 | `internal/cli/docs_*_test.go` (≈40 files) | each holds sentences and check numbers in `docs/gcp-setup.md`, `docs/gcp-live-checklist.md`, the design docs |
 | `internal/config/example.go`'s `exampleProjectLines` | `internal/config/example.yaml`, validated by `validate_test.go` and `docs_project_layer_test.go` |
 | `schemas/fugaro.schema.json` | a `description` naming `fugaro init`, "never guessed from the project name" |
-| 36 `deploy/terraform/**/*.tf` files | variable `description`s naming the command, shown in `terraform plan` |
+| 29 `deploy/terraform/**/*.tf` files (of 58 in the tree) | variable `description`s naming the command, shown in `terraform plan` |
 
 **Consequence.** Two rules, and they need an owner decision because they are
 judgement: (a) **live user-facing text is renamed** — everything a user or an
 agent reads today, including skill files, Terraform descriptions and the
 generated CLI reference; (b) **dated records are not rewritten** —
 `docs/plans/**`, `docs/releases/v*`, `docs/design/**` describing a shipped
-state, and `docs/credentials-service/**`, which is another plan's record. This
+state, `docs/credentials-service/**` and `docs/setup-wizard/**` itself — both
+are another plan's record, and this folder's own prose cannot stop naming the
+command it is about without ceasing to be a record of it. This
 follows the tree's own precedent: `plugin/readme_test.go`'s
 `TestReadmeNamesNoRetiredSkill` carries a `skip` regex over
 `docs/plans/`, `docs/design/m11-` and the spec-source precisely because a
@@ -451,9 +460,10 @@ resolving.
 
 `docs/gcp-live-checklist.md`'s **Check 27** is M11's simple setup on a throwaway
 project, marked NOT RUN, and it covers the never-exercised `--create-project` /
-`--link-billing` path. The highest written section is 70c; 110 is claimed by an
-open pull request, and the register's rule is that whichever of two open claims
-merges second renumbers itself. **111 is the next free number.**
+`--link-billing` path. The register's written sections run to **89** (81, 82 and
+89 are written; 80–89 are the mobile block), and 110 is claimed by an open pull
+request — the register's rule is that whichever of two open claims merges second
+renumbers itself. **111 is therefore the next free number.**
 
 **Consequence.** Check 27 must be rewritten for `fugaro setup` (its steps name
 flags that are about to change under it), and the billing picker needs live
@@ -498,8 +508,8 @@ than refusing outright. See D11.
 The exhaustive per-symbol list is in the naming survey; this is the map to work
 from, with the counts that decide the ordering of the work.
 
-**Go — user-facing strings (the rename's core).** ~84 non-test files, 409 lines,
-19 `selfCommand() + " init"` sites:
+**Go — user-facing strings (the rename's core).** 107 non-test files, 410 lines,
+7 `selfCommand() + " init"` sites:
 
 - `internal/cli` (the majority): `doctor.go`, `doctor_bucket.go`,
   `image_refresh{,_steps,_rules}.go`, `imagecheck.go`, `image.go`, `init*.go`
@@ -521,12 +531,13 @@ from, with the counts that decide the ordering of the work.
   survey — these are free to rename but do not have to be part of the same
   commit.
 
-**Go — tests.** 511 lines: the docs pins of F20, plus
-`internal/e2e/init_test.go` (14 `TestInitRepo*` tests, which rename to
+**Go — tests.** 378 lines: the docs pins of F20, plus
+`internal/e2e/init_test.go` (26 `TestInitRepo*` tests of 27 `TestInit*`, which rename to
 `TestUpdate*`/`TestSetup*` and move), `internal/cli/init*_test.go`,
 `internal/initflow/loop_test.go`, and assertion helpers in ~40 other packages.
 
-**Markdown — 112 files.** Live (renamed): `README.md` (16),
+**Markdown — 111 files** outside this folder (115 with it). Live (renamed):
+`README.md` (16),
 `docs/gcp-setup.md` (113 — its title is `# GCP setup with \`fugaro init\``),
 `docs/gcp-live-checklist.md` (158), `docs/project-layer.md`,
 `docs/project-claude-accounts.md`, `docs/multi-model.md`, `docs/git-providers.md`,
@@ -534,9 +545,10 @@ from, with the counts that decide the ordering of the work.
 `docs/mobile/`, `docs/in-job-review/`, `plugin/skills/setup/SKILL.md` and
 `plugin/skills/setup/reference/*`, `.claude/skills/new-release/SKILL.md`.
 Dated (left alone): `docs/plans/**`, `docs/releases/v*`,
-`docs/design/**`, `docs/credentials-service/**`.
+`docs/design/**`, `docs/credentials-service/**`, `docs/setup-wizard/**` (this
+folder: 71 mentions, and its prose is *about* the retirement).
 
-**Terraform — 36 files.** Variable and output `description`s saying what `fugaro
+**Terraform — 29 files.** Variable and output `description`s saying what `fugaro
 init` writes, e.g. `deploy/terraform/gcp/modules/repo/variables.tf` ("Every name
 arrives from `fugaro init --repo`'s terraform.tfvars.json"),
 `roots/repo/tests/testdata/README.md`. Rename, but in its own commit: these are
@@ -720,10 +732,11 @@ unrelated words for the same moment.
 user-facing strings, skill files, README, the live `docs/` guides, generated
 website content, Terraform descriptions. Left alone: `docs/plans/**`,
 `docs/releases/v*`, `docs/design/**` describing shipped state,
-`docs/credentials-service/**`, and this folder's own spec.md (which is the
-owner's words). This is the tree's own precedent, in
+`docs/credentials-service/**`, and **this whole folder** — its spec.md is the
+owner's words, and its reconciliation and plan cannot describe a rename without
+naming what is renamed. This is the tree's own precedent, in
 `TestReadmeNamesNoRetiredSkill`'s `skip` regex, and it is the only way a
-900-line rename stays reviewable. The plan adds one **new** guard test that
+~790-line rename stays reviewable. The plan adds one **new** guard test that
 asserts the split explicitly, so the line is enforced and not merely intended.
 
 *Alternative:* rename everything including history. Cost: ~30 dated design and
@@ -811,5 +824,5 @@ applies.
 | That the Cloud Billing API's `billing.accounts.list` permission is granted to a typical owner in the owner's two installations | Not called. `internal/infra/projectcreate.go` already carries an UNVERIFIED list against the real services; the picker adds one more row to it. |
 | That every one of the ~50 `re-run fugaro init --firebase` strings means "converge the Firebase stage" | Read, not executed; each was judged by its surrounding symbol. Any exception should be found by the task that rewrites them, and its test should name the string. |
 | That no Terraform `description` is byte-compared by a test | Not exhaustively grepped. If one is, the Terraform rename task's first red step will say so. |
-| The exact count of places naming `fugaro init` | Counted by grep on `main` at `82d366af`: 409 non-test Go lines, 511 test lines, 112 markdown files, 36 Terraform files. A different grep would give a slightly different number; the plan does not depend on the count, only on the categories. |
+| The exact count of places naming `fugaro init` | Counted by grep on `main` at `82d366af`: 410 non-test Go lines across 107 files, 378 test lines across 106 files, 111 markdown files outside `docs/setup-wizard/` (115 with it), 29 Terraform files naming the command out of 58. A different grep would give a slightly different number; the plan does not depend on the count, only on the categories. |
 | That the wizard does not break `internal/cli/docs_checkout_test.go`'s command resolution | Not run. It resolves `` `fugaro …` `` against `NewRootCmd()`; it is expected to **fail** until the docs are renamed in the same commit, which is the point. |
