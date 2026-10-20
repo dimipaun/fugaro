@@ -89,14 +89,20 @@ read at the commit this document is checked against, `82d366af` — the counts
 drift as the tree moves, so **the command is the fact and the number is its
 value at that commit**. In Go: 410 non-test lines across 107 files
 (`git grep -c 'fugaro init' 82d366af -- '*.go' | grep -v _test.go | awk -F:
-'{s+=$NF} END {print s}'`, and the same pipeline with `-l` in place of `-c` for
-the file count), including 7 `selfCommand() + " init"` sites
+'{s+=$NF} END {print s}'` for the lines, and the same pipeline with `-l` in
+place of `-c` **piped to `wc -l`** for the files — `-l` prints paths, so the
+`awk` that sums the third field prints 0 there), including 7
+`selfCommand() + " init"` sites
 (`git grep -n 'selfCommand() + " init"' 82d366af -- '*.go' | wc -l`); 378 test
 lines across 106 files (the same two commands against `'*_test.go'`). In
 markdown: 111 files outside this folder
-(`git grep -l 'fugaro init' 82d366af -- '*.md' | grep -vc
-'^docs/setup-wizard/'`), of which **26 are live** (the rename's) and **85 sit in
-the dated roots** (left alone) — §4 names the 26 live files one by one and gives
+(`git grep -l 'fugaro init' 82d366af -- '*.md'
+':(exclude)docs/setup-wizard/**' | wc -l` — the exclusion is a pathspec rather
+than a `grep -v '^docs/setup-wizard/'`, because a revision makes `git grep`
+print `82d366af:` in front of every path, so the anchored pattern would match
+nothing and the command would quietly count this folder too), of which **26 are
+live** (the rename's) and **85 sit in the dated roots** (left alone) — §4 names
+the 26 live files one by one and gives
 the dated ones **by root, with each root's count**, because a dated root is
 exempt as a whole rather than file by file. Single files:
 158 mentions in `docs/gcp-live-checklist.md` (`git grep -c 'fugaro init'
@@ -509,10 +515,15 @@ is why the counts above sit with it. It does not exist at `82d366af` — the
 commit every figure in this section is read at — so an earlier revision of this
 paragraph called it an artifact folder that names the command **zero** times,
 which was true of an absent folder and false of the tree: it exists on `main`
-today (`spec.md`, `reconciliation.md`, `implementation-plan.md` and a
-`README.md`, exactly the `docs/mobile/` shape, its own header saying "plan only;
-nothing is implemented; decisions open"), and its `reconciliation.md` names
+today — **five** files there
+(`git ls-tree -r --name-only origin/main docs/windows-cli`): `spec.md`,
+`reconciliation.md`, `implementation-plan.md`, `README.md` and `wsl.md`, with its
+own header saying "plan only; nothing is implemented; decisions open" — and its
+`reconciliation.md` names
 `fugaro init` **once**, in F37's cross-reference to this document's own count.
+The likeness to the four folders beside it is "another artifact's plan folder of
+its own", not a file-for-file match: `docs/mobile/` is **thirteen** files at the
+same ref, a `voice-session/` subtree among them.
 By the rule above it is another artifact's dated plan record and belongs on the
 list — the same correction the three folders before it needed, and the same
 "wrong in one direction" that a folder absent at the base commit invites. Its
@@ -653,7 +664,9 @@ because this bullet is the one W2.1 sweeps:
 
 **Go — tests.** 378 lines across 106 files
 (`git grep -c 'fugaro init' 82d366af -- '*_test.go' | awk -F: '{s+=$NF} END
-{print s}'` and the same with `-l`): the docs pins of F20, plus
+{print s}'` for the lines, `git grep -l 'fugaro init' 82d366af -- '*_test.go' |
+wc -l` for the files — not the same pipeline with `-l`, which prints paths and
+so sums 0): the docs pins of F20, plus
 `internal/e2e/init_test.go` (26 `TestInitRepo*` tests of 27 `TestInit*`, which rename to
 `TestUpdate*`/`TestSetup*` and move), `internal/cli/init*_test.go`,
 `internal/initflow/loop_test.go`, and assertion helpers in ~40 other packages.
@@ -694,8 +707,9 @@ these files or W2.6's "every live file is owned by exactly one of W2.1–W2.5" i
 false — which it was, in the first draft of this section.
 
 **Markdown — 111 files** outside this folder name the command
-(`git grep -l 'fugaro init' 82d366af -- '*.md' | grep -vc
-'^docs/setup-wizard/'`), and the split between what the rename touches and what
+(`git grep -l 'fugaro init' 82d366af -- '*.md'
+':(exclude)docs/setup-wizard/**' | wc -l`), and the split between what the
+rename touches and what
 it leaves alone is **26 live files against 85 in the dated roots** — 85 *at
 `82d366af`*, where two of the ten roots do not exist yet (this folder and
 `docs/windows-cli/**`, whose plan records postdate it) and so contribute none of
@@ -1027,9 +1041,9 @@ roots, it is one; the count is read with the command
 (`git grep -c 'fugaro init' -- docs/windows-cli`) rather than at a commit where
 the folder is missing.
 
-**Answered 2026-10-20: as recommended, with the nine-root list above — ten now
-that `docs/windows-cli/**` is read against the tree rather than against
-`82d366af`.** W0.2 writes
+**Answered 2026-10-20: as recommended, with the root list above — nine as the
+answer was taken, **ten** now that `docs/windows-cli/**` is read against the
+tree rather than against `82d366af`.** W0.2 writes
 the constant and W2.6's flip is what enforces it.
 
 *Alternative:* rename everything including history. Cost: ~30 dated design and
