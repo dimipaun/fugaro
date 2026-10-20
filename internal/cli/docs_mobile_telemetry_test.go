@@ -488,6 +488,12 @@ func TestTelemetryPlanRecordsWhatIsBuiltInAndWhatThePairingPayloadCarries(t *tes
 // which is not a value and does not match.
 var telemetryAPIKeyRE = regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)
 
+// telemetryScreenEnumRE reads the backticked value list of §7.2's
+// `screen_shown` row. A regexp rather than a cell split: the enum is written
+// with markdown-escaped pipes (`\|`), so splitting the row on "|" cuts it into
+// a dozen pieces and the cell the test wants is not one of them.
+var telemetryScreenEnumRE = regexp.MustCompile("`screen: ([^`]*)`")
+
 // telemetryRangeRE finds a decision-number range as the documents write it:
 // "D1–D20", "D180–D192", "**D193–D200**", "D39–D54b". It needs the dash, so an
 // "onward" row ("D201 onward") and a bare mention ("D193 is already answered")
@@ -757,7 +763,13 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 //     statement therefore goes in the shell, as a third child, and
 //     `mobile/src/app/root.test.js` — which pins the shell's children to
 //     exactly `[SHELL.TITLE, SHELL.BODY]` — has to move with it, or P7.2's own
-//     `cd mobile && npm test` fails.
+//     `cd mobile && npm test` fails. **The claim, not the sentence, is what is
+//     banned** (round 9): §1's tree row made the same claim in different words
+//     ("lives in its settings surface instead"), and a ban on two exact
+//     sentences passed it. The ban is now on "settings surface" as a phrase,
+//     and §7.2's `screen_shown` enum — which said it "is the whole screen set"
+//     while offering a value for that screen — is checked against the enum
+//     itself, read out of its own row.
 //  2. **The link cannot be built yet.** `shared/url`'s `DEFAULT_HOST_ALLOW_LIST`
 //     ships empty and D124's answer names no hosts, so `/privacy/` is refused
 //     with `allow-list-empty` and renders as text. That is an owner step, and
@@ -794,10 +806,35 @@ func TestTelemetryPlanNamesTheSurfaceAndTheHostItCannotLinkYet(t *testing.T) {
 	if !strings.Contains(planSection(t, doc, "## 6. Consent and opt-out (D195): there is none"), "DEFAULT_HOST_ALLOW_LIST") {
 		t.Errorf("%s's §6 does not name DEFAULT_HOST_ALLOW_LIST: it is the export that refuses every host today, and the section that requires a link has to say which empty list refuses it (read from the raw text, since telemetryPlain strips underscores)", telemetryPlan)
 	}
-	// And the phrase that assumed a surface that does not exist is gone: a
-	// reader sent to a screen the app does not have is a reader sent nowhere.
-	if strings.Contains(flat, "the app's own settings surface") || strings.Contains(flat, "settings surface carries") {
-		t.Errorf("%s still sends a reader to \"the app's own settings surface\": no such screen exists in the app or in any task of any phase, so the statement, the link and check 111's walk have to name the surface the shell actually has", telemetryPlan)
+	// And the phrasing that assumed a surface that does not exist is gone, in
+	// EVERY sentence that used it — not only the two §6 used to carry. The ban is
+	// on the phrase "settings surface" as a whole: §1's tree row said the
+	// statement "lives in its settings surface instead", which is the same claim
+	// in different words, and a ban on two exact sentences passed it.
+	if strings.Contains(flat, "settings surface") {
+		t.Errorf("%s still says \"settings surface\": no such screen exists in the app or in any task of any phase (§6), so the statement, the link and check 111's walk have to name the surface the shell actually has — and a reader sent to a screen the app does not have is a reader sent nowhere", telemetryPlan)
+	}
+
+	// And the screen enum carries no value for the surface that does not exist.
+	// §7.2 says the enum "is the whole screen set", so a value for a screen no
+	// phase builds is a report that can never be sent — the same claim as the
+	// ban above, in the one place where it would be read as a requirement. The
+	// parameters CELL is what is checked, not the whole row: the row's own
+	// explanation names `'settings'` in order to say it is absent.
+	s72 := planSubsection(t, doc, "### 7.2 Sent — the closed allow-list")
+	shown := telemetryRowWith(t, s72, "| `screen_shown` |")
+	m := telemetryScreenEnumRE.FindStringSubmatch(shown)
+	if m == nil {
+		t.Fatalf("the §7.2 screen_shown row %q carries no backticked `screen: …` enum: this test cannot check a value list it cannot locate, and the enum is the whole screen set the app reports", shown)
+	}
+	enum := m[1]
+	for _, want := range []string{"'overview'", "'text'"} {
+		if !strings.Contains(enum, want) {
+			t.Errorf("%s's §7.2 screen_shown enum does not carry %q: the enum is the whole screen set the app reports, and a check that reads it has to see the whole of it", telemetryPlan, want)
+		}
+	}
+	if strings.Contains(enum, "settings") {
+		t.Errorf("%s's §7.2 screen_shown enum still offers a value for a settings screen: no phase builds one (§6), so the value names a screen a device can never reach and a report that can never be sent — while the row says the enum is the whole screen set", telemetryPlan)
 	}
 
 	// 3. And the task that does the work carries both: P7.2 is where the shell
@@ -1212,7 +1249,7 @@ var telemetryWillCreate = map[string]string{
 	"mobile/firebase.json":                         "P7.1 (the react-native auto-collection switches and the two ad-ID switches, §4.2)",
 	"mobile/google-services.json":                  "never — §4.3: delivered by an EAS file secret and kept out of git, so its absence here is the rule (checked beside `mobile/GoogleService-Info.plist` in TestTelemetryPlanKeepsTheNativeFilesOutOfGit)",
 	"mobile/src/telemetry/consent.js":              "never — D195's answer is always-on, so there is no consent gate and no stored choice; §6 names it as a path the opt-in recommendation would have created and the answer takes out of the plan",
-	"mobile/src/telemetry/notice.js":               "P7.2 (the always-on statement the settings surface renders — D195's answer, in place of the sheet)",
+	"mobile/src/telemetry/notice.js":               "P7.2 (the always-on statement the shell renders as SHELL.NOTICE — D195's answer, in place of the sheet; there is no settings screen for it to live in)",
 	"mobile/src/telemetry/notice.test.js":          "P7.2 (the statement's text, the link, and the absence of a switch and of any runtime collection call)",
 	"mobile/src/telemetry/analytics-calls.test.js": "P7.3 (the scan of §4.2's rules with its planted positive controls)",
 	"mobile/src/telemetry/events.test.js":          "P7.3 (the never-send test, over a fixture account, mailbox and token)",
