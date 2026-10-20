@@ -372,7 +372,14 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/picker/)
   })
 
-  it('fixes the table the design allow-list fixes: eleven commands, nine with --project', () => {
+  it('fixes the design allow-list’s dashboard half: eleven argvs, ten commands, nine of them with --project', () => {
+    // The design's §5.1 rule 6 table is the whole allow-list -- twelve argvs
+    // since round 5, because the picker's own read (`config list --json`, the
+    // case above) is on it too -- and this table is the eleven the dashboard
+    // spawns. The two are held in step by hand on purpose: the Go side pins the
+    // document's twelve (`internal/cli/docs_desktop_console_test.go`,
+    // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and these cases pin the
+    // console's eleven plus the picker's one.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',

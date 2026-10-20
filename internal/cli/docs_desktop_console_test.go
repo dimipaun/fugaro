@@ -952,9 +952,13 @@ func firstBacktick(cell string) string {
 // the bare substring "watch --json" is satisfied by a sentence about it, which
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
-// §5.1 rule 6 carries and compares their first cells exactly:
-// the allow-list is the eleven argvs and nothing else, and the "never" table
-// still names the two entries that make a name-based list a hole.
+// §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
+// the twelve argvs and nothing else -- the console's dashboard table
+// (SPAWN_COMMANDS) and its picker table (PICKER_COMMANDS) are together the
+// eleven it fixes, and a review of an earlier revision found the picker's own
+// read, `config list --json`, absent here, which left the specification
+// forbidding the one read the picker depends on -- and the "never" table still
+// names the two entries that make a name-based list a hole.
 func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
@@ -971,6 +975,11 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"accounts ls --json",
 		"version",
 		"doctor --json",
+		// The picker's own read: the twelfth argv, and the only one that
+		// belongs to the installations picker rather than the dashboard. It
+		// carries no --project and no --config, so it is absent from the
+		// contract document's flag inventory below, which is about flags.
+		"config list --json",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}

@@ -547,10 +547,13 @@ interface CliCommand {
  * (there is no command the console could drive that is not here), and nothing on
  * it that is not `allowed` may be driven either. Keeping the list complete is
  * what makes "the console is read-only" a fact about the surface rather than a
- * claim about the eleven commands we happened to think of.
+ * claim about the eleven argvs we happened to think of.
  */
 const CLI_COMMANDS: readonly CliCommand[] = [
-  // The eleven the design's allow-list admits, and the one document each draws.
+  // The ten dashboard commands the design's allow-list admits (eleven argv:
+  // `logs` twice), and the one document each draws. The picker's own read
+  // (`config list --json`) is deliberately not here: it is not a dashboard
+  // operation, and it arrived on 2026-10-18, after this snapshot's date.
   { command: 'watch', kind: 'allowed', where: 'internal/cli/watch.go:134' },
   { command: 'budget show', kind: 'allowed', where: 'internal/cli/budget.go:214' },
   { command: 'report', kind: 'allowed', where: 'internal/cli/report.go:53' },
@@ -621,10 +624,16 @@ const NOT_ON_THIS_TREE: readonly string[] = [
 ]
 
 /**
- * DESIGN_ARGV is design section 5.1 rule 6's allow-list, written as the argv each
- * operation fixes: `RUN` and `--repo R` are arguments the schema carries, and
- * `--dir D` on doctor is main-process state rather than a renderer argument, so
- * both are absent from these strings.
+ * DESIGN_ARGV is the dashboard's half of design section 5.1 rule 6's allow-list,
+ * written as the argv each operation fixes: `RUN` and `--repo R` are arguments
+ * the schema carries, and `--dir D` on doctor is main-process state rather than
+ * a renderer argument, so both are absent from these strings.
+ *
+ * The design's table carries one more row than this list: `config list --json`,
+ * the installations picker's own read, is on the allow-list but is not an
+ * operation of *this* surface (the dashboard's `CONSOLE_OPERATIONS`), so it is
+ * pinned where the picker's table is (`spawn.test.ts`, PICKER_COMMANDS). The
+ * tests below compare this list with that surface, argv for argv.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
