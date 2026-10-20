@@ -116,11 +116,19 @@ func ValidCredentialName(name string) bool {
 	return len(name) <= maxCredentialNameBytes && validHeaderToken(name)
 }
 
-// validHeaderToken reports whether s is one clean value: non-empty, bounded,
-// and printable ASCII with no space — so it can be sent as a header, written
-// into a log line, and used as a database path segment without a newline, a
-// control character or a separator hiding in it. The run's slug and run id,
-// the Cloud Run job's name and a credential's name are all held to it.
+// validHeaderToken reports whether s is one clean header value: non-empty,
+// bounded, and printable ASCII with no space — so it can be sent as a header
+// and written into a log line without a newline, a control character or a
+// space hiding in it. Its two callers are ValidCredentialName and the Cloud
+// Run job-name check in Verify.
+//
+// It is NOT a database path-segment rule, and nothing that becomes a path is
+// held to it: it accepts '/', '~', '.' and '..', which are exactly what a
+// path segment must not be. The run's slug and run id are held to
+// token.ValidSegment instead — the rule the launcher's own minter applies,
+// re-checked in splitRunUID and in RTDBOutcomes before either builds a
+// budget.PathOutcome — and that is the rule to reach for when a segment is
+// what you have.
 func validHeaderToken(s string) bool {
 	if s == "" || len(s) > maxHeaderTokenBytes {
 		return false

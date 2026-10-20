@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/budget/token"
 )
 
 // The wire contract is what C1.11 writes and C1.15/C1.17 read. These tests
@@ -167,6 +169,40 @@ func TestSetCredentialHeadersRefusesWhatIsNotATierOrAName(t *testing.T) {
 	}
 	if !ValidCredentialName("acct-one") || !ValidCredentialName("claude-oauth-token-2") {
 		t.Error("ValidCredentialName refused a name that is one clean header value")
+	}
+}
+
+// There are two rules here and they are not the same rule: validHeaderToken is
+// the header-value rule (what may be sent as a header and written into a log
+// line), token.ValidSegment is the path-segment rule (what may become a
+// budget.PathOutcome). This pins the boundary between them, so that a comment
+// claiming one is the other cannot pass unnoticed — the previous version of
+// validHeaderToken's comment claimed exactly that, and the code never held to
+// it.
+func TestTheHeaderRuleAndThePathSegmentRuleAreTwoRules(t *testing.T) {
+	// Values the header rule allows and the segment rule must not: these are
+	// what a header value may be and a path segment may never be.
+	for _, s := range []string{"a/b", "a~b", "a\\b", ".", ".."} {
+		if !validHeaderToken(s) {
+			t.Errorf("validHeaderToken(%q) = false, want true: it is the header rule, not the segment rule", s)
+		}
+		if token.ValidSegment(s) {
+			t.Errorf("token.ValidSegment(%q) = true, want false: this is what a path segment must not be", s)
+		}
+	}
+	// The header rule refuses what cannot be one header value.
+	for _, s := range []string{"", "acct one", "acct\none", strings.Repeat("A", maxHeaderTokenBytes+1)} {
+		if validHeaderToken(s) {
+			t.Errorf("validHeaderToken(%q) = true, want false", s)
+		}
+	}
+	// A credential's name is the header rule plus the name's bound, so it
+	// inherits the allowance above: a name is a header value, a log line and a
+	// value in the run's record, never a path segment. Nothing that becomes a
+	// path is held to this rule — the uid's halves go through ValidSegment in
+	// splitRunUID, and RTDBOutcomes checks them again before it builds a path.
+	if !ValidCredentialName("acct/one") {
+		t.Error(`ValidCredentialName("acct/one") = false, want true: a name is a header value, not a segment`)
 	}
 }
 
