@@ -1064,6 +1064,34 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(indexSource).not.toContain('executeJavaScript')
   })
 
+  it('answers the header from this run’s resolution, and keeps the record for the source', () => {
+    // Review of this branch. `installation.current` was `picker.installation`
+    // itself, so a chosen record with no `binaryPath` -- the shape this console
+    // writes, because it never stores the path it resolves -- made the header
+    // draw nothing while the console was driving a binary the store had never
+    // heard of, and a legacy record whose override has gone made it name a path
+    // it was not running. The join is `withResolvedBinary` (unit-tested in
+    // `test/unit/installations-store.test.ts`); these are the two things only
+    // this file can be wrong about: which state the header reads, and that both
+    // writers of the resolution are wired to it.
+    expect(indexSource).toContain('installation: () => installationState()')
+    const state = bodyOf('function installationState()')
+    expect(state).toContain('picker?.installation()')
+    expect(state).toContain('resolvedBinaries.get(chosen.project)')
+    expect(state).toContain('withResolvedBinary(')
+    // Both moments a resolution happens, written to the one map: the startup
+    // handshake and a choose.
+    expect(bodyOf('async function readCliVersion()')).toContain(
+      'resolvedBinaries.set(chosen.target.project, resolution.path)',
+    )
+    expect(indexSource).toContain('resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)')
+    // And the source still gives the store's override the first slot: it is
+    // rule 4's first *candidate*, and `InstallationRef.source` says `configured`
+    // only when the path that ran came from the record. The two readers of the
+    // map land on the same file in every case (see `withResolvedBinary`).
+    expect(bodyOf('function activeBinding()')).toContain('chosen.binary ?? resolved')
+  })
+
   // The two Task 3.4b cases that stood here were greps of this file's text
   // (`'configuredPath: chosen.binaryPath'` and the like), and they passed with
   // the B1 fallthrough in place (review S4). Their behaviour is proven instead:

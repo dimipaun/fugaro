@@ -134,13 +134,26 @@ export interface CliStub {
    * first, so it wins even over a machine's own `fugaro`) and the picker does
    * not open. It is for the specs whose subject is the dashboard, not the first
    * run. The stub's `project.txt` is rewritten with it, so the reads the
-   * dashboard makes carry the project the console was pointed at. */
-  seedActiveInstallation(project?: string, binaryPath?: string): void
+   * dashboard makes carry the project the console was pointed at.
+   *
+   * `binaryPath: null` is the shape **this console writes** (owner's ruling of
+   * 2026-10-20): the record carries an id and a project and no override at all,
+   * so rule 4 resolves the stub through the well-known prefixes instead. The
+   * default is the older shape, an override naming the stub, because it pins the
+   * resolution to this scratch tree whatever the machine has in `/usr/local/bin`
+   * -- a spec whose subject is not the resolution should not depend on it. */
+  seedActiveInstallation(project?: string, binaryPath?: string | null): void
   /** seedInstallations writes `installations.json` with these entries and
    * `active` (Task 3.4b), for a spec that needs more than one installation. The
-   * active entry's project becomes the one the stub answers for. */
+   * active entry's project becomes the one the stub answers for. An entry with
+   * no `binaryPath` is written without the field, which is the shape this
+   * console writes. */
   seedInstallations(
-    entries: readonly { readonly id: string; readonly project: string; readonly binaryPath: string }[],
+    entries: readonly {
+      readonly id: string
+      readonly project: string
+      readonly binaryPath?: string | null
+    }[],
     active: string | null,
   ): void
   /** extraStub installs one more stub, printing `line`, in its own directory
@@ -223,9 +236,9 @@ export function installCliStub(line: string): CliStub {
       }
       return [consoleDir, `--user-data-dir=${profile}`]
     },
-    seedActiveInstallation(nextProject = DEFAULT_PROJECT, binaryPath = join(dir, 'fugaro')): void {
+    seedActiveInstallation(nextProject = DEFAULT_PROJECT, binaryPath: string | null = join(dir, 'fugaro')): void {
       const id = '0123456789abcdef'
-      stub.seedInstallations([{ id, project: nextProject, binaryPath }], id)
+      stub.seedInstallations([{ id, project: nextProject, ...(binaryPath === null ? {} : { binaryPath }) }], id)
     },
     seedInstallations(entries, active): void {
       // The stub answers for the **active** installation's project (Task 3.4c,
@@ -241,7 +254,15 @@ export function installCliStub(line: string): CliStub {
         serializeInstallationFile({
           version: INSTALLATION_FILE_VERSION as 1,
           active,
-          installations: entries.map((entry) => ({ id: entry.id, project: entry.project, binaryPath: entry.binaryPath })),
+          installations: entries.map((entry) => ({
+            id: entry.id,
+            project: entry.project,
+            // Absent, not `null` or `''`: `recordOf` in the app writes a record
+            // with no override at all, and `JSON.stringify` drops the key.
+            ...(entry.binaryPath === undefined || entry.binaryPath === null
+              ? {}
+              : { binaryPath: entry.binaryPath }),
+          })),
         }),
         { mode: 0o600 },
       )
