@@ -198,9 +198,14 @@ func reaperEnvOptions(getenv func(string) string, dryRun bool) (batch.ReaperOpti
 // max(longest task timeout, backend.MaxRunTime) plus the launcher's slack, so
 // an installation whose own bound is the ceiling -- the usual case, and the
 // one an installation with no batch.task_timeout has -- gets the same deadline
-// from this source as from its config, and one whose bound is longer is swept
-// by a deadline no run can outlive. A pass never deletes something a live run
-// could still be using; it can only be less patient than the config would be.
+// from this source as from its config, and one whose bound is shorter is swept
+// by a deadline no run can outlive. A configured bound can never be LONGER:
+// localcfg refuses a batch.task_timeout above backend.MaxRunTime
+// (validateBatch), because a run can never be given more than the ceiling
+// (--total-timeout is capped there) and the two sources disagreeing about that
+// is exactly the direction that ends a live run. A pass never deletes
+// something a live run could still be using; it can only be less patient than
+// the config would be.
 type reaperEnvTimeouts struct{}
 
 func (reaperEnvTimeouts) TaskTimeout(string, string) (time.Duration, error) {

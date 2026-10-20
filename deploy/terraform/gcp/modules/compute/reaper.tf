@@ -71,7 +71,9 @@ locals {
 # its bound from a run's own ceiling instead (backend.MaxRunTime), which is the
 # same deadline an installation with no batch.task_timeout derives anyway, and
 # can only ever be the less patient of the two -- never a deadline a live run
-# could still be inside.
+# could still be inside. The two can never disagree in the other direction
+# either: localcfg refuses a batch.task_timeout above backend.MaxRunTime, since
+# a run can never be given more than the ceiling.
 #
 # The image is the installation's pinned base image: the same one the preload
 # bakes into the boot image, and the one the module already reasons about (its

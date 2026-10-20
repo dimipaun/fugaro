@@ -468,6 +468,15 @@ type Batch struct {
 	// who wants the jobs bounded more tightly writes it here. The workflow's
 	// own timeouts.total is where this value comes from once the enable task
 	// reads it per workflow (internal/cli's batchTimeouts).
+	//
+	// It is also REFUSED above that ceiling (validateBatch): the reaper's
+	// deadline is max(the longest configured timeout, backend.MaxRunTime), and
+	// the reaper that runs from its own Cloud Run job's environment has no
+	// project config to read the first of those from, so it derives the base
+	// from the ceiling alone (internal/cli/reaper.go). A configured timeout
+	// above the ceiling makes the two disagree, in the one direction that ends
+	// a live run: the sweeper's bound would be shorter than the config's, and
+	// a job that is legitimately running would read as stuck.
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
 }
 
@@ -521,6 +530,17 @@ func validateBatch(bad func(string, ...any), c *Config) {
 		// and the key can simply be left out. backend.MaxRunTime is what an
 		// omitted key means.
 		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.MaxRunTime)
+	}
+	if b.TaskTimeout.Set && b.TaskTimeout.Duration > backend.MaxRunTime {
+		// The ceiling, and this refusal is the reaper's requirement rather
+		// than a cap for its own sake: no run may be given more than
+		// backend.MaxRunTime (--total-timeout is capped there), so a job sized
+		// past it is headroom no run can use -- while the reaper that runs
+		// from its own Cloud Run job's environment has no config to read this
+		// number from and derives its base from the ceiling
+		// (internal/cli/reaper.go). The two sources would disagree about when
+		// a live run has ended, and that disagreement deletes a running job.
+		bad("batch.task_timeout %v is longer than %v, the longest a run may be given (--total-timeout is capped there): a job sized past it is headroom no run can use, and the reaper of an installation whose config it cannot read derives its own bound from that ceiling, so the two would disagree about when a live run has ended", b.TaskTimeout.Duration, backend.MaxRunTime)
 	}
 	// Each entry is named by its position in the sorted map, and never by its
 	// key: neither side of the map is printed, because **either** side can hold
