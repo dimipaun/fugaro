@@ -11,11 +11,14 @@
 //      fact, so each is driven with the planted value and asserted to name it;
 //   2. **the environment allow-list**: a credential-shaped key in the ambient
 //      environment does not reach the child, and the three paths the run owns do;
-//   3. **the fixtures**: every document in `test/fixtures/screenshots/` goes
-//      through the console's **own** decoder, and the ids and project names the
-//      pictures depend on are asserted to agree across files. A fixture the
-//      console would refuse is a picture of a refusal, and this is the only
-//      place that is cheap to notice;
+//   3. **the fixtures**, in three parts, one per banner below: every document in
+//      `test/fixtures/screenshots/` goes through the console's **own** decoder,
+//      and the ids, project names and run fields the pictures depend on are
+//      asserted to agree across files; the fake CLI and the store it seeds
+//      (`tools/screenshots/fixture.ts`) are held to what the console's own
+//      reader and the launch's handshake make of them; and a fixture the run
+//      cannot use is refused. A fixture the console would refuse is a picture of
+//      a refusal, and this is the only place that is cheap to notice;
 //   4. **the manifest** (`tools/screenshots/manifest.ts`): the shape the website
 //      reads, and the five ways a manifest can be readable-but-wrong;
 //   5. **the blank-image check** (`tools/screenshots/png.ts`): a uniform
@@ -37,7 +40,11 @@
 //   8. **the captures' selectors** (`tools/screenshots/screens.ts`): each one is
 //      held to the renderer file that has to draw its class or id, so a renamed
 //      renderer fails here rather than as a `waitForSelector` timeout on the
-//      owner's Mac.
+//      owner's Mac;
+//   9. **this file's own index**: the list above is held to the banners below
+//      it, because the two had drifted -- header item 2 had no banner, so from
+//      item 3 on every number named the section before it (review of 2026-10-20,
+//      low finding).
 //
 // What is *not* here, stated plainly: the Electron launch, the window's real
 // size, and the fact that a screen draws at all. Those need a display, and the
@@ -54,6 +61,9 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import { INSTALLATION_FILE_VERSION, readInstallationFile, serializeInstallationFile } from '../../src/main/installations'
 import { decodeDocument, decodeSnapshot } from '../../src/shared/schema'
+import { CLI_VERSION_BUILT_AGAINST, classifyCliVersion } from '../../src/shared/version'
+import { deadlineFlag } from '../../src/renderer/screens/live'
+import { viewOf } from '../../src/renderer/installations'
 import { buildRunModel, parseLogWindow } from '../../src/renderer/screens/run'
 import { SPEND_ACCOUNTS, buildSpendModel } from '../../src/renderer/screens/spend'
 import { parseLogEntries } from '../../src/source/cli'
@@ -63,7 +73,7 @@ import { assertFixtureBinary, assertIsolated, assertLaunchIsFixture, launchEnvir
 import type { Isolation } from '../../tools/screenshots/isolation'
 import { BLANK_STDDEV_FLOOR, assertUsableCapture, decodePng, pixelStdDev } from '../../tools/screenshots/png'
 import { CAPTURE_WINDOW, buildManifest, serializeManifest, sha256Of } from '../../tools/screenshots/manifest'
-import { CAPTURE_PIXELS, OMISSIONS, PICKER_SCREEN, RUN_ID, SCREENS } from '../../tools/screenshots/screens'
+import { CAPTURE_PIXELS, LIVE_SCREEN, OMISSIONS, PICKER_SCREEN, RUN_ID, RUN_SCREEN, SCREENS, SPEND_SCREEN } from '../../tools/screenshots/screens'
 import { FAILURE_SENTENCE, exitCodeFor, failureLine, installFailureHandler } from '../../tools/screenshots/failure'
 import type { RunProcess } from '../../tools/screenshots/failure'
 import { STUB_COMMAND_KEYS } from './stub'
@@ -203,6 +213,10 @@ describe('the run refuses to start against anything but its own fixture', () => 
   })
 })
 
+// ---------------------------------------------------------------------------
+// 2. The environment a launch gets is an allow-list.
+// ---------------------------------------------------------------------------
+
 describe('the environment a launch gets is an allow-list', () => {
   const isolation = newIsolation()
 
@@ -274,7 +288,7 @@ describe('the environment a launch gets is an allow-list', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2. The fixtures, through the console's own decoder.
+// 3. The fixtures, through the console's own decoder.
 // ---------------------------------------------------------------------------
 
 /** frames reads the `watch` fixture: the documents the fake prints, one per
@@ -284,11 +298,62 @@ function frames(): readonly unknown[] {
   return parsed.frames
 }
 
-/** COUNT_WORDS spells a small count the way a sentence does. The alt texts are
- * prose written for a person who cannot see the picture, and "3 runs" reads
- * like a log line; the test still has to hold the prose to the fixture, so the
- * number is spelled here the same way the sentence spells it. */
-const COUNT_WORDS: readonly string[] = ['none', 'one', 'two', 'three', 'four', 'five', 'six']
+/** spendModel is the Spend screen's own model built from the two fixtures the
+ * screen draws: `report --json` is the curve and the rows, `budget show
+ * --json` is the caps panel. */
+function spendModel(): ReturnType<typeof buildSpendModel> {
+  return buildSpendModel(
+    JSON.parse(fixture(FIXTURE_COMMANDS.report)) as JSONDoc,
+    JSON.parse(fixture(FIXTURE_COMMANDS['budget show'])) as JSONDoc,
+  )
+}
+
+/** runModel is the Run screen's own model for the run the run-detail picture is
+ * of: `diagnose RUN --json` is the row and the findings, the log fixture is the
+ * window, and `logs RUN --url` is the link. */
+function runModel(): ReturnType<typeof buildRunModel> {
+  const read = parseLogEntries(fixture(FIXTURE_COMMANDS.logs))
+  return buildRunModel({
+    diagnosis: JSON.parse(fixture(FIXTURE_COMMANDS.diagnose)),
+    logs: { entries: read.entries, total: read.total, refused: read.refused },
+    logLink: fixture(FIXTURE_COMMANDS['logs --url']).trim(),
+  })
+}
+
+/** UNIT_WORDS, TEEN_WORDS and TENS_WORDS spell a small count the way a sentence
+ * says it. The alt texts are prose written for a person who cannot see the
+ * picture -- "3 runs" reads like a log line -- and the test still has to hold
+ * the prose to the fixture, so the number is spelled here the way the sentence
+ * spells it. A count with no word here is answered with its digits, which is a
+ * mismatch the test reports rather than a word it invented. */
+const UNIT_WORDS: readonly string[] = ['none', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
+const TEEN_WORDS: readonly string[] = ['ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+const TENS_WORDS: readonly string[] = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+
+function spelled(count: number): string {
+  if (count >= 0 && count < 10) return UNIT_WORDS[count] ?? String(count)
+  if (count >= 10 && count < 20) return TEEN_WORDS[count - 10] ?? String(count)
+  if (count >= 20 && count < 100) {
+    const tens = TENS_WORDS[Math.floor(count / 10)] ?? String(count)
+    const unit = count % 10
+    return unit === 0 ? tens : `${tens}-${UNIT_WORDS[unit] ?? ''}`
+  }
+  return String(count)
+}
+
+/** ordinal spells a position the way a sentence says it: `round: "2"` is the
+ * "second round" the alt text names. */
+const ORDINAL_WORDS: readonly string[] = ['zeroth', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth']
+
+function ordinal(count: number): string {
+  return ORDINAL_WORDS[count] ?? `${spelled(count)}th`
+}
+
+/** listed joins words the way a sentence does: `build, test and lint`. */
+function listed(words: readonly string[]): string {
+  if (words.length <= 1) return words[0] ?? ''
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1] ?? ''}`
+}
 
 describe('the fixtures are documents the console accepts', () => {
   it('decodes every live frame through the schema the feed uses', () => {
@@ -335,16 +400,6 @@ describe('the fixtures are documents the console accepts', () => {
     }
   })
 
-  /** spendModel is the Spend screen's own model built from the two fixtures the
-   * screen draws: `report --json` is the curve and the rows, `budget show
-   * --json` is the caps panel. */
-  function spendModel(): ReturnType<typeof buildSpendModel> {
-    return buildSpendModel(
-      JSON.parse(fixture(FIXTURE_COMMANDS.report)) as JSONDoc,
-      JSON.parse(fixture(FIXTURE_COMMANDS['budget show'])) as JSONDoc,
-    )
-  }
-
   it('reads the report and budget fixtures into the Spend screen’s own model', () => {
     // **Two of the five fixtures are documents the schema does not decode, and
     // that is the schema working.** `decodeDocument` admits the feed's shape and
@@ -386,11 +441,8 @@ describe('the fixtures are documents the console accepts', () => {
     // held to that run -- a diagnose fixture for another run would draw a detail
     // screen for a row nobody clicked.
     const read = parseLogEntries(fixture(FIXTURE_COMMANDS.logs))
-    const model = buildRunModel({
-      diagnosis: JSON.parse(fixture(FIXTURE_COMMANDS.diagnose)),
-      logs: { entries: read.entries, total: read.total, refused: read.refused },
-      logLink: fixture(FIXTURE_COMMANDS['logs --url']).trim(),
-    })
+    const model = runModel()
+    expect(read.entries.length).toBe(model.logs.lines.length)
     expect(model.row.runId).toBe(RUN_ID)
     expect(model.row.repo).toBe('acme/platform-core')
     expect(model.row.status).toBe('running')
@@ -461,6 +513,40 @@ describe('the fixtures are documents the console accepts', () => {
     expect(fixture(FIXTURE_COMMANDS['logs --url'])).toContain(RUN_ID)
   })
 
+  it('tells one story about the run both pictures are of', () => {
+    // The run id agreeing is not the whole of it: both screens draw the run's
+    // own words. `rowOf` copies `stage`, `round` and `verify` into the Live row
+    // verbatim and `runRow` draws them (`src/renderer/screens/live.ts`), and the
+    // run detail draws the same run's `stage` and its verify records
+    // (`stagesOf`, `src/renderer/screens/run.ts`). The fixture's first run was
+    // stamped `implement`/`pending` in its second round while `diagnose.json`
+    // -- the document the detail picture is drawn from -- said that run was in
+    // review with all three verification records passed (review of 2026-10-20,
+    // medium finding): two pictures of one run contradicting each other, and
+    // nothing read both files to notice.
+    const diagnosis = JSON.parse(fixture(FIXTURE_COMMANDS.diagnose)) as {
+      row: { run: string; stage: string }
+      verify: readonly { kind: string; passed: boolean }[]
+    }
+    expect(diagnosis.row.run).toBe(RUN_ID)
+    expect(diagnosis.verify.length).toBeGreaterThan(0)
+    // The feed's `verify` is a free-form label (`src/shared/schema.ts`), and the
+    // run detail draws one stage per verify record: the word the row draws is
+    // derived from those records -- `passed` exactly when every one of them
+    // passed -- rather than from a second copy of the word.
+    const word = diagnosis.verify.every((record) => record.passed) ? 'passed' : 'pending'
+    expect(word).toBe('passed')
+    for (const frame of frames()) {
+      const row = (frame as { runs: readonly { run: string; stage: string; verify: string }[] }).runs[0]
+      expect(row?.run).toBe(RUN_ID)
+      expect(row?.stage).toBe(diagnosis.row.stage)
+      expect(row?.verify).toBe(word)
+    }
+    // The alt text is of the same run, so it says the same thing: the Live
+    // picture's first row is `in review with its verification passed`.
+    expect(SCREENS[0]?.alt).toContain(`in ${diagnosis.row.stage} with its verification ${word}`)
+  })
+
   it('prepares only commands the fake can be asked for', () => {
     for (const name of Object.keys(FIXTURE_COMMANDS)) {
       expect(STUB_COMMAND_KEYS, `${name} is not a command this console spawns`).toContain(name)
@@ -469,7 +555,7 @@ describe('the fixtures are documents the console accepts', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3. The fake CLI and the store it seeds.
+// 3a. The fake CLI and the store it seeds.
 // ---------------------------------------------------------------------------
 
 describe('the fixture CLI and the installation store it seeds', () => {
@@ -550,7 +636,7 @@ describe('the fixture CLI and the installation store it seeds', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3a. The launch's own store, which is the only thing the handshake may read.
+// 3b. The launch's own store, which is the only thing the handshake may read.
 // ---------------------------------------------------------------------------
 
 describe('a launch is checked against the store it seeds', () => {
@@ -678,7 +764,7 @@ describe('a launch is checked against the store it seeds', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3b. A fixture the run cannot use.
+// 3c. A fixture the run cannot use.
 // ---------------------------------------------------------------------------
 
 describe('a fixture the run cannot use', () => {
@@ -871,8 +957,8 @@ describe('the manifest', () => {
     const live = SCREENS[0]?.alt ?? ''
     expect(live).toContain(String(last.total.percent))
     expect(live).toContain(String(last.total.daily_cap_usd))
-    expect(live).toContain(COUNT_WORDS[last.runs.length] ?? '')
-    expect(live).toContain(COUNT_WORDS[last.repos.length] ?? '')
+    expect(live).toContain(`${spelled(last.runs.length)} runs`)
+    expect(live).toContain(`${spelled(last.repos.length)} repositories`)
     // The fixture *does* hold a finished run with a pull request: the absences
     // below are about the alt, not about the fixture.
     const pull = last.finished.find((row) => row.pr_number !== null)
@@ -883,11 +969,41 @@ describe('the manifest', () => {
     expect(PICKER_SCREEN.alt).toContain('acme-platform')
     expect(PICKER_SCREEN.alt).toContain('acme-web')
     expect(PICKER_SCREEN.alt).toContain('acme-data')
-    // The picker's own sentence is `viewOf`'s and `rowText`'s
-    // (`src/renderer/installations.ts`), and the run seeds a *chosen*
-    // installation: a sentence saying nothing is chosen would describe the
-    // first-run state this run no longer launches.
-    expect(PICKER_SCREEN.alt).toContain('is the one this console is showing')
+    // The picker's status line is `viewOf`'s own sentence
+    // (`src/renderer/installations.ts`), so it is **read out of the renderer**
+    // rather than written again here: the alt quotes it, and a test that spelled
+    // the sentence itself would keep passing after the renderer changed its
+    // wording -- which is exactly what the comment above `PICKER_SCREEN` claimed
+    // it did not (review of 2026-10-20, low finding). The two things the console
+    // builds the sentence from are the row the store marks active -- the run
+    // chooses the seed file's first installation -- and the mode the handshake
+    // read for it, which is `ok` because the fake prints the version this
+    // console is built against.
+    const seed = JSON.parse(fixture(SEED_FILE_NAME)) as {
+      installations: readonly { id: string; project: string }[]
+    }
+    const chosen = seed.installations[0]
+    expect(chosen).toBeDefined()
+    const mode = classifyCliVersion(`${CLI_VERSION_BUILT_AGAINST}\n`).mode
+    expect(mode).toBe('ok')
+    const status = viewOf({
+      ok: true,
+      data: {
+        path: join(FIXTURES, SEED_FILE_NAME),
+        rows: seed.installations.map((installation, index) => ({
+          id: installation.id,
+          project: installation.project,
+          binary: join(FIXTURES, 'fugaro'),
+          active: index === 0,
+          mode: index === 0 ? mode : 'unknown',
+        })),
+      },
+    }).status
+    // A status line that named no project, or no mode, would be a sentence the
+    // alt quotes and the picture does not draw.
+    expect(status).toContain(chosen?.project ?? '')
+    expect(status).toContain(`(${mode})`)
+    expect(PICKER_SCREEN.alt).toContain(status)
     expect(PICKER_SCREEN.alt).not.toContain('none of them chosen')
     // **The picker's rows carry a machine-specific path, and the alt text does
     // not quote it.** The rows draw the fake's path inside this run's scratch
@@ -904,6 +1020,72 @@ describe('the manifest', () => {
     // owner's fifth picture finds the reason rather than a silence.
     expect(OMISSIONS.map((omission) => omission.file)).toEqual(['console-first-run.png'])
     expect(OMISSIONS[0]?.because).toMatch(/#751/)
+  })
+
+  it('describes each screen out of the fixture that screen draws', () => {
+    // **Every alt text ships, and two of the four were held by nothing.** The
+    // test above holds `console-live.png`'s figures and `console-
+    // installations.png`'s sentence; `console-run.png`'s "build, test and lint
+    // verification", "three findings" and log tail, and `console-spend.png`'s
+    // "thirty days" and its "per-repository and default daily and per-run caps",
+    // were asserted by no test at all (review of 2026-10-20, medium finding) --
+    // and these are the sentences the website prints under the pictures. Each
+    // figure here is read out of the screen's **own** model, built from the same
+    // fixture the capture is taken of, so an alt text and a fixture can no
+    // longer drift apart in silence.
+    const run = RUN_SCREEN.alt
+    const diagnosis = runModel()
+    expect(run).toContain(RUN_ID)
+    expect(run).toContain(diagnosis.row.repo ?? '')
+    // The stage ledger and the verification records: one stage per verify
+    // record, whose `kind` is the word the alt lists.
+    const kinds = diagnosis.stages.map((stage) => stage.stage)
+    expect(kinds).toEqual(['build', 'test', 'lint'])
+    expect(diagnosis.stages.every((stage) => stage.passed === true)).toBe(true)
+    expect(run).toContain('its stage ledger')
+    expect(run).toContain(`its ${listed(kinds)} verification`)
+    expect(diagnosis.diagnosis.findings.length).toBe(3)
+    expect(run).toContain(`${spelled(diagnosis.diagnosis.findings.length)} findings`)
+    // The log window: the capture waits for a log line, and the alt says the
+    // picture shows the log's tail.
+    expect(diagnosis.logs.lines.length).toBeGreaterThan(0)
+    expect(run).toContain('the tail of its log')
+
+    const spend = SPEND_SCREEN.alt
+    const report = spendModel()
+    // Thirty rows, one per day of the report's range: the curve.
+    expect(report.rows.length).toBe(30)
+    expect(report.dimension).toBe('day')
+    expect(spend).toContain(`${spelled(report.rows.length)} days`)
+    expect(spend).toContain('daily spend')
+    // The caps panel's two halves, both of which the sentence names: a row per
+    // repository, and the defaults an unlisted repository falls back to.
+    const caps = report.caps
+    expect(caps.repos.length).toBeGreaterThan(0)
+    expect(caps.defaults?.repoDailyCap.value).toBeGreaterThan(0)
+    expect(caps.defaults?.repoPerRunCap.value).toBeGreaterThan(0)
+    expect(spend).toContain('per-repository')
+    expect(spend).toContain('default daily and per-run caps')
+
+    // The Live screen's first row is a run the frame describes, and the alt
+    // names what the row draws: its round, its stage, its verification word, the
+    // deadline flag beside it (`deadlineFlag`, `src/renderer/screens/live.ts`)
+    // and a queued row's own stage. These are drawn verbatim (`runRow`), so a
+    // fixture edited and an alt left behind would be a sentence about a picture
+    // nobody took.
+    const last = frames()[frames().length - 1] as {
+      runs: readonly { stage: string; round: string; verify: string; deadline: string }[]
+    }
+    const live = LIVE_SCREEN.alt
+    const [first, second, third] = last.runs
+    expect(first?.round).toBe('2')
+    expect(live).toContain(`${ordinal(Number(first?.round ?? '0'))} round`)
+    expect(live).toContain(`in ${first?.stage} with its verification ${first?.verify}`)
+    const flag = deadlineFlag(second?.deadline ?? '')
+    expect(flag?.name).toBe('near deadline')
+    expect(live).toContain(`in ${second?.stage} with the ${flag?.name ?? ''} flag`)
+    expect(third?.stage).toBe('queued')
+    expect(live).toContain(third?.stage ?? '')
   })
 
   it('asks for a capture the size the manifest declares', () => {
@@ -1370,6 +1552,37 @@ describe('the one scratch tree a run owns', () => {
     } finally {
       rmSync(first.scratch, { recursive: true, force: true })
       rmSync(second.scratch, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. This file's own index, held to the banners below it.
+// ---------------------------------------------------------------------------
+
+describe('the index at the top of this file', () => {
+  it('names the sections the banners below it number', () => {
+    // The header lists this file's sections and the banners in the body number
+    // them, and the two had drifted: header item 2 (the environment allow-list)
+    // had no banner of its own, so from item 3 on every header number named the
+    // section *before* it, and the three sub-banners under the fixtures were in
+    // no list at all (review of 2026-10-20, low finding -- the same index the
+    // commit before it was correcting). Both lists are in this file, so they are
+    // read and compared rather than trusted.
+    const source = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+    const numbered = (pattern: RegExp): readonly string[] =>
+      [...source.matchAll(pattern)].map((match) => match[1] ?? '')
+    // A header item is indented three spaces; a banner sits at the left margin.
+    const header = numbered(/^\/\/ {3}(\d+[a-z]?)\. /gm)
+    const banners = numbered(/^\/\/ (\d+[a-z]?)\. /gm)
+    expect(header).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
+    expect(banners).toEqual(['1', '2', '3', '3a', '3b', '3c', '4', '5', '6', '7', '8', '9'])
+    for (const item of header) {
+      expect(banners, `header item ${item} has no banner`).toContain(item)
+    }
+    for (const banner of banners) {
+      // A sub-banner (`3a`) belongs to the header item it is a part of (`3`).
+      expect(header, `banner ${banner} is in no header item`).toContain(banner.replace(/[a-z]$/, ''))
     }
   })
 })

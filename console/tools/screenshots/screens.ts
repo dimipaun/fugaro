@@ -54,12 +54,21 @@ export interface OneScreen {
  * nothing else from the frame (`src/renderer/screens/live.ts`); the frame's
  * `finished[]` list is decoded and never drawn, so a sentence that counted it
  * would describe a screen nobody took a picture of.
+ *
+ * **Every one of those facts is held to the last frame by the unit suite**
+ * (`test/unit/screenshots.test.ts`, §4), figures and run story alike: the count
+ * of runs and repositories, the day's percent and cap, and the first row's
+ * round, stage and verification word. The last of those is also held against
+ * `diagnose.json`, because the run-detail picture is of that same run -- a feed
+ * row saying `implement` while the detail document says `review` is two
+ * pictures of one run that contradict each other (review of 2026-10-20, medium
+ * finding).
  */
 export const LIVE_SCREEN: OneScreen = Object.freeze({
   file: 'console-live.png',
   drawn: '.live-run',
   drawnBy: 'src/renderer/screens/live.ts',
-  alt: "The console's Live screen for a fictional acme-platform installation: three runs -- one implementing the second round of a scheduler port, one in review and close to its deadline, one queued -- two repositories, and the day's spend at 34.85% of a $120 daily cap.",
+  alt: "The console's Live screen for a fictional acme-platform installation: three runs -- one in its second round, in review with its verification passed; one in review with the near deadline flag; one queued -- two repositories, and the day's spend at 34.85% of a $120 daily cap.",
 })
 
 /** RUN_SCREEN is the run detail, reached from the Live screen's own row. The
@@ -100,15 +109,18 @@ export const SCREENS: readonly OneScreen[] = Object.freeze([LIVE_SCREEN, RUN_SCR
  * The sentence is `rowText`'s and `viewOf`'s own (`src/renderer/installations.ts`):
  * each row is `project — binary · …`, the chosen one carries `active`, a row
  * nobody has probed carries `(unknown)`, and the status line names the active
- * project. The binary path in that row is the fake in this run's scratch tree,
- * which is a different path on every run -- so the alt describes it rather than
- * quoting it.
+ * project. **The alt quotes that status line verbatim**, and the unit suite
+ * builds the sentence out of the renderer's own template rather than writing it
+ * again: a sentence claimed to be the renderer's has to be the renderer's, or
+ * the claim is a comment nobody checks (review of 2026-10-20, low finding). The
+ * binary path in each row is the fake in this run's scratch tree, which is a
+ * different path on every run -- so the alt describes it rather than quoting it.
  */
 export const PICKER_SCREEN: OneScreen = Object.freeze({
   file: 'console-installations.png',
   drawn: '#picker-list li',
   drawnBy: 'src/renderer/installations.html',
-  alt: 'The installation picker on a console that has three installations -- acme-platform, acme-web and acme-data -- each naming the fixture CLI binary this run installed in its own temporary directory; acme-platform is the one this console is showing and the other two have not been read.',
+  alt: 'The installation picker on a console that has three installations -- acme-platform, acme-web and acme-data -- each naming the fixture CLI binary this run installed in its own temporary directory; its status line reads "acme-platform is the installation this console is showing (ok)." and the other two rows have not been read.',
 })
 
 /** OMISSIONS is what this run does not capture, and why. It is a *fact* the

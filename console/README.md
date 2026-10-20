@@ -3755,6 +3755,18 @@ one that failed"), which was a fact about the fixture and in no picture, shippin
 website inside `MANIFEST.json` (review of 2026-10-20, medium finding). `test/unit/screenshots.test.ts`
 now asserts the *absences* as well as the figures.
 
+**And every figure in every alt text is read out of the screen's own model**, built from the same
+fixture the capture is taken of: the run detail's "build, test and lint verification" is the kinds
+of `buildRunModel(...).stages`, its "three findings" is that model's finding count, the spend
+picture's "thirty days" is `buildSpendModel(...).rows.length`, and the Live picture's round, stage,
+verification word, deadline flag and queued row are the last frame's own (review of 2026-10-20,
+medium finding — two of the four sentences were asserted by nothing). The run both pictures are of
+is held to one story as well: the Live row's `stage` and `verify` are the ones `diagnose.json`
+tells, because the run-detail capture is reached by clicking that row and the two screens draw the
+same run's words (review of 2026-10-20, medium finding). The picker's status line is *read out of*
+`src/renderer/installations.ts` rather than written into the test, so the sentence the alt quotes is
+the renderer's and not a copy of it (review of 2026-10-20, low finding).
+
 `tools/screenshots/png.ts` reads the PNG bytes itself and refuses a capture that is blank (the
 standard deviation of its pixel luminance, sampled, must be above `BLANK_STDDEV_FLOOR`) or is
 not exactly the size the manifest declares. It reads PNGs rather than adding an image library
@@ -3770,7 +3782,7 @@ before the run's own words were printed (review of 2026-10-20, high finding).
 
 ### The tests, and the mutations each one was run against
 
-`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 58
+`test/unit/screenshots.test.ts` holds everything the run decides **without a window** — 61
 tests, and every rule below was seen red against a planted change before it was committed:
 
 | Claim | Mutation it was run against |
@@ -3812,6 +3824,10 @@ tests, and every rule below was seen red against a planted change before it was 
 | the capture size is a number, not its own definition | the device scale factor set to 1 — red; the window set to 1440x800 — red |
 | the selectors are the renderers' own class names | `drawnBy` naming the wrong renderer — red; a selector renamed — red; a renderer renaming its class — red; the picker's list losing its id — red |
 | the picker's alt describes its path rather than quoting one | a path put into the sentence — red; the description removed — red |
+| the two pictures of one run tell one story | the feed's first row put back to `implement`/`pending` while `diagnose.json` says `review` with every verify record passed — the cross-file test red; the alt's "in review with its verification passed" changed — red |
+| every alt figure is the fixture's | `RUN_SCREEN`'s "three findings" → "four findings" — red; "build, test and lint" → "build and test" — red; `SPEND_SCREEN`'s "thirty days" → "thirty-one days" — red; the Live alt's round, deadline flag and queued row each changed — red |
+| the picker's sentence is the renderer's own | the alt's quoted sentence changed to `(reduced)` — red; `viewOf`'s own template reworded in `src/renderer/installations.ts` — red (the alt still quotes the old one) |
+| this file's index names its sections | the allow-list's `// 2.` banner removed — red, naming the header item with no banner |
 
 The blank check is driven by a PNG **encoder** written in the test file (`node:zlib`'s
 `deflateSync`, a CRC per chunk, filters 0 and 1 really applied), because the only way to drive
