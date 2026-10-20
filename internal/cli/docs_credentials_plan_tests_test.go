@@ -21,34 +21,46 @@ import (
 // own comment records the rename; the re-review of C1.9 found it, and the same
 // kind of drift was repaired by hand in C1.9's list before that.
 //
-// So this test reads the names out of C1.2's list and asks the tree whether each
-// one is declared. It deliberately covers the tasks whose tests are *written*:
-// the rest of the plan's lists name tests that do not exist yet and are not
-// meant to (C1.1's TestValidateAcceptsCascade is one) because their tasks are
-// unimplemented, so a general sweep over every list would fail by design. Each
-// task's list joins this test as its task lands.
+// So this test reads the names out of a task's list and asks the tree whether
+// each one is declared. It deliberately covers the tasks whose tests are
+// *written* — C0.6, C1.2, C1.3 and C1.9 on this branch. The rest of the plan's
+// lists name tests that do not exist yet and are not meant to (C1.1's
+// TestValidateAcceptsCascade is one) because their tasks are unimplemented, so a
+// general sweep over every list would fail by design; each task's list joins
+// this test as its task lands. C1.9 is the task this branch implements, so its
+// list — including the eight guards the re-review added — was the one left free
+// to drift, which is the failure above.
 //
-// Mutation (verified, run and restored): put C1.2's list back to
+// The count in the table is the number of names the list holds today, so a name
+// quietly dropped from a list is an edit here too: a list that shrinks without
+// saying so is the same drift as a list that names something that is not there.
+//
+// Mutations (both verified, run and restored): put C1.2's list back to
 // TestPolicyCredentialsIgnoredByVersion1Reader — this test fails, naming the
-// test that does not exist and the plan line it is on.
+// test that does not exist and the task; and drop C1.9's entry from the table
+// below — renaming one of C1.9's eighteen names in the plan then goes
+// unnoticed, which is what the entry is for.
 func TestPlanTestListsNamesOnlyTestsThatExist(t *testing.T) {
 	const plan = "docs/credentials-service/implementation-plan.md"
 	doc := flattenDoc(readDoc(t, plan))
 
-	// One entry per implemented task: the heading that starts its section, and a
-	// floor on how many names its list must hold, so a list emptied or reworded
-	// into nothing cannot pass vacuously.
+	// One entry per task whose tests are written: the heading that starts its
+	// section, and how many names its list holds. All eighteen of C1.9's names
+	// resolve in the tree today, its own eight included.
 	for _, task := range []struct {
 		heading string
-		least   int
+		names   int
 	}{
+		{"### Task C0.6:", 4},
 		{"### Task C1.2:", 8},
+		{"### Task C1.3:", 14},
+		{"### Task C1.9:", 18},
 	} {
 		section := taskSection(t, plan, doc, task.heading)
 		tests := testsLine(t, plan, task.heading, section)
 		names := backtickedTestNames(tests)
-		if len(names) < task.least {
-			t.Errorf("%s: %s's **Tests.** list names %d tests, and it held at least %d: the list is what a reviewer of the task checks the work against, so it must keep naming them", plan, task.heading, len(names), task.least)
+		if len(names) != task.names {
+			t.Errorf("%s: %s's **Tests.** list names %d tests and the table here says %d: the list is what a reviewer of the task checks the work against, so a name that left it is a deliberate edit — change the table with it", plan, task.heading, len(names), task.names)
 			continue
 		}
 		inTree := testFuncsInTree(t)

@@ -79,3 +79,46 @@ func taskSection(t *testing.T, path, doc, heading string) string {
 	}
 	return rest
 }
+
+// TestDocsCredentialsServiceDoesNotClaimTheStateStaysOutOfTheRunBinary pins
+// C1.9's **Interfaces.** sentence against the claim the boundary test this
+// branch adds says is false (the review's finding).
+//
+// The plan said "nothing here is ever linked into the runner". The true claim —
+// the one `internal/creds/boundary_test.go` pins, and says in its own doc that
+// it is not the old one — is narrower: no *run-side package imports* the state.
+// cmd/fugaro links internal/cli and the runner into ONE binary, so the binary a
+// run's image carries does contain internal/cli and, from C1.21, the state above
+// its account commands. The word "ever" made the plan contradict its own later
+// task (C1.21 puts the package in internal/cli) on the page whose whole point is
+// that the plan and the code agree, and a reader could take it as "the process
+// cannot hold this code", which is not what keeps a run out of creds/ — the
+// rules are (O1, C1.3).
+//
+// The red step was run for real: this test fails against the plan with the old
+// sentence in it, and passes once it says what the boundary test pins.
+func TestDocsCredentialsServiceDoesNotClaimTheStateStaysOutOfTheRunBinary(t *testing.T) {
+	const plan = "docs/credentials-service/implementation-plan.md"
+	doc := taskSectionOf(t, plan, "### Task C1.9:")
+	for _, want := range []string{
+		"no run-side package imports it",
+		"credsImporters",
+		// The program name is backticked in the plan, so it is not part of the
+		// phrase this looks for.
+		"links the CLI and the runner into one binary",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s's C1.9 no longer says %q: the Interfaces sentence has to state the claim the boundary test pins, which is an import boundary and not a claim about what the run's binary contains", plan, want)
+		}
+	}
+	if strings.Contains(doc, "ever linked into the runner") {
+		t.Errorf("%s's C1.9 says the state is \"ever linked into the runner\" again: cmd/fugaro links internal/cli and the runner into one binary, so that is false, and it is not what keeps a run out of creds/ — the rules are (O1, C1.3)", plan)
+	}
+}
+
+// taskSectionOf is taskSection from the flattened document, for a caller that
+// has no need of the unflattened text.
+func taskSectionOf(t *testing.T, path, heading string) string {
+	t.Helper()
+	return taskSection(t, path, flattenDoc(readDoc(t, path)), heading)
+}
