@@ -1018,6 +1018,59 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode: §5.1 rule 6's
+// table is the console's whole read-only guarantee — D14 rests it on the
+// exact-argv table, because the CLI cannot tell an admin's identity from
+// anyone else's — and a read changes nothing on the machine. The remembered
+// checkouts are a file this machine keeps and the resolver every cloud
+// command goes through is what writes it, so the code has to know which
+// commands are console reads: consoleReadPaths (internal/cli/project.go) is
+// that knowledge, and this test reads it back off the design's own table, so
+// the two cannot drift. Adding an argv to §5.1 without adding its command
+// here fails, and so does a command on the list that the design does not
+// allow (bar the two reads the design names for the console and §5.1 has no
+// row for yet).
+func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+	allowed := map[string]bool{}
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv == "" {
+			continue
+		}
+		// "budget show --json" is the command `fugaro budget show`: its own
+		// words, up to its first flag or its first ARGUMENT (the RUN a
+		// diagnose or a logs row takes, spelled in capitals in the table).
+		var words []string
+		for _, tok := range strings.Fields(argv) {
+			if strings.HasPrefix(tok, "-") || tok == strings.ToUpper(tok) {
+				break
+			}
+			words = append(words, tok)
+		}
+		cmdPath := "fugaro " + strings.Join(words, " ")
+		allowed[cmdPath] = true
+		if !consoleReadPaths[cmdPath] {
+			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
+		}
+	}
+	if len(allowed) != 10 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 10 (logs has two argvs)", path, 11, len(allowed))
+	}
+	// The other direction: the list carries §5.1's commands and nothing else,
+	// except the two reads the design names for the console and §5.1 has not
+	// grown a row for yet (D13/§12 item 8 for the installation list, V2.2.1
+	// for the graph document). A third name is a command someone decided the
+	// console spawns, and that is a design change, not a table entry.
+	namedNotAllowed := map[string]bool{"fugaro config list": true, "fugaro plan graph": true}
+	for cmdPath := range consoleReadPaths {
+		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
+			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor one of the two reads the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
+		}
+	}
+}
+
 // planPhaseRow returns the "What ships" cell of the project-centric plan's
 // phase table row whose Phase cell names phase (a substring of it), and the
 // row's own text, so a claim about which phase ships a command can be checked

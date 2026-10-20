@@ -102,6 +102,13 @@ func resolveCheckout(ctx context.Context, dir string) (*localcfg.Checkout, error
 // and the path never reaches stdout, stderr or a log line: it is local state
 // for `fugaro project ls` and nothing else.
 func recordCheckout(ctx context.Context, co *localcfg.Checkout) {
+	if consoleRead(ctx) {
+		// A read the desktop console spawns changes nothing (see
+		// consoleReadPaths): it looks at the checkout and remembers nothing,
+		// so a console whose stored checkout directory is one no CLI command
+		// has ever been run in stays that way until the operator works there.
+		return
+	}
 	if !config.ProjectNameRE.MatchString(co.Project) {
 		return
 	}
@@ -138,6 +145,63 @@ func providerForHost(host string) string {
 		}
 	}
 	return ""
+}
+
+// consoleReadCtxKey marks the commands the desktop console spawns as reads:
+// docs/design/desktop-console.md §5.1's exact-argv allow-list, plus the two
+// reads that design names for the console and whose allow-list rows the
+// console task adds (`config list --json` for the installation list, D13 and
+// §12 item 8; `plan graph --json` for the graph document, V2.2.1).
+//
+// It is set once, from the command's own path, in NewRootCmd's
+// PersistentPreRun, and read in one place: recordCheckout. A console read
+// must change nothing on the machine — that is the rule the whole allow-list
+// rests on (design §5.1 rule 6, D14: the read-only guarantee is the argv
+// table's, since the credential cannot be checked) — and the remembered
+// checkouts are a file this machine keeps, so a read must not write it. The
+// commands that do work in a checkout (fugaro init --repo, fugaro run,
+// fugaro validate, the writers) are not on this list and record as before.
+type consoleReadCtxKey struct{}
+
+// withConsoleRead marks ctx as a console read; NewRootCmd's PersistentPreRun
+// is the only caller.
+func withConsoleRead(ctx context.Context) context.Context {
+	return context.WithValue(ctx, consoleReadCtxKey{}, true)
+}
+
+// consoleRead reports whether ctx is a command the console spawns as a read.
+// A context that never carried the mark (a test calling a resolver directly,
+// a command path nothing named) is not one: recording is the default and the
+// console's reads are the exception, so a command added tomorrow records
+// until someone says otherwise.
+func consoleRead(ctx context.Context) bool {
+	v, _ := ctx.Value(consoleReadCtxKey{}).(bool)
+	return v
+}
+
+// consoleReadPaths is consoleReadCtxKey's table, keyed by cobra's own command
+// path (cmd.CommandPath(), e.g. "fugaro budget show") rather than by command
+// name: §5.1 rule 6's own warning is that a name is not enough, since
+// "ls" is `runs ls` here and `secrets ls` there. A test reads §5.1's table
+// out of the design document and fails if an argv it allows is missing here,
+// so this list cannot drift from the spawn contract it exists to serve.
+var consoleReadPaths = map[string]bool{
+	"fugaro watch":       true,
+	"fugaro budget show": true,
+	"fugaro report":      true,
+	"fugaro runs ls":     true,
+	"fugaro diagnose":    true,
+	"fugaro logs":        true,
+	"fugaro secrets ls":  true,
+	"fugaro accounts ls": true,
+	"fugaro version":     true,
+	"fugaro doctor":      true,
+	// The two the design names and §5.1 has not carried a row for yet (the
+	// console task adds them). Neither resolves a checkout today; they are
+	// named so that the day one does, it is still a read that changes
+	// nothing.
+	"fugaro config list": true,
+	"fugaro plan graph":  true,
 }
 
 // selectProject picks the project config a cloud command acts on
