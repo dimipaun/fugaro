@@ -151,12 +151,16 @@ class StubEvent {
  *
  * `hover` is the device's answer to the pointer query — a pointer that hovers, or a touch
  * screen's `false`; `setPointerHover` changes it under a page that has already loaded.
- * `matchMedia: false` is a browser old enough to have none. `wide` is the viewport the layout is
- * drawn at: at or above the 48rem breakpoint the drawer is not drawn and the panel is; below it
- * the panel is drawn only while the drawer is open. `script` is the source run in the page, which
- * is the file the site ships unless the refusals below hand in a defect planted in it.
+ * `matchMedia: false` is a browser old enough to have none. `script` is the source run in the
+ * page, which is the file the site ships unless the refusals below hand in a defect planted in
+ * it.
+ *
+ * The viewport's width is not a parameter: since the owner's brief of 2026-10-19 (item 1) the
+ * menu is the same three `<details>` groups at every width — the three labels in the header's
+ * row — and the one thing a width decided, whether a panel is drawn behind a toggle, is gone
+ * with the toggle.
  */
-function stubPage(html, { hover = true, matchMedia = true, wide = true, script = SCRIPT_SOURCE } = {}) {
+function stubPage(html, { hover = true, matchMedia = true, script = SCRIPT_SOURCE } = {}) {
   const root = parse(html)
   const wrapped = new Map()
   const timers = []
@@ -184,25 +188,17 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true, script =
         return true
       })
     },
-    // Whether the element is rendered at all. A closed `<details>` hides its own children, the
-    // drawer's panel is drawn only while the drawer is open, and the drawer itself is taken away
-    // at the breakpoint — the three rules of `base.css`'s nav that decide what a pointer can
-    // reach.
+    // Whether the element is rendered at all. One rule decides it, and it is the element's own:
+    // a closed `<details>` hides what it holds. Nothing in `base.css` hides a group's list at any
+    // width — the list is the `<details>`'s own child, and the disclosure is the whole of the
+    // mechanism.
     drawn(node) {
       for (let at = node; at && at.name !== '#document'; at = at.parent) {
         if (at.attrs.has('hidden')) return false
-        const cls = (at.attrs.get('class') ?? '').split(/\s+/)
-        if (wide && cls.includes('site-nav-drawer')) return false
-        if (!wide && cls.includes('site-nav-panel') && !(siblingDrawer(at)?.attrs.has('open') ?? false)) return false
         if (at.parent?.name === 'details' && at.name !== 'summary' && !at.parent.attrs.has('open')) return false
       }
       return true
     },
-  }
-
-  function siblingDrawer(panel) {
-    const siblings = panel.parent.children.filter((child) => child.name !== undefined)
-    return siblings[siblings.indexOf(panel) - 1] ?? null
   }
 
   function compound(node, part) {
@@ -837,16 +833,35 @@ test('a click opens a group whose trigger did not already hold the focus', () =>
   assert.ok(page.document.activeElement === summary, 'the click did not move the focus to the trigger it pressed')
 })
 
-test('the drawer opens by its own click and not by the pointer: the mobile menu is unchanged', () => {
-  const page = stubPage(HOME.html, { wide: false })
-  const drawer = page.find('.site-nav-drawer')[0]
-  page.moveTo(drawer.querySelector('summary'))
-  assert.equal(drawer.open, false, 'the pointer opened the drawer: the narrow header keeps the toggle it has always had')
+test('the three labels are the menu: nothing stands in front of them, and a tap opens one', () => {
+  // The owner's brief of 2026-10-19 (item 1) took the single "Menu" toggle away. What is left
+  // in the header's row is the three group labels themselves, so a section is one tap from the
+  // first screen rather than two — and the markup that made the second tap necessary is gone
+  // rather than merely unstyled.
+  const page = stubPage(HOME.html, { hover: false })
+  assert.equal(page.find('.site-nav-drawer').length, 0, 'the page still carries the drawer toggle the owner took away')
+  assert.equal(page.find('.site-nav-panel').length, 0, 'the page still carries the panel the toggle opened')
+  assert.equal(page.find('.site-nav-toggle').length, 0, 'the page still carries the drawer toggle’s summary')
 
+  // Every label is drawn with nothing opened first, and each one holds its own panel of links.
+  for (const summary of page.summaries) {
+    assert.ok(summary.getClientRects().length, `the label ${JSON.stringify(textOf(summary.node).trim())} is not drawn until something else is opened`)
+  }
+  assert.equal(page.find('.site-nav-group ul').length, 3, 'the menu is not three labels each holding its own list')
+
+  // A tap is the whole of the mechanism on a touch screen — a device that answers the pointer
+  // query no, which is the phone the brief is about: the finger's arrival leaves the group
+  // alone, and the click the `<summary>` handles by itself opens it.
   const group = page.groups[0]
-  drawer.open = true
-  page.moveTo(group.querySelector('summary'))
-  assert.equal(group.open, true, 'inside an open drawer, the pointer no longer opens a group')
+  const summary = group.querySelector('summary')
+  page.moveTo(summary)
+  assert.equal(group.open, false, 'the pointer opened a group: a touch screen has no hover to give, and the click is the control')
+  page.tap(summary)
+  assert.equal(group.open, true, 'a tap on a label did not open its panel')
+  assert.ok(
+    [...group.querySelectorAll('a')].every((link) => link.getClientRects().length),
+    'the links inside the panel a tap opened are not drawn, so the tap reached nothing',
+  )
 })
 
 // ---- 3. the keyboard ---------------------------------------------------------------------

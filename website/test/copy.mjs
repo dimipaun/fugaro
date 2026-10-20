@@ -387,8 +387,8 @@ class FakeElement {
   querySelectorAll(selector) {
     return [...walk(this.node)].filter((node) => this.dom.matches(node, selector)).map((node) => this.dom.wrap(node))
   }
-  // Rendered unless an ancestor is a closed drawer's panel, a closed group's list, or marked
-  // as not drawn by the case (the drawer on a wide viewport).
+  // Rendered unless an ancestor is a closed `<details>` — a group's list is the disclosure's
+  // own child, and that is the whole of what hides it — or the case says otherwise.
   getClientRects() {
     return this.dom.drawn(this.node) ? [{}] : []
   }
@@ -449,20 +449,11 @@ function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {} }
     drawn(node) {
       for (let at = node; at && at.name !== '#document'; at = at.parent) {
         if (undrawn(at)) return false
-        const cls = (at.attrs.get('class') ?? '').split(/\s+/)
         if (at.attrs.has('hidden')) return false
-        if (cls.includes('site-nav-panel') && !undrawn(siblingDrawer(at))) {
-          const drawer = siblingDrawer(at)
-          if (drawer && !drawer.attrs.has('open')) return false
-        }
         if (at.parent?.name === 'details' && at.name !== 'summary' && !at.parent.attrs.has('open')) return false
       }
       return true
     },
-  }
-  function siblingDrawer(panel) {
-    const siblings = panel.parent.children.filter((child) => child.name !== undefined)
-    return siblings[siblings.indexOf(panel) - 1] ?? null
   }
   function compound(node, part) {
     if (!/^[a-z]*(\.[\w-]+|\[[\w-]+\])*$/.test(part)) throw new Error(`the fake DOM does not understand the selector part ${part}`)
@@ -670,38 +661,42 @@ test('site.js leaves the controls hidden with no clipboard, and says so when a c
 test('Escape and a click outside close the menu, and the focus goes back to a toggle that is drawn', () => {
   const html = builtPages(DIST).find((p) => p.rel === 'docs/index.html').html
 
-  // Narrow: the drawer open, a group open in it, the focus on a link inside that group.
-  const narrow = fakeDOM(html)
-  const drawer = narrow.find('.site-nav-drawer')[0]
-  const group = narrow.find('.site-nav-group details')[0]
-  drawer.open = true
+  // A group open, the focus on a link inside it — the one level the menu has, at every width,
+  // since the owner's brief of 2026-10-19 took the drawer in front of the groups away.
+  const page = fakeDOM(html)
+  const group = page.find('.site-nav-group details')[0]
   group.open = true
   group.querySelector('a').focus()
-  narrow.document.dispatch('keydown', { key: 'Escape' })
-  assert.equal(drawer.open, false, 'Escape left the drawer open')
+  page.document.dispatch('keydown', { key: 'Escape' })
   assert.equal(group.open, false, 'Escape left a group open')
   // Compared by identity and asserted as a boolean: the elements wrap whole parsed pages,
   // and a failing deep comparison would print them.
   assert.ok(
-    narrow.document.activeElement === drawer.querySelector('summary'),
-    'Escape inside the drawer did not give the focus back to the drawer toggle: the panel is the toggle\'s sibling, and a focus left in it is a focus on something no longer drawn',
+    page.document.activeElement === group.querySelector('summary'),
+    "Escape inside a group did not give the focus back to its own trigger: the list is the <details>'s child, and a focus left in it is a focus on something no longer drawn",
   )
 
-  // Wide: the drawer is not drawn, so the group's own toggle takes the focus.
-  const wide = fakeDOM(html, { undrawn: (node) => (node?.attrs?.get('class') ?? '').split(/\s+/).includes('site-nav-drawer') })
-  const wideGroup = wide.find('.site-nav-group details')[1]
-  wideGroup.open = true
-  wideGroup.querySelector('a').focus()
-  wide.document.dispatch('keydown', { key: 'Escape' })
-  assert.equal(wideGroup.open, false, 'Escape left a dropdown open')
-  assert.ok(wide.document.activeElement === wideGroup.querySelector('summary'), 'Escape in a dropdown did not give the focus back to its toggle')
-
   // A key that is not Escape does nothing; a click inside the menu does nothing; outside closes.
-  wideGroup.open = true
-  wide.document.dispatch('keydown', { key: 'Tab' })
-  assert.equal(wideGroup.open, true, 'a key other than Escape closed the menu')
-  wide.document.dispatch('click', { target: wideGroup.querySelector('summary') })
-  assert.equal(wideGroup.open, true, 'a click inside the menu closed it')
-  wide.document.dispatch('click', { target: wide.find('main')[0] })
-  assert.equal(wideGroup.open, false, 'a click outside the menu left it open')
+  group.open = true
+  page.document.dispatch('keydown', { key: 'Tab' })
+  assert.equal(group.open, true, 'a key other than Escape closed the menu')
+  page.document.dispatch('click', { target: group.querySelector('summary') })
+  assert.equal(group.open, true, 'a click inside the menu closed it')
+  page.document.dispatch('click', { target: page.find('main')[0] })
+  assert.equal(group.open, false, 'a click outside the menu left it open')
+
+  // And the trigger it hands the focus to is one that is drawn: a reader whose group closed
+  // while the label was not rendered is left where they were rather than moved to a control
+  // they cannot see. The case says which elements are not drawn, which is how the script's own
+  // question — `getClientRects().length` — is answered here.
+  const hidden = fakeDOM(html, { undrawn: (node) => node.name === 'summary' })
+  const hiddenGroup = hidden.find('.site-nav-group details')[0]
+  hiddenGroup.open = true
+  hiddenGroup.querySelector('a').focus()
+  hidden.document.dispatch('keydown', { key: 'Escape' })
+  assert.equal(hiddenGroup.open, false, 'Escape left a group open')
+  assert.ok(
+    hidden.document.activeElement !== hiddenGroup.querySelector('summary'),
+    'the focus was handed to a trigger that is not drawn, so the reader has been moved to a control they cannot see',
+  )
 })

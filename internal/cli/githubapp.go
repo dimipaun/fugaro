@@ -60,8 +60,17 @@ const checkGitHubAppFlag = "--check-github-app"
 // refuseAppKeyReadInAgent is the refusal of the flag under a coding agent's
 // environment, before anything is read.
 func refuseAppKeyReadInAgent(getenv func(string) string) error {
+	return refuseKeyReadInAgent(getenv, checkGitHubAppFlag, "the GitHub App's private key")
+}
+
+// refuseKeyReadInAgent is that refusal for any command whose flag allows the
+// same read: flag is the flag that would allow it and what names the value, so
+// a command that reads the key for its own purpose (`project sync` lists the
+// App's installed repositories with it) refuses with its own name rather than
+// borrowing one the operator cannot pass here.
+func refuseKeyReadInAgent(getenv func(string) string, flag, what string) error {
 	if agentEnv(getenv) {
-		return userErr("%s reads the GitHub App's private key with your own credentials, so it is refused in a coding agent's session (the value must never reach an agent's process): run it in your own terminal window", checkGitHubAppFlag)
+		return userErr("%s reads %s with your own credentials, so it is refused in a coding agent's session (the value must never reach an agent's process): run it in your own terminal window", flag, what)
 	}
 	return nil
 }

@@ -123,7 +123,7 @@ owner looks at the logo beside the accent (RU3).
 **Independently mergeable because** it changes colour tokens and nothing structural, and
 a revert is the import line and the `PALETTE_IN_FORCE` line.
 
-### P3 — the two-level menu and the mobile drawer (RF3, RF4; D182)
+### P3 — the two-level menu and the mobile drawer (RF3, RF4; D182) — *the drawer was retired on 2026-10-19; see the amendment at the end of this part*
 
 **What.** `website/src/layouts/Base.astro`'s `NAV` becomes groups (D182's
 recommendation: *Product*, *Reference*, *Project*, with Home as the wordmark link that
@@ -170,6 +170,14 @@ openable and closable by keyboard, and the menu usable with JavaScript disabled.
 - **Budgets (D192).** The script grew 20,406 → 26,573 bytes on 2026-10-18 and 26,573 → 30,222 → 33,934 → 35,002 → 37,700 → 39,896 bytes on 2026-10-19, and the README's three figures are re-derived in each commit that ships it. **Where the figures live is `website/README.md`'s budget list, and `website/test/budget.mjs` is the authority for them**: its header carries the derivation (that build plus 25 %) and its `derivationFailures` case reads the README's numbers back and refuses a figure that is not three times the tight derivation of a build the artifact can be measured against — so no number repeated in a plan is ever the one enforced. At this commit they are JavaScript per page **149,610**, page weight **1,001,316**, whole site **3,106,374**.
 - **The runtime half is the owner's, and Check 70a grew a step for it.** Check 70a's step 6 is the brief's acceptance line: the pointer's arrival, the move into the list, the departure and the return, with an emulated touch device (or a phone) as the other half, and — added on 2026-10-19 — the device the query answers **yes** for and a finger still uses (a touch laptop, or a phone with a mouse attached): a tap there opens the group and a second tap closes it, and unplugging the pointer and plugging it back in re-decides without a reload; the keyboard step that used to be 6 is 7. The second 2026-10-19 round added the acceptance the first one's fix needed: **a click on a closed group whose trigger did not hold the focus opens it on that press**, on the mouse and as a tap. Four of that check's statements said what the menu did **before** this amendment, and each is corrected: the script's "only job in the menu" was the two closes (step 4), the wide groups were "closed" (step 5), a group was opened "by keyboard" (the keyboard step, which is 7 now — tabbing to the summary opens it before the key is pressed), and step 6's touch half and its pass/fail lists name the click that must open a group. Until that step runs, the rendered hover behaviour is **UNVERIFIED** in a browser, and the stub DOM is not a pointer.
 
+**Amended 2026-10-19 (owner's brief, item 1) — THE THREE GROUP LABELS ARE THE PHONE'S MENU, and the drawer and its one toggle are retired.** The brief this change was run from asks, as its first item, that the three group labels sit in the header's row on a phone with no `Menu` button, each tapping open its own panel of links, and that they fit beside the wordmark at 375 px with the wordmark's **text** hidden below about 380 px and the mark kept. So the paragraph above is read with this amendment: **"rendered as a two-level menu on a wide viewport and as a drawer behind a single toggle on a narrow one" is now "the same two-level menu at every width"** — one `<details name="site-nav-group">` per group, the shared `name` making the browser keep the three exclusive, a panel across the header's own width on a phone and the same list as a dropdown under its label from 48 rem up. `.site-nav-drawer`, `.site-nav-toggle` and `.site-nav-panel` and the sibling combinator that showed the panel are gone, and `site.js`'s `holds()` loses the drawer branch it kept for the panel. **D182's group decision is untouched** (three groups of three, Home as the wordmark, Privacy in the footer); what changed is what a phone does with them.
+
+- **The wordmark's breakpoint is 390 px, not the ruling's 380.** The row is measured rather than estimated: at 381 px the wordmark's text plus the three labels is a few pixels wider than the header's content box in the font the built site falls back to, and a row that does not fit is a row that scrolls sideways. The text is hidden the way a visually-hidden label is — absolutely positioned, one pixel, clipped — and **not** with `display: none` or `visibility: hidden`: the wordmark is the link home, and a link whose accessible name is thrown away is announced as nothing.
+- **A label and every link in a panel are at least 44 px tall, at every width**, which is the target size the brief asks the menu to be measured against. The header grew 65 px → 77 px and a wide dropdown 114 px → 150 px, which is a change the brief's acceptance asks for.
+- **The gate moves with the menu, and `nav-hover.mjs`'s phone case with it.** `base-styles.mjs`'s `navLayoutFailures` is rewritten for the four invariants of the menu that is (three labels in one row at both widths, the header one row with the list out of its flow, a phone's row fitting, an open that moves nothing) and `navFailures` for the markup's shape, with the toggle, the panel and the drawer refused **by name**; each rule keeps a case that plants the defect and reads the refusal back. `nav-hover.mjs`'s phone case asserts what replaced the toggle — the labels are drawn with nothing in front of them, a pointer that does not hover opens nothing, a tap opens the group — and `copy.mjs`'s stub DOM loses the panel and the drawer branch it carried. **Every case was mutation-proved by hand.**
+- **Check 70a moves with it too.** The drawer step becomes the three labels: at 390 and at 375 the header is one row with the wordmark's mark and no text, each label opens its own panel by tap and by keyboard, Escape closes it, and the menu still reaches every link with **JavaScript off**; at 320 px the same three labels fit. The one-row claim is measured at each width rather than at 390 alone, because the labels and the links grew to 44 px.
+- **Budgets (D192).** The removal is 278 bytes off the base stylesheet every page inlines and 181 off the script, so 459 off the page figure and 3,239 off the site's, re-derived in the commit that ships them. `website/README.md` carries the figures; this bullet does not, on purpose.
+
 ### P4 — cut the text, and gate it (RF5–RF8, RF23, RF24; D186, D188, D189)
 
 **What.**
@@ -183,11 +191,15 @@ openable and closable by keyboard, and the menu usable with JavaScript disabled.
   `CapsCosts.astro:192-194` — the provenance sentences go, replaced by what the page is
   for.
 - The long pages' summaries, **each rendered from a file** under D189's recommendation:
-  `/security/` renders a short "In short" section that the owner adds at the top of
-  `SECURITY.md` (the page stays byte-identical to the file, so
-  `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` does not change; **this needs the
-  owner's text for `SECURITY.md` first**); `/changelog/` renders the first Highlights line
-  of the newest releases above the full list, selected from the release files.
+  `/security/` renders the document's own "In short" section as the page's summary, its own
+  "Reporting a vulnerability" section, and a link to the policy (**this needs the owner's
+  text for `SECURITY.md` first** — and the page it produces is not the byte-for-byte page
+  Global Constraint 12 asks for; **the departure is recorded below**); `/changelog/` renders
+  the product summary of every release above its own entry, read from
+  `website/data/release-summaries.yaml` — the owner's changelog feedback of 2026-10-19 replaced
+  D189's "first Highlights line of the newest releases" reading for this page, and the release
+  files' own Highlights are one click away in a `<details>` block
+  (`docs/website/redesign/README.md`, "The 2026-10-19 changelog brief").
 - Every other page's copy is rewritten short and scannable to D188's numbers: headings
   keep their meaning, the paragraphs under them shrink. FAQ answers stay traceable to the
   document each one names (each answer's `source`, which the page already enforces).
@@ -216,6 +228,46 @@ If D189 takes alternative (a) instead, Global Constraint 6 is amended in
 `../implementation-plan.md` and `changelog-page.mjs` and the security pin each gain an
 exception for a marked summary block, in this part.
 
+**Departure: Global Constraint 12, and where the security page is held now** (the owner's
+brief of 2026-10-19, D189; recorded 2026-10-19, as shipped on this branch). The first
+plan's Global Constraint 12 says a security claim is never paraphrased, and gives it a
+shape: **the security page is generated from `SECURITY.md`, byte for byte below the title,
+with its headings unchanged so the document's own cross-references keep pointing the right
+way** (`../implementation-plan.md:49`). §5 of this plan turned that into a gate,
+`TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`, and the reconciliation's constraint
+table recorded that D189's recommendation kept it. The brief replaced that shape, and two
+things about the constraint are not what this branch ships:
+
+- **The page is not the document.** `/security/` is the brief's three things and nothing
+  else: the document's own "In short" section as the page's summary, its own "Reporting a
+  vulnerability" section, and a link to the policy. The cross-references those two sections
+  carry are rewritten — `#known-limits` becomes a link into `SECURITY.md` in the repository
+  at that section, because the page does not render the section it names, while
+  `#reporting-a-vulnerability` resolves to the page's **own** anchor, because the page does
+  render that section, below the summary that points at it — and a reference
+  whose fragment names no heading of the document is rendered as its own text rather than
+  as a link, which would land the reader at the top of the file under a word that promises
+  a section. So the page is not byte-identical to the document, and its headings are not
+  the document's. **What replaces that half of the constraint is
+  `website/test/security.mjs`**: it holds the page to the document bullet for bullet and
+  word for word, holds each rewritten cross-reference to the section that answers it — the
+  page's own anchor where the page renders that section, the repository URL for the rest —
+  refuses a
+  reference rendered as a link where the document has no heading for it, and refuses a page
+  that is anything other than the three things. That file — not the Go test — is where a
+  change to the page's shape fails.
+- **The Go pin reads the generated copy, and always did.** The constraint's other half
+  survives untouched and is what `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`
+  actually enforces: it reads **`website/content/security.md`**, the file the content
+  pipeline writes from `SECURITY.md` (`go run ./internal/clidoc`, W1.3), which is the
+  document byte for byte below its generated banner — it never reads a page, and it never
+  did. Reading the generated copy is the point (a test written against the generator agrees
+  with whatever the generator does), and its own header records what reads what.
+
+  So Global Constraint 12 holds of the copy and of the pipeline, and the brief of
+  2026-10-19 moved its page-level half from "the page is the document" to "the page is the
+  document's, and `website/test/security.mjs` holds it there".
+
 **Verify.** The two commands of §3, with `meta.mjs`'s and the word-ceiling cases among
 the passes; and the owner reads the rewritten pages (the P9 "after" set is the picture of
 it).
@@ -223,6 +275,19 @@ it).
 **Independently mergeable because** it changes page bodies and tests; the menu, the
 palette and the scripts are untouched. The `/security/` summary waits on the owner's text;
 everything else in P4 does not.
+
+**Amended 2026-10-19 (the owner's request of 2026-10-19) — THE PRIVACY STATEMENT IS THE PRIVACY POLICY THE APP STORES LINK, AND THE WORD CEILING IS NOW DERIVED FROM ITS OWN COUNT.** The request is one page: the App Store and Play listings need a single privacy policy URL, and `/privacy/` is it, so the page has to cover the software as well as the site. The paragraph above is read with this amendment: **D188's 250 is no longer the whole-page ceiling** — the privacy statement is the one page of the site that is not the site's pitch, and the number is derived from it rather than picked.
+
+- **The page carries two named parts.** "The website" is what it always said, in substance unchanged; "The software" says what the command line tool, the desktop console and the phone app do with a reader's data. Every sentence in the second part is held to the thing that makes it true, and `website/test/privacy.mjs` (new, and the ninth gate in `website/README.md`'s list) is what holds it: **the two parts in order and as siblings at the same level** (a part nested inside the other is a page whose two scopes cannot be read, which `consent.mjs`'s own reader refuses too); **the app's reporting held in both directions** — the page names Firebase Crashlytics and Firebase Analytics, so the gate refuses that naming unless the repository holds the plan for it or `mobile/package.json` carries the two packages, and refuses either package declared while the page stays silent — with the paragraph's claims each a sentence the gate looks for (what is collected, what is never sent, the opt-in default, the switch that turns it off, Google as the holder, and the link to Google's own Firebase policy rather than a restatement of it) and the "earlier builds send nothing" sentence required until the reports exist; **no undisclosed reporter and no advertising identifier** — every executable file, manifest and lockfile under `mobile/` is scanned for the analytics, crash-reporting and advertising SDKs and for the platform's advertising-identifier APIs, with the app's own two reporters admitted by name so the scan and the page agree about what the app carries; `SECRET_ITEMS` exactly D111's `idToken` and `macKey` with the page naming them, secure storage, the Keychain and the Keystore, and the tuple's `firebaseProjectId` behind "your own Firebase project"; the update check read from `internal/updatecheck` (GitHub's release list for **this** repository, a 24-hour cache) and the two switches `internal/cli` and `internal/localcfg` define; no production source under `cmd/`, `internal/`, `console/src/`, `mobile/src/` or `shared/` naming the host this project operates; and the contact section as the issue tracker and `SECURITY.md`'s reporting route with no e-mail address on the page. Each rule is one function with its own case, and each has a second case that plants the defect it refuses.
+- **The ceiling, and the half of it that is D188's.** The number is the page's own count on the gates' own build plus 25 %, rounded up (D192's headroom rule) — **and it is not written here**: `website/README.md` states the two figures and `budget.mjs`'s `wordsCeilingFailures` refuses a README that states anything else, in the commit that moves the page. The count has moved twice under this amendment (the software part, then the app's reporting, then the deletion section's carve-out), which is exactly why no figure belongs in a document that is not the one the gate reads. **The raise is that page's and nobody else's**: the same function refuses any other page over D188's 250, so raising the number for one page did not retire D188 for the site — which is the failure this half exists to prevent, and it would have been silent.
+- **`consent.mjs`'s vendor rule reads the site's part.** The software part names the reader's own Firebase project by design, and a scan of the whole page read that as the site's measurement naming a vendor it does not have. The rule is scoped to the site's part and is otherwise unchanged, and a new case plants a vendor in the site part and watches it refused. **The scoping is by document order of the two part headings, and it refuses a page where they do not share a parent**: the first cut read the first heading's siblings and dropped the last, which reads a page whose "The software" sits inside "The website" as though the site's part were the whole of `main` minus one heading — a scope that is not one — so the reader now throws on that page and a case proves it red. The software part naming Google in the shipped page's own words is what that case also holds: naming Google or Firebase there is allowed, and each is still refused named as what the *site* loads.
+- **There is no terms page.** The owner ruled it in the same request, so nothing links one: `privacy.mjs` refuses a built page that does, and a sitemap that lists one.
+- **Check 70b's step 5 moves with it** (the ceiling is read from `website/README.md`, and the page the README derives it from is named there), and the checks the page's own facts wait on are the owner's: the phone app's read path and its store listings.
+- **The app's reporting is written into the page, and the pin runs both ways** (the second round on the owner's request of 2026-10-19, the same day). The owner ruled that the phone app **will** carry Firebase Crashlytics and Firebase Analytics, reporting to a Firebase project the Fugaro project operates rather than the reader's own, and asked for the page to cover it now. So the software part's phone-app section states in plain words what is sent (crash logs, diagnostics and app performance data; which screens are opened; the app-instance identifier Firebase generates), what is never sent (message contents, anything from the installation or its mailbox, credentials and keys), the single purpose, the **opt-in default** ("off until you turn it on, in the app's settings", which is the telemetry design's own answer of the same day and is listed for the owner as a consent default rather than asserted as a ruling), Google as the holder under Google's own Firebase privacy policy — **linked, not restated**, which is why `firebase.google.com` joined `site.yaml`'s `allowed_hosts` — and the sentence that this describes the version that carries the reports and that earlier builds send nothing. The old pin ("the mobile package carries no analytics dependency") is replaced by the bidirectional one above, and the reach scan's SDK list admits the app's own two reporters by name rather than leaving them in a list that would have failed the page's own disclosure. **One correction fell out of it and is worth reading as a rule**: `origins.mjs`'s flag-off half read every attribute for an analytics name, including an `<a href>` — and a link is a reference the reader follows, not a request the page makes, so the page could not point at the holder's own policy in the flag-off artifact without failing the gate written to keep the artifact free of the analytics loader. The link is now excluded from that half by name, with a case that proves both directions (a link is a reference; a script, an image or an inline block naming one is still refused), and every external link is still resolved host by host by `linkcheck.mjs`.
+- **The documents that described the old page say what ships.** `docs/mobile/design/push-notifications.md` §9 argued from the page's deleted "What this page does not cover" section and sent the software's statement to `/security/`, and its Q8 rejected putting that statement on `/privacy/`; both now state the shipped truth (the page carries "The software", a push disclosure would be a subsection of it, and `/security/` is not where the program's statement is sent), while the trust-model half of that design's recommendation stands. The W3.2 note above is read with this amendment too.
+- **The reach scan reads Go, and the case goes through the selector.** The rule above is the one rule whose subject is the whole tree, and its first cut selected the tree's scripts, manifests and lockfiles but not its Go source — 230 files, of which zero were Go, so `cmd/` contributed nothing and `internal/` only its testdata: the sentence "and to nothing the Fugaro project operates" was unenforced for the CLI and the server while the scan read enough files to look busy. The selector carries `.go` now (the `_test.go` filter then keeps the recorded exception out, as its own assertion always claimed), the gate case counts the Go sources it selected so a selector that loses `.go` fails there, and the defect case builds a tree with a production Go file and a Go test beside it and reads them through `softwareSources` itself rather than around it — which is why the first cut's case could not see this.
+- **The app's reporting is always on, and the app carries no switch** (the owner's ruling of 2026-10-19, a third round on the same request). The bullet above states the **opt-in default** the telemetry design answered with, and this ruling supersedes it: the app versions that carry Crashlytics and Analytics send them with no in-app consent switch — not opt-in and not opt-out. So the phone-app paragraph that said collection was "off until you turn it on, in the app's settings" now says the versions that carry the reports send them, that there is no switch inside the app to turn them off, and what a reader can do instead (uninstall the app, or do not install it), with the command line tool and the console named as carrying none of these reports — **the website is not in that clause and must not be**: part one of the same page discloses the site's own Google Analytics measurement under the consent it states, so a software-part sentence calling the website unmeasured would be the page contradicting its own first half, and no rule in `website/test/privacy.mjs` reads the flag that decides that half; and "Deleting your data" says that uninstalling the app stops the sending, where it said the switch did. `website/test/privacy.mjs`'s claims move with the page, each new sentence held by its own case, and the page's word ceiling and the site's byte figure are re-derived in `website/README.md` in the same commit (D192). **What is not argued on the page:** always-on analytics identifiers for a reader in the EU usually need prior consent, and that is the owner's legal review to make rather than a sentence the statement argues.
+- **What does not move.** Every other page's ceiling (250), the lead's 40 words, the three exempt reference pages, and the page's own website half.
 
 ### P5 — the gist above the fold (RF5, RF23; D187)
 
@@ -247,6 +312,30 @@ owner.
 
 **Independently mergeable because** it moves blocks within pages, and neither P4's nor
 P5's tests assert the other's layout. It reads best after P4.
+
+**Amended 2026-10-19 (owner's feedback on the page this part is about) — GETTING STARTED IS
+THREE BANDS, AND WHAT THE COMMAND DOES NOT DO IS ITS OWN SECTION.** The owner's reading of
+the page, after P4 and P5 shipped: "above the fold: just `brew install dimipaun/tap/fugaro`
+and Console links, then we need a section with what you need to do for the actual
+installation (Firebase etc), rest are details, later." So `getting-started.astro` is now
+`#install` (the quick path `install.yaml` carries first, with its copy control, beside the
+console option, and one closing sentence), `#setup` ("Set up your installation": seven
+one-line steps in `docs/gcp-setup.md`'s own order — its preconditions and its short path —
+each naming the document that carries the detail), and `#details` ("Details": the other
+install paths as P4 left them, and the platform list D94 settles). **Nothing P5 claims is
+undone**: `#install` still opens with a command, the two options are still in that section
+in that order, and the page's first command block is what Check 70b measures. The page
+stays inside D188's 250-word ceiling, so the words the new list costs are paid for out of
+the page's own copy rather than out of the ceiling — `install.yaml`'s archive, cosign and
+plugin notes and names are shorter for it, and the notes the Go test pins (the Homebrew
+"tested on macOS", the go install's three phrases) are untouched. `install.yaml`'s header
+now says the first path is the quick path, because that is what puts it above the fold.
+The bands are held by a gate rather than by this paragraph: `website/test/fold.mjs` gains a
+fourth rule — Getting Started's sections are exactly `#install`, `#setup`, `#details` in
+that order, `#setup` is an `ol` and every step in it names the document behind it — so the
+two things the reader came for cannot drift back down a page that grows. The site's own
+build is 1,654 bytes heavier (12 of them the Firebase step's own wording), re-derived in
+`website/README.md` in the same commits (D192).
 
 ### P6 — a copy button on every command block (RF13, RF14, RF15; D183, D192)
 
@@ -408,8 +497,8 @@ they enforce:
 | the accent versus the logo's hue | `website/test/accent.mjs` (new) | new gate; decodes the PNG with `node:zlib` | P2 |
 | `.site-nav ul{display:flex}` and the one-`aria-current` rule | `website/test/base-styles.mjs` | rewritten for the two-level menu, with the page's current marker still exactly one | P3 |
 | provenance phrases | `website/test/meta.mjs` (new) | new gate | P4 |
-| "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; the summary block is release-file text it accepts (D189); an exception only under D189's alternative (a) | P4 |
-| the security page = `SECURITY.md` byte for byte | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` | **unchanged** under D189's recommendation (the summary is in `SECURITY.md`) | P4 |
+| "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; under D189 the summary block was release-file text it accepted, and since the owner's changelog feedback of 2026-10-19 the two sources are the release files and `website/data/release-summaries.yaml`, both of them files the page renders rather than prose it writes | P4 |
+| the security page = `SECURITY.md` byte for byte | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` (the generated copy) and `website/test/security.mjs` (the page) | **departed from, as shipped**: the Go pin still holds `website/content/security.md` to `SECURITY.md`, and the page is held by `website/test/security.mjs` (P4's departure note) | P4 |
 | copy controls | `website/test/copy.mjs` (new) | new gate | P6 |
 | reduced-motion path per animation | `website/test/a11y.mjs` | **unchanged**, and every new animation must satisfy it | P7, P8 |
 | the homepage transcript | `website/test/home.mjs` | grows from one line to every line | P7 |
@@ -418,8 +507,11 @@ they enforce:
 `website/package.json`'s check script is `node --test test/*.mjs`, so a new test file
 under `website/test/` is picked up with no edit there. The Go pins (`internal/cli`,
 `internal/clidoc`) are untouched by every part: no part changes a generated document, the
-canonical host or the install facts, and the security page stays byte-identical to
-`SECURITY.md` (P4's summary is added to the file itself, by the owner).
+canonical host or the install facts, and the generated `website/content/security.md` stays
+byte-identical to `SECURITY.md` (P4's summary is added to the file itself, by the owner).
+The **page** the brief cuts to three things is a departure from Global Constraint 12's
+byte-for-byte shape, recorded in P4's departure note; it is held by
+`website/test/security.mjs`.
 
 ## 6. Order and the owner's go
 
@@ -464,7 +556,7 @@ is reconciliation §9):
 
 1. **D180** — the accent: the logo's hue, `#17A8E6`, as a fourth palette file made the one in force.
 2. **D181** — the warning colour: keep the role, move it to amber `#F5A524`.
-3. **D182** — the menu: *Product*, *Reference*, *Project*, Home as the wordmark, Privacy stays in the footer, a drawer on mobile.
+3. **D182** — the menu: *Product*, *Reference*, *Project*, Home as the wordmark, Privacy stays in the footer, a drawer on mobile — **the drawer is retired (owner's brief, 2026-10-19, item 1): the three group labels are the phone's menu**, and the groups themselves are unchanged (the amendment at the end of P3).
 4. **D183** — the JavaScript: one first-party file, no CSP or allow-list edit.
 5. **D184** — the run animation: today's command plus README's numbered steps, labelled as the documented sequence (alternative: a dated capture of a real run).
 6. **D185** — How It Works: the brief's four steps with quoted captions, cache and security boundary as annotations.

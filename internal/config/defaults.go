@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // BaseKind is the one Fugaro base image's kind (design base-image.md): what a
 // workflow without base: builds on, and its key in the local config's
@@ -32,7 +35,29 @@ const legacyBaseMessage = "was removed in 0.7.0: every workflow builds on the on
 const (
 	DefaultFirstLineRounds = 1
 	DefaultReviewRounds    = 2
+	// DefaultAgentAuth is agent.auth's default: a fugaro.yaml that names none
+	// authenticates with a Vertex key. applyDefaults applies it, and
+	// AgentOf is the other reader of the rule.
+	DefaultAgentAuth = "vertex"
 )
+
+// AgentAuths are the values agent.auth may take: validate's check and every
+// reader that has to tell "an auth this Fugaro knows" from an arbitrary string
+// read one list, so a value the validator accepts is never one a reader
+// refuses as unknown.
+var AgentAuths = []string{"vertex", "api-key", "oauth"}
+
+// KnownAgentAuth reports whether auth is one of AgentAuths.
+//
+// The distinction matters where the value did not come through validation:
+// config.AgentOf reads a repository's own bytes with the strict decode and
+// validates nothing (it exists so a launcher can judge a launch on the
+// fugaro.yaml at the ref the run checks out, without resolving that run's whole
+// config), so an arbitrary string — a newline, an escape sequence — can arrive
+// from a committed file at a gate that both decides on the value and prints it.
+// A gate that cannot place the value says so rather than reading it as one of
+// the three.
+func KnownAgentAuth(auth string) bool { return slices.Contains(AgentAuths, auth) }
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
 // default depends on the checkout's lockfile, so it is not applied here:
@@ -46,7 +71,7 @@ func applyDefaults(c *Config) {
 		c.Git.PR.EarlyDraft = &t
 	}
 	if c.Agent.Auth == "" {
-		c.Agent.Auth = "vertex"
+		c.Agent.Auth = DefaultAgentAuth
 	}
 	if c.Agent.ReviewRounds == 0 {
 		c.Agent.ReviewRounds = DefaultReviewRounds

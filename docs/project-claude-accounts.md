@@ -1,10 +1,11 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, unreleased.** The released Fugaro is 0.8.7, and nothing on this page works on it:
+Status: **0.9.0, released.** The released Fugaro is 0.9.0, the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
-[`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)). The page is kept out
-of the docs hub on the site until the release is cut, and every command below is this release's
+[`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
+reads none of it. The page is kept out
+of the docs hub on the site until the hub lists it, and every command below is a 0.9.0 or later
 `fugaro` binary. The design it documents is
 [design/project-named-oauth-tokens.md](design/project-named-oauth-tokens.md).
 
@@ -214,7 +215,7 @@ is the last segment of the job's name (`gcp.ProjectJobName`), and the job's serv
 can read a value. A profile that lists no accounts deploys exactly what it deployed before.
 
 The published policy carries the account axis in a node the previous release cannot read, so
-**0.9.0's accounts need all three of these**, in this order:
+**0.9.0's accounts need all four of these**, in this order:
 
 1. **Upgrade the CLI, per installation machine:**
 
@@ -263,6 +264,19 @@ The published policy carries the account axis in a node the previous release can
    0.9.0 policy read by an 0.8.x runner is refused (`the project policy is version 3; this Fugaro
    understands version 2`), and the fix is the image, not the policy.
 
+4. **Move the shared jobs onto it, per installation**, in your own terminal, on a machine where
+   step 3 ran:
+
+   ```bash
+   fugaro init --firebase <gcp-project>
+   ```
+
+   `fugaro image refresh` re-pins `base_images` and moves each repository's own jobs, but never a
+   project job: those are the installation's, and only a re-apply of the installation moves them
+   onto the base image this machine's `base_images` now pins. Until it runs, a shared job keeps
+   its 0.8.x runner, which refuses the version-3 node, and neither the launch check nor `fugaro
+   doctor` says so: both read the pin, not the deployed job.
+
 Read it back per installation:
 
 ```bash
@@ -293,6 +307,25 @@ fugaro run --token acme-team
 `--token` overrides `agent.oauth_token`; with neither, the repository's `default` account is used.
 A follow-up (`--pr N`) keeps its previous run's account unless `--token` is given explicitly, and an
 explicit one overrides it. The selection is checked the same way as a first run's.
+
+The `fugaro.yaml` that name is read from is the one **at the ref the run checks out** — the launcher
+reads it out of its own checkout's git objects and fetches nothing — and never the working tree's
+copy: the run resolves `agent.auth` from that same document, and a checkout left on another branch,
+or carrying an uncommitted `agent.oauth_token` edit, cannot choose the account the launch runs as.
+A ref the launcher's checkout does not hold leaves the working tree's value standing, which is what
+a launch had before the ref was read for this; the run then resolves the ref's own file after
+cloning it. The same is true of the two other ways that read can come up short, and they are worth
+knowing because the launcher's answer — *unlike the run's* — is a judgment made from what this
+machine happens to hold: a `fugaro.yaml` at the ref that does not decode as one, and `agent.auth`
+at a ref judged without the project layer that applies to it (the layer this command resolved for
+that checkout, which a fresh machine or a cache that has moved on may not have). In both the
+launcher falls back to the working tree's value, or to the file's own value where the layer would
+have changed it — so a launch can be judged on a document, or on an `agent.auth`, other than the
+one the run resolves. The run is the one that decides: it resolves the file it clones over the
+layer its task carries, and refuses a launch it resolves differently (and on a shared project job
+the launcher re-resolves that same credential before the claim). A launcher's refusal is therefore
+never wrong in the direction of starting a run the file does not permit; what it can be is a
+refusal, or an acceptance, that the run's own resolution then settles.
 
 To see what a repository may choose, **per repository checkout** (offline, names only, no Secret
 Manager call and no value):
@@ -435,7 +468,7 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
 
 ## 11. Limits of this release
 
-- **0.8.7 does not read any of it.** The profile field, the `accounts` block and the jobs ship in
+- **0.8.x does not read any of it.** The profile field, the `accounts` block and the jobs ship in
   0.9.0; an older binary meeting a version-3 policy refuses it and says which release reads it
   (§5).
 - **A GitHub run on a shared job reaches its provider, and it is still not a per-repository job.**

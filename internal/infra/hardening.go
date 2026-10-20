@@ -306,6 +306,80 @@ func HardeningAllowDelete(p *tf.Plan, launchers, operators []string) []string {
 	return out
 }
 
+// LauncherGrantUpgrade is the 0.9.0 upgrade's allow-list for p
+// (docs/design/bucket-iam.md H5): each replace of a launcher's
+// runs_launcher["<m>"] grant on bucket whose before is the pre-0.9.0 grant
+// (objectUser under gcp.LegacyLauncherBucketCondition and its title, no
+// description) and whose after is the same member's objectUser grant on the
+// same bucket under gcp.LauncherBucketCondition and its title. The widened
+// condition is ForceNew, so every installation set up before 0.9.0 plans
+// this replace once per launcher who is not an operator. Anything else — a
+// pure delete, another before or after, another bucket, role or member, an
+// operator, a member on no list — is never allowed: the guard refuses it as
+// before.
+func LauncherGrantUpgrade(p *tf.Plan, bucket string, launchers, operators []string) []string {
+	if p == nil || !gcp.ValidBucketName(bucket) {
+		return nil
+	}
+	const role = "roles/storage.objectUser"
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		m, ok := grantMember(rc.Address, "runs_launcher")
+		if !ok || rc.Type != "google_storage_bucket_iam_member" {
+			continue
+		}
+		a := rc.Change.Actions
+		if !slices.Equal(a, []string{"delete", "create"}) && !slices.Equal(a, []string{"create", "delete"}) {
+			continue
+		}
+		if !slices.Contains(launchers, m) || slices.Contains(operators, m) {
+			continue
+		}
+		if !launcherGrantIs(rc.Change.Before, bucket, m, role, gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket)) ||
+			!launcherGrantIs(rc.Change.After, bucket, m, role, gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(bucket)) {
+			continue
+		}
+		out = append(out, rc.Address)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// launcherGrantIs reports whether one side of a google_storage_bucket_iam_member
+// change is exactly member's role on bucket under the one condition titled
+// title with expression expr and no description.
+func launcherGrantIs(side map[string]any, bucket, member, role, title, expr string) bool {
+	if side == nil || side["bucket"] != bucket || side["member"] != member || side["role"] != role {
+		return false
+	}
+	conds, _ := side["condition"].([]any)
+	if len(conds) != 1 {
+		return false
+	}
+	c, _ := conds[0].(map[string]any)
+	if c == nil || c["title"] != title || c["expression"] != expr {
+		return false
+	}
+	d, set := c["description"]
+	return !set || d == nil || d == ""
+}
+
+// LauncherGrantUpgradeBanner names the launchers whose runs_launcher grant
+// the plan replaces with the runs/ and tokens/ condition, "" when there are
+// none.
+func LauncherGrantUpgradeBanner(allowed []string) string {
+	if len(allowed) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("bucket access (0.9.0): these launchers' runs/ grant is replaced by one on runs/ and tokens/, so the runs they start can write their sealed budget token:\n")
+	for _, a := range allowed {
+		m, _ := grantMember(a, "runs_launcher")
+		b.WriteString("  " + pluginwire.Printable(m) + "\n")
+	}
+	return b.String()
+}
+
 // HardeningBanner names the launchers whose old grant the plan deletes, ""
 // when there are none.
 func HardeningBanner(allowed []string) string {

@@ -26,6 +26,7 @@ Subcommands:
 - `fugaro accounts` -- List the named Claude accounts a repository may use
 - `fugaro allow-delete` -- Record the Terraform addresses a run may delete or replace (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
+- `fugaro backends` -- List the compute backends an installation can run its jobs on
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
@@ -265,6 +266,60 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository RUN belongs to (owner/name; needed only for a bare run ID) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro backends`
+
+List the compute backends an installation can run its jobs on
+
+Usage: `fugaro backends`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for backends |
+
+Subcommands:
+
+- `fugaro backends ls` -- List the compute backends this fugaro knows and which one the project uses
+
+## `fugaro backends ls`
+
+List the compute backends this fugaro knows and which one the project uses
+
+List the compute backends a project config's backend: key may name, and
+which one the selected project uses:
+
+  cloud-run    Cloud Run jobs (the default, and the one every installation
+               runs on today)
+  cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
+
+A config that names no backend runs on cloud-run. A config that names
+cloud-batch is refused by this build ("not enabled yet"): the backend and its
+opener are built and tested, and nothing selects them until Fugaro has passed
+the live checklist for it.
+
+This is a local, read-only lookup: it reads the project config and the backend
+names internal/backend defines, and it calls no cloud API. With --json it
+prints one object instead of two lines, carrying the list, the selected project
+and the name its config selects.
+
+Usage: `fugaro backends ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -1713,6 +1768,7 @@ Subcommands:
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
 - `fugaro project repos` -- The project's allow-list: which repositories may run
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
+- `fugaro project sync` -- Offer the GitHub App's installed repositories that the allow-list does not admit
 
 ## `fugaro project policy`
 
@@ -1764,11 +1820,26 @@ config/policy/repos children are removed too, shared node or not: a delete
 that failed on the shared node leaves them behind, and this is what clears
 them.
 
-routing.claude is written where the operator writes it: this config. A publish
-refuses to drop an active route the config does not account for, and refuses
-a config that writes a routing block naming no Claude switch in the same
-state; --remove-routing is how the operator says the block goes away on
-purpose.
+Each repository an account a profile names admits also gets a child under
+config/policy/repos/$slug, holding the NAMES of its admitted accounts and
+nothing else: the accounts published are the ones some profile names,
+qualified by that profile's provider, so an account this config defines but
+no profile names admits nothing a run could read. The children are narrowed before the shared node and widened
+after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.
+When the node this publish writes carries a member an older Fugaro refuses
+whole — a credentials
+block, or routing.claude.via: cascade — the diff warns: older launchers (and,
+for the cascade, older runner images) stop until they are upgraded.
+
+routing.claude is written where the operator writes it: this config. A
+publish refuses to drop an active route the config does not account for, and
+refuses to turn the credentials cascade off — a node carrying
+routing.claude.via: cascade with a config that names no Claude switch is
+refused with its own sentence, because the cascade is not a route: it decides
+which credential carries a Claude call, never where the call goes, and it is
+what hands a run the project's other credentials. A config that writes a
+routing block naming no Claude switch in the same state is refused too.
+--remove-routing is how the operator says the block goes away on purpose.
 
 Usage: `fugaro project policy publish [--seed-repos] [--delete] [--yes] [--remove-routing]`
 
@@ -1826,7 +1897,7 @@ Flags:
 Subcommands:
 
 - `fugaro project repos add` -- Enroll a repository: add it to the policy's allow-list
-- `fugaro project repos ls` -- List the allow-list and the repositories running now
+- `fugaro project repos ls` -- List the allow-list and the repositories that have run here
 - `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
 
 ## `fugaro project repos add`
@@ -1857,7 +1928,7 @@ This command has no subcommands.
 
 ## `fugaro project repos ls`
 
-List the allow-list and the repositories running now
+List the allow-list and the repositories that have run here
 
 Usage: `fugaro project repos ls`
 
@@ -1930,6 +2001,45 @@ Flags:
 | `--json` | bool | `false` | no | machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project sync`
+
+Offer the GitHub App's installed repositories that the allow-list does not admit
+
+Ask GitHub which repositories the project's GitHub App is installed on (the
+App API, with the App's own credentials) and offer the ones the published
+allow_repos does not admit, as one list confirmed once. The accepted list is
+written through the same ETag-guarded write `project repos add` uses; entries
+are only ever added, so a sync never un-enrolls a repository — including one
+the App is not installed on at all (another provider's, or one whose
+installation was removed). A repository the list already admits, a pattern
+included, is not offered: its runs are admitted already.
+
+Reading the App's private key is --github-app-key: without it, nothing is
+read. Under it the key is read from the project's github-app-key secret with
+your own credentials and held in memory only to sign the App's 9-minute JWT
+(never printed, never passed as an argument, never in an error), and the
+flag is refused in a coding agent's session. The App ID is a number, not a
+secret: --github-app-id, or the one this machine's config already holds.
+
+Usage: `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `--github-app-id` | string | "" | no | the GitHub App's ID (a number, not a secret); default: the one this machine's config holds |
+| `--github-app-key` | bool | `false` | no | read the project's GitHub App private key from Secret Manager to ask GitHub (your own credentials; refused in a coding agent's session) |
+| `-h`, `--help` | bool | `false` | no | help for sync |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--yes` | bool | `false` | no | confirm the batch without typing the project's name |
 
 Subcommands:
 
@@ -2348,8 +2458,9 @@ sanitised and size-capped before it is printed, and it authorises and admits
 nothing. Two identities that differ only in what the sanitising drops -- an
 invisible character a paste left in one of them, say -- or only past the cap are
 one key and one row: the row is the key, not the person. A private view is not
-read off that key. It holds the runs whose launch recorded your identity itself,
-compared as runs ls --mine compares it, so someone whose identity merely
+read off that key. It holds the runs whose launch recorded your identity itself --
+the identity fugaro run writes to launch.json at launch, not the requested_by that
+runs ls --mine compares -- so someone whose identity merely
 sanitises to the same text is never counted in it and your own row can be
 smaller than that key's row in the full table.
 

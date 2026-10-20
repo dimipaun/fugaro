@@ -534,8 +534,12 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 		add("defaults.git.provider", "must be one of %s", strings.Join(Providers, ", "))
 	}
 	ag := d.Agent
-	if ag.Auth != "" && !slices.Contains([]string{"vertex", "api-key", "oauth"}, ag.Auth) {
-		add("defaults.agent.auth", "must be one of vertex, api-key, oauth")
+	if ag.Auth != "" && !KnownAgentAuth(ag.Auth) {
+		// The same list the repository's own agent.auth is checked against
+		// (AgentAuths, one list for both): a layer that sets a value the file's
+		// check refuses would otherwise be a config a run resolves to something
+		// no document may name.
+		add("defaults.agent.auth", "must be one of %s", strings.Join(AgentAuths, ", "))
 	}
 	if ag.ReviewRounds != 0 && (ag.ReviewRounds < 1 || ag.ReviewRounds > 10) {
 		add("defaults.agent.review_rounds", "must be between 1 and 10")

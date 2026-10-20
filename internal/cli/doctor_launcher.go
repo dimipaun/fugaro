@@ -44,10 +44,11 @@ const doctorMaxJobPages = 200
 // role's own permissions are a fact of the installation module, not of any
 // job, so this check reports grants and does not judge them: it is an info
 // line — not a failure under --strict, and still printed, which is what makes
-// the surface readable at all (the check carries a Problem and is not OK:
-// printDoctorChecks prints every check that is not OK, and an OK one only when
-// it carries a Severity, so an un-ok check is the shape that prints either
-// way). Only a read that fails is a warning.
+// the surface readable at all (the check carries a Problem and is not OK, with
+// Severity "info": printDoctorChecks prints every check that is not OK, and an
+// OK one only when it carries a Severity, so an un-ok check is the shape that
+// prints either way; and an info one neither fails doctor nor holds back the
+// "everything checked is ok" line). Only a read that fails is a warning.
 //
 // Read-only, and metadata only: job names and their IAM policies, never an
 // execution, an override or an env var. A test configuration (no_auth with
@@ -211,7 +212,8 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	}
 	// Not OK, and Severity "info": printDoctorChecks prints every check that is
 	// not OK (and an OK one only when it carries a Severity), and an "info" one
-	// never fails doctor, with or without --strict (checksFail). Being un-ok is
+	// neither fails doctor, with or without --strict (checksFail), nor
+	// suppresses the "everything checked is ok" line beside it. Being un-ok is
 	// what makes the print independent of the printer's OK rule as well: a line
 	// the owner must be able to read is the shape that prints either way.
 	out := []doctorCheck{{ID: "launcher-jobs", Severity: "info", Problem: problem,

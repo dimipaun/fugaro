@@ -19,14 +19,29 @@
  * the section it cites; `website/test/home.mjs` makes the same check against the built page
  * from outside. Nothing here is written for the page.
  *
- * **Why a caption cites a section rather than the whole file.** All four captions are lines
- * of README.md, so held to the file alone they could be shuffled among the steps and each
- * would still be a quotation — while the page then said Fugaro is where the pull request
+ * **Why a caption cites a section rather than the whole file.** Three of the four captions
+ * are lines of README.md, and held to the file alone they could be shuffled among the steps
+ * with each still a quotation — while the page then said Fugaro is where the pull request
  * opens. Each cites the section it belongs to (the agent's line is from `## Getting
- * started`, Fugaro's from `## Why Fugaro`, the job's and the pull request's from `## How it
- * works`), and inside one section the lines must appear in the order the section writes
- * them, which is the rule `website/test/home.mjs` holds this page to: of the two steps that
- * share a section, the job's line comes first in the README and must come first here.
+ * started`, Fugaro's from `## Why Fugaro`, the job's from `## How it works`), and inside one
+ * section the lines must appear in the order the section writes them, which is the rule
+ * `website/test/home.mjs` holds this page to.
+ *
+ * **The pull request's caption is the one that cites another document** (the owner's
+ * feedback of 2026-10-19). It used to be README.md's step 4 clause about the branch — "each
+ * commit is pushed within about a minute while the agent works" — which overstates what a
+ * reader of the picture takes it to mean: what opens the pull request is the run's first
+ * checkpoint push, and what a reader gets then is a draft, marked not verified. README.md's
+ * step 4 says that second half too ("a draft opens at the first push (marked not verified)"),
+ * but the sentence that says when the pull request opens — the run's first checkpoint push,
+ * within about a minute of the run's first commit — is `docs/git-providers.md`'s, which is
+ * the document that owns the behaviour, so the step quotes it there. What the caption cannot
+ * carry is the rest of the fact: the minute before that push, which is the section above it in
+ * that document, and the checkpoints the run keeps pushing as it works, which is another
+ * sentence of the section it cites. A caption is one contiguous quotation of a repository
+ * document, and one stitched from two sentences' halves is a sentence the repository never
+ * wrote — so the step, which is the pull request, says what opens and in what state, and the
+ * rest is the section it cites.
  *
  * **The flow is a list, and its picture is decoration.** The steps are an `<ol>` of
  * headings and captions, which is the whole content, and each step's arrow is an SVG marked
@@ -109,33 +124,39 @@ function comparable(document: string): string {
 }
 
 /**
- * One `## <heading>` section of README.md, up to the next `## ` — the same reader
- * `website/test/home.mjs` uses, so the build and the check resolve a section the same way.
- * A heading the README does not carry is a defect in this file rather than in the README:
- * the steps cite sections by name, and a renamed heading has to fail here, naming itself.
+ * One `## <heading>` section of a document of this repository, up to the next `## ` — the
+ * same reader `website/test/home.mjs` uses, so the build and the check resolve a section the
+ * same way. A document or a heading the repository does not carry is a defect in this file
+ * rather than in the document: the steps cite sections by name, and a renamed heading has to
+ * fail here, naming itself.
  */
-function readmeSection(heading: string): string {
-  const readme = readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')
-  const start = readme.indexOf(`\n## ${heading}\n`)
-  if (start === -1) {
+function section(document: string, heading: string): string {
+  const text = readFileSync(path.join(REPO_ROOT, document), 'utf8')
+  // A heading's code span is a marker rather than part of its name, so the search reads the
+  // headings with their backticks off: the section a step cites as `#Checkpoint pushes
+  // (git.pr.checkpoints)` is the document's `## Checkpoint pushes (\`git.pr.checkpoints\`)`,
+  // and the key in it is part of the name rather than something to drop.
+  const at = [...text.matchAll(/^## (.+)$/gm)].find((match) => match[1].replace(/`/g, '') === heading)
+  if (!at || at.index === undefined) {
     throw new Error(
-      `website/src/components/ArchitectureDiagram.astro: README.md carries no "## ${heading}" section, and a step's caption is quoted from it (changes spec 2026-10-18, item 4). Either the section was renamed or the caption moved.`,
+      `website/src/components/ArchitectureDiagram.astro: ${document} carries no "## ${heading}" section, and a step's caption is quoted from it (changes spec 2026-10-18, item 4; the owner's feedback of 2026-10-19). Either the section was renamed or the caption moved.`,
     )
   }
-  const rest = readme.slice(start + 1)
+  const rest = text.slice(at.index)
   const next = rest.indexOf('\n## ', 1)
   return next === -1 ? rest : rest.slice(0, next)
 }
 
 /**
- * The sections a caption may come from, by the name each step cites. Sections of README.md
- * rather than whole files: the four captions are all lines of the README, so held to the file
- * alone they could be shuffled among the steps with every one of them still a quotation.
+ * The sections a caption may come from, by the name each step cites. Sections rather than
+ * whole files: three of the four captions are lines of README.md, so held to the file alone
+ * they could be shuffled among the steps with every one of them still a quotation.
  */
 const SOURCES: { [name: string]: string } = {
-  'README.md#Getting started': readmeSection('Getting started'),
-  'README.md#Why Fugaro': readmeSection('Why Fugaro'),
-  'README.md#How it works': readmeSection('How it works'),
+  'README.md#Getting started': section('README.md', 'Getting started'),
+  'README.md#Why Fugaro': section('README.md', 'Why Fugaro'),
+  'README.md#How it works': section('README.md', 'How it works'),
+  'docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)': section('docs/git-providers.md', 'Checkpoint pushes (git.pr.checkpoints)'),
 }
 
 /**
@@ -166,12 +187,14 @@ const STEPS = [
   },
   {
     name: 'Pull request',
-    source: 'README.md#How it works',
-    // Step 4 of the README's numbered steps, its own words about the push. A fragment and
-    // not the step's heading ("Push and open the pull request"): the other three captions
-    // are lowercase fragments of the sentence they come from, and a capitalised sentence
-    // among them read as a different kind of line.
-    caption: 'each commit is pushed within about a minute while the agent works',
+    source: 'docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)',
+    // The document that owns when a pull request opens, in its own words. Not README.md's
+    // step 4 clause about the push — "each commit is pushed within about a minute while the
+    // agent works" — which is the branch's business and read, under this step's name, as the
+    // pull request appearing and updating per commit (the owner's feedback of 2026-10-19).
+    // The line is lowercase and verb-first like the other three, and the section it cites
+    // says it in one sentence with the draft state beside it.
+    caption: 'the first checkpoint opens the draft PR, marked not verified',
   },
 ]
 
@@ -179,7 +202,8 @@ const STEPS = [
 // paraphrase — or a caption that moved to the step above — stops the build naming the file
 // rather than reaching a reader as the repository's own words. `cursor` walks forward
 // through a section, so two steps citing the same one can only quote it in the order it
-// writes them.
+// writes them; each step cites a section of its own today, and the rule is what keeps that
+// from being the only thing that stops a caption moving.
 {
   const cursors: { [name: string]: number } = {}
   for (const [index, step] of STEPS.entries()) {

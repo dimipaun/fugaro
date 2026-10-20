@@ -75,7 +75,8 @@ func TestWatchAndLsAgreeOnTheLauncher(t *testing.T) {
 	writeRecord(t, f.cloudFixture, done, &runstore.Record{Version: 1, RunID: done, Repo: "acme/app", Workflow: "web",
 		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeNone,
 		StartedAt: time.Now().Add(-25 * time.Minute), FinishedAt: &finishedAt})
-	// A run from before the launcher was recorded.
+	// A launch that recorded no launcher (a backfill, a local run, or the
+	// synthetic launch `fugaro logs` builds).
 	old := runID(6*time.Minute, "cccc")
 	seedSpecBy(t, f.cloudFixture, firstRunSpec(old), "")
 	writeRecord(t, f.cloudFixture, old, &runstore.Record{Version: 1, RunID: old, Repo: "acme/app", Workflow: "web",

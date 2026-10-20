@@ -10,22 +10,34 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // computeBackendPlan is the plan this file pins: docs/plans/2026-10-19-compute-backend.md,
 // the implementation plan for the Cloud Batch compute backend (design
-// docs/design/compute-backend.md), written against the tree branch
-// fugaro/20261019-140014-b55a stands on (= the branch `integration-0.9.5`, cut
+// docs/design/compute-backend.md), written against the tree the branch
+// fugaro/20261019-204914-8a1b stands on (= the branch `integration-0.9.5`, cut
 // from `integration-0.9.0` at `af953e5e`; when this file was added the branch's
 // own commits were this plan and this test, the documents and tests a review of
-// them corrected, and no workflow — and no task of the plan was built. **Task 9
-// has landed on it since**, which is why the plan's Status line and its OWNER
-// APPROVAL GATE read the way they do and why this file's release check is read
-// against the tree rather than against the branch as it was when it was added;
-// the one behavioural line among the corrections is
+// them corrected, the credentials-service documents and their own pin test (a
+// later, separate piece of work whose owner ruling is recorded in
+// docs/credentials-service/reconciliation.md §4), and no workflow — and no task
+// of the plan was built). The one behavioural line among those corrections is
 // internal/managed/stateaccounts.go's table, which learns the compute module's
-// three types, and everything else those earlier commits add is a comment, a
-// test or a document.
+// three types — the NAT as the table's empty answer, corrected on a later
+// review; everything else those earlier commits add is a comment, a test or a
+// document. **The owner approved the plan on 2026-10-19 ("Approve and start",
+// every recommendation P1–P8 accepted as written), and three of its tasks are
+// built**: Task 14 (the seal's carrier on Batch, its refusal kept and
+// documented — see internal/backend/batch/run.go and
+// docs/design/budget-token-channel.md) and Task 8's first half, both merged
+// into the base, and Task 9, landed on the branch that carries it — which is
+// why this file's release check is read against the tree rather than against
+// the branch as it was when it was added. The plan's Status line and its OWNER
+// APPROVAL GATE say so, and TestDocsComputeBackendStatusMatchesTheBranch and
+// TestDocsComputeBackendPlanStatusMatchesTheTree hold both paragraphs to the
+// tree, so a branch that carries more (or less) than they claim fails.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
@@ -35,11 +47,12 @@ const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 // one of them move, so each is stat'ed here as well as required in the text.
 //
 // Two kinds of citation are deliberately NOT in the list below.
-//   - The files the plan's "File Structure" section says it CREATES
-//     (internal/cli/backends.go, internal/cli/reaper.go,
-//     internal/cli/docs_compute_backend_test.go, deploy/terraform/gcp/modules/compute/reaper.tf):
-//     they do not exist yet, and this plan is docs-only, so stat'ing them would
-//     fail on the tree the plan is written for.
+//   - The files the plan's "File Structure" section says it CREATES and that no
+//     task has created yet (internal/cli/reaper.go, internal/cli/reaper_test.go,
+//     deploy/terraform/gcp/modules/compute/reaper.tf): stat'ing them would fail
+//     until Task 11 lands. The block's other two -- internal/cli/backends.go and
+//     internal/cli/backends_test.go, which the pin test was written before -- are
+//     listed below like any other citation, because Task 8 created them.
 //   - The placeholders and globs (docs/releases/<the 0.9.5 note>,
 //     internal/runner/**, .github/workflows/ci.yml's `for r in …` loop): a
 //     placeholder is not a path and a glob is not a file.
@@ -94,6 +107,10 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 		"internal/cli/init_stages.go",
 		"internal/cli/launch_budget.go",
 		"internal/cli/docs_artifact_runs_test.go",
+		// Task 8's own new files, created by the task the pin test was written
+		// for: the command and the tests that hold its list to the seam's.
+		"internal/cli/backends.go",
+		"internal/cli/backends_test.go",
 		"internal/localcfg/localcfg.go",
 		"internal/localcfg/localcfg_test.go",
 		"internal/infra/compute.go",
@@ -170,8 +187,20 @@ var computeBackendSymbols = map[string][]string{
 		// the plan's "no literal 412 anywhere" claim rests on this constant.
 		"TestLaunchRefusesASecretEnv", "testSocketGID",
 	},
-	"internal/cli/cloud.go": {"openCloudFor", "checkExecution"},
-	"internal/cli/run.go":   {"Backend: backend.CloudRun"},
+	// Task 8 is what these two entries changed: the opener map the seam is
+	// opened from is one function now (cloudOpeners, with batchOptions beside
+	// it), and the launch record's backend is read from the codec of the
+	// backend the launch ran on rather than written as Cloud Run's constant.
+	"internal/cli/cloud.go": {"openCloudFor", "checkExecution", "cloudOpeners", "batchOptions", "launchBackend"},
+	"internal/cli/run.go":   {"Backend: launchBackend(env.be)"},
+	// Task 8's command: the two names a project config may select and the
+	// project's own answer, read from localcfg with no cloud call.
+	"internal/cli/backends.go": {"newBackendsCmd", "selectableBackends", "backendsLs", "backendsListDoc"},
+	"internal/cli/backends_test.go": {
+		// The plan's File Structure line for this file: the two names, the
+		// project's own answer, and the refusal for an unknown one.
+		"TestBackendsLsListsTheOpenerMapsNames", "TestBackendsLsMarksTheProjectsOwnBackend",
+	},
 	"internal/cli/recipes_skew.go": {
 		// The gate the plan is about. Task 9 flips it and removes the refusal
 		// beside it; the three names that go are in computeBackendAbsent below,
@@ -331,16 +360,17 @@ const computeBackendTodoMarker = "TODO(compute-backend Task 8)"
 
 // computeBackendCommentMarkers is the other half of the table, as counts: names
 // the plan cites that live in comments rather than in code, so they are checked
-// against the file as written. **The count is the assertion.** One Contains per
-// file passes with one of run.go's two markers deleted — the file still carries
-// the marker, so it reads as present while a call site has lost the note that
-// says Task 8 owns it — and the plan's own sentence is a distribution, not a
-// total: one in `internal/cli/cloud.go`, two in `internal/cli/run.go`. The three
-// are the whole of it, and TestDocsComputeBackendTodoMarkersAreCounted walks the
-// repository to hold both halves of that sentence.
+// against the file as written. **The count is the assertion**, and Task 8 is
+// what took the counts to zero: step 6 removes each marker with the call site it
+// marks, so what the counts assert now is the markers' absence — a zero here
+// plus the walk in TestDocsComputeBackendTodoMarkersAreCounted, which fails on a
+// marker in any file. The two paths stay listed, because they are the two sites
+// the plan's sentence names (one in `internal/cli/cloud.go`, two in
+// `internal/cli/run.go`) and a table that dropped them would be a test that
+// stopped looking where the markers were.
 var computeBackendCommentMarkers = map[string]int{
-	"internal/cli/cloud.go": 1,
-	"internal/cli/run.go":   2,
+	"internal/cli/cloud.go": 0,
+	"internal/cli/run.go":   0,
 }
 
 // stripLineComments removes a file's line comments (`//` in Go, `#` in HCL),
@@ -398,18 +428,23 @@ func TestDocsComputeBackendSymbolsExist(t *testing.T) {
 }
 
 // TestDocsComputeBackendTodoMarkersAreCounted: the plan says the three
-// `TODO(compute-backend Task 8)` markers are the whole of what the seam has not
+// `TODO(compute-backend Task 8)` markers were the whole of what the seam had not
 // reached — one in internal/cli/cloud.go, two in internal/cli/run.go — and that
-// Task 8 removes each one with the call site it marks. A per-file Contains
-// cannot hold that: deleting one of run.go's two markers leaves the other one
-// answering for both, so the file still reads as "the marker is there" while a
-// call site has lost the note that says Task 8 owns it.
+// Task 8 removes each one with the call site it marks. Both halves are still
+// asserted, and the second one is inverted by Task 8's own step 6 ("the counts
+// go to zero and the assertion becomes the markers' absence"): a per-file
+// Contains could never hold the removal, because deleting one of run.go's two
+// markers left the other answering for both — the file still read as "the marker
+// is there" while a call site had lost the note that said Task 8 owned it.
 //
 // So the markers are counted, per file and in total, and the count is held
-// against a walk of the repository in both directions: a marker the table does
-// not name is a call site the plan has not accounted for, and a count that has
-// dropped is a marker removed without its call site moving. This file is the one
-// path the walk skips, because it quotes the marker in its own text.
+// against a walk of the repository in both directions: with the counts at zero,
+// a marker anywhere is a call site the plan has not accounted for — the marker
+// went with the call site, so one that is still there is a call site the seam
+// has not reached — and the two paths the plan's sentence names must stay in the
+// table, so the absence is asserted where the markers were rather than nowhere.
+// This file is the one path the walk skips, because it quotes the marker in its
+// own text.
 func TestDocsComputeBackendTodoMarkersAreCounted(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	// The distribution is the plan's sentence, not this test's invention, so the
@@ -452,24 +487,27 @@ func TestDocsComputeBackendTodoMarkersAreCounted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The two paths the plan's sentence names are the table's whole key set:
+	// dropping one would be a test that stopped looking exactly where the
+	// markers were.
+	for _, path := range []string{"internal/cli/cloud.go", "internal/cli/run.go"} {
+		if _, ok := computeBackendCommentMarkers[path]; !ok {
+			t.Errorf("computeBackendCommentMarkers no longer lists %s, one of the two files %s names as a marker's home: the zero has to be asserted where the marker was", path, computeBackendPlan)
+		}
+	}
 	total := 0
 	for path, want := range computeBackendCommentMarkers {
 		total += want
-		got, ok := seen[path]
-		if !ok {
-			t.Errorf("%s carries no %q marker, and %s's Task 8 names the call site in it as one of the three: either the marker went before the call site did, or the call site moved and this table has to move with it", path, computeBackendTodoMarker, computeBackendPlan)
-			continue
-		}
-		if got != want {
-			t.Errorf("%s carries %d %q markers, want %d: %s counts the three markers rather than checking one substring per file, so a file that still carries one is not a file whose other marker may go unnoticed", path, got, computeBackendTodoMarker, want, computeBackendPlan)
+		if got := seen[path]; got != want {
+			t.Errorf("%s carries %d %q markers, want %d: Task 8 removes each marker with the call site it marks, so a marker still here is a call site the seam has not reached (or one whose removal left the note behind)", path, got, computeBackendTodoMarker, want)
 		}
 	}
-	if total != 3 {
-		t.Errorf("computeBackendCommentMarkers accounts for %d markers, and %s says the three `TODO(compute-backend Task 8)` sites are the whole of it", total, computeBackendPlan)
+	if total != 0 {
+		t.Errorf("computeBackendCommentMarkers accounts for %d markers: Task 8's step 6 removes the three, so every count is zero", total)
 	}
 	for path, n := range seen {
 		if _, ok := computeBackendCommentMarkers[path]; !ok {
-			t.Errorf("%s carries %d %q markers and is not in computeBackendCommentMarkers: the three the plan names are the whole of it, so a fourth site is either a call site the plan has not accounted for or a marker a task left behind", path, n, computeBackendTodoMarker)
+			t.Errorf("%s carries %d %q markers and is not in computeBackendCommentMarkers: the three the plan names were the whole of it, so a fourth site is either a call site the plan has not accounted for or a marker a task left behind", path, n, computeBackendTodoMarker)
 		}
 	}
 }
@@ -622,12 +660,20 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 }
 
 // TestDocsComputeBackendDecisionsAreRecommendations: the plan's own decisions
-// are P1 to P8, and the gate at the foot carries the approval and the
-// conditions with it. The rows were written as recommendations and the owner's
-// ruling of 2026-10-19 took them as written — so the file says that in one
-// place, the decisions section, and the gate says the same thing rather than
-// the UNAPPROVED it opened with; this test is what makes a silent answer, or a
-// gate that still forbids what has landed, impossible.
+// are P1 to P8, and every one of them is still written as a recommendation the
+// plan does not answer itself — what changed is that the owner answered all
+// eight, and both the decisions section and the gate at the foot have to say
+// so. An answer recorded in one place and not the other is the failure this
+// test is for: a gate that says APPROVED over rows a reader still reads as
+// open questions, or rows marked answered by a gate nobody pointed them at.
+//
+// The wrong pair is the one that matters: the gate is APPROVED and the section
+// says the plan answers none of them, or the reversal — a section that looks
+// answered while the gate still refuses to let a task start. Both fail here.
+//
+// Both paragraphs also name the tasks that have landed — Task 14, Task 8's
+// first half and Task 9 — so a plan whose tasks are built while its prose still reads as
+// a proposal fails here too.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	for i := 1; i <= 8; i++ {
@@ -636,9 +682,21 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 			t.Errorf("%s no longer carries the %s decision row", computeBackendPlan, row)
 		}
 	}
-	decisions := section(t, doc, "## Decisions this plan defers to the owner", "## Open items")
-	if !strings.Contains(decisions, "**The owner's ruling of 2026-10-19 took every recommendation below as written**") {
-		t.Errorf("%s: the decisions section no longer records that the owner took its rows as written, so a reader cannot tell an answered row from an open one", computeBackendPlan)
+	decisions := section(t, doc, "## Decisions this plan deferred to the owner", "## Open items")
+	for _, want := range []string{
+		// Still a recommendation, and still not the plan's own answer.
+		"this plan answers none of them itself",
+		// And the owner's answer, with the date it was given.
+		"the owner accepted all eight, as written, on 2026-10-19",
+		"**The owner approved every row below with its recommendation as written, on 2026-10-19**",
+		"**ANSWERED 2026-10-19, and landed (Task 14).**",
+	} {
+		if !strings.Contains(decisions, want) {
+			t.Errorf("%s: the decisions section no longer says %q", computeBackendPlan, want)
+		}
+	}
+	if strings.Contains(doc, "**None is answered**") {
+		t.Errorf("%s still says its own decisions are unanswered; the owner approved them on 2026-10-19, and Task 14 — P1's answer — is built", computeBackendPlan)
 	}
 	// The three the gate says change what gets built, named there as such.
 	// The gate is the file's last section, so it runs to the end of the file.
@@ -648,16 +706,138 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	}
 	gate := doc[i:]
 	for _, want := range []string{
-		"**APPROVED — the owner's ruling of 2026-10-19",
-		"**P1 — the seal's carrier.**",
+		"**APPROVED 2026-10-19 (\"Approve and start\")",
+		"accepted every recommendation P1–P8 as written",
+		"**P1 — the seal's carrier. ANSWERED, and landed (Task 14).**",
 		"**P2 — the reaper's impossible permission.**",
 		"**P5 — the release.**",
 		// Task 12 is the owner's alone, and the gate has to say so.
 		"**Task 12 is OWNER-RUN**",
+		// The gate and the Status line agree on what the approval has built:
+		// Task 14 and Task 8's first half, and nothing else.
+		"Three tasks have been built since: Task 14",
+		"**Task 14 is built, and so are Task 8's first half and Task 9, and nothing else here is**",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
 		}
+	}
+	if strings.Contains(gate, "**UNAPPROVED") {
+		t.Errorf("%s's OWNER APPROVAL GATE still reads UNAPPROVED, while Task 14's commit is on the branch it governs", computeBackendPlan)
+	}
+	// The Status line is where a reader meets the approval first, so it says
+	// the same thing the gate does.
+	status := section(t, doc, "**Status:", "**Spec:**")
+	for _, want := range []string{
+		"**Status: the owner APPROVED this plan on 2026-10-19 (\"Approve and start\")",
+		"Three tasks have been built since: **Task 14**",
+		"**No task's commit exists except Task 14's, Task 8's and Task 9's**",
+	} {
+		if !strings.Contains(status, want) {
+			t.Errorf("%s's Status line no longer says %q", computeBackendPlan, want)
+		}
+	}
+	// The mapping table's last row is the same fact for a reader who checks
+	// the design's outline against this plan rather than reading the prose.
+	if !strings.Contains(doc, "| **Task 14**: the budget seal's carrier on Batch | **built** — this branch, P1's recommended answer |") {
+		t.Errorf("%s's §8.1 mapping table no longer marks Task 14's row built", computeBackendPlan)
+	}
+	if !strings.Contains(doc, "| **dropped** (Task 14's answer needs no fetch, so there is nothing to build) |") {
+		t.Errorf("%s's §8.1 mapping table no longer says Task 13 is dropped rather than deferred", computeBackendPlan)
+	}
+}
+
+// TestDocsComputeBackendStatusMatchesTheBranch holds the two paragraphs that
+// describe what this branch carries, against the tree they describe: the Status
+// line's account and the gate's. A plan is a document about code, so a sentence
+// in it that says "the branch carries X and no task is built" goes stale the
+// moment a task's commit lands — and a stale one is worse than none, because
+// its whole job is to tell a reviewer what to expect before they read the diff.
+// The plan's own gate makes that a finding rather than a shortcut ("a task that
+// lifts it earlier is a finding"), so the paragraph claiming no task has started
+// must not survive the first task that starts.
+//
+// Two directions, both checked here:
+//
+//   - the sentences are present, so the account cannot be deleted to make the
+//     second half pass; and
+//   - the work the account names really is in the tree, so the account cannot
+//     claim a task whose code is not there — the names are the symbols the task
+//     added, and each is read out of its file.
+func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	status := section(t, doc, "**Status:", "**Spec:**")
+	for _, want := range []string{
+		// The approval, in the Status line as well as in the gate.
+		"the owner APPROVED this plan on 2026-10-19",
+		// What the branch carries beyond the plan and its pin test.
+		"Task 8 is the one begun",
+		// And what that half does not include, which is the honest half of
+		// the account: a reader who reads only the Status knows the task is
+		// incomplete before opening its pull request.
+		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written",
+	} {
+		if !strings.Contains(status, want) {
+			t.Errorf("%s: the Status line no longer says %q", computeBackendPlan, want)
+		}
+	}
+	// The sentences the first task to start falsified, and which no later
+	// reader may find again: each said this branch builds none of the plan's
+	// work, and Task 8's commits do.
+	for _, gone := range []string{
+		"nothing here is approved",
+		"no task's commit exists",
+		"this pull request builds none of it",
+		"no line of the work below has been written or run",
+	} {
+		if strings.Contains(doc, gone) {
+			t.Errorf("%s still says %q, and Task 8's first half is committed on this branch: the account a reader checks the diff against says nothing was built", computeBackendPlan, gone)
+		}
+	}
+	// What the account names, read out of the tree: the opener and the
+	// configuration it reads, the command, and the seam's call sites. The
+	// symbols are the pin test's own list (computeBackendSymbols above), so
+	// this is the same hold the rest of the file makes, applied to the
+	// paragraph that says which of them exist.
+	for file, symbols := range map[string][]string{
+		"internal/cli/cloud.go":         {"cloudOpeners", "batchOptions", "batchTimeouts"},
+		"internal/cli/backends.go":      {"newBackendsCmd", "selectableBackends", "backendsLs", "backendsListDoc"},
+		"internal/localcfg/localcfg.go": {"validateBatch", "BatchTaskTimeout"},
+	} {
+		data, err := os.ReadFile("../../" + file)
+		if err != nil {
+			t.Fatalf("the Status line says this branch carries %s, which could not be read: %v", file, err)
+		}
+		code := stripLineComments(string(data))
+		for _, sym := range symbols {
+			if !strings.Contains(code, sym) {
+				t.Errorf("%s no longer defines %s, and %s's Status line says the branch carries it: the account and the tree disagree", file, sym, computeBackendPlan)
+			}
+		}
+	}
+	// And the gate's own account of the same thing, which is the paragraph a
+	// reader arriving at the foot of the file reads.
+	i := strings.Index(doc, "## OWNER APPROVAL GATE")
+	if i < 0 {
+		t.Fatalf("%s has no OWNER APPROVAL GATE: the plan's whole approval story is that section", computeBackendPlan)
+	}
+	gate := doc[i:]
+	for _, want := range []string{
+		"Task 8's first half, begun under that approval",
+		"**No other task has a commit",
+		"`backend: cloud-batch` is still refused by `internal/localcfg`",
+	} {
+		if !strings.Contains(gate, want) {
+			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q: the gate is what tells a reviewer which tasks have started", computeBackendPlan, want)
+		}
+	}
+	// The one refusal the account promises is still there, checked against
+	// localcfg's behaviour rather than against its prose: a gate that says the
+	// name is still refused over a config this build accepts would be the
+	// worst of the two failures.
+	if _, err := localcfg.Parse([]byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
+		"backend: cloud-batch\nrepos:\n  acme/app: { provider: github, workflows: [web] }\n")); err == nil {
+		t.Errorf("%s's gate says `backend: cloud-batch` is still refused, and this build accepts the config that names it", computeBackendPlan)
 	}
 }
 
@@ -916,8 +1096,9 @@ func TestDocsComputeBackendCIReachMatchesTheTree(t *testing.T) {
 // was written against a brief that the tree does not carry — the release, and
 // the Spot result — are stated in the plan's own text rather than smoothed
 // over. The brief's Spot sentence has no `50001` anywhere under docs/ **outside
-// this plan**, and the release is 0.9.0 in the constant and the 0.8.6 note; a
-// plan that quietly agreed with either would be a plan a reader could not check.
+// this plan**, and the release is 0.9.0 in the released notes and in the
+// constant's own comment; a plan that quietly agreed with either would be a plan
+// a reader could not check.
 //
 // The `50001` half is a claim about the whole of `docs/`, so it is asserted
 // over the whole of `docs/` — every file, recursively, this plan excluded —
@@ -979,15 +1160,17 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	}
 	// The release: the tree's own surfaces say 0.9.5 now and the plan follows
 	// the brief's 0.9.5, and the only 0.9.0 the release fact still quotes is the
-	// released note's, which Task 9 does not rewrite.
+	// released notes' and the design's status line, which Task 9 does not turn
+	// back.
 	//
 	// The constant is asserted by its **new** words. This assertion used to read
-	// "is false until 0.9.0" out of internal/cli/recipes_skew.go, and that was
+	// "is false until 0.9.0" (and, after 0.9.0's release content, "is false
+	// until a later release") out of internal/cli/recipes_skew.go, and that was
 	// the assertion Task 9 was written to falsify -- a pin that keeps the old
 	// sentence is a pin that fails the moment the gate it is about ships, so it
 	// is flipped with the thing it asserts rather than deleted. The absence
-	// assertion beside it is what makes a revert of step 5 -- the refusal back
-	// on, under the old words -- fail here.
+	// assertions beside it are what make a revert of step 5 -- the refusal back
+	// on, under either old wording -- fail here.
 	for _, want := range []string{
 		"**0.9.5**", "both are planned to return in 0.9.0 after a redesign", "The reaper will be redesigned for 0.9.0",
 	} {
@@ -1002,30 +1185,45 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	if strings.Contains(skew, "is false until 0.9.0") {
 		t.Errorf("internal/cli/recipes_skew.go says the Batch provisioning is false until 0.9.0 again: Task 9 is the commit that retires that sentence -- the module the stage applies is fixed in 0.9.5, so re-landing the refusal under the old release name is the state this pin exists to catch")
 	}
+	if strings.Contains(skew, "is false until a later release") {
+		t.Errorf("internal/cli/recipes_skew.go says the Batch provisioning is false until a later release again: Task 9 is the commit that retires that sentence, and re-landing it is a revert of step 5")
+	}
 }
 
 // computeBackendZeroNineZero is every place in the tree's own code, its tests
-// and its release documents that still names 0.9.0 for the work this plan is
-// about, each as the file, the line and the words that line carries.
+// and its release documents that names 0.9.0 for the work this plan is about,
+// each as the file, the anchor a reader finds the place by and the words the
+// tree carries there beside the release name: the constant whose comment names
+// the release, the released notes the refusal came from and was recorded in, the
+// rerelease checklist's verifying line, the Terraform pin's comment and its
+// known-invalid entry, the design's own status line, and the init flag table's
+// entry for the stage the refusal covers.
 //
-// It held nine entries before Task 9 and holds two after it, and the two are the
-// whole of what that task leaves: docs/releases/v0.8.6.md's two lines, which are
-// a **released note** -- they were true when they were written, a plan does not
-// edit history, and the plan's fact 1 is rewritten to say the count is two and
-// that these two lines are it. The seven that went are the surfaces Task 9
-// changes or removes: the constant's comment and the refusal text it fed
-// (rewritten and deleted with batchProvisionDisabled,
-// refuseBatchProvisionNotShipped and the assertion that kept the refusal
-// saying 0.9.0, all of which the absence table above holds gone),
-// docs/release.md's verifying line and managed_test.go's init flag entry (both
-// rewritten to 0.9.5 by that task), and deploy/terraform/terraform_test.go's two
-// knownInvalid lines (which went with the entry step 4 takes out of the map).
-// A reader who finds a third entry here has found a surface a commit reverted,
-// and the walk below is what says so rather than a reader's count.
+// It held nine entries before Task 9 and holds four after it, and the four are
+// the whole of what that task leaves: docs/releases/v0.8.6.md's two lines and
+// docs/releases/v0.9.0.md's known-limit bullet, which are **released notes** --
+// they were true when they were written, and a plan does not edit history --
+// and the design's own status line, which says the backend is not in 0.9.0
+// and which Task 9 rewrote to say what stays refused. The five that went are
+// the surfaces Task 9 changes or removes: the constant's comment,
+// docs/release.md's verifying bullet and managed_test.go's init flag entry
+// (rewritten to 0.9.5 by that task), and deploy/terraform/terraform_test.go's
+// comment and knownInvalid entry (which went with the entry step 4 takes out
+// of the map); the refusal text and the assertion that held it went with
+// batchProvisionDisabled and refuseBatchProvisionNotShipped, which the absence
+// table above holds gone. A reader who finds a fifth entry here has found a
+// surface a commit reverted, and the walk below is what says so rather than a
+// reader's count.
 //
-// It is a table of lines rather than a walk because the words matter -- every
-// entry here is a citation the plan makes, and the assertion below reads the
-// tree's line back, so a citation that moved, a line rewritten elsewhere and a
+// It is a table of places rather than of lines because the words are the fact
+// and the line number is not: the tree's 0.9.0 release content landed on this
+// branch, and it rewrote some of these places, retired one of them (the refusal
+// text, which no longer names a release at all) and moved the lines of the rest
+// — a citation by line is a second fact that an edit anywhere above it
+// falsifies, while the anchor a reader finds the place by does not move. The
+// anchor is the symbol, heading or bullet the place is found by, and the
+// assertion below reads the words back out of the comment or paragraph the
+// anchor opens, so a citation that moved, a place rewritten elsewhere and a
 // count that drifted are all failures. What a table cannot do is say whether it
 // is complete, and a count nobody can check is how this fact said "two places"
 // for a tree that has nine: so the two walks below are its bounds.
@@ -1042,14 +1240,58 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 // (the constant's comment, the verifying line, the flag table's entry), so a
 // search that kept 0.9.x would require the plan to list its own new lines; what
 // it must keep finding is every line that still claims this work ships in
-// **0.9.0**, and after Task 9 the released note's two lines are the whole of it.
+// **0.9.0**, and after Task 9 the four places in the table are the whole of it.
 var computeBackendZeroNineZero = []struct {
-	file string
-	line int
-	text string
+	file   string
+	anchor string
+	text   string
 }{
-	{"docs/releases/v0.8.6.md", 2, "both are planned to return in 0.9.0 after a redesign"},
-	{"docs/releases/v0.8.6.md", 15, "The reaper will be redesigned for 0.9.0."},
+	{"docs/releases/v0.8.6.md", "Managed projects and `fugaro init --provision-batch` are turned off in this release", "both are planned to return in 0.9.0 after a redesign"},
+	{"docs/releases/v0.8.6.md", "**`fugaro init --provision-batch` is disabled.**", "The reaper will be redesigned for 0.9.0."},
+	{"docs/design/compute-backend.md", "**Not shipped, and not in 0.9.0.**", "`fugaro init --provision-batch` no longer refuses"},
+	{"docs/releases/v0.9.0.md", "**The Batch backend is still disabled.**", "would return in 0.9.0, and neither returns here"},
+}
+
+// anchoredLines finds the anchor in doc and returns the 0-based index of the
+// line it is on, whether it was found, and the place read as prose: the anchor's
+// line and, for a Go comment or a markdown blockquote, the comment or quote it
+// opens, each stripped of its marker and joined with single spaces. A sentence a
+// comment wraps does not stop at the line it wraps on — the constant's comment
+// wraps "excluded from 0.9.0" across two lines — and the words are what is
+// pinned, so the wrap is not part of the pin. A line carrying no such marker
+// stands alone: a map entry is its own place, not the head of the block it sits
+// in.
+func anchoredLines(doc, anchor string) (int, string, bool) {
+	lines := strings.Split(doc, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, anchor) {
+			continue
+		}
+		marker := lineMarker(lines[i])
+		parts := []string{strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), marker))}
+		for j := i + 1; marker != "" && j < len(lines); j++ {
+			next := strings.TrimSpace(lines[j])
+			if next == "" || !strings.HasPrefix(next, marker) {
+				break
+			}
+			parts = append(parts, strings.TrimSpace(strings.TrimPrefix(next, marker)))
+		}
+		return i, strings.Join(parts, " "), true
+	}
+	return 0, "", false
+}
+
+// lineMarker is the comment or quote marker a line opens with: "//" for a Go
+// comment, ">" for a markdown blockquote, and "" for everything else.
+func lineMarker(line string) string {
+	s := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(s, "//"):
+		return "//"
+	case strings.HasPrefix(s, ">"):
+		return ">"
+	}
+	return ""
 }
 
 // computeBackendGateIdentifiers are this work's own gating names: the constant
@@ -1110,18 +1352,24 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 		}
 	}
 	for _, want := range computeBackendZeroNineZero {
-		if cite := fmt.Sprintf("`%s:%d`", want.file, want.line); !strings.Contains(doc, cite) {
-			t.Errorf("%s no longer cites %s among the places the tree names 0.9.0 for this work", computeBackendPlan, cite)
+		if !strings.Contains(doc, "`"+want.file+"`") {
+			t.Errorf("%s no longer names %s among the places the tree names 0.9.0 for this work", computeBackendPlan, want.file)
 		}
-		if !strings.Contains(doc, want.text) {
-			t.Errorf("%s no longer quotes %q, the words %s:%d carries", computeBackendPlan, want.text, want.file, want.line)
+		// The plan quotes the anchor and the words, so a reader can find the
+		// place and see what it says without the plan having to be right about
+		// which line it is on.
+		for _, quoted := range []string{want.anchor, want.text} {
+			if !strings.Contains(doc, quoted) {
+				t.Errorf("%s no longer quotes %q, which %s carries beside the release name it gives this work", computeBackendPlan, quoted, want.file)
+			}
 		}
-		lines := strings.Split(readDoc(t, want.file), "\n")
-		if want.line < 1 || want.line > len(lines) {
-			t.Fatalf("%s has %d lines and the plan cites line %d", want.file, len(lines), want.line)
+		_, place, ok := anchoredLines(readDoc(t, want.file), want.anchor)
+		if !ok {
+			t.Errorf("%s no longer carries the anchor %q that %s's place is found by: the release fact cites that place, so the anchor and this table move together — and Task 9 is the commit that rewrites or retires the five of these that are not the released notes or the design's own status line", want.file, want.anchor, computeBackendPlan)
+			continue
 		}
-		if got := lines[want.line-1]; !strings.Contains(got, want.text) {
-			t.Errorf("%s:%d no longer says %q (it reads %q): the release fact lists that line, so a moved or rewritten line means the plan and this table move together — and Task 9 is the commit that retires the seven of these that are not the released note's", want.file, want.line, want.text, strings.TrimSpace(got))
+		if !strings.Contains(place, want.text) {
+			t.Errorf("%s's %q no longer says %q (it reads %q): the release fact lists that place, so rewritten words mean the plan and this table move together — and Task 9 is the commit that rewrites or retires the five of these that are not the released notes or the design's own status line", want.file, want.anchor, want.text, place)
 		}
 	}
 }
@@ -1145,15 +1393,22 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 // would be requiring the plan to list the lines the plan's own task just wrote
 // -- a bound that grows with the work rather than holding it. What this must
 // keep finding is every line that still claims this work ships in 0.9.0, which
-// after Task 9 is the released note's two lines and nothing else: a line
-// rewritten back to 0.9.0, or a new one, is a third surface and fails here.
+// after Task 9 is the four places the table lists and nothing else: a line
+// rewritten back to 0.9.0, or a new one, is a fifth surface and fails here.
 //
 // Two files are skipped by name: this test file, whose table quotes every one of
 // the lines, and the plan, which cites them.
 func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
+	// The table is a table of places, and the walk finds lines: each entry is
+	// resolved to the line its anchor is on, and that line is what is listed.
 	listed := map[string]bool{}
 	for _, e := range computeBackendZeroNineZero {
-		listed[fmt.Sprintf("%s:%d", e.file, e.line)] = true
+		i, _, ok := anchoredLines(readDoc(t, e.file), e.anchor)
+		if !ok {
+			t.Errorf("%s no longer carries the anchor %q this table lists a place by, so the walk below cannot tell whether a line of it is listed", e.file, e.anchor)
+			continue
+		}
+		listed[fmt.Sprintf("%s:%d", e.file, i+1)] = true
 	}
 	release := regexp.MustCompile(`0\.9\.0`)
 	found := 0
@@ -1223,12 +1478,15 @@ func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
 // with no count stated anywhere near it. These are the records of the owner's
 // ruling of 2026-10-15, which placed this backend in 0.9.0 and which the brief's
 // placement supersedes: docs/release.md and docs/releases/v0.8.6.md are the two
-// the plan treats as release surfaces (they are in the table above, by line),
-// and the rest are design and plan text no task in this plan rewrites — of which
-// docs/design/compute-backend.md is this work's own design.
+// the plan treats as release surfaces (they are in the table above, by their
+// places), and the rest are released notes and design and plan text no task in
+// this plan rewrites — of which docs/design/compute-backend.md is this work's
+// own design and docs/releases/v0.9.0.md is the note that recorded the work as a
+// known limit of the release it did not return in.
 var computeBackendReleaseProse = []string{
 	"docs/release.md",
 	"docs/releases/v0.8.6.md",
+	"docs/releases/v0.9.0.md",
 	"docs/design/compute-backend.md",
 	"docs/design/generic-tool.md",
 	"docs/plans/2026-10-08-generic-tool.md",
@@ -1563,5 +1821,46 @@ func TestDocsComputeBackendQueueDeadlineKeepsLaunchJSON(t *testing.T) {
 	}
 	if !strings.Contains(reap, "status message") {
 		t.Errorf("internal/backend/batch/reap.go's queue-deadline comment never names the job's status message as what the delete costs: the design §1.4 amendment says that is the price of jobs.cancel not existing")
+	}
+}
+
+// TestDocsComputeBackendTask10CarriesTheAccountRequirement: the security review
+// of Task 8's first half left two things to the enable rather than settling them
+// in that task's code, and both are requirements on Task 10's text. The first is
+// an escalation the code alone does not close — a published `batch.service_account`
+// is held to the anchor's project and to nothing more, so the gate must refuse
+// one outside the installation's own run accounts, or the account must come from
+// the local config only — and the second is the inventory of code outside the
+// seam that still assumes Cloud Run, which the enable has to reach. Neither is
+// pinned anywhere else, so a trim can drop one without a test noticing.
+func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	task := section(t, doc, "### Task 10: The enable", "## Phase C")
+	for _, want := range []string{
+		// The requirement, in both shapes the plan allows, and the third one
+		// (the anchor-project check alone) named as the escalation it is.
+		"not one of the installation's own run accounts",
+		"read from the local config only and never from the shared one",
+		"Keeping the anchor-project check alone is the escalation this step exists to forbid",
+		// The inventory of what the enable must reach, and the one entry that is
+		// the account requirement's neighbour rather than a Cloud Run path.
+		"`gcp.JobName`",
+		"`gcp.WorkflowVariant`",
+		"names Secret Manager secrets of the installation's project without asking whether the installation created them",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("%s's Task 10 no longer says %q: the security review of Task 8's first half left that to the enable, and the enable's own text is where it has to be", computeBackendPlan, want)
+		}
+	}
+	// The other half of the dependency: the step that writes the artifact
+	// refusal points at the task that must leave it standing, and Task 10's own
+	// Depends line names that step.
+	for _, want := range []string{
+		"Task 10's enable depends on this refusal and on nothing else in this step",
+		"Task 8's step 4 in particular",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer carries %q: the artifact refusal and the enable's dependency on it are one fact and are stated on both sides", computeBackendPlan, want)
+		}
 	}
 }
