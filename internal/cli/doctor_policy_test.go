@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -1223,4 +1224,92 @@ func layerBucketWith(t *testing.T, text string) string {
 // providers block is a separate thing, and the check must not resolve over it.
 func doctorRunRoutes(allow, repos string) string {
 	return "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"anthropic/claude-sonnet-5.5\"]\n    allow_data_to: " + allow + "\nrepos:\n" + repos
+}
+
+// TestDoctorReportsBroken is C1.21's doctor finding: a credential the service
+// marked broken (a 401, D139) is reported, naming the account, because nothing
+// else in the installation says it — the cascade routes around the account
+// silently, and an operator only finds out from `fugaro accounts ls` or here.
+// An exhausted account is not a broken one and is not reported: its mark ends
+// by itself at the reset time the upstream gave.
+func TestDoctorReportsBroken(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	now := time.Now().UTC().Truncate(time.Second)
+	db.Set(credsMarkPath("acme-overflow"), map[string]any{
+		"state": "exhausted", "until": now.Add(time.Hour).Format(time.RFC3339Nano)})
+
+	if c, ok := doctorChecksByID(t)["creds-broken"]; ok {
+		t.Fatalf("doctor reported creds-broken with no broken mark: %+v", c)
+	}
+
+	db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "broken", "since": now.Add(-time.Minute).Format(time.RFC3339Nano)})
+	c, ok := doctorChecksByID(t)["creds-broken"]
+	if !ok {
+		t.Fatal("doctor did not report the broken account")
+	}
+	if c.Severity != "warning" {
+		t.Errorf("severity = %q, want warning (--strict must fail on it)", c.Severity)
+	}
+	if !strings.Contains(c.Problem, "acme-personal") {
+		t.Errorf("problem does not name the broken account: %q", c.Problem)
+	}
+	if strings.Contains(c.Problem, "acme-overflow") {
+		t.Errorf("problem names the exhausted account too: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "accounts clear") {
+		t.Errorf("fix does not name the command that clears it: %q", c.Fix)
+	}
+	// The names are database keys and are printed sanitised, like every other
+	// name a bucket or a database carries.
+	db.Set(credsMarkPath("evil\x1b[31mname"), map[string]any{"state": "broken"})
+	if c := doctorChecksByID(t)["creds-broken"]; strings.Contains(c.Problem, "\x1b") {
+		t.Fatalf("a raw control character reached doctor's output: %q", c.Problem)
+	}
+}
+
+// TestDoctorReportsTheCascadeWithoutTheCredsMarker: the credentials family
+// ships in the same rules document as everything else and does not bump
+// projectpolicy.RulesVersion (budget/rules/marker.go), so `policy-rules-skew`
+// cannot see a deploy that predates it. With the cascade switched on, the
+// missing marker is a finding of its own — a cascade run's first recorded
+// credential is refused mid-run — and with the cascade off it is not a finding
+// at all, because an installation that never opted in needs no marker.
+func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
+	cascade := func(p *projectpolicy.Policy) {
+		p.Routing = &projectpolicy.Routing{Claude: &projectpolicy.ClaudeRoute{Via: projectpolicy.RouteCascade}}
+	}
+	_, db := doctorPolicyRig(t, doctorPolicy(cascade), "")
+	c, ok := doctorChecksByID(t)["creds-rules"]
+	if !ok {
+		t.Fatal("doctor did not report the cascade switched on with no credsRules marker")
+	}
+	if c.Severity != "warning" {
+		t.Errorf("severity = %q, want warning", c.Severity)
+	}
+	for _, want := range []string{rules.PathCredsRulesMarker(), "init --firebase"} {
+		if !strings.Contains(c.Problem+c.Fix, want) {
+			t.Errorf("the check does not name %q: %q / %q", want, c.Problem, c.Fix)
+		}
+	}
+
+	// The marker this Fugaro writes: no finding.
+	db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
+	if c, ok := doctorChecksByID(t)["creds-rules"]; ok {
+		t.Fatalf("doctor reported creds-rules with the marker at this release's generation: %+v", c)
+	}
+
+	// A marker above this release's generation is the other direction, and its
+	// remedy is the opposite one: a newer Fugaro deployed those rules.
+	db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion+1)
+	c, ok = doctorChecksByID(t)["creds-rules"]
+	if !ok || !strings.Contains(c.Fix, "upgrade") {
+		t.Fatalf("a marker above this release's generation: %+v (ok=%v), want a warning whose fix is to upgrade", c, ok)
+	}
+
+	// The cascade off: no marker is needed, and doctor says nothing.
+	doctorPolicyRig(t, doctorPolicy(nil), "")
+	if c, ok := doctorChecksByID(t)["creds-rules"]; ok {
+		t.Fatalf("doctor reported creds-rules with the cascade off: %+v", c)
+	}
 }

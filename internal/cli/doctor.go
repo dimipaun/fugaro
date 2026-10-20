@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -1823,6 +1824,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database could not be reached (%v), so the published switch cannot be read", err), layer)...)
 	}
 	checks := doctorRulesSkew(ctx, db)
+	checks = append(checks, doctorCredsBroken(ctx, db)...)
 	// The node is read through projectpolicy.Read, the reader a run uses
 	// (design §5(3)), not with a plain Get: with no marker, or one below
 	// PolicyRulesVersion, no run reads the policy however the node is written, and a
@@ -1910,6 +1912,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
+	checks = append(checks, doctorCredsRules(ctx, db, p)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
 	}
@@ -2485,4 +2488,124 @@ var rulesGenerate = rules.Generate
 func emptyPolicyNode(raw []byte) bool {
 	s := strings.TrimSpace(string(raw))
 	return s == "" || s == "null"
+}
+
+// ------------------------------------------------- the credentials cascade
+
+// doctorCredsBroken reports every credential the service has marked broken
+// (D139, D141): the token was refused with a 401, and nothing ends that state
+// but an operator replacing the token and clearing the mark (C1.21). It is a
+// finding because the cascade then routes around the account silently — the
+// only other place it shows is `fugaro accounts ls` — and because a run under
+// `fallback: oauth-only` halts rather than failing over when the broken account
+// is the one it needs.
+//
+// The subtree is read through creds.RTDBStore.Marks, the same reader `fugaro
+// accounts ls` uses: whole, and strictly, so a mark node this release does not
+// model fails the read rather than being taken for an available credential. A
+// read that failed is an info note, never a failure, which is what the rest of
+// doctor's policy checks do with one (the remedy is a credential, not a
+// configuration change).
+//
+// The marks subtree is written by the service alone, and only for the
+// credentials the published policy admits, so "every broken mark" is "every
+// broken admitted account" without this check resolving the policy itself.
+// Severity is warning: nothing is broken about the installation, and something
+// is broken about a credential — the same weight policy-rules-skew carries, and
+// enough for --strict to fail.
+func doctorCredsBroken(ctx context.Context, db *rtdb.Client) []doctorCheck {
+	marks, err := (&creds.RTDBStore{DB: db}).Marks(ctx)
+	if err != nil {
+		return []doctorCheck{{ID: "creds-broken", Severity: "info",
+			Problem: fmt.Sprintf("the credential marks could not be read (%v), so whether any admitted account is broken is unknown", err),
+			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
+	}
+	var broken []string
+	for name, m := range marks {
+		if m.Broken() {
+			broken = append(broken, name)
+		}
+	}
+	if len(broken) == 0 {
+		return nil
+	}
+	slices.Sort(broken)
+	// A name is a database key, so it is printed through the one sanitiser
+	// every other name from a bucket or a database goes through. The states are
+	// this package's words; the names are names, never values (F27).
+	for i, n := range broken {
+		broken[i] = pluginwire.Printable(n)
+	}
+	return []doctorCheck{{ID: "creds-broken", Severity: "warning",
+		Problem: fmt.Sprintf("%d admitted Claude account(s) are broken — the service saw a 401 on the token, and the cascade routes no work to them until an operator clears the mark: %s", len(broken), strings.Join(broken, ", ")),
+		Fix:     "replace each account's token, then clear its mark: 'fugaro accounts clear NAME' ('fugaro accounts ls' shows the state of every account)"}}
+}
+
+// doctorCredsRules reads the credentials family's marker beside the policy
+// marker (budget/rules.PathCredsRulesMarker, C1.3). The family ships in the
+// same generated document as everything else and deliberately does not bump
+// projectpolicy.RulesVersion, so `policy-rules-skew` cannot see it: an
+// installation whose rules were deployed before this family exists has a marker
+// at this Fugaro's own RulesVersion and a document without the /creds deny and
+// without the registry entry's `credential` and `waiting_until` children. A
+// cascade run then passes every gate and halts on its first write
+// (HaltCredsRulesDenied, C1.17) — the named halt the marker doc's known gap
+// describes, and the reason a current binary reads this marker beside the other
+// one: so it can tell "an older deploy" from "a newer deploy" and say which way
+// the redeploy should go.
+//
+// The switch is what makes it a finding. An installation that has not turned
+// the cascade on needs no marker, and the plan's sentence is exactly that: the
+// service on without the credsRules marker. "The service on" is read from the
+// published policy's routing.claude.via, which is the switch a run reads
+// (projectpolicy.RouteCascade, D150): C1.18's Terraform variable is not a fact
+// this command can read, and the policy is the one the runs themselves obey.
+func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Policy) []doctorCheck {
+	if !cascadeSwitchOn(p) {
+		return nil
+	}
+	const id = "creds-rules"
+	marker := rules.PathCredsRulesMarker()
+	var raw json.RawMessage
+	found, err := db.Get(ctx, marker, &raw)
+	if err != nil {
+		return []doctorCheck{{ID: id, Severity: "info",
+			Problem: fmt.Sprintf("whether the deployed rules carry the credentials family is unknown: %s could not be read (%v)", marker, err),
+			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
+	}
+	via := fmt.Sprintf("routing.claude.via: %s at %s", projectpolicy.RouteCascade, projectpolicy.PathShared())
+	if !found {
+		return []doctorCheck{{ID: id, Severity: "warning",
+			Problem: fmt.Sprintf("the cascade is switched on (%s) and %s is not written: the deployed rules predate the credentials family, so the first credential a cascade run records is refused and the run halts instead of running (fugaro accounts and fugaro watch show no state on such an installation)", via, marker),
+			Fix:     "re-run 'fugaro init --firebase' in your own terminal from a Fugaro that carries the credentials rules — this one does. Do not run it from an older Fugaro: that binary deploys a document without the family and leaves this switch on"}}
+	}
+	var gen int
+	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+		return []doctorCheck{{ID: id, Severity: "warning",
+			Problem: fmt.Sprintf("%s cannot be told apart: %s", marker, oneLine(string(raw))),
+			Fix:     "re-run 'fugaro init --firebase' in your own terminal from a Fugaro that carries the credentials rules: it records the generation this Fugaro reads, over a document it deploys itself"}}
+	}
+	if gen > rules.CredsRulesVersion {
+		return []doctorCheck{{ID: id, Severity: "warning",
+			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's credentials rules carry: a newer Fugaro deployed them, so the deployed document is not the one this binary generates and a cascade run's writes are the newer release's to define", marker, gen, rules.CredsRulesVersion),
+			Fix:     "upgrade Fugaro ('fugaro upgrade') and re-run init with the newer binary; this release refuses to deploy its own rules over a newer marker"}}
+	}
+	if gen < rules.CredsRulesVersion {
+		return []doctorCheck{{ID: id, Severity: "warning",
+			Problem: fmt.Sprintf("%s records generation %d, below the generation %d this Fugaro's credentials rules carry: the deployed document predates the credentials family, so a cascade run's first recorded credential is refused and the run halts", marker, gen, rules.CredsRulesVersion),
+			Fix:     "re-run 'fugaro init --firebase' in your own terminal from this Fugaro: it deploys the document the family ships in and records the generation"}}
+	}
+	return nil
+}
+
+// cascadeSwitchOn reports whether the published policy switches the cascade on
+// (projectpolicy.RouteCascade): the policy is in force here — doctorCredsRules
+// is only called on a node projectpolicy.Read returned — and a node with no
+// routing block, or one whose Claude switch is not cascade, leaves the cascade
+// off (D1b: an absent switch is direct).
+func cascadeSwitchOn(p *projectpolicy.Policy) bool {
+	if p == nil || p.Routing == nil || p.Routing.Claude == nil {
+		return false
+	}
+	return p.Routing.Claude.ViaValue() == projectpolicy.RouteCascade
 }
