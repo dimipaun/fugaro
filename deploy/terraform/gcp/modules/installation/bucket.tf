@@ -1,4 +1,4 @@
-# The runs bucket. The bootstrap created it; fugaro init imports it. Every
+# The runs bucket. The bootstrap created it; fugaro update imports it. Every
 # setting here matches what the bootstrap set, so adopting it changes
 # nothing. It holds runs, caches, locks and build records, so it is never
 # destroyed and never versioned (the lifecycle rules delete old runs and

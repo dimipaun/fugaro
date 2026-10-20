@@ -222,7 +222,7 @@ func TestConfigExampleWithoutProject(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
 	out, _, err := execute(t, "config", "example")
-	if err != nil || !strings.Contains(out, "# the Fugaro project; fugaro init --config-only writes your project config\nproject: example\n") {
+	if err != nil || !strings.Contains(out, "# the Fugaro project; fugaro update --config-only writes your project config\nproject: example\n") {
 		t.Fatalf("out = %q, err = %v", out, err)
 	}
 }

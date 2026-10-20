@@ -1,4 +1,4 @@
-# Every name arrives from fugaro init's terraform.tfvars.json. The
+# Every name arrives from fugaro update's terraform.tfvars.json. The
 # validation blocks check shapes only; nothing here derives a name.
 
 variable "project" {
@@ -42,7 +42,7 @@ variable "runs_bucket" {
 }
 
 variable "state_bucket" {
-  description = "The Terraform state bucket, which fugaro init creates and Terraform doesn't manage. Operators get objectAdmin on it."
+  description = "The Terraform state bucket, which fugaro setup creates and Terraform doesn't manage. Operators get objectAdmin on it."
   type        = string
 
   validation {
@@ -97,7 +97,7 @@ variable "names" {
 }
 
 variable "log_bucket_description" {
-  description = "The log bucket's description, which is its ownership mark: a log bucket carries no labels, so fugaro init adopts an existing one only when it carries this description."
+  description = "The log bucket's description, which is its ownership mark: a log bucket carries no labels, so fugaro update adopts an existing one only when it carries this description."
   type        = string
 
   validation {
@@ -225,7 +225,7 @@ variable "registry_cleanup" {
 }
 
 variable "adopt_legacy_registry" {
-  description = "Whether to adopt the bootstrap's legacy registry. fugaro init sets it when it finds one carrying the fugaro=managed mark."
+  description = "Whether to adopt the bootstrap's legacy registry. fugaro update sets it when it finds one carrying the fugaro=managed mark."
   type        = bool
   default     = false
   nullable    = false
@@ -284,14 +284,14 @@ variable "history" {
 }
 
 variable "project_secrets" {
-  description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro init creates/adopts each; values are never set by Terraform."
+  description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro update creates/adopts each; values are never set by Terraform."
   type        = map(string)
   default     = {}
   nullable    = false
 }
 
 variable "managed_deployer_scoped" {
-  description = "Whether to create the managed deployer's scoped role (fugaroDeployerScoped) and its one conditioned binding. OFF by default since 0.8.6, and fugaro init never sets it: the fmgd- prefix fence that binding carries cannot be expressed as a GCP IAM condition today (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would reject it and stop the whole apply. Managed projects stay disabled until the fence is redesigned and measured live (0.9.6)."
+  description = "Whether to create the managed deployer's scoped role (fugaroDeployerScoped) and its one conditioned binding. OFF by default since 0.8.6, and fugaro update never sets it: the fmgd- prefix fence that binding carries cannot be expressed as a GCP IAM condition today (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would reject it and stop the whole apply. Managed projects stay disabled until the fence is redesigned and measured live (0.9.6)."
   type        = bool
   default     = false
   nullable    = false

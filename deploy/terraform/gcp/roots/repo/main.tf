@@ -1,5 +1,5 @@
 # The repository root: one repository's resources, in a state of its own,
-# so an apply can only ever touch that repository. fugaro init --repo writes
+# so an apply can only ever touch that repository. fugaro update writes
 # it into a workdir with terraform.tfvars.json (the installation's outputs
 # included, so there is no remote state to read) and a backend config
 # naming the state bucket, and plans and applies it there.
