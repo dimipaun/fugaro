@@ -1020,10 +1020,10 @@ in the commit that made it.
   again by `website/test/slider.mjs`'s `stepFailures`. *Benefits* is `Benefits.astro`
   unchanged, rendered into the panel (`inPanel`), because the README's four reasons and their
   icons were already the thing this panel is for. *See it* is the owner's real `fugaro watch`
-  capture above the command, and under the command the panel's caption: the skill's own line,
-  `fugaro watch` is the live screen of spend, repositories and running agents., which
-  `plugin/skills/working/SKILL.md` writes and `home.mjs` reads back to it. The picture and its
-  transcription are the section above's subject.
+  capture above the command, and under the command the panel's caption: `fugaro watch` is the
+  live screen of spend, repositories and running agents. — `plugin/skills/working/SKILL.md`'s own
+  line, which `home.mjs` reads back to that file. The picture and its transcription are the
+  section above's subject.
 - **The tabs are fragment links and not radio inputs, and the site's own privacy statement is
   why.** The draft allows either. A radio group would put three `input` elements on the
   homepage, and the site makes two claims that would then be false: the privacy statement's
@@ -1041,19 +1041,20 @@ in the commit that made it.
   it, from `website/data/install.yaml` through `HOME_PATH` — the same reader the two install
   cards used, so the command is still never typed twice and the two cards are gone.
 - **Every control the page asks a reader to tap is at least 44 px tall**, which is the size the
-  draft's own note measures against. The tabs and the install button already were; the hero's
-  two links were a fraction of a pixel short of it on their padding and their line height
-  alone, so they declare `min-height: 44px` and `website/test/home.mjs`'s `controlTargetFailures`
-  reads the rule — including the case where the minimum sits inside a media query that is not
-  in force, which is a minimum a phone does not get.
+  owner's brief of 2026-10-19 measures every control against. The tabs and the install button
+  already were; the hero's two links were a fraction of a pixel short of it on their padding and
+  their line height alone, so they declare `min-height: 44px` and `website/test/home.mjs`'s
+  `controlTargetFailures` reads the rule — including the case where the minimum sits inside a
+  media query that is not in force, which is a minimum a phone does not get.
 - **What left the page.** `AgentChat.astro` is deleted rather than hidden: a component no page
   renders is a component whose build-time guards stop running, and every line the site still
   publishes is still held to the document it quotes. `ArchitectureDiagram.astro` is off the
-  homepage for the same reason the draft gives — the slider's first panel is the flow the
-  reader is shown — and it still draws `/how-it-works/`, which is now the one page that renders
-  it. The checks that were about the chat were replaced by checks about what replaced it
-  (`website/test/slider.mjs` is new; `home.mjs`, `fold.mjs`, `budget.mjs`, `wording.mjs` and
-  `base-styles.mjs` were re-pointed in the same commit), not dropped.
+  homepage because the draft's page is those three blocks and the picture of the run is not one
+  of them — the slider's first panel is the flow the reader is shown — and it still draws
+  `/how-it-works/`, which is now the one page that renders it. The checks that were about the
+  chat were replaced by checks about what replaced it (`website/test/slider.mjs` is new;
+  `home.mjs`, `fold.mjs`, `budget.mjs`, `wording.mjs` and `base-styles.mjs` were re-pointed in
+  the same commit), not dropped.
 - **What the gates hold, and what they cannot.** The page's order, the three tabs and the three
   panels, the panel each fragment shows, the absence of a script, the 44 px targets and the
   steps' provenance are `website/test/slider.mjs`'s five rules, with twenty-one planted cases
