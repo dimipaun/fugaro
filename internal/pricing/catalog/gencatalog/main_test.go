@@ -114,7 +114,7 @@ func TestGeneratedFileMatchesSnapshots(t *testing.T) {
 	o := options{
 		from:  filepath.Join("..", "testdata", "openrouter"),
 		allow: filepath.Join(tmp, "allow.txt"),
-		date:  "2026-10-14",
+		date:  "2026-10-20",
 		out:   filepath.Join(tmp, "catalog.json"),
 	}
 	if err := os.WriteFile(o.allow, []byte(strings.Join(allowlist(), "\n")+"\n"), 0o644); err != nil {
@@ -125,7 +125,7 @@ func TestGeneratedFileMatchesSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != string(want) {
-		t.Errorf("the checked-in catalog.json is not what the generator produces from testdata/openrouter:\nregenerate it with scripts/gen-price-catalog.sh -from internal/pricing/catalog/testdata/openrouter -date 2026-10-14")
+		t.Errorf("the checked-in catalog.json is not what the generator produces from testdata/openrouter:\nregenerate it with scripts/gen-price-catalog.sh -from internal/pricing/catalog/testdata/openrouter -date 2026-10-20")
 	}
 	again, err := generate(o)
 	if err != nil {
@@ -215,7 +215,7 @@ func TestSnapshotsAreTrimmedToTheDocumentedFields(t *testing.T) {
 	if err := os.WriteFile(allow, []byte(strings.Join(allowlist(), "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := generate(options{from: dir, allow: allow, date: "2026-10-14", out: filepath.Join(dir, "catalog.json")})
+	got, err := generate(options{from: dir, allow: allow, date: "2026-10-20", out: filepath.Join(dir, "catalog.json")})
 	if err != nil {
 		t.Fatal(err)
 	}
