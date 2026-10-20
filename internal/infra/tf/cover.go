@@ -274,7 +274,7 @@ const (
 	// The seven conditioned roles' IDs, one per service, each holding that
 	// service's slice of every update, delete, run and pause permission, every
 	// *.setIamPolicy and actAs, and each bound to the deployer account exactly
-	// once under its own condition (deployerServices below). Until 0.9.6 this
+	// once under its own condition (deployerServices below). Until 0.10.0 this
 	// was ONE role, fugaroDeployerScoped, under one condition; that condition
 	// could not be applied (17 logical operators where IAM allows 12, a
 	// resource.name.contains() which is not a supported function, and
@@ -578,7 +578,7 @@ var RolePermissions = map[string][]string{
 	// The reaper's five, and no others (design compute-backend §3.7): it is
 	// never roles/batch.jobsEditor and never roles/compute.instanceAdmin.v1,
 	// both of which carry the create permissions a reaper must not have. It
-	// named six until 0.9.6, the sixth being batch.jobs.cancel -- a permission
+	// named six until 0.10.0, the sixth being batch.jobs.cancel -- a permission
 	// Google does not define, which is why the role could not be created and
 	// --provision-batch was refused. The queue deadline deletes a job that
 	// never left QUEUED instead (internal/backend/batch/reap.go).
@@ -597,7 +597,7 @@ var RolePermissions = map[string][]string{
 	// else — no write, and no cloudasset.assets.listResource, which belongs to
 	// the wider predefined role this replaced.
 	CloudAssetRole: {"cloudasset.assets.searchAllResources"},
-	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.9.6). They
+	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.10.0). They
 	// are not installation roles: nothing a run does needs them, and their
 	// bound is the split between them — creation, reads and
 	// serviceusage.services.enable in fugaroDeployer, and every update, delete,
@@ -1217,7 +1217,7 @@ func (c Cover) deployerGrant(typ string, ch Change, createsDeployer bool) string
 		return ""
 	}
 	if title != DeployerConditionTitle || expr != svc.Expression() {
-		return "grants " + svc.Role + " under a condition that is not " + DeployerConditionTitle + " on the managed prefix: " + svc.Expression() + " is the whole fence around that role, byte for byte (D75 (2), one binding per service since 0.9.6)"
+		return "grants " + svc.Role + " under a condition that is not " + DeployerConditionTitle + " on the managed prefix: " + svc.Expression() + " is the whole fence around that role, byte for byte (D75 (2), one binding per service since 0.10.0)"
 	}
 	return ""
 }

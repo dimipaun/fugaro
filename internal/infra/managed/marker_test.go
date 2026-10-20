@@ -1162,7 +1162,7 @@ locals {
 		},
 		// Task 1.5's fence is the only reason a storage write at the project
 		// level is admitted: the mutations below are what that admission must
-		// not survive, and since 0.9.6 the fence is one condition per service,
+		// not survive, and since 0.10.0 the fence is one condition per service,
 		// each the fence of the role its binding names.
 		"the scoped deployer grant without its condition": func(f map[string]string) {
 			f["modules/installation/deployer.tf"] = strings.Replace(f["modules/installation/deployer.tf"], `  condition {
@@ -1651,7 +1651,7 @@ var runAccountGrants = setOf(
 	// conditioned permissions is fenced by binding (2), which the scan reads
 	// clause for clause against the role the binding names
 	// (managedPrefixFence, deployerFenceClauses) and which the runs bucket's
-	// own name is outside. since 0.9.6 the conditioned half is seven roles,
+	// own name is outside. since 0.10.0 the conditioned half is seven roles,
 	// one per service, each bound once under its own condition: the seven
 	// lines after the unconditioned one, whose permissions partition the 31
 	// the single fugaroDeployerScoped role held before it (deployerFenceClauses

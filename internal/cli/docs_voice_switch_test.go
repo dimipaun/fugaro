@@ -21,7 +21,7 @@ import (
 // no `## Check 68` section and no summary row for any of them (the
 // managed-projects plan reserves the numbers and its Task 5.3 writes them) —
 // and that row has since been half-made true: Check 68 was written into the
-// register by this repository's 0.9.6 fence work, so §13's row now says 68 is
+// register by this repository's 0.10.0 fence work, so §13's row now says 68 is
 // written and 67a/67b are not, and this test pins each half in its own
 // direction;
 // §2 called `mac` and `kind` "not shipped" when P6.4 (#601, `371038f`) is

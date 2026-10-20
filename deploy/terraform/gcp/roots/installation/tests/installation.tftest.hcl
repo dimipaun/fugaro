@@ -1701,7 +1701,7 @@ run "project_job_grants" {
 }
 
 # The managed deployer's seven conditioned roles and their seven conditioned
-# bindings are gated off by default (0.9.6: the fmgd- fence is one condition per
+# bindings are gated off by default (0.10.0: the fmgd- fence is one condition per
 # service and has not been measured live yet; deployer.tf's header, Check 68 of
 # docs/gcp-live-checklist.md). By default none of the fourteen exists, while the
 # account, the unconditioned role and its binding stay.
@@ -1750,7 +1750,7 @@ run "deployer_scoped_off_by_default" {
   }
 }
 
-# The opt-in plans the gated half exactly as the 0.9.6 redesign writes it: one
+# The opt-in plans the gated half exactly as the 0.10.0 redesign writes it: one
 # role per service, each holding that service's slice of D75's 31 permissions
 # (cloudscheduler.jobs.enable, never the .resume that does not exist), each
 # bound exactly once under its own service's fence and no other service's.
