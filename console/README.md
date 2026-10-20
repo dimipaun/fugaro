@@ -3728,6 +3728,11 @@ all from the **same launch** — are:
 | `console-run.png` | the run detail the Live screen's first row names: stages, verification, findings, the log tail |
 | `console-spend.png` | the Spend screen: thirty days of daily spend, the totals and the caps |
 | `console-installations.png` | the picker, opened from the console's own `Installations…` menu item: three installations, each naming the fake, with `acme-platform` the chosen one |
+| `console-first-run.png` | **not taken.** The no-installation onboarding page is #751, which is not on `main`, so there is no such screen in this console; the manifest carries the omission and the reason rather than a silence |
+
+The fifth row is the omission, and it is a row because that is where the four are: the manifest
+carries it as a fact (`omissions[]`), and a reader who expected the owner's fifth picture finds
+the reason beside the pictures that exist rather than after two paragraphs about alt text.
 
 Every alt text says only what its screen **draws**: the Live screen draws `runs`, `repos` and
 `total`, and the frame's `finished[]` list is decoded and drawn nowhere — an earlier version of
@@ -3735,7 +3740,6 @@ that sentence counted it ("five runs … one that opened pull request acme/platf
 one that failed"), which was a fact about the fixture and in no picture, shipping to the
 website inside `MANIFEST.json` (review of 2026-10-20, medium finding). `test/unit/screenshots.test.ts`
 now asserts the *absences* as well as the figures.
-| `console-first-run.png` | **not taken.** The no-installation onboarding page is #751, which is not on `main`, so there is no such screen in this console; the manifest carries the omission and the reason rather than a silence |
 
 `tools/screenshots/png.ts` reads the PNG bytes itself and refuses a capture that is blank (the
 standard deviation of its pixel luminance, sampled, must be above `BLANK_STDDEV_FLOOR`) or is

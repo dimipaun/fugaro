@@ -1171,10 +1171,16 @@ describe('the line a failed run ends with', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 7. The two commands that take the pictures.
+// 7. What the README promises about the run, held to the tree.
 // ---------------------------------------------------------------------------
 
-describe('the two commands the README documents', () => {
+describe('what the README promises about the run', () => {
+  /** readmeLines is `console/README.md` line by line: the claims below are about
+   * what that document says and about how it renders. */
+  function readmeLines(): readonly string[] {
+    return readFileSync(join(CONSOLE_ROOT, 'README.md'), 'utf8').split('\n')
+  }
+
   /** packageScripts is `package.json`'s `scripts`, read rather than imported:
    * the console's build is a JSON document, and the question here is what the
    * commands in it *do*. */
@@ -1203,9 +1209,33 @@ describe('the two commands the README documents', () => {
     // The finding this holds: the README offered `npm run screenshots` as "the
     // same thing" as the shell script while the two did different work, so the
     // second one launched a `dist/` the reader had no reason to have built.
-    const readme = readFileSync(join(CONSOLE_ROOT, 'README.md'), 'utf8')
+    const readme = readmeLines().join('\n')
     expect(readme).toContain('npm run screenshots')
     expect(readme).toContain('it builds the console first')
+  })
+
+  it('lists every picture, and the omission, in one table', () => {
+    // The finding this holds: the `console-first-run.png` row sat *after* two
+    // paragraphs of prose, so it rendered as literal pipe text rather than as a
+    // row of the table it belongs to. The rows are therefore required to be
+    // contiguous -- five of them, nothing but table between the first and the
+    // last.
+    const lines = readmeLines()
+    const rows = lines
+      .map((line, index) => ({ line, index }))
+      .filter((row) => /^\| `console-[a-z-]+\.png` \|/.test(row.line))
+    expect(rows.map((row) => row.line.split('|')[1]?.trim())).toEqual([
+      '`console-live.png`',
+      '`console-run.png`',
+      '`console-spend.png`',
+      '`console-installations.png`',
+      '`console-first-run.png`',
+    ])
+    const first = rows[0]?.index ?? 0
+    const last = rows[rows.length - 1]?.index ?? 0
+    for (const line of lines.slice(first, last + 1)) {
+      expect(line.startsWith('|'), `${line} breaks the picture table in two`).toBe(true)
+    }
   })
 })
 
