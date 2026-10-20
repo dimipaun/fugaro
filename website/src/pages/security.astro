@@ -410,13 +410,22 @@ const DIAGRAM_LIMITS = [
         label is a phrase of SECURITY.md, proved while the page builds (`quoted()` above), and
         the drawing is one picture with a name: `role="img"` and an aria-label, so a screen
         reader reads the name and then the list rather than every label of the drawing as a
-        loose string of its own. No script reads it and none is loaded for it. */}
+        loose string of its own. No script reads it and none is loaded for it.
+
+        **The geometry is a rhythm and an inset, and the gate reads both.** A card's title is
+        drawn 26 units below its top edge and its lines 24 units apart, so a three-line card is
+        96 units high and a four-line one 120; the last baseline of every card ends inside the
+        inset the card declares (`data-pad`), on the x-axis and the y-axis both — the review of
+        2026-10-20 found two cards whose last line was drawn past their own inset, because the
+        gate measured the labels against the box horizontally and never vertically. A card that
+        cannot hold its lines on the rhythm is a card that has to grow, and the heights and the
+        `viewBox` grow with it. */}
     <section data-security-diagram>
       <h2>{DIAGRAM_HEADING}</h2>
       <figure>
         <svg
           class="boundary-drawing"
-          viewBox="0 0 360 688"
+          viewBox="0 0 360 744"
           role="img"
           aria-label={DIAGRAM_LABEL}
           focusable="false"
@@ -440,22 +449,22 @@ const DIAGRAM_LIMITS = [
           {/* The boundary itself: one container per run, and what the document says is inside
               it. The dashed box is the boundary, so nothing is drawn crossing it except the
               two arrows that leave it. */}
-          <rect class="boundary-boundary" data-pad="20" x="12" y="130" width="336" height="424" rx="16" />
+          <rect class="boundary-boundary" data-pad="20" x="12" y="130" width="336" height="480" rx="16" />
           <text class="boundary-heading" font-size="20" x="32" y="166">{diagramLabel('one container per run')}</text>
 
           <rect class="boundary-card" data-pad="16" x="32" y="182" width="288" height="72" rx="10" />
           <text class="boundary-title" font-size="13" x="48" y="208">{diagramLabel('the agent')}</text>
           <text class="boundary-line" font-size="13" x="48" y="232">{diagramLabel('permission prompts turned off')}</text>
 
-          <rect class="boundary-card" data-pad="16" x="32" y="262" width="288" height="72" rx="10" />
+          <rect class="boundary-card" data-pad="16" x="32" y="262" width="288" height="96" rx="10" />
           <text class="boundary-title" font-size="13" x="48" y="288">{diagramLabel('the runner')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="310">{diagramLabel('the agent shares the container')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="328">{diagramLabel('can read its /proc')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="312">{diagramLabel('the agent shares the container')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="336">{diagramLabel('can read its /proc')}</text>
 
-          <rect class="boundary-card" data-pad="16" x="32" y="342" width="288" height="96" rx="10" />
-          <text class="boundary-title" font-size="13" x="48" y="368">{diagramLabel('per-repository identities')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="392">{diagramLabel('their own service accounts')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="416">{diagramLabel('narrow git credentials')}</text>
+          <rect class="boundary-card" data-pad="16" x="32" y="366" width="288" height="96" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="392">{diagramLabel('per-repository identities')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="416">{diagramLabel('their own service accounts')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="440">{diagramLabel('narrow git credentials')}</text>
 
           {/* The key the container holds, and the gateway that would keep it out of the agent's
               environment — the document's own conditional, in the order it states it: the
@@ -467,26 +476,26 @@ const DIAGRAM_LIMITS = [
               states (SECURITY.md:64 and :72 are the two halves of one conditional), and the
               arrangement is the one thing about this drawing no gate reads — the gate measures
               each label against the box it is drawn in, and cannot read what the boxes mean. */}
-          <rect class="boundary-card" data-pad="16" x="32" y="446" width="288" height="96" rx="10" />
-          <text class="boundary-title" font-size="13" x="48" y="472">{diagramLabel('the budget gateway')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="494">{diagramLabel('not on by default')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="512">{diagramLabel('the real model key')}</text>
-          <text class="boundary-line" font-size="13" x="48" y="530">{diagramLabel("sits in the agent's environment")}</text>
+          <rect class="boundary-card" data-pad="16" x="32" y="470" width="288" height="120" rx="10" />
+          <text class="boundary-title" font-size="13" x="48" y="496">{diagramLabel('the budget gateway')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="520">{diagramLabel('not on by default')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="544">{diagramLabel('the real model key')}</text>
+          <text class="boundary-line" font-size="13" x="48" y="568">{diagramLabel("sits in the agent's environment")}</text>
 
           {/* Out of the container: the pull request every run ends with. */}
           <g class="boundary-arrow">
-            <line x1="150" y1="554" x2="150" y2="571" />
-            <polygon class="boundary-arrow-head" points="150,580 144,569 156,569" />
+            <line x1="150" y1="610" x2="150" y2="627" />
+            <polygon class="boundary-arrow-head" points="150,636 144,625 156,625" />
           </g>
-          <rect class="boundary-card" data-pad="16" x="12" y="580" width="318" height="64" rx="12" />
-          <text class="boundary-title" font-size="13" x="28" y="618">{diagramLabel('ends every run with a pull request')}</text>
+          <rect class="boundary-card" data-pad="16" x="12" y="636" width="318" height="64" rx="12" />
+          <text class="boundary-title" font-size="13" x="28" y="674">{diagramLabel('ends every run with a pull request')}</text>
 
           {/* And out of the boundary, past it: the egress the document says nothing stops. */}
           <g class="boundary-arrow">
-            <path d="M330 528 H 342 V 631" />
-            <polygon class="boundary-arrow-head" points="342,640 336,629 348,629" />
+            <path d="M330 584 H 342 V 687" />
+            <polygon class="boundary-arrow-head" points="342,696 336,685 348,685" />
           </g>
-          <text class="boundary-line" font-size="13" x="348" y="664" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
+          <text class="boundary-line" font-size="13" x="348" y="720" text-anchor="end">{diagramLabel('network egress is unrestricted')}</text>
         </svg>
 
         <ul class="boundary-facts">
