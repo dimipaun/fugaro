@@ -81,8 +81,8 @@ resource "google_service_account" "fugaro_deployer" {
 #     projects/<project>/serviceAccounts/<account>@<project>
 #     .iam.gserviceaccount.com, and var.project is a plan-time literal, so that
 #     service takes this form too.
-#   - extract tests the resource's own LAST segment: the template says what the
-#     name looks like, and what the segment must begin with is the prefix. The
+#   - extract tests the resource's own name, not a "last segment" reading: the
+#     text after the FIRST occurrence of the template's literal prefix. The
 #     other five services need it because the segment before their resource's
 #     own name carries a value this module does not have at plan time — Secret
 #     Manager names a secret with the project NUMBER rather than the id, and

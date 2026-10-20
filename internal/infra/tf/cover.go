@@ -335,7 +335,11 @@ const (
 //     scheduler runs in another region from its jobs). The template anchors at
 //     the collection segment the resource's own name follows ("/secrets/",
 //     "/jobs/", …) and the extracted text runs to the end of the name, which for
-//     a resource of the clause's own type IS its own name.
+//     a resource of the clause's own type IS its own name — the reference
+//     defines the extraction by OCCURRENCE (the text after the FIRST occurrence
+//     of the literal prefix, and, with a suffix too, up to the first subsequent
+//     occurrence of it), which is what internal/infra/tf's cover_test.go models
+//     in extractSegment.
 //
 // Value is never ManagedPrefix alone: a value that admitted any name merely
 // containing "fmgd-" would admit a fugaro-* resource in a container whose name

@@ -1165,15 +1165,70 @@ func TestDeployerExtractTemplatesAreTheDocumentedForm(t *testing.T) {
 	}
 }
 
+// The module's own header states the reading the rest of the tree states.
+//
+// deployer.tf is the file the plan is made from, so its comment on the extract
+// form is the fence's stated rationale: it is what the owner reads to decide
+// whether the fence is the documented one. It said the opposite of the
+// reference once — "extract tests the resource's own LAST segment" — twelve
+// lines above the paragraph arguing the documented rule, and a header that
+// states two readings states none.
+//
+// What this pins is the reading rather than the wording: the header names the
+// FIRST occurrence of the template's literal prefix, and it names the "last
+// segment" reading only to deny it.
+func TestDeployerHeaderStatesTheDocumentedExtractionRule(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The header's comments with their markers and wrapping removed: a sentence
+	// that wraps across comment lines still reads as one sentence, and the
+	// header is prose rather than configuration.
+	var prose []string
+	for _, line := range strings.Split(string(b), "\n") {
+		s := strings.TrimSpace(line)
+		if !strings.HasPrefix(s, "#") {
+			continue
+		}
+		prose = append(prose, strings.TrimSpace(strings.TrimPrefix(s, "#")))
+	}
+	header := strings.Join(strings.Fields(strings.Join(prose, " ")), " ")
+	if !strings.Contains(header, "the FIRST occurrence of the template's literal prefix") {
+		t.Error("deployer.tf's header does not state the documented extraction rule (the text after the FIRST occurrence of the template's literal prefix): the module is where the fence's rationale is read, and the reference defines the extraction by occurrence")
+	}
+	// The reading the first cut took, which the reference does not document: the
+	// header may name it only to deny it, so the denial is removed before the
+	// rest is searched.
+	rest := strings.ReplaceAll(header, `not a "last segment" reading`, "")
+	if m := regexp.MustCompile(`(?i)last segment`).FindString(rest); m != "" {
+		t.Errorf("deployer.tf's header states the %q reading, and the reference documents no such rule: the header has to state one reading, and it is the one the design's C7 and this package's extractSegment model", m)
+	}
+	// And the reason the five services take the extract form, which is the
+	// header's other half: without it the header reads as a preference rather
+	// than as the plan-time fact it is.
+	if !strings.Contains(header, "other five services need it because") {
+		t.Error("deployer.tf's header does not give the reason the five services take the extract form")
+	}
+}
+
 // extractSegment is what resource.name.extract(template) returns for name under
 // the documented semantics: the template carries one {placeholder} with literal
-// text around it, and the call returns the text the placeholder matched — the
-// text between the literal text before it and the literal text after it, which
-// with no suffix runs to the end of the name. A name that does not carry the
-// template's literal text matches nothing, and the result is the empty string,
-// which the condition's .startsWith("fmgd-") reads as false, so a non-match
-// denies (C7, settled by the documented semantics rather than by a live probe:
-// the empty string does not start with the prefix).
+// text around it, and the call returns the text the placeholder matched — which
+// the reference defines by OCCURRENCE: with a prefix-only template, the
+// characters after the FIRST occurrence of the prefix, and with a suffix too,
+// the characters between that first occurrence of the prefix and the first
+// SUBSEQUENT occurrence of the suffix. This is the whole of the documented rule
+// as it bears on this fence: the first occurrence of each literal, and not the
+// last or the only one, and a suffix that ends the extracted text rather than
+// the name.
+//
+// A name that does not carry the template's literal prefix — or, when the
+// template has a suffix, one that does not carry it after that prefix — matches
+// nothing, and the result is the empty string, which the condition's
+// .startsWith("fmgd-") reads as false, so a non-match denies (C7, settled by the
+// documented semantics rather than by a live probe: the empty string does not
+// start with the prefix).
 //
 // This is the model the rest of these tests read the fence through. It is
 // deliberately not "the resource's last segment": that reading is what the
@@ -1183,9 +1238,12 @@ func TestDeployerExtractTemplatesAreTheDocumentedForm(t *testing.T) {
 // a longer name (a version under a secret, an execution under a job) is another
 // type, which no clause of that service names.
 //
-// A name carrying the anchor more than once matches nothing either: which
-// occurrence extract would take is not something the reference says, and an
-// ambiguous name is not a name this fence may admit.
+// A template that is not the documented form — no placeholder, an unterminated
+// one, or more than one — returns "" here because the reference defines no
+// result for it at all: this model reads the documented semantics, and refuses
+// to guess at a template the documentation does not describe. (Such a template
+// is refused outright by TestDeployerExtractTemplatesAreTheDocumentedForm; this
+// is the second line of that defence, not the first.)
 func extractSegment(template, name string) string {
 	if strings.Count(template, "{") != 1 || strings.Count(template, "}") != 1 {
 		return ""
@@ -1198,16 +1256,18 @@ func extractSegment(template, name string) string {
 	pre, post := template[:open], template[closing+1:]
 	rest := name
 	if pre != "" {
-		if strings.Count(name, pre) != 1 {
+		i := strings.Index(name, pre)
+		if i < 0 {
 			return ""
 		}
-		rest = name[strings.Index(name, pre)+len(pre):]
+		rest = name[i+len(pre):]
 	}
 	if post != "" {
-		if !strings.HasSuffix(rest, post) || len(rest) < len(post) {
+		i := strings.Index(rest, post)
+		if i < 0 {
 			return ""
 		}
-		rest = rest[:len(rest)-len(post)]
+		rest = rest[:i]
 	}
 	return rest
 }
@@ -1231,11 +1291,30 @@ func TestExtractSegmentModelsTheDocumentedSemantics(t *testing.T) {
 		{"the anchor in the container", "/secrets/{secret}", "projects/fmgd-/secrets/other", "other"},
 		{"a literal suffix", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x/executions", "fmgd-x"},
 		{"the suffix missing", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x", ""},
+		// The suffix does not have to END the name: the reference says the text
+		// runs from the prefix's first occurrence to the FIRST SUBSEQUENT
+		// occurrence of the suffix, so what follows that occurrence is outside
+		// the extracted text.
+		{"text after the suffix", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x/executions/e1", "fmgd-x"},
+		{"the suffix twice", "/jobs/{job}/executions", "projects/12/locations/l/jobs/fmgd-x/executions/executions", "fmgd-x"},
 		{"a whole-name template", "{name}", "projects/_/buckets/fmgd-x", "projects/_/buckets/fmgd-x"},
 		{"two placeholders", "projects/{project}/secrets/{secret}", "projects/12/secrets/fmgd-x", ""},
 		{"no placeholder at all", "/secrets/fmgd-", "projects/12/secrets/fmgd-x", ""},
 		{"an unterminated placeholder", "/secrets/{secret", "projects/12/secrets/fmgd-x", ""},
-		{"the anchor twice", "/jobs/{job}", "projects/12/jobs/x/jobs/fmgd-x", ""},
+		// The anchor twice: the reference names the occurrence — the FIRST one
+		// — so the extracted text is what follows the first /jobs/ and runs to
+		// the end of the name. It does not start with the prefix, so the clause
+		// denies; what the fence reads here is the reference's rule and not a
+		// guess about an ambiguous name.
+		{"the anchor twice", "/jobs/{job}", "projects/12/jobs/x/jobs/fmgd-x", "x/jobs/fmgd-x"},
+		// And the shape the same rule admits, which is worth naming rather than
+		// leaving to be discovered: with the prefix after the FIRST anchor the
+		// extracted text begins with it. No resource of these five services can
+		// be named that way — a secret id, an API key's uid, a repository id and
+		// a job id carry no path separator — so the fence never sees one, and
+		// the model reads the reference instead of the stricter "the anchor
+		// exactly once" rule it used to apply.
+		{"the anchor twice, prefix after the first", "/jobs/{job}", "projects/12/jobs/fmgd-a/jobs/x", "fmgd-a/jobs/x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

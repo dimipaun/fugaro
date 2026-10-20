@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -303,5 +304,69 @@ func TestChecklistHasCheck68(t *testing.T) {
 	// deployer account (the unconditioned one), and the section says so.
 	if !strings.Contains(section, "**one**") {
 		t.Error("Check 68's restore does not state the binding count it must leave behind")
+	}
+}
+
+// TestManagedDeployerDocsCountTemplatePlaceholdersRight holds the design's own
+// arithmetic about the first cut's templates to the templates it writes out.
+//
+// The C6 row and the §6 paragraph argue that the multi-placeholder template is
+// not the documented form, and they do it by counting: the shape of the
+// argument is "this template carries N placeholders, and the documented form
+// carries one". The count has been wrong — the secret template
+// `projects/{project}/secrets/{secret}` carries two, and the three-placeholder
+// one is the locations form the other four services used — which does not
+// change the argument but does make a reader check the sentence instead of
+// trusting it.
+//
+// The rule here is the one the prose already follows: wherever these docs put a
+// count next to a template, that count is the template's own number of
+// placeholders. A sentence that counts a template the docs do not write out is
+// outside this test, and so is a count expressed any other way ("carries
+// three").
+func TestManagedDeployerDocsCountTemplatePlaceholdersRight(t *testing.T) {
+	numbers := map[string]int{"one": 1, "two": 2, "three": 3, "four": 4}
+	countRE := regexp.MustCompile(`\b(one|two|three|four)[- ]placeholders?\b`)
+	checked := 0
+	for _, path := range []string{
+		"../../docs/design/managed-deployer-fence.md",
+		"../../docs/design/managed-projects.md",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := string(data)
+		for _, template := range []string{
+			"projects/{project}/secrets/{secret}",
+			"projects/{project}/locations/{location}/keys/{key}",
+		} {
+			want := strings.Count(template, "{")
+			for i := 0; ; {
+				j := strings.Index(doc[i:], template)
+				if j < 0 {
+					break
+				}
+				i += j + len(template)
+				// The count phrase that follows the template, near enough to
+				// be about it: the sentences these docs argue in are one line
+				// long.
+				window := doc[i:]
+				if len(window) > 160 {
+					window = window[:160]
+				}
+				m := countRE.FindStringSubmatch(window)
+				if m == nil {
+					continue
+				}
+				checked++
+				if got := numbers[m[1]]; got != want {
+					t.Errorf("%s: the sentence after %s says %q, and the template carries %d placeholders", path, template, m[0], want)
+				}
+			}
+		}
+	}
+	if checked < 3 {
+		t.Errorf("only %d template counts were read, want the C6 row's two and the §6 paragraph's and the managed-projects paragraph's: a doc that stops counting its templates stops being checked here", checked)
 	}
 }
