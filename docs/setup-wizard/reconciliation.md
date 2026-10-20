@@ -583,11 +583,13 @@ than refusing outright. See D11.
 
 **This section is the map** — there is no separate naming-survey document, and
 this folder's four files are the whole deliverable. Every file that names the
-command is accounted for below by category, with the number the category's own
-command prints at `82d366af`; the per-symbol breakdown inside each file is the
-rename task's own red step. The commands are the facts and the numbers are
-their values at that commit (C3), so a reader checks a line by running it
-rather than by trusting it.
+command is accounted for below by category, in **both** of the forms it can take
+— the `fugaro init` pattern the counts are all built on, and the bare
+`init --repo` form the second pattern paragraph below names file by file — with
+the number the category's own command prints at `82d366af`; the per-symbol
+breakdown inside each file is the rename task's own red step. The commands are
+the facts and the numbers are their values at that commit (C3), so a reader
+checks a line by running it rather than by trusting it.
 
 **Go — user-facing strings (the rename's core).** 107 non-test files, 410 lines,
 7 `selfCommand() + " init"` sites — `git grep -l 'fugaro init' 82d366af --
@@ -636,6 +638,40 @@ because this bullet is the one W2.1 sweeps:
 `TestUpdate*`/`TestSetup*` and move), `internal/cli/init*_test.go`,
 `internal/initflow/loop_test.go`, and assertion helpers in ~40 other packages.
 
+**There are two patterns, not one, and the second is where a file list goes
+wrong.** Everything above is the `fugaro init` pattern, and it is the census's
+pattern. A file can also name the command the way a user types it **without the
+`fugaro` in front** — the bare `init --repo` form, which appears in refusal
+messages, in comments and, in one case, in a test's argument list. That set is
+**15 files**, and none of them is in any count above:
+
+```
+comm -13 <(git grep -l 'fugaro init' 82d366af | sort) \
+         <(git grep -l -- 'init --repo' 82d366af | sort)   # 15 files
+```
+
+- **`internal/cli/gitsecret.go:114`** — the one that is **live user-facing
+  text**: a refusal that ends "Run %s init --repo %s in its checkout first, so
+  the mounts and the grants agree again". This is the file that makes the
+  difference matter: the other five live ones are comments, but this one prints
+  a command and would print a retired one.
+- `internal/cli/shipped_gates_test.go:124` — the args in a table,
+  `{"init", "--repo", "--provision-batch"}`, passed to the command tree. It is
+  not a string to rename but an entry point to re-point; W2.1 owns it.
+- comments only (live, non-test): `internal/backend/backend.go`,
+  `internal/cli/budget_preview.go`, `internal/cli/config_publish.go`,
+  `internal/config/project_secrets.go`, `internal/runner/policy.go` — W2.2's.
+- comments only (tests): `internal/cli/{launch_budget,secrets}_test.go` (W2.1);
+  `internal/infra/{statebucket,workdir}_test.go` and
+  `internal/runner/{policy,provider_policy,providers}_test.go` (W2.2).
+- `docs/design/layered-config.md` (4 lines) — a dated root (D9), left alone
+  like the other 30 files in `docs/design/**`, even though the `fugaro init`
+  pattern does not count it in the 85.
+
+W0.2's walk matches **both** patterns, so W2.1's and W2.2's lists have to carry
+these files or W2.6's "every live file is owned by exactly one of W2.1–W2.5" is
+false — which it was, in the first draft of this section.
+
 **Markdown — 111 files** outside this folder name the command
 (`git grep -l 'fugaro init' 82d366af -- '*.md' | grep -vc
 '^docs/setup-wizard/'`), and the split between what the rename touches and what
@@ -654,8 +690,11 @@ Live (renamed) — 26 files: `README.md` (16 mentions), `CONTRIBUTING.md`,
 `deploy/terraform/gcp/roots/repo/tests/testdata/README.md`,
 `plugin/skills/setup/SKILL.md` and `plugin/skills/setup/reference/{decisions,transitions}.md`,
 `plugin/skills/working/reference/status.md`,
-`.claude/skills/new-release/SKILL.md`, and the two **generated** files
-`website/content/cli-reference.md` and `website/content/security.md`.
+`.claude/skills/new-release/SKILL.md`, `website/README.md` (1, inside a quoted
+test description — the file the Website bullet below lists and this one had
+dropped; the count of 26 is right and the enumeration was 25), and the two
+**generated** files `website/content/cli-reference.md` and
+`website/content/security.md`.
 
 Dated (left alone) — 85 files in **nine roots**, each root D9's own rule (F20):
 the dated records of this tree's past — `docs/plans/**` (32), `docs/releases/v*`
@@ -1029,7 +1068,10 @@ applies everything `update` owns with no typed confirmation* — which
 of Installation, Firebase, Images, Installation2 and Repository, and its own
 comment says that **within** those stages the Firestore database's location, a
 **Cloud Build**, replacing a registry tag and onboarding an unlisted repository
-**stay `Typed`**. A Cloud Build is billable and the Firestore location is
+**stay `Typed`**. (Those four are `internal/cli` call sites rather than entries
+in the map — the map is stage names — and two of them ride stages `YesCovers` is
+already true for. The section below says which, because D12's whole answer is
+built there.) A Cloud Build is billable and the Firestore location is
 permanent, so `update --yes` can legitimately stop on an upgrade that has to
 rebuild an image — and W0.1's matrix pins that no row may be relaxed.
 
@@ -1063,8 +1105,11 @@ front door**, and never covers **the Firestore database's location in `setup`**
 The answer is written out row by row rather than summarised, because the rest of
 the matrix is what actually moves: **a billable first image build**,
 **replacing a registry tag** and **onboarding an unlisted repository** become
-ordinary covered rows in both front doors, where they are `Typed` today. Those
-three rows are the whole of what this answer changes about a confirmation.
+ordinary covered rows **in both front doors**, where they are `Typed` today, and
+**the Firestore database's location** becomes covered **in `update` alone**,
+where `setup` keeps it typed. Those **four** rows are the whole of what this
+answer changes about a confirmation; the location is the one that moves in one
+door rather than two, and the paragraph above is where that is stated.
 
 What does **not** move: `canType()`'s four conditions and every refusal of F8 (an
 agent session still applies nothing, `--yes` or not); the secrets stage's
@@ -1072,13 +1117,24 @@ agent session still applies nothing, `--yes` or not); the secrets stage's
 which `--yes` cannot supply, and this answer is about confirmations, not values;
 and the read-only preview, which `--yes` never skips (F10).
 
-**Where it lands.** W5.1's contract is now the opposite of the recommendation: it
-**changes** `internal/initflow/stage.go`'s covering rule instead of reading it,
-which is what makes the conditional lane
-`internal/initflow/stage.go — W1.1 (L0) → W5.1 (L7)` unconditional; and W0.1's
-matrix gains `update`'s column with every row covered, while its "no row may be
-relaxed" becomes "**these three rows may never be relaxed, in either front
-door**".
+**Where it lands.** W5.1's contract is now the opposite of the recommendation,
+and — because of where those four steps are actually enforced — its opposite is
+expressed at the **call sites**, not in `internal/initflow`. `runCovered` is a
+map of five stage *names*; the typed steps inside those stages are `askTyped`
+and `canConfirmTyped(initflow.Typed, …)` guards in `internal/cli`, and two of
+them ride stages whose `YesCovers` is **already true** (the Firestore location
+rides `Firebase` — `init_firebase.go`'s `promptLeft(initflow.Firebase, …)` —
+and the billable build rides `Images`), so no change to `runCovered` could
+relax them and no test written against `YesCovers` could pin them. W5.1
+therefore **reads** `internal/initflow/stage.go` unchanged — the lane written
+for it in an earlier draft, `W1.1 (L0) → W5.1 (L7)`, is **withdrawn** — and
+relaxes `init_firebase.go`'s `confirmLocation` (in `update` only),
+`init.go`'s `buildImages`, `init_images.go`'s `confirmReplace` and
+`init_repo_gate.go`'s `confirmRepo`. W0.1's matrix gains `update`'s column with
+every row covered, its stage table keeps the five covered and three `noYes`
+stages exactly as they are, and its call-site table carries the four steps
+above; "no row may be relaxed" becomes "**these three rows may never be
+relaxed, in either front door**".
 
 *Alternative:* give `update` a way to cover the billable and permanent steps
 non-interactively — a `--rebuild` or `--accept-billable` flag, or refusing those

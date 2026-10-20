@@ -201,11 +201,15 @@ above is the list it must not lose.
    owner's. No task weakens `canType()`, `RunCovers`, `runCovered`, `YesCovers`,
    `Managed`, the agent marker check, the impersonation check, the
    quota-project check or the `ACTIVE` project check. The exception is
-   **W5.1**, which changes `runCovered` because **D12 was answered against the
-   recommendation** (it is exactly the row-relaxation this convention exists to
-   make hard, and it is written out in reconciliation §5 rather than decided by
-   a task); it says so in its own entry and carries a **mandatory independent
-   review**, which any future change of this kind must too.
+   **W5.1**, which relaxes three **call-site** confirmations and one call site
+   in `update` only (`confirmLocation`, `buildImages`, `confirmReplace`,
+   `confirmRepo` — its own entry lists them, and it **reads**
+   `internal/initflow/stage.go` without editing it) because **D12 was answered
+   against the recommendation**: it is exactly the row-relaxation this
+   convention exists to make hard, and it is written out in reconciliation §5
+   rather than decided by a task. W5.1 says so in its own entry and carries a
+   **mandatory independent review**, which any future change of this kind must
+   too.
 8. **Credentials are never printed or stored.** `Options.Redact` stays wired for
    both front doors. The billing picker (W4.3) prints account **identifiers**,
    which are not credentials, and never under `--json`.
@@ -256,10 +260,22 @@ above is the list it must not lose.
    image build, replacing a registry tag and onboarding an unlisted repository
    are **covered**, in both front doors, where they were `Typed` before D12 was
    answered. That is the whole of what the answer moves, and it is written out
-   row by row in §5. One more confirmation is typed by a *different* decision —
-   the offer to enable `cloudbilling.googleapis.com` (D3, W4.4), which `--yes`
-   never covers either — so this list is D12's rows and not every typed step in
-   the work.
+   row by row in §5.
+   **None of those rows is a stage row.** `internal/initflow/stage.go`'s
+   `runCovered` is five stage *names*, read once by
+   `RunCovers(name) = runCovered[name] && YesCovers(name)`;
+   `internal/initflow`'s own three `noYes` stages (`Project`, `Secrets`,
+   `Compute`) are the whole of what the package decides. Every step D12 moves —
+   or holds — is a **call-site** guard in `internal/cli`: `init_firebase.go`'s
+   `confirmLocation`, `init.go`'s `buildImages`, `init_images.go`'s
+   `confirmReplace`, `init_repo_gate.go`'s `confirmRepo` (all four named in
+   W5.1). Two of them ride stages whose `YesCovers` is **already true**
+   (the location rides `Firebase`, the build rides `Images`), so no change to
+   `runCovered` can express the answer, and no test written against
+   `YesCovers` can pin it — W0.1's second table pins the call sites instead.
+   One more confirmation is typed by a *different* decision — the offer to
+   enable `cloudbilling.googleapis.com` (D3, W4.4), which `--yes` never covers
+   either — so this list is D12's rows and not every typed step in the work.
 5. **The rename does not touch the cloud.** W2.x changes text, comments and
    descriptions only: no Terraform resource, variable name or path moves, so an
    apply on an existing installation sees no diff.
@@ -327,7 +343,7 @@ where each answer is built, not what is still owed.
 | D9 (the rename's line) | W0.2, W2.6 |
 | D10 (Check 27, 111) | W0.3, W6.1, W6.2 |
 | D11 (create by default?) | W1.3 |
-| D12 (`update --yes`'s confirmations) | W5.1 — **answered the other way**, so W5.1 *changes* `internal/initflow/stage.go`'s covering rule — and W0.1's matrix rows for `update` |
+| D12 (`update --yes`'s confirmations) | W5.1 — **answered the other way**, so W5.1 relaxes four **call sites** in `internal/cli` (`confirmLocation` in `update` only, `buildImages`, `confirmReplace`, `confirmRepo`) and reads `internal/initflow/stage.go` unchanged — and W0.1's matrix, whose second table is those call sites |
 | F12 (two phases) | W3.5 |
 | F16 (`update`'s refusals) | W5.1 |
 | F21 (`fugaro config init`) | W1.2, Global Constraint 6 |
@@ -367,15 +383,16 @@ where each answer is built, not what is still owed.
 | `internal/cli/testdata/init_commands.golden`, `internal/cli/testdata/init_review.golden`, `internal/cli/testdata/init_retire.golden` | W1.2 (L1), W2.1 (L2) |
 | `internal/cli/init_project.go` | W2.1 (L2), W1.3 (L3), W3.3 (L4), W4.3 (L9), W4.5 (L10) |
 | `internal/cli/init_inputs.go` | W2.1 (L2), W3.1 (L4), W3.2 (L5), W3.5 (L6), W4.3 (L9) |
-| `internal/cli/init_firebase.go` | W2.1 (L2), W3.3 (L4) |
-| `internal/cli/init_repo_gate.go`, `init_repo_target.go` | W2.1 (L2), W3.4 (L5) |
+| `internal/cli/init_firebase.go` | W2.1 (L2), W3.3 (L4), W5.1 (L7) |
+| `internal/cli/init_images.go` | W2.1 (L2), W5.1 (L7) |
+| `internal/cli/init_repo_gate.go`, `init_repo_target.go` | W2.1 (L2), W3.4 (L5) (`init_repo_gate.go` also W5.1 (L7)) |
 | `internal/cli/init_inputs_test.go` | W3.1 (L4), W3.2 (L5) |
 | `internal/cli/billing_prompt.go`, `billing_prompt_test.go` (**new** at W4.3) | W4.3 (L9), W4.4 (L10) |
 | `internal/cli/setup_refusals_test.go` (**new** at W0.1) | W0.1 (L0), W5.1 (L7) |
 | `internal/cli/docs_live_init_census_test.go` (**new** at W0.2) | W0.2 (L0), W2.6 (L5) |
 | `internal/cli/docs_*_test.go` (≈40, the docs pins) | W2.1 (L2), W2.3 (L3) |
 | `internal/cli/docs_website_*_test.go` (3) | W2.1 (L2), W2.4 (L4) |
-| `internal/initflow/stage.go` | W1.1 (L0), **W5.1 (L7)** — unconditional since D12 was answered |
+| `internal/initflow/stage.go` | W1.1 (L0) — D12 is a call-site answer, so nothing else writes this file |
 | `internal/e2e/init_test.go` → `update_test.go` | W2.2 (L2), W5.2 (L8) |
 | `internal/preflight/google.go` | W2.2 (L2), W4.4 (L10) |
 | `internal/infra/projectcreate.go` | W2.2 (L2), W4.5 (L10) |
@@ -430,12 +447,12 @@ W6.2 ← W4.4, W4.5 (owner; plus a release)
 |---|---|---|---|
 | **L0** | W0.1 the refusal matrix · W0.2 the census · W0.3 the checks written · W1.1 `initflow` names no command · W4.1 the billing client | standard · standard · standard · opus · **opus + mandatory** | `internal/cli/setup_refusals_test.go` · `internal/cli/docs_live_init_census_test.go` · `docs/gcp-live-checklist.md` · `internal/initflow/loop.go`, `loop_test.go`, `stage.go` · `internal/billing/accounts.go` |
 | **L1** | W1.2 the two commands, the tombstone, `restore` · W4.2 the gcloud fallback | opus · standard | `internal/cli/{init,setup,update,retired,root,restore}.go`, `restore_test.go`, `testdata/*.golden` · `internal/billing/gcloud.go`, `internal/gcpfake/billing.go` |
-| **L2** | W2.1 the `internal/cli` strings · W2.2 the strings outside `internal/cli` · W2.5 Terraform | standard · standard · standard | the 45 `internal/cli/*.go` of W2.1's list, the 64 `internal/cli/*_test.go` files naming the command, the three goldens · every non-test `.go` outside `internal/cli` that names the command (`internal/{infra,budget,runner,managed,config,localcfg,projectpolicy,preflight,gcpfake,gateway,imagecheck,mirror,basepin,backend/{gcp,backendtest}}/**`, minus `config/example.go`) · `deploy/terraform/**`, `schemas/`, `internal/config/example.{go,yaml}`, `images/verify-public.sh`, `images/history/Dockerfile` |
+| **L2** | W2.1 the `internal/cli` strings · W2.2 the strings outside `internal/cli` · W2.5 Terraform | standard · standard · standard | the 48 `internal/cli/*.go` of W2.1's list, the 67 `internal/cli/*_test.go` files naming the command, the three goldens · every non-test `.go` outside `internal/cli` that names the command (`internal/{infra,budget,runner,managed,config,localcfg,projectpolicy,preflight,gcpfake,gateway,imagecheck,mirror,basepin,backend/{gcp,backendtest}}/**`, minus `config/example.go`) · `deploy/terraform/**`, `schemas/`, `internal/config/example.{go,yaml}`, `images/verify-public.sh`, `images/history/Dockerfile` |
 | **L3** | W1.3 `setup` is the wizard · W2.3 live markdown, README and the skills | opus · standard | `internal/cli/{setup,init_stages,init_project}.go` · `README.md`, `docs/`, `plugin/skills/**`, `.claude/skills/new-release/SKILL.md` |
 | **L4** | W3.1 the id default · W3.3 `--firebase-project` · W2.4 the website and the generated reference | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init,init_firebase,init_project}.go` · `website/**` |
 | **L5** | W3.2 the region and the Firestore location · W3.4 the first-repository question · W2.6 the census emptied and the tail | standard · standard · standard | `internal/cli/init_inputs.go` · `internal/cli/{init_repo_gate,init_repo_target,setup}.go` · `internal/config/{example.yaml,example.go}`, `schemas/`, `images/verify-public.sh`, `docs/gcp-live-checklist.md`, `docs_live_init_census_test.go` |
 | **L6** | W3.5 the two-phase wizard stage | opus | `internal/cli/wizard_stage.go`, `init_inputs.go` |
-| **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | **opus + mandatory** | `internal/initflow/stage.go` (the covering rule D12 moved), `internal/cli/{update,init_stages,init}.go`, `internal/cli/setup_refusals_test.go`, `docs/gcp-setup.md` (its `update` section) |
+| **L7** | W5.1 `update`'s stage set, refusals and non-interactive contract | **opus + mandatory** | `internal/cli/{update,init_stages,init,init_firebase,init_images,init_repo_gate}.go` (the four D12 call sites: `confirmLocation`, `buildImages`, `confirmReplace`, `confirmRepo`), `internal/cli/setup_refusals_test.go`, `docs/gcp-setup.md` (its `update` section) — and **not** `internal/initflow/stage.go`, which it reads unchanged |
 | **L8** | W5.2 the e2e tests, renamed | standard | `internal/e2e/init_test.go` → `update_test.go` |
 | **L9** | W4.3 the picker prompt | **opus + mandatory** | `internal/cli/billing_prompt.go`, `init_project.go`, `init_inputs.go` |
 | **L10** | W4.4 the API-enable refusal · W4.5 the comments that become false | **opus + mandatory** · standard | `internal/cli/billing_prompt.go`, `internal/preflight/google.go` · `internal/cli/init_project.go`, `internal/infra/projectcreate.go` |
@@ -474,8 +491,9 @@ internal/cli/restore.go               W1.2 (L1) → W2.1 (L2)
 internal/cli/testdata/*.golden        W1.2 (L1) → W2.1 (L2)
 internal/cli/init_project.go          W2.1 (L2) → W1.3 (L3) → W3.3 (L4) → W4.3 (L9) → W4.5 (L10)
 internal/cli/init_inputs.go           W2.1 (L2) → W3.1 (L4) → W3.2 (L5) → W3.5 (L6) → W4.3 (L9)
-internal/cli/init_firebase.go         W2.1 (L2) → W3.3 (L4)
-internal/cli/init_repo_gate.go        W2.1 (L2) → W3.4 (L5)
+internal/cli/init_firebase.go         W2.1 (L2) → W3.3 (L4) → W5.1 (L7)
+internal/cli/init_images.go           W2.1 (L2) → W5.1 (L7)
+internal/cli/init_repo_gate.go        W2.1 (L2) → W3.4 (L5) → W5.1 (L7)
 internal/cli/init_repo_target.go      W2.1 (L2) → W3.4 (L5)
 internal/cli/billing_prompt.go        W4.3 (L9) → W4.4 (L10)
 internal/cli/billing_prompt_test.go   W4.3 (L9) → W4.4 (L10)
@@ -484,7 +502,7 @@ internal/cli/docs_*_test.go           W2.1 (L2) → W2.3 (L3)
 internal/cli/docs_website_*_test.go   W2.1 (L2) → W2.4 (L4)
 internal/cli/setup_refusals_test.go   W0.1 (L0) → W5.1 (L7)
 internal/cli/docs_live_init_census_test.go  W0.2 (L0) → W2.6 (L5)
-internal/initflow/stage.go            W1.1 (L0) → W5.1 (L7)
+internal/initflow/stage.go            W1.1 (L0)
 internal/e2e/init_test.go             W2.2 (L2) → W5.2 (L8)   (becomes update_test.go)
 internal/preflight/google.go          W2.2 (L2) → W4.4 (L10)
 internal/infra/projectcreate.go       W2.2 (L2) → W4.5 (L10)
@@ -496,21 +514,38 @@ docs/gcp-live-checklist.md            W0.3 (L0) → W2.6 (L5)
 docs/gcp-setup.md                     W2.3 (L3) → W5.1 (L7)
 ```
 
-**`internal/initflow/stage.go` is on that list unconditionally.** It was written
-as a conditional lane while **D12** was open — "only if the owner answers against
-the recommendation" — and the owner did answer against it, so **W5.1 changes
-`runCovered` there** and the lane stands: W1.1 (L0) touches the file's package
-comment, W5.1 (L7) changes its covering rule.
+**`internal/initflow/stage.go` is W1.1's file alone, and that is D12's shape.**
+An earlier draft carried a second writer on that line — `W5.1 (L7)`, marked
+"only if the owner answers against the recommendation" — on the assumption that
+answering against it meant changing `runCovered`. It does not. `runCovered` is a
+**five-entry map of stage names** (`Installation`, `Firebase`, `Images`,
+`Installation2`, `Repository`), read once by
+`RunCovers(name) = runCovered[name] && YesCovers(name)`, and `internal/initflow`
+decides nothing finer than that. Every step D12 moves is a **call-site** guard in
+`internal/cli` — W5.1's own entry names them: `init_firebase.go`'s
+`confirmLocation` (the Firestore location), `init.go`'s `buildImages` (a billable
+first image build), `init_images.go`'s `confirmReplace` (a registry tag) and
+`init_repo_gate.go`'s `confirmRepo` (an unlisted repository). Two of the four ride
+stages whose `YesCovers` is **already true** — the location rides `Firebase`
+(`init_firebase.go`'s `promptLeft(initflow.Firebase, …)`), the build rides
+`Images` — so a `runCovered` change could not express the answer and a test
+written against `YesCovers` could not pin it (W0.1's second table pins the call
+sites instead). That is why the "unconditionally" paragraph that used to stand
+here is gone, why `internal/initflow/stage.go` now carries W1.1 at L0 and no one
+else, and why `init_images.go` appears above at all: W5.1 writes it, so it is a
+two-writer file from the moment D12 is built.
 
 W2.1 is a **sweep**, and the way it appears above is the precise version of the
 old catch-all line: it writes **every `internal/cli/*.go` and every
 `internal/cli/*_test.go` that names the retired command at L2** — today's 44
-(45 with `init_review.go`, which the census pattern misses) plus any file W1.2
+(48 with the three `init --repo`-only files and `init_review.go`, which the
+`fugaro init` pattern misses) plus any file W1.2
 adds that names it; the tombstone's `retired.go` and `retired_test.go` are
 `retirementText` and are *not* renamed. That is why `W2.1 (L2)` appears in the
 chains for `init.go`, `init_stages.go`, `restore.go`, `init_project.go`,
-`init_inputs.go`, `init_firebase.go`, `init_repo_gate.go`, `init_repo_target.go`,
-the goldens and the two `_test.go` groups: for those files W2.1 is a real writer
+`init_inputs.go`, `init_firebase.go`, `init_images.go`, `init_repo_gate.go`,
+`init_repo_target.go`, the goldens and the two `_test.go` groups: for those files
+W2.1 is a real writer
 that changes no behaviour, and a chain that left it out would put two writers of
 one file in one level. **W1.2's own new files carry no `W2.1 (L2)` step** —
 `setup.go`, `update.go` and `root.go` are written for the new commands and
@@ -588,38 +623,82 @@ and D10 was answered as recommended on 2026-10-20, so it is free to start too.*
 ### Task W0.1: The refusal matrix, pinned — test
 
 **Files.** `internal/cli/setup_refusals_test.go` (**new**).
-**What it pins.** A table over the stages `internal/cli/init_stages.go`
-registers, crossed with `internal/initflow/stage.go`'s `runCovered` map and its
-`noYes` declarations, and five run modes — `--yes`,
-`--non-interactive` (with and without `--yes`), `--json`, no terminal, and an
-agent session — asserting for each the state the loop reaches. It reuses today's
-harness (`internal/initflow/loop_test.go`'s
-`TestYesDoesNotCoverCreateOrBilling` is the seed) and adds the agent and
-`--json` columns, which no single test covers today.
+**What it pins, and it is two tables, not one.** The confirmations in this tree
+are enforced in two places, and a pin that confuses them asserts something
+false:
+
+1. **The stage rows.** Which *stages* `--yes` covers, read from
+   `internal/initflow/stage.go`'s `runCovered` map through
+   `RunCovers(name) = runCovered[name] && YesCovers(name)`, and which stages
+   declare `noYes`. Five are covered (`Installation`, `Firebase`, `Images`,
+   `Installation2`, `Repository`) and three are not (`Project`, `Secrets`,
+   `Compute`) — that is the whole of what the map says.
+2. **The call-site rows.** The steps *within* a covered stage that are still
+   typed, which are **not** in the map: each is an `askTyped` or
+   `canConfirmTyped(initflow.Typed, r.conditions())` guard in `internal/cli`
+   (W5.1's table names the four). **This is why the second table cannot be
+   written with `YesCovers`**: the Firestore database's location rides stage
+   `Firebase` (`promptLeft(initflow.Firebase, …)` in `init_firebase.go`) and a
+   billable first image build rides `Images` — both stages `YesCovers` is
+   **true** for, today and under any change to `runCovered`. Their pin is the
+   call site, and the *shape* of the refusal differs by step — which is the
+   second reason the table is per row rather than one rule over `LeftKind`:
+   - **the Firestore location** (`init_firebase.go`'s `confirmLocation`) returns
+     a `NeedsYouError` whose `Left` is `promptLeft(initflow.Firebase, …)` — kind
+     `prompt` — and the `--json`/agent columns must not change that;
+   - **a billable first image build** (`init.go`'s `buildImages`) and
+     **replacing a registry tag** (`init_images.go`'s `confirmReplace`) go
+     through `askTyped`, which returns `reachable == false` (nothing was asked,
+     nothing applied) and whose caller turns that into
+     `promptLeft(initflow.Images, …)`;
+   - **onboarding an unlisted repository** is the one that is **not** always a
+     `prompt`: the repository stage (`init_repo_stage.go`'s `authorize`) leaves
+     the run with `onboardLeft` — kind `command` for an ordinary origin, kind
+     `console` when the origin is rewritten or the session is a coding agent's —
+     and the `--repo` door's `gateRepo` refuses with a plain `userErr` instead.
+     A pin that asserted kind `prompt` for this row would be wrong today.
+   Nothing is applied in any of the three shapes: for the two `askTyped` rows
+   `reachable == false` is that fact, and for the stage rows the `Left` *is* the
+   `NeedsYou` state.
+
+Both tables are crossed with five run modes — `--yes`, `--non-interactive`
+(with and without `--yes`), `--json`, no terminal, and an agent session — and
+assert for each the state the loop reaches. The file reuses today's harness
+(`internal/initflow/loop_test.go`'s `TestYesDoesNotCoverCreateOrBilling` is the
+stage table's seed) and adds the agent and `--json` columns, which no single
+test covers today.
 **Three rows may never be relaxed, and D12 says which.** After the owner's
-answer the never-covered set is **creating the project, linking the billing
+answer the never-relaxed set is **creating the project, linking the billing
 account and the Firestore database's location** — all three `setup`'s, the first
-two refused outright by `update` (W5.1) and the third covered there. Each
-answers `needs-you` with a `LeftKind` of `prompt` and `initflow.YesCovers(name)`
-is false for the stages that own them. Each row carries its **D12 provenance**
-in a comment — "the owner's answer of 2026-10-20, Global Constraint 4" — so a
-later task that relaxes one has a written rule in front of it.
-**Three rows moved, and this pin names them rather than hiding them.** A
+two refused outright by `update` (W5.1) and the third covered there. Project
+creation and the billing link sit under `Project`, the `noYes` stage, **and**
+behind the typed banners (`init_project.go`'s `projectStage.typed`), so for
+those two both tables apply; the location has no stage row and is the call site
+alone. Each row carries its **D12 provenance** in a comment — "the owner's
+answer of 2026-10-20, Global Constraint 4" — so a later task that relaxes one
+has a written rule in front of it.
+**Four rows moved, and this pin names them rather than hiding them.** A
 **billable first image build**, **replacing a registry tag** and **onboarding an
-unlisted repository** are `Typed` today and become **covered** in both front
-doors. This task writes them as today's value with the target beside it
-(`covered after W5.1`), so the file states the move in the commit that introduces
-it; **W5.1** flips the rows and is where the change is asserted (the lane
-`setup_refusals_test.go W0.1 (L0) → W5.1 (L7)`). Nothing else in the matrix
-moves.
+unlisted repository** are typed today and become **covered in both front doors**
+(the answer keeps only three things typed, and none of them is these), while the
+**Firestore database's location** becomes covered **in `update` only** — `setup`
+keeps it, because `setup` is the door that asks for it as a first-time question.
+This task
+writes each as today's value with the target beside it (`covered after W5.1`, and
+for the location `covered in update after W5.1`), so the file states the moves in
+the commit that introduces them; **W5.1**
+flips them and is where the change is asserted (the lane
+`setup_refusals_test.go W0.1 (L0) → W5.1 (L7)`). Nothing else moves — in
+particular **no stage row does**: D12 is a call-site answer, and a task that
+found itself editing `runCovered` would have misread it.
 **Red step.** None possible today: the pin passes on today's code **by design**,
-because the three rows it asserts are today's rows and the three that move are
+because the rows that never relax are today's rows and the four that move are
 recorded as today's value. The review checks it would fail if a row were
 relaxed, by relaxing one locally and not committing it; W5.1's flip is where a
 red step exists.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Refusal|YesCovers|Confirm' -count=1`.
 **Depends on.** Nothing. **Reviewer.** standard.
-**Commit.** `cli: pin the confirmation matrix both front doors must pass (three rows may never be relaxed)`
+**Commit.** `cli: pin the confirmation matrix both front doors must pass (three rows may never be relaxed, four move)`
 
 ### Task W0.2: The rename census and its frozen list — test
 
@@ -681,10 +760,32 @@ retirement statement, and all four are strings W2.1 renames (the
 `TestInitRepoRetireTranscriptGolden -update-retire` exactly like the other two
 goldens. An exemption for a file the rename empties is the "wrong in one
 direction" case Global Constraint 7 forbids.
+**Two patterns, and `pendingRename` holds both.** The scan matches the
+`fugaro init` pattern **and** the bare `init --repo` form, and the two do not
+find the same files: at `82d366af` the first finds 367 files and the second
+finds **15** that the first misses
+(`comm -13 <(git grep -l 'fugaro init' 82d366af | sort) <(git grep -l -- 'init --repo' 82d366af | sort)`).
+They are named file by file in [reconciliation.md](reconciliation.md) §4, and
+they are in `pendingRename` from this task onward: `internal/cli/gitsecret.go`
+(the one **live string** — a refusal that prints `%s init --repo %s`),
+`internal/cli/shipped_gates_test.go` (the args `{"init", "--repo",
+"--provision-batch"}` in a table, not a string), `internal/cli/{budget_preview,
+config_publish}.go`, `internal/backend/backend.go`,
+`internal/config/project_secrets.go`, `internal/runner/policy.go`,
+`internal/cli/{launch_budget,secrets}_test.go`,
+`internal/infra/{statebucket,workdir}_test.go`,
+`internal/runner/{policy,provider_policy,providers}_test.go` — **fourteen** live
+files — and `docs/design/layered-config.md`, which is a dated root and is
+exempt (note that the `fugaro init` pattern does not count it in the 85, so it
+is the one file in the dated set that the *other* pattern put there). Without
+this the walk and the rename's task list do **not** cover the same set: those
+fourteen files would sit in `pendingRename` owned by no task, and W2.6's "every
+live file is owned by exactly one of W2.1–W2.5" would be false.
 **Red step.** None: passes today with `pendingRename` = today's census at
 `82d366af` — 410 non-test Go lines across 107 files, 378 test lines across 106
 files, 111 markdown files outside this folder (**26 live** and **85 in the dated
-roots**), 29 Terraform files naming the command of 58 — every figure reproducible
+roots**), 29 Terraform files naming the command of 58, **and the 14 live files
+the `init --repo` pattern adds** — every figure reproducible
 by the command stated beside it in
 [reconciliation.md](reconciliation.md) §4. W2.6 **flips the last assertion to
 `len(pendingRename) != 0 → fatal`**, and that is where the pin bites.
@@ -843,10 +944,12 @@ failing pin, and the pin's failure names the next sentence.*
 
 ### Task W2.1: The `internal/cli` strings — standard
 
-**Files.** **45** `internal/cli/*.go`. The list is the census, not a
+**Files.** **48** `internal/cli/*.go`. The list is the census, not a
 recollection of it, so it is stated with its command — `git grep -l 'fugaro init'
-82d366af -- 'internal/cli/*.go' | grep -v _test.go | wc -l` says **44**, and the
-45th is added on purpose below:
+82d366af -- 'internal/cli/*.go' | grep -v _test.go | wc -l` says **44** — plus
+the four files the census's pattern misses and this task still owns: the **3**
+that name the command only as the bare `init --repo`, named with their reasons
+below, and `init_review.go`, added on purpose: 44 + 3 + 1 = **48**.
 
 ```
 allow_delete.go     budget.go           cloud.go            config_list.go
@@ -860,11 +963,19 @@ initsecrets.go      launch_budget.go    lswarn.go           managed_flag.go
 operator_write.go   project.go          project_cmd.go      recipes_skew.go
 report.go           restore.go          roles.go            secrets.go
 sharedcfg.go        upgrade.go          upgrade_cloud.go    validate.go
+budget_preview.go   config_publish.go   gitsecret.go
 ```
 
 `init_retire.go` is in the list for its `retireNextCommand` value, the literal
-`"fugaro init --repo . --retire"`. The 45th file is **`init_review.go`**, and it
-is named separately because the census command does **not** match it: its command
+`"fugaro init --repo . --retire"`. The last line is the second census pattern
+(reconciliation §4 names it): `budget_preview.go`, `config_publish.go` and
+`gitsecret.go` name `init --repo` with no `fugaro` in front, so the command
+above does not find them — and **`gitsecret.go:114` is live user-facing text**,
+a refusal that ends "Run %s init --repo %s in its checkout first". They are in
+the list, in `pendingRename` (W0.2) and therefore owned; leaving them to the
+sweep is exactly how they came to sit in the census owned by nobody.
+The 48th file is **`init_review.go`**, and it
+is named separately because the census command does **not** match it either: its command
 line is built as `args := []string{"init"}` with the program name supplied
 elsewhere, so `fugaro init` never appears in the file. It is still this task's —
 the review screen prints the command it is telling the user to run — and leaving
@@ -872,9 +983,13 @@ it out of the list while relying on the sweep to catch it is exactly the mistake
 the reconciliation's §4 census was re-derived to fix. A file the sweep finds and
 this list does not is a file whose strings nobody chose deliberately.
 It touches **every one of these files**, plus the three goldens regenerated by
-their own tests and the **64** `internal/cli/*_test.go` files that name the
+their own tests and the **67** `internal/cli/*_test.go` files that name the
 command (`git grep -l 'fugaro init' 82d366af -- 'internal/cli/*_test.go' | wc
--l`), whose assertions read the strings being renamed — see W2.2 for why those
+-l`, **64**, plus `launch_budget_test.go`, `secrets_test.go` and
+`shipped_gates_test.go`, the three the `init --repo` pattern adds — the last of
+them not an assertion string but the argument list `{"init", "--repo",
+"--provision-batch"}` passed to the command tree), whose assertions read the
+strings being renamed — see W2.2 for why those
 two sets of test files are written here *and* by W2.3/W2.4.
 **Which name each string gets (F19, D7).** This is judgement, not search and
 replace, and the task's review is about that:
@@ -932,6 +1047,15 @@ internal/basepin/**
 the two exclusions below, and without them it names `internal/initflow/loop.go`,
 `internal/initflow/stage.go` and `internal/config/example.go`, which are not
 this task's; if it names a package not listed above, this list is what is wrong.
+**Three files are this task's without being on that command's output**, because
+they name the command only as the bare `init --repo` (reconciliation §4's second
+pattern): `internal/backend/backend.go:89`,
+`internal/config/project_secrets.go:84` and `internal/runner/policy.go:170`, all
+three comments rather than strings — the same three that made W2.6's ownership
+sentence false. The five `_test.go` files beside them
+(`internal/infra/{statebucket,workdir}_test.go`,
+`internal/runner/{policy,provider_policy,providers}_test.go`) are in the Tests
+line below for the same reason.
 Named examples of the user-facing ones:
 `internal/infra/{discover,discover_firebase,firebase,firebasedb,hardening,installation,projectcreate,projectjobs,readiness,checkjob,tf/env,tf/managed_cover}.go`,
 `internal/budget/{rollover,registry,session}.go`,
@@ -952,8 +1076,24 @@ Named examples of the user-facing ones:
 `` `fugaro update` in the checkout ``. `internal/infra/projectcreate.go`'s
 `"rerun fugaro init --create-project"` becomes `"rerun fugaro setup"`, and its
 head comment is W4.5's.
-**Tests.** The 106 test files asserting those strings (the reconciliation's §4
-counts them, and each package's own red step names them); every one is updated
+**Tests.** **The 42 test files outside `internal/cli` that assert those strings**
+— not the 106 the reconciliation counts tree-wide, which is the number *with*
+`internal/cli`'s 64 and the three plugin files in it. The derivation, each figure
+with its command in §4: 106 tree-wide
+(`git grep -l 'fugaro init' 82d366af -- '*_test.go' | wc -l`), **64** of them in
+`internal/cli` (W2.1's, and the previous paragraph is about the split inside
+them), leaving **42** outside; of those, **3** are `plugin/`'s and belong to
+W2.3 (`plugin/readme_test.go`, `plugin/setup_skill_test.go`,
+`plugin/skills_lint_test.go`), **1** is `internal/initflow/loop_test.go`
+(W1.1's) and **1** is `deploy/terraform/terraform_test.go` (W2.5's) — so **37**
+are this task's, and to them the `init --repo` pattern adds the **5** test files
+no `fugaro init` grep finds (`internal/infra/{statebucket,workdir}_test.go`,
+`internal/runner/{policy,provider_policy,providers}_test.go`), for **42**
+test files this task updates. **The two 42s are different sets, and the
+coincidence is worth stating**: 37 + 5 = 42, and 42 is also the count of test
+files *matching `fugaro init` outside `internal/cli`* — the five added files are
+not among that 42, since by construction they do not match that pattern. Every
+one included above is updated
 in this commit — **except the two sets that belong to later tasks**, and this is
 the only place the split is written down. Inside `internal/cli`, the
 `docs_*_test.go` files are W2.1's strings and W2.3's sentences (W2.4's for the
@@ -1109,8 +1249,16 @@ landed, the only files outside the nine exempt roots and the three
 `retirementText` files that still name the command are `docs/gcp-live-checklist.md`
 and — if W2.5 has not landed yet — `schemas/fugaro.schema.json`,
 `internal/config/example.{go,yaml}` and `images/verify-public.sh`. **Every live
-file is owned by exactly one of W2.1–W2.5** (see `### The file lanes` for the
-files with more than one writer); anything else the red step prints is a file a
+file is owned by exactly one of W2.1–W2.5**, and that now includes the **14 live
+files that name the command only as the bare `init --repo`** — six in
+`internal/cli` (W2.1: `gitsecret.go`, `budget_preview.go`, `config_publish.go`
+and their three test files), eight elsewhere (W2.2:
+`internal/backend/backend.go`, `internal/config/project_secrets.go`,
+`internal/runner/policy.go` and the five tests beside them),
+which is exactly the gap that made this sentence false before — see
+[reconciliation.md](reconciliation.md) §4's second-pattern paragraph and
+`### The file lanes` for the
+files with more than one writer; anything else the red step prints is a file a
 rename task missed and belongs to that task, not to this one.
 The exempt roots are **exactly W0.2's nine, no more and no fewer** —
 `docs/plans/`, `docs/releases/v`, `docs/design/`, `docs/credentials-service/`,
@@ -1427,16 +1575,22 @@ to* is never printed — the half of the old rule that survives).
 ### Task W5.1: `update`'s stage set, its refusals and its non-interactive contract — opus
 
 **Files.** `internal/cli/update.go`, `internal/cli/init_stages.go` (the stages
-`update` registers, and the `runCovered` row that says whether `--yes` may
-cover them), **`internal/initflow/stage.go`** (the map itself — see the contract
-below, which is **D12's answer** and not the recommendation this task was first
-drafted against, so the file is *changed* here and the lane
-`internal/initflow/stage.go W1.1 (L0) → W5.1 (L7)` is unconditional),
-`internal/cli/setup_refusals_test.go` (W0.1's matrix gains `update`'s column,
-and the three rows D12 moves are flipped here),
-`internal/cli/init.go` (the
-`errNoState` family's wording), `docs/gcp-setup.md` (its `fugaro update`
-section), their tests.
+`update` registers), **the four call sites D12's answer moves** —
+`internal/cli/init_firebase.go` (`confirmLocation`, the Firestore database's
+location), `internal/cli/init_images.go` (`confirmReplace`, a registry tag),
+`internal/cli/init_repo_gate.go` (`confirmRepo`, the typed owner/name),
+`internal/cli/init.go` (`buildImages`' Cloud Build confirmation, and the
+`errNoState` family's wording) — `internal/cli/setup_refusals_test.go` (W0.1's
+file: `update`'s column, and the call-site rows D12 moves are flipped here),
+`docs/gcp-setup.md` (its `fugaro update` section), their tests.
+**Not in this list: `internal/initflow/stage.go`.** The contract below says why
+— `runCovered` is a five-entry map of stage names and there is no within-stage
+rule in it to change, so D12 is implemented at the four call sites above, and
+`stage.go` is read (`RunCovers`, `noYes`, the canonical order) and not written.
+W1.1 keeps that file to itself, and the lane
+`internal/initflow/stage.go W1.1 (L0) → W5.1 (L7)` written in an earlier draft
+is **withdrawn** — it was drawn on the assumption that D12 would be a
+`runCovered` change, which is not where these steps live.
 **What it is (F11, F16, D1, D5).** `update` registers everything `setup` does
 **except** the project stage's creation path and `computeStage`: preflight,
 installation, Firebase, images, installation (second pass), secrets, plugin, and
@@ -1456,30 +1610,57 @@ than from §5's recommendation: `update` under `--yes` covers **everything
 `update` owns** — the five stages `internal/initflow/stage.go`'s `runCovered`
 names, `Installation`, `Firebase`, `Images`, `Installation2` and `Repository`,
 **and** every step *within* them that is money or permanent. A Cloud Build, the
-Firestore database's location and replacing a registry tag are **covered when
-`update` asks for them**: a CI job that upgrades the CLI and has to rebuild an
-image gets the build, not `needs-you` and exit code 1. That is a change to
-`runCovered`'s within-stage rule, and it is the only code change D12 makes.
-`update --yes` is total over its own stage set; what it does **not** own it
-cannot cover, and the three rows that may never be relaxed are all `setup`'s:
-**creating the project** and **linking the billing account** — which `update`
-refuses outright and never reaches — and **the Firestore database's location**,
-which `setup` keeps `Typed` and `update` covers. `setup` is therefore where the
-confirmations live, and W0.1's matrix is where that is asserted, row by row,
-with D12's provenance in a comment. W0.1's matrix gains `update`'s column with
-every row covered, and its three moved rows
-(`setup_refusals_test.go`'s) are flipped in this commit.
+Firestore database's location, replacing a registry tag and onboarding an
+unlisted repository are **covered when `update` asks for them**: a CI job that
+upgrades the CLI and has to rebuild an image gets the build, not `needs-you` and
+exit code 1. `update --yes` is total over its own stage set; what it does **not**
+own it cannot cover, and the three rows that may never be relaxed are all
+`setup`'s: **creating the project** and **linking the billing account** — which
+`update` refuses outright and never reaches — and **the Firestore database's
+location**, which `setup` keeps `Typed` and `update` covers. `setup` is
+therefore where the confirmations live.
+
+**Where that is implemented, and it is not `runCovered`.** `runCovered` is a map
+of **five stage names** read once, by
+`RunCovers(name) = runCovered[name] && YesCovers(name)`: it says whether `--yes`
+covers a whole *stage*, and it has no within-stage rule to change. The four
+steps D12 moves are per-call-site guards inside the stage's own apply, and each
+of them is `askTyped` or `canConfirmTyped(initflow.Typed, r.conditions())`:
+
+| Step | Where the guard is | Today |
+|---|---|---|
+| the Firestore database's location | `internal/cli/init_firebase.go`'s `confirmLocation` | typed (its `Left` rides stage `Firebase`, whose `YesCovers` is **true**) |
+| a billable first image build | `internal/cli/init.go`'s `buildImages` | typed |
+| replacing a registry tag | `internal/cli/init_images.go`'s `confirmReplace` | typed |
+| onboarding an unlisted repository | `internal/cli/init_repo_gate.go`'s `confirmRepo` | typed (owner/name typed at the prompt) |
+
+So this task changes those **four call sites** — making the ones `update` owns
+apply under `--yes`, and leaving `setup`'s typed — and it **reads
+`internal/initflow/stage.go` without changing it**: the three `noYes` stages
+(`Project`, `Secrets`, `Compute`) and the five covered ones stay exactly as they
+are. The per-door half of the answer is the reason no single shared rule can
+carry it: the same call site must behave differently in the two front doors, so
+the guard has to know which door is running (W1.1's `Options.Program` names it,
+and `initRun` can carry it). The task's own call is how that door reaches
+`r.conditions()`; the review's question is whether the call site can still say
+*why* it is typed, because that is the sentence the next reader needs.
+W0.1's file carries the stage-level rows and the call-site rows as two separate
+assertions (see its own entry), and the rows D12 moves are flipped there in this
+commit.
 `update` with neither `--yes` nor a terminal plans only, as `initflow.Run`
 already says.
 **Tests.** `TestUpdateRefusesCreateProjectAndLinkBilling`,
 `TestUpdateWithoutAnInstallationNamesSetup`,
 `TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne`,
-`TestUpdateUnderYesCoversEveryStageItOwns` (every stage and every within-stage
-step `update` owns applies with no typed confirmation — a Cloud Build, the
-Firestore location and a registry-tag replacement included, which is the part
-of this test D12 rewrote; **planting the bug** in either direction must fail
-it — covering a row that must stay `Typed`, and leaving one `Typed` that D12
-covers — and the first of those fails W0.1's matrix too),
+`TestUpdateUnderYesCoversEveryStageItOwns` (every stage `update` registers
+applies under `--yes`), and **`TestUpdateAppliesTheFourStepsItOwns`** — the
+call-site half, and the part D12 wrote: `update --yes` applies the Cloud Build,
+the Firestore location, the registry-tag replacement and the unlisted
+repository's onboarding with no typed confirmation, each asserted at its own
+call site rather than through `YesCovers`; **planting the bug** in either
+direction must fail it — covering a call site that must stay `Typed` in
+`setup`, and leaving one `Typed` in `update` that D12 covers — and the first of
+those fails W0.1's file too,
 `TestUpdateNonInteractiveWithoutYesPlansOnly`,
 `TestUpdateConvergesTwiceAndSaysNoChanges` (the second run's every stage is
 `done`/"No changes", which is Check 27's assertion in miniature),
@@ -1604,11 +1785,17 @@ Each needs its own plan amendment and the owner's go.
 - **D12's answer is the newest thing in the plan, and it is the one that moves
   behaviour rather than text.** `update --yes` now covers a Cloud Build, the
   Firestore location and a registry-tag replacement, and `setup` keeps the three
-  rows that may never be relaxed. The risk is not the answer but its **reach**:
-  W5.1 changes `runCovered`, W0.1's matrix has to be flipped in the same commit,
-  and W3.4's onboarding test changes with it. The mitigation is that the answer
-  is written out row by row in §5 and that W0.1's file carries D12's provenance
-  in a comment beside each row, so the diff says which rows moved and why.
+  rows that may never be relaxed. The risk is not the answer but its **reach** —
+  and, as with every other part of D12, the reach is at the **call sites**, not
+  in `internal/initflow`: W5.1 relaxes `confirmLocation` (in `update` only),
+  `buildImages`, `confirmReplace` and `confirmRepo`, W0.1's matrix has to be
+  flipped in the same commit, and W3.4's onboarding test changes with it. Two of
+  those four steps ride stages (`Firebase`, `Images`) whose `YesCovers` is
+  already true, so a task that found itself editing `runCovered` would have read
+  the answer wrong — that misreading is the specific mistake this bullet warns
+  about. The mitigation is that the answer is written out row by row in §5 and
+  that W0.1's file carries D12's provenance in a comment beside each row, so the
+  diff says which rows moved and why.
 - **The build is approved; the tasks are not started.** D1–D12 are answered, so
   nothing here is waiting on a decision — but Global Constraint 2 still asks for
   a go per task or group, and the slivers that need no behaviour decision are
