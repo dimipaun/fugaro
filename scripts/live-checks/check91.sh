@@ -137,7 +137,11 @@ remove_scratch() {
     say "refusing to remove $SCRATCH: it carries no marker from this check"
     return 0
   fi
-  rm -rf "$SCRATCH"
+  # Guarded: this runs from the exit trap, where a `rm` that fails (a read-only parent, a
+  # file the owner's own user cannot unlink) would end the shell under `set -e` before the
+  # RESULT block is printed. A directory that is still there is a FACT, and the block says
+  # so — it is not a reason to lose the rest of the block.
+  rm -rf "$SCRATCH" || true
   if [ ! -e "$SCRATCH" ]; then SCRATCH_REMOVED=yes; fi
 }
 
@@ -170,13 +174,20 @@ restore_run() {
     gcloud artifacts repositories delete "${SVC:?}" --project="${P:?}" --location="${L:?}" --quiet >&2 || true
   fi
 
+  # Each count is guarded: a count query is how this run REPORTS, and one that exits
+  # non-zero must not end the run. The image list is the one that does it in the ordinary
+  # case — the repository was just deleted above, and the real CLI answers a list against a
+  # repository that is not there with NOT_FOUND, a non-zero exit and nothing on stdout.
+  # `set -o pipefail` would carry that exit out of the substitution, `set -e` would end the
+  # script inside this cleanup, and the RESULT block would never be printed: the owner would
+  # be left with a deleted service and no statement of what was left behind.
   local svc_left img_left repo_left
   svc_left=$(gcloud run services list --project="${P:?}" --region="${L:?}" \
-    --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l | tr -d ' ')
+    --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l | tr -d ' ') || true
   img_left=$(gcloud artifacts docker images list "${L}-docker.pkg.dev/${P}/${SVC}" \
-    --project="${P:?}" --include-tags --format='value(image)' 2>/dev/null | wc -l | tr -d ' ')
+    --project="${P:?}" --include-tags --format='value(image)' 2>/dev/null | wc -l | tr -d ' ') || true
   repo_left=$(gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" \
-    --filter="name:${SVC}" --format='value(name)' | wc -l | tr -d ' ')
+    --filter="name:${SVC}" --format='value(name)' | wc -l | tr -d ' ') || true
   fact "restore-counts" PASS "services: ${svc_left}, images: ${img_left}, repository: ${repo_left} (each must read 0)"
   if [ "$svc_left" != 0 ] || [ "$img_left" != 0 ] || [ "$repo_left" != 0 ]; then
     fact "restore" FAIL "the counts are not all 0, so something this check created is still there (services=${svc_left} images=${img_left} repository=${repo_left}). Nothing was tried a second time: delete the survivors by hand (the service and its image, and the repository if the repo-existed record says no), then run the three list commands above until all three counts read 0. The scratch directory is KEPT on purpose — it holds the records that say what is this check's — at $SCRATCH, and it is this check's own: remove it yourself (rm -rf) once you no longer need them. A fresh run of this check does NOT take it over: it makes a new scratch directory of its own and stops in the guards while the service or the repository is still in the project."
@@ -202,12 +213,15 @@ finish() {
   cleanup
   local facts=$FACTS_CAPTURED
   if [ -z "$facts" ]; then facts="aborted|FAIL|the run stopped before it recorded anything"; fi
+  # The scratch directory's row is added BEFORE the verdict is taken, because the verdict
+  # is taken from the facts: a directory this check could not remove is a FAIL, and a block
+  # that printed `scratch-removed: FAIL` beside `END (exit 0)` would read as a pass.
+  facts="${facts}"$'\n'"scratch-removed|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is still there, at $SCRATCH")"
   if printf '%s\n' "$facts" | grep -q '|FAIL|' && [ "$status" = 0 ]; then
     # A guard stop is exit 1 already; a FAILed fact with exit 0 would read as a
     # pass, so the verdict is taken from the facts, not from the exit path.
     status=1
   fi
-  facts="${facts}"$'\n'"scratch-removed|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is still there, at $SCRATCH")"
   if [ -z "$PRINTED" ]; then
     PRINTED=1
     print_block "$facts" "$status"

@@ -10,6 +10,9 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check91.sh
+# The real `rm`, for the one test that puts a stand-in for it on PATH: everything that is
+# not that test's scratch directory is still removed by the real one.
+REAL_RM=$(command -v rm || true)
 work=$(mktemp -d)
 kept=()
 cleanup_all() {
@@ -167,8 +170,16 @@ if args[:2] == ["artifacts", "docker"] and args[2:3] == ["images"]:
     if args[3:4] == ["delete"]:
         rm("image")
         sys.exit(0)
-    if args[3:4] == ["list"] and state("image"):
-        print("us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk91/fugaro-chk91:chk91")
+    if args[3:4] == ["list"]:
+        # A list against a repository that is not there is NOT_FOUND for the real CLI: it
+        # exits non-zero with the error on stderr and prints nothing. The Restore's image
+        # count is the one query that meets this -- the repository is deleted just before
+        # it -- so this is the fake's way of saying the run has to survive it.
+        if not state("repo") and os.environ.get("FAKE_GCLOUD_REPO_EXISTS") != "yes":
+            sys.stderr.write("ERROR: (gcloud.artifacts.docker.images.list) NOT_FOUND: Repository not found\n")
+            sys.exit(1)
+        if state("image"):
+            print("us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk91/fugaro-chk91:chk91")
     sys.exit(0)
 
 if args[:1] == ["builds"]:
@@ -183,6 +194,28 @@ if args[:2] == ["auth", "print-identity-token"]:
 sys.exit(1)
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
+}
+
+write_fake_rm() { # dir
+  # A stand-in for `rm` that refuses to remove a DIRECTORY, the way a real `rm -rf` fails
+  # on a scratch directory it cannot remove (a read-only parent, a file its owner cannot
+  # unlink). Only the scratch directory is a directory here, so every other removal the run
+  # makes still happens.
+  mkdir -p "$1/bin"
+  cat >"$1/bin/rm" <<RM_EOF
+#!/usr/bin/env bash
+# A stand-in for \`rm\`, for scripts/live-checks/check91_test.sh only: it never removes a
+# directory. Everything else is the real \`rm\`.
+set -euo pipefail
+for a in "\$@"; do
+  if [ -d "\$a" ]; then
+    echo "rm: cannot remove '\$a': Operation not permitted" >&2
+    exit 1
+  fi
+done
+exec "$REAL_RM" "\$@"
+RM_EOF
+  chmod +x "$1/bin/rm"
 }
 
 write_fake_curl() { # dir
@@ -536,6 +569,30 @@ test_restore_leftover() {
   expect_absent "$out" "re-run this check" "leftover restore: the block promises no impossible re-run"
 }
 
+# A scratch directory the run cannot remove is a FAIL, and a FAIL in the block is a
+# non-zero exit: the row is added to the facts BEFORE the verdict is read out of them, so a
+# block that reads `scratch-removed: FAIL` cannot end at `exit 0` and be taken for a pass.
+test_scratch_removal_failure_is_a_failure() {
+  local dir=$work/unremovable
+  prepare "$dir"
+  write_fake_rm "$dir"
+  run91 "$dir"
+  expect_status "$status" 1 "unremovable scratch: the verdict"
+  expect_contains "$out" "FACT scratch-removed: FAIL — the scratch directory is still there, at " \
+    "unremovable scratch: the fact says the directory stayed"
+  expect_contains "$out" "CHECK 91 RESULT END (exit 1)" "unremovable scratch: the block's own end line"
+  # Everything else still ran and still passed: this is the one row that failed.
+  expect_contains "$out" "FACT restore: PASS" "unremovable scratch: the Restore still ran"
+  expect_contains "$out" "FACT restore-counts: PASS — services: 0, images: 0, repository: 0" \
+    "unremovable scratch: the counts are still read"
+  expect_absent "$out" "FACT scratch-removed: PASS" "unremovable scratch: the row does not claim the directory went"
+  if [ -d "$scratch" ]; then
+    kept+=("$scratch")
+  else
+    fail "unremovable scratch: the directory went after all, so this case asserted nothing"
+  fi
+}
+
 test_sigint() {
   local dir=$work/sigint
   prepare "$dir"
@@ -601,6 +658,7 @@ test_burst_stream
 test_liveness_probe_failure_is_recorded
 test_no_http2_curl
 test_restore_leftover
+test_scratch_removal_failure_is_a_failure
 test_sigint
 test_never_belong
 

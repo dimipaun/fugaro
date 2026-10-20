@@ -108,6 +108,24 @@ function consolePage(built) {
   return readFileSync(page, 'utf8')
 }
 
+/** A built page's inlined stylesheets, concatenated: what the page's CSS is, as one string. */
+function stylesOf(html) {
+  return [...walk(parse(html))].filter((el) => el.name === 'style').map((el) => el.raw ?? '').join('\n')
+}
+
+/**
+ * Every `animation` declaration a page's stylesheets carry, as the declarations themselves, or
+ * []. The property is what is refused, not one spelling of it: `animation-name` with an
+ * `animation-duration` beside it is a carousel exactly as much as the `animation:` shorthand
+ * is, and the longhands are what a change would most plausibly write. The layout's
+ * reduced-motion rule (`Base.astro`) declares the three longhands that take motion AWAY, and
+ * a rule that only neutralises an animation is not a rule that adds one, so those three names
+ * are stripped before the search.
+ */
+function animationDeclarations(css) {
+  return css.replace(/animation-duration|animation-iteration-count|animation-delay/g, '').match(/animation(-[a-z-]+)?\s*:/g) ?? []
+}
+
 /** Two slides, as a fixture: the rows the component renders and the test reads back. */
 const FIXTURE = [
   {
@@ -384,16 +402,49 @@ test('the slider is the browser\'s own scrolling, with no script and no timer', 
   // The stylesheet: `scroll-snap` on the track and a snap alignment on the slides, which is
   // what makes the browser land on a whole screenshot rather than halfway between two. The
   // built page inlines the component's stylesheet, so this is read out of the page.
-  const css = [...walk(parse(consolePage(built)))].filter((el) => el.name === 'style').map((el) => el.raw ?? '').join('\n')
+  const css = stylesOf(consolePage(built))
   assert.match(css, /scroll-snap-type\s*:\s*x\s+mandatory/, 'the slider\'s stylesheet declares no scroll-snap-type, so the track stops wherever a swipe left it')
   assert.match(css, /scroll-snap-align\s*:/, 'the slider\'s stylesheet gives its slides no scroll-snap-align, so a snap has nothing to land on')
-  // And no autoplay: nothing in the component's own CSS animates on its own. `animation`
-  // is the only property that could, and the reduce rule in the layout neutralises it —
+  // And no autoplay: nothing in the component's own CSS animates on its own. `animation` is
+  // the only property family that could, and the reduce rule in the layout neutralises it —
   // but a slider that had one at all would be a carousel, which the owner did not ask for.
-  assert.ok(
-    !/animation\s*:/.test(css.replace(/animation-duration|animation-iteration-count|animation-delay/g, '')),
-    'the slider\'s stylesheet declares an animation, and the slider does not move on its own: it is a scroll container with dots, not a carousel',
+  // Every spelling of the property counts, which is what `animationDeclarations` is for: the
+  // case below builds the component with a longhand declaration and asserts it is refused.
+  const animations = animationDeclarations(css)
+  assert.deepEqual(
+    animations,
+    [],
+    `the slider's stylesheet declares ${animations.join(', ')} — an animation, and the slider does not move on its own: it is a scroll container with dots, not a carousel`,
   )
+})
+
+// The gate above is about the property, not about one spelling of it. A slider that animated
+// itself through the longhands — `animation-name` with an `animation-duration` beside it —
+// would be a carousel just as much as one written with the shorthand, and the longhands are
+// the spelling a later change would most plausibly reach for, because the shorthand is what
+// the gate names. So the fixture build is repeated with one longhand written into the
+// component's own stylesheet, and the gate has to refuse it.
+test('the autoplay gate reads every spelling of the property, not just the shorthand', (t) => {
+  const component = 'src/components/ScreenshotSlider.astro'
+  const source = readFileSync(path.join(SITE, component), 'utf8')
+  const mutated = source.replace('.screens-track {', '.screens-track {\n    animation-name: slide-in;')
+  assert.notEqual(
+    mutated,
+    source,
+    `${component} no longer carries a .screens-track rule, so this case would build an unmutated copy and assert nothing`,
+  )
+  const built = buildCopy(t, ({ site }) => {
+    writeFileSync(path.join(site, 'data', 'console-screens.yaml'), fixtureYAML(FIXTURE))
+    writeFileSync(path.join(site, component), mutated)
+  })
+  const animations = animationDeclarations(stylesOf(consolePage(built)))
+  assert.ok(
+    animations.includes('animation-name:'),
+    `the built page declares no animation-name after ${component} was built with one: the gate in the case above reads the shorthand only, so a slider that animated itself through the longhands would pass it (read: ${animations.join(', ') || 'nothing'})`,
+  )
+  // And the layout's own reduced-motion rule is not what it read: the build above carries
+  // it, and the only declaration the gate found is the one this case wrote.
+  assert.deepEqual(animations, ['animation-name:'], `the page's animation declarations are ${animations.join(', ')}`)
 })
 
 // ---------------------------------------------------------------------------------------
