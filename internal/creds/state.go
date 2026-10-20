@@ -3,10 +3,20 @@
 //
 // It is a pure package on purpose. It reads and writes the shared state under
 // creds/ and it decides nothing else: no HTTP, no model key, no Anthropic
-// request, no policy file, no runner. The service (internal/credsvc) is its one
-// caller, and nothing here is ever linked into the runner or the in-runner
-// gateway (Convention 11) — a run token holds no write on creds/ at all (O1),
-// so a package that could write it must not be reachable from a run.
+// request, no policy file, no runner. Its callers are the service
+// (internal/credsvc) and the operator's CLI (internal/cli, whose `fugaro
+// accounts` commands read the marks and clear a broken one, C1.21).
+//
+// Convention 11 is what that list is about, and it is narrower than "no run can
+// reach this code": no run token, no runner and no in-runner gateway writes
+// under creds/ (O1 — the database rules deny every run identity the subtree, and
+// this package's writers are the service's admin account and the operator's).
+// The boundary test below is a second layer over that, an allow-list of the
+// packages that may import this one, and it is worth being exact about what it
+// does not say: cmd/fugaro links internal/cli and the runner into ONE binary, so
+// the operator commands — and this state above them — are in the binary a run's
+// image carries. What a run cannot do is hold the identity those commands write
+// with. See internal/creds/boundary_test.go, whose doc states this in full.
 //
 // # Who writes
 //
@@ -316,7 +326,10 @@ func (s Settings) forTier(t Tier) Settings {
 // DefaultAttempts bounds the ETag retries of one conditional write.
 const DefaultAttempts = 5
 
-// DB is the part of the database the state needs; *rtdb.Client is one. It is
+// DB is the part of the database the state needs; *rtdb.Client is one, checked
+// by the compiler rather than left to the first service that wires the two
+// together (state_test.go's `var _ DB = (*rtdb.Client)(nil)`, until C1.10
+// constructs an RTDBStore over a real client). It is
 // the interface budget.SetKill and the CLI's other conditional writes already
 // use, deliberately: the state is written the same way a kill switch is, by
 // reading the node's ETag and writing under it, because RTDB has no

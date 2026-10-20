@@ -14,6 +14,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
+// The database the service uses satisfies the state's DB interface, checked by
+// the compiler rather than by the first service that wires it (C1.10). Nothing
+// in this tree constructs an RTDBStore with a real client yet, so without this
+// line the claim in DB's doc — "*rtdb.Client is one" — is a comment until C1.10
+// finds out otherwise; with it, a method that drifts turns into a build error
+// here. It is the repository's own precedent for a seam with one real
+// implementation: var _ backend.Backend = (*Backend)(nil)
+// (internal/backend/batch/batch.go, internal/backend/gcp/run.go).
+var _ DB = (*rtdb.Client)(nil)
+
 // fakeDB is the database as the state uses it: nodes of JSON, read with their
 // ETag and written under it. It is where the ETag path is exercised, without a
 // network — and it can lose a race on purpose.

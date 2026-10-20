@@ -149,6 +149,40 @@ func (m Mark) Ready(now time.Time, set Settings) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// holdInForce reports whether the mark holds the credential against work at now,
+// and until when. It is the fact the two writers of a race are judged against
+// (Exhaust, ProbeFailed): a credential that holds is not being selected, so a
+// usage limit or a probe result arriving for one is an answer from a call that
+// was already in flight when the hold was written, and never a fresh
+// observation.
+//
+// The two states hold by different clocks, and the difference is a real one
+// rather than a convenience:
+//
+//   - an exhausted mark holds until Ready — its reset, and the window its
+//     exhaustion opened (D142). It is never probed (NeedsProbe is false for it),
+//     so nothing happens against it at all until that time is behind us: every
+//     429 that arrives before then is a call already in flight.
+//   - a backed-off mark holds until its OWN wait, m.Until, and not until Ready.
+//     Its wait is when C1.12 sends a probe, and a probe is work: when Until
+//     passes the credential is being tried again, so a 429 after it is a fresh
+//     observation and the doubling it leads to is C1.12's. The window may still
+//     keep the credential from serving real traffic for hours after that, but it
+//     does not make the probes in between pre-hold calls.
+func (m Mark) holdInForce(now time.Time, set Settings) (time.Time, bool) {
+	switch m.State {
+	case StateExhausted:
+		if at, ok := m.Ready(now, set); ok && at.After(now) {
+			return at, true
+		}
+	case StateBackedOff:
+		if now.Before(m.Until) {
+			return m.Until, true
+		}
+	}
+	return time.Time{}, false
+}
+
 // Exhaust is the mark a usage limit leaves.
 //
 // reset is the reset time the response reported, and the zero time means it
@@ -167,18 +201,33 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		return prev
 	}
 	if !reset.IsZero() && reset.After(now) {
+		// A reset that is reported is a reset: the upstream named a time, and a
+		// named time is a better answer than any wait this package computes, so
+		// it replaces whatever hold was in force. This is also why the guard
+		// below is about the NO-reset case only.
 		return Mark{State: StateExhausted, Until: reset, Since: now}
 	}
-	if prev.State == StateBackedOff && now.Before(prev.Until) {
+	if _, held := prev.holdInForce(now, set); held {
 		// A hold is already in force on this credential, and a usage limit with
-		// no reset time cannot be a fresh exhaustion of it: a backed-off
-		// credential is not selected (Usable is false for it), so the only calls
-		// that can be answering 429 here are the ones that were already in flight
-		// when the first 429 landed. Every one of those reports the same
-		// exhaustion again, and N of them must leave the state one of them left —
-		// otherwise a burst of concurrent calls doubles the wait once per call
-		// and walks the credential to its five-hour cap in a second. So the hold
-		// in force is left exactly as it is, date and all.
+		// no reset time cannot be a fresh exhaustion of it: a credential that
+		// holds is not selected (Usable refuses an exhausted one whose time has
+		// not come and a backed-off one outright), so the only calls that can be
+		// answering 429 here are the ones that were already in flight when the
+		// hold was written. Every one of those reports the same exhaustion
+		// again, and N of them must leave the state one of them left — otherwise
+		// a burst of concurrent calls doubles the wait once per call and walks
+		// the credential to its five-hour cap in a second. So the hold in force
+		// is left exactly as it is, date and all.
+		//
+		// Which states hold, and by which clock, is holdInForce's: an exhausted
+		// mark holds until its reset (and the window), a backed-off one until
+		// its own wait. The guard used to cover only the backed-off case, so an
+		// *exhausted* hold fell through to ProbeFailed, and a second in-flight
+		// 429 carrying no reset header replaced the reset the upstream had just
+		// reported with a fifteen-minute backoff: a four-hour reset became a
+		// wait of fifteen minutes, and Select answered wait=15m for a credential
+		// that was four hours from coming back. The racing call is the same call
+		// in either state.
 		return prev
 	}
 	m := ProbeFailed(prev, now, set)
@@ -197,6 +246,25 @@ func ProbeFailed(prev Mark, now time.Time, set Settings) Mark {
 		// the racing case — a probe of a token that answered 401 in between —
 		// and it must not be the write that takes the 401 off.
 		return prev
+	}
+	if prev.State == StateExhausted {
+		if _, held := prev.holdInForce(now, set); held {
+			// The mirror of the guard in Exhaust, on the probe's side of the
+			// same race. A probe launched while the credential was backed off
+			// can land after the credential answered 429 with a reset: the probe
+			// was in flight, the reset arrived, and the probe's failure is now
+			// being reported against a mark that is no longer backed off.
+			// Doubling from there would *shorten* the hold the upstream just
+			// named — a four-hour reset becomes fifteen minutes, and with a
+			// successful probe behind it the credential is back in rotation long
+			// before the reset — so the exhausted hold wins. It is both the
+			// later of the two and the one the upstream actually said.
+			//
+			// An exhausted mark whose hold has lapsed is not this case: there
+			// the credential is in rotation again, the probe's failure is a
+			// fresh observation, and the first backoff is the right answer.
+			return prev
+		}
 	}
 	set = set.withDefaults()
 	wait := set.BackoffInitial

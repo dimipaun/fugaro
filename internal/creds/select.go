@@ -451,7 +451,22 @@ func earliest(cs []Credential, marks map[string]Mark, leases []Lease, run Run, n
 			// waits for the later of the two. So with both in play the answer
 			// carries both facts — probe it, and it could be used at best at `at`
 			// — and neither is a lie.
-			if exp, ok := SlotFrees(leases, c.Name, now, run, tierSet.concurrency()); ok && exp.After(at) {
+			exp, ok := SlotFrees(leases, c.Name, now, run, tierSet.concurrency())
+			if !ok {
+				// The cap refuses the credential and no lapse frees it: a limit
+				// of 0 or less, which Free reads as "no room at all" for a
+				// negative and as "no cap" for a zero — and a zero cannot reach
+				// here, since Free returns true for it (review finding: a
+				// hand-built negative cap failed closed in Free and answered
+				// "usable now" here). There is no time to wait for, and
+				// answering one would be telling the caller to retry
+				// immediately against a credential the cap will refuse again.
+				// So it is not a candidate for "when", exactly as a broken one
+				// is not: skip it, and let the tier's other credentials — or the
+				// next tier, or ErrNoCredential — answer.
+				continue
+			}
+			if exp.After(at) {
 				at = exp
 			}
 		}

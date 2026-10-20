@@ -136,8 +136,12 @@ func Free(leases []Lease, credential string, now time.Time, run Run, limit int) 
 // limit of 1 it is the last of them, which is the same answer as "all of them
 // must go" and the same answer this function gave for that case before.
 //
-// A limit of 0 or less is no cap at all (Free): there is nothing to wait for,
-// and a caller that asks anyway is answered "no time", not a time.
+// A limit of 0 is no cap at all (Free), so there is nothing to wait for; a
+// negative one is the opposite — Free reads it as no room at all, and no lapse
+// frees room under a cap that refuses everything. Both are answered "no time",
+// and the caller must not read that as "usable now": Free has already said the
+// credential cannot be used, which is why earliest skips it rather than
+// answering the zero time.
 func SlotFrees(leases []Lease, credential string, now time.Time, except Run, limit int) (time.Time, bool) {
 	if limit <= 0 {
 		return time.Time{}, false

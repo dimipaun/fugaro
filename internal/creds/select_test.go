@@ -647,13 +647,28 @@ func TestSelectorWritesTheMarksItOwns(t *testing.T) {
 		t.Fatalf("the mark a usage limit left = %+v", m)
 	}
 
-	// A failed probe doubles the wait and holds the exhaustion's date.
+	// A failed probe while that reset still holds the credential changes
+	// nothing: an exhausted mark is not probed at all (C1.12 probes a
+	// backed-off one), so this is a probe that was in flight when the reset
+	// landed, and its failure must not replace an hour's reset with fifteen
+	// minutes — the exhausted side of the in-flight race.
 	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
 		t.Fatal(err)
 	}
-	m := st.mark(a1.Name)
-	if m.State != StateBackedOff || m.Backoff != 15*time.Minute {
-		t.Fatalf("the mark a failed probe left = %+v; want a 15m backoff", m)
+	if m := st.mark(a1.Name); m.State != StateExhausted || !m.Until.Equal(now.Add(time.Hour)) {
+		t.Fatalf("a failed probe inside a reset left %+v; want the reset it did not shorten", m)
+	}
+
+	// A failed probe on a backed-off mark is C1.12's doubling, and it holds the
+	// exhaustion's date rather than restarting it.
+	if _, err := s.Cleared(ctx, a1.Name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Exhausted(ctx, a1.Name, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if m := st.mark(a1.Name); m.State != StateBackedOff || m.Backoff != 15*time.Minute {
+		t.Fatalf("the no-reset exhaustion left %+v; want a 15m backoff", m)
 	}
 	if _, err := s.ProbeFailed(ctx, a1.Name); err != nil {
 		t.Fatal(err)
@@ -819,6 +834,62 @@ func TestTheSharedControlsDoNotReachThePaidTier(t *testing.T) {
 	}
 	if want := since.Add(DefaultBackoffCap); !eu.At.Equal(want) {
 		t.Fatalf("the shared token's answer = %s; want %s, the end of the window", eu.At, want)
+	}
+}
+
+// The exhausted-side in-flight race, through the public API: a credential
+// exhausted for four hours, and a 429 arriving from a call that was already in
+// flight carrying no reset header. The mark, and therefore the wait Select
+// answers with, must stay the reset's.
+func TestARacingUsageLimitKeepsTheResetInTheAnswer(t *testing.T) {
+	st := newFakeStore()
+	reset := now.Add(4 * time.Hour)
+	st.setMark(b1.Name, Mark{State: StateExhausted, Since: now, Until: reset})
+
+	// Tier B — the tier the review reproduced this on, and the one whose early
+	// hand-back spends money.
+	s := selector(st, Settings{Fallback: Auto})
+	_, _, err := s.Select(ctx, run, []Credential{b1})
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) {
+		t.Fatalf("a selection against a four-hour reset = %v; want an ExhaustedUntil answer", err)
+	}
+	if eu.Wait != 4*time.Hour || !eu.At.Equal(reset) {
+		t.Fatalf("the answer = %+v; want the reset %s four hours out", eu, reset)
+	}
+
+	// The racing report changes nothing: not the state, not the answer.
+	if _, err := s.Exhausted(ctx, b1.Name, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.mark(b1.Name); got != (Mark{State: StateExhausted, Since: now, Until: reset}) {
+		t.Fatalf("a racing no-reset 429 left %+v; want the reset %s", got, reset)
+	}
+	_, _, err = s.Select(ctx, run, []Credential{b1})
+	if !errors.As(err, &eu) || eu.Wait != 4*time.Hour {
+		t.Fatalf("the answer after the racing 429 = %v; want the reset's four hours", err)
+	}
+}
+
+// A hand-built negative concurrency cap fails closed wherever it is read. Free
+// has always refused it ("no room at all"), and the time answer must agree: the
+// credential is refused, so "usable now, wait 0" is not an answer to give — a
+// caller would retry immediately against a credential the cap refuses again.
+// (Unreachable through the policy, which refuses a negative; withDefaults and
+// concurrency both document the hand-built one as failing closed.)
+func TestANegativeCapIsNotUsableNow(t *testing.T) {
+	st := newFakeStore()
+	st.setLease(Run{Slug: run.Slug, ID: "other"}, Lease{Credential: a1.Name, Until: now.Add(30 * time.Minute)})
+	set := noWindow()
+	set.ConcurrencyPerToken = ptr(-1)
+
+	_, wait, err := selector(st, set).Select(ctx, run, []Credential{a1})
+	var eu *ExhaustedUntil
+	if errors.As(err, &eu) {
+		t.Fatalf("a negative cap answered %+v; want a refusal: the cap refuses the credential, so no lapse frees it", eu)
+	}
+	if !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("a negative cap = %q after %s; want ErrNoCredential", err, wait)
 	}
 }
 

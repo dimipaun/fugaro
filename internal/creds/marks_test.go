@@ -240,6 +240,72 @@ func TestConcurrentUsageLimitsDoNotDoubleTheWait(t *testing.T) {
 	}
 }
 
+// A usage limit with no reset header arriving while an EXHAUSTED hold is in
+// force leaves the hold exactly as it is — the exhausted half of the in-flight
+// race above, and the half that was missing.
+//
+// The guard that fixed the backed-off half covered only backed_off, so this case
+// fell through to ProbeFailed: a second in-flight 429 replaced the reset the
+// upstream had just reported with a fifteen-minute backoff, Ready answered
+// fifteen minutes for a credential four hours from coming back, and — on the
+// tier that spends money, after one successful probe — the credential was handed
+// back about three hours and three quarters early.
+func TestAUsageLimitDoesNotDiscardAnExhaustedHold(t *testing.T) {
+	set := noWindow()
+	reset := now.Add(4 * time.Hour)
+	held := Exhaust(Mark{}, now, reset, set)
+	if held.State != StateExhausted || !held.Until.Equal(reset) {
+		t.Fatalf("a 429 reporting a four-hour reset left %+v; want exhausted until %s", held, reset)
+	}
+
+	// The same limit, reported again by calls that were in flight when the reset
+	// landed: a minute later, and three hours in.
+	for _, at := range []time.Time{now.Add(time.Minute), now.Add(3 * time.Hour)} {
+		m := Exhaust(held, at, time.Time{}, set)
+		if m != held {
+			t.Fatalf("a no-reset 429 at +%s left %+v; want the hold the reset wrote, %+v", at.Sub(now), m, held)
+		}
+	}
+
+	// And the time a selection answers with is the reset's.
+	if at, ok := held.Ready(now, set); !ok || !at.Equal(reset) {
+		t.Fatalf("the held mark's wait = %s, %v; want the reset %s", at, ok, reset)
+	}
+
+	// A reset that IS reported still replaces the hold: the upstream named a
+	// time, and this guard is about the no-reset case only.
+	if m := Exhaust(held, now.Add(time.Minute), now.Add(time.Hour), set); !m.Until.Equal(now.Add(time.Hour)) {
+		t.Fatalf("a 429 reporting a shorter reset left %+v; want the reported reset", m)
+	}
+
+	// Once the reset has passed the credential is in rotation again, and the
+	// next no-reset 429 is a fresh exhaustion rather than a racing one.
+	if m := Exhaust(held, reset.Add(time.Minute), time.Time{}, set); m.State != StateBackedOff {
+		t.Fatalf("a no-reset 429 after the reset left %+v; want the first backoff", m)
+	}
+}
+
+// The mirror of that guard, on the probe's side of the same race: a probe
+// launched while the credential was backed off can land after the credential
+// answered 429 with a reset, and its failure must not shorten the hold the
+// upstream just named — a four-hour reset must not become fifteen minutes.
+func TestAFailedProbeDoesNotShortenAnExhaustedHold(t *testing.T) {
+	set := noWindow()
+	backed := Mark{State: StateBackedOff, Until: now.Add(15 * time.Minute), Backoff: 15 * time.Minute, Since: now.Add(-time.Hour)}
+	held := Exhaust(backed, now, now.Add(4*time.Hour), set)
+
+	if m := ProbeFailed(held, now.Add(time.Minute), set); m != held {
+		t.Fatalf("a failed probe a minute into a four-hour reset left %+v; want the reset, %+v", m, held)
+	}
+
+	// After the reset the credential is in rotation, and a failed probe there is
+	// a fresh observation: the first wait is the right answer.
+	lapsed := ProbeFailed(held, held.Until.Add(time.Minute), set)
+	if lapsed.State != StateBackedOff || lapsed.Backoff != DefaultBackoffInitial {
+		t.Fatalf("a failed probe after the reset left %+v; want a backoff of %s", lapsed, DefaultBackoffInitial)
+	}
+}
+
 // The wait doubles to its cap, and the doubling is decided before the multiply
 // that could pass it: a stored backoff at the value a wrapping multiply would
 // turn negative comes out at the cap, and a negative or absurd one is treated as
