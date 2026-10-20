@@ -413,20 +413,35 @@ func trimOneQuotedPair(s string) string {
 	return s
 }
 
-// listingLineMax is the longest entry line this listing prints whole: an
-// address and the identity the delete rule admits. The rule bounds the
-// identity (tf.RemovalIdentityPrintMax, and a removal whose identity is longer
-// than that is refused rather than printed), and the address is the plan's
-// own, so a line past this bound is text no rule produced — the object's
-// writer put it there by hand — and it is printed through safetext.Field,
-// which cuts it and says with its own marker that it did.
+// listingLineMax is the longest entry line this listing prints whole: twice the
+// identity's own bound (tf.RemovalIdentityPrintMax), which is room for an
+// identity inside that bound and an address of the same order beside it. Every
+// entry this command WRITES has an identity inside the bound, because
+// approveArgument refuses a longer one.
+//
+// The address half it writes is unbounded, deliberately. The address is the
+// plan's own — this command cannot know what a plan will carry — and in a
+// managed project the owner's list is the only route to approve a delete at one
+// (GuardAllowList refuses a command-line address there), so refusing a long
+// address would lock that removal away with nothing left to act on. Nothing
+// else bounds it either: the identity half is bounded here (approveArgument)
+// and by the rule, the object is bounded as a whole (managed's 64 KiB read
+// bound) rather than per entry, and parseDeleteList refuses an entry only for a
+// blank half. The identity's bound is no precedent for one: a longer identity
+// is refused by the gate whatever the plan shows, so bounding it here only
+// repeats a rule that already holds, while an address has no such rule to fall
+// back on. A line past this bound is therefore one this command may have
+// written, or one another writer left in the object, and it is printed through
+// safetext.Field, which cuts it at FieldMax and ends it with its own marker:
+// what the owner reads there is visibly a cut text and not the entry.
 const listingLineMax = 2 * tf.RemovalIdentityPrintMax
 
 // printEntries is a listing of the entries an owner's object holds, one per
 // line, in the ADDRESS=IDENTITY form this command's arguments take — so a line
-// the owner reads is a line they can paste back.
+// the owner reads is a line they can paste back, while it is one of the lines
+// this listing prints whole.
 //
-// Each line is printed as the entry itself (safetext.FieldUncut above the
+// Each line is printed as the entry itself (safetext.FieldUncut at or under the
 // listing's own line bound, safetext.Field past it): Field is what keeps an
 // entry read from the bucket — whatever its writer put there, since
 // parseDeleteList refuses only blank halves — from reaching the terminal as an
@@ -438,6 +453,13 @@ const listingLineMax = 2 * tf.RemovalIdentityPrintMax
 // touch), so the rewrites FieldUncut still makes are no-ops on an entry this
 // command wrote, and a line it wrote reads exactly as it was written however
 // long it is.
+//
+// Past the bound the line is Field's: cut at FieldMax, ended with Field's own
+// marker. An entry can be that long — listingLineMax says why the address half
+// is unbounded — and what this listing offers its reader at that length is a
+// visibly cut text rather than an entry, which is the honest answer where a
+// whole line cannot be printed; the entry itself is unchanged in the object,
+// where the command that wrote it put it.
 //
 // And the listing stops at safetext.FieldListMax entries with the rest counted
 // (FieldListNote): the object holds as many entries as it was written with,
