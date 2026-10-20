@@ -534,8 +534,8 @@ shrank). `SECURITY.md` is a root **file**, not a directory, and it is on the wal
 because it names the command **seven** times (`grep -c 'fugaro init'
 SECURITY.md`) and W2.3 renames it; every other root file and every top-level
 directory that names it zero times is left off, so the walk and the rename's
-task list cover the same set. The
-`datedRecords` list is **the six dated roots, and it is stated once, here**:
+task list cover the same set. The `datedRecords` list is **the six dated roots,
+and it is stated once, here**:
 `docs/plans/`, `docs/releases/v`, `docs/design/`, `docs/credentials-service/`,
 `docs/website/` and **`docs/setup-wizard/` itself** — matching
 `plugin/readme_test.go`'s `TestReadmeNamesNoRetiredSkill` `skip` regex in
