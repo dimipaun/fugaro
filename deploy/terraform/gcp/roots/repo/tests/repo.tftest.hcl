@@ -1428,3 +1428,126 @@ run "resolved_secret_job_grant" {
     error_message = "the job account's accessor grant on an unresolved name must stay the repository's own container"
   }
 }
+
+# The credentials service ON (C1.18, Q6). Two things move for the job, and
+# nothing else:
+#
+#   * the job account loses roles/secretmanager.secretAccessor on the model
+#     credentials it mounts — claude-oauth-token here, and every
+#     FUGARO_PROVIDER_KEY_* — and keeps it on the rest of its own secret_env;
+#   * the job account gains roles/run.invoker on the installation's service,
+#     and on nothing else. That grant is what the service's own ID-token check
+#     (Q6) is layered on: IAM says which accounts may call it at all, the
+#     service says which of them are served.
+#
+# The run deliberately leaves the *mount* alone: C1.18 drops the accessor and
+# C1.20 drops the mount, so the opt-in must not be turned on between the two —
+# the last assertion pins that this task did not reach into the mount.
+run "credentials_service_on_job" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project             = var.bitbucket.project
+    fugaro_project      = var.bitbucket.fugaro_project
+    region              = var.bitbucket.region
+    name                = "web"
+    repo_label          = var.bitbucket.repo.label
+    workflow            = var.bitbucket.repo.workflows.web
+    secrets             = var.bitbucket.repo.secrets
+    runs_bucket         = var.bitbucket.installation.runs_bucket
+    job_runner_role     = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      bitbucket-token = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe   = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "with the credentials service on, the job account must hold no accessor on a model credential (claude-oauth-token here), and must keep the rest of its own secret_env"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.job :
+      m.role == "roles/secretmanager.secretAccessor" &&
+    m.member == "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the surviving grants are still secretAccessor to the job's own account, and no other"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service_iam_member.credentials) == 1 &&
+      google_cloud_run_v2_service_iam_member.credentials[0].name == "fugaro-credentials" &&
+      google_cloud_run_v2_service_iam_member.credentials[0].location == "us-east5" &&
+      google_cloud_run_v2_service_iam_member.credentials[0].project == "proj-1234" &&
+      google_cloud_run_v2_service_iam_member.credentials[0].role == "roles/run.invoker" &&
+    google_cloud_run_v2_service_iam_member.credentials[0].member == "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com")
+    error_message = "the job's own account, and only it, may invoke the installation's credentials service"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials[0].condition) == 0
+    error_message = "the invoker grant is unconditional: which accounts are served is the service's own ID-token check, not an IAM condition"
+  }
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e
+    if length(e.value_source) > 0]) == 3
+    error_message = "C1.18 drops the accessor and not the mount: the model credential is still mounted here, and C1.20 is the task that removes it (the opt-in must not be turned on between the two)"
+  }
+}
+
+# The same workflow with the opt-in OFF, which is every installation until
+# C1.20 lands: the job account keeps accessor on every secret it mounts — the
+# model credential included — and no service exists to invoke (D147).
+run "credentials_service_off_job" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      claude-oauth-token = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      bitbucket-token    = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe      = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "with the credentials service off, the job account keeps accessor on every secret it mounts — the model credential included (D147: with the opt-in off, nothing changes)"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 0
+    error_message = "with the credentials service off there is no service to invoke, so no invoker grant"
+  }
+}
