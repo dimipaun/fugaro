@@ -1420,18 +1420,37 @@ name should be settled before the flag ships, not after.
 **O7 — This folder's D-block is local, and the register's own rule is the reason
 to say so out loud.** `docs/coordinator/README.md` §"The numbers this work holds"
 is the one table in this repository that allocates D-numbers: **D1–D192 is the
-owner's allocation, block by block**, the highest number written anywhere in
-`docs/` is **D192**, and **D193 onward is free**. This folder numbers its
-decisions **D1–D25** anyway, which collides numerically with
-`docs/setup-wizard/`'s D1–D12 and `docs/windows-cli/`'s D1–D16 —
+owner's allocation, block by block**, and **D193 onward is free** — but that row
+anchors its own figure (*"the highest number written anywhere in `docs/` at
+`c6009b5f` is D192"*), and the anchor is the point: a figure like this moves, so
+it is read anchored and name by name, the way
+[docs/mobile/voice-session/](../mobile/voice-session/) reads it. Read at **this
+work's base commit `1d325928`**, the register's own command
+(`git grep -hoE '\bD[0-9]{2,3}\b' 1d325928 -- docs/ | sort -t D -k2 -n | tail -1`)
+returns **D220**, because voice-session — merged at the fork point, the same work
+whose **D219** the plan's check table cites — writes **D201–D220**. So **D193
+onward is not the free range at this tree**, and the move named below is not
+merely cosmetic: it would land this work's twenty-five decisions inside
+voice-session's block, which is the collision both readings exist to avoid — a
+number an earlier plan has already written is never taken. **D193–D200** are
+written nowhere in this tree, but voice-session **left them alone** deliberately
+and started at **D201** rather than collide with **D200**, which the owner's brief
+records as an already-taken ruling this tree cannot cite (voice-session's F20 and
+O5) — so they are not this work's to take on this tree's evidence either.
+
+This folder numbers its decisions **D1–D25** anyway, which collides numerically
+with `docs/setup-wizard/`'s D1–D12 and `docs/windows-cli/`'s D1–D16 —
 the same choice the newer of those two made and recorded in its own index
 ("**Recommendation: keep D1–D16 local and distinct by folder, or move this work
 to D193 onward; renumbering is mechanical and changes nothing but the numbers**").
-The recommendation here is the same: keep D1–D25 **folder-local**, distinct by
-folder, or move this work to **D193 onward** if the owner prefers one sequence.
-Either way the register line should be updated in the same commit that settles
-it, because a reader who greps for `D7` gets this folder's D7 and
-`docs/windows-cli/`'s D7 and has no way to tell them apart except the path.
+The recommendation here is the same in its first half and corrected in its
+second: keep D1–D25 **folder-local**, distinct by folder, as the two folders
+above did; and if the owner prefers one sequence, the next free block read from
+this branch's base is **D221 onward**, not the unanchored **D193 onward** that
+voice-session's own index had to correct the same way. Either way the register
+line should be updated in the same commit that settles it, because a reader who
+greps for `D7` gets this folder's D7 and `docs/windows-cli/`'s D7 and has no way
+to tell them apart except the path.
 
 ## 9. UNVERIFIED
 

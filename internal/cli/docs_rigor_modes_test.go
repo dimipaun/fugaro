@@ -47,6 +47,10 @@ const (
 	// rigorModesCensusHeading is the reconciliation's census, whose rows the
 	// census guard reads.
 	rigorModesCensusHeading = "## 4. The census, and what it is scoped to"
+
+	// rigorModesQuestionsHeading is the spec's own section of open questions, the
+	// one the spec guard counts and no document here may answer.
+	rigorModesQuestionsHeading = "## Open questions"
 )
 
 // rigorModesRevision is the commit the reconciliation was read at. A later run
@@ -169,13 +173,19 @@ func TestDocsRigorModesSpecIsTheOwners(t *testing.T) {
 		"Oct 20, 2026 · @Dimi",
 		// The five modes, as the owner named them.
 		"**POC**", "**Startup**", "**Pro**", "**Critical**", "**Hotfix**",
-		"## Open questions",
+		rigorModesQuestionsHeading,
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("%s lacks %q", rigorModesSpec, want)
 		}
 	}
-	if got := strings.Count(spec[strings.Index(spec, "## Open questions"):], "\n- "); got != 4 {
+	// The index is looked up and checked before it is sliced: a guard over a
+	// heading that has been removed fails, and does not panic on spec[-1:].
+	i := strings.Index(spec, rigorModesQuestionsHeading)
+	if i < 0 {
+		t.Fatalf("%s lacks %q: a document with no question section has no questions to count", rigorModesSpec, rigorModesQuestionsHeading)
+	}
+	if got := strings.Count(spec[i:], "\n- "); got != 4 {
 		t.Errorf("%s: the owner's open questions are %d, want 4", rigorModesSpec, got)
 	}
 
@@ -230,7 +240,7 @@ func rigorModesNumbered(t *testing.T, path, doc, what string, re *regexp.Regexp)
 // TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered: every finding carries
 // a number and one of the five class words, every decision and every item is
 // numbered from 1 with no gap, and the UNVERIFIED table is numbered the same
-// way. The index states "F1–F34", "D1–D19" and "U1–U8", so the ranges it states
+// way. The index states "F1–F41", "D1–D25" and "U1–U10", so the ranges it states
 // are exactly the ranges the documents carry.
 func TestDocsRigorModesFindingsDecisionsAndItemsAreNumbered(t *testing.T) {
 	recon := readDoc(t, rigorModesRecon)
@@ -451,20 +461,32 @@ var rigorModesAnyNumberRE = regexp.MustCompile(`([FDOU])([0-9]+)`)
 
 // rigorModesForeignNumber is a number above this folder's own blocks that a
 // document here may still cite, because it belongs to a register the document
-// names: the coordinator's allocation (D192) and its free range (D193), and the
-// two sibling folders' D-blocks (docs/windows-cli/'s D1–D16 and
-// docs/setup-wizard/'s D1–D12). Each is allowed only where the document names
-// its owner, because "D16" beside no name is a citation of a decision this
-// folder does not have.
+// names: the coordinator's allocation (D192), the free range its row states
+// (D193), the two sibling folders' D-blocks (docs/windows-cli/'s D1–D16 and
+// docs/setup-wizard/'s D1–D12), and the block the folder's own O7 reads out of
+// the register — docs/mobile/voice-session/'s D201–D220, the numbers around them
+// that voice-session left alone (D200, written nowhere here), and the next free
+// block at this folder's base (D221), which O7 recommends by name.
+//
+// Each is allowed only where the document names its owner, because "D16" beside
+// no name is a citation of a decision this folder does not have. The register's
+// figures are quoted with the anchor they were read at (docs/coordinator/README.md's
+// row says "at `c6009b5f`"), which is why the block above is read from this
+// folder's base commit rather than trusted as current: at `1d325928` the highest
+// number written anywhere in docs/ is D220, not D192.
 var rigorModesForeignNumber = []struct {
 	prefix, owner string
 	end           int
 }{
 	{"D", "owner's allocation", 192},
-	{"D", "free", 193},
+	{"D", "D193 onward", 193},
 	{"D", "docs/windows-cli/", 16},
 	{"D", "docs/setup-wizard/", 12},
+	{"D", "docs/mobile/voice-session/", 200},
+	{"D", "docs/mobile/voice-session/", 201},
 	{"D", "docs/mobile/voice-session/", 219},
+	{"D", "docs/mobile/voice-session/", 220},
+	{"D", "next free block", 221},
 }
 
 // TestDocsRigorModesEveryBlockRangeIsCurrent: every block range a document in
@@ -487,6 +509,10 @@ func TestDocsRigorModesEveryBlockRangeIsCurrent(t *testing.T) {
 		"U": len(rigorModesNumbered(t, rigorModesRecon, recon, "UNVERIFIED rows", rigorModesUnverifRE)),
 	}
 	foreign := func(prefix string, n int, doc string) bool {
+		// The owner is looked for across the document's own line breaks: a
+		// markdown paragraph wraps, and "the next free\nblock" still names the
+		// register the number comes from.
+		doc = strings.ReplaceAll(doc, "\n", " ")
 		for _, f := range rigorModesForeignNumber {
 			if f.prefix == prefix && f.end == n && strings.Contains(doc, f.owner) {
 				return true

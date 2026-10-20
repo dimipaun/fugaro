@@ -100,9 +100,17 @@ task that writes the check (T8.1) owns any renumbering and the register line in
 the same commit.
 
 **This plan takes no D-number.** Its decisions are **D1–D25**, folder-local and
-distinct by folder, which is the register's second row's own situation
-(`docs/coordinator/README.md`: **D1–D192** is the owner's allocation, **D193
-onward** is free) — O7 states the choice and the recommendation.
+distinct by folder, like `docs/windows-cli/`'s D1–D16 and
+`docs/setup-wizard/`'s D1–D12. The register
+(`docs/coordinator/README.md` §"The numbers this work holds") allocates
+**D1–D192** — the owner's allocation, block by block — and anchors that figure
+itself, *"the highest number written anywhere in `docs/` at `c6009b5f` is D192"*,
+which is why it has to be read anchored, the way `docs/mobile/voice-session/`
+reads it: at this plan's base `1d325928` the register's own command finds
+**D220**, because voice-session writes **D201–D220** there, the same work whose
+**D219** the check table above cites. So **D193 onward is not free at this
+tree** — the next free block is **D221 onward**. O7 states the choice, the
+reading and the collision; this plan takes no number either way.
 
 ## 4. Conventions every task follows
 
@@ -294,6 +302,9 @@ product code.
   line the document carries it on).
 - **Tests.** `docs_coordinator_test.go`'s own guards, unchanged, which is the
   point: the register's line moves and the test that reads it stays the same.
+  The line it records is **D221 onward** — the next free block read from this
+  plan's base (O7), not the register's unanchored **D193 onward**, which
+  `docs/mobile/voice-session/` already sits inside.
 - **Red step.** The register does not mention this folder, so a test asserting
   that it does fails. If O7 is answered "keep the block local", this task is
   dropped and its absence is recorded in the index.
