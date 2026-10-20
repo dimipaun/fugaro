@@ -1138,6 +1138,55 @@ func TestSecretsLsProjectWideShowsAnyRepository(t *testing.T) {
 	}
 }
 
+// TestSecretsLsProjectWideSkipsAContainerWithNoSecretName: the C1.18
+// credentials bundle is a container of this installation carrying the
+// fugaro/fugaro_project ownership marks and deliberately NO fugaro_secret
+// label — that label is what decides which *logical secret* of the project's
+// secret set a container holds (modules/installation/credentials.tf), and the
+// bundle is not one of those. listRepoScope already skips such a container;
+// listProjectWide must too, or an operator sees a row with NAME "-" and
+// --json emits an entry whose name is omitted, which a script keying on name
+// mis-handles.
+func TestSecretsLsProjectWideSkipsAContainerWithNoSecretName(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	// The bundle container's shape: the two ownership marks, a version, and no
+	// fugaro_secret label at all.
+	bundle := gcp.ProjectSecretID("aurora", "creds-bundle")
+	sm.Seed(bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora"}, []byte("bundle-document-EXAMPLE"))
+
+	out, _, err := execute(t, "secrets", "ls", "--project-wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, bundle) {
+		t.Errorf("ls --project-wide lists the bundle container:\n%s", out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 { // the header and the one real secret
+		t.Errorf("ls --project-wide = %d rows, want 1:\n%s", len(lines)-1, out)
+	}
+	for _, l := range lines[1:] {
+		if strings.HasPrefix(strings.TrimSpace(l), "- ") {
+			t.Errorf("a row has no name:\n%s", l)
+		}
+	}
+	out, _, err = execute(t, "secrets", "ls", "--project-wide", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []lsEntry
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("ls --project-wide --json = %s, %v", out, err)
+	}
+	if len(list) != 1 || list[0].Name != "openrouter-api-key" {
+		t.Errorf("ls --project-wide --json = %+v, want the one named secret", list)
+	}
+}
+
 // TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse: a repository's
 // listing answers with the plan's own rule (infra.ProjectSecretCandidate),
 // not with "a project-wide copy exists". This repository is on no
