@@ -60,12 +60,12 @@ function parentOf(value, path) {
 }
 
 // grown returns a deep copy of value one step past the bound: one more code
-// unit at spec.at, one more entry on the list at spec.at, or nought in the
+// unit at spec.at, the entry spec.add on the list at spec.at, or nought in the
 // number at spec.at.
 function grown(value, spec) {
   const copy = structuredClone(value);
   const { parent, key } = parentOf(copy, spec.at);
-  if (spec.mode === 'append') parent[key].push(structuredClone(parent[key][0]));
+  if (spec.mode === 'append') parent[key].push(structuredClone(spec.add));
   else if (spec.mode === 'zero') parent[key] = 0;
   else parent[key] = `${parent[key]}x`;
   return copy;
