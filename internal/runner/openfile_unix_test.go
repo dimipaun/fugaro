@@ -5,8 +5,51 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
+
+// TestOpenRootNoFollowDoesNotBlockOnAFIFO: the flags at this call site are
+// O_RDONLY|O_NOFOLLOW|O_NONBLOCK, and the root is what refuses the link — so
+// what O_NONBLOCK buys here is the other half of the open, the one a swapped-in
+// FIFO would otherwise win: a FIFO opened read-only with no writer blocks until
+// something opens the write end, which is forever for an agent that has already
+// gone. With the flag the open returns at once and the caller's fstat is what
+// refuses the file; without it this call never returns and the run hangs.
+//
+// Mutation: dropping O_NONBLOCK from openRootNoFollow makes this test fail on
+// the timeout below, because the open never returns. The goroutine it leaves
+// blocked is abandoned with the test process, which is the point of the case.
+func TestOpenRootNoFollowDoesNotBlockOnAFIFO(t *testing.T) {
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "agent.log"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	done := make(chan error, 1)
+	go func() {
+		f, err := openRootNoFollow(rt, "agent.log")
+		if f != nil {
+			f.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		// A FIFO with no writer opens and hands back a handle; that it is not
+		// a regular file is the caller's fstat's business, not this open's.
+		if err != nil {
+			t.Fatalf("opening a FIFO in the root: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("openRootNoFollow blocked on a FIFO with no writer: O_NONBLOCK is what stops that")
+	}
+}
 
 // The runner opens files that are not its own: the agent's followup.md and a
 // saved session file under HOME, both of which an agent-side process can
