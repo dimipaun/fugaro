@@ -157,12 +157,16 @@ const FOUNDATION = ['expo', 'react', 'react-native'];
  * not declared, and every bare import no declared package answers for. A
  * function of its two arguments so that the test below can plant one of each
  * and watch both come back -- the positive control.
+ *
+ * `dependencies` alone answers for an import, and **not `devDependencies`**:
+ * everything `index.js` and `src/` import ships in the app, and a package in
+ * `devDependencies` is one a production install (`npm ci --omit=dev`, and the
+ * install a build machine may make) does not put in `node_modules` -- so a
+ * runtime import listed as a dev dependency is a bundle that fails after the
+ * install, not before it.
  */
 function offences(manifest, files) {
-  const declared = new Set([
-    ...Object.keys(manifest.dependencies ?? {}),
-    ...Object.keys(manifest.devDependencies ?? {}),
-  ]);
+  const declared = new Set(Object.keys(manifest.dependencies ?? {}));
   const found = FOUNDATION.filter((name) => !declared.has(name)).map((name) => `declared: ${name}`);
   for (const [file, text] of Object.entries(files)) {
     for (const specifier of specifiers(text)) {
@@ -191,6 +195,14 @@ test('the checker flags a missing package, in code but not in prose', () => {
   // ... and the same tree is clean once the manifest answers for both: the
   // prose is not read, and a relative path is not a package.
   assert.deepEqual(offences({ dependencies: { ...full.dependencies, 'expo-camera': '~17.0.0' } }, files), []);
+  // ... a runtime import listed as a DEV dependency is still an offence: a
+  // production install does not write `devDependencies` into `node_modules`.
+  assert.deepEqual(
+    offences({ dependencies: full.dependencies, devDependencies: { 'expo-camera': '~17.0.0' } }, {
+      'src/camera.js': "import { Camera } from 'expo-camera';\n",
+    }),
+    ['src/camera.js: expo-camera'],
+  );
   // ... a scoped name is one package, not its scope, and a subpath is not a
   // package of its own.
   assert.deepEqual(
