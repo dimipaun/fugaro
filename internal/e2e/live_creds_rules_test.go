@@ -1,9 +1,9 @@
 //go:build live
 
-// The live credentials-rules check (docs/gcp-live-checklist.md, check 92):
+// The live credentials-rules check the credentials-service plan numbers 92:
 // what the rules deployed on a real installation do with a run's own identity
-// around /creds and around the credentials children the cascade writes
-// (credentials-service plan, task C1.4).
+// around /creds and around the credentials children the cascade writes (task
+// C1.4; C1.5 writes the check's section into docs/gcp-live-checklist.md).
 //
 // It is the owner's, at the owner's terminal, against one installation, and it
 // costs nothing: no model call, no image, no bucket. It is what C1.5's section
@@ -139,7 +139,7 @@ func crTargetFrom(getenv func(string) string) (crTarget, error) {
 		return crTarget{}, crSkip
 	}
 	if optIn != "1" {
-		return crTarget{}, fmt.Errorf("%s is not 1: this check writes to a real installation's database and is yours to run (docs/gcp-live-checklist.md, check 92); set %s=1 to opt in", crOKVar, crOKVar)
+		return crTarget{}, fmt.Errorf("%s is not 1: this check writes to a real installation's database and is yours to run (the credentials-service plan's check 92); set %s=1 to opt in", crOKVar, crOKVar)
 	}
 	var missing []string
 	for _, v := range []struct{ name, value string }{
@@ -499,7 +499,7 @@ func crNamesAny(path string, scratch []string) bool {
 func TestLiveCredsRules(t *testing.T) {
 	target, err := crTargetFrom(os.Getenv)
 	if errors.Is(err, crSkip) {
-		t.Skip("check 92 is yours, against one installation: set " + crOKVar + "=1 and the variables this file's comment names (docs/gcp-live-checklist.md)")
+		t.Skip("the credentials-service plan's check 92 is yours, against one installation: set " + crOKVar + "=1 and the variables this file's comment names")
 	}
 	if err != nil {
 		t.Fatal(err)
