@@ -173,7 +173,7 @@ interface Recording {
   readonly checkout: Readonly<Record<string, string>>[]
   readonly remove: Readonly<Record<string, string>>[]
   readonly calls: string[]
-  readonly openExternal: readonly unknown[][]
+  readonly openExternal: unknown[][]
 }
 
 /** DEFAULT_PATH is the store path the fake answers with, so a refusal's sentence

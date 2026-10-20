@@ -412,6 +412,9 @@ async function anAbsentState(directory: string): Promise<NoBinaryState> {
   const resolution = await resolveBinary({
     prefixes: [bin],
     home: directory,
+    // The app's own environment, which rule 4 never searches: the `PATH` a test
+    // runner happens to have must not decide this spec's answer.
+    appEnv: { PATH: '/nowhere' },
     directory,
     target: { project: 'fugaro' },
   })

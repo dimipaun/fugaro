@@ -101,14 +101,20 @@ const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
 
 /**
- * COMMANDS_TAKING_PROJECT and COMMANDS_WITHOUT_PROJECT are the plan's own list,
- * hard-coded: the nine commands `addCloudFlags` gives `--project` to
- * (`internal/cli/cloud.go:51`, called from each of those constructors), the two
- * log operations that share the `logs` command, and the one command that takes
- * no flag at all. `newVersionCmd` (`internal/cli/root.go`) is `cobra.NoArgs`
- * with no `Flags()`, so the handshake is exactly `["version"]`.
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the ten
+ * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
+ * called from each of those constructors), including the two log operations
+ * that share the `logs` command. The complement -- the commands that take no
+ * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
+ * command words the CLI itself uses (`version`, and the picker's `config list`),
+ * which is the same list `assertSpawnSurface` holds the table to; this file
+ * imports it rather than spelling it twice.
+ *
+ * `installation.list` is a *spawn* row the console's own operation table does
+ * not have -- its `OperationName` is the dashboard's -- so the list below names
+ * it as itself plus that one name.
  */
-const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
+const COMMANDS_TAKING_PROJECT: readonly (OperationName | 'installation.list')[] = [
   'live.watch',
   'budget.show',
   'spend.report',
@@ -120,8 +126,6 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'accounts.inventory',
   'environment.report',
 ]
-const COMMANDS_WITHOUT_PROJECT: readonly OperationName[] = ['cli.version']
-
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
   // The canonical spelling: on macOS the temporary directory is reached through
