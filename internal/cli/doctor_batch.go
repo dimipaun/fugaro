@@ -73,7 +73,29 @@ func doctorBatchChecks(ctx context.Context, lc *localcfg.Config, c *crm.Service)
 	out = append(out, doctorBatchNetwork(ctx, lc)...)
 	out = append(out, doctorBatchLogSink(ctx, lc))
 	out = append(out, doctorBatchLauncherIAM(ctx, lc, c)...)
+	out = append(out, doctorBatchArtifactBoundary())
 	return out
+}
+
+// doctorBatchArtifactBoundary names the boundary Global Constraint 13 leaves
+// standing, for an installation that carries a batch block: an
+// artifact-producing run is not launched on this backend, and `fugaro
+// validate` (`artifacts:` with `backend: cloud-batch`) with the launch's own
+// gate (run.go's checkArtifactLaunch) are what refuse it. The constraint asks
+// doctor to name it, and this is where an operator reads what the backend does
+// not do.
+//
+// Informational, never a warning: the state it describes is the plan's own
+// decision (docs/design/artifact-runs.md §8.5 and D11 — a Batch run's account
+// is not per-repository), not a fault this installation can fix, and a warning
+// no run of `fugaro init` could clear is the shape this file refuses for the
+// launcher grant's operator case. Task 10's doctor gate is what makes that
+// matter: every check has to pass before the enable, and an info check never
+// fails doctor, so naming the boundary costs that gate nothing.
+func doctorBatchArtifactBoundary() doctorCheck {
+	return doctorCheck{ID: "batch-artifact-boundary", Severity: "info",
+		Problem: "an artifact-producing run is never launched on cloud-batch (docs/design/artifact-runs.md §8.5 and D11): a Batch run's account is not per-repository, so the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile. fugaro validate refuses `artifacts:` with `backend: cloud-batch`, and a launch naming an artifact recipe is refused by the launch's own gate",
+		Fix:     "keep artifact-producing recipes on backend: cloud-run. This is the boundary a later plan removes, with the per-run prefix condition or the per-run account it is waiting for (plan 2026-10-19-compute-backend.md, Global Constraint 13)"}
 }
 
 // batchUnchecked is a read that could not be made, in the shape every cloud
@@ -106,8 +128,11 @@ func doctorBatchAPIs(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 		if err != nil {
 			return []doctorCheck{batchUnchecked("batch-apis", "whether "+s+" is enabled in "+lc.GCPProject, batchReadFix, err)}
 		}
+		// The state is the API's own string, printed inside this check's
+		// sentence: one line of it, like every other value a project answers
+		// (batchUnchecked's read errors, the sink's destination).
 		if st.State != "ENABLED" {
-			disabled = append(disabled, fmt.Sprintf("%s is %s", s, st.State))
+			disabled = append(disabled, fmt.Sprintf("%s is %s", s, oneLineCLI(st.State)))
 		}
 	}
 	if len(disabled) > 0 {
@@ -166,20 +191,21 @@ func doctorBatchImageFamily(ctx context.Context, lc *localcfg.Config) doctorChec
 		return doctorCheck{ID: id, OK: true}
 	}
 	family := pathTail(lc.Batch.BootImage)
+	project := resourceProject(lc.Batch.BootImage, lc.GCPProject)
 	svc, err := compute.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Compute)...)
 	if err != nil {
-		return batchUnchecked(id, "the preload image family "+family, batchReadFix, err)
+		return batchUnchecked(id, "the preload image family "+family+" in "+project, batchReadFix, err)
 	}
-	_, err = svc.Images.GetFromFamily(lc.GCPProject, family).Context(ctx).Do()
+	_, err = svc.Images.GetFromFamily(project, family).Context(ctx).Do()
 	switch {
 	case err == nil:
 		return doctorCheck{ID: id, OK: true}
 	case isNotFound(err):
 		return doctorCheck{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("the preload image family projects/%s/global/images/family/%s does not exist in %s: a run's bootDisk.image names the family (not one of its generations), so this installation's VMs have nothing to boot until the preload build has published a generation (design compute-backend.md §1.2, §4.4)", lc.GCPProject, family, lc.GCPProject),
-			Fix:     "run the preload rebuild (fugaro init --provision-batch in " + lc.GCPProject + ", or the fugaro-preload-rebuild Scheduler job), then rerun fugaro doctor"}
+			Problem: fmt.Sprintf("the preload image family projects/%s/global/images/family/%s does not exist in %s: a run's bootDisk.image names the family (not one of its generations), so this installation's VMs have nothing to boot until the preload build has published a generation (design compute-backend.md §1.2, §4.4)", project, family, project),
+			Fix:     "run the preload rebuild (fugaro init --provision-batch in " + project + ", or the fugaro-preload-rebuild Scheduler job), then rerun fugaro doctor"}
 	default:
-		return batchUnchecked(id, "the preload image family "+family+" in "+lc.GCPProject, batchReadFix, err)
+		return batchUnchecked(id, "the preload image family "+family+" in "+project, batchReadFix, err)
 	}
 }
 
@@ -202,29 +228,56 @@ func doctorBatchNetwork(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 		return []doctorCheck{batchUnchecked("batch-network", "the network and subnetwork a run's VMs are placed in", batchReadFix, err)}
 	}
 	var out []doctorCheck
+	netProject := resourceProject(network, lc.GCPProject)
 	netName := pathTail(network)
-	if _, err := svc.Networks.Get(lc.GCPProject, netName).Context(ctx).Do(); err != nil {
+	if _, err := svc.Networks.Get(netProject, netName).Context(ctx).Do(); err != nil {
 		if !isNotFound(err) {
-			return []doctorCheck{batchUnchecked("batch-network", "the network "+network, batchReadFix, err)}
+			// The pair is read independently, so one read that cannot be made
+			// does not hide the other resource's finding.
+			out = append(out, batchUnchecked("batch-network", "the network "+network, batchReadFix, err))
+		} else {
+			out = append(out, doctorCheck{ID: "batch-network", Severity: "warning",
+				Problem: "the network " + network + " that the batch block names is not in " + netProject + ": a run's VMs are placed in it explicitly, because Batch refuses a no-external-IP job unless the network and the subnetwork are named (design compute-backend.md §1.7)",
+				Fix:     "check batch.network in the local config, or run fugaro init --provision-batch in " + netProject + " which creates the installation's own network"})
 		}
-		out = append(out, doctorCheck{ID: "batch-network", Severity: "warning",
-			Problem: "the network " + network + " that the batch block names is not in " + lc.GCPProject + ": a run's VMs are placed in it explicitly, because Batch refuses a no-external-IP job unless the network and the subnetwork are named (design compute-backend.md §1.7)",
-			Fix:     "check batch.network in the local config, or run fugaro init --provision-batch in " + lc.GCPProject + " which creates the installation's own network"})
 	} else {
 		out = append(out, doctorCheck{ID: "batch-network", OK: true})
 	}
+	return append(out, doctorBatchSubnetwork(ctx, svc, lc, subnetwork)...)
+}
+
+// doctorBatchSubnetwork is the subnetwork half of doctorBatchNetwork, read in
+// the project its name names for the same reason (resourceProject): a shared
+// VPC's subnetwork is in the host project.
+func doctorBatchSubnetwork(ctx context.Context, svc *compute.Service, lc *localcfg.Config, subnetwork string) []doctorCheck {
+	subProject := resourceProject(subnetwork, lc.GCPProject)
 	region, subName := subnetParts(subnetwork)
-	if _, err := svc.Subnetworks.Get(lc.GCPProject, region, subName).Context(ctx).Do(); err != nil {
+	if _, err := svc.Subnetworks.Get(subProject, region, subName).Context(ctx).Do(); err != nil {
 		if !isNotFound(err) {
-			return append(out, batchUnchecked("batch-subnetwork", "the subnetwork "+subnetwork, batchReadFix, err))
+			return []doctorCheck{batchUnchecked("batch-subnetwork", "the subnetwork "+subnetwork, batchReadFix, err)}
 		}
-		out = append(out, doctorCheck{ID: "batch-subnetwork", Severity: "warning",
-			Problem: "the subnetwork " + subnetwork + " that the batch block names is not in " + lc.GCPProject + ": the VMs are placed in it explicitly (Batch refuses a no-external-IP job unless both are named, design compute-backend.md §1.7), and the subnetwork is where a run's VMs are, so one in a second project or region is a run this installation cannot see",
-			Fix:     "check batch.subnetwork in the local config, or run fugaro init --provision-batch in " + lc.GCPProject + " which creates the installation's own subnetwork"})
-	} else {
-		out = append(out, doctorCheck{ID: "batch-subnetwork", OK: true})
+		return []doctorCheck{{ID: "batch-subnetwork", Severity: "warning",
+			Problem: "the subnetwork " + subnetwork + " that the batch block names is not in " + subProject + ": the VMs are placed in it explicitly (Batch refuses a no-external-IP job unless both are named, design compute-backend.md §1.7), and the subnetwork is where a run's VMs are, so one in a second project or region is a run this installation cannot see",
+			Fix:     "check batch.subnetwork in the local config, or run fugaro init --provision-batch in " + subProject + " which creates the installation's own subnetwork"}}
 	}
-	return out
+	return []doctorCheck{{ID: "batch-subnetwork", OK: true}}
+}
+
+// resourceProject is the project a full resource name names -- parts[1] of
+// projects/<p>/... -- and fallback for a name that has no such shape (which
+// the job-definition check refuses first). The checks above read the resource
+// THE NAME NAMES, not this installation's own of the same tail: a subnetwork
+// of a shared VPC is placed in the host project while the run's VMs are in
+// this one (design compute-backend.md §1.7 names the pair explicitly for
+// exactly that reason), so reading lc.GCPProject for a name that points
+// elsewhere answers about a network the run does not use -- a false OK when
+// this project happens to hold a same-named one, and a false "not there" when
+// only the named project has it.
+func resourceProject(name, fallback string) string {
+	if parts := strings.Split(name, "/"); len(parts) >= 2 && parts[0] == "projects" && parts[1] != "" {
+		return parts[1]
+	}
+	return fallback
 }
 
 // doctorBatchLogSink reads the installation's log sink, fugaro-jobs. What it
@@ -254,8 +307,12 @@ func doctorBatchLogSink(ctx context.Context, lc *localcfg.Config) doctorCheck {
 		return batchUnchecked(id, "the log sink "+infra.LogSink+" and its filter", batchReadFix, err)
 	}
 	if want := "logging.googleapis.com/" + logBucketPath(lc); sink.Destination != want {
+		// The destination is the sink's own string, printed inside this
+		// check's sentence: one line of it, as the read errors above are
+		// (the installed destination is a value a project answers, not one
+		// this config wrote).
 		return doctorCheck{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("the log sink %s routes to %s, not to this installation's log bucket %s (design compute-backend.md §1.5)", infra.LogSink, sink.Destination, want),
+			Problem: fmt.Sprintf("the log sink %s routes to %s, not to this installation's log bucket %s (design compute-backend.md §1.5)", infra.LogSink, oneLineCLI(sink.Destination), want),
 			Fix:     "run fugaro init in " + lc.GCPProject + ", which applies the installation root's logging"}
 	}
 	if !strings.Contains(sink.Filter, batchSinkArm) {

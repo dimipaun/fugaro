@@ -385,6 +385,109 @@ func TestDoctorBatchRefusesAJobDefinitionTheBackendWouldRefuse(t *testing.T) {
 	}
 }
 
+// TestDoctorBatchReadsTheProjectTheResourceNameNames: the batch block's
+// network and subnetwork are full resource names, and a subnetwork of a shared
+// VPC lives in the HOST project while the run's VMs are in this one — which is
+// what §1.7 has the pair named explicitly for. Reading lc.GCPProject for a name
+// that points elsewhere answers about a resource the run does not use: a false
+// OK where this project happens to hold a same-named one, and a false "not
+// there" where only the named project has it. The project the read uses is the
+// project the NAME names.
+//
+// Mutation (read lc.GCPProject, as this check did): the case fails, because the
+// fake holds this project's own network of that name and answers OK.
+func TestDoctorBatchReadsTheProjectTheResourceNameNames(t *testing.T) {
+	const id = "batch-network"
+	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
+	batchProvisioned(t, f)
+	// The installation's own project has this network; the name points at the
+	// host project, which does not.
+	block := strings.Replace(batchBlock, "  network: projects/proj-1234/global/networks/fugaro\n",
+		"  network: projects/host-4321/global/networks/fugaro\n", 1)
+	r.withBatchBlock(t, f, block, "")
+
+	c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, id)
+	if !ok || c.OK {
+		t.Fatalf("a network named in another project = %+v (%v), want a finding: the read must follow the name's project", c, ok)
+	}
+	if !strings.Contains(c.Problem, "host-4321") {
+		t.Errorf("the finding does not name the project the read used: %s", c.Problem)
+	}
+}
+
+// TestDoctorBatchNeverPassesAReadItCouldNotMake: every cloud check here is a
+// read of a project, and a read that fails is a warning naming what could not
+// be read, never a pass -- doctor's rule for its other cloud checks, and the
+// whole point of a Batch check while the backend name is refused (an
+// installation's batch block is work in progress, so a silent pass would hide
+// exactly the state the operator is in). The endpoints here answer nothing:
+// nothing is listening on them, which is a read that cannot be made.
+//
+// Mutation (answer OK on a read error, i.e. `default: return
+// doctorCheck{ID: id, OK: true}`): each named check stops warning.
+func TestDoctorBatchNeverPassesAReadItCouldNotMake(t *testing.T) {
+	const dead = "http://127.0.0.1:1/"
+	r := newDoctorRig(t)
+	// One endpoint, three services, nothing answering on it; no_auth carries
+	// over from the rig's own config, so the client does not go looking for
+	// credentials before the connection fails.
+	cfg := strings.Replace(r.cfg, "endpoints: { ",
+		"endpoints: { compute: "+dead+"compute/v1/, logging: "+dead+", service_usage: "+dead+", ", 1) + batchBlock
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	o := r.runDoctorJSON(t)
+	for _, id := range []string{"batch-apis", "batch-image-family", "batch-network", "batch-subnetwork", "batch-log-sink"} {
+		c, ok := doctorCheckByID(o.Checks, id)
+		if !ok {
+			t.Errorf("doctor reports no %s check", id)
+			continue
+		}
+		if c.OK {
+			t.Errorf("%s = %+v, want a finding: its read could not be made", id, c)
+			continue
+		}
+		if !strings.Contains(c.Problem, "could not check") {
+			t.Errorf("%s does not say the read could not be made: %s", id, c.Problem)
+		}
+	}
+}
+
+// TestDoctorBatchNamesTheArtifactBoundary: Global Constraint 13 asks doctor to
+// name the boundary an artifact-producing run meets on this backend, and this
+// is the check that does it. Informational, never a warning: it describes the
+// plan's own decision (docs/design/artifact-runs.md §8.5 and D11), not a fault
+// an installation can fix, and a warning no run of fugaro init could clear
+// would make Task 10's gate unsatisfiable -- which is why the severity matters
+// here and not only the text.
+//
+// Mutation (drop the check; make it a warning; or drop §8.5 and D11): the
+// named assertion fails.
+func TestDoctorBatchNamesTheArtifactBoundary(t *testing.T) {
+	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
+	batchProvisioned(t, f)
+	r.withBatch(t, f, "")
+
+	c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-artifact-boundary")
+	if !ok {
+		t.Fatal("doctor does not name the artifact boundary for a Batch installation")
+	}
+	if c.Severity != "info" {
+		t.Errorf("the boundary's check has severity %q, want info: it is a decision and not a fault, and a warning would fail doctor --strict for every Batch installation", c.Severity)
+	}
+	for _, want := range []string{"artifact-runs.md", "§8.5", "D11", "cloud-run"} {
+		if !strings.Contains(c.Problem+c.Fix, want) {
+			t.Errorf("the boundary's text does not name %q: %s / %s", want, c.Problem, c.Fix)
+		}
+	}
+	// An installation with no batch block gets none of these checks, this one
+	// included: the same silence the other batch checks keep.
+	if _, ok := doctorCheckByID(newDoctorRig(t).runDoctorJSON(t).Checks, "batch-artifact-boundary"); ok {
+		t.Error("an installation with no batch block is told about the boundary")
+	}
+}
+
 // TestBatchSinkArmMatchesTheModulesFilter: batchSinkArm is a copy of the
 // installation module's own arm (deploy/terraform/gcp/modules/installation/
 // logging.tf's local.fugaro_batch_logs), and the sink check reads it with
