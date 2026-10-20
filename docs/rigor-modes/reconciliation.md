@@ -9,9 +9,9 @@ the code that would have to carry it, with the consequence for the design. The
 
 ## 1. Checked against, and how
 
-- Base: `main` at `54cb02a8`'s successor — the commit this document was read at
-  is `1d325928` (the branch point of this work), and the running tree is the one
-  the reader has.
+- Base: the commit this document was read at is `1d325928`
+  (`1d32592836a089cce2d72ff53e29116a00e1c433`, the branch point of this work),
+  and the running tree is the one the reader has.
 - Method: read the packages named below, then run the command in §4's census
   for every count. A claim that a symbol exists is a claim the reader can check
   with `git grep`; a claim about behaviour is a claim about a named function, and
