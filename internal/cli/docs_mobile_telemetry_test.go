@@ -482,6 +482,96 @@ func TestTelemetryPlanRecordsWhatIsBuiltInAndWhatThePairingPayloadCarries(t *tes
 	}
 }
 
+// TestTelemetryPlanDoesNotClaimWorkAlreadyDone pins the four findings of
+// round 10, and all four are the same mistake in different clothes: a sentence
+// that described work as still to be done when the tree, or a decision the owner
+// had already given, said otherwise.
+//
+//  1. **The Firebase project is not created.** D194 answered `fugaro-prod`, the
+//     project the website is already deployed into, and §5 step 1 states
+//     "Nothing is created for telemetry: no new project". §11 and the mobile
+//     plan's Phase 7 registration nevertheless said the owner's live action was
+//     "creating the Firebase project". The live action is **registering the two
+//     Firebase apps in the project that exists**, and a plan that tells the
+//     owner to create `fugaro-prod` tells them to create a project that is
+//     already serving the website.
+//  2. **The retention setting is not recorded anywhere.** §5 step 4 said
+//     "D194's answer records which" retention is required, and §14's item 8
+//     said the opposite: "D194 is answered and the retention setting is still
+//     not recorded". D194's row answers which project and says nothing about
+//     retention, so step 4 is where the owner notes it — which is what §14 said
+//     and what the step has to say too.
+//  3. **Neither native path is ignored yet, and the root `.gitignore` is not
+//     where the rule goes.** §4.3's item 1 said both paths "are ignored at the
+//     repository root's `.gitignore` and at `mobile/.gitignore`"; no entry for
+//     either exists in either file, and no task names the root `.gitignore` —
+//     P7.1, §10.1's level table and §13's edited table all name the app's own
+//     file. Both paths are under `mobile/`, where the app's file governs them,
+//     so the root is not touched and the plan says so instead of implying an
+//     entry that is not there.
+//
+// Mutations (verified, run and restored): put "the owner creating the Firebase
+// project" back in §11; delete "registering the two Firebase apps" from §11;
+// restore "D194's answer records which" in §5's step 4; delete "no decision
+// records it today" from it; restore "ignored at the repository root" in §4.3;
+// delete "Neither path is ignored anywhere today" from it; or put
+// "at both `.gitignore`s" back in §4.4 — this test fails, each of them.
+func TestTelemetryPlanDoesNotClaimWorkAlreadyDone(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+	flat := telemetryPlain(strings.Join(strings.Fields(doc), " "))
+	register := telemetryPlain(strings.Join(strings.Fields(readDoc(t, "docs/mobile/implementation-plan.md")), " "))
+
+	// 1. Nothing creates the project. Read as a phrase over both documents, and
+	// the §11 requirement beside it reads the plan's own section: a ban with no
+	// positive requirement beside it is satisfied by deleting the sentence.
+	for _, tc := range []struct{ path, text string }{
+		{telemetryPlan, flat},
+		{"docs/mobile/implementation-plan.md", register},
+	} {
+		for _, stale := range []string{
+			"the owner creating the Firebase project",
+			"creating the Firebase project and uploading",
+		} {
+			if strings.Contains(tc.text, telemetryPlain(stale)) {
+				t.Errorf("%s still says %q: D194 answered `fugaro-prod`, the project the website is already deployed into, and §5 step 1 states that nothing is created for telemetry — the owner's live action is REGISTERING the two Firebase apps in the project that exists, and a reader told to create it would create a second project beside the one serving the site", tc.path, stale)
+			}
+		}
+	}
+	s11 := telemetryPlain(strings.Join(strings.Fields(planSection(t, doc, "## 11. What this plan does not change")), " "))
+	if !strings.Contains(s11, "registering the two Firebase apps") {
+		t.Errorf("%s's §11 does not say the owner's live action is \"registering the two Firebase apps\": D194 answered a project that already exists, so the only thing the phase asks of the owner there is the two app registrations — and a section that lists the phase's live actions has to name the one it has", telemetryPlan)
+	}
+
+	// 2. The retention setting is the owner's to note, and no decision records
+	// it. This is §14's item 8's own statement, and step 4 has to agree with it.
+	for _, stale := range []string{"D194's answer records which", "D194's answer records the retention"} {
+		if strings.Contains(flat, telemetryPlain(stale)) {
+			t.Errorf("%s still says %q: D194's row answers which project the native files name and says nothing about retention, while §14's item 8 says the retention setting is still not recorded — one of the two sentences was false, and this one is it", telemetryPlan, stale)
+		}
+	}
+	s5 := telemetryPlain(strings.Join(strings.Fields(planSection(t, doc, "## 5. The Fugaro-operated project")), " "))
+	if !strings.Contains(s5, "no decision records it today") {
+		t.Errorf("%s's §5 does not say that no decision records the retention setting today: step 4 tells the owner to note it and states the plan's own requirement (the shortest the console offers), and the section has to say that the number is theirs to record — otherwise a reader looks for a decision that does not exist", telemetryPlan)
+	}
+
+	// 3. One ignore file, the app's own, and neither path is ignored yet.
+	if strings.Contains(flat, telemetryPlain("ignored at the repository root")) {
+		t.Errorf("%s still says the two native paths are \"ignored at the repository root\": neither has an entry in the root `.gitignore` or in `mobile/.gitignore` today, and no task in any phase names the root — both paths are under `mobile/`, where the app's own file governs them, so the plan must not imply an entry nothing writes", telemetryPlan)
+	}
+	if strings.Contains(flat, "at both `.gitignore`s") {
+		t.Errorf("%s still says the paths are ignored at \"both `.gitignore`s\": the root's is not touched and does not need to be — a rule written in two files is a rule corrected in one", telemetryPlan)
+	}
+	s43 := telemetryPlain(strings.Join(strings.Fields(planSection(t, doc, "### 4.3 The native config files are never committed")), " "))
+	for _, want := range []string{
+		"The repository root's `.gitignore` is not touched",
+		"Neither path is ignored anywhere today",
+	} {
+		if !strings.Contains(s43, want) {
+			t.Errorf("%s's §4.3 does not say %q: the rule lives in the app's own ignore file, the root's is deliberately left alone, and both entries are P7.1's to add — a reader who cannot tell what is in the tree from what the task will add takes an unwritten rule for a written one", telemetryPlan, want)
+		}
+	}
+}
+
 // telemetryAPIKeyRE matches a Google API key VALUE, not the shape's name: 39
 // characters starting `AIza`, which is `SECRET_SHAPES`'s own `google-api-key`
 // pattern. The plan writes the ellipsis form (`AIza…`) when it names the shape,
@@ -636,34 +726,31 @@ func TestTelemetryPlanTakesChecksAndLeavesTheRest(t *testing.T) {
 			t.Errorf("docs/gcp-live-checklist.md carries a summary row for check %s while %s says it is proposed: the row and the section are written together, by P7.5, after the owner approves Phase 7", n, telemetryPlan)
 		}
 	}
-	// The register must also still be free of a written section above 104 at
-	// all — 105–109 are reserved and 110 onward is where this plan's numbers
-	// come from, so a section in or above 105 is a section somebody wrote under
-	// a claim that is still open.
-	highest := highestWrittenCheck(t, register)
-	if highest > 104 {
-		t.Errorf("docs/gcp-live-checklist.md has a written `## Check %d` section: 105–109 are reserved and the plan takes nothing out of them, so a written section above 104 is a number another claim has already spent", highest)
+	// And what the register must be free of is THE NUMBERS THIS PLAN TAKES — not
+	// a ceiling on the register. This assertion used to require
+	// `highestWrittenCheck(register) <= 104`, which was wrong twice over: it
+	// fails the moment ANY later number is written (PR #632's check 110, which
+	// this plan names as an open claim it deliberately does not touch, or the
+	// reserved 105–109 when their holder writes them), and §2.2 states the
+	// opposite principle — "the highest check section written is a reading", and
+	// a reading moves without the block moving. The register is read twice, once
+	// as it is and once with a later claim's section appended, so the ceiling
+	// cannot creep back in: what is checked is what this plan takes.
+	for _, tc := range []struct{ name, text string }{
+		{"the register as it is", register},
+		{"the register with a later claim's section appended", register + "\n## Check 110\n\nPR #632's claim, written by whoever holds it.\n"},
+	} {
+		for _, n := range telemetryTakenChecks {
+			if strings.Contains(tc.text, "## Check "+n) {
+				t.Errorf("docs/gcp-live-checklist.md writes a `## Check %s` section (%s) while %s says check %s is proposed and written by P7.5: a check is never run before its text is in the register, and the numbers this plan takes are the only ones whose written presence says anything about this plan — a number above them belongs to whichever claim holds it", n, tc.name, telemetryPlan, n)
+			}
+		}
 	}
 }
 
 // telemetryHighestRE finds a written check section's number. The register writes
 // them as `## Check 81`, and `## Check 70a` for the lettered ones.
 var telemetryHighestRE = regexp.MustCompile(`(?m)^## Check ([0-9]+)[a-z]?\b`)
-
-// highestWrittenCheck reads the highest check section a register document
-// actually writes. It is derived rather than stated, because the number moves:
-// PR #667 is approved to append `## Check 100`–`## Check 104`, which raises this
-// reading from 89 to 104 without touching anything either plan takes.
-func highestWrittenCheck(t *testing.T, register string) int {
-	t.Helper()
-	highest := 0
-	for _, m := range telemetryHighestRE.FindAllStringSubmatch(register, -1) {
-		if n, err := strconv.Atoi(m[1]); err == nil && n > highest {
-			highest = n
-		}
-	}
-	return highest
-}
 
 func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 	doc := readDoc(t, telemetryPlan)
@@ -1493,10 +1580,17 @@ func TestTelemetryPlanAgreesWithItsOwnRegistration(t *testing.T) {
 		if !written[statedNumber] {
 			t.Errorf("%s states the highest check section written is `## Check %d`, and %s writes no such section: a premise read from the register has to name a section the register has, and #667 appending sections above it does not remove the one it read", telemetryPlan, statedNumber, tc.name)
 		}
-		// And nothing at or above the reserved block is written, which is what
-		// makes "the first free number is 111" true against this register.
-		if h := highestWrittenCheck(t, tc.text); h > 104 {
-			t.Errorf("%s states its block is the first free one and takes nothing out of 105–109, and %s writes `## Check %d`: the claim is false against this register, and 105–109 are reserved whether or not a section sits there", telemetryPlan, tc.name, h)
+		// And none of the numbers the plan takes is written, which is what makes
+		// "the first free number is 111" true against this register. NOT a
+		// ceiling on the register: the numbers above the block belong to other
+		// claims (110 is the orchestrator's, and 105–109 are reserved for their
+		// holder to write whenever they like), so a `highest <= 104` assertion
+		// would fail on a change that says nothing about this plan — and §2.2
+		// states the reading as a reading precisely so that it can move.
+		for _, n := range telemetryTakenChecks {
+			if strings.Contains(tc.text, "## Check "+n) {
+				t.Errorf("%s states its block is the first free one, and %s writes `## Check %s`: the claim is false against this register, and the numbers the plan takes are the ones whose written presence falsifies it", telemetryPlan, tc.name, n)
+			}
 		}
 	}
 }

@@ -694,8 +694,10 @@ renumbered**, and this phase renumbers nothing.
 Phase 7 enters it as a new **step 7b**, which is the label the gate below carries — **an
 answered row is not an approval**, and all eight rows of the block are answered now). It
 **changes no rules file, no Terraform, no `fugaro`
-command and no workflow** — the only live action in the whole phase is the owner creating the
-Firebase project and uploading two EAS file secrets. And it **moves no existing task**: Phase
+command and no workflow** — the only live actions in the whole phase are the owner
+**registering the two Firebase apps in the project that exists** (`fugaro-prod`, D194's
+answer — the project the website is already deployed into, so nothing is created for
+telemetry) and uploading two EAS file secrets. And it **moves no existing task**: Phase
 3, Phase 6 and Phase 7 are independent, and the voice-less MVP is unaffected (D198).
 
 **Two findings the phase is built on**, both read from the tree and both stated in the plan's

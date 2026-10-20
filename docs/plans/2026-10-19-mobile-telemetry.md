@@ -359,10 +359,14 @@ that is where the Firebase console's own output goes and where the plugin looks 
 default. They are **never** committed. The mechanism is four parts, and every one of them is
 a test or a guard rather than a sentence:
 
-1. **`.gitignore`.** Both paths are ignored at the repository root's `.gitignore` and at
-   `mobile/.gitignore` — the app's own ignore file, which P4.4 left in place and which P7.1
-   **appends to** so the rule travels with the app. **A path under `mobile/` that
-   names `google-services` or `GoogleService-Info` is never tracked.**
+1. **`.gitignore`, the app's own.** Both paths are ignored at **`mobile/.gitignore`** — the
+   app's own ignore file, which P4.4 left in place and which P7.1 **appends to** so the rule
+   travels with the app. **The repository root's `.gitignore` is not touched, and does not
+   need to be**: both paths are under `mobile/`, where the app's own file governs them, so a
+   second entry at the root would be a rule written twice and corrected once. **Neither path
+   is ignored anywhere today** — the two entries are P7.1's to add, and this is a plan, not a
+   statement about the tree — and **a path under `mobile/` that names `google-services` or
+   `GoogleService-Info` is never tracked once P7.1 lands.**
 2. **A scan with a positive control.** P7.1 extends `mobile/src/app-config.test.js` (whose
    "no credential, no installation" walk already exists, with a planted `AIza…` value as its
    control) with a **tracked-files** rule: for each of the two paths, the test fails if the
@@ -407,7 +411,7 @@ path into the phone's secure storage.**
 
 | | What it is | How it gets there | Where it is written down |
 |---|---|---|---|
-| **Built into the build** | **The telemetry project's two native config files** — `mobile/google-services.json` and `mobile/GoogleService-Info.plist`, naming **`fugaro-prod`** (D194). The plugin applies them at prebuild, so the app's **default** Firebase app is the Fugaro telemetry project for every installation, and no `apiKey` is ever written in JavaScript (§4.1). | **EAS file secrets**, named by `eas.json`'s profiles and applied on the build machine — §4.3's four-part rule: ignored at both `.gitignore`s, scanned by a tracked-files test with a planted control, refused by `app.config.js` when a profile carries neither, and never read by an agent. | **Nowhere in this repository.** Never committed, never a fixture, never a log line, never a pull request. |
+| **Built into the build** | **The telemetry project's two native config files** — `mobile/google-services.json` and `mobile/GoogleService-Info.plist`, naming **`fugaro-prod`** (D194). The plugin applies them at prebuild, so the app's **default** Firebase app is the Fugaro telemetry project for every installation, and no `apiKey` is ever written in JavaScript (§4.1). | **EAS file secrets**, named by `eas.json`'s profiles and applied on the build machine — §4.3's four-part rule: ignored at `mobile/.gitignore`, scanned by a tracked-files test with a planted control, refused by `app.config.js` when a profile carries neither, and never read by an agent. | **Nowhere in this repository.** Never committed, never a fixture, never a log line, never a pull request. |
 | **Inside the pairing payload** | **The installation's own Firebase connection** — its **Realtime Database URL** and its **web API key**. They differ per installation and **are not known at build time**, so no build can carry them. | **The encrypted pairing payload** the user's own installation hands over when an account is added by hand. The CLI already records both (`init_firebase.go`), and **G18** already reads them for the QR. They travel under **D113b**'s pairing key — the same key D111's item (2) is. | **Nowhere in this repository**, and nowhere on the wire unencrypted. |
 | **In the phone's secure storage** | **Four items per account** — D111's two, plus D199's two: **(1)** the Firebase Auth **ID token**, **(2)** the **per-pairing MAC key** (D113b's option (a)), **(3)** the installation's **Realtime Database URL**, **(4)** the installation's **web API key**. | **Platform secure storage** (Keychain / Keystore), the same store D111's two already use. Never logged, never a fixture, never a settings entry — `SettingsStore`'s `SECRET_SHAPES` and `FORBIDDEN_KEY_SEGMENTS` are unchanged. | **D111's row** in [mobile/reconciliation.md](../mobile/reconciliation.md) and **Global Constraint 4** in [mobile/implementation-plan.md](../mobile/implementation-plan.md), each carrying a **dated amendment of 2026-10-20** that records the owner's acceptance of 2026-10-19 and keeps the original *two items* text visible. |
 
@@ -466,8 +470,10 @@ Named plainly, because every step below is the owner's and none is an agent's:
 3. **Download the two native config files.** They are the artifacts §4.3 delivers. They go to
    the EAS project's file secrets and **nowhere else**. *Owner step.*
 4. **Turn on Analytics and Crashlytics** in the project, and note the property's **retention**
-   setting — the plan requires the shortest retention the console offers, and D194's answer
-   records which. *Owner step.*
+   setting — the plan requires the shortest retention the console offers, and **this step is
+   where the owner notes which it is**: **no decision records it today**, D194's row answers
+   which project and says nothing about retention, and §14's item 8 says so in as many words.
+   *Owner step.*
 5. **Membership: the owner alone.** **No service account, no CI identity and no agent** may be
    granted any **Analytics or Crashlytics read**. The **website's deploy service account is the
    one identity already inside the project**, and it holds **Firebase Hosting roles only** —
@@ -1039,9 +1045,13 @@ none** (§13): the owner decides whether one is wanted when the first task lands
   `internal/projectpolicy/version.go` are untouched: the telemetry project is not an
   installation, holds no Fugaro data, and no RTDB rule mentions it. **There is no rules change
   in this phase and no `RulesVersion` bump.**
-- **No Terraform, no `fugaro` command, no Cloud Run job, no workflow.** The only live action
-  in the whole phase is the owner creating the Firebase project (D194) and uploading two file
-  secrets (§4.3).
+- **No Terraform, no `fugaro` command, no Cloud Run job, no workflow.** The only live actions
+  in the whole phase are the owner **registering the two Firebase apps in the project that
+  already exists** — `fugaro-prod`, D194's answer, the project the website is deployed into,
+  so **no project is created for telemetry** (§5 step 1) — and **uploading two file secrets**
+  (§4.3). **D194's answer is what makes the first a registration and not a creation**: the
+  project is the one the website already uses, and §5's opening paragraph states the
+  arrangement the owner accepted with that answer.
 - **No credential in the app beyond D111's list, as D199's acceptance widens it — four items
   per account, and no more.** The app's D111 items and the installation's two connection values
   all stay in platform secure storage, and none of them is ever in a settings entry, a fixture,
