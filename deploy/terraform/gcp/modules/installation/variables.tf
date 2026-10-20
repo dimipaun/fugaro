@@ -291,7 +291,7 @@ variable "project_secrets" {
 }
 
 variable "credentials_service" {
-  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image (C1.20's init stage fills it, as it fills history.image); bundle_secret is the Secret Manager ID of the one bundle container the service reads (gcp.CredsBundleSecretID), created here and written only by the owner-run fugaro creds set (C1.25)."
+  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image (C1.20's init stage fills it, as it fills history.image); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25)."
   type = object({
     account_id    = string
     service       = string

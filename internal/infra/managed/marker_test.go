@@ -1559,7 +1559,27 @@ var runAccountGrants = setOf(
 	// The job account's (a run's own credential): the runs bucket under its
 	// condition, its secrets one by one, Vertex AI.
 	`google_project_iam_member | "roles/aiplatform.user" | project=var.project | google_service_account.job.member | for_each= | perms=`,
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.workflow.secret_env)) | perms=`,
+	// Reviewed for C1.18 (the credentials service): the set is still exactly
+	// the workflow's own secret_env values, and on an installation that has
+	// opted in it is those values minus the model credentials — the two named
+	// env vars (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) and every
+	// FUGARO_PROVIDER_KEY_* — which the job then reads from the service
+	// instead. Nothing else is dropped, the account is the same, and the
+	// target is still the secret-level container: with the opt-in off
+	// (credentials_service unset, the default) the set is unchanged.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_model_secret_env[env] ])] | perms=`,
+	// Reviewed for C1.18: the credentials service's own account, on the one
+	// bundle container C1.18 creates, and on nothing else. secretAccessor on
+	// a secret the installation creates is not a write path to the marker:
+	// the bundle holds model credentials, and its container is the
+	// installation's own (it is not the runs bucket and not a prefix the
+	// deployer's fence admits).
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.credentials_bundle[0].secret_id | google_service_account.credentials[0].member | for_each= | perms=`,
+	// Reviewed for C1.18: each job's account may invoke the credentials
+	// service. roles/run.invoker carries no storage permission at all — it is
+	// the right to send a request to a Cloud Run service — and the target is
+	// the service, not a job and not the runs bucket.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// The same account's read-only grant on the budget token objects, in the
 	// workflow module (tokens/<slug>/, one repository) and in the project

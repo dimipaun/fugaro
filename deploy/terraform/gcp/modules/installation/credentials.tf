@@ -146,10 +146,12 @@ resource "google_cloud_run_v2_service" "credentials" {
       }
 
       # The service's identity, and no credential: it reads the one bundle
-      # secret as its own account, by the name
-      # internal/backend/gcp.CredsBundleSecretID derives from FUGARO_PROJECT —
-      # the same name this file creates the container with — so no secret ID
-      # and no value is ever an environment variable here.
+      # secret as its own account, by the name it derives from FUGARO_PROJECT
+      # (the project-wide container of the logical name "creds-bundle",
+      # internal/backend/gcp's ProjectSecretID — the same value
+      # var.credentials_service.bundle_secret carries, which is what the
+      # container above is created with), so no secret ID and no value is ever
+      # an environment variable here.
       env {
         name  = "FUGARO_PROJECT"
         value = var.fugaro_project

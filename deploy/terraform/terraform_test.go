@@ -1156,8 +1156,10 @@ var (
 	// TestComputePreloadBuilderRoleAreExactlyTheBuild), and the
 	// build-submitter id is the installation's own role.
 	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
-	// The member expressions an IAM member may use.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.history\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	// The member expressions an IAM member may use. google_service_account
+	// .credentials[0] is the credentials service's own account (C1.18): the
+	// one member its bundle's secretAccessor grant names.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
 
 	// A custom role of this project, spelled as the literal path
 	// "projects/${var.project}/roles/<id>" rather than read from the role

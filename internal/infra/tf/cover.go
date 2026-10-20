@@ -26,7 +26,13 @@ var allowedTypes = map[string]bool{
 	"google_billing_budget":                          true,
 	"google_cloud_run_v2_job":                        true,
 	"google_cloud_run_v2_job_iam_member":             true,
-	"google_cloud_scheduler_job":                     true,
+	// The credentials service (D146, C1.18): the service itself and each job
+	// account's roles/run.invoker on it. Both are created only on an
+	// installation that has opted in, so no plan of an installation that has
+	// not carries them.
+	"google_cloud_run_v2_service":            true,
+	"google_cloud_run_v2_service_iam_member": true,
+	"google_cloud_scheduler_job":             true,
 	// The Batch backend's own root (design compute-backend §8.1 task 6) is a
 	// root of its own, applied by its own stage behind --provision-batch and
 	// its own typed confirmation: these three types are the NAT, its router
@@ -145,6 +151,13 @@ var grantRules = map[string]map[string]who{
 	"google_cloud_run_v2_job_iam_member": {
 		customKey + "fugaroJobRunner": toPeople | toAccounts,
 		"roles/run.invoker":           toAccounts,
+	},
+	// The credentials service (C1.18): each job account may invoke it, and
+	// nothing else may. No person is ever granted this role, and the grant is
+	// unconditional — the service's own ID-token check (Q6) is what decides
+	// who is served, not an IAM condition.
+	"google_cloud_run_v2_service_iam_member": {
+		"roles/run.invoker": toAccounts,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,

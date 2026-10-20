@@ -2210,7 +2210,14 @@ var moduleResourceRE = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"
 // not produce for either fixture, each with the reason it is off. Every entry
 // is a hole in this guard, so it takes a reason: a resource that is merely
 // missing because nobody regenerated the golden does not belong here.
-var conditionalResources = map[string]string{}
+var conditionalResources = map[string]string{
+	// The credentials service's invoker grant (C1.18, D147): off in both
+	// fixtures, because neither opts in, and the whole point of the opt-in is
+	// that an installation that has not turned it on has no such resource.
+	// Addresses() adds it, so the day a fixture sets credentials_service the
+	// guard sees it and this entry can go.
+	"google_cloud_run_v2_service_iam_member.credentials": "the installation has not opted in to the credentials service (credentials_service is unset in both fixtures), so no job account is granted invoker on it",
+}
 
 // TestAddressesCoversEveryModuleResource is the drift guard the goldens
 // cannot be: every resource the repo and workflow modules declare must show
