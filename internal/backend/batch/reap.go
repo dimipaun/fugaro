@@ -180,21 +180,46 @@ type Refusal struct {
 	Reason string
 }
 
-// Report is what one pass did.
+// Report is what one pass did, and where and by what deadlines it did it.
+//
+// The four context fields are not the pass's own business -- Reap decides by
+// them, it does not decide them -- but they belong in the report, because the
+// report is read long after the process that wrote it is gone: the schedule
+// that runs the reaper starts a Cloud Run job whose whole output is this
+// report (internal/cli/reaper.go), and "deleted job X" is not a line anyone
+// can check months later without the project, the region and the deadlines it
+// was judged by -- an installation that changed a task timeout changed the
+// reaper's patience with it, which is the one thing that makes an old
+// deletion explainable. Reap fills them in from the Reaper; a zero one (a
+// Report built by hand, as the lines' own test does) renders no header line at
+// all.
 type Report struct {
-	DryRun  bool
-	Actions []Action
-	Refused []Refusal
+	// Project and Region are the GCP project and the region the pass swept.
+	Project, Region string
+	// QueueDeadline, RunBudget and MaxAge are the deadlines the pass decided
+	// by, after NewReaper's defaults (Reaper.QueueDeadline, RunBudget and
+	// MaxAge, which is what these are copied from).
+	QueueDeadline, RunBudget, MaxAge time.Duration
+	DryRun                           bool
+	Actions                          []Action
+	Refused                          []Refusal
 }
 
-// Lines renders the report for an operator: one line per action and per
-// refusal, every action first and every refusal after. That is not the order
-// they were decided in -- refusals come out of both passes, so a job refused
-// in the job pass prints after an instance deleted in the instance pass -- but
-// it is the order an operator reads: what the pass did to their project, then
-// what it left alone and why. A dry run says "would" on every action.
+// Lines renders the report for an operator: one line for what the pass was and
+// by what it judged, then one line per action and per refusal, every action
+// first and every refusal after. That is not the order they were decided in --
+// refusals come out of both passes, so a job refused in the job pass prints
+// after an instance deleted in the instance pass -- but it is the order an
+// operator reads: what the pass did to their project, then what it left alone
+// and why. A dry run says "would" on every action, and says so on the header
+// too, since a log that holds only "would delete job ..." lines must not be
+// mistaken later for a pass that deleted nothing because there was nothing to
+// delete.
 func (r Report) Lines() []string {
-	out := make([]string, 0, len(r.Actions)+len(r.Refused))
+	out := make([]string, 0, len(r.Actions)+len(r.Refused)+1)
+	if head := r.headline(); head != "" {
+		out = append(out, head)
+	}
 	for _, a := range r.Actions {
 		verb := actionVerb(a.Kind, r.DryRun)
 		line := verb + " " + a.Target
@@ -207,6 +232,23 @@ func (r Report) Lines() []string {
 		out = append(out, "refused "+f.Target+": "+f.Reason)
 	}
 	return out
+}
+
+// headline is the report's first line: the project and region the pass swept
+// and the three deadlines it decided by, or "" for a Report that names no
+// project (one built by hand rather than by Reap). It is the line that makes
+// the rest of the report checkable later -- every deletion in it was judged by
+// these numbers, and the numbers are the installation's own task timeouts.
+func (r Report) headline() string {
+	if r.Project == "" && r.Region == "" {
+		return ""
+	}
+	verb := "reaped"
+	if r.DryRun {
+		verb = "would reap"
+	}
+	return fmt.Sprintf("%s projects/%s/locations/%s: queue deadline %v, run budget %v, max age %v",
+		verb, r.Project, r.Region, r.QueueDeadline, r.RunBudget, r.MaxAge)
 }
 
 // actionVerb is how one action reads in a report: what it did, or what a dry
@@ -433,7 +475,15 @@ func (r *Reaper) location() string {
 // of what it did before that point is still returned, and a caller must not
 // read a short report as a clean project.
 func (r *Reaper) Reap(ctx context.Context) (Report, error) {
-	rep := Report{DryRun: r.o.DryRun}
+	// The report carries the context of the pass as well as its outcome, and
+	// it is filled in before the first request: a pass that errors on its
+	// first listing still hands back a report whose header says where it was
+	// looking and by what (Lines' headline).
+	rep := Report{
+		Project: r.o.GCPProject, Region: r.o.Region,
+		QueueDeadline: r.queueDeadline, RunBudget: r.runBudget, MaxAge: r.maxAge,
+		DryRun: r.o.DryRun,
+	}
 	jobs, err := r.listJobs(ctx)
 	if err != nil {
 		return rep, err

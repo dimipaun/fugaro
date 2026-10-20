@@ -1751,3 +1751,128 @@ func TestReaperListingsPageAndSort(t *testing.T) {
 		t.Fatalf("VM actions = %v, want them sorted by zone/name", targets)
 	}
 }
+
+// TestReportLinesPerActionKind: one line of the report, for every ActionKind
+// and for both a pass and a dry run, with and without a reason. This is the
+// rendering the reaper's own Cloud Run job logs and `fugaro reaper` prints, so
+// each line has to name the action, the target and the reason on its own: a
+// reader of a log has no other row to join it to.
+func TestReportLinesPerActionKind(t *testing.T) {
+	const (
+		jobName = "projects/proj-1234/locations/us-east5/jobs/acme-app-web-20260927-100000-abcd"
+		vmName  = "us-east5-a/acme-app-web-20260927-100001-abcd"
+		why     = "still RUNNING 900 minutes into the state, past every run deadline this installation configures"
+	)
+	for _, tc := range []struct {
+		name   string
+		kind   ActionKind
+		dryRun bool
+		target string
+		reason string
+		want   string
+	}{
+		{"a deleted job", ActionDeleteJob, false, jobName, why,
+			"deleted job " + jobName + " (" + why + ")"},
+		{"a job a dry run would delete", ActionDeleteJob, true, jobName, "stuck: " + why,
+			"would delete job " + jobName + " (stuck: " + why + ")"},
+		{"a deleted VM", ActionDeleteVM, false, vmName, "no Batch job of its run answers for it",
+			"deleted VM " + vmName + " (no Batch job of its run answers for it)"},
+		{"a VM a dry run would delete", ActionDeleteVM, true, vmName, "no Batch job of its run answers for it",
+			"would delete VM " + vmName + " (no Batch job of its run answers for it)"},
+		// An action with no reason is a line without the parentheses rather
+		// than one ending in "()".
+		{"an action with no reason", ActionDeleteJob, false, jobName, "", "deleted job " + jobName},
+		// A kind this build does not know renders as itself: a new ActionKind
+		// whose verb nobody wrote shows up in the log rather than as an empty
+		// line or a line that says it deleted something it did not.
+		{"a kind this build does not know", ActionKind("reap-something"), false, jobName, "why",
+			"reap-something " + jobName + " (why)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := Report{DryRun: tc.dryRun, Actions: []Action{{Kind: tc.kind, Target: tc.target, Reason: tc.reason}}}
+			if got := rep.Lines(); len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("Lines() = %q, want exactly [%q]", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReportLinesOrderAndHeadline: the report reads as a header, then what the
+// pass did, then what it refused and why. The header is the line that makes an
+// old log checkable -- the project, the region and the three deadlines every
+// deletion in it was judged by -- and it is written from the Report's own
+// fields, so a Report that names no project (one built by hand) has none.
+func TestReportLinesOrderAndHeadline(t *testing.T) {
+	rep := Report{
+		Project: "proj-1234", Region: "us-east5",
+		QueueDeadline: 25*time.Hour + backend.TaskTimeoutSlack,
+		RunBudget:     25*time.Hour + backend.TaskTimeoutSlack + ReapMargin,
+		MaxAge:        50*time.Hour + 2*backend.TaskTimeoutSlack + ReapMargin,
+		Actions: []Action{
+			{Kind: ActionDeleteJob, Target: "projects/proj-1234/locations/us-east5/jobs/j", Reason: "stuck"},
+			{Kind: ActionDeleteVM, Target: "us-east5-a/vm", Reason: "leaked"},
+		},
+		Refused: []Refusal{{Target: "us-east5-a/other", Reason: "it is not ours"}},
+	}
+	want := []string{
+		"reaped projects/proj-1234/locations/us-east5: queue deadline 25h2m0s, run budget 25h17m0s, max age 50h19m0s",
+		"deleted job projects/proj-1234/locations/us-east5/jobs/j (stuck)",
+		"deleted VM us-east5-a/vm (leaked)",
+		"refused us-east5-a/other: it is not ours",
+	}
+	if got := rep.Lines(); !slices.Equal(got, want) {
+		t.Fatalf("Lines() = %q, want %q", got, want)
+	}
+	// A dry run says so on the header as well: a log that holds only "would
+	// delete ..." lines must not read later as a pass that found nothing to
+	// delete.
+	rep.DryRun = true
+	if got := rep.Lines()[0]; got != "would reap projects/proj-1234/locations/us-east5: queue deadline 25h2m0s, run budget 25h17m0s, max age 50h19m0s" {
+		t.Errorf("a dry run's headline = %q, want it to say would reap", got)
+	}
+	// No project, no headline: the lines of a report built by hand (or of a
+	// pass that never got as far as naming where it looked) start with the
+	// first action.
+	bare := Report{Actions: []Action{{Kind: ActionDeleteJob, Target: "j", Reason: "stuck"}}}
+	if got := bare.Lines(); len(got) != 1 || got[0] != "deleted job j (stuck)" {
+		t.Errorf("Lines() of a report naming no project = %q, want the action alone", got)
+	}
+}
+
+// TestReapReportCarriesWhereItLookedAndByWhat: the context Reap fills in is
+// the one the Reaper decides by, not a second derivation -- a report whose
+// header disagreed with the deadlines the pass actually used would be worse
+// than no header at all. Including on a pass that errored before it decided
+// anything: the report a failed pass returns still says where it was looking.
+func TestReapReportCarriesWhereItLookedAndByWhat(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	rep := rt.reap(t)
+	if rep.Project != testProject || rep.Region != testRegion {
+		t.Errorf("report names %s/%s, want %s/%s", rep.Project, rep.Region, testProject, testRegion)
+	}
+	if rep.QueueDeadline != rt.r.QueueDeadline() || rep.RunBudget != rt.r.RunBudget() || rep.MaxAge != rt.r.MaxAge() {
+		t.Errorf("report deadlines = %v/%v/%v, want the reaper's own %v/%v/%v",
+			rep.QueueDeadline, rep.RunBudget, rep.MaxAge, rt.r.QueueDeadline(), rt.r.RunBudget(), rt.r.MaxAge())
+	}
+	if got := rep.Lines()[0]; !strings.HasPrefix(got, "reaped projects/"+testProject+"/locations/"+testRegion+": ") {
+		t.Errorf("a clean pass's first line = %q, want the headline naming the pass", got)
+	}
+	if rep.DryRun {
+		t.Errorf("a live pass's report says DryRun")
+	}
+	// The failed pass: the instance delete is refused by the API, so Reap
+	// returns an error with the report it built up to that point.
+	rt = newReaperTest(t, nil)
+	rt.cf.FailDeleteWith = http.StatusForbidden
+	rt.vm("vm", runLabels(t, "20260927-100000-abcd"), rt.old())
+	rep, err := rt.r.Reap(context.Background())
+	if err == nil {
+		t.Fatal("Reap succeeded with an instance delete the API refused")
+	}
+	if rep.Project != testProject || rep.Region != testRegion || rep.QueueDeadline != rt.r.QueueDeadline() {
+		t.Errorf("a failed pass's report = %+v, want it to carry the project, region and deadlines it was judging by", rep)
+	}
+	if got := rep.Lines()[0]; !strings.HasPrefix(got, "reaped projects/"+testProject+"/locations/"+testRegion+": ") {
+		t.Errorf("a failed pass's first line = %q, want the headline naming the pass", got)
+	}
+}
