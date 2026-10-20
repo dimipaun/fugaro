@@ -125,25 +125,34 @@ google_cloud_run_v2_job.web or module.web.google_storage_bucket.data,
 followed by the identity a refused managed apply printed for the object that
 address removes, as in
 
-  fugaro allow-delete 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket'
+  fugaro allow-delete 'module.web.google_storage_bucket.data=type=google_storage_bucket project=proj-1234 name=data id=data-bucket instance=2026-01-02T03:04:05.678Z'
 
 An approval is of one object and not of the address: the same address carrying
 another object later — another name, a renamed or replaced resource, one moved
 in from elsewhere — is not approved by it, so an entry an earlier apply already
 used admits nothing more. The identity is compared character for character with
 the one the plan's before view shows, so copy it from the refusal rather than
-retyping it; it is printed there bare, and one surrounding pair of double
-quotes is stripped from it if you paste it quoted anyway, because a shell or a
-message may have added them.
+retyping it; it is printed there bare, and one matched pair of double quotes
+around it is stripped if you paste it quoted anyway, because a shell or a
+message may have added them (a quote at one end only is a character of the
+identity, and is kept).
 
-What an approval does not tell apart, said here rather than left to be
-discovered: for every managed type but google_apikeys_key the provider derives
-a resource's id from its configured name, and a plan's before view carries
-nothing else, so an object deleted and then re-created from the same
-configuration under the same name at the same address carries the same
-identity and this entry still approves its removal. The rule is about the
-object at the address, not about one instance of a name; if that matters for a
-resource, review the list rather than rely on the entry having been used up.
+What the identity tells apart, and what it does not, said here rather than left
+to be discovered. For the seven managed types whose state carries a value the
+provider mints once per instance — a bucket's time_created, a secret's or an
+artifact repository's create_time, a Cloud Run job's or an API key's uid, a
+service account's unique_id, a bucket object's generation — the identity
+carries that value, so an object of one of those types deleted and then created
+again under the same name at the same address carries a DIFFERENT identity and
+this entry no longer approves its removal. It does not for the seven types that
+have no such value: a Cloud Scheduler job, a project service, and the five
+*_iam_member types, whose whole state is the grant they carry. For those the
+identity is the named object, and a re-creation under the same name at the same
+address is approved by the entry that named it. The provider's own id is not
+one of the instance values: for every managed type it is derived from the
+configured name (an API key's id is projects/P/locations/global/keys/NAME).
+If the difference matters for a resource of the second kind, review the list
+rather than rely on the entry having been used up.
 
 Nothing else is recorded — no note and no reason: the object's own version
 history is the record of who approved what and when, and the identity is what
@@ -176,7 +185,10 @@ installation has, not that the project is Fugaro-managed.
 
 The list is read fail-closed: an absent object, an empty one, one naming
 another project, one written by an older Fugaro (its addresses carry no
-identities, so nothing in it says which object was approved), one whose fields
+identities, so nothing in it says which object was approved), one whose
+identities are an earlier build's (an entry that names the object without the
+per-instance value its type has matches no removal the gate identifies, so it
+approves nothing — re-approve it from a current refusal), one whose fields
 are not exactly the ones this command writes, or one this package cannot read
 is no entries — and no entries refuses every delete and replacement rather
 than permitting them. The write is fail-closed too: if the current list cannot
