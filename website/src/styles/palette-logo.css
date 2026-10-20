@@ -36,8 +36,15 @@
 :root {
   /* The page's ground and the surface a card, a code block or a terminal sits on — the
    * logo's blue-black rather than D104's violet-black. Both are dark enough that every text
-   * tone below clears AA on either of them. */
+   * tone below clears AA on either of them.
+   *
+   * `--panel` is the third step between them, and the bold redesign's own: the box a tab bar,
+   * a hero illustration or a raised card is drawn on sits one step above the ground and one
+   * below the surface, so a panel reads as a thing laid on the page rather than as the page
+   * itself or as a card on top of a card. It is a panel and not a fourth ground: every text
+   * tone clears AA on it (see the pair set in `website/test/a11y.mjs`). */
   --ground: #0A0E16;
+  --panel: #0D131D;
   --surface: #121A26;
 
   /* Body text and the tone for the sentence beside it. */
@@ -53,6 +60,13 @@
   /* A separator that is meant to be seen and not to shout, and the warning tone. */
   --border: #24303F;
   --warn: #F5A524;
+
+  /* The success tone: the end of the run, the third step, the last arrow of the flow. It is
+   * the one colour on the site that means "this finished", and it is 132° from the accent, so
+   * a green mark and a cyan one are never mistaken for each other. It carries the ground as a
+   * label when it is a fill (the same 4.5:1 the accent's fill carries), and it is legible as a
+   * mark on the ground, the panel and the surface. */
+  --ok: #4CC38A;
 
   /* The hero's gradient, as its two stops: `linear-gradient(var(--gradient-from),
    * var(--gradient-to))`. Naming the stops as tokens is what lets the contrast check treat

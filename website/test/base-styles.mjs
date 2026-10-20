@@ -327,7 +327,7 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a group's list left in the header's flow",
-      plant('background:var(--ground);position:absolute;top:100%;left:0;right:0}', 'background:var(--ground);top:100%;left:0;right:0}'),
+      plant('background:var(--panel);position:absolute;top:100%;left:0;right:0}', 'background:var(--panel);top:100%;left:0;right:0}'),
       /in the header's flow/,
     ],
     [
@@ -337,7 +337,7 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a rule that hides a group's list",
-      plant('background:var(--ground);position:absolute', 'background:var(--ground);display:none;position:absolute'),
+      plant('background:var(--panel);position:absolute', 'background:var(--panel);display:none;position:absolute'),
       /hides a group's list/,
     ],
     [
@@ -420,12 +420,12 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a wide dropdown that is still the header's width",
-      plant('border-radius:var(--radius-sm);left:auto;right:0}', 'border-radius:var(--radius-sm);left:0;right:0}'),
+      plant('border-radius:var(--radius-lg);left:auto;right:0}', 'border-radius:var(--radius-sm);left:0;right:0}'),
       /hangs across the header/,
     ],
     [
       "a group's dropdown opening rightwards off the viewport",
-      plant('border-radius:var(--radius-sm);left:auto;right:0}', 'border-radius:var(--radius-sm);left:auto;right:auto}'),
+      plant('border-radius:var(--radius-lg);left:auto;right:0}', 'border-radius:var(--radius-sm);left:auto;right:auto}'),
       /sideways scroll/,
     ],
   ]
