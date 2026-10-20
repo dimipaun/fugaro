@@ -358,6 +358,12 @@ test('the unreleased site still passes the gates that read the artifact', (t) =>
   // the one where the flag is off. `NODE_TEST_CONTEXT` is stripped, because a nested
   // `node --test` that inherits this process's test context refuses to run the files it is
   // given and exits zero — the trap the pass-count check below closes.
+  //
+  // The reporter is named rather than left to the runner's default: the checks below read the
+  // child's TAP, and a Node whose default reporter is not TAP when stdout is a pipe (24 is
+  // `spec`) reports the same passing run in a shape those checks cannot read. Asking for `tap`
+  // is the format, not the result — the pass count and the case named below are still what says
+  // the child ran its files.
   const built = unreleasedBuild(t)
   assert.equal(built.status, 0, `the build of the unreleased site failed:\n${built.output}`)
 
@@ -366,7 +372,7 @@ test('the unreleased site still passes the gates that read the artifact', (t) =>
   delete env.NODE_TEST_CONTEXT
   const run = spawnSync(
     process.execPath,
-    ['--test', ...gates.map((name) => path.join(SITE, 'test', `${name}.mjs`))],
+    ['--test', '--test-reporter=tap', ...gates.map((name) => path.join(SITE, 'test', `${name}.mjs`))],
     { env, encoding: 'utf8' },
   )
   const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
