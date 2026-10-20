@@ -24,12 +24,14 @@
 // light set deferred), so `palette.css` declares one value set and there is no second one
 // to compare against. What replaces that case is the exact-set case below, which is the
 // same "a token cannot arrive on one side only" guarantee against the design's table, plus
-// the case under it that a light set cannot arrive silently at all. Of the two cases section
-// 6.3 defers to a task that writes what they read, **the `--border`-is-decorative scan is
-// here as of Task 6.4**: it reads `base.css` and `screens.css`, which Tasks 6.3 and 6.4
-// created, so this is the first task at which both exist. The window-background comparison
-// against the main process's window module is still not here, because `backgroundColor` is a
-// key Task 6.5 adds and there is nothing to compare before then.
+// the case under it that a light set cannot arrive silently at all. **And the two cases
+// section 6.3 defers to a task that writes what they read are both here now**: the
+// `--border`-is-decorative scan arrived with **Task 6.4**, which created `screens.css` (the
+// second of the two stylesheets it reads; `base.css` is Task 6.3's), and the
+// **window-background comparison** against the main process's window module arrived with
+// **Task 6.5**, which is the task that gave `consoleWindowOptions` its `backgroundColor`
+// literal -- the case reads that literal out of the options the window is built with, so
+// before 6.5 there was nothing for it to compare against.
 //
 // The arithmetic is the WCAG 2.1 relative-luminance definition, written out the way
 // website/test/a11y.mjs writes it rather than imported from it: that file is a

@@ -275,7 +275,7 @@ div.console-rail-list {
   overflow-y: auto;
 }
 
-/* A row is a tab in all but name (the role and the tablist are Task 6.5's): two
+/* A row is a tab, role and tablist both (they arrived with Task 6.5): two
  * lines of identity, the state and the spend, and the hairline that separates it
  * from the next row. The left border is reserved at the selected width so that
  * selecting a row moves no text. */
@@ -295,7 +295,7 @@ button.console-rail-row:hover {
 }
 
 /* The selected row: the raised surface and a 3 px `--accent` left border. The
- * attribute is Task 6.5's and the border is this task's — see this file's header. */
+ * attribute arrived with Task 6.5 and the border is this task's — see this file's header. */
 button.console-rail-row[aria-selected='true'] {
   background: var(--surface-alt);
   border-left-color: var(--accent);

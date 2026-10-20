@@ -2754,21 +2754,26 @@ The red step is kept as a case: a deliberately failing fixture, `#646464` on `#1
 must print `--text-muted on --surface is 3.1:1, needs 4.5:1` — one decimal, because that is
 the line `a11y.mjs`'s own committed fixture prints.
 
-**Three** of the cases the design's section 6.3 assigns to `theme-tokens.test.ts` are not in
-the file, and two different reasons put them elsewhere:
+**The design's section 6.3 names three cases beyond Task 6.1's palette cases, and all three
+are accounted for**: the **two that read a file other than `palette.css` are both in the file
+now** — each arrived in the task that writes what it reads — and the third is *replaced*
+rather than deferred:
 
 - the **"vocabulary complete and identical in both sets"** case is *replaced*: under the
   owner's dark-only ruling there is one value set, so it would compare a set with itself.
   What catches what it was written for is here instead — the vocabulary is declared
   **exactly** (every token of the design's section 3.1 table is present, and no name
   outside it), no colour is spelled in `tokens.css`, and no step is spelled in
-  `palette.css`;
+  `palette.css`. It is the one of the three that is still not in the file, and its reason is
+  the ruling rather than a later task;
 - the **`--border`-is-decorative scan** of `base.css` and `screens.css` was Task 6.4's,
-  because both files are created later than Task 6.1 — the case lands in the task that
-  writes what it reads, and Task 6.4 wrote it;
-- the **window-background comparison** against `consoleWindowOptions` is Task 6.5's:
-  `backgroundColor` is a key that task adds to `src/main/window.ts`, and under the ruling it
-  is one literal, `#0A0E16`, checked against the one `--ground`.
+  because both files are created later than Task 6.1 — the case landed in the task that
+  writes what it reads, and it is in the file since Task 6.4;
+- the **window-background comparison** against `consoleWindowOptions` was Task 6.5's, for
+  the same reason: `backgroundColor` is a key that task added to `src/main/window.ts`, and
+  the case reads the literal out of the options the window is built with — under the ruling
+  one literal, `#0A0E16`, checked against the one `--ground`. It is in the file since
+  Task 6.5.
 
 ## The wiring: the stylesheet is bundled, served and linked (Task 6.2)
 
@@ -3030,8 +3035,9 @@ This task re-records nothing, and no frame is compared or written by it: the gol
 are among the ones the skip covers, and the eight baselines are Task 6.6's single recording
 act.
 
-The `--border`-is-decorative scan is Task 6.4's and the window-background comparison is Task
-6.5's, both for the reasons Task 6.1's section above gives.
+The `--border`-is-decorative scan was Task 6.4's and the window-background comparison was
+Task 6.5's, both for the reasons Task 6.1's section above gives, and both are in
+`theme-tokens.test.ts` now.
 
 ## The layout, and the installation rail (Task 6.3)
 
@@ -3118,8 +3124,8 @@ when the system takes the colours away.
 `button.console-rail-row[aria-selected='true']` draws the raised surface and the 3 px
 `--accent` left border, and the row reserves that border at the selected width
 (`border-left: 3px solid transparent`) so selecting a row moves no text. The attribute itself
-— with `role="tablist"`, `role="tab"` and the keys — is Task 6.5's, which is the design's
-split: the border is this task's and the mark that turns it on arrives with the tablist
+— with `role="tablist"`, `role="tab"` and the keys — was Task 6.5's, which is the design's
+split: the border is this task's and the mark that turns it on arrived with the tablist
 behaviour.
 
 The collapse control is this task's, so its behaviour is too: it flips the rail's
@@ -3223,9 +3229,9 @@ Each was planted for real, run, and removed; the failure is the red step.
 
 `screens.css` is Task 6.4's, and the rows' and badges' `@media (forced-colors: active)` block
 with it — each stylesheet carries the block for the rules it writes. The `--border`-is-
-decorative scan is 6.4's, the rows' `role`/`aria-selected` and the keys are 6.5's, the
-window-background comparison is 6.5's, and the eight golden frames are 6.6's, which is
-owner-run. **The goldens are held, not unchanged**: this task's layout is exactly the kind of
+decorative scan was 6.4's, the rows' `role`/`aria-selected`, the keys and the
+window-background comparison were 6.5's — all three are in the tree since it — and the
+eight golden frames are 6.6's, which is owner-run. **The goldens are held, not unchanged**: this task's layout is exactly the kind of
 change 6.6 exists to record once, at the end, rather than mid-phase.
 
 ## The screens (Task 6.4)
@@ -3328,9 +3334,11 @@ carry the attribute it qualifies the class with. It found four rules:
   which is the one selector that can see the banner inside.
 - `button.console-rail-row[aria-selected='true']` is the **fourth**, and it is deliberate:
   `base.css`'s header records Task 6.3 writing the design's own rule (§4.1) before the
-  attribute §2.1 hands to Task 6.5. The case carries it in a one-entry `AHEAD_OF_THE_CODE`
-  list rather than failing on it, because a rule ahead of its attribute is this design's own
-  split — and a second entry there would be a rule nothing emits.
+  attribute §2.1 handed to Task 6.5. **Task 6.5 arrived and emptied the list**: the tablist
+  behaviour writes `aria-selected`, so the case reads the write off the code like any other
+  compound selector's, and `AHEAD_OF_THE_CODE` is an empty list rather than a one-entry one.
+  An entry there would be a rule ahead of its attribute, which is this design's own split,
+  and a second one would be a rule nothing emits.
 
 **And one tone.** `span.run-stage-passed` was painted `--ok` for both of the stage's words:
 the class holds `passed` **or** `failed` with no attribute (§2.6), so the rule read a failed
@@ -3402,10 +3410,105 @@ layer does do is §4.2's own: the three-column figure groups become two at 48.75
 
 The eight golden frames are Task 6.6's, which is owner-run and records once at the end of the
 phase; the computed-background assertion belongs with that recording, for the reason Task 6.3
-gives. The rail's `role`/`aria-selected`, the keys and the window background are Task 6.5's.
+gives. The rail's `role`/`aria-selected`, the keys and the window background were Task 6.5's,
+and all three are in the tree since it.
 
 **The five forced-colors cases are written but not run in the container this task was
 implemented in**: Playwright's Electron launch needs a display and a GTK/NSS/glib stack the
 image does not have. `npm run test:unit` is green there and `tsc --noEmit` typechecks the
 specs; the e2e suite is the one verification this branch could not complete, and the pull
+request says so.
+
+## The window's ground, and the keyboard (Task 6.5)
+
+Task 6.4 was the last stylesheet, so this task paints nothing: it is the two things the
+design's section 4.1 asks of the **code** — the colour the window paints *before* the
+document does, and the keyboard the canvas's two tablists and the rail's shortcut keys need.
+It is also the task the owner's Q1 ruling of 2026-10-19 lands in, which is why what it adds
+is smaller than the task it was written as: **one** value set ships, dark, so `CONSOLE_THEME`
+stays the literal `'dark'`, no `matchMedia` read and no `nativeTheme` query comes with it, and
+the window paints **one** background literal against the one `--ground`.
+
+| Where | What changed |
+|---|---|
+| `src/main/window.ts` | **new**: `CONSOLE_WINDOW_BACKGROUND` (`#0A0E16`) and the `backgroundColor` key in `consoleWindowOptions` |
+| `src/renderer/entry.ts` | **the keyboard**: the view navigation and the rail's list as tablists (`role`, `aria-selected`, a roving `tabindex`, each on its own axis, Home and End, Enter on the rail, the focus following the move), `isMacPlatform`, and the rail's shortcut keys on the document |
+| `src/renderer/theme/base.css` | the header's account of the selected row's rule, which now selects an attribute the code writes |
+| `test/unit/theme-tokens.test.ts` | three cases: the window background against `consoleWindowOptions`, the focus ring's one `:focus-visible` rule, and the collapsed rail's names |
+| `test/unit/entry-wiring.test.ts`, `test/support/fakeDom.ts` | the keyboard's cases, and the fake's `press`/`focus` and its two key fields |
+| `test/unit/theme-selectors.test.ts` | `drawnAttributes` reads a tablist's write made in a loop over a container the drawing filled — which is what retires `AHEAD_OF_THE_CODE`'s one entry |
+| `test/unit/window.test.ts` | the options list gains the one ground literal |
+| `docs/coordinator/reconciliation.md` | the two `window.ts` citations follow the line they name |
+| this file | the section you are reading |
+
+### The window paints the ground before the document draws, and the duplicate is a case
+
+`backgroundColor` is what the platform fills the window with in the frame between the window
+existing and the stylesheet's first paint, so a console without it flashes the platform's
+default white on every launch — a defect no screenshot of a **painted** window can see, which
+is why the guard is the only place it can be. The value is `--ground`, and it is written out
+in `src/main/window.ts` **as a literal rather than read from the stylesheet**: the main
+process has no way to resolve a custom property, so the equality is held by a test instead of
+by the compiler — `theme-tokens.test.ts` reads the literal **out of the options the window is
+built with** (not out of the exported constant, so a `backgroundColor` dropped from
+`consoleWindowOptions` fails the same case as one that drifted) and fails by name when the
+two differ. One literal and one direction, because one set ships: the two-set design's second
+literal and its `nativeTheme` read are the record of the question the ruling answered.
+
+### The keyboard: two tablists, and the shortcut keys are the document's
+
+The design's section 4.3 gives the WAI-ARIA tablist pattern to the view navigation **and** to
+the rail's list (section 4.1), and they are two tablists with two axes: the navigation is a
+row of buttons driven with Left and Right, the rail's list is a column of rows driven with
+Arrow Up and Arrow Down, and Home and End are on both. The arrows move the focus **and** the
+roving `tabindex` together, and the rail's Enter selects the row — the pattern's
+manual-activation form, since what a selection means on this rail is its own mark rather than
+a read the document could make. `tabStop` is one function both tablists write through,
+because the rail's list holds one row today: a rail whose write stopped roving would still
+draw exactly one tab stop, so the rule is held where a case can drive it rather than where it
+would be unobservable.
+
+The rail's **shortcut keys** are the document's and not the row's, which is what section 4.3
+means by "without walking the tab order at all": the key reaches a row from wherever the
+operator is standing. The design grants **Command-1 to Command-3** on macOS and
+**Control-1 to Control-3** elsewhere — the first three rows the rail draws, which is the
+hint's own sentence — so the mapping answers `null` above the third (and the key is then
+neither selected nor prevented: the window keeps it), answers `null` for the modifier the
+platform does not use, and reads the **physical** key (`event.code`): on AZERTY the unshifted
+`1` key produces `&`, and a mapping that read the character the layout produces would do
+nothing to the very keystroke the hint asks that operator for. `Numpad1` is a different
+physical key and is not a second spelling of `Digit1` — the design grants the number row and
+names no keypad key.
+
+### The mutations this task is proved against
+
+Each was planted in the shipped code, run, and removed; the failure is the red step. The last
+three are the 2026-10-20 follow-up's, and the sections above record what each was for.
+
+| Mutation | What fails |
+|---|---|
+| `CONSOLE_WINDOW_BACKGROUND` drifted from `--ground` (`#FFFFFF`) | `theme-tokens.test.ts`, the window-background case, and `window.test.ts`'s options case — 2 failed |
+| `backgroundColor` dropped from `consoleWindowOptions` | the same two cases — 2 failed |
+| `tabStop` answers `'0'` for both states | `entry-wiring.test.ts`, 3 cases — the navigation's two and the rule's own |
+| `shortcutRow` reads `event.key` again, so the layout decides | `entry-wiring.test.ts`, the physical-key case and the rail's wiring case — 2 failed |
+| the three-row bound dropped, so `Digit4` to `Digit9` select again | `entry-wiring.test.ts`, 3 cases — the three-row case, the physical-key case and the rail's wiring case |
+| `Numpad` admitted as a second spelling of the number row | `entry-wiring.test.ts`, the physical-key case and the rail's wiring case — 2 failed |
+
+### What this task does not own
+
+The eight golden frames are Task 6.6's, which is owner-run and records once at the end of the
+phase — **and this task moved the picture once**: `base.css` has drawn the selected rail row's
+raised surface and 3 px `--accent` border since Task 6.3, and the `aria-selected` that turns
+them on is written here, so a frame taken now differs from the same frame taken before it.
+The reason the goldens wait is still Task 6.6's own. The
+theme switch this task was named for is **not** deferred work: the owner's Q1 ruling removed
+it, and a later task that wants it needs a light set to switch to and a new ruling to ship it
+(plan Task 6.5's record, design section 3.6). No token, no rule and no served file is this
+task's: `THEME_STYLESHEETS`, `SERVED_FILES` and the CSP are exactly what Task 6.4 left, and
+`ElementLike` needed no widening — `role`, `aria-*` and `tabindex` are attributes, and
+`event.code` is a read of an event rather than a write to the DOM.
+
+**The e2e suite was not run in the container this task was implemented in** (Playwright's
+Electron launch needs a display and a GTK/NSS/glib stack the image does not have);
+`npm run test:unit` and `tsc --noEmit` are the two verifications that ran, and the pull
 request says so.
