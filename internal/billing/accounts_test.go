@@ -4,10 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -96,6 +102,42 @@ func TestListRefusedWhenTheAPIIsDisabled(t *testing.T) {
 	}
 }
 
+// TestListQuotesTheQuotaProjectInTheEnableCommand pins that the enable line is
+// a command someone pastes into a shell: the quota project goes through
+// shellword, so a value that is not one safe word is quoted instead of
+// splitting the line. Dropping the quoting prints it bare.
+func TestListQuotesTheQuotaProjectInTheEnableCommand(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	disabledOn(t, f, "projects/a project with spaces")
+
+	_, err := List(context.Background(), fakeCreds(f))
+	var e *ErrDisabled
+	if !errors.As(err, &e) {
+		t.Fatalf("a disabled API: %v, want *ErrDisabled", err)
+	}
+	if e.QuotaProject != "a project with spaces" {
+		t.Errorf("the quota project: %q", e.QuotaProject)
+	}
+	want := "gcloud services enable cloudbilling.googleapis.com --project 'a project with spaces'"
+	if e.EnableCommand != want {
+		t.Errorf("the enable command: %q, want %q", e.EnableCommand, want)
+	}
+}
+
+// TestListWithNoAccounts pins the empty answer: a caller with no billing
+// accounts at all is not an error, and nothing is invented for it.
+func TestListWithNoAccounts(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+
+	got, err := List(context.Background(), fakeCreds(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a caller with no accounts: %+v", got)
+	}
+}
+
 func TestListRefusedWithoutThePermission(t *testing.T) {
 	f := gcpfake.NewBilling(t)
 	f.AddAccountNamed(accountID(t, "one"), "the operator's own account", true)
@@ -115,6 +157,113 @@ func TestListRefusedWithoutThePermission(t *testing.T) {
 	}
 	if msg := e.Error(); !strings.Contains(msg, "billing.accounts.list") {
 		t.Errorf("the error does not name the permission: %v", msg)
+	}
+}
+
+// disabledOn points a Service Usage fake at the billing fake with consumer as
+// the project the SERVICE_DISABLED answer names, as projects/<number>.
+func disabledOn(t *testing.T, f *gcpfake.Billing, consumer string) *gcpfake.ServiceUsage {
+	t.Helper()
+	su := gcpfake.NewServiceUsage(t)
+	su.Consumer = consumer
+	su.Disable("cloudbilling.googleapis.com", f.Server)
+	return su
+}
+
+// TestListRefusedWithoutAQuotaProject pins the one project this package must
+// never name as one to enable the API on: when the credentials name no quota
+// project of their own, Google bills the call to its own project (the literal
+// below, gcloud's default), and the answer's consumer is that project. An
+// enable line for it would send the operator to a project that is not theirs.
+func TestListRefusedWithoutAQuotaProject(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	f.AddAccountNamed(accountID(t, "one"), "the operator's own account", true)
+	disabledOn(t, f, "projects/764086051850")
+
+	got, err := List(context.Background(), fakeCreds(f))
+	if len(got) != 0 {
+		t.Errorf("a refused list answered with accounts: %+v", got)
+	}
+	var e *ErrNoQuotaProject
+	if !errors.As(err, &e) {
+		t.Fatalf("a disable billed to Google's own project: %v, want *ErrNoQuotaProject", err)
+	}
+	var d *ErrDisabled
+	if errors.As(err, &d) {
+		t.Errorf("Google's own project was named as one to enable the API on: %v", err)
+	}
+	if msg := e.Error(); strings.Contains(msg, "764086051850") && !strings.Contains(msg, "not yours") {
+		t.Errorf("the error names Google's project without saying it is not the operator's: %v", msg)
+	}
+	if !strings.Contains(e.Error(), "set-quota-project") {
+		t.Errorf("the error does not say how to name a quota project: %v", e.Error())
+	}
+	if e.SetCommand != "gcloud auth application-default set-quota-project <your-project>" {
+		t.Errorf("the fix: %q", e.SetCommand)
+	}
+}
+
+// TestListClassifiesRefusalsByReason pins what a 403 that is not a disable is
+// told as: the missing permission the wizard has an answer for keeps its own
+// error, and every other reason the API names — USER_PROJECT_DENIED, an
+// insufficient token scope — gets the generic one that quotes it, rather than
+// all being told "you need billing.accounts.list".
+func TestListClassifiesRefusalsByReason(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		reason string
+		perm   bool
+		quoted string
+	}{
+		{"the missing permission", "IAM_PERMISSION_DENIED", true, ""},
+		{"no reason at all", "", true, ""},
+		{"the quota project rejected", "USER_PROJECT_DENIED", false, "USER_PROJECT_DENIED"},
+		{"a token without the scope", "ACCESS_TOKEN_SCOPE_INSUFFICIENT", false, "ACCESS_TOKEN_SCOPE_INSUFFICIENT"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := gcpfake.NewBilling(t)
+			f.RefusePath("/v1/billingAccounts", http.StatusForbidden, "PERMISSION_DENIED", c.reason, "refused")
+
+			_, err := List(context.Background(), fakeCreds(f))
+			var perm *ErrNoPermission
+			var refused *ErrRefused
+			switch {
+			case c.perm && !errors.As(err, &perm):
+				t.Fatalf("a %s refusal: %v, want *ErrNoPermission", c.name, err)
+			case !c.perm && !errors.As(err, &refused):
+				t.Fatalf("a %s refusal: %v, want *ErrRefused", c.name, err)
+			case c.perm && errors.As(err, &refused):
+				t.Errorf("a %s refusal was told as the generic one: %v", c.name, err)
+			case !c.perm && errors.As(err, &perm):
+				t.Errorf("a %s refusal was told as a missing billing.accounts.list: %v", c.name, err)
+			}
+			if c.quoted != "" && !strings.Contains(err.Error(), c.quoted) {
+				t.Errorf("the refusal does not quote the reason the API gave: %v", err)
+			}
+			if c.perm && !strings.Contains(err.Error(), "billing.accounts.list") {
+				t.Errorf("the missing-permission error does not name the permission: %v", err)
+			}
+		})
+	}
+}
+
+// TestRefusalReasonIsMadeSafeToPrint pins that the reason the API gave reaches
+// the terminal through safetext: it is a string from outside this program, and
+// a newline or an escape sequence in it must not reach a printed line whole.
+func TestRefusalReasonIsMadeSafeToPrint(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	f.RefusePath("/v1/billingAccounts", http.StatusForbidden, "PERMISSION_DENIED", "TWO\nLINES", "refused")
+
+	_, err := List(context.Background(), fakeCreds(f))
+	var refused *ErrRefused
+	if !errors.As(err, &refused) {
+		t.Fatalf("the refusal: %v, want *ErrRefused", err)
+	}
+	if msg := err.Error(); strings.ContainsAny(msg, "\n\r") {
+		t.Errorf("the reason's newline reached the error: %q", msg)
+	}
+	if !strings.Contains(err.Error(), "TWO?LINES") {
+		t.Errorf("the reason is not the sanitized one: %q", err.Error())
 	}
 }
 
@@ -274,6 +423,165 @@ func TestListFollowsEveryPage(t *testing.T) {
 	}
 	if n := len(f.Requests()); n != 2 {
 		t.Errorf("a list of %d accounts took %d calls, want 2: %+v", len(ids), n, f.Requests())
+	}
+}
+
+// pages hands out one account per call, forever: tokens is the next page
+// token the call-th answer carries ("" ends the walk), so a test can drive the
+// walk's own limits from a server that never stops or never moves on.
+func pages(t *testing.T, ids []string, tokens func(call int) string) *httptest.Server {
+	t.Helper()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		body := map[string]any{"billingAccounts": []any{map[string]any{
+			"name": "billingAccounts/" + ids[(calls-1)%len(ids)], "displayName": "account " + strconv.Itoa(calls), "open": true,
+		}}}
+		if next := tokens(calls); next != "" {
+			body["nextPageToken"] = next
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestListRefusesARepeatedPageToken pins the walk's first limit: a server that
+// answers the same token again is a loop, not a list, and it is refused rather
+// than followed. Without the check the walk runs to the page bound instead.
+func TestListRefusesARepeatedPageToken(t *testing.T) {
+	ids := []string{accountID(t, "one"), accountID(t, "two")}
+	srv := pages(t, ids, func(int) string { return "same" })
+
+	got, err := List(context.Background(), Credentials{Endpoint: srv.URL, NoAuth: true})
+	if err == nil {
+		t.Fatalf("a repeated page token was followed to the end: %+v", got)
+	}
+	if !strings.Contains(err.Error(), "same") {
+		t.Errorf("the error does not name the token it refused: %v", err)
+	}
+}
+
+// TestListStopsAtThePageBound pins the walk's second limit: a server that hands
+// out a fresh token forever is stopped at the bound — 100 pages, the literal
+// below, so that raising it is a change someone made on purpose. The server
+// runs out of tokens at 250, so a walk with no bound finishes instead of
+// hanging, and this test fails on its own assertions.
+func TestListStopsAtThePageBound(t *testing.T) {
+	ids := []string{accountID(t, "one")}
+	srv := pages(t, ids, func(call int) string {
+		if call >= 250 {
+			return ""
+		}
+		return strconv.Itoa(call)
+	})
+
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return http.DefaultTransport.RoundTrip(r)
+	})}
+	got, err := List(context.Background(), Credentials{Endpoint: srv.URL, NoAuth: true, HTTPClient: client})
+	if err == nil {
+		t.Fatalf("a list of endless pages finished with %d accounts", len(got))
+	}
+	if calls != 100 {
+		t.Errorf("the walk made %d calls, want the bound of 100", calls)
+	}
+}
+
+// roundTripFunc is a RoundTripper that counts what it passes on.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestListSkipsAnAccountWhoseIDIsNotOne pins that an ID this package cannot
+// read is not passed on: the ID ends up in a typed confirmation and in a
+// printed gcloud line, so an entry whose ID is not the API's own shape is
+// dropped rather than offered.
+func TestListSkipsAnAccountWhoseIDIsNotOne(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	good := accountID(t, "good")
+	f.AddAccountNamed(good, "the operator's own account", true)
+	for _, tag := range []string{"lower", "short"} {
+		bad := accountID(t, tag)
+		switch tag {
+		case "lower":
+			bad = strings.ToLower(bad)
+		case "short":
+			bad = bad[:11]
+		}
+		f.AddAccountNamed(bad, "an account whose ID is not one", true)
+	}
+
+	got, err := List(context.Background(), fakeCreds(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != good {
+		t.Errorf("the list: %+v, want only %s", got, good)
+	}
+}
+
+// TestOnlyTheWizardMayImportThisPackage is the head comment's "called from
+// exactly one place", checked: it walks every non-test Go file of the module
+// and fails on any package that imports this one without being on the list
+// below. W4.3 is that one place — internal/cli's billing question — and adding
+// it here is a deliberate change to the privacy story, not a step a new
+// importer takes on its own.
+func TestOnlyTheWizardMayImportThisPackage(t *testing.T) {
+	allowed := map[string]bool{}
+	root := filepath.Join("..", "..") // internal/billing -> the module root
+	const self = "github.com/dimipaun/fugaro/internal/billing"
+	importers := map[string]bool{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "testdata", "node_modules", "vendor":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		// The import is read from the file's syntax tree, so a comment that
+		// mentions the path is not an importer.
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if err != nil {
+			return fmt.Errorf("parsing %s: %w", path, err)
+		}
+		imports := false
+		for _, is := range f.Imports {
+			if p, err := strconv.Unquote(is.Path.Value); err == nil && p == self {
+				imports = true
+			}
+		}
+		if !imports {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		importers[dir] = true
+		if !allowed[dir] {
+			t.Errorf("%s imports %s: it may be imported only by %v (W4.3's billing question)", rel, self, allowed)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the module: %v", err)
+	}
+	for dir := range allowed {
+		if !importers[dir] {
+			t.Errorf("the list allows %s to import this package, and it does not: the list is stale", dir)
+		}
 	}
 }
 

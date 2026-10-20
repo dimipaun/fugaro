@@ -36,6 +36,14 @@
 // Everywhere else the rule stands: no other command lists a caller's billing
 // accounts, and none of them prints the account a project is already linked
 // to.
+//
+// One name collision to know about before importing this package: four files
+// in this tree already call google.golang.org/api/cloudbilling/v1 "billing"
+// (internal/cli/doctor.go, internal/infra/discover.go,
+// internal/infra/projectcreate.go, internal/preflight/google.go), and this
+// package's import path ends in the same word. A file that needs both — W4.3's
+// billing question is one — aliases one of the two; this package's own file
+// calls the generated client "cloudbilling" for that reason.
 package billing
 
 import (
@@ -44,12 +52,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	cloudbilling "google.golang.org/api/cloudbilling/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
@@ -60,6 +70,32 @@ const serviceCloudBilling = "cloudbilling.googleapis.com"
 // listPageSize is the page billingAccounts.list is asked for: the API's own
 // maximum, and its default.
 const listPageSize = 100
+
+// maxPages bounds one walk of billingAccounts.list: 100 pages, 10,000
+// accounts. A list longer than that is not a list an operator picks from, and
+// an answer that never stops is a bug in the walk's counterpart, not something
+// to follow.
+const maxPages = 100
+
+// googleOwnedQuotaProject is the project Google bills a call to when the
+// credentials name no quota project of their own — gcloud's own default
+// project. It is not the operator's, so it is never offered as one to enable
+// an API on (see ErrNoQuotaProject); internal/infra/firebase.go treats the
+// same answer the same way (NoQuotaProjectProblem).
+const googleOwnedQuotaProject = "764086051850"
+
+// setQuotaProjectCommand names a quota project of the operator's own. It is
+// what ErrNoQuotaProject carries: there is no enable line to print, because
+// the project the API is off on is not theirs.
+const setQuotaProjectCommand = "gcloud auth application-default set-quota-project <your-project>"
+
+// billingAccountIDRE is a billing account's ID: three groups of six uppercase
+// hexadecimal digits, the shape `gcloud billing projects link
+// --billing-account` takes and internal/infra/projectcreate.go's
+// billingAccountRE accepts. An ID that is not one is dropped: it ends up in a
+// typed confirmation and in a printed gcloud line, so an answer this package
+// cannot read is not passed on.
+var billingAccountIDRE = regexp.MustCompile(`^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$`)
 
 // discardLogger keeps the client from logging requests and their answers.
 // Without it a Google client logs the response body when
@@ -110,27 +146,65 @@ func (e *ErrDisabled) Error() string {
 }
 
 // ErrNoPermission is the caller not being allowed to read the accounts: they
-// lack billing.accounts.list. There is nothing to retry — no second call, no
-// other credential, no other project — and a caller falls back to the guided
-// gcloud line.
+// lack billing.accounts.list. A 403 that names no reason at all lands here
+// too, a bare refusal being most often the missing role. There is nothing to
+// retry — no second call, no other credential, no other project — and a caller
+// falls back to the guided gcloud line.
 type ErrNoPermission struct{}
 
 func (e *ErrNoPermission) Error() string {
 	return "you can't list billing accounts: the caller needs billing.accounts.list (roles/billing.viewer, or an owner role, on the billing accounts)"
 }
 
+// ErrNoQuotaProject is the Cloud Billing API being off while the credentials
+// name no quota project of their own. Google then bills the call to its own
+// project (googleOwnedQuotaProject), and the SERVICE_DISABLED answer names
+// that project as the consumer. It is never the operator's to enable the API
+// on, so this is not an ErrDisabled: SetCommand is the line that gives the
+// credentials a quota project of the operator's own, and the caller prints
+// that instead of any enable line.
+type ErrNoQuotaProject struct {
+	SetCommand string
+}
+
+func (e *ErrNoQuotaProject) Error() string {
+	return "you can't list billing accounts: your credentials name no quota project, so Google bills this call to its own project (" + googleOwnedQuotaProject + "), which is not yours to enable the Cloud Billing API on; name one of your own projects and retry: " + e.SetCommand
+}
+
+// ErrRefused is a refusal this package has no answer of its own for: the API
+// said no and named a reason that is not a missing permission — the quota
+// project rejected, a token without the scope, or a reason this package has
+// never seen. Reason is that reason, made safe to print (safetext), and a
+// caller falls back to the guided gcloud line.
+type ErrRefused struct {
+	Reason string
+}
+
+func (e *ErrRefused) Error() string {
+	if e.Reason == "" {
+		return "you can't list billing accounts: the API refused the call"
+	}
+	return "you can't list billing accounts: the API refused the call (" + e.Reason + ")"
+}
+
 // List reads the caller's billing accounts with the credentials creds names
 // and returns the open ones, in the order the API answered them. It is one
-// walk of billingAccounts.list — one call, plus one per further page — and a
-// refusal is never retried: a caller that cannot read the list is told so once,
-// with ErrDisabled or ErrNoPermission.
+// walk of billingAccounts.list — one call, plus one per further page, up to
+// maxPages — and a refusal is never retried: a caller that cannot read the
+// list is told so once, with ErrDisabled, ErrNoQuotaProject, ErrNoPermission
+// or ErrRefused.
 func List(ctx context.Context, creds Credentials) ([]Account, error) {
 	svc, err := newService(ctx, creds)
 	if err != nil {
 		return nil, err
 	}
 	var out []Account
-	for token := ""; ; {
+	seen := map[string]bool{}
+	token := ""
+	for page := 1; ; page++ {
+		if page > maxPages {
+			return nil, fmt.Errorf("listing billing accounts: the API answered more than %d pages", maxPages)
+		}
 		call := svc.BillingAccounts.List().PageSize(listPageSize)
 		if token != "" {
 			call = call.PageToken(token)
@@ -143,11 +217,19 @@ func List(ctx context.Context, creds Credentials) ([]Account, error) {
 			if a == nil || !a.Open {
 				continue
 			}
-			out = append(out, Account{ID: strings.TrimPrefix(a.Name, "billingAccounts/"), DisplayName: a.DisplayName, Open: a.Open})
+			id := strings.TrimPrefix(a.Name, "billingAccounts/")
+			if !billingAccountIDRE.MatchString(id) {
+				continue
+			}
+			out = append(out, Account{ID: id, DisplayName: a.DisplayName, Open: a.Open})
 		}
 		if token = resp.NextPageToken; token == "" {
 			return out, nil
 		}
+		if seen[token] {
+			return nil, fmt.Errorf("listing billing accounts: the API repeated the page token %s", safetext.OneLine(token))
+		}
+		seen[token] = true
 	}
 }
 
@@ -181,51 +263,68 @@ func newService(ctx context.Context, creds Credentials) (*cloudbilling.APIServic
 	return svc, nil
 }
 
-// listErr types the two refusals the wizard has an answer for, and leaves
-// every other failure as it came — a 401 among them: credentials that are
-// missing or expired are not a missing permission, and the API's own message
-// says which.
+// listErr types the refusals the wizard has an answer for, and leaves every
+// other failure as it came — a 401 among them: credentials that are missing or
+// expired are not a missing permission, and the API's own message says which.
 func listErr(err error) error {
-	if off, quota := serviceDisabled(err); off {
-		if quota == "" {
-			// An API is off, but not one this package can print an enable line
-			// for — another API's answer, or one naming no quota project. It is
-			// not a missing permission, so it stays as it came.
-			return fmt.Errorf("listing billing accounts: %w", err)
-		}
-		return &ErrDisabled{
-			QuotaProject:  quota,
-			EnableCommand: "gcloud services enable " + serviceCloudBilling + " --project " + shellword.Quote(quota),
-		}
-	}
-	var ge *googleapi.Error
-	if errors.As(err, &ge) && ge.Code == http.StatusForbidden {
-		return &ErrNoPermission{}
-	}
-	return fmt.Errorf("listing billing accounts: %w", err)
-}
-
-// serviceDisabled reports whether err is an API being off rather than a caller
-// being refused, and the quota project the answer names it on — "" when it
-// names none, or names another API. It reads the structured detail exactly as
-// internal/preflight/google.go's check of the same API reads it (mirrored, not
-// reused, to keep each package's Google surface to the one client it needs).
-func serviceDisabled(err error) (off bool, quota string) {
 	var ae *googleapi.Error
 	if !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
-		return false, ""
+		return fmt.Errorf("listing billing accounts: %w", err)
 	}
+	reason, metadata := errorInfo(ae)
+	switch reason {
+	case reasonServiceDisabled:
+		service, _ := metadata["service"].(string)
+		consumer, _ := metadata["consumer"].(string)
+		quota := strings.TrimPrefix(consumer, "projects/")
+		switch {
+		case service != serviceCloudBilling || quota == "":
+			// An API is off, but not one this package can print an enable line
+			// for — another API's answer, or one naming no project at all. It
+			// is not a missing permission, so it stays as it came.
+			return fmt.Errorf("listing billing accounts: %w", err)
+		case quota == googleOwnedQuotaProject:
+			// The credentials name no quota project of their own, and Google
+			// billed the call to its own. Never an enable line: that project is
+			// not the operator's.
+			return &ErrNoQuotaProject{SetCommand: setQuotaProjectCommand}
+		default:
+			return &ErrDisabled{
+				QuotaProject:  quota,
+				EnableCommand: "gcloud services enable " + serviceCloudBilling + " --project " + shellword.Quote(quota),
+			}
+		}
+	case "", reasonPermissionDenied:
+		// The missing permission, and the 403 that names no reason at all: a
+		// bare refusal is most often the missing role, and billing.accounts.list
+		// is the one this package needs.
+		return &ErrNoPermission{}
+	default:
+		return &ErrRefused{Reason: safetext.OneLine(reason)}
+	}
+}
+
+// The reasons this package reads out of a refusal's structured detail. Every
+// other reason is carried by ErrRefused rather than guessed at.
+const (
+	reasonServiceDisabled  = "SERVICE_DISABLED"
+	reasonPermissionDenied = "IAM_PERMISSION_DENIED"
+)
+
+// errorInfo is the reason and metadata of the first google.rpc.ErrorInfo
+// detail in a Google error, "" and nil when there is none. It reads the detail
+// exactly as internal/preflight/google.go's check of the same API reads it
+// (mirrored, not reused, to keep each package's Google surface to the one
+// client it needs).
+func errorInfo(ae *googleapi.Error) (string, map[string]any) {
 	for _, d := range ae.Details {
 		m, ok := d.(map[string]any)
-		if !ok || m["@type"] != "type.googleapis.com/google.rpc.ErrorInfo" || m["reason"] != "SERVICE_DISABLED" {
+		if !ok || m["@type"] != "type.googleapis.com/google.rpc.ErrorInfo" {
 			continue
 		}
-		md, _ := m["metadata"].(map[string]any)
-		if md["service"] != serviceCloudBilling {
-			return true, ""
-		}
-		consumer, _ := md["consumer"].(string)
-		return true, strings.TrimPrefix(consumer, "projects/")
+		reason, _ := m["reason"].(string)
+		metadata, _ := m["metadata"].(map[string]any)
+		return reason, metadata
 	}
-	return false, ""
+	return "", nil
 }
