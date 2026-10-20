@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **990,197 bytes in a checkout with no tags** and to **990,197 bytes with the
+  commit builds to **987,954 bytes in a checkout with no tags** and to **987,954 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -294,10 +294,13 @@ added or removed without this sentence moving fails there:
     one-pixel line, with the step's name and its line beside it: the page that renders them
     grows by the rail, the connector, the rule that stops it at the last step and the markup
     that places them, and the other ten pages, which render no run, are unmoved. The page weight
-    and the script did not move either: the heaviest page is still the docs hub. The shape is
-    held by `test/base-styles.mjs`'s `runTimelineFailures`, which reads the layout in force at
-    360, 768 and 1280, the connector's own extent and width, and every width or `nowrap` in the
-    section against the phone's content box. The clone figure moved by the same bytes.
+    and the script did not move either: the heaviest page is still the docs hub. The shape was
+    held by `test/base-styles.mjs`'s `runTimelineFailures` — the layout in force at 360, 768 and
+    1280, the connector's own extent and width, and every width or `nowrap` in the section
+    against the phone's content box. The timeline those cases were written for is gone: the run
+    under the picture is a diagram now, and `test/how-it-works.mjs`'s `runDiagramFailures` holds
+    its shape instead, every line of the drawing measured against the box it is drawn in (the
+    entry below). The clone figure moved by the same bytes.
 
   - **The caps-and-costs rework** (the owner's brief of 2026-10-19) moved the site figure
     alone, 1,021,991 → **1,023,326**, by **1,335 bytes**, on one page: the table of what a job
@@ -336,7 +339,9 @@ added or removed without this sentence moving fails there:
     `README.md#How it works`, on the two pages that render the flow — the homepage and How It
     Works. The page weight and the script did not move: the heaviest page is the docs hub,
     which renders no flow. The caption is two words shorter than the one it replaces, which the
-    homepage's word count below carries.
+    homepage's word count below carries. (Two pages rendered the flow then; the round that put
+    the run's own diagram on How It Works — the owner's draft of 2026-10-19, below — leaves it
+    on the homepage, so the caption reaches one page now.)
   - **The benefits' block rule** (the review of round 6) moved the site figure alone,
     1,031,001 → **1,031,084**, by **83 bytes**: the section's gutter and the room below it are now
     declared in the component that renders the section, where they were declared on the page and
@@ -459,7 +464,87 @@ added or removed without this sentence moving fails there:
     four glyphs are shapes in the markup, and `test/home.mjs` reads each one back off the built
     page and refuses an icon that references a file or an origin. The words are the ones the
     section already carried, so the word ceiling did not move.
-  - **The 0.9.5 line's CLI reference** (the sync of `main` into `integration-0.9.5`): the
+  - **The CLI's `--repo` gained its bare form, and the two figures it moved were left
+    un-derived** (the round of 2026-10-19; this round repairs it). `fugaro budget set --repo`
+    with no value means the checkout's own repository now, and the command tree's usage strings
+    changed with it — `--repo R` → `--repo [owner/name]` on `budget set`, `budget kill` and
+    `budget resume`. The site renders those strings in two places, and nothing is fetched for
+    either: **1,060 bytes onto the docs hub**, whose page carries the whole generated CLI
+    reference, and **66 bytes onto caps-and-costs**, which quotes the three usages under its
+    commands — **1,126 bytes onto the site figure**. Neither was re-derived in that round, and
+    the round after it (How It Works, below) added its own 6,510 bytes to the figure stated in
+    this list rather than re-deriving from the build — 975,034 + 6,510 is the 981,544 it wrote,
+    while the build was 1,126 bytes larger — so the shortfall survived it and is paid in
+    the logo round at the end of this list. Both figures are read off the gate's own build now,
+    which is the rule (D192).
+  - **How It Works is one diagram of the run, and the run in words under it** (the owner
+    approved the draft "How it works, draft 2 (diagram)" on 2026-10-19 with "build it", and
+    item P8's step-by-step timeline came out). It moved the site figure alone, 975,034 →
+    **981,544**, by **6,510 bytes**: one inline `<svg>` per width — the run read left to right,
+    and the same run read top to bottom below the site's 48 rem breakpoint, both drawn from
+    the same labels in `RunDiagram.astro` — the box, pill, arrow and band rules that paint
+    them from the palette's tokens, and the two lists of the repository's own lines under the
+    picture. Both drawings are markup in the page and nothing is fetched for either; the page
+    weight and the script did not move, because the heaviest page is the docs hub, which
+    renders none of this, and `public/scripts/site.js` is untouched — the page loads the one
+    script every page loads (the JavaScript budget below), and the drawing is markup rather
+    than script. The words are the diagram's own labels and the page's remaining
+    facts, so the word ceiling did not move either.
+  - **The diagram's changeover, its ceiling and its arrow** (the review of the round above).
+    The review read the drawing the way a reader meets it, and found three things the round's
+    own gate did not hold. It moved the site figure alone, 981,544 → **982,707**, by **37
+    bytes** — the rules that say where the two drawings change over and how wide the stacked
+    one is drawn. The two drawings change over at **59.25 rem** now rather than at the site's
+    48 rem chrome breakpoint: the wide drawing's smallest label is 16 units of a 1200-unit
+    picture, so at a 768 px viewport the column scaled it to 9.6 px, and a label a reader
+    cannot read is the whole reason the stacked drawing exists. The stacked drawing carries a
+    ceiling of its own scale — 22.5 rem, one unit to the pixel — so a tablet is shown the
+    phone's picture rather than that picture stretched to the column, and
+    `website/test/how-it-works.mjs` holds that ceiling, the changeover and the floor at the
+    column the page's own stylesheet gives each drawing, and reads which *side* of that width
+    each rule holds on rather than only the width: `(width<=59.25rem)` and `(width>=59.25rem)`
+    name the same width and show the drawings to opposite readers, so a changeover read from
+    the wrong side — the stacked drawing on the desktop, the shrunk wide one on the phone the
+    floor exists for — is refused too. The same file holds the arrow itself
+    now: the line and the head that lands it, drawn at all, joining `review` and `implement`
+    rather than two other stages, and the head at the end of the line that lands on
+    `implement`, pointing the way the line runs — the head is a triangle and its own three
+    corners say which way round it was drawn, because a mirrored head is the same triangle over
+    the same two x's and its box cannot tell the two apart. Before, the gate refused only an
+    arrow drawn across a stage pill, so deleting the arrow from both drawings left it green,
+    and the head the component drew was mirrored: it sat on the right pill pointing back up
+    its own line, at the stage the run came from. The page weight and the script did not move:
+    the rules are scoped to the component, which one page renders, and the script is
+    untouched.
+  - **And the round re-derived the three figures from the build rather than from its own
+    delta**, because the base the numbers carried was stale. `website/content/cli-reference.md`
+    was regenerated in the round that landed `fugaro budget set --repo` and the figures were
+    not re-derived with it (D192's rule), so the build the README named was 1,060 bytes under
+    the docs hub it calls the heaviest page and 1,126 bytes under the site figure's build. The
+    page figure's build moves 280,681 → **281,741** — the regenerated reference, which the
+    docs hub renders and which this round's own change does not touch — and the site figure's
+    981,544 → **982,707**, the 1,126 bytes plus this round's 37. Both figures are what
+    `website/test/budget.mjs` measures in the gates' own build, which is the build the numbers
+    are derived from (above); the script's figure did not move, so it was not re-derived.
+  - **The logo's source became the owner's 2048 px one, and every derived icon was regenerated**
+    (2026-10-20). The owner supplied `fugaro-logo-large.png`, 2048 × 2048, 8-bit RGBA on
+    transparency: the same artwork with twice the real pixels, so the 1024 px app icon — and the
+    console's byte copy of it — is no longer an upscale of a smaller source (`brand/README.md`
+    and `console/README.md` carry the account, and `test/accent.mjs` re-pins the facts about the
+    file: the canvas, the counts and the circular mean hue, which moved 198.4° → **199.0°**).
+    Every file `scripts/gen-brand-icons.py` writes moved with it, and the two byte figures moved
+    in opposite directions. **The whole site went 982,707 → 972,362, by −10,345 bytes:** the icons
+    the site serves are **10,345 bytes lighter** in total — the three Android icons and the
+    apple-touch icon are most of it, the three favicons are 89 bytes heavier, and the header's
+    `logo.png` is 17 lighter. **The page weight went 281,741 → 281,813, by +72
+    bytes:** the docs hub fetches the three favicons (89 bytes heavier) and the header logo (17
+    lighter), so its share of the move is +72, on top of the 1,060 the CLI reference had
+    already added to it. The script did not move — no page's JavaScript changed, and
+    `public/scripts/site.js` is the same 39,888 bytes — and neither did a word of any page: no
+    markup and no stylesheet changed, so the two word ceilings did not move either, and the count
+    of files in `dist/` is 23, as it was.
+  - **The 0.9.5 line's CLI reference** (the first sync of `main` into `integration-0.9.5`; its
+    figures are that line's build, before the second sync below): the
     generated `content/cli-reference.md` gains the 0.9.5 commands — `fugaro backends ls`,
     `fugaro project sync` and `fugaro project repos` — and that moved the page weight and the
     site figure by the same **7,187 bytes**, 280,681 → **287,868** at the docs hub (the
@@ -471,6 +556,15 @@ added or removed without this sentence moving fails there:
     its collapsed Highlights, and that moved the site figure by **7,976 bytes**, 982,221 →
     **990,197**. The changelog page is not the heaviest page, so the page weight did not move,
     and neither did the script or the number of files; the clone figure moved by the same bytes.
+  - **The second sync of `main` into `integration-0.9.5`, re-derived from the gate's own build**
+    rather than from the deltas above, which were each measured on one line before the two
+    met. The merged build carries `main`'s rounds (the `--repo` usages, How It Works and the
+    regenerated icons) and the 0.9.5 line's (the 0.9.5 CLI reference, and the 0.9.5 release
+    notes on the changelog page, with the price catalog's line and its known limit), and it
+    measures **289,000 bytes** at the docs hub, still the heaviest page (281,813 on `main`, so
+    **+7,187**, the 0.9.5 reference), and **987,954 bytes** for the whole site (972,362 on
+    `main`, so **+15,592**). The script and the number of files did not move, and the
+    clone figure moved by the same bytes.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -494,10 +588,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,079,505 bytes. Three times 359,835: the heaviest page, the
-    docs hub, at 287,868 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,083,750 bytes. Three times 361,250: the heaviest page, the
+    docs hub, at 289,000 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,713,241 bytes. Three times 1,237,747 (every file in `dist/`, 990,197
+  - **Whole site:** 3,704,829 bytes. Three times 1,234,943 (every file in `dist/`, 987,954
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -1093,7 +1187,7 @@ them there.
   (`READ_UNDER_PLUGIN`).
 - **The four steps' captions and the run's detail** come from `README.md` and
   `docs/design/v1.md`, cited by the component that quotes each line
-  (`src/components/ArchitectureDiagram.astro`, `src/components/RunDetail.astro`).
+  (`src/components/ArchitectureDiagram.astro`, `src/components/RunDiagram.astro`).
 
 ## Layout
 

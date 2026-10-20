@@ -106,8 +106,10 @@ matches the logo" needs a gate that cannot be satisfied by a palette edit from m
 logo is a plain 8-bit, non-interlaced RGBA PNG, so the test **decodes it with the standard
 library** (`node:zlib`'s `inflateSync` and the five PNG row filters — no dependency), runs
 reconciliation §5.1's method over it (alpha ≥ 250, value ≥ 0.05, saturation ≥ 0.5,
-circular mean), and asserts that the result is 198.4° ± 0.5° (the figure
-`sample-logo-hue.py` prints, so a changed logo is noticed), that the palette in force's
+circular mean), and asserts that the result is 199.0° ± 0.5° (the figure
+`sample-logo-hue.py` prints on the 2048 px source the owner supplied on 2026-10-20; it was
+198.4° on the 1024 px one this part was written against, and the re-sample moved it to
+199.0°, so a changed logo is noticed either way), that the palette in force's
 `--accent` hue is within **5°** of it, and that `--warn` is at least 90° from it.
 Mutation-proven: a fixture palette with `--accent: #8B5CF6` (258.3°) fails, and the test
 carries that case.

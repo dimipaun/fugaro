@@ -358,12 +358,16 @@ Subcommands:
 
 Halt every run of the project or of one repository (budget admins)
 
-Set the project's kill switch (--all) or one repository's (--repo R), recording
-who, when and why. Runs in flight halt within seconds (a run in its last stage
-finishes pushing its work first) and new runs refuse. --all asks you to type
-the project's name (or pass --yes); one repository needs no confirmation.
+Set the project's kill switch (--all) or one repository's (--repo [owner/name]),
+recording who, when and why. --repo with no value means the repository this
+checkout belongs to, as it does for set. show takes owner/name (its empty
+--repo means no repository filter, not a checkout), and preview already
+means this checkout's repository without the flag.
+Runs in flight halt within seconds (a run in its last stage finishes pushing
+its work first) and new runs refuse. --all asks you to type the project's name
+(or pass --yes); one repository needs no confirmation.
 
-Usage: `fugaro budget kill (--all | --repo R) [--reason TEXT]`
+Usage: `fugaro budget kill (--all | --repo [owner/name]) [--reason TEXT]`
 
 Flags:
 
@@ -376,7 +380,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | one repository (owner/name) |
+| `--repo` | string | "" | no | one repository, given as owner/name (no value: this checkout's origin) |
 | `--yes` | bool | `false` | no | confirm without typing the project's name |
 
 Subcommands:
@@ -490,10 +494,12 @@ This command has no subcommands.
 
 Clear a kill switch (budget admins)
 
-Clear the project's kill switch (--all) or one repository's (--repo R), recording who
-and when. Asks you to type the project's name (or pass --yes): runs start again.
+Clear the project's kill switch (--all) or one repository's (--repo [owner/name]),
+recording who and when. --repo with no value means the repository this checkout
+belongs to, as it does for set. Asks you to type the project's name (or pass
+--yes): runs start again.
 
-Usage: `fugaro budget resume (--all | --repo R) [--reason TEXT]`
+Usage: `fugaro budget resume (--all | --repo [owner/name]) [--reason TEXT]`
 
 Flags:
 
@@ -506,7 +512,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | one repository (owner/name) |
+| `--repo` | string | "" | no | one repository, given as owner/name (no value: this checkout's origin) |
 | `--yes` | bool | `false` | no | confirm without typing the project's name |
 
 Subcommands:
@@ -520,20 +526,29 @@ Set a cap, the lease limit or the mode (budget admins)
 Set caps in the project's budget database, with an ETag-guarded write that shows
 the old and the new value.
 
-  --global    the project's daily and per-run caps; also takes --max-reserve and --mode
-  --defaults  the caps of every repository that has none of its own
-  --repo R    one repository's caps
+  --global            the project's daily and per-run caps; also takes --max-reserve and --mode
+  --defaults          the caps of every repository that has none of its own
+  --repo [owner/name] one repository's caps; --repo with no value means the
+                      repository this checkout belongs to, which needs no
+                      owner/name at all
 
 --max-reserve (the largest single lease) and --mode (observe, or enforce: caps
 bite) are project-wide, so they go with --global. Amounts are US dollars from 0
 to 100000, and a per-run cap may not exceed the daily cap of the same scope.
 --clear removes the scope's caps.
 
+--repo owner/name always works, from anywhere; the bare --repo is refused
+outside a checkout whose origin names a repository, and never stands for the
+project-wide caps. kill and resume take --repo the same way. preview needs no
+bare form: left out, --repo already means this checkout's repository. show is
+the one whose empty --repo is not the checkout (it means no repository
+filter), so it takes owner/name.
+
 Raising a cap (setting one that was unset counts), or lowering the mode to
 observe, loosens what runs may spend, so it asks you to type the project's name
 (or pass --yes). Lowering needs no confirmation.
 
-Usage: `fugaro budget set (--global | --defaults | --repo R) [--daily USD] [--per-run USD] [--max-reserve USD] [--mode observe|enforce] | --clear`
+Usage: `fugaro budget set (--global | --defaults | --repo [owner/name]) [--daily USD] [--per-run USD] [--max-reserve USD] [--mode observe|enforce] | --clear`
 
 Flags:
 
@@ -551,7 +566,7 @@ Flags:
 | `--per-run` | float64 | `0` | no | the per-run cap, in US dollars |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | one repository's caps (owner/name) |
+| `--repo` | string | "" | no | one repository's caps, given as owner/name (no value: this checkout's origin) |
 | `--yes` | bool | `false` | no | confirm a raise without typing the project's name |
 
 Subcommands:

@@ -36,6 +36,19 @@
 //     and `npm test` itself -- so the config resolves without a store account,
 //     and a static identity planted in `app.json` is still dropped.
 //
+// And one thing this file adds that is **not** an environment value: the
+// export-compliance declaration the owner ruled on 2026-10-20
+// (`ios.infoPlist.ITSAppUsesNonExemptEncryption: false`, see `app.config.js`
+// and `mobile/README.md`). It is a constant, not a third variable -- the same
+// answer for every copy of the app -- and `resolveConfig` merges it in **both**
+// states, a build and a dev/lint run alike, because it is a fact about the app
+// rather than about the environment. So "the static config, unchanged" below
+// means `app.json`'s `expo` object plus that one key: the constant `DECLARED`
+// is what a resolution is compared with, and it is spelled out rather than
+// built by the same merge the file under test does. The key's own tests are in
+// `src/app-config.test.js`, beside the rest of the boundary between `app.json`
+// and the config the build reads.
+//
 // And the fence around the file itself: **the identity is committed nowhere**.
 // Every fixture here is the fictional `com.example.sample`, and the last test
 // walks every tracked file under `mobile/` and `docs/mobile/` for the owner's
@@ -80,6 +93,22 @@ const SOURCE = readFileSync(new URL('../app.config.js', import.meta.url), 'utf8'
 const IOS = 'com.example.sample';
 const ANDROID = 'com.example.sample';
 
+/**
+ * The static config as **a resolution** carries it: `app.json`'s `expo` object
+ * plus the one thing `app.config.js` merges into it in every state -- the
+ * export-compliance declaration (the owner's ruling of 2026-10-20). Written
+ * out field for field rather than by calling the file's own merge, so the
+ * expectation is a statement about what the config should carry and not a
+ * second copy of the code that produces it. `app.json`'s `ios` section sets no
+ * `infoPlist` of its own: the merge has this key to add and no key to keep, and
+ * the "a key that is already there survives the merge" case is
+ * `src/app-config.test.js`'s (it needs a config that sets one).
+ */
+const DECLARED = {
+  ...EXPO,
+  ios: { ...EXPO.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
+};
+
 /** An environment as EAS's build servers present it to `app.config.js`. */
 const build = (extra = {}) => ({
   EAS_BUILD: 'true',
@@ -88,7 +117,10 @@ const build = (extra = {}) => ({
   ...extra,
 });
 
-/** `config` without the two identity fields, so what is left can be compared. */
+/** `resolved` without the two identity fields, so what is left can be compared
+ * with `DECLARED` (the static config as a resolution carries it: the identities
+ * are the only fields this strips -- the declaration is the other addition, and
+ * it is expected, so it stays in). */
 function withoutIdentities(resolved) {
   const ios = { ...resolved.ios };
   const android = { ...resolved.android };
@@ -268,10 +300,11 @@ test('a build with both variables resolves them onto the static config, and chan
   const resolved = resolveConfig(EXPO, build());
   assert.equal(resolved.ios.bundleIdentifier, IOS);
   assert.equal(resolved.android.package, ANDROID);
-  // The identities are the ONLY difference: every other field of the static
-  // config survives untouched (`supportsTablet`, `edgeToEdgeEnabled`, the
-  // name, the slug and the version included).
-  assert.deepEqual(withoutIdentities(resolved), EXPO);
+  // The identities are the only fields ADDED here: every other field of the
+  // static config survives untouched (`supportsTablet`, `edgeToEdgeEnabled`,
+  // the name, the slug and the version included), and what a resolution
+  // carries besides them is the export-compliance declaration `DECLARED` names.
+  assert.deepEqual(withoutIdentities(resolved), DECLARED);
   // ... and the static object itself is not mutated by resolving it.
   assert.equal('bundleIdentifier' in EXPO.ios, false);
   assert.equal('package' in EXPO.android, false);
@@ -280,11 +313,12 @@ test('a build with both variables resolves them onto the static config, and chan
 test('a dev/lint run requires nothing, and gets the config unchanged with nothing set', () => {
   // `expo start` and `npm test` have neither switch set, and they must keep
   // working without a store account: with the variables unset the config is the
-  // static one, field for field. Mutation: require them in local mode (or add
-  // an empty identity) and this line goes red.
-  assert.deepEqual(resolveConfig(EXPO, {}), EXPO);
-  assert.deepEqual(resolveConfig(EXPO, { FUGARO_REQUIRE_IDS: '0' }), EXPO);
-  assert.deepEqual(resolveConfig(EXPO, { EAS_BUILD: '' }), EXPO);
+  // static one, field for field -- plus the declaration, which is the app's own
+  // and not the environment's (`DECLARED`). Mutation: require them in local
+  // mode (or add an empty identity) and this line goes red.
+  assert.deepEqual(resolveConfig(EXPO, {}), DECLARED);
+  assert.deepEqual(resolveConfig(EXPO, { FUGARO_REQUIRE_IDS: '0' }), DECLARED);
+  assert.deepEqual(resolveConfig(EXPO, { EAS_BUILD: '' }), DECLARED);
   // ... and a value that got into the static config by hand is REMOVED here
   // rather than passed through, so `app.json` cannot quietly become a second
   // site for the identities. Mutation: return `config` as-is and this fails.
@@ -305,7 +339,7 @@ test('a local eas-cli run gets the identities from the variables, and a typo is 
   const local = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS, [ID_VARIABLES.android]: ANDROID });
   assert.equal(local.ios.bundleIdentifier, IOS);
   assert.equal(local.android.package, ANDROID);
-  assert.deepEqual(withoutIdentities(local), EXPO, 'and nothing else moves');
+  assert.deepEqual(withoutIdentities(local), DECLARED, 'and nothing else moves');
   // A value that IS set has to be one in this state too -- a mistyped export
   // must not be baked into a dev build either. Mutation: skip validation when
   // the switches are unset and this throws nothing.
@@ -355,7 +389,7 @@ test('the switches add the requirement, and only the requirement', () => {
   const asked = resolveConfig(EXPO, { EAS_BUILD: 'true', ...build() });
   const local = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS, [ID_VARIABLES.android]: ANDROID });
   assert.deepEqual(asked, local);
-  assert.deepEqual(resolveConfig(EXPO, {}), EXPO, 'no switch, no variables: nothing is required');
+  assert.deepEqual(resolveConfig(EXPO, {}), DECLARED, 'no switch, no variables: nothing is required');
   assert.match(refusal(() => resolveConfig(EXPO, { EAS_BUILD: 'true' })), /FUGARO_IOS_BUNDLE_ID/);
 });
 
@@ -366,9 +400,10 @@ test("Expo's entry reads process.env, and refuses a call with no static config",
   try {
     for (const key of keys) delete process.env[key];
     // Local mode: the entry resolves over the real `process.env`, and adds
-    // nothing. Mutation: `appConfig` passing a frozen empty env, or ignoring
-    // `process.env`, and the build-mode assertion below cannot go green.
-    assert.deepEqual(appConfig({ config: EXPO }), EXPO);
+    // nothing but the app's own declaration. Mutation: `appConfig` passing a
+    // frozen empty env, or ignoring `process.env`, and the build-mode assertion
+    // below cannot go green.
+    assert.deepEqual(appConfig({ config: EXPO }), DECLARED);
     process.env.EAS_BUILD = 'true';
     process.env[ID_VARIABLES.ios] = IOS;
     process.env[ID_VARIABLES.android] = ANDROID;

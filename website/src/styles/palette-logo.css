@@ -4,7 +4,9 @@
  * matter of taste: `brand/fugaro-logo.png` was sampled pixel by pixel (the method is
  * `docs/website/redesign/sample-logo-hue.py`; the figures are `docs/website/redesign/
  * reconciliation.md` §5.1), and its colour is a saturated cyan-blue whose circular mean hue
- * is **198.4°** over the pixels with alpha ≥ 250, value ≥ 0.05 and saturation ≥ 0.5. The
+ * is **199.0°** over the pixels with alpha ≥ 250, value ≥ 0.05 and saturation ≥ 0.5 (198.4°
+ * when the 1024 px source was sampled; the owner's 2048 px one is in the tree since
+ * 2026-10-20, and §5.1 carries the re-sample). The
  * palette this file replaces had `--accent: #8B5CF6` at 258.3°, about 60° away from it.
  *
  * So the whole palette moves, not only the accent: `--ground` is a blue-black rather than a

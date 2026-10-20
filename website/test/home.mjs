@@ -36,10 +36,10 @@
 //      out of the spec's own item 4 and of the section of a document of this repository the
 //      step cites, in that section's order — three of the four captions are lines of the
 //      README, so a source alone would let them be shuffled among the steps. `ArchitectureDiagram.astro` supersedes D185's
-//      step names; the detail D185's two annotations held (the caches, the trust boundary) is
-//      under `RunDetail.astro` on How It Works, whose five steps and note are held to
-//      README.md's `## How it works` and to `docs/design/v1.md` the same way, and whose
-//      absence from the homepage is a case of its own (changes spec item 4).
+//      step names; the run's own detail — the stages, the caps, the trust boundary — is on How
+//      It Works under `RunDiagram.astro`, whose labels are held to the documents they cite by
+//      `test/how-it-works.mjs`, and whose absence from the homepage is a case of its own
+//      (changes spec item 4).
 //   5. **Neither page names a claim the product cannot back**: no console download, no
 //      Windows/WSL support, no "~2 h", no ballpark ranges (F50, D102, W1.4 step 4). The
 //      video slot is checked against `site.yaml`'s own flag rather than against today's
@@ -454,179 +454,6 @@ function sharedSectionSteps() {
   const steps = fixtureSteps()
   steps[3] = { ...steps[3], source: 'README.md#How it works', caption: 'a draft opens at the first push (marked not verified)' }
   return steps
-}
-
-/** The section the detail quotes, by the name each of its steps cites. */
-const HOW_IT_WORKS_SOURCE = 'README.md#How it works'
-
-/**
- * The documents the detail may quote from, by the name each line cites: README.md's own run,
- * and the design document's one sentence about where the boundary of a run is.
- */
-function runDetailSources() {
-  return {
-    [HOW_IT_WORKS_SOURCE]: readmeSection('How it works'),
-    'docs/design/v1.md': repoFile('docs/design/v1.md'),
-  }
-}
-
-/**
- * README.md's `## How it works` numbered steps, as the section writes them: the bold words
- * that name a step. The names carry punctuation the heading does not (`**Loop:**`,
- * `**Write caches back and exit.**`), which is the section's layout rather than a second name,
- * so it is stripped here.
- */
-function howItWorksSteps() {
-  return [...readmeSection('How it works').matchAll(/^\s*(\d+)\.\s+\*\*([^*]+)\*\*/gm)].map((match) => ({
-    number: Number(match[1]),
-    name: match[2].trim().replace(/[:.]$/, ''),
-  }))
-}
-
-/** A name as the component writes it into `data-step`. */
-function slug(name) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
-/** The How It Works page's detail, as the elements it renders: its title, its steps and its note. */
-function runDetailOf(html) {
-  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
-  const doc = parse(html)
-  const sections = findAll(doc, (el) => el.name === 'section' && classes(el).includes('run-detail'))
-  const out = { sections: sections.length, title: '', steps: [], note: '' }
-  for (const section of sections) {
-    const inside = (root, selector) => {
-      const node = [...walk(root)].find((child) => classes(child).includes(selector))
-      return node ? textOf(node).replace(/\s+/g, ' ').trim() : ''
-    }
-    out.title = inside(section, 'run-detail-title')
-    out.note = inside(section, 'run-note')
-    for (const el of walk(section)) {
-      if (el.name !== 'li' || !classes(el).includes('run-step')) continue
-      // The heading is the step's name and nothing else. The number is a sibling of it — a
-      // column of the step's own grid, the rail the line is drawn down — and the section's name
-      // is what the heading has to carry. This used to strip a leading `3 ` back off the
-      // heading, because the old markup put the number inside it; the strip is gone with that
-      // markup, so a heading that swallowed its number again reads as the heading it is rather
-      // than as the step's name, and is refused below.
-      out.steps.push({
-        name: el.attrs.get('data-step') ?? '',
-        source: el.attrs.get('data-source') ?? '',
-        heading: inside(el, 'run-step-name'),
-        line: inside(el, 'run-step-line'),
-      })
-    }
-  }
-  return out
-}
-
-/**
- * Every way the detail falls short of README.md's own run, as the lines a reader of this file
- * sees. Pure, over the detail and the section, so the built page is checked with it and the
- * refusals are proved with it.
- *
- * `cursor` walks forward through the section: a step's heading and its line have to appear in
- * the section at or after the step before them, which is what keeps two neighbouring steps
- * from swapping their lines — each is still a line of the section, and the page then restores
- * the caches after the agent has run.
- */
-function runDetailFailures(detail, steps, sources) {
-  const out = []
-  if (detail.sections !== 1) {
-    return [`the page renders ${detail.sections} detail sections, and it renders one: the detail is the zoom-in under the picture (changes spec 2026-10-18, item 4)`]
-  }
-  if (detail.steps.length !== steps.length) {
-    out.push(
-      `the detail renders ${detail.steps.length} steps, and README.md's "## How it works" numbers ${steps.length}: the detail is the run that section describes, and a step missing is a run described as shorter than it is (Global Constraint 6)`,
-    )
-  }
-
-  const section = normalize(sources[HOW_IT_WORKS_SOURCE] ?? '')
-  let cursor = 0
-  for (const [index, step] of detail.steps.entries()) {
-    const named = steps[index]?.name ?? ''
-    const where = `the detail's step ${index + 1}`
-    if (step.heading !== named) {
-      out.push(
-        `${where} is headed ${JSON.stringify(step.heading)}, and README.md names step ${index + 1} ${JSON.stringify(named)}: the headings are the section's own names for its steps (Global Constraint 6, D102)`,
-      )
-    }
-    if (step.source !== HOW_IT_WORKS_SOURCE) {
-      out.push(`${where} attributes its lines to ${JSON.stringify(step.source)}, and the detail quotes README.md's "## How it works" (Global Constraint 6)`)
-    }
-    if (slug(step.heading) !== step.name) {
-      out.push(
-        `${where} carries data-step ${JSON.stringify(step.name)} beside the heading ${JSON.stringify(step.heading)}, and the two name the same step: the attribute is this check's own hook, and a hook that drifted from the heading is a check reading a page nobody sees`,
-      )
-    }
-    // Both are searched from where the step before this one ended, and the cursor moves to
-    // the end of the *line*: the section writes `**Sync** to the exact target commit…`, so a
-    // line begins inside the name that heads it, and a cursor advanced past the name would
-    // sit past the start of the line that belongs to it.
-    let end = cursor
-    for (const [what, line] of [
-      ['heading', step.heading],
-      ['line', step.line],
-    ]) {
-      const quoted = normalize(line)
-      const at = quoted ? section.indexOf(quoted, cursor) : -1
-      if (at === -1) {
-        out.push(
-          `${where}'s ${what} ${JSON.stringify(line)} is not a line of README.md's "## How it works" at or after the step before it: the detail is the section's own words, in the section's own order (changes spec 2026-10-18, item 4; Global Constraint 6)`,
-        )
-      } else {
-        end = Math.max(end, at + quoted.length)
-      }
-    }
-    cursor = end
-  }
-
-  if (!detail.note) {
-    out.push('the detail carries no note, and the note is the one fact under the steps: where the boundary of a run is (changes spec 2026-10-18, item 4)')
-  } else if (!normalize(sources['docs/design/v1.md'] ?? '').includes(normalize(detail.note))) {
-    out.push(
-      `the detail's note ${JSON.stringify(detail.note)} is not a line of docs/design/v1.md: the note is quoted from the design document rather than written for the page (Global Constraint 6)`,
-    )
-  }
-  return out
-}
-
-/** The line the detail carries under its steps: the design document's sentence. */
-function detailNote() {
-  return 'The trust boundary is the container, not the process.'
-}
-
-/**
- * The detail's steps for the fixture cases: README.md's own five, each with the line the
- * component quotes from it.
- */
-function fixtureDetailSteps() {
-  const lines = {
-    Start: "from the image of the repository's workflow (a named build-and-test setup in its fugaro.yaml)",
-    Sync: 'Sync to the exact target commit and restore the dependency caches.',
-    Loop: 'Claude Code implements, writes tests, runs the build and tests through a recording wrapper, reviews and fixes',
-    'Push and open the pull request': 'a draft opens at the first push (marked not verified), and it is marked ready only when the run passes',
-    'Write caches back and exit': 'The run record and the PR remain; the container does not.',
-  }
-  return howItWorksSteps().map((step) => ({ name: step.name, line: lines[step.name] }))
-}
-
-/**
- * A page carrying nothing but a detail section, for the refusals above. The markup is the one
- * `RunDetail.astro` renders: the number a sibling of the heading and the heading's own line in
- * the column beside it, so the fixture the refusals are proved on is the page they are about.
- */
-function runDetailPage(steps, note) {
-  const body = steps
-    .map(
-      (step, index) =>
-        `<li class="run-step" data-step="${slug(step.heading ?? step.name)}" data-source="${HOW_IT_WORKS_SOURCE}"><span class="run-step-number" aria-hidden="true">${index + 1}</span><div class="run-step-body"><h3 class="run-step-name">${step.heading ?? step.name}</h3><p class="run-step-line">${step.line}</p></div></li>`,
-    )
-    .join('')
-  return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><section class="run-detail" aria-labelledby="run-detail-title"><h2 class="run-detail-title" id="run-detail-title">The run, step by step</h2><ol class="run-steps">${body}</ol><p class="run-note">${note}</p></section></main></body></html>`
 }
 
 test("the hero headline is README.md's tagline line, byte for byte", () => {
@@ -1740,7 +1567,7 @@ test('the watch screenshot is in the slot the changes spec marks, named, sized a
   )
 })
 
-test("the flow carries the changes spec's four steps, as one component on both pages", () => {
+test("the flow carries the changes spec's four steps, on the homepage", () => {
   const ruling = item4()
   assert.equal(ruling.steps.length, 4, `the changes spec's item 4 names ${ruling.steps.length} steps, and the picture draws four (changes spec 2026-10-18, item 4)`)
 
@@ -1761,47 +1588,22 @@ test("the flow carries the changes spec's four steps, as one component on both p
   const order = [...walk(home)]
   assert.ok(order.indexOf(hero) < order.indexOf(figure), 'the homepage renders its flow above the hero: the picture of the run goes below the hero (P8)')
 
-  // Both pages, because the flow is the homepage's picture of the run as much as the How It
-  // Works page's opening: item 4 asks for the SAME diagram on both, from one shared component.
-  for (const route of ['', 'how-it-works']) {
-    const failures = flowFailures(builtPage(route), ruling, captionSources())
-    assert.deepEqual(
-      failures,
-      [],
-      `the ${route === '' ? '/' : `/${route}/`} page's flow is not the one the changes spec's item 4 describes:\n  ${failures.join('\n  ')}`,
+  // The homepage's flow, and only the homepage's. The four steps used to be on both pages,
+  // one figure rendered by one component; the owner's approved draft for How It Works
+  // (2026-10-19) replaced that page's body with the run's own diagram — the stages a run
+  // works through, which the four steps do not draw — and `test/how-it-works.mjs` is the gate
+  // for it. The flow is the homepage's picture now, and a page that quietly grew a second
+  // copy of it would be a second picture to keep in step with the first.
+  const failures = flowFailures(builtPage(''), ruling, captionSources())
+  assert.deepEqual(failures, [], `the homepage's flow is not the one the changes spec's item 4 describes:\n  ${failures.join('\n  ')}`)
+  for (const route of ['how-it-works']) {
+    const page = builtPage(route)
+    assert.equal(
+      findAll(parse(page), (el) => el.name === 'figure' && (el.attrs.get('class') ?? '').split(/\s+/).includes('flow')).length,
+      0,
+      'the How It Works page renders the homepage\'s four-step flow: the owner\'s draft puts the run\'s own diagram there, and `test/how-it-works.mjs` holds it (owner\'s draft of 2026-10-19)',
     )
   }
-
-  // "one shared component, not two copies" (changes spec item 4), held to the artifact rather
-  // than to the source: the two pages render the same figure, character for character, so a
-  // page that grew a second copy of the picture — a copy that can drift from the first — is
-  // this failure rather than two pictures that quietly disagree.
-  const figureMarkup = (route) => {
-    const page = builtPage(route)
-    const start = page.indexOf('<figure class="flow"')
-    assert.notEqual(start, -1, `the ${route === '' ? '/' : `/${route}/`} page renders no <figure class="flow">, and the picture is on both pages (changes spec 2026-10-18, item 4)`)
-    return page.slice(start, page.indexOf('</figure>', start))
-  }
-  assert.equal(
-    figureMarkup('how-it-works'),
-    figureMarkup(''),
-    'the homepage and How It Works render different flow markup: item 4 asks for the same diagram on both pages, from one component rather than two copies (changes spec 2026-10-18, item 4)',
-  )
-
-  // And the copy that told the run again on the homepage is gone (item 4: "the duplicate
-  // text-heavy 'how it works' section is REMOVED"): the homepage carries the picture, and the
-  // detail belongs to the page that opens with it. A section that came back would be a second
-  // description of the run to keep in step with the first.
-  assert.equal(
-    runDetailOf(builtPage('')).sections,
-    0,
-    'the homepage renders a run-detail section: item 4 removes the duplicate text-heavy "how it works" section from the homepage and leaves the detail to the How It Works page (changes spec 2026-10-18, item 4)',
-  )
-  assert.equal(
-    runDetailOf(builtPage('how-it-works')).sections,
-    1,
-    'the How It Works page renders no run-detail section, and item 4 puts the detailed explanation under the picture there (changes spec 2026-10-18, item 4)',
-  )
 })
 
 test('the flow refusals fire on the defect each one names', () => {
@@ -1920,7 +1722,9 @@ test("every caption in the flow is a line of the section its step cites, in that
   const ruling = item4()
   const sources = captionSources()
 
-  for (const route of ['', 'how-it-works']) {
+  // The homepage, where the flow is: the How It Works page carries the run's own diagram
+  // instead (the owner's draft of 2026-10-19, `test/how-it-works.mjs`).
+  for (const route of ['']) {
     const where = route === '' ? '/' : `/${route}/`
     const flow = flowOf(builtPage(route))
 
@@ -1955,86 +1759,6 @@ test("every caption in the flow is a line of the section its step cites, in that
   }
 })
 
-test("the How It Works detail is README.md's own steps, in its own order, under the picture", () => {
-  // Item 4's zoom-in: the same picture the homepage renders, and under it the detail README.md
-  // already writes. Read out of the built page and held to the section's own numbered steps
-  // rather than to a copy of them here, so a page that reworded a step is a failure rather
-  // than a second description of a run (Global Constraint 6, D102).
-  const detail = runDetailOf(builtPage('how-it-works'))
-  assert.equal(detail.sections, 1, 'the How It Works page renders no run-detail section, and item 4 puts the detailed explanation under the picture (changes spec 2026-10-18, item 4)')
-  assert.ok(detail.title, 'the detail carries no heading, and a section that opens without one leaves the steps hanging under the picture (W1.11)')
-
-  const failures = runDetailFailures(detail, howItWorksSteps(), runDetailSources())
-  assert.deepEqual(failures, [], `the How It Works detail is not README.md's own run (changes spec 2026-10-18, item 4):\n  ${failures.join('\n  ')}`)
-})
-
-test('the detail refusals fire on the defect each one names', () => {
-  // The detail's own proof, as the flow's: the fixture passes, and each fixture that breaks
-  // one rule of the detail makes exactly that rule's line appear.
-  const steps = fixtureDetailSteps()
-  const sources = runDetailSources()
-  const failing = (detailSteps, note) => runDetailFailures(runDetailOf(runDetailPage(detailSteps, note ?? detailNote())), steps, sources)
-
-  assert.deepEqual(failing(steps), [], 'the fixture detail does not pass the check it is the control for')
-
-  const dropped = steps.slice(0, -1)
-  assert.ok(
-    failing(dropped).some((line) => /renders 4 steps, and README\.md's "## How it works" numbers 5/.test(line)),
-    'a step removed from the detail passes the check: the detail is the section\'s five steps, and one missing is a run described as shorter than it is',
-  )
-
-  const paraphrased = steps.map((step, i) => (i === 1 ? { ...step, line: 'Synchronise the repository.' } : step))
-  assert.ok(
-    failing(paraphrased).some((line) => /is not a line of README\.md's "## How it works"/.test(line)),
-    'a step line written for the page passes the check: every line is the step\'s own words (Global Constraint 6, D102)',
-  )
-
-  // Both lines are lines of the section, so a check that held each one to the section and no
-  // further would let two neighbouring steps swap their lines: the page would then restore the
-  // caches after the agent had run.
-  const swapped = steps.map((step, i) => (i === 1 ? { ...step, line: steps[2].line } : i === 2 ? { ...step, line: steps[1].line } : step))
-  assert.ok(
-    failing(swapped).some((line) => /at or after the step before it/.test(line)),
-    "two steps' lines swapped pass the check: each is still a line of the section, and the order is what keeps each on the step it describes",
-  )
-
-  const renamed = steps.map((step, i) => (i === 3 ? { ...step, heading: 'The pull request' } : step))
-  assert.ok(
-    failing(renamed).some((line) => /is headed .*and README\.md names step 4/.test(line)),
-    'a step heading written for the page passes the check: the headings are the section\'s own names for its steps',
-  )
-
-  const elsewhere = steps.map((step, i) => (i === 0 ? { ...step, heading: 'Setup' } : step))
-  assert.ok(
-    failing(elsewhere).some((line) => /is not a line of README\.md's "## How it works"/.test(line)),
-    'a heading the section does not write passes the check: a step named for the page is not a step of the section',
-  )
-
-  // The number sits beside the heading rather than in it. The old markup carried it inside the
-  // heading and `runDetailOf` stripped it back off, so a reader saw "3 Loop" and this file saw
-  // "Loop"; the fixture below is that markup, and it is refused rather than stripped.
-  const numbered = steps.map((step, i) => (i === 2 ? { ...step, heading: `${i + 1}${step.name}` } : step))
-  assert.ok(
-    failing(numbered).some((line) => /is headed .*and README\.md names step 3/.test(line)),
-    'a step whose heading carries its own number passes the check: the number is decoration beside the heading, and a heading that swallowed it is not the name the section gives the step',
-  )
-
-  const invented = 'The container is the trust boundary.'
-  assert.ok(
-    failing(steps, invented).some((line) => /is not a line of docs\/design\/v1\.md/.test(line)),
-    'a note the design document does not write passes the check: the note is the one fact of the picture the steps do not state, and it is quoted like every other line',
-  )
-
-  assert.equal(
-    runDetailOf(runDetailPage([], detailNote())).sections,
-    1,
-    'the fixture page renders no detail section, so every refusal above is about a page that has one',
-  )
-  assert.deepEqual(
-    runDetailFailures({ sections: 0, title: '', steps: [], note: '' }, steps, sources),
-    ['the page renders 0 detail sections, and it renders one: the detail is the zoom-in under the picture (changes spec 2026-10-18, item 4)'],
-  )
-})
 
 test("every link on the two pages points at a route the plan's tasks write", () => {
   const routes = plannedRoutes()

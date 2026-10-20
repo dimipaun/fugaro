@@ -1,8 +1,14 @@
 # Brand assets
 
 `fugaro-logo.png` is the Fugaro logo: a blue wing, gear and cloud around a terminal
-prompt, 1024x1024 RGBA on a transparent background. It is the **source of truth**, kept
+prompt, 2048x2048 RGBA on a transparent background. It is the **source of truth**, kept
 as the original bytes; every other icon is derived from it and is never edited by hand.
+
+The owner replaced the source with this 2048 px one on 2026-10-20 (it was 1024x1024
+before, and the artwork on it was 548x371 px, so the 1024 px app icon was a 1.5x upscale
+of it). The new canvas carries the same picture at twice the real pixels — the artwork's
+alpha bounding box is now 1089x738 — so the app-icon master renders it *down*, and
+`console/README.md` has the measured figures and what they mean for the packager.
 
 ## Regenerating the derived files
 
