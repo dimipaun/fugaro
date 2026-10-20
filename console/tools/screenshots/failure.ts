@@ -36,7 +36,7 @@ export const FAILURE_SENTENCE = 'the screenshot run failed: '
 export interface RunProcess {
   on(event: 'unhandledRejection', listener: (reason: unknown) => void): unknown
   stderr: { write(chunk: string): unknown }
-  exitCode: number | string | undefined
+  exitCode: number | string | null | undefined
 }
 
 /** failureLine is what a failed run prints, whatever the failure was: a whole

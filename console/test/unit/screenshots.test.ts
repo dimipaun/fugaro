@@ -1114,14 +1114,14 @@ interface FakeRun {
   readonly target: RunProcess
   readonly events: readonly string[]
   readonly written: () => string
-  readonly exitCode: () => number | string | undefined
+  readonly exitCode: () => number | string | null | undefined
   readonly emit: (reason: unknown) => void
 }
 
 function fakeRun(): FakeRun {
   const listeners = new Map<string, ((reason: unknown) => void)[]>()
   let written = ''
-  let exitCode: number | string | undefined
+  let exitCode: number | string | null | undefined
   const target: RunProcess = {
     on(event: string, listener: (reason: unknown) => void) {
       listeners.set(event, [...(listeners.get(event) ?? []), listener])
@@ -1136,7 +1136,7 @@ function fakeRun(): FakeRun {
     get exitCode() {
       return exitCode
     },
-    set exitCode(value: number | string | undefined) {
+    set exitCode(value: number | string | null | undefined) {
       exitCode = value
     },
   }
