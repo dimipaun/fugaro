@@ -238,8 +238,19 @@ const consoleExists = facts.features.consoleDownloads
 
   /* The primary: the accent as a fill and the ground as its label, which is the pair
      `a11y.mjs` computes at 4.5:1 for a label a reader reads (the same pair the flow's step
-     numbers are set in). */
+     numbers are set in).
+
+     `min-height: 44px` is the target size the owner's brief of 2026-10-19 measures every
+     control against, and the row's two links are controls: the padding and the line height
+     alone leave this one a fraction of a pixel short of it. `display: inline-flex` with
+     `align-items: center` is what centres the label in the box the minimum makes, and
+     `box-sizing: border-box` is what makes the minimum the whole box rather than the box
+     plus its padding. `website/test/home.mjs` reads the rule and refuses a control under it. */
   .hero-cta {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
     padding: var(--space-2xs) var(--space-md);
     border-radius: var(--radius-pill);
     background: var(--accent);
@@ -252,8 +263,13 @@ const consoleExists = facts.features.consoleDownloads
 
   /* The second action is a link, not a second button. It keeps the underline `base.css`
      gives every link in running text, so it reads as a link at a glance rather than as a
-     disabled control beside the filled one. */
+     disabled control beside the filled one — and it is a control all the same, so it carries
+     the same 44 px minimum the filled one does. */
   .hero-cta-quiet {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
     font-size: var(--font-size-base);
     font-weight: var(--weight-medium);
   }

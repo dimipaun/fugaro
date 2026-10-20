@@ -1818,6 +1818,107 @@ test('the tokens the pages name are the ones the design layer declares', () => {
   )
 })
 
+/** The homepage's own controls, and what each one is, as a failure names it. */
+const CONTROL_TARGETS = [
+  ['hero-cta', "the hero's filled call to action"],
+  ['hero-cta-quiet', "the hero's quiet call to action"],
+  ['home-install-button', 'the button under the slider'],
+]
+
+/**
+ * Every way a homepage control misses the target size the owner's brief of 2026-10-19
+ * measures it against, as the lines a reader of a failure gets. **Every control the page asks
+ * a reader to tap is at least 44 px tall**, and the page's own controls are the hero's two
+ * links in the action row and the one button under the slider (`HomeInstall.astro`); the
+ * slider's three tabs are `test/slider.mjs`'s, which reads them at the widths the page is
+ * read at, so this reading is about the controls outside the slider.
+ *
+ * A minimum rather than a measurement, and that is the point: the hero's filled link is its
+ * own line height plus its padding, which comes to a fraction of a pixel short of the target
+ * with nothing in the markup to say so — a defect no reading of the markup can see and no
+ * rendered measurement in this repository can take, which is why the rule declares the minimum
+ * and this reading looks for the declaration. A rule inside a media query does not count: the
+ * minimum has to hold at every width, so the rule it is declared in is one with no condition
+ * over it.
+ */
+export function controlTargetFailures(css, controls = CONTROL_TARGETS) {
+  const tokens = new Map([...css.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;}]+)/g)].map((m) => [m[1], m[2].trim()]))
+  const px = (value) => {
+    const trimmed = (value ?? '').trim()
+    const named = /^var\((--[a-z0-9-]+)\)$/.exec(trimmed)
+    const resolved = named ? (tokens.get(named[1]) ?? '') : trimmed
+    const m = /^([\d.]+)px$/.exec(resolved.trim())
+    return m ? Number(m[1]) : null
+  }
+  // Whether a position in the stylesheet is inside a block: at the top level every rule is in
+  // force at every width, and a rule inside a media query is not.
+  const depthAt = (index) => {
+    let depth = 0
+    for (let i = 0; i < index; i++) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') depth--
+    }
+    return depth
+  }
+
+  const out = []
+  for (const [klass, what] of controls) {
+    const heights = []
+    for (const match of css.matchAll(new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{([^}]*)\\}`, 'g'))) {
+      if (depthAt(match.index) !== 0) continue
+      const declared = /min-height\s*:\s*([^;}]+)/.exec(match[1])
+      const height = px(declared?.[1])
+      if (height !== null) heights.push(height)
+    }
+    if (!heights.some((height) => height >= 44)) {
+      out.push(
+        `${what} is ${heights.length ? `a ${Math.max(...heights)} px target` : 'no declared target'}, and the owner's brief of 2026-10-19 measures every control the page asks a reader to tap against 44 px`,
+      )
+    }
+  }
+  return out
+}
+
+test('every control the homepage asks a reader to tap is at least 44 px tall', () => {
+  assert.deepEqual(
+    controlTargetFailures(builtCSS(builtPage(''))),
+    [],
+    'a control on the homepage is under the 44 px target the owner’s brief of 2026-10-19 measures every control against',
+  )
+})
+
+test('a control under the target is refused, wherever its minimum is missing or out of force', (t) => {
+  // Each plant is one of the ways the minimum stops holding: taken off the rule that declares
+  // it, moved into a media query where it is in force at one width rather than at every one,
+  // and declared under the target. All three are defects a reading of the markup cannot see,
+  // which is why the reading is of the declaration.
+  const css = builtCSS(builtPage(''))
+  const ruleOf = (klass) => new RegExp(`\\.${klass}(?![\\w-])[^{}]*\\{[^}]*\\}`)
+  const withoutMinimum = (klass) => css.replace(ruleOf(klass), (rule) => rule.replace(/min-height\s*:\s*[^;}]+;?/, ''))
+  const cases = [
+    ['the minimum taken off the hero’s filled link', withoutMinimum('hero-cta'), /the hero's filled call to action is no declared target/],
+    ['the minimum taken off the hero’s quiet link', withoutMinimum('hero-cta-quiet'), /the hero's quiet call to action is no declared target/],
+    [
+      'the button’s minimum moved into a media query, where it holds at one width and not at every one',
+      `${withoutMinimum('home-install-button')}@media (min-width:48rem){.home-install-button{min-height:56px}}`,
+      /the button under the slider is no declared target/,
+    ],
+    [
+      'a minimum declared under the target',
+      css.replace(ruleOf('hero-cta'), (rule) => rule.replace('min-height:44px', 'min-height:20px')),
+      /the hero's filled call to action is a 20 px target/,
+    ],
+  ]
+  for (const [what, planted, expected] of cases) {
+    assert.notEqual(planted, css, `${what} left the stylesheet as it is, so the plant is not a plant`)
+    const failures = controlTargetFailures(planted)
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused by the sentence that names it:\n  ${failures.join('\n  ') || '(nothing refused)'}`,
+    )
+  }
+})
+
 test('neither page names a claim the product cannot back', () => {
   // The four sentences the reconciliation holds back (F50, D102), each as the thing a
   // reader could check for: a link to an artifact that does not exist, a platform the
