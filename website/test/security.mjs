@@ -502,15 +502,23 @@ function drawnBox(node) {
 /**
  * Every label of the drawing, measured against the box it is drawn in: the card whose rect
  * holds the label's baseline, inset by the `data-pad` that card declares, or the drawing's own
- * `viewBox` for a label drawn outside every card.
+ * `viewBox` for a label drawn outside every card. The inset is read on both axes — a card
+ * declares the room its contents are drawn in, and a baseline past it is a line on the card's
+ * border, whichever edge it is past (`x` for the width of a phrase, `y` for how many lines a
+ * card holds and where they sit).
  *
- * The labels of this drawing are hand-placed against fixed card widths and every one of them is
- * quoted from `SECURITY.md`, which the owner edits — so a phrase that grows a word or two
- * overruns its card, and a line over a card's border is the one defect of this picture the
- * label rule cannot see: the longer phrase is still a phrase of the document. The How It Works
- * drawing is measured the same way, at build time and over the built page
- * (`website/test/how-it-works.mjs`); here the built page is the whole of it, because the
- * geometry is written by hand in the page rather than generated from the same numbers.
+ * The labels of this drawing are hand-placed against fixed card sizes and every one of them is
+ * quoted from `SECURITY.md`, which the owner edits — so a phrase that grows a word overruns its
+ * card, or one line too many for the card it is drawn in runs past the bottom inset, and the
+ * phrase is still a phrase of the document either way. That is why this rule exists rather than
+ * the label rule above: the label rule passes a longer phrase the document carries, and the
+ * page's byte budget only reports that something moved. The vertical half was added by the
+ * review of 2026-10-20, which found two cards drawing their last line below their own inset
+ * (the runner's `can read its /proc` 10 units past it, the gateway's last line 4) while the
+ * gate measured `x` alone. The How It Works drawing is measured the same way, at build time and
+ * over the built page (`website/test/how-it-works.mjs`); here the built page is the whole of
+ * it, because the geometry is written by hand in the page rather than generated from the same
+ * numbers.
  */
 function checkLabelBoxes(picture, drawn, fail) {
   const view = (picture.attrs.get('viewbox') ?? '').trim().split(/\s+/).map(Number)
@@ -546,7 +554,9 @@ function checkLabelBoxes(picture, drawn, fail) {
     const box = holds[0]
     const left = box === undefined ? view[0] : box.x + box.pad
     const right = box === undefined ? view[0] + view[2] : box.x + box.width - box.pad
-    if (![left, right].every(Number.isFinite)) {
+    const top = box === undefined ? view[1] : box.y + box.pad
+    const bottom = box === undefined ? view[1] + view[3] : box.y + box.height - box.pad
+    if (![left, right, top, bottom].every(Number.isFinite)) {
       fail(
         `${what} is drawn in a box this check cannot measure, and a box nothing can measure is a box nothing holds a label inside: the drawing declares the \`viewBox\` its units are in, and every card declares the inset (\`data-pad\`) its contents are drawn at (the owner's brief of 2026-10-20)`,
       )
@@ -555,6 +565,15 @@ function checkLabelBoxes(picture, drawn, fail) {
     if (label.x0 < left - 0.5 || label.x1 > right + 0.5) {
       fail(
         `${what} says ${JSON.stringify(prose(text(node)))} and is drawn from ${label.x0.toFixed(1)} to ${label.x1.toFixed(1)} units, and the ${box === undefined ? 'drawing' : 'card it is drawn in'} runs ${left.toFixed(1)} to ${right.toFixed(1)}: the picture is laid out for the font the page's stack resolves to on a reader's system (DejaVu Sans and the other wide sans faces are wider per character than Arial or Inter), and a line that does not fit its room is a line over the card's border — or past the picture's own edge. Every label here is hand-placed and every one of them is quoted from ${SOURCE}, which the owner edits, so a phrase that grows a word overruns its box and nothing else in this file would see it (the owner's brief of 2026-10-20)`,
+      )
+    }
+    // And the same inset on the other axis: a card's `data-pad` is the room its contents are
+    // drawn in, so a baseline above the top inset or below the bottom one is a line drawn on
+    // the card's border. The two cards the review of 2026-10-20 found had room for one line
+    // fewer than they drew, which no reading of `x` can see.
+    if (label.y < top - 0.5 || label.y > bottom + 0.5) {
+      fail(
+        `${what} says ${JSON.stringify(prose(text(node)))} and its baseline is drawn at y=${label.y.toFixed(1)}, and the ${box === undefined ? 'drawing' : 'card it is drawn in'} holds a label between y=${top.toFixed(1)} and y=${bottom.toFixed(1)}: a card declares the inset its contents are drawn at (\`data-pad\`) on both axes, and a line drawn past it sits on the card's border — a card with one line more than it has room for, which is what a phrase the owner grows in ${SOURCE} does to a hand-placed drawing. The drawing's own rhythm is the card that holds the lines: a title 26 units below the top edge, the lines 24 apart, and a taller card when a line is added (the owner's brief of 2026-10-20; the review of 2026-10-20)`,
       )
     }
   }
@@ -1139,6 +1158,28 @@ test('the gate refuses each planted defect', (t) => {
     verdict(t, overwide).join('\n'),
     /the drawing's label \d+ says "Fugaro runs a coding agent with its permission prompts turned off" and is drawn from \d+\.\d+ to \d+\.\d+ units, and the card it is drawn in runs/,
     'a label wider than the card it is drawn in is not refused, so a phrase that grows in SECURITY.md overruns the picture with nothing here to notice',
+  )
+
+  // A label past its card's inset, vertically — the defect this drawing actually had. The plant
+  // moves one line's own `y` and nothing else: the phrase, its size and its `x` are the page's,
+  // so the width rule passes it and only the vertical one can refuse it. `352` is inside the
+  // runner card's rect (262 to 358) and 10 units past the inset that card declares (16) — the
+  // 10 units the last line was drawn past it before the review of 2026-10-20, when the line sat
+  // at 328 in a card whose contents end at 342.
+  const sunk = planted(html, /(<text[^>]*\sy=")336("[^>]*>can read its \/proc)/, '$1' + '352' + '$2')
+  assert.match(
+    verdict(t, sunk).join('\n'),
+    /its baseline is drawn at y=352\.0, and the card it is drawn in holds a label between y=278\.0 and y=342\.0/,
+    'a label drawn below the inset its card declares is not refused, so a card can carry one line more than it has room for and the gate sees nothing',
+  )
+
+  // And above the top inset, which is the same rule's other half — here on the boundary box
+  // itself, whose own inset (20) is what holds the heading it draws.
+  const risen = planted(html, /(<text[^>]*\sy=")166("[^>]*>one container per run)/, '$1' + '140' + '$2')
+  assert.match(
+    verdict(t, risen).join('\n'),
+    /its baseline is drawn at y=140\.0, and the card it is drawn in holds a label between y=150\.0 and y=590\.0/,
+    'a label drawn above the inset its box declares is not refused, so the boundary\'s own margin is a number nothing reads',
   )
 
   // The picture with its name taken off: a screen reader reads the drawing as nothing. The

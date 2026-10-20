@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **988,259 bytes in a checkout with no tags** and to **988,259 bytes with the
+  commit builds to **988,260 bytes in a checkout with no tags** and to **988,260 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -644,6 +644,15 @@ added or removed without this sentence moving fails there:
     (`data-pad`), every label the size it is drawn at (`font-size`) — so that `test/security.mjs`
     can measure each label against the box it is drawn in and refuse one that overruns its card,
     which is why the source card's phrase is broken after "launch a" and not after "launch".
+    **The inset is read on both axes, and the review of 2026-10-20 is why**: the first round
+    measured a label's width against the card's and nothing else, so two cards drew their last
+    line *below* the inset they declared — the runner's `can read its /proc` ten units past it,
+    the gateway's last line four — and the gate was green over a picture with two lines on a
+    card's border. Both cards grew to the height the lines need (a three-line card is 96 units
+    high on the drawing's rhythm of a title 26 below the top edge and lines 24 apart, a
+    four-line one 120) and the drawing's `viewBox` with them, 688 → **744**; a baseline above a
+    card's top inset or below its bottom one is refused now, and the two cases are planted in
+    `test/security.mjs`'s refusals.
   - **The benefits section is headed "Why Fugaro?"** (the owner's ruling of 2026-10-20), and it
     moved the site figure alone, 988,253 → **988,259**, by **6 bytes**: the section's heading
     and the slider tab that opens its panel are one name, so the three characters "Why
@@ -658,6 +667,14 @@ added or removed without this sentence moving fails there:
     which is well inside the ceiling `privacy`'s page sets and does not move it; the two gates
     that pin the string are `test/home.mjs` (the heading) and `test/slider.mjs` (the tab, which
     it holds equal to the heading of the panel the tab opens).
+  - **The security drawing's vertical round grew the two cards the review of 2026-10-20 found**
+    (above), and it moved the site figure alone, 988,259 → **988,260**, by **1 byte**: the
+    gateway card's own height goes from a two-digit number to a three-digit one (`96` → `120`),
+    which is the whole of what the page's bytes did with it. The drawing loads nothing, so the
+    page weight and the script did not move and no file the site ships was added. **It is the
+    same round that added the gate's vertical half**, so the bytes and the check that reads them
+    arrive in one commit: a picture that grows by the card that overran is a picture only a
+    gate that measures the inset on both axes can hold.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -684,7 +701,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,083,750 bytes. Three times 361,250: the heaviest page, the
     docs hub, at 289,000 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,705,972 bytes. Three times 1,235,324 (every file in `dist/`, 988,259
+  - **Whole site:** 3,705,975 bytes. Three times 1,235,325 (every file in `dist/`, 988,260
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
