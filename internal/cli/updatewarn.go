@@ -112,8 +112,9 @@ type updateCheckCtxKey struct{}
 
 // withUpdateCheckDisabled and updateCheckDisabledFromContext carry
 // updateCheckDisabled's result from PersistentPreRun onward, so a command
-// that resolves a project (selectedProjectConfig: a git rev-parse and a
-// config file read) only pays for it once.
+// that resolves a project (selectedProjectConfigReadOnly: a git rev-parse and
+// a config file read, with no recording of the checkout it looks at — see
+// updateCheckDisabled) only pays for it once.
 func withUpdateCheckDisabled(ctx context.Context, disabled bool) context.Context {
 	return context.WithValue(ctx, updateCheckCtxKey{}, disabled)
 }

@@ -559,6 +559,106 @@ func TestConfigListReportsASymlinkLoop(t *testing.T) {
 	}
 }
 
+// TestConfigListReportsAPathThatIsNoLongerACheckout: the path is still a
+// directory, but it is not a git checkout's own root any more — the shape a
+// moved, re-cloned or re-created directory leaves in the state file, and the
+// one a listing that only stat'd the path would call valid.
+//
+// The reason code is its own (not_a_checkout, not missing): the console shows
+// the operator a directory that is there and says what is wrong with it, and
+// "missing" would send them looking for something that is not.
+//
+// Mutation (run, restore): return checkoutMissing from validateCheckoutPath's
+// `co == nil || filepath.Clean(path) != co.Root` branch and every subtest here
+// fails, while the rest of this file stays green.
+func TestConfigListReportsAPathThatIsNoLongerACheckout(t *testing.T) {
+	t.Run("the path is now inside another checkout", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		// A checkout of this project and repository, recorded at one of its
+		// subdirectories: git resolves the toplevel for the path, and the
+		// toplevel is not the path, so the path is a checkout of nothing.
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+		sub := filepath.Join(co, "sub")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		checkoutsRemember(t, "aurora", sub, "https://github.com/acme/app.git")
+
+		doc, _ := configListJSON(t)
+		c := configListCheckoutsOf(t, doc, "aurora")[0]
+		if c.Valid || c.Reason != checkoutNotACheckout || c.Path != sub {
+			t.Errorf("the subdirectory = %+v, want valid false, reason %q and the path kept", c, checkoutNotACheckout)
+		}
+	})
+	t.Run("the checkout's git directory is gone", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+		checkoutsRemember(t, "aurora", co, "https://github.com/acme/app.git")
+		if err := os.RemoveAll(filepath.Join(co, ".git")); err != nil {
+			t.Fatal(err)
+		}
+
+		doc, _ := configListJSON(t)
+		c := configListCheckoutsOf(t, doc, "aurora")[0]
+		if c.Valid || c.Reason != checkoutNotACheckout {
+			t.Errorf("the de-gitted directory = %+v, want valid false and reason %q", c, checkoutNotACheckout)
+		}
+	})
+	t.Run("the checkout's fugaro.yaml is gone", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+		checkoutsRemember(t, "aurora", co, "https://github.com/acme/app.git")
+		if err := os.Remove(filepath.Join(co, "fugaro.yaml")); err != nil {
+			t.Fatal(err)
+		}
+
+		doc, _ := configListJSON(t)
+		c := configListCheckoutsOf(t, doc, "aurora")[0]
+		if c.Valid || c.Reason != checkoutNotACheckout {
+			t.Errorf("the checkout with no fugaro.yaml = %+v, want valid false and reason %q", c, checkoutNotACheckout)
+		}
+	})
+}
+
+// TestConfigListReportsACheckoutItCannotRead: the path is a git checkout's own
+// root, and its fugaro.yaml is one this command cannot read — a file that is
+// not a regular file, or one whose project: is not a string. That is neither
+// "missing" nor "not a checkout": the checkout is there and the file is what
+// is wrong, which is the one of the two things an operator can go and fix.
+//
+// Mutation (run, restore): return checkoutMissing from validateCheckoutPath's
+// resolveCheckout-error branch and both subtests fail.
+func TestConfigListReportsACheckoutItCannotRead(t *testing.T) {
+	t.Run("fugaro.yaml is not a regular file", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+		checkoutsRemember(t, "aurora", co, "https://github.com/acme/app.git")
+		if err := os.Remove(filepath.Join(co, "fugaro.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(co, "fugaro.yaml"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		doc, _ := configListJSON(t)
+		c := configListCheckoutsOf(t, doc, "aurora")[0]
+		if c.Valid || c.Reason != checkoutUnreadable {
+			t.Errorf("the checkout with a directory for fugaro.yaml = %+v, want valid false and reason %q", c, checkoutUnreadable)
+		}
+	})
+	t.Run("project: is not a string", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"), "version: 1\nproject: 7\n", "https://github.com/acme/app.git")
+		checkoutsRemember(t, "aurora", co, "https://github.com/acme/app.git")
+
+		doc, _ := configListJSON(t)
+		c := configListCheckoutsOf(t, doc, "aurora")[0]
+		if c.Valid || c.Reason != checkoutUnreadable {
+			t.Errorf("the checkout whose project: is a number = %+v, want valid false and reason %q", c, checkoutUnreadable)
+		}
+	})
+}
+
 // TestConfigListPrintsNothingTheDiskCanDrive: every string in the document
 // comes from a file this process did not write, so every one of them goes
 // through the printable escaping and the length bound — a control character,

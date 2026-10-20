@@ -443,9 +443,16 @@ func selectedProjectConfigErr(ctx context.Context) (*localcfg.Config, error) {
 // NewRootCmd's PersistentPreRun). Recording there would make every command
 // that runs in a checkout write the remembered checkouts — `fugaro config
 // list` among them, and that one is a read the console spawns under a rule
-// of its own, that a read the console spawns changes nothing
-// (TestConsoleV2ReadsWriteNothing). A command that resolves the checkout for
-// its own work still records it, because it calls checkoutProject.
+// of its own, that a read the console spawns changes nothing.
+// TestTheUpdateCheckLookupRemembersNothing is what pins this: it runs two
+// commands the console never spawns and that resolve no checkout of their
+// own — bare `fugaro backends` and `fugaro upgrade --check` — from inside an
+// unremembered checkout and asserts no state file, and it fails when this
+// resolver is swapped for selectedProjectConfig. (A test over the console's
+// own reads cannot pin it: consoleReadPaths' context mark stops the recording
+// there whatever resolver the pre-run used.) A command that resolves the
+// checkout for its own work still records it, because it calls
+// checkoutProject.
 func selectedProjectConfigReadOnly(ctx context.Context) *localcfg.Config {
 	lc, _ := selectedProjectErr(ctx, resolveCheckout)
 	return lc

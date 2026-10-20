@@ -238,6 +238,44 @@ func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
 	}
 }
 
+// TestTheUpdateCheckLookupRemembersNothing: NewRootCmd's PersistentPreRun
+// resolves the selected project config on EVERY command, before the command
+// has done anything, to answer "does this project say update_check: false"
+// (updateCheckDisabled). That lookup must not remember the checkout it looked
+// at: the command it rides on may resolve no checkout for its own work at all,
+// and the directory the operator happens to be standing in is not something
+// the command did.
+//
+// The two commands below are exactly that — bare `fugaro backends` prints its
+// own help, and `fugaro upgrade --check` is documented as writing nothing —
+// and the console spawns neither, so neither is in consoleReadPaths. The
+// read-only resolver is the only thing between them and a write, which is why
+// this is the test that pins selectedProjectConfigReadOnly:
+// TestConsoleV2ReadsWriteNothing's commands are protected twice over, by
+// consoleReadPaths' context mark as well, and it passes with the resolver
+// reverted.
+//
+// Mutation (run, restore): revert updateCheckDisabled (updatewarn.go) to
+// selectedProjectConfig and this fails on the first row, with the state file
+// holding the checkout the command merely started in.
+func TestTheUpdateCheckLookupRemembersNothing(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsYAML, "https://github.com/acme/app.git")
+	t.Chdir(co)
+	statePath, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"backends"}, {"upgrade", "--check"}} {
+		if out, _, err := execute(t, args...); err != nil {
+			t.Logf("%v exited with %v:\n%s", args, err, out)
+		}
+		if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%v remembered the checkout it started in (stat %s: %v)", args, statePath, err)
+		}
+	}
+}
+
 // TestAFailedRecordNeverFailsTheCommand: remembering a checkout is best
 // effort. A state file that cannot be written (here: a directory where the
 // file goes) leaves the resolver — and so the command that called it —
