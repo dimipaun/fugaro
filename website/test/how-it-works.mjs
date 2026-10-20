@@ -43,18 +43,28 @@
 //   - **The drawing scales to a phone, and never scrolls sideways.** Every drawing carries a
 //     `viewBox` and the stylesheet gives it `width: 100%` of the column and a `max-width` of
 //     the same, so a drawing is scaled rather than clipped; no rule of the diagram's declares a
-//     width a 360 px phone cannot fit, or a `white-space: nowrap` that cannot break; the tall
-//     viewBox is drawn at a phone's own width and its smallest label is still at least 12 px
-//     once the column scales it; and exactly one of the two drawings is displayed at a time —
-//     the wide one above the site's 48 rem breakpoint, the tall one below it — so the run is
-//     drawn twice and read once.
+//     width a 360 px phone cannot fit, or a `white-space: nowrap` that cannot break; and
+//     exactly one of the two drawings is displayed at a time, at one width the stylesheet
+//     declares, so the run is drawn twice and read once. The width they change over at is read
+//     out of the stylesheet and the box each drawing is scaled into out of the page's own
+//     gutter and ceiling, because what the changeover buys is a label size: the wide drawing's
+//     smallest label is 16 units of a 1200-unit picture, so the drawing is shown where its
+//     column puts that label at 12 px or more, and the tall drawing — drawn at a phone's own
+//     width, with a ceiling of its own scale — meets the phone's column instead. A number typed
+//     in here would keep agreeing with itself after the page's gutter moved.
+//   - **The loop's arrow is drawn, and it joins the stages the run repeats.** The draft draws
+//     `[fix ─► review(2)]`: the arrow leaves `review`, runs up beside the pills and lands back
+//     on `implement`. So the pill the arrow's two ends land on is read from the stage words the
+//     drawing itself pairs with its pills, the line has to reach those two pills, the head that
+//     lands it has to be drawn at the end of the line that lands on `implement`, and no part of
+//     the arrow may be drawn across a pill. An arrow deleted from the drawing, or redrawn
+//     between two other stages, is a run the page does not describe.
 //
 // Standard library only; no network (Global Constraint 4).
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { DIST, REPO, builtPages, cssDeclarations, cssRules, findAll, parse, textOf, walk } from './lib/html.mjs'
 
@@ -224,6 +234,34 @@ function textBox(text) {
 const overlaps = (a, b) => a.x0 < b.x1 - 0.5 && a.x1 > b.x0 + 0.5 && a.y0 < b.y1 - 0.5 && a.y1 > b.y0 + 0.5
 
 /**
+ * Whether a stage's own label is drawn inside a pill: the sides, and the line's own cap
+ * height — a descender dipping a hair under the pill's edge is how the type sits in every
+ * pill of the drawing, and what is read here is whether the word is drawn across the pill
+ * rather than in it.
+ */
+const inPill = (drawn, text, pill) =>
+  drawn.x0 >= pill.x0 - 0.5 && drawn.x1 <= pill.x1 + 0.5 && text.y - text.size * 0.8 >= pill.y0 - 1 && text.y <= pill.y1 + 0.5
+
+/**
+ * The pill each stage's own label is drawn in, paired by the drawing's own geometry — a stage
+ * word inside a pill is that pill's stage. One predicate, read twice: by the check that every
+ * stage word of the drawing has a pill of its own, and by the reading of which two pills the
+ * loop's arrow joins, so the two cannot disagree about where a stage is drawn (which is what
+ * makes the loop's ends a fact about the stages rather than about two numbers).
+ */
+function stagePills(box) {
+  const pairs = []
+  for (const text of box.texts) {
+    if (!text.stage || !text.klass.includes('run-stage')) continue
+    if (![text.x, text.y, text.size].every(Number.isFinite)) continue
+    const drawn = textBox(text)
+    const pill = box.pills.find((candidate) => inPill(drawn, text, candidate))
+    if (pill) pairs.push({ stage: text.stage, pill })
+  }
+  return pairs
+}
+
+/**
  * A page's run diagram, as the elements it renders: the drawings, each drawing's labelled
  * groups and stage names, the picture's name, and the words under it. `figure` is 0 or 1.
  */
@@ -275,6 +313,9 @@ export function runDiagramOf(html) {
               .map((el) => ({
                 klass: classes(el),
                 text: textOf(el).trim(),
+                // The stage a stage's label names: the pill it sits in is read from this,
+                // which is how the loop's arrow is held to the two stages it joins.
+                stage: el.attrs.get('data-stage') ?? null,
                 x: Number(el.attrs.get('x')),
                 y: Number(el.attrs.get('y')),
                 size: Number(el.attrs.get('font-size')),
@@ -288,9 +329,15 @@ export function runDiagramOf(html) {
                 y0: Number(el.attrs.get('y')),
                 y1: Number(el.attrs.get('y')) + Number(el.attrs.get('height')),
               })),
+            // The loop's own paths — the line, and the head that lands it — each with the
+            // class it is drawn under, so the arrow the draft asks for can be held as the
+            // arrow it is: it has to be drawn, and it has to join the two stages.
             loop: [...walk(body)]
               .filter((el) => el.name === 'path' && classes(el).some((name) => name.startsWith('run-loop')))
-              .map((el) => pathBox(el.attrs.get('d') ?? '')),
+              .map((el) => ({
+                klass: classes(el).find((name) => name.startsWith('run-loop')) ?? '',
+                path: pathBox(el.attrs.get('d') ?? ''),
+              })),
           }
         }),
       })
@@ -336,6 +383,89 @@ function diagramDeclarations(css) {
     }
   }
   return out
+}
+
+/**
+ * The width a media query's own condition names, in pixels — `(width<=47.99rem)` and
+ * `(width>=48rem)` are what the built stylesheet writes, and the source forms it is built
+ * from (`(max-width: 47.99rem)`) read the same — or `null` for a query that is about
+ * something else (`prefers-reduced-motion`, a hover query). A query naming two widths is
+ * read as the last of them, which is the one the rule's own reading turns on.
+ */
+function queryWidth(conditions) {
+  let found = null
+  for (const [, minimum, maximum, kind, value, unit] of (conditions ?? '').matchAll(
+    /(min-)?(max-)?width\s*(:|<=|>=|<|>)\s*([\d.]+)(rem|px)/g,
+  )) {
+    const at = Number(value) * (unit === 'rem' ? 16 : 1)
+    if (kind !== ':') found = at
+    else if (maximum) found = at
+    else if (minimum) found = at
+    else found = null
+  }
+  return found
+}
+
+/** Whether a rule's own conditions hold at a viewport: the widths a query names, and nothing
+ * else. A rule inside a query this check cannot read — a print sheet, a hover query, a
+ * `supports` block — is not the rule a reader at this viewport gets. */
+function appliesAt(conditions, viewport) {
+  for (const condition of conditions ?? []) {
+    const widths = [...condition.matchAll(/(min-)?(max-)?width\s*(:|<=|>=|<|>)\s*([\d.]+)(rem|px)/g)]
+    if (widths.length === 0) return false
+    for (const [, minimum, maximum, kind, value, unit] of widths) {
+      const at = Number(value) * (unit === 'rem' ? 16 : 1)
+      if (kind === '>=' || (kind === ':' && minimum)) {
+        if (!(viewport >= at)) return false
+      } else if (kind === '<=' || (kind === ':' && maximum)) {
+        if (!(viewport <= at)) return false
+      } else if (kind === '>') {
+        if (!(viewport > at)) return false
+      } else if (kind === '<') {
+        if (!(viewport < at)) return false
+      } else return false
+    }
+  }
+  return true
+}
+
+/**
+ * `main`'s inline padding at a viewport, read out of the page's own stylesheet: the gutter
+ * the drawings are scaled inside. The page's own two rules are the reading — the base
+ * `padding: var(--space-lg) var(--space-sm) var(--space-2xl)` and the wider viewport's
+ * `padding: var(--space-xl) var(--space-md) var(--space-3xl)` — so a token that moves moves
+ * every number below with it rather than leaving this check measuring a box the page is no
+ * longer drawn in. `null` when no rule of the page declares a padding this check can turn
+ * into pixels, which the callers refuse rather than guess at.
+ */
+function mainGutter(css, viewport) {
+  let gutter = null
+  for (const rule of cssRules(css)) {
+    if ((rule.selector ?? '').trim() !== 'main') continue
+    const padding = [...cssDeclarations(rule.body ?? '')].find(([property]) => property === 'padding')
+    if (!padding) continue
+    if (!appliesAt(rule.conditions ?? [], viewport)) continue
+    // The shorthand's inline value: `padding: 0` is none, and a two- or three-value padding
+    // writes it second.
+    const parts = padding[1].trim().split(/\s+/)
+    const px = lengthInPx(parts.length === 1 ? parts[0] : parts[1], css)
+    if (Number.isNaN(px)) return null
+    gutter = px
+  }
+  return gutter
+}
+
+/**
+ * The width of the column `main` holds at a viewport: the page's `--page-max` ceiling, less
+ * the gutter on both sides. This is the box a drawing is scaled into, and every readability
+ * number below is taken at a viewport this way rather than from a width written here.
+ * `null` when the stylesheet does not say.
+ */
+function columnAt(css, viewport) {
+  const gutter = mainGutter(css, viewport)
+  const pageMax = lengthInPx('var(--page-max)', css)
+  if (gutter === null || Number.isNaN(pageMax)) return null
+  return Math.min(viewport, pageMax) - 2 * gutter
 }
 
 /**
@@ -465,14 +595,17 @@ export function runDiagramFailures(html, css, docs = sources()) {
   if (!maxWidth || !/^100%$/.test(maxWidth.value.trim())) {
     out.push(`\`.run-svg\` is \`max-width: ${maxWidth?.value ?? '(nothing declared)'}\`, and the drawing never grows past the column: \`max-width: 100%\` is the ceiling that keeps it there (the owner's draft of 2026-10-19)`)
   }
+  // The column a 360 px phone gives the drawings — out of the page's own stylesheet, so that
+  // a gutter that moves moves this with it — which is the box every width below is held to.
+  const phoneColumn = columnAt(css, PHONE_WIDTH)
   for (const declaration of diagramDeclarations(css)) {
     if (!['width', 'min-width'].includes(declaration.property)) continue
     const px = lengthInPx(declaration.value, css)
     if (declaration.property === 'width' && /^\d+(\.\d+)?%$/.test(declaration.value.trim())) continue
     if (Number.isNaN(px)) {
       out.push(`\`${declaration.selector}\` is \`${declaration.property}: ${declaration.value}\`, which this check cannot turn into pixels, and a width it cannot read is one nothing checked (the owner's draft of 2026-10-19)`)
-    } else if (px > PHONE_BOX) {
-      out.push(`\`${declaration.selector}\` is \`${declaration.property}: ${declaration.value}\` — ${Math.round(px)} px, and a 360 px phone's content box is ${PHONE_BOX} px: a box wider than the phone is a page the phone scrolls sideways (the owner's draft of 2026-10-19)`)
+    } else if (phoneColumn !== null && px > phoneColumn) {
+      out.push(`\`${declaration.selector}\` is \`${declaration.property}: ${declaration.value}\` — ${Math.round(px)} px, and a ${PHONE_WIDTH} px phone's column is ${Math.round(phoneColumn)} px: a box wider than the phone is a page the phone scrolls sideways (the owner's draft of 2026-10-19)`)
     }
     if (declaration.property === 'min-width' && declaration.value.trim() !== '0') {
       out.push(`\`${declaration.selector}\` is \`min-width: ${declaration.value}\`, and a floor under the width of a block of the run is a block a phone cannot fit (the owner's draft of 2026-10-19)`)
@@ -512,12 +645,7 @@ export function runDiagramFailures(html, css, docs = sources()) {
         // A stage's own label belongs to its pill: the pill is the stage, and a word drawn
         // wider than it is a word sitting on two pills at once.
         if (text.klass.includes('run-stage')) {
-          // The sides and the line's own cap height: a descender dipping a hair under the
-          // pill's edge is how the type sits in every pill of the drawing, and what is read
-          // here is whether the word is drawn across the pill rather than in it.
-          const inside = box.pills.some(
-            (pill) => drawn.x0 >= pill.x0 - 0.5 && drawn.x1 <= pill.x1 + 0.5 && text.y - text.size * 0.8 >= pill.y0 - 1 && text.y <= pill.y1 + 0.5,
-          )
+          const inside = box.pills.some((pill) => inPill(drawn, text, pill))
           if (!inside) {
             out.push(`${where}'s ${box.name} draws the stage ${JSON.stringify(text.text)} from ${drawn.x0.toFixed(1)} to ${drawn.x1.toFixed(1)} units, and no pill of the drawing holds it: a stage is its pill, and a word wider than the pill it sits in is a word over the pill beside it (the owner's draft of 2026-10-19)`)
           }
@@ -530,25 +658,114 @@ export function runDiagramFailures(html, css, docs = sources()) {
         }
       }
       // The loop the draft draws: an arrow that leaves `review`, runs up beside the stages and
-      // lands back on `implement`. Drawn through the pills it is a line struck through the two
-      // stages the round trip is between.
-      for (const path of box.loop) {
-        if (!path) {
+      // lands back on `implement` — the `fix` round `docs/design/v1.md` §4 draws. Three
+      // readings, because the arrow is a claim about the run rather than decoration: it has
+      // to be *drawn* (the line, and the head that lands it — an arrow deleted from the
+      // drawing leaves a run with no fix round in it), it has to join `review` and
+      // `implement` rather than two other stages, and it has to be drawn beside the pills
+      // rather than across them (a line struck through the two stages the round trip is
+      // between).
+      if (box.texts.some((text) => text.stage)) {
+        const lines = box.loop.filter((path) => path.klass === 'run-loop-line')
+        const heads = box.loop.filter((path) => path.klass === 'run-loop-head')
+        if (lines.length !== 1 || heads.length !== 1) {
+          out.push(`${where}'s ${box.name} draws the loop with ${lines.length} \`run-loop-line\` and ${heads.length} \`run-loop-head\` paths, and the fix round is one arrow: a line that leaves \`review\` and the head that lands it back on \`implement\` (docs/design/v1.md §4; the owner's draft of 2026-10-19)`)
+        } else if (!lines[0].path || !heads[0].path) {
           out.push(`${where}'s ${box.name} draws the loop with a path this check cannot read, and an arrow nothing can measure is an arrow nothing holds beside the pills (the owner's draft of 2026-10-19)`)
-          continue
+        } else {
+          const staged = stagePills(box)
+          const review = staged.find((pair) => pair.stage === 'review')?.pill
+          const implement = staged.find((pair) => pair.stage === 'implement')?.pill
+          const from = lines[0].path
+          const tip = heads[0].path
+          const reaches = (y, pill) => pill !== undefined && y >= pill.y0 - 0.5 && y <= pill.y1 + 0.5
+          const span = (pill) => (pill ? `${pill.y0.toFixed(1)} to ${pill.y1.toFixed(1)} units` : 'no pill this check can find')
+          const joins =
+            (reaches(from.y0, review) && reaches(from.y1, implement)) || (reaches(from.y1, review) && reaches(from.y0, implement))
+          if (!joins) {
+            out.push(`${where}'s ${box.name} draws the loop's arrow from y ${from.y0.toFixed(1)} to y ${from.y1.toFixed(1)}, and the round trip runs from the \`review\` pill (${span(review)}) back round to \`implement\`'s (${span(implement)}): the pills are where the run's stages are drawn, so an arrow between two other stages is a fix round the run does not take (docs/design/v1.md §4; the owner's draft of 2026-10-19)`)
+          }
+          const landed = (tip.y0 + tip.y1) / 2
+          if (!reaches(landed, implement) || tip.x0 < from.x0 - 0.5 || tip.x1 > from.x1 + 0.5) {
+            out.push(`${where}'s ${box.name} draws the arrow's head from x ${tip.x0.toFixed(1)} to x ${tip.x1.toFixed(1)} at y ${landed.toFixed(1)}, and the head of the round trip sits at the end of its line that lands on \`implement\` — the line runs x ${from.x0.toFixed(1)} to x ${from.x1.toFixed(1)}, y ${from.y0.toFixed(1)} to y ${from.y1.toFixed(1)} —: an arrowhead is where the arrow points, and a head drawn anywhere else points at something the round trip does not do (the owner's draft of 2026-10-19)`)
+          }
         }
-        for (const pill of box.pills) {
-          if (overlaps(path, pill)) {
-            out.push(`${where}'s ${box.name} draws the loop's arrow across ${path.x0.toFixed(1)} to ${path.x1.toFixed(1)} units and the stage pill at ${pill.x0.toFixed(1)} to ${pill.x1.toFixed(1)} is drawn over it: the loop is drawn beside the stages it sends the run back through, and an arrow through a pill reads as a line through that stage rather than the round trip (the owner's draft of 2026-10-19)`)
+        for (const path of box.loop) {
+          if (!path.path) continue
+          for (const pill of box.pills) {
+            if (overlaps(path.path, pill)) {
+              out.push(`${where}'s ${box.name} draws the loop's arrow across ${path.path.x0.toFixed(1)} to ${path.path.x1.toFixed(1)} units and the stage pill at ${pill.x0.toFixed(1)} to ${pill.x1.toFixed(1)} is drawn over it: the loop is drawn beside the stages it sends the run back through, and an arrow through a pill reads as a line through that stage rather than the round trip (the owner's draft of 2026-10-19)`)
+            }
           }
         }
       }
     }
   }
 
-  // The second viewBox is a second scale, at a phone's own width, with labels a reader can
-  // read once the column has scaled it: the smallest label of the tall drawing, at the width
-  // the drawing is shown at, is at least a readable 12 px.
+  // The two drawings are two scales of one picture, and the label a reader has to be able to
+  // read is the smallest one — every number below is taken at a width the page's own
+  // stylesheet declares rather than at one written here: the gutter out of `main`'s padding,
+  // the ceiling out of `--page-max`, and the width the drawings change over at out of the
+  // stylesheet's own query. A check that typed the box in would keep agreeing with itself
+  // after the page's gutter moved.
+  //
+  //   - The **tall** drawing meets a phone: it is drawn at a phone's own width, so its
+  //     smallest label scales by about one into a phone's column, and it carries a
+  //     `max-width` of its own scale so that the tablet it is also shown on gets the phone's
+  //     picture rather than that picture stretched.
+  //   - The **wide** drawing meets the narrowest column it is shown in — the column at the
+  //     width the drawings change over at, which is the whole reason that width is 59.25 rem
+  //     and not the site's 48 rem chrome breakpoint: at a 768 px viewport the column scales
+  //     the wide drawing's 16 unit labels to 9.6 px, a label a reader cannot read.
+  const shown = (klass) => {
+    const rules = diagramDeclarations(css).filter(
+      (declaration) => declaration.property === 'display' && new RegExp(`\\.${klass}(?![\\w-])`).test(declaration.selector),
+    )
+    return {
+      plain: rules.filter((rule) => !rule.conditions).map((rule) => rule.value),
+      switched: rules
+        .filter((rule) => rule.conditions)
+        .map((rule) => ({ value: rule.value, at: queryWidth(rule.conditions), query: rule.conditions })),
+    }
+  }
+  const tallShown = shown('run-tall')
+  const wideShown = shown('run-wide')
+  const widths = [...new Set([...tallShown.switched, ...wideShown.switched].map((rule) => rule.at))]
+  const switchAt = widths.length === 1 ? widths[0] : null
+  if (!tallShown.plain.includes('none')) {
+    out.push(`the tall drawing is \`display: ${tallShown.plain.join(', ') || '(nothing declared)'}\` above the width the two drawings change over at, and only one of the two drawings is shown at a time: the run is drawn twice and read once (the owner's draft of 2026-10-19)`)
+  }
+  if (switchAt === null) {
+    out.push(`the two drawings change over at ${widths.length === 0 ? 'no width this check can read' : `${widths.length} different widths (${widths.map((at) => (at === null ? 'one it cannot read' : `${at} px`)).join(', ')})`}: one drawing is shown at a time, so the page's stylesheet declares the single width that swaps them, and the whole reason that width is where it is is the label size below (the owner's draft of 2026-10-19)`)
+  } else {
+    if (!tallShown.switched.some((rule) => rule.value === 'block' && rule.at === switchAt)) {
+      out.push(`the tall drawing is \`display: ${tallShown.switched.map((rule) => rule.value).join(', ') || '(nothing declared)'}\` inside a media query, and a phone is met with the stacked run rather than the shrunk wide one: the query at ${switchAt} px is the one that shows it (the owner's draft of 2026-10-19)`)
+    }
+    if (!wideShown.switched.some((rule) => rule.value === 'none' && rule.at === switchAt)) {
+      out.push(`the wide drawing is \`display: ${wideShown.switched.map((rule) => rule.value).join(', ') || '(nothing declared)'}\` inside a media query, and the wide drawing is turned off at the same width the tall one is turned on at: two drawings on a page is the run drawn twice and read twice (the owner's draft of 2026-10-19)`)
+    }
+  }
+  const switchColumn = switchAt === null ? null : columnAt(css, switchAt)
+  if (switchColumn === null || phoneColumn === null) {
+    out.push(`the column the drawings are scaled into cannot be read out of the page's own stylesheet (${switchColumn === null ? 'the width they change over at, ' : ''}${phoneColumn === null ? "`main`'s own inline padding or the page's ceiling" : ''}), and the box a drawing is drawn in is what every readability number here is taken at: a check that wrote the box down instead would keep measuring a page the reader no longer has (the owner's draft of 2026-10-19)`)
+  }
+
+  // The readable floor: the smallest label of each drawing, at the narrowest column it is
+  // shown in, is at least 12 px.
+  const floor = 12
+  const scaledInto = (drawing, column) => {
+    const box = drawing.viewBox.trim().split(/\s+/).map(Number)
+    const smallest = Math.min(...drawing.sizes)
+    if (!Number.isFinite(box[2]) || box[2] <= 0 || !Number.isFinite(smallest) || column === null) return null
+    return { smallest, units: box[2], px: (smallest * column) / box[2] }
+  }
+  const wide = diagram.drawings.find((drawing) => drawing.wide)
+  if (wide && switchAt !== null) {
+    const read = scaledInto(wide, switchColumn)
+    if (read && !(read.px >= floor)) {
+      out.push(`the wide drawing's smallest label is ${read.smallest} units, which is ${read.px.toFixed(1)} px in the ${Math.round(switchColumn)} px column the page gives the drawing at ${switchAt} px — the narrowest viewport it is shown at: a label under ${floor} px is a label a reader cannot read, and the wide drawing is shown above the width its own labels fit at or it is shown to a reader who cannot read it (the owner's draft of 2026-10-19)`)
+    }
+  }
   const tall = diagram.drawings.find((drawing) => drawing.tall)
   if (!tall) {
     out.push('the page carries no tall drawing, and a phone meets the run stacked rather than shrunk: the wide drawing\'s labels are a third of the size they are drawn at on a 360 px screen (the owner\'s draft of 2026-10-19)')
@@ -557,33 +774,29 @@ export function runDiagramFailures(html, css, docs = sources()) {
     if (Number.isFinite(box[2]) && box[2] > PHONE_WIDTH) {
       out.push(`the tall drawing is drawn ${box[2]} units wide and a phone's viewport is ${PHONE_WIDTH} px: the second viewBox is the run drawn at a phone's own width, so its labels scale by about one and stay readable (the owner's draft of 2026-10-19)`)
     }
-    const smallest = Math.min(...tall.sizes)
-    const scaled = (smallest * PHONE_BOX) / (Number.isFinite(box[2]) ? box[2] : PHONE_BOX)
-    if (!(scaled >= 12)) {
-      out.push(`the tall drawing's smallest label is ${smallest} units, which is ${scaled.toFixed(1)} px at a phone's content box: a label under 12 px is a label a reader on a phone cannot read, and the stacked drawing is there so that they can (the owner's draft of 2026-10-19)`)
+    // Its own scale, as the stylesheet declares it: the ceiling the stacked drawing is shown
+    // under, so a tablet is shown the phone's picture rather than a stretched one. Unreadable
+    // (or absent) is refused rather than defaulted: a ceiling nothing states is a ceiling a
+    // tablet does not have.
+    const cap = declaredFor(css, 'run-tall', 'max-width')
+    const capPx = cap ? lengthInPx(cap.value, css) : NaN
+    const fit = (column) => (column === null ? null : Number.isNaN(capPx) ? column : Math.min(column, capPx))
+    if (Number.isNaN(capPx)) {
+      out.push(`the tall drawing declares \`max-width: ${cap?.value ?? '(nothing)'}\`, which this check cannot turn into pixels${cap ? '' : ', and it declares no ceiling at all'}: the stacked drawing is the run at a phone's own scale, and a ceiling nothing states leaves the tablet it is also shown on with a picture stretched to the column (the owner's draft of 2026-10-19)`)
     }
-  }
-
-  // Exactly one drawing is displayed at a time: the tall one below the site's breakpoint, and
-  // the wide one above it. Above it the tall drawing is `display: none`, which is what takes it
-  // out of the reading as well as off the page.
-  const shown = (klass) => {
-    const rules = diagramDeclarations(css).filter((declaration) => declaration.property === 'display' && new RegExp(`\\.${klass}(?![\\w-])`).test(declaration.selector))
-    return {
-      plain: rules.filter((rule) => !rule.conditions).map((rule) => rule.value),
-      phone: rules.filter((rule) => /width\s*<=?\s*([\d.]+)rem/.test(rule.conditions) && Number(/width\s*<=?\s*([\d.]+)rem/.exec(rule.conditions)[1]) * 16 <= BREAKPOINT).map((rule) => rule.value),
+    const read = scaledInto(tall, fit(phoneColumn))
+    if (read && !(read.px >= floor)) {
+      out.push(`the tall drawing's smallest label is ${read.smallest} units, which is ${read.px.toFixed(1)} px in the ${Math.round(fit(phoneColumn) ?? 0)} px box a ${PHONE_WIDTH} px phone gives it (the page's own column, capped by the drawing's own ceiling): a label under ${floor} px is a label a reader on a phone cannot read, and the stacked drawing is there so that they can (the owner's draft of 2026-10-19)`)
     }
-  }
-  const tallShown = shown('run-tall')
-  const wideShown = shown('run-wide')
-  if (!tallShown.plain.includes('none')) {
-    out.push(`the tall drawing is \`display: ${tallShown.plain.join(', ') || '(nothing declared)'}\` above the site's breakpoint, and only one of the two drawings is shown at a time: the run is drawn twice and read once (the owner's draft of 2026-10-19)`)
-  }
-  if (!tallShown.phone.includes('block')) {
-    out.push(`the tall drawing is \`display: ${tallShown.phone.join(', ') || '(nothing declared)'}\` inside the media query below the site's breakpoint, and a phone is met with the stacked run rather than the shrunk wide one (the owner's draft of 2026-10-19)`)
-  }
-  if (!wideShown.phone.includes('none')) {
-    out.push(`the wide drawing is \`display: ${wideShown.phone.join(', ') || '(nothing declared)'}\` inside the media query below the site's breakpoint, and a phone shows exactly one drawing (the owner's draft of 2026-10-19)`)
+    // And the ceiling itself: at the widest viewport the tall drawing is shown at — the width
+    // the drawings change over at — it is not drawn larger than its own viewBox. A ceiling this
+    // check cannot read is refused above rather than read as one that is not there.
+    if (!Number.isNaN(capPx) && Number.isFinite(box[2]) && box[2] > 0 && switchAt !== null) {
+      const widest = fit(switchColumn)
+      if (widest !== null && widest > box[2] + 0.5) {
+        out.push(`the tall drawing is shown ${Math.round(widest)} px wide at ${switchAt} px — the widest viewport it is shown at, the narrowest the wide one is — and it is drawn ${box[2]} units wide: the stacked drawing is the run at a phone's own scale, and a tablet is shown the phone's picture rather than that picture stretched (the owner's draft of 2026-10-19)`)
+      }
+    }
   }
   return out
 }
@@ -593,14 +806,13 @@ function different(values) {
   return new Set(values).size > 1
 }
 
-/** The width a 360 px phone's column has, with `main`'s own gutter out of it. */
-const PHONE_BOX = 328
-
-/** And the phone itself: the width the tall drawing is drawn at, and the width it scales into. */
+/**
+ * The phone the drawings are held to: the width the tall drawing is drawn at, and the
+ * viewport whose column every phone number below is taken at. It is the one number written
+ * here rather than read out of the page — the box that column holds is `columnAt`'s, out of
+ * `main`'s own padding, so a gutter that moves moves the box with it.
+ */
 const PHONE_WIDTH = 360
-
-/** The site's breakpoint: `base.css` switches the chrome at 48 rem, and the drawings follow it. */
-const BREAKPOINT = 48 * 16
 
 /** A length in pixels, for the tokens this page's stylesheet declares. */
 function lengthInPx(value, css) {
@@ -662,6 +874,34 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     return html.replace(pill[0], pill[0] + copy)
   }
 
+  // A path of the loop moved sideways, whole: every x of its `d` by the same amount, so the
+  // fixture moves the arrow rather than redrawing it. The loop's `d` is written as pairs of
+  // numbers per command (`M x y H x V y H x`, and the head's `M x y L x y L x y Z`), so the
+  // even ones are the x's.
+  const shiftX = (html, klass, by) => {
+    const path = new RegExp(`(<path class="${klass}" d=")([^"]*)"`).exec(html)
+    assert.ok(path, `the built page draws no \`${klass}\` path, and this fixture moves it`)
+    let index = 0
+    const moved = path[2].replace(/-?\d+(?:\.\d+)?/g, (number) => (index++ % 2 === 0 ? (Number(number) + by).toFixed(1) : number))
+    return html.replace(path[0], `${path[1]}${moved}"`)
+  }
+
+  // The loop redrawn between two other stages, in the lane it keeps: the arrow's two ends
+  // moved up one stage row, so the round trip leaves `verify` and lands on `bootstrap` — a fix
+  // round the run does not take. The row is the drawing's own: every pill is drawn six units
+  // shorter than the row it sits in, which is the arithmetic the component draws its stages
+  // with. Nothing else moves: the line stays in its lane, clear of the pills, and the head
+  // stays on the end of the line that lands on `implement`, so the one thing this fixture
+  // breaks is which two stages the arrow joins.
+  const reroute = (html) => {
+    const pill = /<rect class="run-stage-pill"[^>]*height="([\d.]+)"/.exec(html)
+    assert.ok(pill, 'the built page draws no stage pill, and this fixture moves the loop a stage row at a time')
+    const step = Number(pill[1]) + 6
+    const line = /(class="run-loop-line" d="M ([\d.]+) ([\d.]+) H ([\d.]+) V ([\d.]+) H )([\d.]+)"/.exec(html)
+    assert.ok(line, 'the built page draws no loop line in the shape this fixture redraws, and the fixture is written to that shape')
+    return html.replace(line[0], `${line[1]}${line[2]} ${(Number(line[3]) - step).toFixed(1)} H ${line[4]} V ${(Number(line[5]) - step).toFixed(1)} H ${line[6]}"`)
+  }
+
   const cases = [
     ['a page with no diagram', page.replace(/<figure class="run-diagram"[\s\S]*?<\/figure>/, ''), /renders 0 run diagrams/],
     [
@@ -716,9 +956,37 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
       'a loop drawn through the stage pills',
       // The arrow left where it is drawn and moved back over the pills: the width the pills
       // took before the loop had a lane of its own, which is the defect a reader sees as a
-      // line struck through `implement` and `review`.
-      page.replace(/(class="run-loop-line" d=")([^"]*)"/, (match, head, d) => `${head}${d.replace(/([MH]) (-?[\d.]+)/g, (one, command, x) => `${command} ${(Number(x) - 40).toFixed(1)}`)}"`),
-      /draws the loop's arrow across .* and the stage pill/,
+      // line struck through `implement` and `review`. Two readings are true of it and both are
+      // expected: the line is drawn over three pills, and the head it no longer reaches — the
+      // fixture moves the line and leaves the arrowhead where it was drawn — no longer sits at
+      // the end of the line that lands on `implement`.
+      shiftX(page, 'run-loop-line', -40),
+      /draws the loop's arrow across .* and the stage pill|draws the arrow's head from/,
+    ],
+    // The arrow itself, read the way the draft writes it (`[fix ─► review(2)]`): it is drawn,
+    // at all, and it joins the two stages the round trip is between. Each fixture breaks one of
+    // those and nothing else, so the refusal that fires is the one the fixture is about.
+    [
+      'a drawing with no loop at all',
+      // The whole arrow gone from the wide drawing: the line and the head that lands it, which
+      // is a run with no fix round in it however the pills are drawn.
+      page.replace(/<path class="run-loop-line"[^>]*\/>/, '').replace(/<path class="run-loop-head"[^>]*\/>/, ''),
+      /draws the loop with 0 `run-loop-line` and 0 `run-loop-head` paths/,
+    ],
+    [
+      'a loop with no arrowhead',
+      page.replace(/<path class="run-loop-head"[^>]*\/>/, ''),
+      /draws the loop with 1 `run-loop-line` and 0 `run-loop-head` paths/,
+    ],
+    [
+      'a loop that joins two other stages',
+      reroute(page),
+      /draws the loop's arrow from y .* and the round trip runs from the `review` pill/,
+    ],
+    [
+      'an arrowhead somewhere else',
+      shiftX(page, 'run-loop-head', 40),
+      /draws the arrow's head from x .* and the head of the round trip sits at the end of its line/,
     ],
     // A label written for the page rather than quoted: the sentence a reader reads has to be
     // the document's own.
@@ -794,7 +1062,27 @@ test('every run-diagram refusal fires on the defect it names', (t) => {
     // the phone block's own tail, so the fixture rewrites the rule in the query rather than the
     // base rule above it.
     ['a tall drawing that is not the one a phone shows', replaceOnce('display:block}}', 'display:none}}'), /a phone is met with the stacked run|shows exactly one drawing/],
-    ['a tall drawing shown above the breakpoint', rewrite('run-tall', 'display:none', 'display:block'), /above the site's breakpoint/],
+    ['a tall drawing shown above the changeover', rewrite('run-tall', 'display:none', 'display:block'), /above the width the two drawings change over at/],
+    // The width the two drawings change over at, and the reason it is not the site's chrome
+    // breakpoint: moved back to 48 rem, the wide drawing is shown from a 768 px viewport up,
+    // where its own 16 unit labels come out at 9.8 px — the finding this check was written for.
+    [
+      'the drawings changing over at the site chrome breakpoint',
+      replaceOnce('(width<=59.25rem)', '(width<=47.99rem)'),
+      /wide drawing's smallest label is .* px in the .* px column the page gives the drawing/,
+    ],
+    // The stacked drawing's ceiling: a tablet is shown the phone's picture rather than that
+    // picture stretched, and a ceiling nothing states is refused rather than read as none.
+    [
+      'a tall drawing stretched to the column',
+      rewrite('run-tall', 'max-width:22.5rem', 'max-width:56.25rem'),
+      /the tall drawing is shown .* px wide at .* and it is drawn .* units wide/,
+    ],
+    [
+      'a tall drawing with no ceiling of its own',
+      rewrite('run-tall', 'max-width:22.5rem;', ''),
+      /declares `max-width: \(nothing\)`.*declares no ceiling at all/,
+    ],
   ]
   for (const [what, stylesheet, expected] of [...cases, ...cssCases]) {
     const broken = typeof stylesheet === 'string' && stylesheet.startsWith('<!DOCTYPE')

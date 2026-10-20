@@ -147,7 +147,11 @@ here goes stale the way the byte budgets did before D192.
   changes spec is the later brief and names them itself (`1 Your agent`, `2 Fugaro`,
   `3 Ephemeral cloud job`, `4 Pull request`), so the flow is drawn from those names, one
   line each — and `website/test/home.mjs` reads them out of the spec's own item 4 rather
-  than out of a copy in the component, so the picture and the ruling cannot drift.
+  than out of a copy in the component, so the picture and the ruling cannot drift. **That
+  bullet is item 4 as it stands on the homepage, and item 4's second half is amended by the
+  owner's draft of 2026-10-19**: the HOW IT WORKS page opens with the run's own diagram rather
+  than with this flow, and the amendment is recorded in "The owner's 2026-10-19 approval of the
+  run's diagram" at the end of this document.
 - **The two facts D185 put in the captions move to the detail.** Item 4 asks for "one short
   line each" in one bold picture, so neither the caches nor the trust boundary is a caption:
   the caches stay in the README's own step 2, and "The trust boundary is the container, not
@@ -323,6 +327,18 @@ here goes stale the way the byte budgets did before D192.
   eleven pages grows by the same bytes — the stylesheet they all inline — so the site figure and
   the page weight both move, the docs hub inlining the same stylesheet and being the heaviest
   page. The script is untouched.
+  **And a later round is the run's own diagram** (the owner's approval of the draft *"How it
+  works, draft 2 (diagram)"* on 2026-10-19, *"build it"*, which took the timeline above out of
+  the page): the site figure alone moves, on the one page that renders a run — one inline
+  `<svg>` per width, the box, pill, arrow and band rules that paint them from the palette's
+  tokens, and the two lists of the repository's own lines under the picture — and then the
+  review of that round moves it once more by the two rules that say where the drawings change
+  over and how wide the stacked one is drawn. The page weight and the script stay where they
+  were: the heaviest page is the docs hub, which renders none of it, and the drawing is markup
+  rather than script. **That round also re-derived all three figures from the gates' own build
+  rather than from its own delta**, because the base they carried was stale: the generated CLI
+  reference had been regenerated a round earlier without re-deriving the numbers, and the
+  correction is recorded in `website/README.md` with the round.
   **The figures themselves are the ones `website/README.md` writes, and they are written
   there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
   the build it can measure, and a derivation that names another build fails, which is what
@@ -722,6 +738,12 @@ goes stale the way the byte budgets did before D192.
 
 ## The owner's 2026-10-19 feedback on How It Works: the run is one vertical timeline
 
+**Superseded**: the owner's next reading of that page approved the draft *"How it works, draft
+2 (diagram)"* with *"build it"*, and the timeline below came out of the page — `RunDetail.astro`
+and the gate that read its shape went with it. The section is kept as the round that decided
+it; the shape that ships is the one in "The owner's 2026-10-19 approval of the run's diagram"
+at the end of this document.
+
 - **"It is a bit better, but not quite there. The run, step by step section does not look
   good."** The section had the right content and the wrong shape. `RunDetail.astro`'s five
   steps were a `repeat(auto-fit, minmax(18rem, 1fr))` grid: at 1280 px the five read three
@@ -980,3 +1002,67 @@ out is recorded here.
 - **What is still the owner's check.** Whether the summaries read as product news and whether
   `/changelog/` looks right is the owner's own reading of the page (70a–70c, D190): this run
   cannot see a rendered page, and no screenshot is committed here.
+
+## The owner's 2026-10-19 approval of the run's diagram: the timeline comes out
+
+The owner approved the draft *"How it works, draft 2 (diagram)"* on 2026-10-19 with *"build
+it"*, and the round that built it is the one `website/README.md` records as "How It Works is
+one diagram of the run, and the run in words under it". Its sections here are the one above
+(the timeline) and **changes spec item 4**, which is amended by it rather than rewritten there
+(the spec is committed as it was agreed, and no part of it is implemented by being written
+down).
+
+- **The timeline above is superseded, and item 4's "SAME diagram" is amended for one page.**
+  Item 4 asks for the homepage's four-step flow and for the HOW IT WORKS page to "open with the
+  SAME diagram (one shared component, not two copies)". That page opens with the run's own
+  diagram now: one drawing of the run — the draft's `[fix ─► review(2)]` loop and all — with
+  the same facts in words under it, drawn by `RunDiagram.astro`. The homepage keeps
+  `ArchitectureDiagram.astro` and its four quoted captions, and the two components are two
+  drawings of two things rather than two copies of one. The reading is the owner's and it is
+  the whole of the amendment: **item 4's "one shared component" holds for the picture the two
+  pages used to share, and the page that answers "what happens between asking for the work and
+  getting the pull request" answers it with the run**, which is a picture the homepage's flow
+  is not (item 4's acceptance — a picture, not a paragraph — is untouched).
+- **The timeline section above is a record, not the page's shape.** The vertical timeline, its
+  rail and its connector are gone from the artifact, `RunDetail.astro` with them, and
+  `test/base-styles.mjs`'s `runTimelineFailures` went with the shape it read (that file's own
+  note says so, and what is left of the run's layout there is the room its blocks take). The
+  section above stays because the rounds are kept as they were decided — read it with this one
+  beside it, and the page it describes is not the page that ships.
+- **Every line of the drawing is quoted from the repository, and the drawing is markup.** Both
+  drawings are inline `<svg>` rendered from one set of labels, each label carrying the document
+  it is quoted from (`data-source`), and nothing is fetched: no picture file, no font, no
+  origin, no script (D183, D190). The four steps `ArchitectureDiagram.astro` draws cite their
+  captions the same way, and the run's diagram cites the redesign's own changes spec,
+  `docs/design/v1.md` and the plugin's skills.
+- **The shape is a gate, and each claim has a fixture.** `website/test/how-it-works.mjs` reads
+  the built page and refuses: a figure that is not one diagram, a drawing without an
+  accessible name or a `viewBox`, a stage the repository does not name, a label that is not a
+  line of the document it cites, a line of the drawing wider than the box it is drawn in, a
+  drawing scaled into a box narrower than a phone's column — and, since the review round below,
+  the loop's own arrow. Its fixtures plant each defect in the built page and read the refusal
+  back, and the page as it is built passes its own gate.
+- **The review round: the changeover, the ceiling and the arrow.** Three findings came out of
+  the review of that round, and all three were the gate's rather than the page's rendering:
+  **the arrow was unheld** — deleting both loop paths, or drawing the arrow between two other
+  stages, left the gate green, so the gate now reads the line and the head that lands it,
+  which two stages its two ends join (paired with the pills by the drawing's own geometry) and
+  where the head sits; **the wide drawing's floor held only at the widths the page happened to
+  be read at** — its smallest label is 16 units of a 1200-unit picture and the drawings changed
+  over at the site's 48 rem chrome breakpoint, so at a 768 px viewport that label came out at
+  9.6 px, and the changeover is 59.25 rem now, the width at which the label is exactly the 12
+  px floor in the page's own 900 px column; and **no ceiling held the stacked drawing**, which
+  a tablet would have been shown stretched to the column, so `.run-tall` carries a
+  `max-width` of its own scale — 22.5 rem, one unit to the pixel — and the gate refuses a
+  ceiling that is absent, unreadable or larger than the viewBox it is drawn at. The box every
+  readability number is taken at is read out of the page's own stylesheet (`main`'s inline
+  padding and the page's ceiling) rather than typed into the gate, so a gutter that moves moves
+  the arithmetic with it. **The byte budget is re-derived in the commit that moves it (D192)**:
+  the site figure alone moved, by the stylesheet rules of that round, and the numbers are
+  `website/README.md`'s (that round also re-derived the three figures from the gates' own
+  build, because the base they carried was stale — `website/content/cli-reference.md` had been
+  regenerated a round earlier without re-deriving them, which is recorded there).
+- **What is still the owner's check.** The drawing was built to the draft the owner approved,
+  and whether the page then looks right is the owner's reading of it (70a–70c, D190): this run
+  cannot see a rendered page, no screenshot is committed here, and the gate says what the
+  drawing contains and how large its labels come out rather than what it looks like.

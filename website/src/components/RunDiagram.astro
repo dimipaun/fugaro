@@ -578,16 +578,24 @@ const ALT =
     max-width: 100%;
   }
 
-  /* One drawing at a time. Under 48 rem — where the site's chrome switches — the wide
-     drawing's labels would be a third of the size they are drawn at, so the tall viewBox is
-     the one a phone shows; above it, the tall one is not rendered at all. An SVG that is not
-     rendered is not in the accessibility tree either, so a screen reader is told the run
-     once. */
+  /* One drawing at a time, and the width they change over at is the tall drawing's own scale
+     rather than the site's chrome breakpoint: the wide drawing's smallest label is 16 units
+     of a 1200 unit picture, and it is readable from 12 px up, which a column of 900 px is —
+     a 59.25 rem viewport, in a page whose column is its width less `main`'s 24 px of padding
+     on either side. At the site's 48 rem the column scales that label to 9.6 px, a label a
+     reader cannot read, which is the whole reason these two numbers are not the same. Above
+     it the tall drawing is not rendered at all: an SVG that is not rendered is not in the
+     accessibility tree either, so a screen reader is told the run once. */
   .run-tall {
     display: none;
+    /* The stacked drawing is drawn at a phone's own width (360 units of `viewBox`, one unit
+       to the pixel), and a tablet is shown it at that size rather than stretched to the
+       column: 22.5 rem is the drawing's own scale, so its labels never grow or shrink. */
+    max-width: 22.5rem;
+    margin-inline: auto;
   }
 
-  @media (max-width: 47.99rem) {
+  @media (max-width: 59.25rem) {
     .run-wide {
       display: none;
     }
