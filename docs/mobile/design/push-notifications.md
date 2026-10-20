@@ -107,9 +107,18 @@ answered.
 
 - **No push library, no push service, no push token.** No Go package under `internal/` or
   `mobile/` imports FCM, APNs, Expo's push service or `firebase-admin/messaging`;
-  `go.mod` carries no FCM client, and `mobile/package.json` declares **no runtime dependency
-  at all** (the manifest is deliberately empty until the Expo toolchain is pinned, and
-  `mobile/src/skeleton/index.test.js` keeps it so). **The permission exists in a catalogue and
+  `go.mod` carries no FCM client, and `mobile/package.json` declares **no push library, no FCM
+  or APNs client and no Expo push client** — its dependencies are the five the app imports
+  (`expo`, `react`, `react-native`, `expo-secure-store`,
+  `@react-native-async-storage/async-storage`, declared when the Expo SDK was pinned; Expo SDK
+  58), and none of them is `expo-notifications` or `firebase`. *(Amended 2026-10-20: this
+  sentence said the manifest declared "**no runtime dependency at all**", which was true until
+  the SDK was declared and is not true now. The claim this document needs — no push path
+  exists — is unchanged, and `mobile/src/dependencies.test.js` is what makes the dependency
+  list equal to the imports the app makes, so a push library would have to be imported to
+  arrive. The empty-manifest pin it replaced, the fourth check of
+  `mobile/src/skeleton/index.test.js`, was removed with it and the file still exists.)*
+  **The permission exists in a catalogue and
   nowhere else**: `deploy/terraform/testdata/custom-role-permissions.txt` lists
   `firebasecloudmessaging.messages.create` and its siblings among the permissions this
   repository knows the names of *(the file is in this tree: it landed on
@@ -342,8 +351,8 @@ that FCM assigns; the **IP address** the device registered from and the network 
 topic); and hence a **time series per device** — when the phone was reachable, and *from §3.1's
 category alone* when runs finish, fail, need answers or bind a budget. Stating it as "a
 provider learns a category and a device address" understates it by four fields and a timing
-series. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no runtime
-dependency at all), so Google does not additionally receive app-usage events from this build —
+series. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no Firebase or
+analytics package), so Google does not additionally receive app-usage events from this build —
 which is true of the recommended shape and would stop being true if a later task links one.
 
 **The alternative: Expo's push service.** The app is an Expo app (`mobile/package.json`,
@@ -1160,8 +1169,8 @@ Installation ID**; the **IP address** at registration and delivery; **device and
 and through all of that a **per-device time series of category events** — when runs finish,
 fail, need answers or bind a budget (§3.3). The first draft's "a provider learns a category and
 a device address" **understated this by four fields and a timing series**, and is corrected
-here. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no runtime
-dependency at all), so this build sends Google no app-usage events beyond the push path itself.
+here. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no Firebase or
+analytics package), so this build sends Google no app-usage events beyond the push path itself.
 *What this design does*: makes the payload carry nothing (§3.1). The design does **not** claim
 end-to-end secrecy — it cannot, FCM and APNs see the payload by construction — and it does not
 pretend the payload is encrypted for the phone, because the phone has no key the push path

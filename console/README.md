@@ -3532,24 +3532,30 @@ a visitor's browser tab are showing the same picture.
 
 ### 1024, and the artwork's real size
 
-**The 1024 is a size the packager needs, not detail the source has.** The source logo is a
-1024 x 1024 *canvas*, but the mark on it is much smaller: the alpha bounding box of
-`brand/fugaro-logo.png` (alpha > 8, the generator's own `ALPHA_THRESHOLD`) is **548 x 371
-pixels**, with the rest transparent margin. `scripts/gen-brand-icons.py` crops to that box
-and then scales it per output, so the generator's own `fit(art, 1024, 0.80, ground)` —
-factor **1.4949**, artwork about 819 x 555 — is an **upscale of about 1.5x**, and the site's
-`android-chrome-512x512.png` (factor 0.7474, artwork about 410 x 277) is the same artwork
-*down*scaled. `brand/app-icon-1024.png` is therefore the largest rendering the generator
-produces rather than a native-resolution one, and the console's icon inherits exactly that.
+**The 1024 is the size the packager needs, and since 2026-10-20 it is also a size the
+source holds.** The owner replaced `brand/fugaro-logo.png` with a 2048 x 2048 canvas
+carrying the same picture at twice the real pixels, and the mark grew with the canvas: the
+alpha bounding box of the file (alpha > 8, the generator's own `ALPHA_THRESHOLD`) is
+**1089 x 738 pixels**, with the rest transparent margin. `scripts/gen-brand-icons.py` crops
+to that box and then scales it per output, so the generator's own
+`fit(art, 1024, 0.80, ground)` — factor **0.7522**, artwork **819 x 555** — *down*scales it
+now, and the site's `android-chrome-512x512.png` (factor 0.3761, artwork 410 x 278) is the
+same artwork downscaled further. `brand/app-icon-1024.png` is therefore a
+native-resolution rendering of the mark rather than an interpolation of a smaller one, and
+the console's icon inherits exactly that.
 
-An earlier revision of this section said the master was "a genuine 1024 render" and that
-"nothing here is an upscale", and the first commit's message said the same. That was wrong,
-and the figures above are what corrects it: they were measured by decoding the committed
-files (the alpha bbox of the source, and the artwork's bbox in the 1024 master and in the
-site's 512) rather than read off the filenames.
+**This section used to ask for that change, and the figures above are the answer to it.**
+Until 2026-10-20 the source was a 1024 x 1024 canvas whose mark was only **548 x 371 px**,
+so the same call scaled it *up* by 1.4949 and this file was an ~1.5x interpolation; the
+section ended by naming what would fix it — "artwork that holds it: a
+`brand/fugaro-logo.png` whose visible mark is about 1024 px across" — and the owner supplied
+exactly that. An earlier revision of this section also said the master was "a genuine 1024
+render" and that "nothing here is an upscale": that was wrong for the file it described
+(the mark was 548 px across) and it is true of the one in the tree now (1089 px across, so
+the 819 px the master draws is a reduction). Both readings are the measurement above rather
+than a claim read off a filename.
 
-The **file choice stands**, for two reasons that do not depend on the artwork being
-oversized:
+The **file choice stands**, for two reasons that never depended on the artwork's size:
 
 - **the packager wants 1024.** electron-builder converts the PNG to the bundle's `.icns`
   and refuses anything under 512 for that format; the `.icns` carries every slot from 1024
@@ -3557,19 +3563,17 @@ oversized:
   instead would leave the 1024 slot filled by a second resampler's guess at the file the
   generator already wrote;
 - **one source of truth.** The site's 512 and this 1024 come from one artwork, one ground
-  and one generator call; upscaling the 512 here would be a *second* derivation of the mark
-  in the console's tree, which is the thing this task exists to avoid.
+  and one generator call; resampling the 512 up here would be a *second* derivation of the
+  mark in the console's tree, which is the thing this task exists to avoid.
 
-**For a genuinely crisp 1024** the owner has to supply artwork that holds it: a
-`brand/fugaro-logo.png` whose visible mark is about 1024 px across (the canvas is already
-1024 x 1024 — the mark on it is not), or a redrawn master at that size. Then
-`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png`
-is the whole change, and `website/test/brand.mjs` and `test/unit/icon.test.ts` are what
+**A source change is still the only thing that moves this**, and it is a one-liner when it
+happens: replace `brand/fugaro-logo.png`, then
+`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png`,
+which is the whole change — `website/test/brand.mjs` and `test/unit/icon.test.ts` are what
 check it. Nothing here smooths the 512 up and calls it a 1024.
 
 `test/unit/icon.test.ts` asserts the size, the opacity (colour type 2 — a `.icns` with holes
-in it shows the desktop through the mark) and the bytes; the PR records the same figures and
-the same limitation.
+in it shows the desktop through the mark) and the bytes; the PR records the same figures.
 
 ### Where the packager takes it, and where a running console does
 

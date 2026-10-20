@@ -2065,10 +2065,11 @@ func TestSecretsLsDefaultsToProjectAndSaysSo(t *testing.T) {
 // `--repo` (no "=value", no token after it) becomes `--repo=`, whose empty
 // value resolveSecretRepo reads as this checkout's origin, and nothing else
 // changes -- the space-separated form every script writes, `--repo=` as typed,
-// anything after `--`, anything outside `secrets set` / `secrets ls` (init's
-// --repo is a bool), and everything before the subcommand (the global flags
-// and their values) are left byte for byte as they came in. The input slice is
-// not mutated: cmd/fugaro/main.go passes os.Args[1:] into it.
+// anything after `--`, anything outside optionalRepoVerbs (init's --repo is a
+// bool; budget set/kill/resume have their own half of the table in
+// TestBudgetNormalizeRepoArgs), and everything before the subcommand (the
+// global flags and their values) are left byte for byte as they came in. The
+// input slice is not mutated: cmd/fugaro/main.go passes os.Args[1:] into it.
 func TestNormalizeRepoArgs(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2163,7 +2164,7 @@ func TestNormalizeRepoArgs(t *testing.T) {
 }
 
 // TestSecretsBoolFlagsMatchTheFlags keeps secretsBoolFlags equal to the flags
-// the secrets commands declare with a NoOptDefVal. secretsVerb's scan decides
+// the secrets commands declare with a NoOptDefVal. optionalRepoVerb's scan decides
 // from that map whether a token after a long flag is the flag's value, and
 // pflag decides the same question from the flag's NoOptDefVal: a flag in one
 // and not the other is how the scan read "set" as --json's value in
@@ -2190,7 +2191,7 @@ func TestSecretsBoolFlagsMatchTheFlags(t *testing.T) {
 	}
 	for name := range declared {
 		if !secretsBoolFlags[name] {
-			t.Errorf("the secrets commands declare %s with a NoOptDefVal (it takes no value), and secretsVerb's scan does not know it: a token after it would be read as its value", name)
+			t.Errorf("the secrets commands declare %s with a NoOptDefVal (it takes no value), and optionalRepoVerb's scan does not know it: a token after it would be read as its value", name)
 		}
 	}
 	for name := range secretsBoolFlags {

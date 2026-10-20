@@ -5,7 +5,8 @@
 // the page's own stacking layer, so a block a page draws *after* the header and takes a place
 // out of the flow painted over them. `ArchitectureDiagram.astro`'s steps are exactly that
 // block — `position: relative` is what their arrows are placed against — and they sit on the
-// two pages that carry the diagram, `/how-it-works/` and the homepage. A positioned box with
+// homepage, which is the page that carries the flow (the owner's draft of 2026-10-19 gave the
+// How It Works page the run's own diagram instead). A positioned box with
 // no `z-index` paints with every other such box in tree order, and the header is the first of
 // them: an open drawer had each step's card painted across it, which is a navigation a reader
 // on a phone cannot use.
@@ -234,8 +235,11 @@ test('the flow keeps the position its arrows are placed against, and no layer of
   // layer on it is what the defect was. It is asserted here rather than left to the case above
   // because this is the shape a later "fix" would take: the step's own rule, in the built
   // page, positioned and without a `z-index`.
-  const page = builtPages(DIST).find((entry) => entry.rel === path.join('how-it-works', 'index.html'))
-  assert.ok(page, 'dist/how-it-works/index.html is missing: run `npm run build` (npm run check does it first)')
+  // The homepage is where the flow is drawn now: the owner's draft of 2026-10-19 replaced the
+  // How It Works page's body with the run's own diagram, whose steps are SVG the stylesheet
+  // lays out rather than positioned boxes.
+  const page = builtPages(DIST).find((entry) => entry.rel === 'index.html')
+  assert.ok(page, 'dist/index.html is missing: run `npm run build` (npm run check does it first)')
   const steps = cssRules(pageCss(page.html, DIST)).filter((rule) => /(^|[\s,>+~])\.flow-step(\[|[:,]|$)/.test(rule.selector))
   assert.ok(steps.length, 'the built page carries no .flow-step rule: the diagram is the page that has the steps')
   assert.ok(

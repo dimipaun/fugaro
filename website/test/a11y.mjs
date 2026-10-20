@@ -904,17 +904,19 @@ export function flowA11yFailures(html) {
 }
 
 test('the flow is an ordered list a screen reader reads in order, and its arrows are decoration', () => {
-  // Both pages carry the flow (D185 places it on the homepage too), so both are checked —
-  // and the two are held to four steps each, or a page that rendered no flow at all would
-  // pass a check that read nothing.
+  // The homepage carries the flow now; the How It Works page carries the run's own diagram,
+  // whose steps are its stage pills and whose name is on the drawing
+  // (`test/how-it-works.mjs`). Every page is still walked, so a page that grew a flow of its
+  // own is checked by the same rules, and the homepage is held to four steps or a page that
+  // rendered no flow at all would pass a check that read nothing.
   for (const page of builtPages()) {
     const steps = flowStepsOf(page.html)
     const failures = flowA11yFailures(page.html)
     assert.deepEqual(failures, [], `${page.rel}: the flow is not readable in order:\n  ${failures.join('\n  ')}`)
-    if (page.rel === 'index.html' || page.rel === 'how-it-works/index.html') {
+    if (page.rel === 'index.html') {
       assert.equal(steps.length, 4, `${page.rel} carries ${steps.length} flow steps, and D185's flow is the brief's four (P8)`)
     } else {
-      assert.equal(steps.length, 0, `${page.rel} carries a flow, and D185 places it on How It Works and on the homepage`)
+      assert.equal(steps.length, 0, `${page.rel} carries a flow, and the flow is the homepage's picture of the run (the owner's draft of 2026-10-19 moved the How It Works page to the run's own diagram)`)
     }
   }
 })

@@ -14,7 +14,7 @@
 // average for an angle). The result is the logo's hue, and three checks hold the palette in
 // force to it:
 //
-//   1. the logo decodes to the shape §5.1 sampled and to the hue it records (198.4°), so a
+//   1. the logo decodes to the shape §5.1 sampled and to the hue it records (199.0°), so a
 //      logo that changed is noticed rather than silently re-baselined;
 //   2. the palette in force's `--accent` is within 5° of that hue (D180);
 //   3. its `--warn` is at least 90° from it (D181), so the warning tone can never be read
@@ -44,11 +44,11 @@ const TOKENS_FILE = 'tokens.css'
 // ---- the numbers, and where each one comes from -----------------------------------------
 
 /** The logo's circular mean hue at saturation ≥ 0.5, as §5.1 records it. */
-export const LOGO_HUE = 198.4
-/** §5.1's figure is a mean over 107,437 pixels; a different count means a different method. */
-export const LOGO_PIXELS = 107437
-/** …and 83,028 of them carry saturation ≥ 0.5, which is the set the mean is taken over. */
-export const LOGO_PIXELS_AT_SATURATION = 83028
+export const LOGO_HUE = 199.0
+/** §5.1's figure is a mean over 431,842 pixels; a different count means a different method. */
+export const LOGO_PIXELS = 431842
+/** …and 336,810 of them carry saturation ≥ 0.5, which is the set the mean is taken over. */
+export const LOGO_PIXELS_AT_SATURATION = 336810
 /** How far the accent may drift from the logo's own hue (D180, §5.2). */
 export const ACCENT_TOLERANCE = 5
 /** How far the warning tone must stay from it (D181, §5.2). */
@@ -260,10 +260,16 @@ export function accentFailures(tokens, logo) {
 
 // ---- the cases --------------------------------------------------------------------------
 
+// The shape is §5.1's: plain 8-bit RGBA, non-interlaced, and a square canvas — and the canvas
+// is **2048 px** since the owner supplied the artwork at that size (the same picture with twice
+// the real pixels, so the derived icons are no longer upscales; `brand/README.md` and
+// `console/README.md` carry the account). The number is asserted rather than assumed, because a
+// re-sampled logo moves every figure below it, and the shape is where a decoder change would
+// show up first.
 test('the logo is the plain 8-bit, non-interlaced RGBA PNG §5.1 sampled', () => {
   const image = decodePng(LOGO)
-  assert.equal(image.width, 1024, 'brand/fugaro-logo.png width')
-  assert.equal(image.height, 1024, 'brand/fugaro-logo.png height')
+  assert.equal(image.width, 2048, 'brand/fugaro-logo.png width')
+  assert.equal(image.height, 2048, 'brand/fugaro-logo.png height')
   assert.equal(image.colourType, 6, 'brand/fugaro-logo.png is RGBA, so its ground is not its colour')
   assert.equal(image.bitDepth, 8, 'brand/fugaro-logo.png is 8 bits per channel')
   assert.equal(image.interlace, 0, 'brand/fugaro-logo.png is not interlaced')
@@ -296,7 +302,7 @@ test('the palette in force takes its accent from the logo, and keeps the warning
 })
 
 // The red step, kept. The palette in force before D180 was `--accent: #8B5CF6` at 258.3°,
-// 59.9° from the logo's hue — the exact mistake this gate exists to refuse — so the fixture
+// 59.3° from the logo's hue — the exact mistake this gate exists to refuse — so the fixture
 // is that accent, in an otherwise passing palette, and the line it produces is required
 // word for word from the same function the case above calls.
 test('the accent check refuses the palette in force before D180, with the line it produces', () => {
@@ -305,7 +311,7 @@ test('the accent check refuses the palette in force before D180, with the line i
     ['warn', '#F5A524'],
   ])
   assert.deepEqual(accentFailures(before, LOGO_HUE), [
-    "--accent is 258.3°, 59.9° from the logo's 198.4°: D180 makes the accent the logo's hue, and this check allows 5° of drift",
+    "--accent is 258.3°, 59.3° from the logo's 199.0°: D180 makes the accent the logo's hue, and this check allows 5° of drift",
   ])
 })
 
@@ -315,6 +321,6 @@ test('the warning check refuses a warning tone that is the accent, with the line
     ['warn', '#17A8E6'],
   ])
   assert.deepEqual(accentFailures(tooClose, LOGO_HUE), [
-    "--warn is 198.0°, 0.4° from the logo's 198.4°: D181 keeps the warning tone at least 90° from the accent, so the two can never be read as one colour",
+    "--warn is 198.0°, 1.0° from the logo's 199.0°: D181 keeps the warning tone at least 90° from the accent, so the two can never be read as one colour",
   ])
 })

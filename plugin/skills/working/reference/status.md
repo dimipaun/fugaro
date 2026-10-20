@@ -57,6 +57,7 @@ Mention a kill switch that is on, a cap close to its limit, or no headroom. Chan
 
 ```bash user-runs
 fugaro budget set --repo <owner/name> --daily <usd>
+fugaro budget set --repo --daily <usd>            # run in the checkout: this repository
 fugaro budget kill
 fugaro budget resume
 fugaro project policy publish
